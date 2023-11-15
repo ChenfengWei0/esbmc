@@ -53,6 +53,9 @@ enum TypeNameT
   // tuple
   TupleTypeName,
 
+  // map
+  MapTypeName,
+
   TypeNameTError
 };
 TypeNameT get_type_name_t(const nlohmann::json &type_name);
@@ -290,6 +293,9 @@ enum ExpressionT
 
   // rule Tuple
   Tuple,
+
+  // rule Map
+  Mapping,
 
   // FunctionCall
   CallExprClass,

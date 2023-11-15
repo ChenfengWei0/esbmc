@@ -147,6 +147,10 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     {
       return TupleTypeName;
     }
+    if(typeString.substr(0, 8) == "mapping(")
+    {
+      return MapTypeName;
+    }
     else if(typeIdentifier.find("t_array$") != std::string::npos)
     {
       // Solidity's array type description is like:
@@ -257,6 +261,7 @@ const char *type_name_to_str(TypeNameT type)
     ENUM_TO_STR(PointerArrayToPtr)
     ENUM_TO_STR(ArrayTypeName)
     ENUM_TO_STR(DynArrayTypeName)
+    ENUM_TO_STR(MapTypeName)
     ENUM_TO_STR(ContractTypeName)
     ENUM_TO_STR(TypeConversionName)
     ENUM_TO_STR(EnumTypeName)
@@ -619,6 +624,10 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
   {
     return Tuple;
   }
+  else if(expr["nodeType"] == "Mapping")
+  {
+    return Mapping;
+  }
   else if(expr["nodeType"] == "FunctionCall")
   {
     if(expr["expression"]["nodeType"] == "NewExpression")
@@ -882,6 +891,7 @@ const char *expression_to_str(ExpressionT type)
     ENUM_TO_STR(DeclRefExprClass)
     ENUM_TO_STR(Literal)
     ENUM_TO_STR(Tuple)
+    ENUM_TO_STR(Mapping)
     ENUM_TO_STR(CallExprClass)
     ENUM_TO_STR(ImplicitCastExprClass)
     ENUM_TO_STR(IndexAccess)

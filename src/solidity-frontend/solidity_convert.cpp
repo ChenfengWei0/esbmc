@@ -233,26 +233,21 @@ bool solidity_convertert::get_var_decl(
   // to improve the re-usability of get_type* function, when dealing with non-array var decls.
   // For array, do NOT use ["typeName"]. Otherwise, it will cause problem
   // when populating typet in get_cast
-  bool dyn_array = is_dyn_array(ast_node["typeDescriptions"]);
-  if(dyn_array)
+
+  if(
+    ast_node.contains("initialValue") &&
+    is_dyn_array(ast_node["typeName"]["typeDescriptions"]))
   {
-    if(ast_node.contains("initialValue"))
-    {
-      // append size expr in typeDescription JSON object
-      const nlohmann::json &type_descriptor =
-        add_dyn_array_size_expr(ast_node["typeDescriptions"], ast_node);
-      if(get_type_description(type_descriptor, t))
-        return true;
-    }
-    else
-    {
-      if(get_type_description(ast_node["typeDescriptions"], t))
-        return true;
-    }
+    // get size from initialValue node and
+    // append size expr in typeDescription JSON object
+    const nlohmann::json &type_descriptor =
+      add_dyn_array_size_expr(ast_node["typeName"], ast_node);
+    if(get_typename(type_descriptor, t))
+      return true;
   }
   else
   {
-    if(get_type_description(ast_node["typeName"]["typeDescriptions"], t))
+    if(get_typename(ast_node["typeName"], t))
       return true;
   }
 
@@ -1296,6 +1291,16 @@ bool solidity_convertert::get_expr(
 
     break;
   }
+  case SolidityGrammar::ExpressionT::Mapping:
+  {
+    // e.g. mapping(address => uint) balances;
+    // - keyType: address
+    // - valueType: uint
+    // The keyType can be any built-in value type, bytes, string, or any contract or enum type.
+    // Other user-defined or complex types, such as mappings, structs or array types are not allowed.
+    abort();
+    break;
+  }
   case SolidityGrammar::ExpressionT::CallExprClass:
   {
     // 1. Get callee expr
@@ -2169,8 +2174,8 @@ bool solidity_convertert::get_var_decl_ref(
     get_var_decl_name(decl, name, id);
 
   typet type;
-  if(get_type_description(
-       decl["typeName"]["typeDescriptions"],
+  if(get_typename(
+       decl["typeName"],
        type)) // "type-name" as in state-variable-declaration
     return true;
 
@@ -2273,97 +2278,44 @@ bool solidity_convertert::get_decl_ref_builtin(
   return false;
 }
 
-bool solidity_convertert::get_type_description(
+/*
+  "typeName": {
+    "typeDescriptions": {
+      "typeIdentifier": 
+      "typeString":
+    }
+  }
+  calling order:
+  - get_typename => get_type_descriptions
+  - get_type_descriptions => get_type_descriptions
+*/
+bool solidity_convertert::get_typename(
   const nlohmann::json &type_name,
   typet &new_type)
 {
-  // For Solidity rule type-name:
-  SolidityGrammar::TypeNameT type = SolidityGrammar::get_type_name_t(type_name);
-
+  const nlohmann::json typeDescriptions = type_name["typeDescriptions"];
+  SolidityGrammar::TypeNameT type =
+    SolidityGrammar::get_type_name_t(typeDescriptions);
   switch(type)
   {
-  case SolidityGrammar::TypeNameT::ElementaryTypeName:
-  {
-    // rule state-variable-declaration
-    return get_elementary_type_name(type_name, new_type);
-  }
-  case SolidityGrammar::TypeNameT::ParameterList:
-  {
-    // rule parameter-list
-    // Used for Solidity function parameter or return list
-    return get_parameter_list(type_name, new_type);
-  }
-  case SolidityGrammar::TypeNameT::Pointer:
-  {
-    // auxiliary type: pointer (FuncToPtr decay)
-    // This part is for FunctionToPointer decay only
-    assert(
-      type_name["typeString"].get<std::string>().find("function") !=
-        std::string::npos ||
-      type_name["typeString"].get<std::string>().find("contract") !=
-        std::string::npos);
-
-    // Since Solidity does not have this, first make a pointee
-    nlohmann::json pointee = make_pointee_type(type_name);
-    typet sub_type;
-    if(get_func_decl_ref_type(pointee, sub_type))
-      return true;
-
-    if(sub_type.is_struct() || sub_type.is_union())
-      assert(!"struct or union is NOT supported");
-
-    new_type = gen_pointer_type(sub_type);
-    break;
-  }
-  case SolidityGrammar::TypeNameT::PointerArrayToPtr:
-  {
-    // auxiliary type: pointer (FuncToPtr decay)
-    // This part is for FunctionToPointer decay only
-    assert(
-      type_name["typeIdentifier"].get<std::string>().find("ArrayToPtr") !=
-      std::string::npos);
-
-    // Array type descriptor is like:
-    //  "typeIdentifier": "ArrayToPtr",
-    //  "typeString": "uint8[2] memory"
-
-    // Since Solidity does not have this, first make a pointee
-    typet sub_type;
-    if(get_array_to_pointer_type(type_name, sub_type))
-      return true;
-
-    if(
-      sub_type.is_struct() ||
-      sub_type.is_union()) // for "assert(sum > 100)", false || false
-      assert(!"struct or union is NOT supported");
-
-    new_type = gen_pointer_type(sub_type);
-    break;
-  }
   case SolidityGrammar::TypeNameT::ArrayTypeName:
   {
-    // Deal with array with constant size, e.g., int a[2]; Similar to clang::Type::ConstantArray
-    // array's typeDescription is in a compact form, e.g.:
-    //    "typeIdentifier": "t_array$_t_uint8_$2_storage_ptr",
-    //    "typeString": "uint8[2]"
-    // We need to extract the elementary type of array from the information provided above
-    // We want to make it like ["baseType"]["typeDescriptions"]
-    nlohmann::json array_elementary_type =
-      make_array_elementary_type(type_name);
-    typet the_type;
-    if(get_type_description(array_elementary_type, the_type))
+    // get elem
+    typet elem;
+    if(get_type_description(type_name["baseType"]["typeDescriptions"], elem))
       return true;
 
-    assert(the_type.is_unsignedbv()); // assuming array size is unsigned bv
-    std::string the_size = get_array_size(type_name);
-    unsigned z_ext_value = std::stoul(the_size, nullptr);
-    new_type = array_typet(
-      the_type,
-      constant_exprt(
-        integer2binary(z_ext_value, bv_width(int_type())),
-        integer2string(z_ext_value),
-        int_type()));
+    // get size: fixed array must have size
+    assert(type_name.contains("length"));
+    int size;
+    size = stoi(type_name["length"]["value"].get<std::string>());
 
+    new_type = array_typet(
+      elem,
+      constant_exprt(
+        integer2binary(size, bv_width(int_type())),
+        integer2string(size),
+        int_type()));
     break;
   }
   case SolidityGrammar::TypeNameT::DynArrayTypeName:
@@ -2390,6 +2342,7 @@ bool solidity_convertert::get_type_description(
     {
       // dynamic memory with initial list
 
+      // 1. get size
       const nlohmann::json &rtn_expr = type_name["sizeExpr"];
       // wrap it in an ImplicitCastExpr to convert LValue to RValue
       nlohmann::json implicit_cast_expr =
@@ -2399,10 +2352,11 @@ bool solidity_convertert::get_type_description(
       nlohmann::json l_type = rtn_expr["typeDescriptions"];
       if(get_expr(implicit_cast_expr, l_type, size_expr))
         return true;
+
+      // 2. get elem
       typet subtype;
-      nlohmann::json array_elementary_type =
-        make_array_elementary_type(type_name);
-      if(get_type_description(array_elementary_type, subtype))
+      if(get_type_description(
+           type_name["baseType"]["typeDescriptions"], subtype))
         return true;
 
       new_type = array_typet(subtype, size_expr);
@@ -2414,30 +2368,174 @@ bool solidity_convertert::get_type_description(
       //     "typeIdentifier": "t_array$_t_uint256_$dyn_memory_ptr",
       //     "typeString": "uint256[]"
 
-      // 1. rebuild baseType
-      nlohmann::json new_json;
-      std::string temp = type_name["typeString"].get<std::string>();
-      auto pos = temp.find("[]"); // e.g. "uint256[] memory"
-      const std::string typeString = temp.substr(0, pos);
-      const std::string typeIdentifier = "t_" + typeString;
-      new_json["typeString"] = typeString;
-      new_json["typeIdentifier"] = typeIdentifier;
-
-      // 2. get subType
-      typet sub_type;
-      if(get_type_description(new_json, sub_type))
+      // get elem
+      typet subtype;
+      if(get_type_description(
+           type_name["baseType"]["typeDescriptions"], subtype))
         return true;
 
-      // 3. make pointer
-      new_type = gen_pointer_type(sub_type);
+      // make pointer
+      new_type = gen_pointer_type(subtype);
     }
+    break;
+  }
+  case SolidityGrammar::TypeNameT::MapTypeName:
+  {
+    // get key
+    typet keyType;
+    if(get_type_description(type_name["keyType"]["typeDescriptions"], keyType))
+      return true;
+
+    // get value
+    typet valueType;
+    if(get_type_description(
+         type_name["valueType"]["typeDescriptions"], valueType))
+      return true;
+
+    // TODO
+    break;
+  }
+  default:
+  {
+    if(get_type_description(typeDescriptions, new_type))
+      return true;
+    break;
+  }
+  }
+  return false;
+}
+
+/*
+  "typeDescriptions": {
+    "typeIdentifier": 
+    "typeString":
+  }
+*/
+bool solidity_convertert::get_type_description(
+  const nlohmann::json &typeDescriptions,
+  typet &new_type)
+{
+  // For Solidity rule type-name:
+  SolidityGrammar::TypeNameT type =
+    SolidityGrammar::get_type_name_t(typeDescriptions);
+
+  switch(type)
+  {
+  case SolidityGrammar::TypeNameT::ElementaryTypeName:
+  {
+    // rule state-variable-declaration
+    return get_elementary_type_name(typeDescriptions, new_type);
+  }
+  case SolidityGrammar::TypeNameT::ParameterList:
+  {
+    // rule parameter-list
+    // Used for Solidity function parameter or return list
+    return get_parameter_list(typeDescriptions, new_type);
+  }
+  case SolidityGrammar::TypeNameT::Pointer:
+  {
+    // auxiliary type: pointer (FuncToPtr decay)
+    // This part is for FunctionToPointer decay only
+    assert(
+      typeDescriptions["typeString"].get<std::string>().find("function") !=
+        std::string::npos ||
+      typeDescriptions["typeString"].get<std::string>().find("contract") !=
+        std::string::npos);
+
+    // Since Solidity does not have this, first make a pointee
+    nlohmann::json pointee = make_pointee_type(typeDescriptions);
+    typet sub_type;
+    if(get_func_decl_ref_type(pointee, sub_type))
+      return true;
+
+    if(sub_type.is_struct() || sub_type.is_union())
+      assert(!"struct or union is NOT supported");
+
+    new_type = gen_pointer_type(sub_type);
+    break;
+  }
+  case SolidityGrammar::TypeNameT::PointerArrayToPtr:
+  {
+    // auxiliary type: pointer (FuncToPtr decay)
+    // This part is for FunctionToPointer decay only
+    assert(
+      typeDescriptions["typeIdentifier"].get<std::string>().find(
+        "ArrayToPtr") != std::string::npos);
+
+    // Array type descriptor is like:
+    //  "typeIdentifier": "ArrayToPtr",
+    //  "typeString": "uint8[2] memory"
+
+    // Since Solidity does not have this, first make a pointee
+    typet sub_type;
+    if(get_array_to_pointer_type(typeDescriptions, sub_type))
+      return true;
+
+    if(
+      sub_type.is_struct() ||
+      sub_type.is_union()) // for "assert(sum > 100)", false || false
+      assert(!"struct or union is NOT supported");
+
+    new_type = gen_pointer_type(sub_type);
+    break;
+  }
+  case SolidityGrammar::TypeNameT::ArrayTypeName:
+  {
+    // Deal with array with constant size, e.g., int a[2]; Similar to clang::Type::ConstantArray
+    // array's typeDescription is in a compact form, e.g.:
+    //    "typeIdentifier": "t_array$_t_uint8_$2_storage_ptr",
+    //    "typeString": "uint8[2]"
+    // We need to extract the elementary type of array from the information provided above
+    // We want to make it like ["baseType"]["typeDescriptions"]
+    nlohmann::json array_elementary_type =
+      make_array_elementary_type(typeDescriptions);
+    typet the_type;
+    if(get_type_description(array_elementary_type, the_type))
+      return true;
+
+    assert(the_type.is_unsignedbv()); // assuming array size is unsigned bv
+    std::string the_size = get_array_size(typeDescriptions);
+    unsigned z_ext_value = std::stoul(the_size, nullptr);
+    new_type = array_typet(
+      the_type,
+      constant_exprt(
+        integer2binary(z_ext_value, bv_width(int_type())),
+        integer2string(z_ext_value),
+        int_type()));
+
+    break;
+  }
+  case SolidityGrammar::TypeNameT::DynArrayTypeName:
+  {
+    // e.g.
+    // "typeDescriptions": {
+    //     "typeIdentifier": "t_array$_t_uint256_$dyn_memory_ptr",
+    //     "typeString": "uint256[]"
+
+    // 1. rebuild baseType
+    nlohmann::json new_json;
+    std::string temp = typeDescriptions["typeString"].get<std::string>();
+    auto pos = temp.find("[]"); // e.g. "uint256[] memory"
+    const std::string typeString = temp.substr(0, pos);
+    const std::string typeIdentifier = "t_" + typeString;
+    new_json["typeString"] = typeString;
+    new_json["typeIdentifier"] = typeIdentifier;
+
+    // 2. get subType
+    typet sub_type;
+    if(get_type_description(new_json, sub_type))
+      return true;
+
+    // 3. make pointer
+    new_type = gen_pointer_type(sub_type);
     break;
   }
   case SolidityGrammar::TypeNameT::ContractTypeName:
   {
     // e.g. ContractName tmp = new ContractName(Args);
 
-    std::string constructor_name = type_name["typeString"].get<std::string>();
+    std::string constructor_name =
+      typeDescriptions["typeString"].get<std::string>();
     size_t pos = constructor_name.find(" ");
     std::string id = prefix + constructor_name.substr(pos + 1);
 
@@ -2461,8 +2559,9 @@ bool solidity_convertert::get_type_description(
     // }
 
     nlohmann::json new_json;
-    std::string typeIdentifier = type_name["typeIdentifier"].get<std::string>();
-    std::string typeString = type_name["typeString"].get<std::string>();
+    std::string typeIdentifier =
+      typeDescriptions["typeIdentifier"].get<std::string>();
+    std::string typeString = typeDescriptions["typeString"].get<std::string>();
 
     // convert it back to ElementaryTypeName by removing the "type" prefix
     std::size_t begin = typeIdentifier.find("$_");
@@ -3508,12 +3607,12 @@ bool solidity_convertert::is_dyn_array(const nlohmann::json &json_in)
 {
   if(json_in.contains("typeIdentifier"))
   {
+    const std::string typeIdentifier =
+      json_in["typeIdentifier"].get<std::string>();
     if(
-      json_in["typeIdentifier"].get<std::string>().find("dyn") !=
-      std::string::npos)
-    {
+      typeIdentifier.substr(0, 6) == "t_array" &&
+      typeIdentifier.find("$dyn") != std::string::npos)
       return true;
-    }
   }
   return false;
 }
