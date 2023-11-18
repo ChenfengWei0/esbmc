@@ -725,6 +725,10 @@ bool clang_c_convertert::get_function_param(
     param_type.remove("size");
     param_type.remove("#constant");
   }
+  else if(param_type.is_code())
+  {
+    param_type = pointer_typet(param_type);
+  }
 
   std::string id, name;
   get_decl_name(pd, name, id);
@@ -3391,7 +3395,14 @@ void clang_c_convertert::get_presumed_location(
     return;
 
   clang::SourceLocation FileLoc = sm->getFileLoc(loc);
-  PLoc = sm->getPresumedLoc(FileLoc);
+  bool use_line_directives = true;
+#if ESBMC_SVCOMP
+  /* Do not use #line directives, because the GraphML witness format appearently
+   * wants to use the physical line in the pre-processed .i file; at least
+   * CPAchecker and UAutomizer do. */
+  use_line_directives = false;
+#endif
+  PLoc = sm->getPresumedLoc(FileLoc, use_line_directives);
 }
 
 void clang_c_convertert::set_location(

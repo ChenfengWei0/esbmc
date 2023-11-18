@@ -496,6 +496,8 @@ void goto_symext::symex_input(const code_function_call2t &func_call)
   else
     abort();
 
+  cur_state->source.pc--;
+
   if(func_call.ret)
     symex_assign(code_assign2tc(
       func_call.ret,
@@ -527,6 +529,8 @@ void goto_symext::symex_input(const code_function_call2t &func_call)
       symex_assign(code_assign2tc(item.object, val), false, cur_state->guard);
     }
   }
+
+  cur_state->source.pc++;
 }
 
 void goto_symext::symex_cpp_new(const expr2tc &lhs, const sideeffect2t &code)
@@ -1432,9 +1436,9 @@ void goto_symext::intrinsic_memset(
       std::string error_msg =
         fmt::format("dereference failure: trying to deref a ptr code");
 
-      expr2tc false_expr = gen_false_expr();
-      guard.guard_expr(false_expr);
-      claim(false_expr, error_msg);
+      // SAME_OBJECT(ptr, item) => DEREF ERROR
+      expr2tc check = implies2tc(item.guard, gen_false_expr());
+      claim(check, error_msg);
       continue;
     }
 
@@ -1450,8 +1454,9 @@ void goto_symext::intrinsic_memset(
         type_size - number_of_offset,
         number_of_bytes);
 
-      guard.add(gen_false_expr());
-      claim(gen_false_expr(), error_msg);
+      // SAME_OBJECT(ptr, item) => DEREF ERROR
+      expr2tc check = implies2tc(item.guard, gen_false_expr());
+      claim(check, error_msg);
       continue;
     }
 
@@ -1505,4 +1510,90 @@ void goto_symext::intrinsic_get_object_size(
     code_assign2tc(ret_ref, typecast2tc(ret_ref->type, obj_size)),
     false,
     cur_state->guard);
+}
+
+void goto_symext::intrinsic_races_check_dereference(expr2tc &expr)
+{
+  if(!options.get_bool_option("data-races-check"))
+    return;
+
+  exprt tmp_exprt = migrate_expr_back(expr);
+  std::string iden;
+
+  // There are two kinds of instructions generated in a data races check:
+  // assignment and assertion (_ESBMC_deref_a = false; assert !_ESBMC_deref_a)
+
+  if(!tmp_exprt.is_not())
+    iden = tmp_exprt.is_index() ? id2string(tmp_exprt.op0().identifier())
+                                : id2string(tmp_exprt.identifier());
+  else
+  {
+    tmp_exprt = tmp_exprt.op0();
+    iden = tmp_exprt.is_index() ? id2string(tmp_exprt.op0().identifier())
+                                : id2string(tmp_exprt.identifier());
+  }
+
+  // Only instructions with special prefixes are processed
+  // _ESBMC_deref_a = "_ESBMC_deref_" + "a"
+  if(has_prefix(iden, "__ESBMC_deref"))
+  {
+    const irep_idt identifier = iden.substr(14);
+
+    const symbolt *symbol = new_context.find_symbol(identifier);
+
+    if(!symbol)
+      return;
+
+    exprt deref("dereference");
+    deref.type() = symbol_expr(*symbol).type().subtype();
+    deref.copy_to_operands(symbol_expr(*symbol));
+
+    expr2tc tmp_deref;
+    migrate_expr(deref, tmp_deref);
+    dereference(tmp_deref, dereferencet::READ);
+    deref = migrate_expr_back(tmp_deref);
+
+    const irep_idt new_idt = deref.is_symbol()
+                               ? "tmp_" + id2string(deref.identifier())
+                               : "tmp_" + id2string(deref.op0().identifier());
+
+    if(new_idt == "tmp_")
+      return;
+
+    const symbolt *s = new_context.find_symbol(new_idt);
+
+    symbolt new_symbol;
+
+    if(s)
+      new_symbol = *s;
+    else
+    {
+      type2tc index = array_type2tc(get_bool_type(), expr2tc(), true);
+
+      new_symbol.id = new_idt;
+      new_symbol.name = new_idt;
+      new_symbol.type =
+        tmp_exprt.is_index() ? migrate_type_back(index) : typet("bool");
+      new_symbol.static_lifetime = true;
+      new_symbol.value.make_false();
+
+      new_context.add(new_symbol);
+    }
+
+    deref = symbol_expr(new_symbol);
+
+    if(tmp_exprt.is_index())
+    {
+      index_exprt index(
+        symbol_expr(new_symbol),
+        to_index_expr(tmp_exprt).index(),
+        typet("bool"));
+      deref.swap(index);
+    }
+
+    if(expr->expr_id != expr2t::not_id)
+      migrate_expr(deref, expr);
+    else
+      migrate_expr(gen_not(deref), expr);
+  }
 }

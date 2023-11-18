@@ -14,6 +14,17 @@ void rw_sett::compute(const codet &code)
     assert(code.operands().size() == 2);
     assign(code.op0(), code.op1());
   }
+  else if(statement == "printf")
+  {
+    exprt expr = code;
+    Forall_operands(it, expr)
+      read_rec(*it);
+  }
+  else if(statement == "return")
+  {
+    assert(code.operands().size() == 1);
+    read_rec(code.op0());
+  }
 }
 
 void rw_sett::assign(const exprt &lhs, const exprt &rhs)
@@ -28,7 +39,8 @@ void rw_sett::read_write_rec(
   bool w,
   const std::string &suffix,
   const guardt &guard,
-  const exprt &original_expr)
+  const exprt &original_expr,
+  bool dereferenced)
 {
   if(expr.id() == "symbol" && !expr.has_operands())
   {
@@ -37,7 +49,7 @@ void rw_sett::read_write_rec(
     const symbolt *symbol = ns.lookup(symbol_expr.get_identifier());
     if(symbol)
     {
-      if(!symbol->static_lifetime && !expr.type().is_pointer())
+      if(!symbol->static_lifetime && !dereferenced)
       {
         return; // ignore for now
       }
@@ -46,7 +58,8 @@ void rw_sett::read_write_rec(
         symbol->name == "__ESBMC_alloc" ||
         symbol->name == "__ESBMC_alloc_size" || symbol->name == "stdin" ||
         symbol->name == "stdout" || symbol->name == "stderr" ||
-        symbol->name == "sys_nerr")
+        symbol->name == "sys_nerr" || symbol->name == "operator=::ref" ||
+        symbol->name == "this")
       {
         return; // ignore for now
       }
@@ -64,6 +77,7 @@ void rw_sett::read_write_rec(
     entry.object = object;
     entry.r = entry.r || r;
     entry.w = entry.w || w;
+    entry.deref = expr.type().is_pointer() && dereferenced;
     entry.guard = migrate_expr_back(guard.as_expr());
     entry.original_expr = original_expr;
   }
@@ -77,20 +91,32 @@ void rw_sett::read_write_rec(
   else if(expr.id() == "index")
   {
     assert(expr.operands().size() == 2);
-    read_write_rec(expr.op0(), r, w, suffix, guard, expr);
+    read_write_rec(expr.op0(), r, w, suffix, guard, expr, dereferenced);
   }
   else if(expr.id() == "dereference")
   {
     assert(expr.operands().size() == 1);
     read_rec(expr.op0(), guard, original_expr);
 
-    exprt tmp(expr.op0());
     expr2tc tmp_expr;
-    migrate_expr(tmp, tmp_expr);
+    migrate_expr(expr, tmp_expr);
     dereference(target, tmp_expr, ns, value_sets);
-    tmp = migrate_expr_back(tmp_expr);
+    exprt tmp = migrate_expr_back(tmp_expr);
 
-    read_write_rec(tmp, r, w, suffix, guard, original_expr);
+    // If dereferencing fails, then we revert the variable
+    // and we will attempt dereferencing in symex
+    if(
+      has_prefix(id2string(tmp.identifier()), "symex::invalid_object") ||
+      id2string(tmp.identifier()) == "")
+      tmp = expr.op0();
+
+    if(tmp.id() == "+")
+    {
+      index_exprt tmp_index(tmp.op0(), tmp.op1(), tmp.type());
+      tmp.swap(tmp_index);
+    }
+
+    read_write_rec(tmp, r, w, suffix, guard, original_expr, true);
   }
   else if(expr.is_address_of() || expr.id() == "implicit_address_of")
   {

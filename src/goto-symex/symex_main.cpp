@@ -380,6 +380,8 @@ void goto_symext::symex_assert()
   expr2tc tmp = instruction.guard;
   replace_nondet(tmp);
 
+  intrinsic_races_check_dereference(tmp);
+
   dereference(tmp, dereferencet::READ);
   replace_dynamic_allocation(tmp);
 
@@ -726,6 +728,13 @@ void goto_symext::run_intrinsic(
 
     symex_assign(
       code_assign2tc(tgt, bitcast2tc(tgt->type, src)), false, cur_state->guard);
+  }
+  else if(symname == "c:@F@__ESBMC_unreachable")
+  {
+    if(options.get_bool_option("enable-unreachability-intrinsic"))
+      claim(
+        not2tc(cur_state->guard.as_expr()),
+        "reachability: unreachable code reached");
   }
   else
   {
