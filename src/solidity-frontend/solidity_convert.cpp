@@ -72,7 +72,13 @@ bool solidity_convertert::convert()
       // disable if it's in contract mode
       // otherwise leads to error. To be fixed.
       if (sol_func == "")
-        continue;
+      {
+        //! temporary fix
+        auto pattern_check =
+          std::make_unique<pattern_checker>((*itr)["nodes"], "test");
+        if (pattern_check->do_pattern_check())
+          return true; // 'true' indicates something goes wrong.
+      }
 
       assert(itr->contains("nodes"));
       auto pattern_check =
