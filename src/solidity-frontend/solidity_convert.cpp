@@ -53,6 +53,25 @@ bool solidity_convertert::convert()
 
   absolute_path = ast_json["absolutePath"].get<std::string>();
 
+  // polulate the scope_map
+  //   "exportedSymbols": {
+  //     "Base": [  ---> contract name
+  //         11
+  //     ],
+  //     "x": [    ---> constant file var name
+  //         4
+  //     ]
+  // },
+  if (ast_json.contains("exportedSymbols"))
+  {
+    const nlohmann::json &exported_symbol = ast_json["exportedSymbols"];
+    for (auto &el : exported_symbol.items())
+    {
+      for (auto scp : el.value())
+        scope_map.insert(std::pair<int, std::string>(scp, el.key()));
+    }
+  }
+
   // By now the context should have the symbols of all ESBMC's intrinsics and the dummy main
   // We need to convert Solidity AST nodes to the equivalent symbols and add them to the context
   nlohmann::json &nodes = ast_json["nodes"];
@@ -95,6 +114,14 @@ bool solidity_convertert::convert()
     if (node_type == "EnumDefinition")
       // set the ["Value"] for each member inside enum
       add_enum_member_val(*itr);
+    if (node_type == "VariableDeclaration")
+    {
+      //! Assume is a const var
+      assert((*itr)["mutability"].get<std::string>() == "constant");
+      exprt new_expr;
+      if (get_var_decl(*itr, new_expr))
+        return true;
+    }
   }
 
   // secound round: handle contract definition
@@ -286,11 +313,19 @@ bool solidity_convertert::get_var_decl(
       return true;
   }
 
+  // handle const var
+  if (ast_node["mutability"].get<std::string>() == "constant")
+    t.cmt_constant(true);
+  //TODO handle immutable var (== static var)
+
   bool is_state_var = ast_node["stateVariable"] == true;
+  bool is_global_var = scope_map.count(ast_node["id"].get<int>()) != 0;
 
   // 2. populate id and name
   std::string name, id;
-  if (is_state_var)
+  if (is_global_var)
+    get_global_var_decl_name(ast_node, name, id);
+  else if (is_state_var)
     get_state_var_decl_name(ast_node, name, id);
   else if (current_functionDecl)
   {
@@ -316,7 +351,7 @@ bool solidity_convertert::get_var_decl(
   get_default_symbol(symbol, debug_modulename, t, name, id, location_begin);
 
   symbol.lvalue = true;
-  symbol.static_lifetime = is_state_var;
+  symbol.static_lifetime = is_global_var || is_state_var;
   symbol.file_local = !is_state_var;
   symbol.is_extern = false;
 
@@ -339,8 +374,9 @@ bool solidity_convertert::get_var_decl(
 
   if (has_init)
   {
-    nlohmann::json init_value =
-      is_state_var ? ast_node["value"] : ast_node["initialValue"];
+    nlohmann::json init_value = (is_global_var || is_state_var)
+                                  ? ast_node["value"]
+                                  : ast_node["initialValue"];
     nlohmann::json literal_type = ast_node["typeDescriptions"];
 
     assert(literal_type != nullptr);
@@ -2358,7 +2394,10 @@ bool solidity_convertert::get_var_decl_ref(
   // Function to configure new_expr that has a +ve referenced id, referring to a variable declaration
   assert(decl["nodeType"] == "VariableDeclaration");
   std::string name, id;
-  if (decl["stateVariable"])
+
+  if (scope_map.count(decl["id"].get<int>()))
+    get_global_var_decl_name(decl, name, id);
+  else if (decl["stateVariable"])
     get_state_var_decl_name(decl, name, id);
   else
     get_var_decl_name(decl, name, id);
@@ -3164,6 +3203,17 @@ bool solidity_convertert::get_parameter_list(
   return false;
 }
 
+// parse the global variable
+void solidity_convertert::get_global_var_decl_name(
+  const nlohmann::json &ast_node,
+  std::string &name,
+  std::string &id)
+{
+  // e.g. c:@xx
+  name = ast_node["name"].get<std::string>();
+  id = "c:@C@" + name;
+}
+
 // parse the state variable
 void solidity_convertert::get_state_var_decl_name(
   const nlohmann::json &ast_node,
@@ -3320,7 +3370,7 @@ void solidity_convertert::get_location_from_decl(
   // To annotate local declaration within a function
   if (
     ast_node["nodeType"] == "VariableDeclaration" &&
-    ast_node["stateVariable"] == false)
+    ast_node["stateVariable"] == false && scope_map.count(ast_node["id"] == 0))
   {
     assert(
       current_functionDecl); // must have a valid current function declaration

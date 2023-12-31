@@ -48,7 +48,7 @@ protected:
   std::string current_contractName;
   std::string current_fileName;
 
-  // an auxiliary data structure to store the ast_node["id"] of contract/struct/function/...
+  // an auxiliary data structure to store the ast_node["id"] of global_var/contract/struct/function/...
   std::unordered_map<int, std::string> scope_map;
 
   bool convert_ast_nodes(const nlohmann::json &contract_def);
@@ -105,6 +105,10 @@ protected:
   bool
   get_elementary_type_name(const nlohmann::json &type_name, typet &new_type);
   bool get_parameter_list(const nlohmann::json &type_name, typet &new_type);
+  void get_global_var_decl_name(
+    const nlohmann::json &ast_node,
+    std::string &name,
+    std::string &id);
   void get_state_var_decl_name(
     const nlohmann::json &ast_node,
     std::string &name,
