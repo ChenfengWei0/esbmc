@@ -1150,6 +1150,8 @@ bool solidity_convertert::get_expr(
     "	@@@ got Expr: SolidityGrammar::ExpressionT::{}",
     SolidityGrammar::expression_to_str(type));
 
+  log_status("{}", SolidityGrammar::expression_to_str(type));
+
   switch (type)
   {
   case SolidityGrammar::ExpressionT::BinaryOperatorClass:
@@ -3444,6 +3446,9 @@ const nlohmann::json &solidity_convertert::find_decl_ref(int ref_decl_id)
   for (nlohmann::json::iterator itr = nodes.begin(); itr != nodes.end();
        ++itr, ++index)
   {
+    if ((*itr)["id"] == ref_decl_id)
+      return nodes.at(index);
+
     // this stands for the nodes outside of the contract
     // it can be referred to the data structure itself
     // or the members inside the structure.
@@ -3451,9 +3456,6 @@ const nlohmann::json &solidity_convertert::find_decl_ref(int ref_decl_id)
       (*itr)["nodeType"] == "EnumDefinition" ||
       (*itr)["nodeType"] == "StructDefinition")
     {
-      if ((*itr)["id"] == ref_decl_id)
-        return nodes.at(index);
-
       unsigned men_idx = 0;
       nlohmann::json &mem_nodes = nodes.at(index)["members"];
       for (nlohmann::json::iterator mem_itr = mem_nodes.begin();
