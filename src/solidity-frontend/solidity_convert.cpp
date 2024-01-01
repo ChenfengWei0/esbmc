@@ -1150,8 +1150,6 @@ bool solidity_convertert::get_expr(
     "	@@@ got Expr: SolidityGrammar::ExpressionT::{}",
     SolidityGrammar::expression_to_str(type));
 
-  log_status("{}", SolidityGrammar::expression_to_str(type));
-
   switch (type)
   {
   case SolidityGrammar::ExpressionT::BinaryOperatorClass:
