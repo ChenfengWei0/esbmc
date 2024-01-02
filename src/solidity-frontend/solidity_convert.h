@@ -50,6 +50,10 @@ protected:
 
   // an auxiliary data structure to store the ast_node["id"] of global_var/contract/struct/function/...
   std::unordered_map<int, std::string> scope_map;
+  // store contract dependencies
+  std::unordered_map<int, int> depend_map;
+  // store contract base (inheritance)
+  std::unordered_map<int, int> base_map;
 
   bool convert_ast_nodes(const nlohmann::json &contract_def);
 

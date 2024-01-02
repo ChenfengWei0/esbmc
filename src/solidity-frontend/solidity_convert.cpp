@@ -29,7 +29,9 @@ solidity_convertert::solidity_convertert(
     current_forStmt(nullptr),
     current_functionName(""),
     current_contractName(""),
-    scope_map({})
+    scope_map({}),
+    depend_map({}),
+    base_map({})
 {
   std::ifstream in(_contract_path);
   contract_contents.assign(
@@ -99,7 +101,7 @@ bool solidity_convertert::convert()
 
   // reasoning-based verification
 
-  // first round: handle definitions that can be outside of the contract
+  // First round: handle definitions that can be outside of the contract
   // including struct, enum, interface, event, error, library...
   // noted that some can also be inside the contract, e.g. struct, enum...
   index = 0;
@@ -124,16 +126,44 @@ bool solidity_convertert::convert()
     }
   }
 
-  // secound round: handle contract definition
+  // Secound round: handle the contract dependencies
+  // poplulate the dependency_map and base_map
   index = 0;
   for (nlohmann::json::iterator itr = nodes.begin(); itr != nodes.end();
        ++itr, ++index)
   {
     std::string node_type = (*itr)["nodeType"].get<std::string>();
 
-    if (node_type == "ContractDefinition") // rule source-unit
+    if (node_type == "ContractDefinition")
+    {
+      int id = (*itr)["id"].get<int>();
+      // contract id is i
+      for (auto &i : (*itr)["contractDependencies"])
+        depend_map.insert(std::pair<int, int>(i, id));
+      // contract id { i x = new i()}
+      for (auto &i : (*itr)["linearizedBaseContracts"])
+        base_map.insert(std::pair<int, int>(i, id));
+    }
+  }
+
+  // Third round: handle contract definition
+  index = 0;
+  for (nlohmann::json::iterator itr = nodes.begin(); itr != nodes.end();
+       ++itr, ++index)
+  {
+    std::string node_type = (*itr)["nodeType"].get<std::string>();
+
+    if (node_type == "ContractDefinition")
     {
       current_contractName = (*itr)["name"].get<std::string>();
+      // pass if we are in single contracr mode and the contract is neither the target one
+      // nor the depended/based one
+      if (
+        !config.options.get_option("contract").empty() &&
+        config.options.get_option("contract") == current_contractName &&
+        depend_map.count((*itr)["id"].get<int>()) &&
+        base_map.count((*itr)["id"].get<int>()))
+        continue;
 
       // modify the enum
       nlohmann::json &ast_nodes = (*itr)["nodes"];
@@ -3247,14 +3277,26 @@ void solidity_convertert::get_var_decl_name(
         std::
           string>(); // assume Solidity AST json object has "name" field, otherwise throws an exception in nlohmann::json
 
+  // we need to append "num" to distinguish
+  // function setA() external {
+  //     {
+  //         string x;  // num 1
+  //     }
+  //     {
+  //         string x;   // num 2
+  //     }
+  // }
+  std::string num = std::to_string(ast_node["id"].get<int>());
+
   if (current_functionDecl)
   {
     // converting local variable inside a function
     // For non-state functions, we give it different id.
-    // E.g. for local variable i in function nondet(), it's "c:overflow_2_nondet.c@55@F@nondet@i".
+    // E.g. for local variable i in function nondet(), it's "c:@C@ContractName@F@FuncName@55@i".
+
     assert(!current_functionName.empty());
     id = "c:@C@" + current_contractName + "@F@" + current_functionName + "@" +
-         name;
+         num + "@" + name;
   }
   else if (ast_node.contains("scope"))
   {
@@ -3263,9 +3305,10 @@ void solidity_convertert::get_var_decl_name(
     int scp = ast_node["scope"].get<int>();
     std::string struct_name = scope_map.at(scp);
     if (current_contractName.empty())
-      id = "c:@C@" + struct_name + "@" + name;
+      id = "c:@S@" + struct_name + "@" + num + "@" + name;
     else
-      id = "c:@C@" + current_contractName + "@" + struct_name + "@" + name;
+      id = "c:@C@" + current_contractName + "@S@" + struct_name + "@" + num +
+           "@" + name;
   }
   else
   {
