@@ -2837,6 +2837,10 @@ bool solidity_convertert::get_sol_builtin_ref(
       expr["expression"].contains("typeName") &&
       expr["expression"]["typeName"].contains("name"))
       bs = expr["expression"]["typeName"]["name"].get<std::string>();
+    else if (0)
+    {
+      //TODO：support something like <address>.balance
+    }
     else
       return true;
 
@@ -2844,7 +2848,20 @@ bool solidity_convertert::get_sol_builtin_ref(
     std::string id_var = "c:@" + bs + "_" + mem;
     std::string id_func = "c:@F@" + bs + "_" + mem;
     if (context.find_symbol(id_var) != nullptr)
-      new_expr = symbol_expr(*context.find_symbol(id_var));
+    {
+      symbolt &sym = *context.find_symbol(id_var);
+
+      if (sym.value.is_empty() || sym.value.is_zero())
+      {
+        // update: set the value to rand (default 0）
+        // since all the current support built-in vars are uint type.
+        // we just set the value to c:@F@nondet_uint
+        symbolt &r = *context.find_symbol("c:@F@nondet_uint");
+        sym.value = r.value;
+      }
+      new_expr = symbol_expr(sym);
+    }
+
     else if (context.find_symbol(id_func) != nullptr)
       new_expr = symbol_expr(*context.find_symbol(id_func));
     else
