@@ -80,7 +80,7 @@ protected:
   bool get_var_decl_ref(const nlohmann::json &decl, exprt &new_expr);
   bool get_func_decl_ref(const nlohmann::json &decl, exprt &new_expr);
   bool get_enum_member_ref(const nlohmann::json &decl, exprt &new_expr);
-  bool get_decl_ref_builtin(const nlohmann::json &decl, exprt &new_expr);
+  bool get_esbmc_builtin_ref(const nlohmann::json &decl, exprt &new_expr);
   bool get_type_description(const nlohmann::json &type_name, typet &new_type);
   bool get_func_decl_ref_type(const nlohmann::json &decl, typet &new_type);
   bool get_array_to_pointer_type(const nlohmann::json &decl, typet &new_type);
@@ -154,6 +154,7 @@ protected:
     locationt location);
 
   std::string get_ctor_call_id(const std::string &contract_name);
+  bool get_sol_builtin_ref(const nlohmann::json expr, exprt &new_expr);
 
   // literal conversion functions
   bool convert_integer_literal(

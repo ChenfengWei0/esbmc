@@ -62,7 +62,7 @@ enum TypeNameT
   TupleTypeName,
 
   // built-in member
-  SpecialTypeName,
+  BuiltinTypeName,
 
   TypeNameTError
 };
@@ -344,7 +344,7 @@ enum ExpressionT
   EnumMemberCall,
 
   // Built-in Member Access
-  SpecialMemberCall,
+  BuiltinMemberCall,
 
   ExpressionTError
 };

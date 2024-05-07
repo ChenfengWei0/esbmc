@@ -1448,7 +1448,7 @@ bool solidity_convertert::get_expr(
       else
       {
         // for special functions, we need to deal with it separately
-        if (get_decl_ref_builtin(expr, new_expr))
+        if (get_esbmc_builtin_ref(expr, new_expr))
           return true;
       }
     }
@@ -1456,7 +1456,7 @@ bool solidity_convertert::get_expr(
     {
       // Soldity uses -ve odd numbers to refer to built-in var or functions that
       // are NOT declared in the contract
-      if (get_decl_ref_builtin(expr, new_expr))
+      if (get_esbmc_builtin_ref(expr, new_expr))
         return true;
     }
 
@@ -1649,6 +1649,10 @@ bool solidity_convertert::get_expr(
   }
   case SolidityGrammar::ExpressionT::CallExprClass:
   {
+    // 0. check if it's a builtin func
+    if (!get_sol_builtin_ref(expr, new_expr))
+      break;
+
     // 1. Get callee expr
     const nlohmann::json &callee_expr_json = expr["expression"];
 
@@ -2064,13 +2068,11 @@ bool solidity_convertert::get_expr(
 
     break;
   }
-  case SolidityGrammar::ExpressionT::SpecialMemberCall:
+  case SolidityGrammar::ExpressionT::BuiltinMemberCall:
   {
-    //!TODO
-    log_error("Unsupported built-in member call");
-    abort();
+    if (get_sol_builtin_ref(expr, new_expr))
+      return true;
     break;
-    //
   }
   case SolidityGrammar::ExpressionT::ElementaryTypeNameExpression:
   {
@@ -2747,8 +2749,8 @@ bool solidity_convertert::get_enum_member_ref(
   return false;
 }
 
-// get the built-in methods
-bool solidity_convertert::get_decl_ref_builtin(
+// get the esbmc built-in methods
+bool solidity_convertert::get_esbmc_builtin_ref(
   const nlohmann::json &decl,
   exprt &new_expr)
 {
@@ -2787,7 +2789,8 @@ bool solidity_convertert::get_decl_ref_builtin(
   }
   else
   {
-    assert(!"Unsupported special functions");
+    //!assume it's a solidity built-in func
+    return get_sol_builtin_ref(decl, new_expr);
   }
 
   type = convert_type;
@@ -2797,6 +2800,58 @@ bool solidity_convertert::get_decl_ref_builtin(
   new_expr.identifier(id);
   new_expr.cmt_lvalue(true);
   new_expr.name(name);
+
+  return false;
+}
+
+bool solidity_convertert::get_sol_builtin_ref(
+  const nlohmann::json expr,
+  exprt &new_expr)
+{
+  // get the reference from the pre-populated symbol table
+  // note that this could be either vars or funcs.
+  assert(expr.contains("nodeType"));
+
+  if (expr["nodeType"].get<std::string>() == "FunctionCall")
+  {
+    //  e.g. gasleft() <=> c:@gasleft
+    if (expr["expression"]["nodeType"].get<std::string>() != "Identifier")
+      // this means it's not a builtin funciton
+      // however, we should not treat this as an error ("return true")
+      return get_expr(expr["expression"], new_expr);
+
+    std::string name = expr["expression"]["name"].get<std::string>();
+    std::string id = "c:@F@" + name;
+    if (context.find_symbol(id) == nullptr)
+      return true;
+    const symbolt &sym = *context.find_symbol(id);
+    new_expr = symbol_expr(sym);
+  }
+  else if (expr["nodeType"].get<std::string>() == "MemberAccess")
+  {
+    // e.g. string.concat() <=> c:@string_concat
+    std::string bs;
+    if (expr["expression"].contains("name"))
+      bs = expr["expression"]["name"].get<std::string>();
+    else if (
+      expr["expression"].contains("typeName") &&
+      expr["expression"]["typeName"].contains("name"))
+      bs = expr["expression"]["typeName"]["name"].get<std::string>();
+    else
+      return true;
+
+    std::string mem = expr["memberName"].get<std::string>();
+    std::string id_var = "c:@" + bs + "_" + mem;
+    std::string id_func = "c:@F@" + bs + "_" + mem;
+    if (context.find_symbol(id_var) != nullptr)
+      new_expr = symbol_expr(*context.find_symbol(id_var));
+    else if (context.find_symbol(id_func) != nullptr)
+      new_expr = symbol_expr(*context.find_symbol(id_func));
+    else
+      return true;
+  }
+  else
+    return true;
 
   return false;
 }

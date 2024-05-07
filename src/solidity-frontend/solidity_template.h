@@ -101,11 +101,6 @@ void string_concat(char *x, char *y)
 {
 	strcat(x, y);
 }
-
-size_t string_length(char *x)
-{
-	return strlen(x);
-}
 )";
 
 const std::string sol_byte = R"(

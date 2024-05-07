@@ -1,5 +1,5 @@
-#include <solidity-frontend/solidity_grammar.h>
 #include <fmt/core.h>
+#include <solidity-frontend/solidity_grammar.h>
 #include <set>
 #include <util/message.h>
 
@@ -231,9 +231,9 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
       return PointerArrayToPtr;
     }
     // for Special Variables and Functions
-    else if (typeString == "msg" || typeString == "block" || typeString == "tx")
+    else if (typeIdentifier == "t_magic_transaction")
     {
-      return SpecialTypeName;
+      return BuiltinTypeName;
     }
     else
     {
@@ -279,7 +279,7 @@ const char *type_name_to_str(TypeNameT type)
     ENUM_TO_STR(StructTypeName)
     ENUM_TO_STR(TupleTypeName)
     ENUM_TO_STR(MappingTypeName)
-    ENUM_TO_STR(SpecialTypeName)
+    ENUM_TO_STR(BuiltinTypeName)
     ENUM_TO_STR(TypeNameTError)
   default:
   {
@@ -696,8 +696,11 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
       return EnumMemberCall;
     else if (type_name == SolidityGrammar::TypeNameT::ContractTypeName)
       return ContractMemberCall;
-    else if (type_name == SolidityGrammar::TypeNameT::SpecialTypeName)
-      return SpecialMemberCall;
+    else 
+      //!Fixme. Assume it's a builtin member
+      // due to that the BuiltinTypeName cannot cover all the builtin member
+      // e.g. string.concat ==> TypeConversionName
+      return BuiltinMemberCall;
   }
   else if (expr["nodeType"] == "ImplicitCastExprClass")
   {
@@ -948,7 +951,7 @@ const char *expression_to_str(ExpressionT type)
     ENUM_TO_STR(ContractMemberCall)
     ENUM_TO_STR(StructMemberCall)
     ENUM_TO_STR(EnumMemberCall)
-    ENUM_TO_STR(SpecialMemberCall)
+    ENUM_TO_STR(BuiltinMemberCall)
     ENUM_TO_STR(ElementaryTypeNameExpression)
     ENUM_TO_STR(ExpressionTError)
   default:
