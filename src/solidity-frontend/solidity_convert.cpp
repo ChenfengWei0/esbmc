@@ -1706,9 +1706,10 @@ bool solidity_convertert::get_expr(
   }
   case SolidityGrammar::ExpressionT::CallExprClass:
   {
-    // 0. check if it's a builtin func
+    // 0. check if it's a solidity built-in function
     if (!get_sol_builtin_ref(expr, new_expr))
-      break;
+      if (expr.contains("name") && !check_intrinsic_function(expr))
+        break;
 
     // 1. Get callee expr
     const nlohmann::json &callee_expr_json = expr["expression"];
@@ -2813,6 +2814,7 @@ bool solidity_convertert::get_esbmc_builtin_ref(
   // -ve ref id means built-in functions or variables.
   // Add more special function names here
 
+  assert(decl.contains("name"));
   const std::string blt_name = decl["name"].get<std::string>();
   std::string name, id;
 
@@ -3209,7 +3211,7 @@ bool solidity_convertert::get_type_description(
     //  "typeString": "mapping(uint256 => string)"
     // since the key will always be regarded as string, we only need to obtain the value type.
 
-    typet val_t;  
+    typet val_t;
     //!TODO
     break;
   }
@@ -4172,7 +4174,9 @@ bool solidity_convertert::check_intrinsic_function(
   // function to detect special intrinsic functions, e.g. __ESBMC_assume
   return (
     ast_node["name"] == "__ESBMC_assume" ||
-    ast_node["name"] == "__VERIFIER_assume");
+    ast_node["name"] == "__VERIFIER_assume" ||
+    ast_node["name"] == "__ESBMC_assert" ||
+    ast_node["name"] == "__VERIFIER_assert");
 }
 
 nlohmann::json solidity_convertert::make_implicit_cast_expr(
@@ -4432,7 +4436,9 @@ bool solidity_convertert::is_dyn_array(const nlohmann::json &json_in)
 // check if the child node "typeName" is a mapping
 bool solidity_convertert::is_child_mapping(const nlohmann::json &ast_node)
 {
-  if (ast_node.contains("typeName") && ast_node["typeName"]["nodeType"] == "Mapping")
+  if (
+    ast_node.contains("typeName") &&
+    ast_node["typeName"]["nodeType"] == "Mapping")
     return true;
   return false;
 }
