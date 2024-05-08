@@ -314,6 +314,7 @@ bool solidity_convertert::get_var_decl(
   // For array, do NOT use ["typeName"]. Otherwise, it will cause problem
   // when populating typet in get_cast
   bool dyn_array = is_dyn_array(ast_node["typeDescriptions"]);
+  bool mapping = is_child_mapping(ast_node);
   if (dyn_array)
   {
     if (ast_node.contains("initialValue"))
@@ -328,6 +329,46 @@ bool solidity_convertert::get_var_decl(
     {
       if (get_type_description(ast_node["typeDescriptions"], t))
         return true;
+    }
+  }
+  else if (mapping)
+  {
+    // the mapping should not handled in var decl, instead
+    // it should be an expression inside the function.
+
+    // 1. get the expr
+    if (get_expr(ast_node["typeName"], new_expr))
+      return true;
+
+    // 2. move it to a function.
+    if (current_functionDecl)
+    {
+      // trace:
+      //        get_function_definition =>
+      //        get_block => get_statement =>
+      //        get_var_decl_stmt => get_var_decl
+      //
+      // Beside, it should always have an initial value, otherwise:
+      // "Uninitialized mapping. Mappings cannot be created dynamically, you have to assign them from a state variable."
+      // Do nothing since we have already updated the new_expr (was "code_skipt").
+      return false;
+    }
+    else
+    {
+      // assume it's not inside a funciton, then move it to the ctor
+      std::string contract_name;
+      if (get_current_contract_name(ast_node, contract_name))
+        return true;
+      if (contract_name.empty())
+        return true;
+      // add an implict ctor if it's not declared explictly
+      if (add_implicit_constructor())
+        return true;
+      symbolt &ctor =
+        *context.find_symbol("sol:@" + contract_name + "@F@" + contract_name);
+      ctor.value.operands().push_back(new_expr);
+
+      return false;
     }
   }
   else
@@ -430,7 +471,7 @@ bool solidity_convertert::get_var_decl(
     // 2. since the contract type variable has no initial value, i.e. explicit constructor call,
     // we construct an implicit constructor expression
     exprt val;
-    if (get_implicit_ctor_call(val, contract_name))
+    if (get_implicit_ctor_ref(val, contract_name))
       return true;
 
     // 3. make it to a temporary object
@@ -1647,6 +1688,22 @@ bool solidity_convertert::get_expr(
 
     break;
   }
+  case SolidityGrammar::ExpressionT::Mapping:
+  {
+    // convert
+    //   mapping(string => int) m;
+    // to
+    //   map_int_t m; map_init(&m);
+
+    // 1. populate the symbol
+    exprt dump;
+    if (get_var_decl(expr, dump))
+      return true;
+
+    // 2. call map_init;
+    //TODO
+    break;
+  }
   case SolidityGrammar::ExpressionT::CallExprClass:
   {
     // 0. check if it's a builtin func
@@ -2691,9 +2748,7 @@ bool solidity_convertert::get_var_decl_ref(
     get_var_decl_name(decl, name, id);
 
   if (context.find_symbol(id) != nullptr)
-  {
     new_expr = symbol_expr(*context.find_symbol(id));
-  }
   else
   {
     typet type;
@@ -3150,10 +3205,12 @@ bool solidity_convertert::get_type_description(
   case SolidityGrammar::TypeNameT::MappingTypeName:
   {
     // e.g.
-    //   mapping(uint => uint) public balances;
-    // ==>
-    //   map_int_t
+    //  "typeIdentifier": "t_mapping$_t_uint256_$_t_string_storage_$",
+    //  "typeString": "mapping(uint256 => string)"
+    // since the key will always be regarded as string, we only need to obtain the value type.
 
+    typet val_t;  
+    //!TODO
     break;
   }
   default:
@@ -4372,6 +4429,14 @@ bool solidity_convertert::is_dyn_array(const nlohmann::json &json_in)
   return false;
 }
 
+// check if the child node "typeName" is a mapping
+bool solidity_convertert::is_child_mapping(const nlohmann::json &ast_node)
+{
+  if (ast_node.contains("typeName") && ast_node["typeName"]["nodeType"] == "Mapping")
+    return true;
+  return false;
+}
+
 bool solidity_convertert::get_constructor_call(
   const nlohmann::json &ast_node,
   exprt &new_expr)
@@ -4388,7 +4453,7 @@ bool solidity_convertert::get_constructor_call(
   // Special handling of implicit constructor
   // since there is no ast nodes for implicit constructor
   if (constructor_ref.empty())
-    return get_implicit_ctor_call(new_expr, contract_name);
+    return get_implicit_ctor_ref(new_expr, contract_name);
 
   if (get_func_decl_ref(constructor_ref, callee))
     return true;
@@ -4440,7 +4505,7 @@ bool solidity_convertert::get_constructor_call(
   return false;
 }
 
-bool solidity_convertert::get_implicit_ctor_call(
+bool solidity_convertert::get_implicit_ctor_ref(
   exprt &new_expr,
   const std::string &contract_name)
 {

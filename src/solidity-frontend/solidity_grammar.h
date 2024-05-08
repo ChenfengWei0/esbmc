@@ -55,11 +55,11 @@ enum TypeNameT
   // struct
   StructTypeName,
 
-  // Mapping
-  MappingTypeName,
-
   // tuple
   TupleTypeName,
+
+  // mapping
+  MappingTypeName,
 
   // built-in member
   BuiltinTypeName,
@@ -309,8 +309,8 @@ enum ExpressionT
   // rule Tuple
   Tuple,
 
-  // rule revert
-  Revert,
+  // Mapping
+  Mapping,
 
   // FunctionCall
   CallExprClass,

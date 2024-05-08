@@ -156,7 +156,7 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     {
       return TupleTypeName;
     }
-    else if (typeString.substr(0, 8) == "mapping(")
+    if (typeIdentifier.substr(0, 10) == "t_mapping(")
     {
       return MappingTypeName;
     }
@@ -231,7 +231,7 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
       return PointerArrayToPtr;
     }
     // for Special Variables and Functions
-    else if (typeIdentifier == "t_magic_transaction")
+    else if (typeIdentifier.substr(0, 7) == "t_magic")
     {
       return BuiltinTypeName;
     }
@@ -675,6 +675,10 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
   {
     return Tuple;
   }
+  else if (expr["nodeType"] == "Mapping")
+  {
+    return Mapping;
+  }
   else if (expr["nodeType"] == "FunctionCall")
   {
     if (expr["expression"]["nodeType"] == "NewExpression")
@@ -696,7 +700,7 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
       return EnumMemberCall;
     else if (type_name == SolidityGrammar::TypeNameT::ContractTypeName)
       return ContractMemberCall;
-    else 
+    else
       //!Fixme. Assume it's a builtin member
       // due to that the BuiltinTypeName cannot cover all the builtin member
       // e.g. string.concat ==> TypeConversionName
@@ -944,6 +948,7 @@ const char *expression_to_str(ExpressionT type)
     ENUM_TO_STR(DeclRefExprClass)
     ENUM_TO_STR(Literal)
     ENUM_TO_STR(Tuple)
+    ENUM_TO_STR(Mapping)
     ENUM_TO_STR(CallExprClass)
     ENUM_TO_STR(ImplicitCastExprClass)
     ENUM_TO_STR(IndexAccess)

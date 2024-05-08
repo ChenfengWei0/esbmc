@@ -46,8 +46,7 @@ protected:
 
   // handle the implicit constructor
   bool add_implicit_constructor();
-  bool
-  get_implicit_ctor_call(exprt &new_expr, const std::string &contract_name);
+  bool get_implicit_ctor_ref(exprt &new_expr, const std::string &contract_name);
   bool
   get_struct_class_fields(const nlohmann::json &ast_node, struct_typet &type);
   bool
@@ -144,6 +143,7 @@ protected:
   nlohmann::json add_dyn_array_size_expr(
     const nlohmann::json &type_descriptor,
     const nlohmann::json &dyn_array_node);
+  bool is_child_mapping(const nlohmann::json &ast_node);
 
   void get_default_symbol(
     symbolt &symbol,
