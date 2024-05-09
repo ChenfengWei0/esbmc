@@ -1706,14 +1706,37 @@ bool solidity_convertert::get_expr(
   }
   case SolidityGrammar::ExpressionT::CallExprClass:
   {
-    // 0. check if it's a solidity built-in function
-    if (!get_sol_builtin_ref(expr, new_expr))
-      if (expr.contains("name") && !check_intrinsic_function(expr))
-        break;
-
-    // 1. Get callee expr
     const nlohmann::json &callee_expr_json = expr["expression"];
 
+    // 0. check if it's a solidity built-in function
+    if (
+      !get_sol_builtin_ref(expr, new_expr) &&
+      !check_intrinsic_function(callee_expr_json))
+    {
+      // construct call
+      typet type = to_code_type(new_expr.type()).return_type();
+
+      side_effect_expr_function_callt call;
+      call.function() = new_expr;
+      call.type() = type;
+
+      // populate params
+      size_t arg_size = to_code_type(new_expr.type()).arguments().size();
+
+      for (const auto &arg : expr["arguments"].items())
+      {
+        exprt single_arg;
+        if (get_expr(arg.value(), arg.value()["typeDescriptions"], single_arg))
+          return true;
+
+        call.arguments().push_back(single_arg);
+      }
+
+      new_expr = call;
+      break;
+    }
+
+    // 1. Get callee expr
     if (
       callee_expr_json.contains("nodeType") &&
       callee_expr_json["nodeType"] == "MemberAccess")
@@ -4173,10 +4196,10 @@ bool solidity_convertert::check_intrinsic_function(
 {
   // function to detect special intrinsic functions, e.g. __ESBMC_assume
   return (
-    ast_node["name"] == "__ESBMC_assume" ||
-    ast_node["name"] == "__VERIFIER_assume" ||
-    ast_node["name"] == "__ESBMC_assert" ||
-    ast_node["name"] == "__VERIFIER_assert");
+    ast_node.contains("name") && (ast_node["name"] == "__ESBMC_assume" ||
+                                  ast_node["name"] == "__VERIFIER_assume" ||
+                                  ast_node["name"] == "__ESBMC_assert" ||
+                                  ast_node["name"] == "__VERIFIER_assert"));
 }
 
 nlohmann::json solidity_convertert::make_implicit_cast_expr(
