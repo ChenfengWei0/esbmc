@@ -26,18 +26,7 @@ public:
   bool convert();
 
 protected:
-  // for builtin variables and functions
   bool convert_ast_nodes(const nlohmann::json &contract_def);
-  bool convert_builtin_members();
-  void populate_builtin_variables(
-    const std::string &bs,
-    const std::map<std::string, std::string> &mems);
-  bool populate_builtin_functions(
-    const std::string &bs,
-    const std::map<std::string, std::string> &mems,
-    const std::string &ast_node = "");
-  bool
-  get_builtin_function_ref(const nlohmann::json &ast_node, exprt &new_expr);
 
   // conversion functions
   // get decl in rule contract-body-element
@@ -231,10 +220,6 @@ protected:
   std::string tgt_func;
   // --contract
   std::string tgt_cnt;
-
-  // flag to indicate built-in member processing
-  // this is used in get_(state_)var_decl_name
-  bool is_builtin_members;
 
 private:
   bool get_elementary_type_name_uint(

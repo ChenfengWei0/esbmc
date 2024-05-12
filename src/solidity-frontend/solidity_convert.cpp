@@ -32,8 +32,7 @@ solidity_convertert::solidity_convertert(
     current_contractName(""),
     scope_map({}),
     tgt_func(config.options.get_option("function")),
-    tgt_cnt(config.options.get_option("contract")),
-    is_builtin_members(false)
+    tgt_cnt(config.options.get_option("contract"))
 {
   std::ifstream in(_contract_path);
   contract_contents.assign(
@@ -81,14 +80,6 @@ bool solidity_convertert::convert()
     }
   }
   assert(found_contract_def && "No contracts were found in the program.");
-
-  // pre-processing: populate built-in members into the symbol table
-  is_builtin_members = true;
-  if (convert_builtin_members())
-    return true;
-  is_builtin_members = false;
-
-  log_progress("Done conversion of intrinsics");
 
   // reasoning-based verification
 
@@ -202,256 +193,6 @@ bool solidity_convertert::convert()
   }
 
   return false; // 'false' indicates successful completion.
-}
-
-/*
-  We have two approaches to handle the buitin Solidity member functions,
-  1. populate the function symbol with corresponding return type and empty function body,
-     the symex should be implemented later
-     TODO: For now the added functions do not store any params. This will affect the symex
-  2. convert it to a supported function in C/C++, e.g. str.concat => strcat
-*/
-bool solidity_convertert::convert_builtin_members()
-{
-  /// special variables
-  // msg
-  populate_builtin_variables(
-    SolidityTemplate::msg_bs, SolidityTemplate::msg_mem);
-
-  // tx
-  populate_builtin_variables(SolidityTemplate::tx_bs, SolidityTemplate::tx_mem);
-
-  // block
-  populate_builtin_variables(
-    SolidityTemplate::block_bs, SolidityTemplate::block_mem);
-
-  /// special functions
-
-  // blockhash()
-  populate_builtin_functions("", SolidityTemplate::block_hash);
-
-  // gasleft()
-  populate_builtin_functions("", SolidityTemplate::gasleft);
-
-  // abi
-  populate_builtin_functions(
-    SolidityTemplate::abi_bs, SolidityTemplate::ai_mem);
-
-  // byte
-  populate_builtin_functions(
-    SolidityTemplate::byte_bs, SolidityTemplate::byte_mem);
-
-  // string
-  populate_builtin_functions(
-    SolidityTemplate::string_bs, SolidityTemplate::string_mem);
-
-  // math
-  if (populate_builtin_functions(
-        "", SolidityTemplate::addmod, SolidityTemplate::addmod_body))
-    return true;
-  if (populate_builtin_functions(
-        "", SolidityTemplate::mulmod, SolidityTemplate::mulmod_body))
-    return true;
-
-  return false;
-}
-
-/*
-  Construct a symbol and move to the symbol table.
-  Note that this added symbol might be incomplete.
-*/
-void solidity_convertert::populate_builtin_variables(
-  const std::string &bs,
-  const std::map<std::string, std::string> &mems)
-{
-  for (const auto &item : mems)
-  {
-    const auto mem = item.first;
-    const auto rtn_typ = item.second;
-
-    std::string name, id;
-    if (!bs.empty())
-      name = bs + "_" + mem;
-    else
-      name = mem;
-    id = "sol:@" + name + "#";
-
-    locationt location_begin;
-    std::string debug_modulename =
-      get_modulename_from_path(location_begin.file().as_string());
-    symbolt symbol;
-
-    typet t;
-    if (rtn_typ.find("uint") != std::string::npos)
-    {
-      t = unsignedbv_typet(256);
-    }
-    else if (rtn_typ.find("bytes") != std::string::npos)
-    {
-      int byte_num;
-      if (rtn_typ == "bytes")
-        byte_num = 32;
-      else
-        byte_num = std::stoi(rtn_typ.substr(5));
-      t = signedbv_typet(byte_num * 8);
-    }
-    else if (rtn_typ.find("address") != std::string::npos)
-    {
-      t = unsignedbv_typet(160);
-    }
-    else if (rtn_typ == "string")
-    {
-      size_t value_length = 128;
-      t = array_typet(
-        signed_char_type(),
-        constant_exprt(
-          integer2binary(value_length, bv_width(int_type())),
-          integer2string(value_length),
-          int_type()));
-    }
-    else
-    {
-      log_error("Unsupported Special Members.");
-      abort();
-    }
-    get_default_symbol(symbol, debug_modulename, t, name, id, location_begin);
-    auto &sym = *move_symbol_to_context(symbol);
-    sym.lvalue = false;
-    sym.file_local = true;
-    symbol.mode = "C++";
-    symbol.module = "esbmc_intrinsics";
-  }
-}
-
-bool solidity_convertert::populate_builtin_functions(
-  const std::string &bs,
-  const std::map<std::string, std::string> &mems,
-  const std::string &ast_node)
-{
-  for (const auto &item : mems)
-  {
-    const auto mem = item.first;
-    const auto rtn_typ = item.second;
-
-    std::string name, id;
-    if (!bs.empty())
-      name = bs + "_" + mem;
-    else
-      name = mem;
-    id = "sol:@F@" + name + "#";
-
-    locationt location_begin;
-    std::string debug_modulename =
-      get_modulename_from_path(location_begin.file().as_string());
-
-    code_typet type;
-    if (rtn_typ.find("uint") != std::string::npos)
-    {
-      type.return_type() = unsignedbv_typet(256);
-    }
-    else if (rtn_typ.find("bytes") != std::string::npos)
-    {
-      int byte_num;
-      if (rtn_typ == "bytes")
-        byte_num = 32;
-      else
-        byte_num = std::stoi(rtn_typ.substr(5));
-      type.return_type() = signedbv_typet(byte_num * 8);
-    }
-    else if (rtn_typ.find("address") != std::string::npos)
-    {
-      type.return_type() = unsignedbv_typet(160);
-    }
-    else if (rtn_typ == "string")
-    {
-      size_t value_length = 128;
-      type.return_type() = array_typet(
-        signed_char_type(),
-        constant_exprt(
-          integer2binary(value_length, bv_width(int_type())),
-          integer2string(value_length),
-          int_type()));
-    }
-    else
-    {
-      log_error("Unsupported Special Members.");
-      abort();
-    }
-
-    symbolt symbol;
-    get_default_symbol(
-      symbol, debug_modulename, type, name, id, location_begin);
-
-    symbol.lvalue = true;
-    symbol.is_extern = false;
-    symbol.file_local = false;
-    symbol.mode = "C++";
-    symbol.module = "esbmc_intrinsics";
-
-    // 10. Add symbol into the context
-    symbolt &added_symbol = *move_symbol_to_context(symbol);
-
-    if (!ast_node.empty())
-    {
-      const nlohmann::json *old_functionDecl = current_functionDecl;
-      const std::string old_functionName = current_functionName;
-      auto func_json = nlohmann::json::parse(ast_node);
-      current_functionDecl = &func_json;
-      current_functionName = name;
-
-      SolidityGrammar::ParameterListT params =
-        SolidityGrammar::get_parameter_list_t(func_json["parameters"]);
-      if (params != SolidityGrammar::ParameterListT::EMPTY)
-      {
-        // convert parameters if the function has them
-        // update the typet, since typet contains parameter annotations
-        for (const auto &decl : func_json["parameters"]["parameters"].items())
-        {
-          const nlohmann::json &func_param_decl = decl.value();
-
-          code_typet::argumentt param;
-          if (get_function_params(func_param_decl, param))
-            return true;
-
-          // clear the location info as it's incorrect
-          param.location().clear();
-          param.location().set_function(name);
-          param.location().set_file("solidity_template");
-          type.arguments().push_back(param);
-        }
-      }
-      added_symbol.type = type;
-
-      assert(func_json.contains("body"));
-      exprt body_exprt;
-      if (get_block(func_json["body"], body_exprt))
-        return true;
-      added_symbol.value = body_exprt;
-
-      current_functionDecl = old_functionDecl;
-      current_functionName = old_functionName;
-    }
-  }
-
-  return false;
-}
-
-bool solidity_convertert::get_builtin_function_ref(
-  const nlohmann::json &ast_node,
-  exprt &new_expr)
-{
-  std::string name, id;
-  //TODO bs
-  name = ast_node["name"].get<std::string>();
-  id = "sol:@F@" + name + "#";
-
-  if (context.find_symbol(id) == nullptr)
-    return true;
-
-  symbolt &sym = *context.find_symbol(id);
-  new_expr = symbol_expr(sym);
-
-  return false;
 }
 
 bool solidity_convertert::convert_ast_nodes(const nlohmann::json &contract_def)
@@ -1386,16 +1127,7 @@ bool solidity_convertert::get_statement(
         return true;
     }
     else
-    {
-      //! Assume we are handling solidity template
-      assert((*current_functionDecl).contains("isTemplate"));
-      std::string id =
-        (*current_functionDecl)["templateFunctionID"].get<std::string>();
-      if (context.find_symbol(id) == nullptr)
-        return true;
-      symbolt &sym = *context.find_symbol(id);
-      return_type = to_code_type(sym.type).return_type();
-    }
+      return true;
 
     nlohmann::json literal_type = nullptr;
 
@@ -3025,16 +2757,6 @@ bool solidity_convertert::get_decl_ref_builtin(
   // Add more special function names here
 
   const std::string blt_name = decl["name"].get<std::string>();
-
-  // solidiity template
-  if (!(blt_name == "assert" || blt_name == "require" || blt_name == "revert" ||
-        blt_name == "__ESBMC_assume" || blt_name == "__VERIFIER_assume"))
-  {
-    if (get_builtin_function_ref(decl, new_expr))
-      return true;
-    return false;
-  }
-
   std::string name, id;
 
   // "require" keyword is virtually identical to "assume"
@@ -3350,6 +3072,15 @@ bool solidity_convertert::get_type_description(
     }
 
     new_type = symbol_typet(id);
+
+    break;
+  }
+  case SolidityGrammar::TypeNameT::MappingTypeName:
+  {
+    // e.g.
+    //   mapping(uint => uint) public balances;
+    // ==>
+    //   map_int_t
 
     break;
   }
@@ -3792,13 +3523,6 @@ void solidity_convertert::get_state_var_decl_name(
   if (!contract_name.empty())
     id = "sol:@C@" + contract_name + "@" + name + "#" +
          i2string(ast_node["id"].get<std::int16_t>());
-  else if (
-    current_functionDecl && !current_functionName.empty() && is_builtin_members)
-  {
-    //!Assume is solidity_template
-    id = "sol:@F@" + current_functionName + "@" + name + "#" +
-         i2string(ast_node["id"].get<std::int16_t>());
-  }
   else
     id = "sol:@" + name + "#" + i2string(ast_node["id"].get<std::int16_t>());
 }
@@ -3835,14 +3559,6 @@ void solidity_convertert::get_var_decl_name(
     id = "sol:@C@" + contract_name + "@F@" + current_functionName + "@" + name +
          "#" + i2string(ast_node["id"].get<std::int16_t>());
   }
-  else if (
-    current_functionDecl && !current_functionName.empty() && is_builtin_members)
-  {
-    // Assume it is a solidity template
-    id = "sol:@F@" + current_functionName + "@" + name + "#" +
-         i2string(ast_node["id"].get<std::int16_t>());
-  }
-
   else if (ast_node.contains("scope"))
   {
     // This means we are handling a local variable which is not inside a function body.
@@ -4059,30 +3775,41 @@ solidity_convertert::find_decl_ref(int ref_decl_id, std::string &contract_name)
     abort();
   }
 
-  // A "global function", which stands for the situation
-  // where we are handling solidity_template
-  // therefore, we skip the search in original src_ast_json.
-  if (!(current_functionDecl != nullptr && current_contractName.empty() &&
-        is_builtin_members))
+  // First, search state variable nodes
+  nlohmann::json &nodes = src_ast_json["nodes"];
+  unsigned index = 0;
+  for (nlohmann::json::iterator itr = nodes.begin(); itr != nodes.end();
+       ++itr, ++index)
   {
-    // First, search state variable nodes
-    nlohmann::json &nodes = src_ast_json["nodes"];
-    unsigned index = 0;
-    for (nlohmann::json::iterator itr = nodes.begin(); itr != nodes.end();
-         ++itr, ++index)
-    {
-      // check the nodes outside of the contract
-      // it can be referred to the data structure
-      // or the members inside the structure.
-      if ((*itr)["id"] == ref_decl_id)
-        return nodes.at(index);
+    // check the nodes outside of the contract
+    // it can be referred to the data structure
+    // or the members inside the structure.
+    if ((*itr)["id"] == ref_decl_id)
+      return nodes.at(index);
 
+    if (
+      (*itr)["nodeType"] == "EnumDefinition" ||
+      (*itr)["nodeType"] == "StructDefinition")
+    {
+      unsigned men_idx = 0;
+      nlohmann::json &mem_nodes = nodes.at(index)["members"];
+      for (nlohmann::json::iterator mem_itr = mem_nodes.begin();
+           mem_itr != mem_nodes.end();
+           ++mem_itr, ++men_idx)
+      {
+        if ((*mem_itr)["id"] == ref_decl_id)
+          return mem_nodes.at(men_idx);
+      }
+    }
+
+    if ((*itr)["nodeType"] == "ErrorDefinition")
+    {
       if (
-        (*itr)["nodeType"] == "EnumDefinition" ||
-        (*itr)["nodeType"] == "StructDefinition")
+        (*itr).contains("parameters") &&
+        ((*itr)["parameters"]).contains("parameters"))
       {
         unsigned men_idx = 0;
-        nlohmann::json &mem_nodes = nodes.at(index)["members"];
+        nlohmann::json &mem_nodes = (*itr)["parameters"]["parameters"];
         for (nlohmann::json::iterator mem_itr = mem_nodes.begin();
              mem_itr != mem_nodes.end();
              ++mem_itr, ++men_idx)
@@ -4091,15 +3818,30 @@ solidity_convertert::find_decl_ref(int ref_decl_id, std::string &contract_name)
             return mem_nodes.at(men_idx);
         }
       }
+    }
 
-      if ((*itr)["nodeType"] == "ErrorDefinition")
+    // check the nodes inside a contract
+    if ((*itr)["nodeType"] == "ContractDefinition")
+    {
+      // update the contract name first
+      contract_name = (*itr)["name"].get<std::string>();
+
+      nlohmann::json &ast_nodes = nodes.at(index)["nodes"];
+      unsigned idx = 0;
+      for (nlohmann::json::iterator itrr = ast_nodes.begin();
+           itrr != ast_nodes.end();
+           ++itrr, ++idx)
       {
+        if ((*itrr)["id"] == ref_decl_id)
+          return ast_nodes.at(idx);
+
         if (
-          (*itr).contains("parameters") &&
-          ((*itr)["parameters"]).contains("parameters"))
+          (*itrr)["nodeType"] == "EnumDefinition" ||
+          (*itrr)["nodeType"] == "StructDefinition")
         {
           unsigned men_idx = 0;
-          nlohmann::json &mem_nodes = (*itr)["parameters"]["parameters"];
+          nlohmann::json &mem_nodes = ast_nodes.at(idx)["members"];
+
           for (nlohmann::json::iterator mem_itr = mem_nodes.begin();
                mem_itr != mem_nodes.end();
                ++mem_itr, ++men_idx)
@@ -4108,30 +3850,15 @@ solidity_convertert::find_decl_ref(int ref_decl_id, std::string &contract_name)
               return mem_nodes.at(men_idx);
           }
         }
-      }
 
-      // check the nodes inside a contract
-      if ((*itr)["nodeType"] == "ContractDefinition")
-      {
-        // update the contract name first
-        contract_name = (*itr)["name"].get<std::string>();
-
-        nlohmann::json &ast_nodes = nodes.at(index)["nodes"];
-        unsigned idx = 0;
-        for (nlohmann::json::iterator itrr = ast_nodes.begin();
-             itrr != ast_nodes.end();
-             ++itrr, ++idx)
+        if ((*itr)["nodeType"] == "ErrorDefinition")
         {
-          if ((*itrr)["id"] == ref_decl_id)
-            return ast_nodes.at(idx);
-
           if (
-            (*itrr)["nodeType"] == "EnumDefinition" ||
-            (*itrr)["nodeType"] == "StructDefinition")
+            (*itr).contains("parameters") &&
+            ((*itr)["parameters"]).contains("parameters"))
           {
             unsigned men_idx = 0;
-            nlohmann::json &mem_nodes = ast_nodes.at(idx)["members"];
-
+            nlohmann::json &mem_nodes = (*itr)["parameters"]["parameters"];
             for (nlohmann::json::iterator mem_itr = mem_nodes.begin();
                  mem_itr != mem_nodes.end();
                  ++mem_itr, ++men_idx)
@@ -4140,31 +3867,13 @@ solidity_convertert::find_decl_ref(int ref_decl_id, std::string &contract_name)
                 return mem_nodes.at(men_idx);
             }
           }
-
-          if ((*itr)["nodeType"] == "ErrorDefinition")
-          {
-            if (
-              (*itr).contains("parameters") &&
-              ((*itr)["parameters"]).contains("parameters"))
-            {
-              unsigned men_idx = 0;
-              nlohmann::json &mem_nodes = (*itr)["parameters"]["parameters"];
-              for (nlohmann::json::iterator mem_itr = mem_nodes.begin();
-                   mem_itr != mem_nodes.end();
-                   ++mem_itr, ++men_idx)
-              {
-                if ((*mem_itr)["id"] == ref_decl_id)
-                  return mem_nodes.at(men_idx);
-              }
-            }
-          }
         }
       }
     }
-
-    //! otherwise, assume it is current_contractName
-    contract_name = current_contractName;
   }
+
+  //! otherwise, assume it is current_contractName
+  contract_name = current_contractName;
 
   if (current_functionDecl != nullptr)
   {

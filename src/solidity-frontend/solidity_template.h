@@ -1,3 +1,7 @@
+/*
+  The template/library for Solidity built-in variables, function and data structure
+*/
+
 #include <nlohmann/json.hpp>
 #include <unordered_set>
 
@@ -6,505 +10,115 @@
 
 namespace SolidityTemplate
 {
-inline const std::string parentheis = "()";
 
-/// special variables
-// msg
-inline std::string msg_bs = "msg";
-inline std::map<std::string, std::string> msg_mem = {
-  {"data", "bytes"},
-  {"sender", "address"},
-  {"sig", "bytes4"},
-  {"value", "uint"}};
+/// header & typedef
 
-// tx
-inline std::string tx_bs = "tx";
-inline std::map<std::string, std::string> tx_mem = {
-  {"gasprice", "uint"},
-  {"origin", "address"}};
-
-// block
-inline std::string block_bs = "block";
-inline std::map<std::string, std::string> block_mem = {
-  {"basefee", "uint"},
-  {"chainid", "uint"},
-  {"coinbase", "address"},
-  {"difficulty", "uint"},
-  {"gaslimit", "uint"},
-  {"number", "uint"},
-  {"prevrandao", "uint"},
-  {"timestamp", "uint"}};
-
-/// sepcial functions
-
-inline std::map<std::string, std::string> block_hash = {
-  {"blockhash", "bytes32"}};
-inline std::map<std::string, std::string> gasleft = {{"gasleft", "uint"}};
-
-// abi
-inline std::string abi_bs = "abi";
-inline std::map<std::string, std::string> ai_mem = {
-  {"encode", "bytes"},
-  {"encodePacked", "bytes"},
-  {"encodeWithSelector", "bytes"},
-  {"encodeWithSignature", "bytes"},
-  {"encodeCall", "bytes"}}; // {"decode","tuple"},
-
-// byte
-inline std::string byte_bs = "byte";
-inline std::map<std::string, std::string> byte_mem = {
-  {"concat", "bytes"},
-};
-
-// string
-inline std::string string_bs = "string";
-inline std::map<std::string, std::string> string_mem = {{"concat", "string"}};
-
-// addmod
-
-inline std::map<std::string, std::string> addmod = {{"addmod", "uint"}};
-inline std::map<std::string, std::string> mulmod = {{"mulmod", "uint"}};
-
-// Library wriiten in solidity
-
-// The idea is write the function in solidity and utilize the AST-json.
-// The main benifit is that we can use the uint256/int256, which are
-// not currently supported in C.
-
-/// function body
-// 1. set "stateVariable": true
-// 2. add "isTemplate": true and "templateFunctionID"
-// 3. make sure the Visibility is intnernal or private
-/* 
-    addmod(uint x, uint y, uint k) returns (uint)
-    function addmod(uint x, uint y, uint k) public returns (uint)
-    {
-        assert(k != 0);
-        return (x + y) % k;
-    }
-*/
-inline const std::string addmod_body =
-  R"({
-    "isTemplate": true,
-    "templateFunctionID": "sol:@F@addmod#",
-    "body": {
-    "id": 25,
-    "nodeType": "Block",
-    "src": "107:59:0",
-    "statements": [
-        {
-            "expression": {
-                "commonType": {
-                    "typeIdentifier": "t_uint256",
-                    "typeString": "uint256"
-                },
-                "id": 23,
-                "isConstant": false,
-                "isLValue": false,
-                "isPure": false,
-                "lValueRequested": false,
-                "leftExpression": {
-                    "components": [
-                        {
-                            "commonType": {
-                                "typeIdentifier": "t_uint256",
-                                "typeString": "uint256"
-                            },
-                            "id": 20,
-                            "isConstant": false,
-                            "isLValue": false,
-                            "isPure": false,
-                            "lValueRequested": false,
-                            "leftExpression": {
-                                "id": 18,
-                                "name": "x",
-                                "nodeType": "Identifier",
-                                "overloadedDeclarations": [],
-                                "referencedDeclaration": 3,
-                                "src": "149:1:0",
-                                "typeDescriptions": {
-                                    "typeIdentifier": "t_uint256",
-                                    "typeString": "uint256"
-                                }
-                            },
-                            "nodeType": "BinaryOperation",
-                            "operator": "+",
-                            "rightExpression": {
-                                "id": 19,
-                                "name": "y",
-                                "nodeType": "Identifier",
-                                "overloadedDeclarations": [],
-                                "referencedDeclaration": 5,
-                                "src": "153:1:0",
-                                "typeDescriptions": {
-                                    "typeIdentifier": "t_uint256",
-                                    "typeString": "uint256"
-                                }
-                            },
-                            "src": "149:5:0",
-                            "typeDescriptions": {
-                                "typeIdentifier": "t_uint256",
-                                "typeString": "uint256"
-                            }
-                        }
-                    ],
-                    "id": 21,
-                    "isConstant": false,
-                    "isInlineArray": false,
-                    "isLValue": false,
-                    "isPure": false,
-                    "lValueRequested": false,
-                    "nodeType": "TupleExpression",
-                    "src": "148:7:0",
-                    "typeDescriptions": {
-                        "typeIdentifier": "t_uint256",
-                        "typeString": "uint256"
-                    }
-                },
-                "nodeType": "BinaryOperation",
-                "operator": "%",
-                "rightExpression": {
-                    "id": 22,
-                    "name": "k",
-                    "nodeType": "Identifier",
-                    "overloadedDeclarations": [],
-                    "referencedDeclaration": 7,
-                    "src": "158:1:0",
-                    "typeDescriptions": {
-                        "typeIdentifier": "t_uint256",
-                        "typeString": "uint256"
-                    }
-                },
-                "src": "148:11:0",
-                "typeDescriptions": {
-                    "typeIdentifier": "t_uint256",
-                    "typeString": "uint256"
-                }
-            },
-            "functionReturnParameters": 11,
-            "id": 24,
-            "nodeType": "Return",
-            "src": "141:18:0"
-        }
-    ]
-},
-"functionSelector": "9796df37",
-"id": 26,
-"implemented": true,
-"kind": "function",
-"modifiers": [],
-"name": "addmod",
-"nameLocation": "54:6:0",
-"nodeType": "FunctionDefinition",
-"parameters": {
-    "id": 8,
-    "nodeType": "ParameterList",
-    "parameters": [
-        {
-            "constant": false,
-            "id": 3,
-            "mutability": "mutable",
-            "name": "x",
-            "nameLocation": "66:1:0",
-            "nodeType": "VariableDeclaration",
-            "src": "61:6:0",
-            "stateVariable": true,
-            "storageLocation": "default",
-            "typeDescriptions": {
-                "typeIdentifier": "t_uint256",
-                "typeString": "uint256"
-            },
-            "typeName": {
-                "id": 2,
-                "name": "uint",
-                "nodeType": "ElementaryTypeName",
-                "src": "61:4:0",
-                "typeDescriptions": {
-                    "typeIdentifier": "t_uint256",
-                    "typeString": "uint256"
-                }
-            },
-            "visibility": "internal"
-        },
-        {
-            "constant": false,
-            "id": 5,
-            "mutability": "mutable",
-            "name": "y",
-            "nameLocation": "74:1:0",
-            "nodeType": "VariableDeclaration",
-            "src": "69:6:0",
-            "stateVariable": true,
-            "storageLocation": "default",
-            "typeDescriptions": {
-                "typeIdentifier": "t_uint256",
-                "typeString": "uint256"
-            },
-            "typeName": {
-                "id": 4,
-                "name": "uint",
-                "nodeType": "ElementaryTypeName",
-                "src": "69:4:0",
-                "typeDescriptions": {
-                    "typeIdentifier": "t_uint256",
-                    "typeString": "uint256"
-                }
-            },
-            "visibility": "internal"
-        },
-        {
-            "constant": false,
-            "id": 7,
-            "mutability": "mutable",
-            "name": "k",
-            "nameLocation": "82:1:0",
-            "nodeType": "VariableDeclaration",
-            "src": "77:6:0",
-            "stateVariable": true,
-            "storageLocation": "default",
-            "typeDescriptions": {
-                "typeIdentifier": "t_uint256",
-                "typeString": "uint256"
-            },
-            "typeName": {
-                "id": 6,
-                "name": "uint",
-                "nodeType": "ElementaryTypeName",
-                "src": "77:4:0",
-                "typeDescriptions": {
-                    "typeIdentifier": "t_uint256",
-                    "typeString": "uint256"
-                }
-            },
-            "visibility": "internal"
-        }
-    ],
-    "src": "60:24:0"
-},
-"src": "45:121:0",
-"stateMutability": "nonpayable",
-"virtual": false,
-"visibility": "private"
-})";
-
-inline const std::string mulmod_body =
-  R"({
-    "isTemplate": true,
-    "templateFunctionID": "sol:@F@mulmod#",
-    "body": {
-        "id": 19,
-        "nodeType": "Block",
-        "src": "145:35:0",
-        "statements": [
-            {
-                "expression": {
-                    "commonType": {
-                        "typeIdentifier": "t_uint256",
-                        "typeString": "uint256"
-                    },
-                    "id": 17,
-                    "isConstant": false,
-                    "isLValue": false,
-                    "isPure": false,
-                    "lValueRequested": false,
-                    "leftExpression": {
-                        "components": [
-                            {
-                                "commonType": {
-                                    "typeIdentifier": "t_uint256",
-                                    "typeString": "uint256"
-                                },
-                                "id": 14,
-                                "isConstant": false,
-                                "isLValue": false,
-                                "isPure": false,
-                                "lValueRequested": false,
-                                "leftExpression": {
-                                    "id": 12,
-                                    "name": "x",
-                                    "nodeType": "Identifier",
-                                    "overloadedDeclarations": [],
-                                    "referencedDeclaration": 3,
-                                    "src": "163:1:0",
-                                    "typeDescriptions": {
-                                        "typeIdentifier": "t_uint256",
-                                        "typeString": "uint256"
-                                    }
-                                },
-                                "nodeType": "BinaryOperation",
-                                "operator": "*",
-                                "rightExpression": {
-                                    "id": 13,
-                                    "name": "y",
-                                    "nodeType": "Identifier",
-                                    "overloadedDeclarations": [],
-                                    "referencedDeclaration": 5,
-                                    "src": "167:1:0",
-                                    "typeDescriptions": {
-                                        "typeIdentifier": "t_uint256",
-                                        "typeString": "uint256"
-                                    }
-                                },
-                                "src": "163:5:0",
-                                "typeDescriptions": {
-                                    "typeIdentifier": "t_uint256",
-                                    "typeString": "uint256"
-                                }
-                            }
-                        ],
-                        "id": 15,
-                        "isConstant": false,
-                        "isInlineArray": false,
-                        "isLValue": false,
-                        "isPure": false,
-                        "lValueRequested": false,
-                        "nodeType": "TupleExpression",
-                        "src": "162:7:0",
-                        "typeDescriptions": {
-                            "typeIdentifier": "t_uint256",
-                            "typeString": "uint256"
-                        }
-                    },
-                    "nodeType": "BinaryOperation",
-                    "operator": "%",
-                    "rightExpression": {
-                        "id": 16,
-                        "name": "k",
-                        "nodeType": "Identifier",
-                        "overloadedDeclarations": [],
-                        "referencedDeclaration": 7,
-                        "src": "172:1:0",
-                        "typeDescriptions": {
-                            "typeIdentifier": "t_uint256",
-                            "typeString": "uint256"
-                        }
-                    },
-                    "src": "162:11:0",
-                    "typeDescriptions": {
-                        "typeIdentifier": "t_uint256",
-                        "typeString": "uint256"
-                    }
-                },
-                "functionReturnParameters": 11,
-                "id": 18,
-                "nodeType": "Return",
-                "src": "155:18:0"
-            }
-        ]
-    },
-    "id": 20,
-    "implemented": true,
-    "kind": "function",
-    "modifiers": [],
-    "name": "mulmod",
-    "nameLocation": "91:6:0",
-    "nodeType": "FunctionDefinition",
-    "parameters": {
-        "id": 8,
-        "nodeType": "ParameterList",
-        "parameters": [
-            {
-                "constant": false,
-                "id": 3,
-                "mutability": "mutable",
-                "name": "x",
-                "nameLocation": "103:1:0",
-                "nodeType": "VariableDeclaration",
-                "scope": 20,
-                "src": "98:6:0",
-                "stateVariable": false,
-                "storageLocation": "default",
-                "typeDescriptions": {
-                    "typeIdentifier": "t_uint256",
-                    "typeString": "uint256"
-                },
-                "typeName": {
-                    "id": 2,
-                    "name": "uint",
-                    "nodeType": "ElementaryTypeName",
-                    "src": "98:4:0",
-                    "typeDescriptions": {
-                        "typeIdentifier": "t_uint256",
-                        "typeString": "uint256"
-                    }
-                },
-                "visibility": "internal"
-            },
-            {
-                "constant": false,
-                "id": 5,
-                "mutability": "mutable",
-                "name": "y",
-                "nameLocation": "111:1:0",
-                "nodeType": "VariableDeclaration",
-                "scope": 20,
-                "src": "106:6:0",
-                "stateVariable": false,
-                "storageLocation": "default",
-                "typeDescriptions": {
-                    "typeIdentifier": "t_uint256",
-                    "typeString": "uint256"
-                },
-                "typeName": {
-                    "id": 4,
-                    "name": "uint",
-                    "nodeType": "ElementaryTypeName",
-                    "src": "106:4:0",
-                    "typeDescriptions": {
-                        "typeIdentifier": "t_uint256",
-                        "typeString": "uint256"
-                    }
-                },
-                "visibility": "internal"
-            },
-            {
-                "constant": false,
-                "id": 7,
-                "mutability": "mutable",
-                "name": "k",
-                "nameLocation": "119:1:0",
-                "nodeType": "VariableDeclaration",
-                "scope": 20,
-                "src": "114:6:0",
-                "stateVariable": false,
-                "storageLocation": "default",
-                "typeDescriptions": {
-                    "typeIdentifier": "t_uint256",
-                    "typeString": "uint256"
-                },
-                "typeName": {
-                    "id": 6,
-                    "name": "uint",
-                    "nodeType": "ElementaryTypeName",
-                    "src": "114:4:0",
-                    "typeDescriptions": {
-                        "typeIdentifier": "t_uint256",
-                        "typeString": "uint256"
-                    }
-                },
-                "visibility": "internal"
-            }
-        ],
-        "src": "97:24:0"
-    },
-    "scope": 21,
-    "src": "82:98:0",
-    "stateMutability": "nonpayable",
-    "virtual": false,
-    "visibility": "private"
-})";
-
-// Library written in C
-
-inline const std::string sol_header = R"(
+const std::string sol_header = R"(
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 )";
 
+/*
+  uint == uint256_t
+  bytes == uint256_t
+  bytes32 == uint256_t
+  address == address_t
+*/
+const std::string sol_typedef = R"(
+typedef unsigned _ExtInt(256) uint256_t;
+typedef unsigned _ExtInt(160) address_t;
+)";
+
+/// Variables
+// the value of these variables need to be set to rand afterwards
+
+const std::string sol_msg = R"(
+uint256_t msg_data;
+address_t msg_address;
+__uint32_t msg_sig;
+uint256_t msg_value;
+)";
+
+const std::string sol_tx = R"(
+uint256_t tx_gasprice;
+address_t tx_origin;
+)";
+
+const std::string sol_block = R"(
+uint256_t block_basefee;
+uint256_t block_chainid;
+address_t block_coinbase;
+uint256_t block_difficulty;
+uint256_t block_gaslimit;
+uint256_t block_number;
+uint256_t block_prevrandao;
+uint256_t block_timestamp;
+)";
+
+const std::string sol_vars = sol_msg + sol_tx + sol_block;
+
+/// functions
+// if the function does not currently have an actual implement,
+// leave the params empty.
+
+const std::string blockhash = R"(
+uint256_t blockhash();
+)";
+
+const std::string gasleft = R"(
+uint256_t gasleft();
+)";
+
+const std::string sol_abi = R"(
+uint256_t abi_encode();
+uint256_t abi_encodePacked();
+uint256_t abi_encodeWithSelector();
+uint256_t abi_encodeWithSignature();
+uint256_t abi_encodeCall();
+)";
+
+const std::string sol_math = R"(
+uint256_t addmod(uint256_t x, uint256_t y, uint256_t k)
+{
+	return (x + y) % k;
+}
+
+uint256_t mulmod(uint256_t x, uint256_t y, uint256_t k)
+{
+	return (x * y) % k;
+}
+
+uint256_t keccak256();
+uint256_t sha256();
+address_t ripemd160();
+address_t ecrecover();
+)";
+
+const std::string sol_string = R"(
+void string_concat(char *x, char *y)
+{
+	strcat(x, y);
+}
+
+size_t string_length(char *x)
+{
+	return strlen(x);
+}
+)";
+
+const std::string sol_byte = R"(
+void byte_concat();
+)";
+
+const std::string sol_funcs =
+  blockhash + gasleft + sol_abi + sol_math + sol_string + sol_byte;
+
+/// data structure
+
 /* https://github.com/rxi/map */
-inline const std::string sol_mapping = R"(
+const std::string sol_mapping = R"(
 #ifndef MAP_H
 #define MAP_H
 
@@ -570,8 +184,6 @@ struct map_node_t
 	unsigned hash;
 	void *value;
 	map_node_t *next;
-	/* char key[]; */
-	/* char value[]; */
 };
 
 static unsigned map_hash(const char *str)
@@ -601,8 +213,6 @@ static map_node_t *map_newnode(const char *key, void *value, int vsize)
 
 static int map_bucketidx(map_base_t *m, unsigned hash)
 {
-	/* If the implementation is changed to allow a non-power-of-2 bucket count,
-	 * the line below should be changed to use mod instead of AND */
 	return hash & (m->nbuckets - 1);
 }
 
@@ -618,7 +228,6 @@ static int map_resize(map_base_t *m, int nbuckets)
 	map_node_t *nodes, *node, *next;
 	map_node_t **buckets;
 	int i;
-	/* Chain all nodes together */
 	nodes = NULL;
 	i = m->nbuckets;
 	while (i--)
@@ -702,14 +311,12 @@ int map_set_(map_base_t *m, const char *key, void *value, int vsize)
 {
 	int n, err;
 	map_node_t **next, *node;
-	/* Find & replace existing node */
 	next = map_getref(m, key);
 	if (next)
 	{
 		memcpy((*next)->value, value, vsize);
 		return 0;
 	}
-	/* Add new node */
 	node = map_newnode(key, value, vsize);
 	if (node == NULL)
 		goto fail;
@@ -775,8 +382,9 @@ const char *map_next_(map_base_t *m, map_iter_t *iter)
 #endif
 )";
 
-// all content plus together
-inline const std::string sol_library = sol_header + sol_mapping;
+// combination
+const std::string sol_library =
+  sol_header + sol_typedef + sol_vars + sol_funcs + sol_mapping;
 
 }; // namespace SolidityTemplate
 

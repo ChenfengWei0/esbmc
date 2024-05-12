@@ -156,6 +156,10 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     {
       return TupleTypeName;
     }
+    else if (typeString.substr(0, 8) == "mapping(")
+    {
+      return MappingTypeName;
+    }
     else if (typeIdentifier.find("t_array$") != std::string::npos)
     {
       // Solidity's array type description is like:
@@ -273,6 +277,8 @@ const char *type_name_to_str(TypeNameT type)
     ENUM_TO_STR(TypeConversionName)
     ENUM_TO_STR(EnumTypeName)
     ENUM_TO_STR(StructTypeName)
+    ENUM_TO_STR(TupleTypeName)
+    ENUM_TO_STR(MappingTypeName)
     ENUM_TO_STR(SpecialTypeName)
     ENUM_TO_STR(TypeNameTError)
   default:

@@ -55,6 +55,9 @@ enum TypeNameT
   // struct
   StructTypeName,
 
+  // Mapping
+  MappingTypeName,
+
   // tuple
   TupleTypeName,
 
