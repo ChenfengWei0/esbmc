@@ -97,9 +97,10 @@ address_t ecrecover();
 )";
 
 const std::string sol_string = R"(
-void string_concat(char *x, char *y)
+char* string_concat(char *x, char *y)
 {
 	strcat(x, y);
+	return x;
 }
 )";
 

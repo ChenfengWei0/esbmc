@@ -1721,10 +1721,16 @@ bool solidity_convertert::get_expr(
       call.type() = type;
 
       // populate params
-      size_t arg_size = to_code_type(new_expr.type()).arguments().size();
+      size_t define_size = to_code_type(new_expr.type()).arguments().size();
+      const size_t arg_size = expr["arguments"].size();
 
       for (const auto &arg : expr["arguments"].items())
       {
+        // we only populate the exact number of args according to the template
+        if (define_size >= arg_size)
+          break;
+        else
+          --define_size;
         exprt single_arg;
         if (get_expr(arg.value(), arg.value()["typeDescriptions"], single_arg))
           return true;

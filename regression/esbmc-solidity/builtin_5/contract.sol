@@ -1,27 +1,22 @@
+// SPDX-License-Identifier: GPL-3.0
 pragma solidity >=0.5.0;
 
-contract Base {
-    bytes16 data1;
-    bytes4 data2;
-
-    constructor() {
-        data1 = "test";
-        data2 = 0x74657374; // "test"
+contract Test {
+    function createRandomNumber(uint256 max) public view returns (uint256) {
+        return
+            uint256(
+                keccak256(
+                    abi.encodePacked(
+                        block.timestamp,
+                        block.difficulty,
+                        msg.sender
+                    )
+                )
+            ) % max;
     }
 
-    function test() public {
-        assert(data1 == data2);
-        bytes2 data4 = bytes2(data2);
-        assert(data4 == 0x7465);
-        bytes4 data5 = bytes4(data4);
-        assert(data5 == 0x74650000);
-    }
-}
-
-contract Dreive {
-    Base x = new Base();
-
-    function test1() public {
-        x.test();
+    function checkRandomNumber() public view {
+        uint x = createRandomNumber(128); // smaller than 128
+        assert(x > 128);
     }
 }
