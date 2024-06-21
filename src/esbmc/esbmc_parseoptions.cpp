@@ -1703,8 +1703,10 @@ bool esbmc_parseoptionst::process_goto_program(
     namespacet ns(context);
 
     bool is_no_remove = cmdline.isset("multi-property") ||
-                        cmdline.isset("goto-coverage") ||
-                        cmdline.isset("goto-coverage-claims");
+                        cmdline.isset("assertion-coverage") ||
+                        cmdline.isset("assertion-coverage-claims") ||
+                        cmdline.isset("condition-coverage") ||
+                        cmdline.isset("condition-coverage-claims");
 
     // Start by removing all no-op instructions and unreachable code
     if (!(cmdline.isset("no-remove-no-op")))
@@ -1712,7 +1714,7 @@ bool esbmc_parseoptionst::process_goto_program(
 
     // We should skip this 'remove-unreachable' removal in goto-cov and multi-property
     // - multi-property wants to find all the bugs in the src code
-    // - goto-coverage wants to find out unreached codes (asserts)
+    // - assertion-coverage wants to find out unreached codes (asserts)
     // - however, the optimisation below will remove codes during the Goto stage
     if (!(cmdline.isset("no-remove-unreachable") || is_no_remove))
       remove_unreachable(goto_functions);
@@ -1825,29 +1827,58 @@ bool esbmc_parseoptionst::process_goto_program(
 
       value_set_analysis.update(goto_functions);
     }
-    if (cmdline.isset("add-false-assert"))
-    {
-      goto_coveraget tmp;
-      tmp.add_false_asserts(goto_functions);
-    }
 
     //! goto-cov will also mutate the asserts added by esbmc (e.g. goto-check)
-    if (cmdline.isset("goto-coverage") || cmdline.isset("goto-coverage-claims"))
+    if (
+      cmdline.isset("assertion-coverage") ||
+      cmdline.isset("assertion-coverage-claims"))
     {
-      // for assertion coverage metric
-      options.set_option("make-assert-false", true);
       // for multi-property
       options.set_option("result-only", true);
       options.set_option("base-case", true);
       options.set_option("multi-property", true);
       options.set_option("keep-verified-claims", false);
+
+      goto_coveraget tmp(ns, goto_functions);
+      tmp.replace_all_asserts_to_guard(gen_false_expr(), true);
+    }
+
+    if (
+      cmdline.isset("condition-coverage") ||
+      cmdline.isset("condition-coverage-claims") ||
+      cmdline.isset("condition-coverage-rm") ||
+      cmdline.isset("condition-coverage-claims-rm"))
+    {
+      // for multi-property
+      options.set_option("result-only", true);
+      options.set_option("base-case", true);
+      options.set_option("multi-property", true);
+      options.set_option("keep-verified-claims", false);
+      // unreachable conditions should be also considered as short-circuited
+
+      //?:
+      // if we do not want expressions like 'if(2 || 3)' get simplified to 'if(1||1)'
+      // we need to enable the options below:
+      //    options.set_option("no-simplify", true);
+      //    options.set_option("no-propagation", true);
+      // however, this will affect the performance, thus they are not enabled by default
+
+      std::string filename = cmdline.args[0];
+      goto_coveraget tmp(ns, goto_functions, filename);
+      tmp.replace_all_asserts_to_guard(gen_true_expr());
+      tmp.gen_cond_cov();
     }
 
     if (options.get_bool_option("make-assert-false"))
     {
-      goto_coveraget tmp;
-      tmp.make_asserts_false(goto_functions, ns);
-      tmp.gen_assert_instance(goto_functions);
+      goto_coveraget tmp(ns, goto_functions);
+      tmp.replace_all_asserts_to_guard(gen_false_expr());
+    }
+
+    if (cmdline.isset("add-false-assert"))
+    {
+      goto_coveraget tmp(ns, goto_functions);
+      tmp.add_false_asserts();
     }
   }
 
