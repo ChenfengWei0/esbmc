@@ -36,6 +36,7 @@ protected:
 
   // conversion functions
   // get decl in rule contract-body-element
+  bool get_contract_definition(const std::string &c_name);
   bool get_non_function_decl(const nlohmann::json &ast_node, exprt &new_expr);
   bool get_function_decl(const nlohmann::json &ast_node);
   // get decl in rule variable-declaration-statement, e.g. function local declaration
@@ -67,7 +68,11 @@ protected:
     const std::string &c_name,
     std::set<std::string> &merged_list);
 
+  // auxiliary funcitons
   // handle the constructor
+  bool get_constructor(
+    const nlohmann::json &ast_node,
+    const std::string &contract_name);
   bool add_implicit_constructor(const std::string &contract_name);
   bool get_implicit_ctor_ref(exprt &new_expr, const std::string &contract_name);
   bool get_instantiation_ctor_call(
@@ -201,6 +206,7 @@ protected:
   symbolt *move_symbol_to_context(symbolt &symbol);
   bool multi_transaction_verification(const std::string &contractName);
   bool multi_contract_verification();
+  void reset_auxiliary_vars();
 
   // auxiliary functions
   std::string get_modulename_from_path(std::string path);
@@ -301,8 +307,8 @@ protected:
   // Store state variables
   std::unordered_set<symbolt *> initializers;
   // For inheritance
-  nlohmann::json ctor_modifier;
-  nlohmann::json base_contracts;
+  const nlohmann::json *ctor_modifier;
+  const nlohmann::json *base_contracts;
   bool is_contract_member_access;
 
   static constexpr const char *mode = "C++";
