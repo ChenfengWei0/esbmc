@@ -89,7 +89,7 @@ Source code → Frontend (AST) → GOTO program → Symbolic execution (SSA) →
 | `clang-c-frontend/` | C frontend using Clang. `clang_c_convert.cpp` is the main AST-to-irep2 converter. |
 | `clang-cpp-frontend/` | C++ frontend extending the C frontend. Handles classes, templates, virtual functions. |
 | `python-frontend/` | Python frontend. Converts Python AST (via ast2json) to irep2. |
-| `solidity-frontend/` | Solidity smart contract frontend. Core converter split by concern: `solidity_convert.cpp` (entry/init), `_expr` (expressions), `_call` (function calls/transfers), `_type` (types), `_decl` (declarations), `_util` (helpers), `_constructor`, `_contract` (instances/multi-contract verification), `_ref` (symbol resolution), `_mapping`, `_stmt`, `_modifier`, `_builtin` (msg/tx/block), `_tuple`, `_inheritance`, `_literals`. Single class `solidity_convertert` declared in `solidity_convert.h`. |
+| `solidity-frontend/` | Solidity smart contract frontend. |
 | `jimple-frontend/` | Java/Kotlin frontend via Soot's Jimple IR. |
 | `c2goto/` | C library models and standard definitions for GOTO conversion. |
 | `pointer-analysis/` | Static pointer analysis framework. |
