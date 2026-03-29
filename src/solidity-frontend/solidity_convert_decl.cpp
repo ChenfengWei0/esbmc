@@ -739,12 +739,14 @@ bool solidity_convertert::get_struct_class(const nlohmann::json &struct_def)
   // 1. populate name, id
   std::string id, name;
   struct_typet t = struct_typet();
+  std::string cname;
 
   if (struct_def["nodeType"].get<std::string>() == "ContractDefinition")
   {
     name = struct_def["name"].get<std::string>();
     id = prefix + name;
     t.tag(name);
+    cname = name;
   }
   else if (struct_def["nodeType"].get<std::string>() == "StructDefinition")
   {
@@ -1513,3 +1515,4 @@ void solidity_convertert::get_function_definition_name(
 
   log_debug("solidity", "\t\t@@@ got function name {}", name);
 }
+

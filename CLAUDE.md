@@ -4,69 +4,104 @@ This file provides guidance to coding agents working with this repository. The s
 
 ## Project Overview
 
-ESBMC (Efficient SMT-based Context-Bounded Model Checker) is a software model checker that detects bugs or proves their absence in C, C++, CUDA, CHERI-C, Python, Solidity, Java, and Kotlin programs. It works by parsing source → building AST → converting to GOTO program → symbolic execution (SSA) → encoding as SMT formula → solving with SMT solvers.
+ESBMC (Efficient SMT-based Context-Bounded Model Checker) is a formal verification tool that detects bugs in C, C++, CUDA, CHERI-C, Python, Java/Kotlin, Solidity, and Rust programs. It works by parsing source code into an AST, converting to a GOTO intermediate representation, symbolically executing it to produce SSA constraints, encoding those as SMT formulas, and checking satisfiability to find property violations (or prove their absence).
 
 ## Build Commands
 
-**NEVER run cmake in the repo root (e.g., `cmake .` or `cmake -B. -S.`).** Always use `build/` or a subdirectory of it as the build directory (e.g., `-Bbuild`). The `.gitignore` only covers `build/` — in-tree builds pollute the source tree with hundreds of untracked artifacts.
+```bash
+# Full build (install deps, configure, build, install)
+./scripts/build.sh
 
-```sh
-# Minimal build with Z3 solver (at least one solver must be enabled for regression tests)
-cmake -GNinja -Bbuild -S . \
-  -DDOWNLOAD_DEPENDENCIES=On \
-  -DENABLE_PYTHON_FRONTEND=On \
-  -DENABLE_Z3=On \
-  -DBUILD_TESTING=On \
-  -DENABLE_REGRESSION=On \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+# Individual steps
+./scripts/build.sh deps      # Install dependencies + configure
+./scripts/build.sh build     # Build only
+./scripts/build.sh install   # Install to ./release/
 
-# Build (uses Ninja)
-ninja -C build
-
-# Install
-ninja -C build install
+# Common options
+./scripts/build.sh -b Debug build          # Debug build
+./scripts/build.sh -s address build        # With AddressSanitizer
+./scripts/build.sh -C deps build install   # SV-COMP build (extra solvers)
 ```
 
-Additional optional CMake flags:
-- `-DENABLE_SOLIDITY_FRONTEND=On` — Solidity smart contract frontend
-- `-DENABLE_JIMPLE_FRONTEND=On` — Java/Kotlin frontend (requires JDK 11+)
-- `-DENABLE_BITWUZLA=On` — Bitwuzla solver backend
-- `-DENABLE_BOOLECTOR=On` — Boolector solver backend
-- Quality: `-DENABLE_WERROR=On`, `-DENABLE_CLANG_TIDY=On`, `-DENABLE_COVERAGE=On`
-
-See `scripts/build.sh` for full platform-specific dependency setup and solver configuration.
-
-Requires: CMake 3.18+, Ninja, Boost (date_time, program_options, iostreams, system, filesystem), LLVM 11+ (tested up to 21), Bison, Flex, Z3 (or another SMT solver).
+The binary is installed to `./release/bin/esbmc`.
 
 ## Testing
 
-Regression tests require at least one solver backend (e.g., Z3). All commands run from the `build/` directory.
+Tests are run via CTest from the `build/` directory:
 
-```sh
-# Run unit tests only (fast, excludes regression-labeled tests)
-ctest -j$(nproc) -LE regression --timeout 60
+```bash
+cd build/
 
-# Run all regression tests (slow, creates temp dirs in /tmp — see note below)
-ctest -j$(nproc) -L regression --timeout 120
+# Run all regression tests
+ctest -j$(nproc) --progress --output-on-failure
 
-# Run a specific regression suite by label
-ctest -j$(nproc) -L esbmc --timeout 120          # core C tests
-ctest -j$(nproc) -L python --timeout 120          # Python tests
-ctest -j$(nproc) -L "esbmc-cpp/cpp" --timeout 120 # C++ tests
-ctest -j$(nproc) -L floats --timeout 120          # floating-point tests
+# Run a specific test suite (label matches "folder/" pattern)
+ctest -j4 -L "esbmc-cpp/cpp"
+ctest -j4 -L "python"
 
-# List all available test labels
-ctest --print-labels
+# Run a single test by name
+ctest -R "regression/esbmc/00_bitshift_01"
 
-# Run a single named test
-ctest -R "regression/esbmc/00_big_endian_01" --output-on-failure
+# Exclude slow Python tests
+ctest -j4 -LE python-intensive
+
+# Run unit tests only
+ctest -j4 -L unit
 ```
 
-**Important: Python frontend tests require `ast2json`.** ESBMC's Python frontend invokes `python3` from `PATH` to run `parser.py`, which imports `ast2json`. For Python regression tests to pass, either activate the uv venv first (`source .venv/bin/activate`) or ensure `ast2json` is installed in the system Python.
+### Regression Test Format
 
-**Important: /tmp disk space.** Each regression test creates an `esbmc-headers-*` temp directory (~7.4MB) in `/tmp`. Running the full suite generates thousands of these (~70GB total). Clean them after test runs: `rm -rf /tmp/esbmc-headers-*`
+Each test is a directory under `regression/` containing:
+- A source file (e.g., `main.c`, `main.py`)
+- A `test.desc` file with this format:
+  ```
+  CORE                          # Mode: CORE, THOROUGH, KNOWNBUG, or FUTURE
+  main.c                        # Input file
+  --no-slice --some-flag        # ESBMC command-line arguments
+  ^VERIFICATION FAILED$         # Expected output regex (one per line)
+  ```
 
-Regression test format (`test.desc`): line 1 is `CORE`/`KNOWNBUG`/`FUTURE`/`THOROUGH` (THOROUGH is Linux-only), line 2 is the source file, line 3 is ESBMC flags, line 4+ are expected output regexes. Every PR should include at least two regression tests (one passing, one failing).
+Every PR should include at least two test cases: one that passes and one that fails verification.
+
+## Code Formatting
+
+- C/C++: clang-format with Clang 11
+- Python: YAPF
+- CMake: cmakelint
+
+## Architecture
+
+### Verification Pipeline
+
+```
+Source code → Frontend (AST) → GOTO program → Symbolic execution (SSA) → SMT formula → Solver → Result
+```
+
+### Key Source Directories (`src/`)
+
+| Directory | Purpose |
+|-----------|---------|
+| `esbmc/` | Entry point (`main.cpp`), BMC orchestration (`bmc.cpp`), CLI parsing (`esbmc_parseoptions.cpp`) |
+| `irep2/` | Core intermediate representation: typed expressions (`irep2_expr.h`) and types (`irep2_type.h`). Uses `expr2tc`/`type2tc` smart pointers. |
+| `goto-programs/` | GOTO IR: control flow graph with instruction types (GOTO, ASSERT, ASSUME, ASSIGN, etc.). `goto_convert.cpp` transforms AST to GOTO. |
+| `goto-symex/` | Symbolic execution engine. `symex_main.cpp` drives path exploration, generates SSA form via `symex_target_equation`. |
+| `solvers/` | SMT/SAT solver backends. Abstract interface in `smt/smt_conv.h`; implementations in `z3/`, `bitwuzla/`, `boolector/`, `cvc5/`, `yices/`, `mathsat/`, `smtlib/`. |
+| `clang-c-frontend/` | C frontend using Clang. `clang_c_convert.cpp` is the main AST-to-irep2 converter. |
+| `clang-cpp-frontend/` | C++ frontend extending the C frontend. Handles classes, templates, virtual functions. |
+| `python-frontend/` | Python frontend. Converts Python AST (via ast2json) to irep2. |
+| `solidity-frontend/` | Solidity smart contract frontend. Core converter split by concern: `solidity_convert.cpp` (entry/init), `_expr` (expressions), `_call` (function calls/transfers), `_type` (types), `_decl` (declarations), `_util` (helpers), `_constructor`, `_contract` (instances/multi-contract verification), `_ref` (symbol resolution), `_mapping`, `_stmt`, `_modifier`, `_builtin` (msg/tx/block), `_tuple`, `_inheritance`, `_literals`. Single class `solidity_convertert` declared in `solidity_convert.h`. |
+| `jimple-frontend/` | Java/Kotlin frontend via Soot's Jimple IR. |
+| `c2goto/` | C library models and standard definitions for GOTO conversion. |
+| `pointer-analysis/` | Static pointer analysis framework. |
+| `util/` | Shared utilities: symbol table (`context.h`), config, expression simplifier, type casting. |
+
+### Solver Architecture
+
+The solver layer uses an abstract interface (`smt_convt`) with per-solver implementations. The conversion pipeline flattens irep2 expressions → lowers memory model/pointers/casts → encodes to solver-native AST → queries satisfiability. See `src/solvers/README.txt` for details.
+
+### Expression System
+
+The `irep2` layer defines 170+ expression types and 20+ type constructors. Expressions use `expr2tc` (shared pointer wrapper) and are enumerated in `ESBMC_LIST_OF_EXPRS`. Types use `type2tc`. This is the universal IR that all frontends target and all backends consume.
 
 **Before committing:**
 
