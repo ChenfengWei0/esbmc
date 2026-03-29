@@ -143,6 +143,9 @@ bool solidity_languaget::typecheck(contextt &context, const std::string &module)
   convert_intrinsics(
     new_context); // Add ESBMC and TACAS intrinsic symbols to the context
 
+  // Load pre-compiled Solidity operational models (builtins, mapping, array, etc.)
+  add_cprover_library(new_context, this);
+
   solidity_convertert converter(
     new_context, src_ast_json_array, contract_names, func_name, contract_path);
   if (converter.convert()) // Add Solidity symbols to the context
@@ -184,6 +187,9 @@ std::string solidity_languaget::temp_cpp_file()
 {
   // This function populates the temp file so that Clang has a compilation job.
   // Clang needs a job to convert the intrinsics.
+  // Solidity operational models are now loaded via c2goto pre-compiled library,
+  // but we still need the type definitions for convert_intrinsics() and the
+  // string templates that are referenced during Solidity AST conversion.
   std::string content =
     SolidityTemplate::sol_library + R"(int main() { return 0; })";
   return content;

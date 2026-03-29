@@ -246,6 +246,68 @@ const static std::vector<std::string> python_c_models = {
   "__ESBMC_list_reverse",
   "__ESBMC_list_push_dict_ptr",
   "__ESBMC_list_lt"};
+
+// Solidity operational model functions
+const static std::vector<std::string> solidity_c_models = {
+  // builtins (solidity_builtins.c)
+  "blockhash", "gasConsume", "gasleft",
+  "abi_encode", "abi_encodePacked", "abi_encodeWithSelector",
+  "abi_encodeWithSignature", "abi_encodeCall",
+  "addmod", "mulmod", "keccak256", "sha256", "ripemd160", "ecrecover",
+  "selfdestruct", "string_concat",
+  // bytes (solidity_bytes.c)
+  "bytes_dynamic_init_check", "bytes_dynamic_bounds_check",
+  "hex_char_to_nibble",
+  "bytes_static_from_hex", "bytes_static_from_string",
+  "bytes_static_truncate", "bytes_static_and", "bytes_static_or",
+  "bytes_static_xor", "bytes_static_to_uint", "bytes_static_from_uint",
+  "bytes_static_shl", "bytes_static_shr", "bytes_static_to_mapping_key",
+  "bytes_static_init_zero", "bytes_static_set", "bytes_static_get",
+  "bytes_static_equal", "bytes_static_to_string",
+  "bytes_static_extend", "bytes_static_resize",
+  "bytes_static_extend_from_dynamic", "bytes_static_resize_from_dynamic",
+  "bytes_static_truncate_from_dynamic",
+  "bytes_dynamic_init_zero", "bytes_dynamic_init",
+  "bytes_dynamic_ensure_capacity", "bytes_dynamic_from_static",
+  "bytes_dynamic_from_string", "bytes_dynamic_from_hex",
+  "bytes_dynamic_concat", "bytes_dynamic_copy",
+  "bytes_dynamic_set", "bytes_dynamic_get",
+  "bytes_dynamic_equal", "bytes_dynamic_to_mapping_key",
+  "bytes_dynamic_push", "bytes_dynamic_pop",
+  "bytes_dynamic_to_uint", "bytes_dynamic_to_string",
+  "bytes_pool_init",
+  // mapping (solidity_mapping.c)
+  "map_get_raw", "map_set_raw",
+  "map_uint_set", "map_uint_get", "map_int_set", "map_int_get",
+  "map_string_set", "map_string_get", "map_bool_set", "map_bool_get",
+  "map_generic_set", "map_generic_get",
+  "map_get_raw_fast", "map_set_raw_fast",
+  "map_uint_set_fast", "map_uint_get_fast",
+  "map_int_set_fast", "map_int_get_fast",
+  "map_string_set_fast", "map_string_get_fast",
+  "map_bool_set_fast", "map_bool_get_fast",
+  "map_generic_set_fast", "map_generic_get_fast",
+  // array (solidity_array.c)
+  "_ESBMC_array_null_check", "_ESBMC_element_null_check",
+  "_ESBMC_zero_size_check", "_ESBMC_pop_empty_check",
+  "_ESBMC_store_array", "_ESBMC_array_length",
+  "_ESBMC_arrcpy", "_ESBMC_array_push", "_ESBMC_array_pop",
+  // units (solidity_units.c)
+  "_ESBMC_wei", "_ESBMC_gwei", "_ESBMC_szabo",
+  "_ESBMC_finney", "_ESBMC_ether",
+  "_ESBMC_seconds", "_ESBMC_minutes", "_ESBMC_hours",
+  "_ESBMC_days", "_ESBMC_weeks", "_ESBMC_years",
+  // string (solidity_string.c)
+  "get_char", "sol_rev", "i256toa", "u256toa",
+  "decToHexa", "ASCIItoHEX", "hexdec", "str2uint",
+  "_str_assign", "nondet_string",
+  // address (solidity_address.c)
+  "_ESBMC_get_addr_array_idx", "_ESBMC_cmp_cname",
+  "_ESBMC_get_obj", "update_addr_obj",
+  "_ESBMC_get_unique_address", "_ESBMC_get_nondet_cont_name",
+  // misc (solidity_misc.c)
+  "_max", "_min", "_creationCode", "_runtimeCode",
+  "_ESBMC_check_reentrancy", "initialize"};
 } // namespace
 
 static void generate_symbol_deps(
@@ -381,6 +443,9 @@ void add_cprover_library(contextt &context, const languaget *language)
   if (language && language->id() == "python")
     goto_reader.set_functions_to_read(python_c_models);
 
+  if (language && language->id() == "solidity_ast")
+    goto_reader.set_functions_to_read(solidity_c_models);
+
   /* Python: actively has a function filter
    *    - not everything makes it into new_ctx
    *    - ignored symbols go into ignored_ctx
@@ -414,7 +479,7 @@ void add_cprover_library(contextt &context, const languaget *language)
   symbol_deps.insert(joincheck);
 
   /* Iterate through the new_ctx symbols, figure out which ones to go into store_ctx
-   *    For Python this is everything: new_ctx already has a filtering layer
+   *    For Python/Solidity this is everything: new_ctx already has a filtering layer
    *    For other frontends, only add symbols that exist already in context but value empty
    * store_ctx is what actually gets merged into the existing, final context
    */
@@ -426,7 +491,8 @@ void add_cprover_library(contextt &context, const languaget *language)
                            &language](const symbolt &s) {
     const symbolt *symbol = context.find_symbol(s.id);
     if (
-      (language && language->id() == "python") ||
+      (language &&
+       (language->id() == "python" || language->id() == "solidity_ast")) ||
       (symbol != nullptr && symbol->value.is_nil()))
     {
       store_ctx.add(s);
@@ -458,7 +524,10 @@ void add_cprover_library(contextt &context, const languaget *language)
     symbolt *s;
 
     // Look in the appropriate place for this symbol
-    if ((language && language->id() == "python"))
+    bool uses_whitelist =
+      language &&
+      (language->id() == "python" || language->id() == "solidity_ast");
+    if (uses_whitelist)
     {
       s = ignored_ctx.find_symbol(*nameit);
     }
@@ -471,12 +540,12 @@ void add_cprover_library(contextt &context, const languaget *language)
     {
       store_ctx.add(*s);
 
-      /* Python frontend hasn't looked for dependencies for symbols that aren't in
-       * the function whitelist, (since they're not put in new_ctx); other frontends
-       * have these dependencies already available in symbol_deps.
+      /* Whitelisted frontends haven't looked for dependencies for symbols that
+       * aren't in the function whitelist, (since they're not put in new_ctx);
+       * other frontends have these dependencies already available in symbol_deps.
        * Therefore add dependencies that result from this new symbol
        */
-      if (language && language->id() == "python")
+      if (uses_whitelist)
       {
         generate_symbol_deps(s->id, s->value, symbol_deps);
         generate_symbol_deps(s->id, s->type, symbol_deps);

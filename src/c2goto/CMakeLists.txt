@@ -141,6 +141,14 @@ function(mangle_clib output)
     set(c2goto_python_files "")
   endif()
 
+  # Extract C models for Solidity
+  if(ENABLE_SOLIDITY_FRONTEND)
+    file(GLOB_RECURSE c2goto_solidity_files CONFIGURE_DEPENDS
+      "${CMAKE_CURRENT_SOURCE_DIR}/library/solidity/*.c")
+  else()
+    set(c2goto_solidity_files "")
+  endif()
+
   # For each config, generate clib*.c and clib*.goto file in the current binary directory
   foreach(in_f ${ARGN})
     set (in_f "${${in_f}}")
@@ -162,6 +170,10 @@ function(mangle_clib output)
       list(APPEND inputs_c ${c2goto_python_files})
     endif()
 
+    if(ENABLE_SOLIDITY_FRONTEND)
+      list(APPEND inputs_c ${c2goto_solidity_files})
+    endif()
+
     if(ESBMC_CHERI_CLANG)
       list(APPEND in_flags -I "${cheri_compressed_cap_SOURCE_DIR}")
     endif()
@@ -172,7 +184,7 @@ function(mangle_clib output)
     # Convert a list of C operational models (e.g. *.c) into a single goto binary file (e.g. clib32.goto) at CMake build time
     add_custom_command(OUTPUT ${out_goto}
       COMMAND ${run_c2goto}
-      DEPENDS c2goto ${c2goto_library_files} ${c2goto_libm_files} ${c2goto_header_files} ${c2goto_python_files}
+      DEPENDS c2goto ${c2goto_library_files} ${c2goto_libm_files} ${c2goto_header_files} ${c2goto_python_files} ${c2goto_solidity_files}
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
       COMMENT "Generating libc model ${out_goto}"
       VERBATIM
@@ -220,6 +232,20 @@ function(mangle_clib output)
       ${CMAKE_CURRENT_BINARY_DIR}/libpython.h)
   endif()
 
+  if(ENABLE_SOLIDITY_FRONTEND)
+    mangle(${CMAKE_CURRENT_BINARY_DIR}/libsolidity.c
+           ${CMAKE_CURRENT_SOURCE_DIR}/library/solidity
+           WILDCARD *.c
+           SINGLE
+           PREFIX esbmc_solidity_
+           MACRO ESBMC_FLAIL
+           ACC_HEADERS_INTO ${CMAKE_CURRENT_BINARY_DIR}/libsolidity.h)
+
+    list(APPEND result
+      ${CMAKE_CURRENT_BINARY_DIR}/libsolidity.c
+      ${CMAKE_CURRENT_BINARY_DIR}/libsolidity.h)
+  endif()
+
 
   list(APPEND result ${CMAKE_CURRENT_BINARY_DIR}/libc.c
                      ${CMAKE_CURRENT_BINARY_DIR}/libm.c)
@@ -243,6 +269,10 @@ set(private_headers
 
 if(ENABLE_PYTHON_FRONTEND)
   list(APPEND private_headers "${CMAKE_CURRENT_BINARY_DIR}/libpython.h")
+endif()
+
+if(ENABLE_SOLIDITY_FRONTEND)
+  list(APPEND private_headers "${CMAKE_CURRENT_BINARY_DIR}/libsolidity.h")
 endif()
 
 set_target_properties(clibs PROPERTIES PRIVATE_HEADER "${private_headers}")
