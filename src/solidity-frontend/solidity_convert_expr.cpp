@@ -2646,8 +2646,6 @@ bool solidity_convertert::get_unary_operator_expr(
   const nlohmann::json &literal_type,
   exprt &new_expr)
 {
-  // TODO: Fix me! Currently just support prefix == true,e.g. pre-increment
-
   // 1. get UnaryOperation opcode
   SolidityGrammar::ExpressionT opcode =
     SolidityGrammar::get_unary_expr_operator_t(expr, expr["prefix"]);

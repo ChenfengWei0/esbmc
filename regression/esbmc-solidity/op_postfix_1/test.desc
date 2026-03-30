@@ -1,0 +1,4 @@
+CORE
+contract.solast
+--function test_postfix --sol contract.sol --contract PostfixTest --no-standard-checks --k-induction
+^VERIFICATION SUCCESSFUL$
