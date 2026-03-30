@@ -564,6 +564,7 @@ void add_cprover_library(contextt &context, const languaget *language)
         lib_start, lib_size, new_ctx, ignored_ctx, goto_functions))
     abort();
 
+
   // Traverse symbols and get dependencies from both their nested types and values
   new_ctx.foreach_operand([&symbol_deps](const symbolt &s) {
     generate_symbol_deps(s.id, s.value, symbol_deps);
