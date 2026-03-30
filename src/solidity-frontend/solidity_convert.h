@@ -277,6 +277,33 @@ protected:
     const nlohmann::json &literal_type,
     const typet &dest_type,
     exprt &new_expr);
+  // Expression handlers (extracted from get_expr switch)
+  bool get_decl_ref_expr(const nlohmann::json &expr, exprt &new_expr);
+  bool get_literal_expr(
+    const nlohmann::json &expr,
+    const nlohmann::json &literal_type,
+    exprt &new_expr);
+  bool get_tuple_expr(
+    const nlohmann::json &expr,
+    const nlohmann::json &literal_type,
+    exprt &new_expr);
+  bool get_call_expr(
+    const nlohmann::json &expr,
+    const nlohmann::json &literal_type,
+    exprt &new_expr);
+  bool get_contract_member_call_expr(
+    const nlohmann::json &expr,
+    const nlohmann::json &literal_type,
+    exprt &new_expr);
+  bool get_index_access_expr(
+    const nlohmann::json &expr,
+    const nlohmann::json &literal_type,
+    exprt &new_expr);
+  bool get_new_object_expr(
+    const nlohmann::json &expr,
+    const nlohmann::json &literal_type,
+    exprt &new_expr);
+
   bool get_binary_operator_expr(const nlohmann::json &expr, exprt &new_expr);
   bool get_compound_assign_expr(
     const nlohmann::json &expr,
@@ -766,6 +793,47 @@ private:
   bool get_elementary_type_name_bytesn(
     SolidityGrammar::ElementaryTypeNameT &type,
     typet &out);
+
+  // RAII scope guards for global state variables.
+  // Usage: ScopeGuard<T> guard(member, new_value);
+  // Restores original value on destruction (including early returns/exceptions).
+  template <typename T>
+  class ScopeGuard
+  {
+    T &ref;
+    T saved;
+
+  public:
+    ScopeGuard(T &target, const T &new_val) : ref(target), saved(target)
+    {
+      ref = new_val;
+    }
+    ~ScopeGuard()
+    {
+      ref = saved;
+    }
+    ScopeGuard(const ScopeGuard &) = delete;
+    ScopeGuard &operator=(const ScopeGuard &) = delete;
+  };
+
+  // Stack push guard: pushes on construction, pops on destruction.
+  template <typename T>
+  class StackGuard
+  {
+    std::stack<T> &stk;
+
+  public:
+    StackGuard(std::stack<T> &s, const T &val) : stk(s)
+    {
+      stk.push(val);
+    }
+    ~StackGuard()
+    {
+      stk.pop();
+    }
+    StackGuard(const StackGuard &) = delete;
+    StackGuard &operator=(const StackGuard &) = delete;
+  };
 };
 
 #endif /* SOLIDITY_FRONTEND_SOLIDITY_CONVERT_H_ */
