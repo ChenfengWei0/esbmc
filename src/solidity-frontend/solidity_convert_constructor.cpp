@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 // parse the explicit ctor, or add the implicit ctor
 bool solidity_convertert::get_constructor(

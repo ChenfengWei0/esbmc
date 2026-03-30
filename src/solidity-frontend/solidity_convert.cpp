@@ -12,7 +12,6 @@
 #include <optional>
 
 #include <fstream>
-#include <iostream>
 
 // initialize static members
 const nlohmann::json solidity_convertert::empty_json = nlohmann::json::object();
@@ -125,7 +124,7 @@ bool solidity_convertert::convert()
   nlohmann::json &nodes = src_ast_json["nodes"];
 
   // store auxiliary info
-  if (populate_auxilary_vars())
+  if (populate_auxiliary_vars())
     return true;
 
   // for coverage and trace simplification: update include_files
@@ -417,11 +416,6 @@ bool solidity_convertert::contract_precheck()
       }
       found_contract_def = true;
       break;
-      //TODO: skip pattern base check as it's not really valuable at the moment.
-      // assert(itr->contains("nodes"));
-      // auto pattern_check =
-      //   std::make_unique<pattern_checker>((*itr)["nodes"], sol_func);
-      // pattern_check->do_pattern_check();
     }
   }
   if (!found_contract_def)
@@ -605,7 +599,7 @@ bool solidity_convertert::check_sol_ver()
   return false;
 }
 
-bool solidity_convertert::populate_auxilary_vars()
+bool solidity_convertert::populate_auxiliary_vars()
 {
   nlohmann::json &nodes = src_ast_json["nodes"];
 
@@ -644,10 +638,6 @@ bool solidity_convertert::populate_auxilary_vars()
       if (linearizedBaseList[c_name].empty())
         return true;
 
-      // auto _json = (*itr)["nodes"];
-      // functionSignature[c_name].insert(c_name); // constructor
-      // for(nlohmann::json::iterator ittr;ittr != _json.end(); ++ittr)
-      // {}
     }
   }
 

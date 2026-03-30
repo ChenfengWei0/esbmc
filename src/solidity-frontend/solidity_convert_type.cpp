@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 bool solidity_convertert::get_type_description(
   const nlohmann::json &type_name,
@@ -522,8 +518,6 @@ bool solidity_convertert::get_func_decl_ref_type(
       "solidity",
       "	@@@ Got type={}",
       SolidityGrammar::func_decl_ref_to_str(type));
-    //TODO: seem to be unnecessary, need investigate
-    // assert(!"Unimplemented type in auxiliary type to convert function call");
     return true;
   }
   }

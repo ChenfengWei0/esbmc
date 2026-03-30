@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 void solidity_convertert::get_mapping_inf_arr_name(
   const std::string &cname,

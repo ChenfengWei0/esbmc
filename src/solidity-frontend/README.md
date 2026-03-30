@@ -114,6 +114,6 @@ esbmc --sol example.sol example.solast --bound --contract Vulnerable --function 
 
 ## For Developers
 
-* The Solidity Frontend convert solidity statement into CPP-style IR -- each contract is considered as a class. Yet no other C++ specific syntax are used, meaning all statements are convert to C-style IR. Data structure like `mapping`, `Bytes` are written as C-struct internally. For more details, check `solidity_template.cpp`.
+* The Solidity Frontend converts Solidity statements into CPP-style IR -- each contract is considered as a class. Yet no other C++ specific syntax are used, meaning all statements are converted to C-style IR. Data structures like `mapping`, `Bytes` are written as C-struct internally. Operational models are pre-compiled via the c2goto pipeline (see `src/c2goto/library/solidity/`).
 * The blockchain state is encoded as properties within each contract, such as `address`, `codehash`, `balance`, etc. Note that while in reality a balance is bound to an address, in our modelling it is bound to each contract instance.
 * For multi-contract programs, the JSON of each contract is parsed separately. Inheritance is mainly handled by merging the corresponding AST JSON files.

@@ -12,7 +12,6 @@
 #include <optional>
 
 #include <fstream>
-#include <iostream>
 
 void solidity_convertert::get_location_from_node(
   const nlohmann::json &ast_node,

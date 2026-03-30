@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 static inline void static_lifetime_init(const contextt &context, codet &dest)
 {

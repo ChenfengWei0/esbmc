@@ -136,7 +136,6 @@ void pattern_checker::check_tx_origin(const nlohmann::json &left_expr)
     {
       if (left_expr["expression"]["name"].get<std::string>() == "tx")
       {
-        //assert(!"Found vulnerability SWC-115 Authorization through tx.origin");
         log_error(
           "Found vulnerability SWC-115 Authorization through tx.origin");
         log_fail("VERIFICATION FAILED");

@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 bool solidity_convertert::get_non_function_decl(
   const nlohmann::json &ast_node,
@@ -719,7 +715,7 @@ bool solidity_convertert::get_struct_class(const nlohmann::json &struct_def)
 bool solidity_convertert::get_contract_definition(const std::string &c_name)
 {
   // cache
-  // this is due to that we might call this funciton to parse another contract B
+  // this is due to that we might call this function to parse another contract B
   // when we are parsing contract A
   auto old_current_baseContractName = current_baseContractName;
   auto old_current_functionName = current_functionName;
@@ -983,7 +979,7 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
   return false;
 }
 
-// add a "body" node to funcitons within interfacae && abstract && event
+// add a "body" node to functions within interface && abstract && event
 // the idea is to utilize the function-handling APIs.
 void solidity_convertert::add_empty_body_node(nlohmann::json &ast_node)
 {

@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 bool solidity_convertert::get_expr(const nlohmann::json &expr, exprt &new_expr)
 {
@@ -29,7 +25,7 @@ bool solidity_convertert::get_expr(const nlohmann::json &expr, exprt &new_expr)
      * !Always check if the expression is a Literal before calling get_expr
      * !Unless you are 100% sure it will not be a constant
      * 
-     * This function is called throught two paths:
+     * This function is called through two paths:
      * 1. get_non_function_decl => get_var_decl => get_expr
      * 2. get_non_function_decl => get_function_definition => get_statement => get_expr
      * 
@@ -88,7 +84,7 @@ bool solidity_convertert::get_expr(
   {
     if (expr["referencedDeclaration"] > 0)
     {
-      // Soldity uses +ve odd numbers to refer to var or functions declared in the contract
+      // Solidity uses +ve odd numbers to refer to var or functions declared in the contract
       nlohmann::json decl =
         find_decl_ref(src_ast_json, expr["referencedDeclaration"]);
       if (decl.empty())
@@ -169,7 +165,7 @@ bool solidity_convertert::get_expr(
       }
       else
       {
-        // Soldity uses -ve odd numbers to refer to built-in var or functions that
+        // Solidity uses -ve odd numbers to refer to built-in var or functions that
         // are NOT declared in the contract
         if (get_esbmc_builtin_ref(expr, new_expr))
           return true;
@@ -569,7 +565,7 @@ bool solidity_convertert::get_expr(
         }
 
       case 2:
-        1. when parsing the funciton definition, if the returnParam > 1
+        1. when parsing the function definition, if the returnParam > 1
            make the function return void instead, and create a struct type
         2. when parsing the return statement, if the return value is a tuple,
            create a struct type instance, do assignments,  and return empty;
@@ -873,7 +869,7 @@ bool solidity_convertert::get_expr(
       break;
     }
 
-    // funciton call expr
+    // function call expr
     assert(callee_expr.type().is_code());
     typet type = to_code_type(callee_expr.type()).return_type();
 
@@ -895,11 +891,10 @@ bool solidity_convertert::get_expr(
       break;
     }
 
-    // * check if it's the funciton inside library node
-    //TODO
+    // * check if it's the function inside library node
     log_debug("solidity", "\t\t@@@ got normal function call");
     // * we had ruled out all the special cases
-    // * we now confirm it is called by aother contract inside current contract
+    // * we now confirm it is called by another contract inside current contract
     // * func() ==> current_func_this.func(&current_func_this);
 
     // * check if the function call has named arguments

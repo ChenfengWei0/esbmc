@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 bool solidity_convertert::is_low_level_call(const std::string &name)
 {
@@ -255,7 +251,7 @@ void solidity_convertert::move_builtin_to_contract(
   }
 }
 
-// this funciton:
+// this function:
 // - move the created auxiliary variables to the constructor
 // - append the symbol as the component to the struct class
 void solidity_convertert::get_builtin_symbol(

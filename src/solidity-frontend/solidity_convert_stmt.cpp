@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 void solidity_convertert::reset_auxiliary_vars()
 {
@@ -240,7 +236,7 @@ bool solidity_convertert::get_statement(
     }
     else
     {
-      // seperate the decl and assignment
+      // separate the decl and assignment
       for (const auto &it : declgroup.items())
       {
         if (it.value().is_null() || it.value().empty())

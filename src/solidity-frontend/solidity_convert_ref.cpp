@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 void solidity_convertert::get_symbol_decl_ref(
   const std::string &sym_name,
@@ -356,7 +352,7 @@ bool solidity_convertert::get_sol_builtin_ref(
   {
     //  e.g. gasleft() <=> c:@F@gasleft
     if (expr["expression"]["nodeType"].get<std::string>() != "Identifier")
-      // this means it's not a builtin funciton
+      // this means it's not a builtin function
       return true;
 
     std::string name = expr["expression"]["name"].get<std::string>();

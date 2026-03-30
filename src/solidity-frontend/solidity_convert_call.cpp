@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 bool solidity_convertert::get_library_function_call(
   const nlohmann::json &decl_ref,
@@ -163,7 +159,7 @@ bool solidity_convertert::get_non_library_function_call(
 
   if (decl_ref.contains("parameters") && caller.contains("arguments"))
   {
-    // * Assume it is a normal funciton call, including ctor call with params
+    // * Assume it is a normal function call, including ctor call with params
     // set caller object as the first argument
 
     nlohmann::json param_nodes = decl_ref["parameters"]["parameters"];
@@ -639,7 +635,7 @@ bool solidity_convertert::get_high_level_member_access(
                         (member.type().is_code() &&
                          to_code_type(member.type()).return_type().is_empty());
 
-  // construct auxilirary funciton
+  // construct auxiliary function
   // e.g.
   //  Bank target;
   //  target.withdraw()
@@ -771,7 +767,7 @@ bool solidity_convertert::get_high_level_member_access(
     bool is_revert = false;
     if (is_func_call)
     {
-      // e.g. x.call() y.call(). we need to find the definiton of the call beyond the contract x/y seperately
+      // e.g. x.call() y.call(). we need to find the definition of the call beyond the contract x/y separately
       // get call
       std::string func_name = member.name().as_string();
       assert(!func_name.empty());
@@ -1093,7 +1089,7 @@ void solidity_convertert::get_new_object(const typet &t, exprt &this_object)
 }
 
 // add `call(address _addr)` to the contract
-// If it contains the funciton signature, it should be directly converted to the function calls rathe than invoke this `call`
+// If it contains the function signature, it should be directly converted to the function calls rather than invoke this `call`
 // e.g. addr.call(abi.encodeWithSignature("doSomething(uint256)", 123))
 // => _ESBMC_Object_Base.doSomething(123);
 bool solidity_convertert::get_call_definition(

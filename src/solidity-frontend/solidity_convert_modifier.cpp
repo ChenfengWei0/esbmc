@@ -8,11 +8,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
-#include <regex>
-#include <optional>
-
 #include <fstream>
-#include <iostream>
 
 bool solidity_convertert::get_function_definition(
   const nlohmann::json &ast_node)
@@ -204,8 +200,6 @@ bool solidity_convertert::get_function_definition(
   }
 
   added_symbol.value = body_exprt;
-
-  //assert(!"done - finished all expr stmt in function?");
 
   // 13. Restore current_functionDecl
   log_debug("solidity", "@@@ Finish parsing function {}", current_functionName);

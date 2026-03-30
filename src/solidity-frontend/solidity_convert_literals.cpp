@@ -52,8 +52,6 @@ bool solidity_convertert::convert_integer_literal(
 
   dest.swap(the_val);
   return false;
-
-  return false;
 }
 
 bool solidity_convertert::convert_bool_literal(
