@@ -31,7 +31,4 @@ src/CMakeFiles/
 src/CPackConfig.cmake
 src/CPackSourceConfig.cmake
 /.mypy_cache/
-
-# macOS debug symbols and compiled test binaries in regression dirs
-*.dSYM/
-regression/**/test
+docs/
