@@ -260,7 +260,7 @@ bool solidity_convertert::get_expr(
 
     const int struct_var_id = expr["referencedDeclaration"].get<int>();
     const nlohmann::json &struct_var_ref =
-      find_decl_ref(src_ast_json, struct_var_id);
+      find_decl_ref(struct_var_id);
     if (struct_var_ref == empty_json)
     {
       log_error("cannot find struct member reference");
@@ -280,7 +280,7 @@ bool solidity_convertert::get_expr(
     assert(expr.contains("expression"));
     const int enum_id = expr["referencedDeclaration"].get<int>();
     const nlohmann::json &enum_member_ref =
-      find_decl_ref_unique_id(src_ast_json, enum_id);
+      find_node_by_id(src_ast_json, enum_id);
     if (enum_member_ref == empty_json)
     {
       log_error("cannot find enum member reference for id {}", enum_id);
@@ -430,7 +430,7 @@ bool solidity_convertert::get_expr(
     typet t;
     if (get_type_description(caller_expr_json["typeDescriptions"], t))
       return true;
-    const auto &func_ref = find_decl_ref_unique_id(
+    const auto &func_ref = find_node_by_id(
       src_ast_json, expr["referencedDeclaration"].get<int>());
 
     if (t.get("#sol_type") == "ENUM")
@@ -579,7 +579,7 @@ bool solidity_convertert::get_decl_ref_expr(
     {
       // Solidity uses +ve odd numbers to refer to var or functions declared in the contract
       nlohmann::json decl =
-        find_decl_ref(src_ast_json, expr["referencedDeclaration"]);
+        find_decl_ref(expr["referencedDeclaration"]);
       if (decl.empty())
       {
         log_error(
@@ -1249,7 +1249,7 @@ bool solidity_convertert::get_call_expr(
       exprt inits = gen_zero(t);
 
       int ref_id = callee_expr_json["referencedDeclaration"].get<int>();
-      const nlohmann::json &struct_ref = find_decl_ref(src_ast_json, ref_id);
+      const nlohmann::json &struct_ref = find_decl_ref(ref_id);
       if (struct_ref == empty_json)
       {
         log_error("cannot find struct definition for ref_id {}", ref_id);
@@ -1286,7 +1286,7 @@ bool solidity_convertert::get_call_expr(
       callee_expr_json.contains("referencedDeclaration") &&
       !callee_expr_json["referencedDeclaration"].is_null());
     const auto &decl_ref = find_decl_ref(
-      src_ast_json, callee_expr_json["referencedDeclaration"].get<int>());
+      callee_expr_json["referencedDeclaration"].get<int>());
     std::string node_type = decl_ref["nodeType"].get<std::string>();
 
     // * check if it's a event, error function call
@@ -1362,7 +1362,7 @@ bool solidity_convertert::get_contract_member_call_expr(
       caller_expr_json["referencedDeclaration"].get<int>();
     assert(!current_baseContractName.empty());
     const nlohmann::json &base_expr_json =
-      find_decl_ref(src_ast_json["nodes"], contract_var_id); // contract
+      find_decl_ref(contract_var_id); // contract
 
     // contract C{ Base x; x.call();} where base.contractname != current_ContractName;
     // therefore, we need to extract the based contract name
@@ -1401,7 +1401,7 @@ bool solidity_convertert::get_contract_member_call_expr(
     {
       ScopeGuard<std::string> guard(current_baseContractName, base_cname);
       member_decl_ptr =
-        &find_decl_ref(src_ast_json["nodes"], member_id); // methods or variables
+        &find_decl_ref(member_id); // methods or variables
     }
     const nlohmann::json &member_decl_ref = *member_decl_ptr;
 
@@ -1668,7 +1668,7 @@ bool solidity_convertert::get_index_access_expr(
       // find mapping definition
       assert(base_json.contains("referencedDeclaration"));
       const nlohmann::json &map_node = find_decl_ref(
-        src_ast_json["nodes"], base_json["referencedDeclaration"].get<int>());
+        base_json["referencedDeclaration"].get<int>());
 
       // get key/value type
       typet key_t, value_t;

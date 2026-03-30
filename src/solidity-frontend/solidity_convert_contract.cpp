@@ -532,7 +532,7 @@ nlohmann::json solidity_convertert::reorder_arguments(
 
   std::vector<std::string> param_order;
   const auto &decl_ref =
-    find_decl_ref(src_ast_json, callee_expr_json["referencedDeclaration"]);
+    find_decl_ref(callee_expr_json["referencedDeclaration"]);
   // check if the function has parameters and store the order
   if (
     decl_ref.contains("parameters") &&

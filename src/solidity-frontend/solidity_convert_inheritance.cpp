@@ -72,7 +72,7 @@ void solidity_convertert::merge_inheritance_ast(
       }
 
       const nlohmann::json &i_node =
-        find_decl_ref_unique_id(src_ast_json["nodes"], *i_ptr);
+        find_node_by_id(src_ast_json["nodes"], *i_ptr);
       assert(!i_node.empty());
 
       // abstract contract

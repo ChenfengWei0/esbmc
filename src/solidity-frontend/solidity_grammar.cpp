@@ -175,7 +175,7 @@ bool is_address_member_call(const nlohmann::json &expr)
 // check if it is a function defined in a library
 bool is_sol_library_function(const int ref_id)
 {
-  const auto &func_ref = solidity_convertert::find_decl_ref_unique_id(
+  const auto &func_ref = solidity_convertert::find_node_by_id(
     solidity_convertert::src_ast_json["nodes"], ref_id);
   if (func_ref.empty() || func_ref.is_null())
     return false;

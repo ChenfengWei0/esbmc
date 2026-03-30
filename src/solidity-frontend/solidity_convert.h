@@ -37,13 +37,17 @@ public:
   static const nlohmann::json &find_parent_contract(
     const nlohmann::json &json,
     const nlohmann::json &target);
+
+  // Pure DFS: find node with matching "id" field in any JSON subtree.
   static const nlohmann::json &
-  find_decl_ref_in_contract(const nlohmann::json &j, int ref_id);
-  static const nlohmann::json &
-  find_decl_ref_global(const nlohmann::json &j, int ref_id);
-  static const nlohmann::json &
-  find_decl_ref_unique_id(const nlohmann::json &json, int ref_id);
-  const nlohmann::json &find_decl_ref(const nlohmann::json &json, int ref_id);
+  find_node_by_id(const nlohmann::json &subtree, int ref_id);
+
+  // Scoped declaration lookup: searches current_baseContractName + libraries
+  // + global scope. Handles virtual/override via overrideMap.
+  // After inheritance merging, node IDs are not unique across contracts,
+  // so this function restricts the search to the correct scope.
+  const nlohmann::json &find_decl_ref(int ref_id);
+
   static const nlohmann::json &find_constructor_ref(int ref_decl_id);
   static const nlohmann::json &
   find_constructor_ref(const std::string &contract_name);

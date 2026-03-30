@@ -406,7 +406,7 @@ bool solidity_convertert::get_func_modifier(
     int modifier_id = (*it)["modifierName"]["referencedDeclaration"];
     // we cannot use reference here, as the src_ast_json got inserted/deleted later
     const nlohmann::json mod_def =
-      find_decl_ref(src_ast_json["nodes"], modifier_id);
+      find_decl_ref(modifier_id);
     assert(!mod_def.is_null());
     assert(!mod_def.empty());
 
@@ -565,7 +565,7 @@ bool solidity_convertert::get_func_modifier(
       int next_modifier_id =
         (*next_it)["modifierName"]["referencedDeclaration"];
       const nlohmann::json &next_mod_def =
-        find_decl_ref(src_ast_json["nodes"], next_modifier_id);
+        find_decl_ref(next_modifier_id);
 
       std::string next_mod_name = next_mod_def["name"];
       std::string next_aux_func_name, next_aux_func_id;

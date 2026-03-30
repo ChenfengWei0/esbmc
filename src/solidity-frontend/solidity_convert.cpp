@@ -666,7 +666,7 @@ bool solidity_convertert::populate_auxiliary_vars()
       {
         std::string base_cname = j.first;
 
-        auto c_def = find_decl_ref(src_ast_json["nodes"], inherit_id);
+        auto c_def = find_decl_ref(inherit_id);
         assert(!c_def.empty());
 
         if (cname == c_def["name"].get<std::string>())
