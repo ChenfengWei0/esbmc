@@ -164,7 +164,7 @@ bool solidity_convertert::get_block(
   case SolidityGrammar::BlockT::BlockTError:
   default:
   {
-    assert(!"Unimplemented type in rule block");
+    log_error("Unimplemented type in rule block");
     return true;
   }
   }
@@ -318,7 +318,10 @@ bool solidity_convertert::get_statement(
       if (get_tuple_instance_name(*current_functionDecl, tname, tid))
         return true;
       if (context.find_symbol(tid) == nullptr)
+      {
+        log_error("cannot find tuple instance symbol: {}", tid);
         return true;
+      }
 
       // get lhs
       exprt lhs = symbol_expr(*context.find_symbol(tid));

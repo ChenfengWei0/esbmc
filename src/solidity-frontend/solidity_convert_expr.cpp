@@ -416,7 +416,8 @@ bool solidity_convertert::get_expr(
       break;
     }
     default:
-      assert(!"Literal not implemented");
+      log_error("Unimplemented literal type");
+      return true;
     }
     break;
   }
@@ -837,7 +838,10 @@ bool solidity_convertert::get_expr(
       log_debug("solidity", "\t\t@@@ got struct constructor call");
       // e.g. Book book = Book('Learn Java', 'TP', 1);
       if (callee_expr.type().id() != irept::id_struct)
+      {
+        log_error("expected struct type for struct constructor call");
         return true;
+      }
 
       typet t = callee_expr.type();
       exprt inits = gen_zero(t);
@@ -845,7 +849,10 @@ bool solidity_convertert::get_expr(
       int ref_id = callee_expr_json["referencedDeclaration"].get<int>();
       const nlohmann::json &struct_ref = find_decl_ref(src_ast_json, ref_id);
       if (struct_ref == empty_json)
+      {
+        log_error("cannot find struct definition for ref_id {}", ref_id);
         return true;
+      }
 
       const nlohmann::json members = struct_ref["members"];
       const nlohmann::json args = expr["arguments"];
@@ -1593,7 +1600,10 @@ bool solidity_convertert::get_expr(
     const nlohmann::json &enum_member_ref =
       find_decl_ref_unique_id(src_ast_json, enum_id);
     if (enum_member_ref == empty_json)
+    {
+      log_error("cannot find enum member reference for id {}", enum_id);
       return true;
+    }
 
     if (get_enum_member_ref(enum_member_ref, new_expr))
       return true;
@@ -1687,7 +1697,10 @@ bool solidity_convertert::get_expr(
         assert((*func_call)["nodeType"] == "FunctionCall");
 
         if ((*func_call).empty() || (*func_call).is_null())
+        {
+          log_error("failed to resolve function call in member access");
           return true;
+        }
 
         exprt arg = nil_exprt();
         assert((*func_call).contains("arguments"));
@@ -1859,7 +1872,9 @@ bool solidity_convertert::get_expr(
   }
   default:
   {
-    assert(!"Unimplemented type in rule expression");
+    log_error(
+      "Unimplemented expression type: {}",
+      SolidityGrammar::expression_to_str(type));
     return true;
   }
   }
@@ -2473,7 +2488,7 @@ bool solidity_convertert::get_binary_operator_expr(
   {
     if (get_compound_assign_expr(expr, lhs, rhs, common_type, new_expr))
     {
-      assert(!"Unimplemented binary operator");
+      log_error("Unimplemented binary operator");
       return true;
     }
 
@@ -2620,6 +2635,7 @@ bool solidity_convertert::get_compound_assign_expr(
     break;
   }
   default:
+    log_error("Unimplemented compound assignment operator");
     return true;
   }
 
@@ -2699,7 +2715,8 @@ bool solidity_convertert::get_unary_operator_expr(
   }
   default:
   {
-    assert(!"Unimplemented unary operator");
+    log_error("Unimplemented unary operator");
+    return true;
   }
   }
 
@@ -2785,7 +2802,8 @@ bool solidity_convertert::get_cast_expr(
   }
   default:
   {
-    assert(!"Unimplemented implicit cast type");
+    log_error("Unimplemented implicit cast type");
+    return true;
   }
   }
 

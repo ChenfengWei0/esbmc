@@ -602,40 +602,32 @@ bool solidity_convertert::is_var_getter_matched(
   return false;
 }
 
-void solidity_convertert::get_aux_var(
+void solidity_convertert::get_unique_name(
+  const std::string &name_prefix,
+  const std::string &id_prefix,
   std::string &aux_name,
   std::string &aux_id)
 {
   do
   {
-    aux_name = "_ESBMC_aux" + std::to_string(aux_counter);
-    aux_id = "sol:@" + aux_name;
+    aux_name = name_prefix + std::to_string(aux_counter);
+    aux_id = id_prefix + aux_name;
     ++aux_counter;
   } while (context.find_symbol(aux_id) != nullptr);
 }
 
-void solidity_convertert::get_aux_function(
+void solidity_convertert::get_aux_var(
   std::string &aux_name,
   std::string &aux_id)
 {
-  do
-  {
-    aux_name = "_ESBMC_aux" + std::to_string(aux_counter);
-    aux_id = "sol:@F@" + aux_name;
-    ++aux_counter;
-  } while (context.find_symbol(aux_id) != nullptr);
+  get_unique_name("_ESBMC_aux", "sol:@", aux_name, aux_id);
 }
 
 void solidity_convertert::get_aux_array_name(
   std::string &aux_name,
   std::string &aux_id)
 {
-  do
-  {
-    aux_name = "aux_array" + std::to_string(aux_counter);
-    aux_id = "sol:@" + aux_name;
-    ++aux_counter;
-  } while (context.find_symbol(aux_id) != nullptr);
+  get_unique_name("aux_array", "sol:@", aux_name, aux_id);
 }
 
 void solidity_convertert::get_aux_array(

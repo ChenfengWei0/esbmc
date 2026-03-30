@@ -70,7 +70,10 @@ bool solidity_convertert::get_type_description(
       return true;
 
     if (sub_type.is_struct() || sub_type.is_union())
-      assert(!"struct or union is NOT supported");
+    {
+      log_error("struct or union pointer type is not supported");
+      return true;
+    }
 
     new_type = gen_pointer_type(sub_type);
     break;
@@ -90,10 +93,11 @@ bool solidity_convertert::get_type_description(
     if (get_array_to_pointer_type(type_name, sub_type))
       return true;
 
-    if (
-      sub_type.is_struct() ||
-      sub_type.is_union()) // for "assert(sum > 100)", false || false
-      assert(!"struct or union is NOT supported");
+    if (sub_type.is_struct() || sub_type.is_union())
+    {
+      log_error("struct or union pointer type is not supported");
+      return true;
+    }
 
     new_type = gen_pointer_type(sub_type);
     break;
@@ -404,11 +408,9 @@ bool solidity_convertert::get_type_description(
   }
   default:
   {
-    log_debug(
-      "solidity",
-      "	@@@ got type name=SolidityGrammar::TypeNameT::{}",
+    log_error(
+      "Unimplemented type in rule type-name: {}",
       SolidityGrammar::type_name_to_str(type));
-    assert(!"Unimplemented type in rule type-name");
     return true;
   }
   }
@@ -543,7 +545,10 @@ bool solidity_convertert::get_array_to_pointer_type(
     new_type.set("#cpp_type", "unsigned_char");
   }
   else
-    assert(!"Unsupported types in ArrayToPinter decay");
+  {
+    log_error("Unsupported types in ArrayToPointer decay");
+    return true;
+  }
 
   // TODO: More var decl attributes checks:
   //    - Constant
@@ -783,7 +788,9 @@ bool solidity_convertert::get_elementary_type_name(
       "solidity",
       "	@@@ Got elementary-type-name={}",
       SolidityGrammar::elementary_type_name_to_str(type));
-    assert(!"Unimplemented type in rule elementary-type-name");
+    log_error(
+      "Unimplemented type in rule elementary-type-name: {}",
+      SolidityGrammar::elementary_type_name_to_str(type));
     return true;
   }
   }
@@ -862,7 +869,7 @@ bool solidity_convertert::get_parameter_list(
   }
   default:
   {
-    assert(!"Unimplemented type in rule parameter-list");
+    log_error("Unimplemented type in rule parameter-list");
     return true;
   }
   }
