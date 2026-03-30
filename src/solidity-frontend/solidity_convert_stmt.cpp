@@ -302,7 +302,7 @@ bool solidity_convertert::get_statement(
           stmt["expression"]["typeDescriptions"], return_exrp_type))
       return true;
 
-    if (return_exrp_type.get("#sol_type") == "TUPLE_RETURNS")
+    if (get_sol_type(return_exrp_type) == SolidityGrammar::SolType::TUPLE_RETURNS)
     {
       if (
         stmt["expression"]["nodeType"].get<std::string>() !=

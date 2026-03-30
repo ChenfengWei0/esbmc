@@ -184,8 +184,8 @@ bool solidity_convertert::get_var_decl(
     return true;
 
   bool is_contract =
-    t.get("#sol_type").as_string() == "CONTRACT" ? true : false;
-  bool is_mapping = t.get("#sol_type").as_string() == "MAPPING" ? true : false;
+    get_sol_type(t) == SolidityGrammar::SolType::CONTRACT ? true : false;
+  bool is_mapping = get_sol_type(t) == SolidityGrammar::SolType::MAPPING ? true : false;
   bool is_new_expr = newContractSet.count(current_contractName);
   bool is_byte_static = is_bytesN_type(t);
   if (is_new_expr)
@@ -288,7 +288,7 @@ bool solidity_convertert::get_var_decl(
 
   // 7. populate init value if there is any
   // special handling for array/dynarray
-  std::string t_sol_type = t.get("#sol_type").as_string();
+  SolidityGrammar::SolType t_sol_type = get_sol_type(t);
 
   // this pointer
   exprt this_expr;
@@ -307,7 +307,7 @@ bool solidity_convertert::get_var_decl(
   }
 
   exprt val;
-  if (t_sol_type == "ARRAY" || t_sol_type == "ARRAY_LITERAL")
+  if (t_sol_type == SolidityGrammar::SolType::ARRAY || t_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
   {
     /** 
       uint[2] z;            // uint *z = (uint *)calloc(2, sizeof(uint));
@@ -373,7 +373,7 @@ bool solidity_convertert::get_var_decl(
       decl.operands().push_back(calc_call);
     }
   }
-  else if (t_sol_type == "DYNARRAY" && set_init)
+  else if (t_sol_type == SolidityGrammar::SolType::DYNARRAY && set_init)
   {
     // Note for inherited dynamic array, they will be registered in
     // D.dyn_arr = _ESBMC_arrcpy(B.dyn_ar)
@@ -381,7 +381,7 @@ bool solidity_convertert::get_var_decl(
     if (get_init_expr(init_value, literal_type, t, val))
       return true;
 
-    if (val.is_typecast() || val.type().get("#sol_type") == "ARRAY_CALLOC")
+    if (val.is_typecast() || get_sol_type(val.type()) == SolidityGrammar::SolType::ARRAY_CALLOC)
     {
       // uint[] zz = new uint(10);
       // uint[] zz = new uint(len);
@@ -816,7 +816,7 @@ bool solidity_convertert::get_struct_class_fields(
   if (get_var_decl_ref(ast_node, false, comp))
     return true;
 
-  if (comp.type().get("#sol_type") == "MAPPING" && comp.type().is_array())
+  if (get_sol_type(comp.type()) == SolidityGrammar::SolType::MAPPING && comp.type().is_array())
   {
     //! hack: for the (non-nested) mapping from contract that is not used in a new expression
     // we convert it to a global static infinity array
@@ -913,7 +913,7 @@ bool solidity_convertert::get_noncontract_decl_ref(
     decl["contractKind"] == "library")
   {
     new_expr = code_skipt();
-    new_expr.type().set("#sol_type", "LIBRARY");
+    set_sol_type(new_expr.type(), SolidityGrammar::SolType::LIBRARY);
   }
   else
   {

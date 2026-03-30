@@ -51,7 +51,7 @@ bool solidity_convertert::get_var_decl_ref(
     return true;
 
   bool is_global_static_mapping =
-    type.get("#sol_type") == "MAPPING" && type.is_array();
+    get_sol_type(type) == SolidityGrammar::SolType::MAPPING && type.is_array();
 
   if (context.find_symbol(id) != nullptr)
     new_expr = symbol_expr(*context.find_symbol(id));
@@ -376,10 +376,11 @@ bool solidity_convertert::get_sol_builtin_ref(
         exprt dump;
         if (get_expr(expr["expression"], dump))
           return true;
-        std::string sol_str = dump.type().get("#sol_type").as_string();
-        // extract integer width: e.g. uint8 => uint + 8
+        SolidityGrammar::SolType sol_st = get_sol_type(dump.type());
+        // extract integer width: e.g. UINT8 => "UINT" + "8"
+        std::string sol_str = SolidityGrammar::sol_type_to_str(sol_st);
         std::string type = (sol_str[0] == 'U') ? "UINT" : "INT";
-        std::string width = sol_str.substr(type.size()); // Extract width part
+        std::string width = sol_str.substr(type.size());
         exprt is_signed =
           type == "INT" ? exprt(true_exprt()) : exprt(false_exprt());
 
@@ -427,11 +428,13 @@ bool solidity_convertert::get_sol_builtin_ref(
         if (get_type_description(
               expr["expression"]["typeDescriptions"], base_t))
           return true;
-        std::string solt = base_t.get("#sol_type").as_string();
-        if (solt.find("ARRAY") != std::string::npos)
+        SolidityGrammar::SolType solt = get_sol_type(base_t);
+        if (solt == SolidityGrammar::SolType::ARRAY ||
+            solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
+            solt == SolidityGrammar::SolType::DYNARRAY)
         {
           // dynamic array
-          if (solt.find("DYNARRAY") != std::string::npos)
+          if (solt == SolidityGrammar::SolType::DYNARRAY)
           {
             side_effect_expr_function_callt length_expr;
             get_library_function_call_no_args(
@@ -461,7 +464,7 @@ bool solidity_convertert::get_sol_builtin_ref(
         }
         else
         {
-          log_error("Unexpect length of {} type", solt);
+          log_error("Unexpected length of {} type", SolidityGrammar::sol_type_to_str(solt));
           return true;
         }
         new_expr.location() = l;
@@ -478,12 +481,14 @@ bool solidity_convertert::get_sol_builtin_ref(
               expr["expression"]["typeDescriptions"], base_t))
           return true;
 
-        std::string solt = base_t.get("#sol_type").as_string();
+        SolidityGrammar::SolType solt = get_sol_type(base_t);
 
         locationt l;
         get_location_from_node(expr, l);
 
-        if (solt.find("ARRAY") != std::string::npos)
+        if (solt == SolidityGrammar::SolType::ARRAY ||
+            solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
+            solt == SolidityGrammar::SolType::DYNARRAY)
         {
           // Original array push/pop logic
           assert(base_t.has_subtype());
@@ -624,7 +629,7 @@ bool solidity_convertert::get_sol_builtin_ref(
         }
         else
         {
-          log_error("Unexpected .{}() on non-array/bytes type: {}", name, solt);
+          log_error("Unexpected .{}() on non-array/bytes type: {}", name, SolidityGrammar::sol_type_to_str(solt));
           return true;
         }
         new_expr.location() = l;

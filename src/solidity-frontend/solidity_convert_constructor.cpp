@@ -473,7 +473,7 @@ bool solidity_convertert::move_initializer_to_ctor(
       exprt rhs = symbol->value;
       exprt _assign;
       if (
-        lhs.type().get("#sol_type") == "STRING" &&
+        get_sol_type(lhs.type()) == SolidityGrammar::SolType::STRING &&
         rhs.get("#zero_initializer") != "1" && rhs.id() != "string-constant")
       {
         // p = NULL;
@@ -690,7 +690,7 @@ bool solidity_convertert::move_inheritance_to_ctor(
               lhs = member_exprt(this_expr, comp.name(), comp.type());
               rhs = member_exprt(
                 symbol_expr(added_ctor_symbol), c_comp.name(), c_comp.type());
-              if (comp.type().get("#sol_type") == "STRING")
+              if (get_sol_type(comp.type()) == SolidityGrammar::SolType::STRING)
                 // it have been initialized so should have no dereference failure
                 get_string_assignment(lhs, rhs, _assign);
               else

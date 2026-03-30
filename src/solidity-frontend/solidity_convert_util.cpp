@@ -646,7 +646,7 @@ void solidity_convertert::get_aux_array(
   // typecast for element
   exprt new_src_expr = src_expr;
   new_src_expr.type().subtype() = sub_t;
-  new_src_expr.type().set("#sol_type", "ARRAY");
+  set_sol_type(new_src_expr.type(), SolidityGrammar::SolType::ARRAY);
   for (exprt &op : new_src_expr.operands())
     solidity_gen_typecast(ns, op, sub_t);
 
@@ -768,7 +768,7 @@ bool solidity_convertert::get_empty_array_ref(
   calc_call.arguments().push_back(size);
   calc_call.arguments().push_back(size_of_expr);
   new_expr = calc_call;
-  new_expr.type().set("#sol_type", "ARRAY_CALLOC");
+  set_sol_type(new_expr.type(), SolidityGrammar::SolType::ARRAY_CALLOC);
 
   return false;
 }

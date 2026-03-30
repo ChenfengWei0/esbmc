@@ -169,7 +169,7 @@ bool solidity_convertert::add_auxiliary_members(
   }
 
   t = string_t;
-  //t.set("#sol_type", "STRING");
+  //set_sol_type(t, SolidityGrammar::SolType::STRING);
   get_builtin_symbol(
     "_ESBMC_bind_cname",
     sol_prefix + "_ESBMC_bind_cname",
@@ -457,7 +457,7 @@ void solidity_convertert::get_builtin_property_expr(
   else if (name == "code" || name == "codehash" || name == "balance")
   {
     t = unsignedbv_typet(256);
-    t.set("#sol_type", "UINT256");
+    set_sol_type(t, SolidityGrammar::SolType::UINT256);
   }
   else
   {
@@ -468,7 +468,7 @@ void solidity_convertert::get_builtin_property_expr(
   exprt mem;
   if (
     base.is_member() && (base.op0().name() == "this" ||
-                         base.op0().type().get("#sol_type") == "CONTRACT"))
+                         get_sol_type(base.op0().type()) == SolidityGrammar::SolType::CONTRACT))
     // e.g. address(_ins_).balance => _ins_.balance
     //      address(this) => this->address
     //TODO: fixme! this pattern match is weak

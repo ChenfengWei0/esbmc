@@ -433,7 +433,7 @@ bool solidity_convertert::get_expr(
     const auto &func_ref = find_node_by_id(
       src_ast_json, expr["referencedDeclaration"].get<int>());
 
-    if (t.get("#sol_type") == "ENUM")
+    if (get_sol_type(t) == SolidityGrammar::SolType::ENUM)
     {
       /*
       "expression": {
@@ -471,7 +471,7 @@ bool solidity_convertert::get_expr(
     if (get_library_function_call(func_ref, args_json, call))
       return true;
 
-    if (!(base.is_code() && base.type().get("#sol_type") == "LIBRARY"))
+    if (!(base.is_code() && get_sol_type(base.type()) == SolidityGrammar::SolType::LIBRARY))
       // this means it is a using for library
       call.arguments().insert(call.arguments().begin(), base);
 
@@ -768,7 +768,7 @@ bool solidity_convertert::get_literal_expr(
             "Unsupported bytes literal type in expression: {}", expr.dump());
           return true;
         }
-        call.type().set("#sol_type", "BytesStatic");
+        set_sol_type(call.type(), SolidityGrammar::SolType::BYTES_STATIC);
         call.type().set("#sol_bytesn_size", expected_size);
         new_expr = make_aux_var(call, location);
         return false;
@@ -832,12 +832,12 @@ bool solidity_convertert::get_literal_expr(
           exprt dynamic_pool;
           if (get_dynamic_pool(current_contractName, dynamic_pool))
             return true;
-          str_call.type().set("#sol_type", "BytesDynamic");
+          set_sol_type(str_call.type(), SolidityGrammar::SolType::BYTES_DYN);
           str_call.arguments().push_back(dynamic_pool);
         }
         else
         {
-          str_call.type().set("#sol_type", "BytesStatic");
+          set_sol_type(str_call.type(), SolidityGrammar::SolType::BYTES_STATIC);
           str_call.type().set(
             "#sol_bytesn_size", byte_t.get("#sol_bytesn_size"));
         }
@@ -868,7 +868,7 @@ bool solidity_convertert::get_literal_expr(
       {
         if (convert_hex_literal(the_value, new_expr))
           return true;
-        new_expr.type().set("#sol_type", "INT_CONST");
+        set_sol_type(new_expr.type(), SolidityGrammar::SolType::INT_CONST);
       }
       else if (convert_integer_literal(literal_type, the_value, new_expr))
         return true;
@@ -892,7 +892,7 @@ bool solidity_convertert::get_literal_expr(
     {
       if (convert_hex_literal(the_value, new_expr, 160))
         return true;
-      new_expr.type().set("#sol_type", "ADDRESS");
+      set_sol_type(new_expr.type(), SolidityGrammar::SolType::ADDRESS);
       break;
     }
     case SolidityGrammar::ElementaryTypeNameT::ADDRESS_PAYABLE:
@@ -900,7 +900,7 @@ bool solidity_convertert::get_literal_expr(
       // 20 bytes
       if (convert_hex_literal(the_value, new_expr, 160))
         return true;
-      new_expr.type().set("#sol_type", "ADDRESS_PAYABLE");
+      set_sol_type(new_expr.type(), SolidityGrammar::SolType::ADDRESS_PAYABLE);
       break;
     }
     default:
@@ -965,7 +965,7 @@ bool solidity_convertert::get_tuple_expr(
       // declare static array tuple
       exprt inits;
       inits = gen_zero(arr_type);
-      inits.type().set("#sol_type", "ARRAY_LITERAL");
+      set_sol_type(inits.type(), SolidityGrammar::SolType::ARRAY_LITERAL);
       inits.type().set("#sol_array_size", size.cformat().as_string());
 
       // populate array
@@ -1432,7 +1432,7 @@ bool solidity_convertert::get_contract_member_call_expr(
       // special checks for mapping
       // e.g. _b.map(0)
       // => map[0] or map_uint_get(ins , 0);
-      if (comp.type().get("#sol_type") == "MAPPING")
+      if (get_sol_type(comp.type()) == SolidityGrammar::SolType::MAPPING)
       {
         assert(func_call_json.contains("arguments"));
         assert(member_decl_ref.contains("typeName"));
@@ -1454,7 +1454,7 @@ bool solidity_convertert::get_contract_member_call_expr(
         }
         // get key/value type
         typet key_t, value_t;
-        std::string key_sol_type, val_sol_type;
+        SolidityGrammar::SolType key_sol_type, val_sol_type;
         if (get_mapping_key_value_type(
               member_decl_ref, key_t, value_t, key_sol_type, val_sol_type))
         {
@@ -1653,7 +1653,7 @@ bool solidity_convertert::get_index_access_expr(
     typet base_t;
     if (get_type_description(base_json["typeDescriptions"], base_t))
       return true;
-    if (base_t.get("#sol_type").as_string() == "MAPPING")
+    if (get_sol_type(base_t) == SolidityGrammar::SolType::MAPPING)
     {
       // hack to improve the verification speed
       bool is_new_expr = newContractSet.count(current_contractName);
@@ -1672,7 +1672,7 @@ bool solidity_convertert::get_index_access_expr(
 
       // get key/value type
       typet key_t, value_t;
-      std::string key_sol_type, val_sol_type;
+      SolidityGrammar::SolType key_sol_type, val_sol_type;
       if (get_mapping_key_value_type(
             map_node, key_t, value_t, key_sol_type, val_sol_type))
       {
@@ -1908,7 +1908,7 @@ bool solidity_convertert::get_new_object_expr(
 
         // assert(b[0] ==  (new bytes(4))[0]);
         new_expr = make_aux_var(call, location);
-        new_expr.type().set("#sol_type", "BytesDynamic");
+        set_sol_type(new_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
         return false;
       }
     }
@@ -2125,8 +2125,8 @@ bool solidity_convertert::get_binary_operator_expr(
 
   typet lt = lhs.type();
   typet rt = rhs.type();
-  std::string lt_sol = lt.get("#sol_type").as_string();
-  std::string rt_sol = rt.get("#sol_type").as_string();
+  SolidityGrammar::SolType lt_sol = get_sol_type(lt);
+  SolidityGrammar::SolType rt_sol = get_sol_type(rt);
 
   // 2.1 special handling for the sol_unbound harness
   convert_unboundcall_nondet(lhs, common_type, l);
@@ -2186,8 +2186,8 @@ bool solidity_convertert::get_binary_operator_expr(
           convert_type_expr(ns, lhs, common_type, expr);
         }
 
-        lt_sol = lhs.type().get("#sol_type").as_string();
-        rt_sol = rhs.type().get("#sol_type").as_string();
+        lt_sol = get_sol_type(lhs.type());
+        rt_sol = get_sol_type(rhs.type());
         is_static = is_bytesN_type(lhs.type()) && is_bytesN_type(rhs.type());
         is_dynamic = is_bytes_type(lhs.type()) && is_bytes_type(rhs.type());
 
@@ -2203,7 +2203,7 @@ bool solidity_convertert::get_binary_operator_expr(
         }
         else
         {
-          log_error("Incompatible bytes comparison: {} vs {}", lt_sol, rt_sol);
+          log_error("Incompatible bytes comparison: {} vs {}", SolidityGrammar::sol_type_to_str(lt_sol), SolidityGrammar::sol_type_to_str(rt_sol));
           return true;
         }
       }
@@ -2238,7 +2238,8 @@ bool solidity_convertert::get_binary_operator_expr(
       if (!is_bytesN_type(lt))
       {
         log_error(
-          "Shift operations only supported on bytesN types, got {}", lt_sol);
+          "Shift operations only supported on bytesN types, got {}",
+          SolidityGrammar::sol_type_to_str(lt_sol));
         return true;
       }
 
@@ -2323,15 +2324,15 @@ bool solidity_convertert::get_binary_operator_expr(
   {
     // special handling for tuple-type assignment;
     //TODO: handle nested tuple
-    if (rt_sol == "TUPLE_INSTANCE" || rt_sol == "TUPLE_RETURNS")
+    if (rt_sol == SolidityGrammar::SolType::TUPLE_INSTANCE || rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS)
     {
       construct_tuple_assigments(expr, lhs, rhs);
       new_expr = code_skipt();
       return false;
     }
-    else if (rt_sol == "ARRAY" || rt_sol == "ARRAY_LITERAL")
+    else if (rt_sol == SolidityGrammar::SolType::ARRAY || rt_sol == SolidityGrammar::SolType::ARRAY_LITERAL)
     {
-      if (rt_sol == "ARRAY_LITERAL")
+      if (rt_sol == SolidityGrammar::SolType::ARRAY_LITERAL)
         // construct aux_array while adding padding
         // e.g. data1 = [1,2] ==> data1 = aux_array$1
         convert_type_expr(ns, rhs, lhs, expr);
@@ -2358,7 +2359,7 @@ bool solidity_convertert::get_binary_operator_expr(
 
       rhs = acpy_call;
     }
-    else if (rt_sol == "DYNARRAY")
+    else if (rt_sol == SolidityGrammar::SolType::DYNARRAY)
     {
       /* e.g. 
         int[] public data1;
@@ -2389,7 +2390,7 @@ bool solidity_convertert::get_binary_operator_expr(
       rhs = acpy_call;
       // fall through to do assignment
     }
-    else if (rt_sol == "ARRAY_CALLOC")
+    else if (rt_sol == SolidityGrammar::SolType::ARRAY_CALLOC)
     {
       /* e.g. 
         int[] memory ac;
@@ -2420,7 +2421,7 @@ bool solidity_convertert::get_binary_operator_expr(
 
       rhs = acpy_call;
     }
-    else if (lt_sol == "STRING")
+    else if (lt_sol == SolidityGrammar::SolType::STRING)
     {
       get_string_assignment(lhs, rhs, new_expr);
       return false;

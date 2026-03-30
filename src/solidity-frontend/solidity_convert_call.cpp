@@ -226,7 +226,7 @@ void solidity_convertert::extract_new_contracts()
             log_error("failed to obtain typeDescriptions");
             abort();
           }
-          if (new_type.get("#sol_type") == "CONTRACT")
+          if (get_sol_type(new_type) == SolidityGrammar::SolType::CONTRACT)
           {
             std::string contract_name = new_type.get("#sol_contract").c_str();
             newContractSet.insert(contract_name);
@@ -377,7 +377,7 @@ bool solidity_convertert::assign_param_nondet(
       typet t;
       if (get_type_description(p_node["typeDescriptions"], t))
         return true;
-      if (t.get("#sol_type") == "CONTRACT")
+      if (get_sol_type(t) == SolidityGrammar::SolType::CONTRACT)
       {
         /*
             e.g. function run(Base x)
@@ -394,7 +394,7 @@ bool solidity_convertert::assign_param_nondet(
         get_static_contract_instance_ref(base_cname, s);
         call.arguments().push_back(s);
       }
-      else if (t.get("#sol_type") == "STRING" && is_pointer_check)
+      else if (get_sol_type(t) == SolidityGrammar::SolType::STRING && is_pointer_check)
       {
         //! specific for string, we need to explicitly assign it as nondet_string()
         // otherwise we will get invalid_object
@@ -538,7 +538,7 @@ bool solidity_convertert::get_high_level_member_access(
 
   // get 'Base'
   std::string _cname;
-  if (base.type().get("#sol_type") != "CONTRACT")
+  if (get_sol_type(base.type()) != SolidityGrammar::SolType::CONTRACT)
   {
     log_error("Expecting contract type");
     base.type().dump();
@@ -625,7 +625,7 @@ bool solidity_convertert::get_high_level_member_access(
 
   // now we need to consider the binding
 
-  if (member.type().get("#sol_type") == "TUPLE_RETURNS")
+  if (get_sol_type(member.type()) == SolidityGrammar::SolType::TUPLE_RETURNS)
   {
     log_error("Unsupported return tuple");
     return true;
@@ -944,7 +944,7 @@ bool solidity_convertert::get_low_level_member_accsss(
     if (options != nullptr)
     {
       // do call#1(this, addr, value) (call with ether)
-      addr.type().set("#sol_type", "ADDRESS_PAYABLE");
+      set_sol_type(addr.type(), SolidityGrammar::SolType::ADDRESS_PAYABLE);
       exprt value;
       // type should be uint256
       nlohmann::json literal_type = {
@@ -963,7 +963,7 @@ bool solidity_convertert::get_low_level_member_accsss(
     else
     {
       // To call#0(this, addr)
-      addr.type().set("#sol_type", "ADDRESS");
+      set_sol_type(addr.type(), SolidityGrammar::SolType::ADDRESS);
 
       std::string func_id = "sol:@C@" + cname + "@F@$call#0";
       get_library_function_call_no_args(func_name, func_id, bool_t, loc, call);

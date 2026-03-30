@@ -218,7 +218,7 @@ bool solidity_convertert::get_type_description(
           integer2string(z_ext_value),
           int_type()));
       new_type.set("#sol_array_size", the_size);
-      new_type.set("#sol_type", "ARRAY_LITERAL");
+      set_sol_type(new_type, SolidityGrammar::SolType::ARRAY_LITERAL);
     }
     else
     {
@@ -261,7 +261,7 @@ bool solidity_convertert::get_type_description(
 
       // 3. make pointer
       new_type = gen_pointer_type(sub_type);
-      new_type.set("#sol_type", "DYNARRAY");
+      set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
     }
 
     break;
@@ -276,7 +276,7 @@ bool solidity_convertert::get_type_description(
     std::string id = prefix + cname;
 
     new_type = pointer_typet(symbol_typet(id));
-    new_type.set("#sol_type", "CONTRACT");
+    set_sol_type(new_type, SolidityGrammar::SolType::CONTRACT);
     new_type.set("#sol_contract", cname);
     break;
   }
@@ -322,7 +322,7 @@ bool solidity_convertert::get_type_description(
   case SolidityGrammar::TypeNameT::EnumTypeName:
   {
     new_type = enum_type();
-    new_type.set("#sol_type", "ENUM");
+    set_sol_type(new_type, SolidityGrammar::SolType::ENUM);
     break;
   }
   case SolidityGrammar::TypeNameT::StructTypeName:
@@ -356,7 +356,7 @@ bool solidity_convertert::get_type_description(
 
     const std::string id = prefix + "struct " + token;
     new_type = symbol_typet(id);
-    new_type.set("#sol_type", "STRUCT");
+    set_sol_type(new_type, SolidityGrammar::SolType::STRUCT);
     break;
   }
   case SolidityGrammar::TypeNameT::MappingTypeName:
@@ -384,7 +384,7 @@ bool solidity_convertert::get_type_description(
       new_type = array_typet();
       new_type.size(exprt("infinity"));
     }
-    new_type.set("#sol_type", "MAPPING");
+    set_sol_type(new_type, SolidityGrammar::SolType::MAPPING);
     break;
   }
   case SolidityGrammar::TypeNameT::TupleTypeName:
@@ -392,7 +392,7 @@ bool solidity_convertert::get_type_description(
     // do nothing as it won't be used
     new_type = struct_typet();
     new_type.set("#cpp_type", "void");
-    new_type.set("#sol_type", "TUPLE_RETURNS");
+    set_sol_type(new_type, SolidityGrammar::SolType::TUPLE_RETURNS);
     break;
   }
   case SolidityGrammar::TypeNameT::ErrorTypeName:
@@ -654,7 +654,7 @@ bool solidity_convertert::get_elementary_type_name(
     if (get_elementary_type_name_uint(type, new_type))
       return true;
 
-    new_type.set("#sol_type", elementary_type_name_to_str(type));
+    set_sol_type(new_type, SolidityGrammar::elementary_to_sol_type(type));
     break;
   }
   case SolidityGrammar::ElementaryTypeNameT::INT8:
@@ -693,7 +693,7 @@ bool solidity_convertert::get_elementary_type_name(
     if (get_elementary_type_name_int(type, new_type))
       return true;
 
-    new_type.set("#sol_type", elementary_type_name_to_str(type));
+    set_sol_type(new_type, SolidityGrammar::elementary_to_sol_type(type));
     break;
   }
   case SolidityGrammar::ElementaryTypeNameT::INT_LITERAL:
@@ -701,7 +701,7 @@ bool solidity_convertert::get_elementary_type_name(
     // for int_const type
     new_type = signedbv_typet(256);
     new_type.set("#cpp_type", "signed_char");
-    new_type.set("#sol_type", "INT_CONST");
+    set_sol_type(new_type, SolidityGrammar::SolType::INT_CONST);
     break;
   }
   case SolidityGrammar::ElementaryTypeNameT::BOOL:
@@ -777,7 +777,7 @@ bool solidity_convertert::get_elementary_type_name(
     auto json = find_last_parent(src_ast_json, type_name);
     assert(!json.empty());
     string_constantt x(json["value"].get<std::string>());
-    x.type().set("#sol_type", "STRING_LITERAL");
+    set_sol_type(x.type(), SolidityGrammar::SolType::STRING_LITERAL);
     new_type = x.type();
 
     break;
@@ -864,7 +864,7 @@ bool solidity_convertert::get_parameter_list(
     assert(type_name["parameters"].size() > 1);
     new_type = empty_typet();
     new_type.set("#cpp_type", "void");
-    new_type.set("#sol_type", "TUPLE_RETURNS");
+    set_sol_type(new_type, SolidityGrammar::SolType::TUPLE_RETURNS);
     break;
   }
   default:
@@ -899,16 +899,16 @@ bool solidity_convertert::get_array_pointer_type(
         return true;
     }
     new_type.set("#sol_array_size", length);
-    new_type.set("#sol_type", "ARRAY");
+    set_sol_type(new_type, SolidityGrammar::SolType::ARRAY);
   }
   else
-    new_type.set("#sol_type", "DYNARRAY");
+    set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
   return false;
 }
 
 bool solidity_convertert::is_byte_type(const typet &t)
 {
-  if (t.get("#sol_type").as_string().compare(0, 5, "Bytes") == 0)
+  if (SolidityGrammar::is_bytes_type(get_sol_type(t)))
     return true;
   if (
     t.is_struct() &&
@@ -919,8 +919,8 @@ bool solidity_convertert::is_byte_type(const typet &t)
 
 bool solidity_convertert::is_bytesN_type(const typet &t)
 {
-  std::string solt = t.get("#sol_type").as_string();
-  if (solt == "BytesStatic")
+  SolidityGrammar::SolType solt = get_sol_type(t);
+  if (solt == SolidityGrammar::SolType::BYTES_STATIC)
     return true;
   if (t.is_struct() && t.type().tag() == "BytesStatic")
     return true;
@@ -929,9 +929,9 @@ bool solidity_convertert::is_bytesN_type(const typet &t)
 
 bool solidity_convertert::is_bytes_type(const typet &t)
 {
-  // expects t like "bytes1", "bytes2", ..., "bytes32"
-  std::string solt = t.get("#sol_type").as_string();
-  if (solt == "BytesDynamic")
+  // expects t like "bytes" (dynamic)
+  SolidityGrammar::SolType solt = get_sol_type(t);
+  if (solt == SolidityGrammar::SolType::BYTES_DYN)
     return true;
   if (t.is_struct() && t.type().tag() == "BytesDynamic")
     return true;
@@ -959,13 +959,15 @@ void solidity_convertert::convert_type_expr(
 
   typet src_type = src_expr.type();
   typet dest_type = dest_expr.type();
-  std::string src_sol_type = src_type.get("#sol_type").as_string();
-  std::string dest_sol_type = dest_type.get("#sol_type").as_string();
+  SolidityGrammar::SolType src_sol_type = get_sol_type(src_type);
+  SolidityGrammar::SolType dest_sol_type = get_sol_type(dest_type);
 
   bool not_same_type = false;
   if (src_type != dest_type)
     not_same_type = true;
-  else if (!src_sol_type.empty() && !dest_sol_type.empty())
+  else if (
+    src_sol_type != SolidityGrammar::SolType::UNSET &&
+    dest_sol_type != SolidityGrammar::SolType::UNSET)
   {
     if (src_sol_type != dest_sol_type)
       not_same_type = true;
@@ -981,11 +983,17 @@ void solidity_convertert::convert_type_expr(
   // only do conversion when the src.type != dest.type
   if (not_same_type)
   {
-    log_debug("solidity", "\t\tGot src_sol_type = {}", src_sol_type);
-    if (src_sol_type.empty())
+    log_debug(
+      "solidity",
+      "\t\tGot src_sol_type = {}",
+      SolidityGrammar::sol_type_to_str(src_sol_type));
+    if (src_sol_type == SolidityGrammar::SolType::UNSET)
       log_debug("solidity", "{}", src_type.to_string());
-    log_debug("solidity", "\t\tGot dest_sol_type = {}", dest_sol_type);
-    if (dest_sol_type.empty())
+    log_debug(
+      "solidity",
+      "\t\tGot dest_sol_type = {}",
+      SolidityGrammar::sol_type_to_str(dest_sol_type));
+    if (dest_sol_type == SolidityGrammar::SolType::UNSET)
       log_debug("solidity", "{}", dest_type.to_string());
 
     if (is_byte_type(src_type) && is_byte_type(dest_type))
@@ -1017,7 +1025,7 @@ void solidity_convertert::convert_type_expr(
         resize_call.arguments().push_back(len_expr);
 
         src_expr = make_aux_var(resize_call, src_expr.location());
-        src_expr.type().set("#sol_type", "BytesStatic");
+        set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_STATIC);
         return;
       }
 
@@ -1037,7 +1045,7 @@ void solidity_convertert::convert_type_expr(
         from_static_call.arguments().push_back(pool_member);
 
         src_expr = make_aux_var(from_static_call, src_expr.location());
-        src_expr.type().set("#sol_type", "BytesDynamic");
+        set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
         return;
       }
 
@@ -1059,7 +1067,7 @@ void solidity_convertert::convert_type_expr(
         resize_dyn_call.arguments().push_back(pool_member);
 
         src_expr = make_aux_var(resize_dyn_call, src_expr.location());
-        src_expr.type().set("#sol_type", "BytesStatic");
+        set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_STATIC);
         return;
       }
 
@@ -1078,7 +1086,7 @@ void solidity_convertert::convert_type_expr(
         copy_call.arguments().push_back(pool_member);
 
         src_expr = make_aux_var(copy_call, src_expr.location());
-        src_expr.type().set("#sol_type", "BytesDynamic");
+        set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
         return;
       }
     }
@@ -1104,7 +1112,7 @@ void solidity_convertert::convert_type_expr(
           call);
         src_expr = make_aux_var(src_expr, src_expr.location());
         call.arguments().push_back(src_expr);
-        call.type().set("#sol_type", "BytesDynamic");
+        set_sol_type(call.type(), SolidityGrammar::SolType::BYTES_DYN);
 
         // resolve pool_data: this.dynamic_pool
         exprt pool_member;
@@ -1139,11 +1147,13 @@ void solidity_convertert::convert_type_expr(
         call.arguments().push_back(len_expr);
 
         src_expr = make_aux_var(call, loc);
-        src_expr.type().set("#sol_type", "BytesStatic");
+        set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_STATIC);
       }
       else
       {
-        log_error("Unknown bytes destination type: {}", dest_sol_type);
+        log_error(
+          "Unknown bytes destination type: {}",
+          SolidityGrammar::sol_type_to_str(dest_sol_type));
         abort();
       }
     }
@@ -1235,14 +1245,14 @@ void solidity_convertert::convert_type_expr(
       return;
     }
     else if (
-      (dest_sol_type == "ADDRESS" || dest_sol_type == "ADDRESS_PAYABLE") &&
-      (src_sol_type == "CONTRACT" || src_sol_type.empty()))
+      (SolidityGrammar::is_address_type(dest_sol_type)) &&
+      (src_sol_type == SolidityGrammar::SolType::CONTRACT || src_sol_type == SolidityGrammar::SolType::UNSET))
     {
       // CONTRACT: address(instance) ==> instance.address
       // EMPTY: address(this) ==> this.address
       std::string comp_name = "$address";
       typet t;
-      if (dest_sol_type == "ADDRESS")
+      if (dest_sol_type == SolidityGrammar::SolType::ADDRESS)
         t = addr_t;
       else
         t = addrp_t;
@@ -1250,8 +1260,8 @@ void solidity_convertert::convert_type_expr(
       src_expr = member_exprt(src_expr, comp_name, t);
     }
     else if (
-      (src_sol_type == "ADDRESS" || src_sol_type == "ADDRESS_PAYABLE") &&
-      dest_sol_type == "CONTRACT")
+      (SolidityGrammar::is_address_type(src_sol_type)) &&
+      dest_sol_type == SolidityGrammar::SolType::CONTRACT)
     {
       // E.g. for `Derive x = Derive(_addr)`:
       // => Derive* x = &_ESBMC_Obeject_Derive;
@@ -1263,10 +1273,10 @@ void solidity_convertert::convert_type_expr(
 
       // type conversion
       src_expr = address_of_exprt(c_ins);
-      src_expr.type().set("#sol_type", "CONTRACT");
+      set_sol_type(src_expr.type(), SolidityGrammar::SolType::CONTRACT);
     }
     else if (
-      (src_sol_type == "ARRAY_LITERAL") && src_type.id() == typet::id_array)
+      (src_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL) && src_type.id() == typet::id_array)
     {
       // this means we are handling a constant array
       // which should be assigned to an array pointer
@@ -1302,7 +1312,7 @@ void solidity_convertert::convert_type_expr(
       std::string dest_size = dest_type.get("#sol_array_size").as_string();
       if (dest_size.empty())
       {
-        if (dest_sol_type == "ARRAY")
+        if (dest_sol_type == SolidityGrammar::SolType::ARRAY)
         {
           log_error("Unexpected empty-length fixed array");
           abort();
@@ -1326,7 +1336,7 @@ void solidity_convertert::convert_type_expr(
         // - src_expr: [1, z]
         // - dest_type: uint*
         array_typet arr_t = array_typet(dest_type.subtype(), dest_array_size);
-        arr_t.set("#sol_type", "ARRAY");
+        set_sol_type(arr_t, SolidityGrammar::SolType::ARRAY);
         arr_t.set("#sol_array_size", src_size);
         exprt new_arr = exprt(irept::id_array, arr_t);
 

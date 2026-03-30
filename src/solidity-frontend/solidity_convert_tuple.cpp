@@ -111,7 +111,7 @@ bool solidity_convertert::get_tuple_instance(
 
   // get type
   typet t = context.find_symbol(id)->type;
-  t.set("#sol_type", "TUPLE_INSTANCE");
+  set_sol_type(t, SolidityGrammar::SolType::TUPLE_INSTANCE);
   assert(t.id() == typet::id_struct);
 
   // get instance name,id
@@ -275,7 +275,7 @@ void solidity_convertert::get_llc_ret_tuple(symbolt &s)
   const symbolt &struct_sym = *context.find_symbol(_id);
 
   typet sym_t = struct_sym.type;
-  sym_t.set("#sol_type", "TUPLE_INSTANCE");
+  set_sol_type(sym_t, SolidityGrammar::SolType::TUPLE_INSTANCE);
 
   std::string name, id;
   name = "tuple_instance$" + std::to_string(aux_counter);
@@ -354,12 +354,12 @@ bool solidity_convertert::construct_tuple_assigments(
 
   typet lt = lhs.type();
   typet rt = rhs.type();
-  std::string lt_sol = lt.get("#sol_type").as_string();
-  std::string rt_sol = rt.get("#sol_type").as_string();
+  SolidityGrammar::SolType lt_sol = get_sol_type(lt);
+  SolidityGrammar::SolType rt_sol = get_sol_type(rt);
 
   assert(lt.is_code() && to_code(lhs).statement() == "block");
   exprt new_rhs = rhs;
-  if (rt_sol == "TUPLE_RETURNS")
+  if (rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS)
   {
     // e.g. (x,y) = func(); (x,y) = func(func2()); (x, (x,y)) = (x, func());
     // ==>
@@ -419,7 +419,7 @@ void solidity_convertert::get_tuple_assignment(
   exprt rop)
 {
   exprt assign_expr;
-  if (lop.type().get("#sol_type") == "STRING")
+  if (get_sol_type(lop.type()) == SolidityGrammar::SolType::STRING)
     get_string_assignment(lop, rop, assign_expr);
   else
   {

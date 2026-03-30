@@ -52,6 +52,16 @@ public:
   static const nlohmann::json &
   find_constructor_ref(const std::string &contract_name);
 
+  // Set/get SolType enum on a typet via the #sol_type irep attribute.
+  static void set_sol_type(typet &t, SolidityGrammar::SolType st)
+  {
+    t.set("#sol_type", SolidityGrammar::sol_type_to_str(st));
+  }
+  static SolidityGrammar::SolType get_sol_type(const typet &t)
+  {
+    return SolidityGrammar::str_to_sol_type(t.get("#sol_type").as_string());
+  }
+
   // json nodes that always empty
   // used as the return value for find_constructor_ref when
   // dealing with the implicit constructor call
@@ -485,8 +495,8 @@ protected:
     const nlohmann::json &map_node,
     typet &key_t,
     typet &value_t,
-    std::string &key_sol_type,
-    std::string &val_sol_type);
+    SolidityGrammar::SolType &key_sol_type,
+    SolidityGrammar::SolType &val_sol_type);
   void gen_mapping_key_typecast(
     const std::string &c_name,
     exprt &pos,
@@ -494,7 +504,7 @@ protected:
     const typet &key_type);
   bool get_new_mapping_index_access(
     const typet &value_t,
-    const std::string &val_sol_type,
+    SolidityGrammar::SolType val_sol_type,
     bool is_mapping_set,
     const exprt &array,
     const exprt &pos,

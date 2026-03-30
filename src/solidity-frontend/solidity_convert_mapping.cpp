@@ -37,8 +37,8 @@ bool solidity_convertert::get_mapping_key_value_type(
   const nlohmann::json &map_node,
   typet &key_t,
   typet &value_t,
-  std::string &key_sol_type,
-  std::string &val_sol_type)
+  SolidityGrammar::SolType &key_sol_type,
+  SolidityGrammar::SolType &val_sol_type)
 {
   assert(map_node.contains("typeName"));
   if (get_type_description(
@@ -55,9 +55,9 @@ bool solidity_convertert::get_mapping_key_value_type(
   }
 
   // set type flag
-  key_sol_type = key_t.get("#sol_type").as_string();
-  val_sol_type = value_t.get("#sol_type").as_string();
-  if (val_sol_type.empty())
+  key_sol_type = get_sol_type(key_t);
+  val_sol_type = get_sol_type(value_t);
+  if (val_sol_type == SolidityGrammar::SolType::UNSET)
     return true;
   return false;
 }
@@ -215,8 +215,10 @@ void solidity_convertert::gen_mapping_key_typecast(
   const locationt &location,
   const typet &key_type)
 {
-  std::string key_sol_type = key_type.get("#sol_type").as_string();
-  if (key_sol_type == "STRING" || key_sol_type == "STRING_LITERAL")
+  SolidityGrammar::SolType key_sol_type = get_sol_type(key_type);
+  if (
+    key_sol_type == SolidityGrammar::SolType::STRING ||
+    key_sol_type == SolidityGrammar::SolType::STRING_LITERAL)
   {
     side_effect_expr_function_callt str2uint_call;
     assert(context.find_symbol("c:@F@str2uint") != nullptr);
@@ -283,7 +285,7 @@ void solidity_convertert::gen_mapping_key_typecast(
 */
 bool solidity_convertert::get_new_mapping_index_access(
   const typet &value_t,
-  const std::string &val_sol_type,
+  SolidityGrammar::SolType val_sol_type,
   bool is_mapping_set,
   const exprt &array,
   const exprt &pos,
@@ -293,24 +295,27 @@ bool solidity_convertert::get_new_mapping_index_access(
   std::string val_flg;
   typet func_type;
   if (
-    val_sol_type.find("UINT") != std::string::npos ||
-    val_sol_type.find("Bytes") != std::string::npos ||
-    val_sol_type.find("ADDRESS") != std::string::npos || val_sol_type == "ENUM")
+    SolidityGrammar::is_uint_type(val_sol_type) ||
+    SolidityGrammar::is_bytes_type(val_sol_type) ||
+    SolidityGrammar::is_address_type(val_sol_type) ||
+    val_sol_type == SolidityGrammar::SolType::ENUM)
   {
     val_flg = "uint";
     func_type = unsignedbv_typet(256);
   }
-  else if (val_sol_type.find("INT") != std::string::npos)
+  else if (SolidityGrammar::is_int_type(val_sol_type))
   {
     val_flg = "int";
     func_type = signedbv_typet(256);
   }
-  else if (val_sol_type == "BOOL")
+  else if (val_sol_type == SolidityGrammar::SolType::BOOL)
   {
     val_flg = "bool";
     func_type = bool_typet();
   }
-  else if (val_sol_type == "STRING" || val_sol_type == "STRING_LITERAL")
+  else if (
+    val_sol_type == SolidityGrammar::SolType::STRING ||
+    val_sol_type == SolidityGrammar::SolType::STRING_LITERAL)
   {
     val_flg = "string";
     func_type = value_t;
@@ -339,7 +344,7 @@ bool solidity_convertert::get_new_mapping_index_access(
     log_error(
       "cannot find mapping ref {}. Got val_sol_type={}",
       func_name,
-      val_sol_type);
+      SolidityGrammar::sol_type_to_str(val_sol_type));
     return true;
   }
   side_effect_expr_function_callt call;
@@ -425,7 +430,7 @@ bool solidity_convertert::get_new_mapping_index_access(
     exprt map_struct_get;
     std::string struct_contract_name = value_t.identifier().as_string();
     assert(!struct_contract_name.empty());
-    assert(val_sol_type == "STRUCT"); // t_symbol
+    assert(val_sol_type == SolidityGrammar::SolType::STRUCT); // t_symbol
     get_mapping_struct_function(
       value_t, struct_contract_name, call, map_struct_get);
 

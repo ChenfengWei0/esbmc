@@ -73,7 +73,7 @@ bool solidity_convertert::get_function_definition(
 
   // special handling for tuple:
   // construct a tuple type and a tuple instance
-  if (type.return_type().get("#sol_type") == "TUPLE_RETURNS")
+  if (get_sol_type(type.return_type()) == SolidityGrammar::SolType::TUPLE_RETURNS)
   {
     exprt dump;
     if (get_tuple_definition(*current_functionDecl))

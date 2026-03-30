@@ -112,7 +112,7 @@ bool solidity_convertert::convert_string_literal(
   string_constantt string(the_value);
 
   dest.swap(string);
-  dest.type().set("#sol_type", "STRING_LITERAL");
+  set_sol_type(dest.type(), SolidityGrammar::SolType::STRING_LITERAL);
   return false;
 }
 

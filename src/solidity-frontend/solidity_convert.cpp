@@ -85,27 +85,27 @@ solidity_convertert::solidity_convertert(
   get_library_function_call_no_args(
     "nondet_uint", "c:@F@nondet_uint", uint_type(), l, nondet_uint_expr);
 
-  nondet_bool_expr.type().set("#sol_type", "BOOL");
-  nondet_uint_expr.type().set("#sol_type", "UINT256");
+  set_sol_type(nondet_bool_expr.type(), SolidityGrammar::SolType::BOOL);
+  set_sol_type(nondet_uint_expr.type(), SolidityGrammar::SolType::UINT256);
 
   addr_t = unsignedbv_typet(160);
-  addr_t.set("#sol_type", "ADDRESS");
+  set_sol_type(addr_t, SolidityGrammar::SolType::ADDRESS);
 
   addrp_t = unsignedbv_typet(160);
-  addrp_t.set("#sol_type", "ADDRESS_PAYABLE");
+  set_sol_type(addrp_t, SolidityGrammar::SolType::ADDRESS_PAYABLE);
 
   string_t = pointer_typet(signed_char_type());
-  string_t.set("#sol_type", "STRING");
+  set_sol_type(string_t, SolidityGrammar::SolType::STRING);
 
   bool_t = bool_type();
-  bool_t.set("#sol_type", "BOOL");
+  set_sol_type(bool_t, SolidityGrammar::SolType::BOOL);
   bool_t.set("#cpp_type", "bool");
 
   byte_dynamic_t = symbol_typet(lib_prefix + "BytesDynamic");
-  byte_dynamic_t.set("#sol_type", "BytesDynamic");
+  set_sol_type(byte_dynamic_t, SolidityGrammar::SolType::BYTES_DYN);
 
   byte_static_t = symbol_typet(lib_prefix + "BytesStatic");
-  byte_static_t.set("#sol_type", "BytesStatic");
+  set_sol_type(byte_static_t, SolidityGrammar::SolType::BYTES_STATIC);
 }
 
 // Convert smart contracts into symbol tables
@@ -737,7 +737,7 @@ bool solidity_convertert::populate_auxiliary_vars()
     aux_cid = "sol:@" + aux_cname;
 
     string_constantt string(contract_name);
-    string.type().set("#sol_type", "STRING_LITERAL");
+    set_sol_type(string.type(), SolidityGrammar::SolType::STRING_LITERAL);
     typet ct = string_t;
     ct.cmt_constant(true);
     symbolt s;
@@ -791,7 +791,7 @@ bool solidity_convertert::populate_auxiliary_vars()
     typet ct = string_t;
     ct.cmt_constant(true);
     array_typet arr_t(ct, size_expr);
-    arr_t.set("#sol_type", "ARRAY");
+    set_sol_type(arr_t, SolidityGrammar::SolType::ARRAY);
     arr_t.set("#sol_array_size", std::to_string(length));
 
     std::string aux_name, aux_id;
