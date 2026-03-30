@@ -24,7 +24,7 @@ The core converter is a single class `solidity_convertert` (declared in `solidit
 | `solidity_convert_tuple.cpp` | Tuple definition, instantiation, assignment unpacking |
 | `solidity_convert_inheritance.cpp` | Contract inheritance handling |
 | `solidity_convert_literals.cpp` | Literal conversion (integer, bool, string, hex) |
-| `solidity_grammar.cpp/h` | Grammar enums and type mapping tables |
+| `solidity_grammar.cpp/h` | Grammar enums, `SolType` enum, type mapping and classification functions |
 | `solidity_language.cpp/h` | Language plugin interface |
 | `pattern_check.cpp/h` | Vulnerability pattern detection (e.g. SWC-115 tx.origin) |
 
@@ -185,59 +185,68 @@ After inheritance merging, AST node IDs are **not unique** across contracts (inh
 | `find_node_by_id(subtree, id)` | Pure DFS — find node by ID in any subtree |
 | `find_decl_ref(id)` | Scoped lookup: searches `current_baseContractName` + libraries + globals, falls back to `overrideMap` |
 
-### Solidity ↔ C Type Mapping (`#sol_type`)
+### Solidity ↔ C Type Mapping (`SolType` enum)
 
-The `#sol_type` attribute is a string stored on `typet` objects to preserve Solidity type semantics through the C/irep2 pipeline. It is set via `type.set("#sol_type", "...")` and read via `type.get("#sol_type")`.
+The `SolidityGrammar::SolType` enum (defined in `solidity_grammar.h`) annotates `typet` objects to preserve Solidity type semantics through the C/irep2 pipeline. Stored in irep via the `#sol_type` attribute, but accessed only through type-safe helpers:
+
+```cpp
+set_sol_type(typet &t, SolidityGrammar::SolType st);   // solidity_convert.h
+SolidityGrammar::SolType get_sol_type(const typet &t);  // solidity_convert.h
+```
+
+Classification functions (in `SolidityGrammar` namespace):
+- `is_uint_type(SolType)` — UINT8–UINT256
+- `is_int_type(SolType)` — INT8–INT256 (excluding UINT)
+- `is_integer_type(SolType)` — all integers
+- `is_bytesN_type(SolType)` — BYTES1–BYTES32
+- `is_bytes_type(SolType)` — BYTES1–BYTES32 + BYTES_DYN + BYTES_STATIC
+- `is_address_type(SolType)` — ADDRESS + ADDRESS_PAYABLE
+- `elementary_to_sol_type(ElementaryTypeNameT)` — maps grammar enum to SolType
 
 **Value types:**
 
-| Solidity | `#sol_type` string | irep2/C type |
-|----------|-------------------|--------------|
-| `uint8`–`uint256` (×32) | `"UINT8"`–`"UINT256"` | `unsignedbv_typet(N)` |
-| `int8`–`int256` (×32) | `"INT8"`–`"INT256"` | `signedbv_typet(N)` |
-| `bool` | `"BOOL"` | `bool_type()` |
-| `address` | `"ADDRESS"` | `unsignedbv_typet(160)` |
-| `address payable` | `"ADDRESS_PAYABLE"` | `unsignedbv_typet(160)` |
-| `bytes1`–`bytes32` (×32) | *(not set — uses `#sol_bytesn_size`)* | `symbol_typet(lib_prefix + "BytesStatic")` |
-| `bytes` (dynamic) | `"BytesDynamic"` | `symbol_typet(lib_prefix + "BytesDynamic")` |
-| `string` | `"STRING"` | `pointer_typet(signed_char_type())` |
-| `enum` | `"ENUM"` | `enum_type()` (= `unsignedbv_typet(8)`) |
+| Solidity | `SolType` enum | irep2/C type |
+|----------|---------------|--------------|
+| `uint8`–`uint256` (×32) | `UINT8`–`UINT256` | `unsignedbv_typet(N)` |
+| `int8`–`int256` (×32) | `INT8`–`INT256` | `signedbv_typet(N)` |
+| `bool` | `BOOL` | `bool_type()` |
+| `address` | `ADDRESS` | `unsignedbv_typet(160)` |
+| `address payable` | `ADDRESS_PAYABLE` | `unsignedbv_typet(160)` |
+| `bytes1`–`bytes32` (×32) | `BYTES_STATIC` *(inherited from `byte_static_t`)* | `symbol_typet(lib_prefix + "BytesStatic")` with `#sol_bytesn_size` |
+| `bytes` (dynamic) | `BYTES_DYN` | `symbol_typet(lib_prefix + "BytesDynamic")` |
+| `string` | `STRING` | `pointer_typet(signed_char_type())` |
+| `enum` | `ENUM` | `enum_type()` (= `unsignedbv_typet(8)`) |
 
 **Composite/reference types:**
 
-| Solidity | `#sol_type` string | irep2/C type |
-|----------|-------------------|--------------|
-| `T[N]` (static array) | `"ARRAY"` / `"ARRAY_LITERAL"` | `array_typet(sub, size)` with `#sol_array_size` |
-| `T[]` (dynamic array) | `"DYNARRAY"` | `pointer_typet(sub_type)` |
-| `mapping(K=>V)` | `"MAPPING"` | `array_typet()` (infinity size) or `symbol_typet("mapping_t")` |
-| `struct S` | `"STRUCT"` | `symbol_typet(prefix + "struct " + name)` |
-| contract instance | `"CONTRACT"` | `pointer_typet(symbol_typet(id))` with `#sol_contract` |
-| library | `"LIBRARY"` | `code_typet(...)` (marker only) |
+| Solidity | `SolType` enum | irep2/C type |
+|----------|---------------|--------------|
+| `T[N]` (static array) | `ARRAY` / `ARRAY_LITERAL` | `array_typet(sub, size)` with `#sol_array_size` |
+| `T[]` (dynamic array) | `DYNARRAY` | `pointer_typet(sub_type)` |
+| `mapping(K=>V)` | `MAPPING` | `array_typet()` (infinity size) or `symbol_typet("mapping_t")` |
+| `struct S` | `STRUCT` | `symbol_typet(prefix + "struct " + name)` |
+| contract instance | `CONTRACT` | `pointer_typet(symbol_typet(id))` with `#sol_contract` |
+| library | `LIBRARY` | `code_typet(...)` (marker only) |
 
 **Literals/temporaries:**
 
-| Concept | `#sol_type` string | irep2/C type |
-|---------|-------------------|--------------|
-| integer constant | `"INT_CONST"` | `signedbv_typet(256)` |
-| string literal | `"STRING_LITERAL"` | `string_constantt(...).type()` |
-| array literal | `"ARRAY_LITERAL"` | `array_typet(sub, size)` |
-| new allocation | `"ARRAY_CALLOC"` | (allocation marker) |
-| BytesStatic (runtime) | `"BytesStatic"` | `symbol_typet(lib_prefix + "BytesStatic")` |
-| BytesDynamic (runtime) | `"BytesDynamic"` | `symbol_typet(lib_prefix + "BytesDynamic")` |
+| Concept | `SolType` enum | irep2/C type |
+|---------|---------------|--------------|
+| integer constant | `INT_CONST` | `signedbv_typet(256)` |
+| string literal | `STRING_LITERAL` | `string_constantt(...).type()` |
+| array literal | `ARRAY_LITERAL` | `array_typet(sub, size)` |
+| new allocation | `ARRAY_CALLOC` | (allocation marker) |
+| BytesStatic (runtime) | `BYTES_STATIC` | `symbol_typet(lib_prefix + "BytesStatic")` |
+| BytesDynamic (runtime) | `BYTES_DYN` | `symbol_typet(lib_prefix + "BytesDynamic")` |
 
 **Internal tuple types:**
 
-| Concept | `#sol_type` string | irep2/C type |
-|---------|-------------------|--------------|
-| multi-return | `"TUPLE_RETURNS"` | `struct_typet()` |
-| tuple instance | `"TUPLE_INSTANCE"` | (derived from function return type) |
+| Concept | `SolType` enum | irep2/C type |
+|---------|---------------|--------------|
+| multi-return | `TUPLE_RETURNS` | `struct_typet()` |
+| tuple instance | `TUPLE_INSTANCE` | (derived from function return type) |
 
-**Known issues with current `#sol_type` system:**
-1. 86+ string set/get operations scattered across 10+ files with no central constant definitions
-2. Dispatch uses `find("UINT")` substring matching — fragile and could match unintended types
-3. `bytes1`–`bytes32` have no explicit sol_type set; inconsistent with other elementary types
-4. `BOOL`, `ADDRESS`, `ADDRESS_PAYABLE` sol_type set only in member init, not in `get_elementary_type_name()`
-5. Mixes Solidity semantic types (UINT256, BOOL) with internal modeling types (BytesStatic, TUPLE_RETURNS, ARRAY_CALLOC) in the same attribute
+**Note:** `bytes1`–`bytes32` inherit `BYTES_STATIC` from the `byte_static_t` member (not individually typed as `BYTES1`–`BYTES32`) and are differentiated only by the `#sol_bytesn_size` irep attribute. The `SolType` enum defines `BYTES1`–`BYTES32` for future use, but they are not yet assigned in `get_elementary_type_name()` due to downstream code paths that depend on the `BYTES_STATIC` value.
 
 ### RAII State Guards
 
