@@ -163,6 +163,40 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 7. Data location semantics — soundness improvement
 8. Free functions — increasingly common pattern
 
+## Code Architecture Notes
+
+### Expression Conversion (`get_expr`)
+
+The main expression converter `get_expr()` dispatches to focused handler functions:
+- `get_decl_ref_expr()` — variable/function/contract reference resolution
+- `get_literal_expr()` — integer, bool, string, hex, bytes literals
+- `get_tuple_expr()` — tuple expressions (init lists, swap, multi-return)
+- `get_call_expr()` — function calls (builtin, struct ctor, normal, event/error)
+- `get_contract_member_call_expr()` — cross-contract member access (x.func(), x.data())
+- `get_index_access_expr()` — array/mapping index access
+- `get_new_object_expr()` — `new` expressions (contract instantiation, dynamic arrays)
+
+### Declaration Lookup (`find_decl_ref`)
+
+After inheritance merging, AST node IDs are **not unique** across contracts (inherited nodes are copied into derived contracts). The lookup system uses three layers:
+
+| Function | Scope | Used When |
+|----------|-------|-----------|
+| `find_decl_ref_in_contract(j, id)` | Unscoped DFS in subtree `j` | Raw lookup, called by `find_decl_ref_unique_id` |
+| `find_decl_ref_global(j, id)` | Scoped: only searches `current_baseContractName` + libraries + globals | Post-merge expression conversion |
+| `find_decl_ref(j, id)` | Scoped + override-aware (falls back to `overrideMap`) | Main entry point for expression conversion |
+| `find_decl_ref_unique_id(j, id)` | Unscoped full DFS | Pre-merge and during merging (IDs still unique in context) |
+
+### RAII State Guards
+
+The converter uses `ScopeGuard<T>` and `StackGuard<T>` templates for safe save/restore of mutable state:
+- `current_baseContractName` — scoped contract context for `find_decl_ref`
+- `current_BinOp_type` — stack-based type context for binary operator conversion
+
+### Auxiliary Name Generation
+
+`get_unique_name(name_prefix, id_prefix, ...)` is the shared helper for generating collision-free auxiliary variable/function/array names. Called by `get_aux_var()` and `get_aux_array_name()`.
+
 ## Building & Testing Solidity
 
 **Prerequisites:** `solc` (Solidity compiler) must be installed.
