@@ -7,13 +7,14 @@ CC_DIAGNOSTIC_POP()
 
 #include <solidity-frontend/solidity_language.h>
 #include <solidity-frontend/solidity_convert.h>
-#include <solidity-frontend/solidity_template.h>
 #include <clang-cpp-frontend/clang_cpp_main.h>
 #include <clang-cpp-frontend/clang_cpp_adjust.h>
 #include <clang-cpp-frontend/clang_cpp_convert.h>
 #include <c2goto/cprover_library.h>
 #include <util/c_link.h>
 #include "filesystem.h"
+#include <unordered_set>
+#include <unordered_map>
 
 languaget *new_solidity_language()
 {
@@ -45,8 +46,9 @@ solidity_languaget::solidity_languaget()
 
 std::string solidity_languaget::get_temp_file()
 {
-  // Create a temp file for clang-tool
-  // needed to convert intrinsics
+  // Create a minimal temp file for clang-tool to parse ESBMC intrinsic symbols.
+  // Only includes standard headers (for nondet, assert, etc.) and a dummy main.
+  // Solidity operational models are loaded separately from c2goto (sol64).
   static std::once_flag flag;
   static std::string p;
 
@@ -54,7 +56,7 @@ std::string solidity_languaget::get_temp_file()
     p = file_operations::create_tmp_dir("esbmc_solidity_temp-%%%%-%%%%-%%%%")
           .path();
     boost::filesystem::create_directories(p);
-    p += "/libary.cpp";
+    p += "/intrinsics.cpp";
     std::ofstream f(p);
     if (!f)
     {
@@ -62,7 +64,16 @@ std::string solidity_languaget::get_temp_file()
         "Can't create temporary directory (needed to convert intrinsics)");
       abort();
     }
-    f << temp_cpp_file();
+    f << R"(
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <assert.h>
+#include <string.h>
+#include <ctype.h>
+int main() { return 0; }
+)";
   });
 
   return p;
@@ -70,20 +81,15 @@ std::string solidity_languaget::get_temp_file()
 
 bool solidity_languaget::parse(const std::string &path)
 {
-  /// For c
-  // prepare temp file
+  // Phase 1: Parse a minimal C++ file through Clang to get ESBMC intrinsic
+  // symbols (nondet_bool, nondet_uint, __ESBMC_assert, etc.)
   temp_path = get_temp_file();
-
-  // get AST nodes of ESBMC intrinsics and the dummy main
-  // populate ASTs inherited from parent class
   auto sol_lang = std::exchange(config.language, {language_idt::CPP, ""});
   if (clang_cpp_languaget::parse(temp_path))
     return true;
-
-  /// For solidity
   config.language = std::move(sol_lang);
 
-  // Process AST json file
+  // Phase 2: Parse Solidity AST JSON
   std::ifstream ast_json_file_stream(path);
   std::string new_line;
   std::vector<nlohmann::json> json_blocks;
@@ -140,24 +146,46 @@ bool solidity_languaget::convert_intrinsics(contextt &context)
 bool solidity_languaget::typecheck(contextt &context, const std::string &module)
 {
   contextt new_context;
-  convert_intrinsics(
-    new_context); // Add ESBMC and TACAS intrinsic symbols to the context
 
-  // Load pre-compiled Solidity operational models (builtins, mapping, array, etc.)
+  // Phase 1: Convert ESBMC intrinsic symbols (nondet_bool, nondet_uint,
+  // __ESBMC_assert, etc.) from Clang AST into the context.
+  convert_intrinsics(new_context);
+
+  // Phase 2: Load Solidity operational models from the separate sol64 goto
+  // binary (builtins, mapping, array, bytes, string, address, units, misc).
   add_cprover_library(new_context, this);
 
+  // Record which symbols came from phases 1+2 (before converter adds its own)
+  std::unordered_set<std::string> lib_symbols;
+  new_context.foreach_operand(
+    [&lib_symbols](const symbolt &s) { lib_symbols.insert(s.id.as_string()); });
+
+  // Phase 3: Convert Solidity AST to ESBMC IR
   solidity_convertert converter(
     new_context, src_ast_json_array, contract_names, func_name, contract_path);
-  if (converter.convert()) // Add Solidity symbols to the context
+  if (converter.convert())
     return true;
 
-  // migrate from clang_c_adjust to clang_cpp_adjust
-  // for the reason that we need clang_cpp_adjust::adjust_side_effect
-  // to adjust the created temporary object
-  // otherwise it would raise "unknown side effect: temporary_object"
+  // Phase 4: Adjust converter-generated code. Save and restore sol64 function
+  // bodies because clang_cpp_adjust would corrupt them (they are already
+  // adjusted by c2goto's clang_c_adjust).
+  std::unordered_map<std::string, exprt> saved_values;
+  new_context.Foreach_operand([&](symbolt &s) {
+    if (lib_symbols.count(s.id.as_string()) && s.value.is_not_nil())
+      saved_values[s.id.as_string()] = s.value;
+  });
+
   clang_cpp_adjust adjuster(new_context);
   if (adjuster.adjust())
     return true;
+
+  // Restore pre-adjusted function bodies from intrinsics and sol64
+  for (auto &[id, val] : saved_values)
+  {
+    symbolt *s = new_context.find_symbol(id);
+    if (s)
+      s->value = std::move(val);
+  }
 
   if (c_link(
         context, new_context, module)) // also populates language_uit::context
@@ -181,16 +209,4 @@ bool solidity_languaget::final(contextt &context)
   // roll back
   config.language = {language_idt::SOLIDITY, ""};
   return false;
-}
-
-std::string solidity_languaget::temp_cpp_file()
-{
-  // This function populates the temp file so that Clang has a compilation job.
-  // Clang needs a job to convert the intrinsics.
-  // Solidity operational models are now loaded via c2goto pre-compiled library,
-  // but we still need the type definitions for convert_intrinsics() and the
-  // string templates that are referenced during Solidity AST conversion.
-  std::string content =
-    SolidityTemplate::sol_library + R"(int main() { return 0; })";
-  return content;
 }

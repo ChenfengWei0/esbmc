@@ -1,5 +1,4 @@
 #include <solidity-frontend/solidity_convert.h>
-#include <solidity-frontend/solidity_template.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>
 #include <util/bitvector.h>
@@ -99,7 +98,7 @@ bool solidity_convertert::get_dynamic_pool(
   }
 
   pool =
-    member_exprt(cur_this_expr, "$dynamic_pool", symbol_typet("tag-BytesPool"));
+    member_exprt(cur_this_expr, "$dynamic_pool", symbol_typet(lib_prefix + "BytesPool"));
 
   return false;
 }

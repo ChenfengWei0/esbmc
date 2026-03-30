@@ -1,5 +1,4 @@
 #include <solidity-frontend/solidity_convert.h>
-#include <solidity-frontend/solidity_template.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>
 #include <util/bitvector.h>
@@ -378,7 +377,7 @@ bool solidity_convertert::get_type_description(
     }
 
     if (is_new_expr)
-      new_type = symbol_typet(prefix + "mapping_t");
+      new_type = symbol_typet(lib_prefix + "mapping_t");
     else
     {
       // we will populate the size type later

@@ -1,5 +1,4 @@
 #include <solidity-frontend/solidity_convert.h>
-#include <solidity-frontend/solidity_template.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>
 #include <util/bitvector.h>
@@ -136,7 +135,7 @@ bool solidity_convertert::add_auxiliary_members(
     get_library_function_call_no_args(
       "bytes_pool_init",
       "c:@F@bytes_pool_init",
-      symbol_typet("tag-BytesPool"),
+      symbol_typet(lib_prefix + "BytesPool"),
       l,
       init_call);
 
@@ -144,7 +143,7 @@ bool solidity_convertert::add_auxiliary_members(
     get_builtin_symbol(
       "$dynamic_pool",
       sol_prefix + "$dynamic_pool#",
-      symbol_typet("tag-BytesPool"),
+      symbol_typet(lib_prefix + "BytesPool"),
       l,
       init_call,
       contract_name);

@@ -45,6 +45,11 @@ extern "C"
   extern const uint8_t clib64_fp_cherip_buf[];
   extern const unsigned int clib32_fp_cherip_buf_size;
   extern const unsigned int clib64_fp_cherip_buf_size;
+
+#ifdef ENABLE_SOLIDITY_FRONTEND
+  extern const uint8_t sol64_buf[];
+  extern const unsigned int sol64_buf_size;
+#endif
 }
 
 namespace
@@ -443,8 +448,26 @@ void add_cprover_library(contextt &context, const languaget *language)
   if (language && language->id() == "python")
     goto_reader.set_functions_to_read(python_c_models);
 
+  // Solidity uses a separate, smaller goto binary (sol64) for fast loading.
+  // No whitelist needed: sol64 contains ONLY Solidity symbols.
+  const uint8_t *lib_start;
+  unsigned int lib_size;
+  bool is_solidity = false;
+#ifdef ENABLE_SOLIDITY_FRONTEND
   if (language && language->id() == "solidity_ast")
-    goto_reader.set_functions_to_read(solidity_c_models);
+  {
+    lib_start = sol64_buf;
+    lib_size = sol64_buf_size;
+    is_solidity = true;
+  }
+  else
+#endif
+  {
+    if (language && language->id() == "python")
+      goto_reader.set_functions_to_read(python_c_models);
+    lib_start = clib->start;
+    lib_size = clib->size;
+  }
 
   /* Python: actively has a function filter
    *    - not everything makes it into new_ctx
@@ -455,8 +478,9 @@ void add_cprover_library(contextt &context, const languaget *language)
    */
   contextt ignored_ctx;
   if (goto_reader.read_goto_binary_array(
-        clib->start, clib->size, new_ctx, ignored_ctx, goto_functions))
+        lib_start, lib_size, new_ctx, ignored_ctx, goto_functions))
     abort();
+
 
   // Traverse symbols and get dependencies from both their nested types and values
   new_ctx.foreach_operand([&symbol_deps](const symbolt &s) {
@@ -484,23 +508,24 @@ void add_cprover_library(contextt &context, const languaget *language)
    * store_ctx is what actually gets merged into the existing, final context
    */
 
+  // Determine whether this language uses a whitelist-based loading strategy.
+  // Python: uses whitelist with clib64 → symbols split between new_ctx/ignored_ctx.
+  // Solidity: uses dedicated sol64 binary → ALL symbols in new_ctx, no whitelist.
+  bool uses_whitelist =
+    language && language->id() == "python";
+
   new_ctx.foreach_operand([&context,
                            &store_ctx,
                            &symbol_deps,
                            &to_include,
-                           &language](const symbolt &s) {
+                           &is_solidity,
+                           &uses_whitelist](const symbolt &s) {
     const symbolt *symbol = context.find_symbol(s.id);
     if (
-      (language &&
-       (language->id() == "python" || language->id() == "solidity_ast")) ||
+      (is_solidity || uses_whitelist) ||
       (symbol != nullptr && symbol->value.is_nil()))
     {
       store_ctx.add(s);
-
-      // ingest_symbol takes this added symbol and goes through symbol_deps
-      // it only moves dependencies from symbol_deps to to_include
-      //    if they're dependencies for a symbol that is definitely being included
-      //    (i.e. in store_ctx)
       ingest_symbol(s.id, symbol_deps, to_include);
     }
   });
@@ -508,14 +533,12 @@ void add_cprover_library(contextt &context, const languaget *language)
   /* Now iterate through the dependencies that we know we want to add (due to ingest_symbol filter)
    * These will be symbols that didn't make it into store_ctx
    *
-   * For Python:
-   *    - symbols that didn't make it into store_ctx didn't make it because they're not in new_ctx
-   *    - they will be found in ignored_ctx
-   *
-   * For other frontends:
-   *    - every symbol made it into new_ctx (no ignored_ctx)
-   *    - not every symbol made it into store_ctx from new_ctx
-   *    - they will be found in new_ctx
+   * For Python (whitelist):
+   *    - symbols not in whitelist go to ignored_ctx, dependencies found there
+   * For Solidity (dedicated binary, no whitelist):
+   *    - all symbols already in new_ctx, dependencies found in new_ctx
+   * For other frontends (no filter):
+   *    - everything in new_ctx, dependencies found in new_ctx
    */
   for (std::list<irep_idt>::const_iterator nameit = to_include.begin();
        nameit != to_include.end();
@@ -523,10 +546,6 @@ void add_cprover_library(contextt &context, const languaget *language)
   {
     symbolt *s;
 
-    // Look in the appropriate place for this symbol
-    bool uses_whitelist =
-      language &&
-      (language->id() == "python" || language->id() == "solidity_ast");
     if (uses_whitelist)
     {
       s = ignored_ctx.find_symbol(*nameit);
@@ -540,11 +559,6 @@ void add_cprover_library(contextt &context, const languaget *language)
     {
       store_ctx.add(*s);
 
-      /* Whitelisted frontends haven't looked for dependencies for symbols that
-       * aren't in the function whitelist, (since they're not put in new_ctx);
-       * other frontends have these dependencies already available in symbol_deps.
-       * Therefore add dependencies that result from this new symbol
-       */
       if (uses_whitelist)
       {
         generate_symbol_deps(s->id, s->value, symbol_deps);

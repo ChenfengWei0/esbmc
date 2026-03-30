@@ -27,19 +27,15 @@ public:
 
   void show_parse(std::ostream &out) override;
 
-  // temp file used by clang-c-frontend
+  // temp file for Clang to parse ESBMC intrinsic symbols
   std::string temp_path;
-
-  // Functions to handle temp C file used by clang-c-frontend
   std::string get_temp_file();
-  std::string temp_cpp_file();
+  bool convert_intrinsics(contextt &context);
 
   languaget *new_language() const override
   {
     return new solidity_languaget;
   }
-
-  bool convert_intrinsics(contextt &context);
 
   // contract name for verification, allow multiple inputs.
   std::string contract_names;

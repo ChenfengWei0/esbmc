@@ -1,5 +1,4 @@
 #include <solidity-frontend/solidity_convert.h>
-#include <solidity-frontend/solidity_template.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>
 #include <util/bitvector.h>
@@ -271,10 +270,10 @@ void solidity_convertert::get_tuple_function_call(const exprt &op)
 void solidity_convertert::get_llc_ret_tuple(symbolt &s)
 {
   log_debug("solidity", "\tconvert return value to tuple");
-  std::string _id = "tag-sol_llc_ret";
+  std::string _id = lib_prefix + "sol_llc_ret";
   if (context.find_symbol(_id) == nullptr)
   {
-    log_error("cannot find library symbol tag-sol_llc_ret");
+    log_error("cannot find library symbol {}", _id);
     abort();
   }
   const symbolt &struct_sym = *context.find_symbol(_id);
@@ -296,7 +295,15 @@ void solidity_convertert::get_llc_ret_tuple(symbolt &s)
   // value
   typet t = struct_sym.type;
   exprt inits = gen_zero(t);
-  inits.op0() = nondet_bool_expr;
+  // Cast nondet_bool to match the struct field type (C frontend compiles
+  // _Bool/bool as unsigned int in struct layout due to padding)
+  exprt bool_val = nondet_bool_expr;
+  if (inits.op0().type() != nondet_bool_expr.type())
+  {
+    typecast_exprt cast(nondet_bool_expr, inits.op0().type());
+    bool_val = cast;
+  }
+  inits.op0() = bool_val;
   inits.op1() = nondet_uint_expr;
   added_sym.value = inits;
   s = added_sym;

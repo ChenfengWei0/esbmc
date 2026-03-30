@@ -1,5 +1,4 @@
 #include <solidity-frontend/solidity_convert.h>
-#include <solidity-frontend/solidity_template.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>
 #include <util/bitvector.h>
@@ -479,14 +478,14 @@ bool solidity_convertert::get_var_decl(
     symbolt arr_s;
     std::string mapping_struct_name = "_ESBMC_Mapping";
 
-    if (context.find_symbol(prefix + mapping_struct_name) == nullptr)
+    if (context.find_symbol(lib_prefix + mapping_struct_name) == nullptr)
     {
       log_error("failed to find _ESBMC_Mapping reference");
       return true;
     }
 
     typet arr_t = array_typet(
-      symbol_typet(prefix + mapping_struct_name), exprt("infinity"));
+      symbol_typet(lib_prefix + mapping_struct_name), exprt("infinity"));
     get_default_symbol(
       arr_s, debug_modulename, arr_t, arr_name, arr_id, location_begin);
     arr_s.static_lifetime = true;
@@ -497,7 +496,7 @@ bool solidity_convertert::get_var_decl(
 
     // 2. construct mapping_t struct instance's value
     typet map_t;
-    map_t = context.find_symbol(prefix + "mapping_t")->type;
+    map_t = context.find_symbol(lib_prefix + "mapping_t")->type;
 
     assert(map_t.is_struct());
     exprt inits = gen_zero(map_t);

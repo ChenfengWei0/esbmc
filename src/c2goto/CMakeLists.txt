@@ -170,9 +170,8 @@ function(mangle_clib output)
       list(APPEND inputs_c ${c2goto_python_files})
     endif()
 
-    if(ENABLE_SOLIDITY_FRONTEND)
-      list(APPEND inputs_c ${c2goto_solidity_files})
-    endif()
+    # Solidity models are built as a separate goto binary (sol64.goto),
+    # NOT mixed into clib64, for faster runtime loading.
 
     if(ESBMC_CHERI_CLANG)
       list(APPEND in_flags -I "${cheri_compressed_cap_SOURCE_DIR}")
@@ -184,7 +183,7 @@ function(mangle_clib output)
     # Convert a list of C operational models (e.g. *.c) into a single goto binary file (e.g. clib32.goto) at CMake build time
     add_custom_command(OUTPUT ${out_goto}
       COMMAND ${run_c2goto}
-      DEPENDS c2goto ${c2goto_library_files} ${c2goto_libm_files} ${c2goto_header_files} ${c2goto_python_files} ${c2goto_solidity_files}
+      DEPENDS c2goto ${c2goto_library_files} ${c2goto_libm_files} ${c2goto_header_files} ${c2goto_python_files}
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
       COMMENT "Generating libc model ${out_goto}"
       VERBATIM
@@ -241,9 +240,32 @@ function(mangle_clib output)
            MACRO ESBMC_FLAIL
            ACC_HEADERS_INTO ${CMAKE_CURRENT_BINARY_DIR}/libsolidity.h)
 
+    # Build a separate goto binary for Solidity operational models (sol64.goto)
+    # This is loaded at runtime instead of the full clib64.goto for performance.
+    set(sol64_goto "${CMAKE_CURRENT_BINARY_DIR}/sol64.goto")
+    set(sol64_c "${CMAKE_CURRENT_BINARY_DIR}/sol64.c")
+    add_custom_command(OUTPUT ${sol64_goto}
+      COMMAND c2goto ${multiarch_flags} ${OS_C2GOTO_FLAGS}
+              ${c2goto_solidity_files} --64 --fixedbv -D__ESBMC_FIXEDBV
+              --output ${sol64_goto}
+      DEPENDS c2goto ${c2goto_solidity_files} ${c2goto_header_files}
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+      COMMENT "Generating Solidity model ${sol64_goto}"
+      VERBATIM
+    )
+    add_custom_command(OUTPUT ${sol64_c}
+      COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/flail.py
+              -o ${sol64_c} ${sol64_goto}
+      DEPENDS ${sol64_goto} ${CMAKE_SOURCE_DIR}/scripts/flail.py
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+      COMMENT "Converting Solidity model ${sol64_goto} to data"
+      VERBATIM
+    )
+
     list(APPEND result
       ${CMAKE_CURRENT_BINARY_DIR}/libsolidity.c
-      ${CMAKE_CURRENT_BINARY_DIR}/libsolidity.h)
+      ${CMAKE_CURRENT_BINARY_DIR}/libsolidity.h
+      ${sol64_c})
   endif()
 
 

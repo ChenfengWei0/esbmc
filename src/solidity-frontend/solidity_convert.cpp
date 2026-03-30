@@ -1,5 +1,4 @@
 #include <solidity-frontend/solidity_convert.h>
-#include <solidity-frontend/solidity_template.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>
 #include <util/bitvector.h>
@@ -103,10 +102,10 @@ solidity_convertert::solidity_convertert(
   bool_t.set("#sol_type", "BOOL");
   bool_t.set("#cpp_type", "bool");
 
-  byte_dynamic_t = symbol_typet(prefix + "BytesDynamic");
+  byte_dynamic_t = symbol_typet(lib_prefix + "BytesDynamic");
   byte_dynamic_t.set("#sol_type", "BytesDynamic");
 
-  byte_static_t = symbol_typet(prefix + "BytesStatic");
+  byte_static_t = symbol_typet(lib_prefix + "BytesStatic");
   byte_static_t.set("#sol_type", "BytesStatic");
 }
 

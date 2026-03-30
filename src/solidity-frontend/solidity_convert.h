@@ -722,8 +722,11 @@ protected:
 
   std::unordered_map<std::string, std::vector<func_sig>> funcSignatures;
 
-  // The prefix for the id of each class
+  // The prefix for the id of each class (Solidity-defined structs)
   std::string prefix = "tag-";
+
+  // The prefix for c2goto library struct types (C frontend uses "struct" in tag)
+  std::string lib_prefix = "tag-struct ";
 
   // for auxiliary var name
   int aux_counter;
