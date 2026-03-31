@@ -240,6 +240,7 @@ enum BlockT
   BlockForStatement,
   BlockIfStatement,
   BlockWhileStatement,
+  BlockDoWhileStatement,
   BlockExpressionStatement,
   BlockTError
 };
@@ -256,6 +257,7 @@ enum StatementT
   ForStatement,          // rule for-statement
   IfStatement,           // rule if-statement
   WhileStatement,
+  DoWhileStatement,
   StatementTError,
   ContinueStatement,    // rule continue
   BreakStatement,       // rule break

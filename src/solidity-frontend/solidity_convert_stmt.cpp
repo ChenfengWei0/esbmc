@@ -156,6 +156,7 @@ bool solidity_convertert::get_block(
   case SolidityGrammar::BlockT::BlockForStatement:
   case SolidityGrammar::BlockT::BlockIfStatement:
   case SolidityGrammar::BlockT::BlockWhileStatement:
+  case SolidityGrammar::BlockT::BlockDoWhileStatement:
   {
     // this means only one statement in the block
     exprt statement;
@@ -590,6 +591,25 @@ bool solidity_convertert::get_statement(
     code_while.body() = body;
 
     new_expr = code_while;
+    break;
+  }
+  case SolidityGrammar::StatementT::DoWhileStatement:
+  {
+    exprt cond = true_exprt();
+    if (get_expr(stmt["condition"], cond))
+      return true;
+
+    codet body = codet();
+    if (get_block(stmt["body"], body))
+      return true;
+
+    convert_expression_to_code(body);
+
+    code_dowhilet code_dowhile;
+    code_dowhile.cond() = cond;
+    code_dowhile.body() = body;
+
+    new_expr = code_dowhile;
     break;
   }
   case SolidityGrammar::StatementT::ContinueStatement:

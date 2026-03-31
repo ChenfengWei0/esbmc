@@ -640,6 +640,10 @@ BlockT get_block_t(const nlohmann::json &block)
   {
     return BlockWhileStatement;
   }
+  else if (block["nodeType"] == "DoWhileStatement")
+  {
+    return BlockDoWhileStatement;
+  }
   else if (block["nodeType"] == "ExpressionStatement")
   {
     return BlockExpressionStatement;
@@ -660,6 +664,7 @@ const char *block_to_str(BlockT type)
     ENUM_TO_STR(BlockForStatement)
     ENUM_TO_STR(BlockIfStatement)
     ENUM_TO_STR(BlockWhileStatement)
+    ENUM_TO_STR(BlockDoWhileStatement)
     ENUM_TO_STR(BlockExpressionStatement)
     ENUM_TO_STR(BlockTError)
   default:
@@ -700,6 +705,10 @@ StatementT get_statement_t(const nlohmann::json &stmt)
   else if (stmt["nodeType"] == "WhileStatement")
   {
     return WhileStatement;
+  }
+  else if (stmt["nodeType"] == "DoWhileStatement")
+  {
+    return DoWhileStatement;
   }
   else if (stmt["nodeType"] == "Continue")
   {
@@ -746,6 +755,7 @@ const char *statement_to_str(StatementT type)
     ENUM_TO_STR(ForStatement)
     ENUM_TO_STR(IfStatement)
     ENUM_TO_STR(WhileStatement)
+    ENUM_TO_STR(DoWhileStatement)
     ENUM_TO_STR(StatementTError)
     ENUM_TO_STR(ContinueStatement)
     ENUM_TO_STR(BreakStatement)
