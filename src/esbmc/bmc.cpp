@@ -580,6 +580,11 @@ static std::string prettify_solidity_expr(const std::string &expr)
   static const std::regex bracket_paren(R"(\[\(([^()]*)\)\])");
   s = std::regex_replace(s, bracket_paren, "[$1]");
 
+  // Prettify Solidity internal symbol IDs: sol:@C@Contract@F@func#N -> func
+  // Appears in "function entry: sol:@C@..." messages
+  static const std::regex sol_id_re(R"(sol:@C@\w+@F@(\w+)#\d*)");
+  s = std::regex_replace(s, sol_id_re, "$1");
+
   // Clean up extra spaces from removed casts
   static const std::regex multi_space(R"(  +)");
   s = std::regex_replace(s, multi_space, " ");
