@@ -16,6 +16,7 @@
 #endif
 
 #include <fmt/format.h>
+#include <regex>
 #include <ac_config.h>
 #include <esbmc/bmc.h>
 #include <esbmc/document_subgoals.h>
@@ -527,6 +528,71 @@ void bmct::report_multi_property_trace(
   }
 }
 
+// Prettify C-level expression strings for Solidity coverage reports.
+// Strips C casts, maps internal names to Solidity names, etc.
+static std::string prettify_solidity_expr(const std::string &expr)
+{
+  if (config.language.lid != language_idt::SOLIDITY)
+    return expr;
+
+  std::string s = expr;
+
+  // Remove C-style casts: (signed int), (unsigned int), (signed long int), etc.
+  // Also handles _ExtInt(N) casts like (unsigned _ExtInt(256))
+  static const std::regex cast_re(
+    R"(\((?:signed|unsigned)\s+(?:_ExtInt\(\d+\)|(?:long\s+)?(?:long\s+)?int)\))");
+  s = std::regex_replace(s, cast_re, "");
+
+  // Remove this-> prefix (Solidity state variables)
+  static const std::regex this_re(R"(this->)");
+  s = std::regex_replace(s, this_re, "");
+
+  // Map internal Solidity global variable names to their Solidity equivalents
+  static const std::vector<std::pair<std::regex, std::string>> name_map = {
+    {std::regex(R"(\bmsg_sender\b)"), "msg.sender"},
+    {std::regex(R"(\bmsg_value\b)"), "msg.value"},
+    {std::regex(R"(\bmsg_sig\b)"), "msg.sig"},
+    {std::regex(R"(\bmsg_data\b)"), "msg.data"},
+    {std::regex(R"(\btx_origin\b)"), "tx.origin"},
+    {std::regex(R"(\btx_gasprice\b)"), "tx.gasprice"},
+    {std::regex(R"(\bblock_number\b)"), "block.number"},
+    {std::regex(R"(\bblock_timestamp\b)"), "block.timestamp"},
+    {std::regex(R"(\bblock_coinbase\b)"), "block.coinbase"},
+    {std::regex(R"(\bblock_difficulty\b)"), "block.difficulty"},
+    {std::regex(R"(\bblock_gaslimit\b)"), "block.gaslimit"},
+    {std::regex(R"(\bblock_chainid\b)"), "block.chainid"},
+    {std::regex(R"(\bblock_basefee\b)"), "block.basefee"},
+  };
+  for (const auto &[re, repl] : name_map)
+    s = std::regex_replace(s, re, repl);
+
+  // Remove redundant parentheses left by cast removal, e.g. ((x)) -> (x)
+  // Iteratively reduce until stable (handles nested cases)
+  static const std::regex double_paren(R"(\((\([^()]*\))\))");
+  std::string prev;
+  do
+  {
+    prev = s;
+    s = std::regex_replace(s, double_paren, "$1");
+  } while (s != prev);
+
+  // Remove parens in array index: [(...)] -> [...]
+  static const std::regex bracket_paren(R"(\[\(([^()]*)\)\])");
+  s = std::regex_replace(s, bracket_paren, "[$1]");
+
+  // Clean up extra spaces from removed casts
+  static const std::regex multi_space(R"(  +)");
+  s = std::regex_replace(s, multi_space, " ");
+
+  // Remove leading/trailing whitespace
+  auto start = s.find_first_not_of(' ');
+  auto end = s.find_last_not_of(' ');
+  if (start != std::string::npos)
+    s = s.substr(start, end - start + 1);
+
+  return s;
+}
+
 // Parse location string "file X line Y column Z function F" into components
 static nlohmann::json parse_claim_location(const std::string &loc)
 {
@@ -593,20 +659,17 @@ void report_coverage(
     const int tracked_instance = reached_mul_claims.size();
     const int total_instance = goto_coveraget::total_assert_ins;
 
-    if (total)
-    {
-      log_success("\n[Coverage]\n");
-      // The total assertion instances include the assert inside the source file, the unwinding asserts, the claims inserted during the goto-check and so on.
-      log_result("Total Asserts: {}", total);
-      if (total_instance >= tracked_instance)
-        log_result("Total Assertion Instances: {}", total_instance);
-      else
-        // this could be
-        // 1. the loop is too large that we cannot goto-unwind it
-        // 2. the loop is somewhat non-deterministic that we cannot run goto-unwind
-        log_result("Total Assertion Instances: unknown / non-deterministic");
-      log_result("Reached Assertion Instances: {}", tracked_instance);
-    }
+    log_success("\n[Coverage]\n");
+    // The total assertion instances include the assert inside the source file, the unwinding asserts, the claims inserted during the goto-check and so on.
+    log_result("Total Asserts: {}", total);
+    if (total_instance >= tracked_instance)
+      log_result("Total Assertion Instances: {}", total_instance);
+    else
+      // this could be
+      // 1. the loop is too large that we cannot goto-unwind it
+      // 2. the loop is somewhat non-deterministic that we cannot run goto-unwind
+      log_result("Total Assertion Instances: unknown / non-deterministic");
+    log_result("Reached Assertion Instances: {}", tracked_instance);
 
     // show claims
     if (options.get_bool_option("assertion-coverage-claims"))
@@ -614,7 +677,7 @@ void report_coverage(
       // reached claims:
       for (const auto &claim : reached_mul_claims)
       {
-        log_status("  {}", claim);
+        log_status("  {}", prettify_solidity_expr(claim));
       }
     }
 
@@ -662,7 +725,7 @@ void report_coverage(
       {
         // show sat claims
         if (cond_show_claims)
-          log_status("  {} : SATISFIED", claim_sig);
+          log_status("  {} : SATISFIED", prettify_solidity_expr(claim_sig));
 
         // update counter +=2
         // as we handle ass and !ass at the same time
@@ -688,13 +751,15 @@ void report_coverage(
         {
           ++sat_instance;
           if (cond_show_claims)
-            log_result("  {} : SATISFIED", r_claim_sig);
+            log_result(
+              "  {} : SATISFIED", prettify_solidity_expr(r_claim_sig));
         }
         else
         {
           ++unsat_instance;
           if (cond_show_claims)
-            log_result("  {} : UNSATISFIED", r_claim_sig);
+            log_result(
+              "  {} : UNSATISFIED", prettify_solidity_expr(r_claim_sig));
         }
 
         // prevent double count
@@ -720,7 +785,7 @@ void report_coverage(
         std::string claim_msg = claim_pair.first;
         std::string claim_loc = claim_pair.second;
         std::string claim_sig = claim_msg + "\t" + claim_loc;
-        log_result("  {}", claim_sig);
+        log_result("  {}", prettify_solidity_expr(claim_sig));
       }
     }
 
@@ -746,26 +811,22 @@ void report_coverage(
     // this also included the non-unwinding-assertions
     // which is not what we want
     const size_t tracked_instance = reached_claims.size();
-    if (total)
-    {
-      log_success("\n[Coverage]\n");
-      // The total assertion instances include the assert inside the source file, the unwinding asserts, the claims inserted during the goto-check and so on.
-      log_result("Branches : {}", total);
-      log_result("Reached : {}", tracked_instance);
-    }
+    log_success("\n[Coverage]\n");
+    log_result("Branches : {}", total);
+    log_result("Reached : {}", tracked_instance);
 
     // show claims
     if (options.get_bool_option("branch-coverage-claims"))
     {
       // reached claims:
       for (const auto &claim : reached_claims)
-        log_status("  {}", claim);
+        log_status("  {}", prettify_solidity_expr(claim));
     }
 
     if (total != 0)
       log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
     else
-      log_result("Branch Coverage: 0%");
+      log_result("Branch Coverage: N/A (no branches)");
   }
 
   else if (is_branch_func_cov)
@@ -776,26 +837,22 @@ void report_coverage(
     // this also included the non-unwinding-assertions
     // which is not what we want
     const size_t tracked_instance = reached_claims.size();
-    if (total)
-    {
-      log_success("\n[Coverage]\n");
-      // The total assertion instances include the assert inside the source file, the unwinding asserts, the claims inserted during the goto-check and so on.
-      log_result("Function Entry Points & Branches : {}", total);
-      log_result("Reached : {}", tracked_instance);
-    }
+    log_success("\n[Coverage]\n");
+    log_result("Function Entry Points & Branches : {}", total);
+    log_result("Reached : {}", tracked_instance);
 
     // show claims
     if (options.get_bool_option("branch-function-coverage-claims"))
     {
       // reached claims:
       for (const auto &claim : reached_claims)
-        log_status("  {}", claim);
+        log_status("  {}", prettify_solidity_expr(claim));
     }
 
     if (total != 0)
       log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
     else
-      log_result("Branch Coverage: 0%");
+      log_result("Branch Coverage: N/A (no branches)");
   }
 
   // Generate JSON coverage report
@@ -832,7 +889,7 @@ void report_coverage(
         source_files.insert(file);
 
       json claim_entry;
-      claim_entry["condition"] = claim_msg;
+      claim_entry["condition"] = prettify_solidity_expr(claim_msg);
       claim_entry["file"] = loc["file"];
       claim_entry["line"] = loc["line"];
       claim_entry["column"] = loc["column"];
@@ -909,7 +966,7 @@ void bmct::report_coverage_verbose(
         options.get_bool_option("condition-coverage-claims-rm"))
       {
         // show claims
-        log_status("\n  {} : SATISFIED", claim_sig);
+        log_status("\n  {} : SATISFIED", prettify_solidity_expr(claim_sig));
       }
 
       // show coverage data
@@ -928,7 +985,7 @@ void bmct::report_coverage_verbose(
       if (options.get_bool_option("assertion-coverage-claims"))
       {
         for (const auto &claim : reached_mul_claims)
-          log_status("  {}", claim);
+          log_status("  {}", prettify_solidity_expr(claim));
       }
       if (total_instance != 0)
       {
@@ -949,7 +1006,7 @@ void bmct::report_coverage_verbose(
       {
         // reached claims:
         for (const auto &claim : reached_claims)
-          log_status("  {}", claim);
+          log_status("  {}", prettify_solidity_expr(claim));
       }
 
       if (totals != 0)
@@ -966,7 +1023,7 @@ void bmct::report_coverage_verbose(
       {
         // reached claims:
         for (const auto &claim : reached_claims)
-          log_status("  {}", claim);
+          log_status("  {}", prettify_solidity_expr(claim));
       }
 
       if (totals != 0)
@@ -1345,6 +1402,18 @@ smt_convt::resultt bmct::run_thread(std::shared_ptr<symex_target_equationt> &eq)
         return smt_convt::P_SMTLIB;
       }
 
+      // In coverage mode, still print the coverage summary even when all
+      // claims are simplified away (e.g., straight-line code with 0 branches).
+      if (options.get_bool_option("multi-property"))
+      {
+        std::unordered_set<std::string> empty_reached;
+        std::unordered_multiset<std::string> empty_mul_reached;
+        pytest_generator empty_pytest;
+        ctest_generator empty_ctest;
+        report_coverage(
+          options, empty_reached, empty_mul_reached, empty_pytest, empty_ctest);
+      }
+
       return smt_convt::P_UNSATISFIABLE;
     }
 
@@ -1658,7 +1727,7 @@ smt_convt::resultt bmct::multi_property_check(
     if (!is_cov_silent)
       log_status(
         "Solving claim '{}' with solver {}",
-        claim.claim_cstr,
+        prettify_solidity_expr(claim.claim_cstr),
         solver_ptr->solver_text());
 
     // Save current instance with timing
@@ -1677,12 +1746,20 @@ smt_convt::resultt bmct::multi_property_check(
       if (solver_result == smt_convt::P_UNSATISFIABLE)
       {
         // Claim passed - show in green
-        log_status("{}✓ PASSED{}: '{}'", GREEN, RESET, claim.claim_cstr);
+        log_status(
+          "{}✓ PASSED{}: '{}'",
+          GREEN,
+          RESET,
+          prettify_solidity_expr(claim.claim_cstr));
       }
       else if (solver_result == smt_convt::P_SATISFIABLE)
       {
         // Claim failed - show in red
-        log_status("{}✗ FAILED{}: '{}'", RED, RESET, claim.claim_cstr);
+        log_status(
+          "{}✗ FAILED{}: '{}'",
+          RED,
+          RESET,
+          prettify_solidity_expr(claim.claim_cstr));
       }
     }
 
