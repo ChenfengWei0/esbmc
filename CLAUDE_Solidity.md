@@ -383,3 +383,41 @@ ctest -R "regression/esbmc-solidity/address_1"
 - Fallback/receive functions
 - Abstract contracts
 - Storage layout / packing
+
+## Structural Coverage Analysis
+
+ESBMC supports all 4 coverage criteria on Solidity contracts. See `CLAUDE_COVERAGE.md` § "Solidity Coverage Support" for full details.
+
+### Quick Reference
+
+```bash
+# Branch coverage (recommended: use --function for targeted analysis)
+esbmc contract.sol --contract MyContract --function myFunc \
+  --branch-coverage-claims --unwind 10 --no-unwinding-assertions
+
+# Condition coverage (works without --function)
+esbmc contract.sol --contract MyContract \
+  --condition-coverage-claims --unwind 10 --no-unwinding-assertions
+
+# Assertion coverage
+esbmc contract.sol --contract MyContract --function myFunc \
+  --assertion-coverage-claims --unwind 10 --no-unwinding-assertions
+```
+
+### Solidity-Specific Handling
+
+- **Multi-tx harness auto-disabled**: The `_ESBMC_Main*` while-loop is neutralized in coverage mode so `--function` is optional (but recommended for performance)
+- **Modifier prefix matching**: `--function deposit` matches `deposit_onlyPositive`
+- **Pretty-printed expressions**: C casts and internal names are mapped to Solidity equivalents in coverage output (e.g., `msg_sender` → `msg.sender`, `this->owner` → `owner`)
+- **`require()` invisible to branch coverage**: Modeled as `assume`, not a branch — this is correct Solidity semantics
+- **Zero-goal summary**: Coverage summary always printed, even for straight-line code with no branches
+
+### Future Work: Coverage
+
+**Already works (no changes needed):**
+- `--cov-report-json` — JSON report generation is language-agnostic, uses standard location format
+- `scripts/cov-report.py` — HTML report generator reads JSON, works with any source file including `.sol`
+- Counterexample traces — built from SSA steps, language-agnostic
+
+**Needs new code (medium-large effort):**
+- Solidity testcase generator — new `solidity_testcase_generator` class (~2000-3000 lines). Current `pytest_generator` and `ctest_generator` are Python/C-specific (type mappings, variable name mangling, output format). Solidity would need: uint256/address/bytes32 type mapping, contract state initialization, ABI encoding, and choice of test framework (Hardhat/Foundry)
