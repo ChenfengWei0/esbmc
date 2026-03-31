@@ -782,6 +782,7 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
     const std::string typeString = expr["typeDescriptions"]["typeString"];
     if (
       typeString.compare(0, 9, "int_const") == 0 &&
+      typeString.find("...") == std::string::npos &&
       (!expr.contains("value") ||
        expr["value"].get<std::string>().find(".") != std::string::npos))
       return LiteralWithRational;

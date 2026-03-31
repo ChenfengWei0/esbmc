@@ -1,0 +1,5 @@
+KNOWNBUG
+contract.solast
+--function test_overflow --sol contract.sol --unsigned-overflow-check --contract CompoundOverflow --unwind 1 --no-unwinding-assertions
+^VERIFICATION FAILED$
+-- overflow check doesn't trigger for sub-256-bit types (arithmetic widened to uint256)

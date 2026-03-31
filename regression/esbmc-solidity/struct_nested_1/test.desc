@@ -1,0 +1,4 @@
+CORE
+contract.solast
+--function test_nested --sol contract.sol --no-standard-checks --contract StructNested --unwind 1 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$

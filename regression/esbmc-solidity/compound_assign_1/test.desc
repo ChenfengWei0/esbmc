@@ -1,0 +1,4 @@
+CORE
+contract.solast
+--function test_compound --sol contract.sol --no-standard-checks --contract CompoundAssign --unwind 1 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$

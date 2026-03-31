@@ -1,0 +1,4 @@
+CORE
+contract.solast
+--function test_unchecked_overflow --sol contract.sol --unsigned-overflow-check --contract UncheckedWrap --unwind 1 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$

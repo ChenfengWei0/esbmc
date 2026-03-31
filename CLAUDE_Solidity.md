@@ -84,6 +84,50 @@ The converter uses two prefixes:
 - 6 THOROUGH tests fail due to C/C++ frontend differences in struct bit-field layout and `fixedbv` typecast handling. All CORE tests pass.
 - The `sol_llc_ret.x` field uses `unsigned int` (not `bool`) to avoid C/C++ bool representation mismatch.
 
+### Known Bugs (diagnosed 2026-03-31)
+
+#### Bug 1: Sub-256-bit overflow check ineffective (HIGH severity)
+
+`--unsigned-overflow-check` does not detect overflow for uint8/uint16/etc. Example: `uint8 x = 255; x + 1` reports VERIFICATION SUCCESSFUL.
+
+**Root cause:** The Solidity frontend creates binary ops with the correct narrow type (e.g. `unsignedbv_typet(8)`), and `goto_check.cpp:278` inserts `overflow2tc(expr)`. However, the overflow predicate evaluates incorrectly for narrow types — the SMT-level encoding may widen operands or the overflow intrinsic may not account for sub-256-bit wrap semantics.
+
+**Affected code path:** `goto_check.cpp:278-319` (`overflow_check`), `smt_casts.cpp` (overflow predicate encoding)
+
+**Regression tests:** `int_boundary_2` (KNOWNBUG), `compound_assign_2` (KNOWNBUG), `unchecked_block_4` (KNOWNBUG)
+
+**Fix strategy:** After each narrow-type arithmetic operation, insert an explicit range-check assertion: `assert(result <= type_max)` at the GOTO level. This can be done in `goto_check.cpp`'s `overflow_check` for Solidity when the type width < 256. Alternatively, fix `overflow2tc` to correctly model overflow for arbitrary bit-widths.
+
+#### Bug 2: Large constant-folded literals truncated to zero (MEDIUM severity)
+
+Solidity AST expressions like `10**36` whose `typeString` is abbreviated by solc (e.g. `"int_const 1000...(29 digits omitted)...0000"`) are silently evaluated to 0.
+
+**Root cause:** `solidity_grammar.cpp:783-787` classifies BinaryOperation nodes as `LiteralWithRational` when their `typeString` starts with `"int_const"` AND the node has no `"value"` field (BinaryOperations don't). The `LiteralWithRational` handler (`solidity_convert_expr.cpp:89-103`) extracts the value from the truncated `typeString` and calls `string2integer()` (`mp_arith.cpp:39-46`), which returns 0 for any string containing non-alphanumeric characters (`...`, `(`, `)`, spaces).
+
+**Fix (applied 2026-03-31):** Added `typeString.find("...") == std::string::npos` guard in `solidity_grammar.cpp:785`. When solc truncates a large constant's typeString with `...`, the expression now falls through to the BinaryOperatorClass path (e.g. `BO_Pow`), which correctly computes the value via BigInt arithmetic. Non-truncated rational expressions (e.g. `0.5 * 10 ether`) still use the `LiteralWithRational` path as before.
+
+#### Bug 3: `unchecked` block semantics not implemented (LOW severity, masked)
+
+`unchecked { ... }` blocks are parsed as normal blocks (`CLAUDE_Solidity.md` line 113). Tests pass because Bug 1 (overflow check ineffective) masks the missing unchecked semantics — overflow checks don't trigger regardless.
+
+**Fix strategy:** After Bug 1 is fixed, propagate the `unchecked` flag from AST through GOTO conversion. In `goto_check.cpp`, skip overflow assertion insertion for expressions originating from unchecked blocks. Requires an irep attribute (e.g. `#unchecked`) set during `solidity_convert_stmt.cpp` block conversion.
+
+#### Bug 4: fixedbv typecast error in pow() (THOROUGH-only)
+
+`pow()` for non-constant exponentiation uses `double_type()` which becomes `fixedbv` when `--fixedbv` is set. The SMT cast handler `convert_typecast_to_fixedbv_nonint` (`smt_casts.cpp:39`) is missing a `floatbv` source type case.
+
+**Affected tests:** inheritance_6, op_binary_5, op_binary_8 (all THOROUGH with `--k-induction`/`--bound`)
+
+**Fix strategy:** Add `floatbv_type` handling in `smt_casts.cpp:22-41` (`convert_typecast_to_fixedbv_nonint`), similar to the existing `convert_typecast_to_fpbv` function.
+
+#### Bug 5: Z3 sort mismatch in mapping struct (THOROUGH-only)
+
+`mapping_t` struct uses bitfield `address_t addr : 160` in the C library (`solidity_mapping.c:20`). The bitfield representation from the C frontend (c2goto) doesn't match the C++ frontend's `unsignedbv_typet(160)`, causing a Z3 sort mismatch during SMT encoding.
+
+**Affected tests:** mapping_13, mapping_16, transfer_send_2 (all THOROUGH)
+
+**Fix strategy:** Remove the bitfield declaration in `solidity_mapping.c` — use `address_t addr;` instead of `address_t addr : 160;` since the bitfield width equals the type width and is redundant.
+
 ## Solidity Language Support Audit (2026-03-30)
 
 Comprehensive audit against Solidity 0.8.x official documentation. Minimum supported version: 0.5.0 (recommended: 0.8.x).
@@ -110,8 +154,8 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | **Address members** | `.balance`, `.code`, `.codehash`, `.transfer()`, `.send()`, `.call()`, `.delegatecall()`, `.staticcall()` |
 | **Type info** | `type(T).min`, `type(T).max`, `type(C).creationCode` |
 | **Units** | Ether (`wei`/`gwei`/`ether`), time (`seconds`/`minutes`/`hours`/`days`/`weeks`) |
-| **Unchecked** | `unchecked { ... }` blocks (parsed as normal blocks) |
-| **Verification** | Overflow/underflow, division-by-zero, reentrancy detection (mutex-based), bound/unbound address modes, whole-contract verification |
+| **Unchecked** | `unchecked { ... }` blocks (parsed as normal blocks; see Bug 3 — semantics not enforced) |
+| **Verification** | Overflow/underflow (uint256 only; see Bug 1), division-by-zero, reentrancy detection (mutex-based), bound/unbound address modes, whole-contract verification |
 
 ### Partially Supported / Compromises
 
@@ -151,17 +195,26 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 
 ### Priority for Future Work
 
+**Critical bugs** (verification soundness):
+1. **Fix Bug 2** (large literal truncation) — one-line fix in `solidity_grammar.cpp:783`, high confidence
+2. **Fix Bug 1** (sub-256-bit overflow) — requires `goto_check.cpp` changes, affects all narrow-type contracts
+3. **Fix Bug 3** (unchecked semantics) — depends on Bug 1 being fixed first
+
 **High impact** (blocks real-world contracts):
-1. Nested mapping — required by ERC20 (`allowance`), ERC721, most DeFi
-2. Inline assembly — used pervasively in optimized contracts
-3. `do-while` loops — simple to implement
-4. `delete` operator — common storage cleanup pattern
+4. Nested mapping — required by ERC20 (`allowance`), ERC721, most DeFi
+5. Inline assembly — used pervasively in optimized contracts
+6. `do-while` loops — simple to implement
+7. `delete` operator — common storage cleanup pattern
 
 **Medium impact**:
-5. Try/Catch — DeFi error handling
-6. `abi.decode()` — low-level call return parsing
-7. Data location semantics — soundness improvement
-8. Free functions — increasingly common pattern
+8. Try/Catch — DeFi error handling
+9. `abi.decode()` — low-level call return parsing
+10. Data location semantics — soundness improvement
+11. Free functions — increasingly common pattern
+
+**Backend fixes** (THOROUGH-only, lower priority):
+12. Fix Bug 4 (fixedbv typecast) — `smt_casts.cpp` missing case
+13. Fix Bug 5 (mapping bitfield mismatch) — `solidity_mapping.c` bitfield removal
 
 ## Code Architecture Notes
 
@@ -278,3 +331,35 @@ ctest -R "regression/esbmc-solidity/address_1"
 ```
 
 **Note:** Both `ENABLE_SOLIDITY_FRONTEND` and `ENABLE_REGRESSION` must be ON. The default build (`./scripts/build.sh`) sets `ENABLE_REGRESSION=OFF`, so regression tests won't appear in `ctest -N` unless explicitly enabled.
+
+### Test Baseline (2026-03-31)
+
+**356 total tests**: 350 CORE pass, 6 THOROUGH fail (Bugs 4 & 5), 3 KNOWNBUG (Bug 1). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+
+**Adversarial tests added (2026-03-31):**
+
+| Test | Type | What it verifies |
+|------|------|-----------------|
+| `bitwise_ops_1` | CORE | AND, OR, XOR, NOT, left/right shifts on uint8 |
+| `bitwise_ops_2` | CORE | Incorrect bitwise assertion detected |
+| `int_boundary_1` | CORE | uint8/uint256/int8/int256 min/max boundary values |
+| `int_boundary_2` | KNOWNBUG | uint8 overflow detection (Bug 1) |
+| `typeconv_3` | CORE | Narrowing, widening, signed↔unsigned conversions |
+| `typeconv_4` | CORE | Narrowing data loss detected |
+| `compound_assign_1` | CORE | All 10 compound assignment operators |
+| `compound_assign_2` | KNOWNBUG | Compound assignment overflow (Bug 1) |
+| `enum_boundary_1` | CORE | Enum values, uint conversion, comparison |
+| `struct_nested_1` | CORE | Nested struct read/write, default values |
+| `array_boundary_1` | CORE | Static array indexing, overwrite |
+| `unchecked_block_3` | CORE | Overflow wrapping inside unchecked block |
+| `unchecked_block_4` | KNOWNBUG | Checked overflow detection (Bug 1) |
+| `perf_large_uint_1` | CORE | uint256 large arithmetic, chained ops, max value |
+
+**Coverage gaps** (no tests exist):
+- Bitwise operators on uint256 (OOM with default solver settings)
+- Signed integer arithmetic right-shift edge cases
+- ABI encoding/decoding operations
+- Hash function return values
+- Fallback/receive functions
+- Abstract contracts
+- Storage layout / packing
