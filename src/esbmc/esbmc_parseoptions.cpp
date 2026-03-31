@@ -684,15 +684,28 @@ int esbmc_parseoptionst::doit()
   optionst options;
   get_command_line_options(options);
 
-  // for solidity
-  if (cmdline.isset("sol"))
+  // for solidity: detect .sol files in positional args or via --sol
   {
-    // set default options
-    options.set_option(
-      "no-align-check", true); // no need to check alignment in solidity
-    options.set_option("no-unlimited-scanf-check", true);
-    options.set_option(
-      "force-malloc-success", true); // for calloc in the 'newexpression'
+    bool is_solidity = cmdline.isset("sol");
+    if (!is_solidity)
+    {
+      for (const auto &arg : cmdline.args)
+      {
+        if (arg.size() >= 4 && arg.substr(arg.size() - 4) == ".sol")
+        {
+          is_solidity = true;
+          break;
+        }
+      }
+    }
+    if (is_solidity)
+    {
+      options.set_option(
+        "no-align-check", true); // no need to check alignment in solidity
+      options.set_option("no-unlimited-scanf-check", true);
+      options.set_option(
+        "force-malloc-success", true); // for calloc in the 'newexpression'
+    }
   }
 
   // Create and preprocess a GOTO program

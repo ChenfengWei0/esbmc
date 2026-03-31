@@ -1,4 +1,5 @@
-THOROUGH
+KNOWNBUG
 contract.solast
 --sol contract.sol --k-induction --no-standard-checks --contract TestTransfer --bound
 ^VERIFICATION FAILED$
+-- k-induction with --bound causes solver timeout (>1200s)

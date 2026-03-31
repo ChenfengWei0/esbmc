@@ -7,15 +7,28 @@ The ESBMC Solidity frontend accepts smart contracts written in the Solidity lang
 
 ## Usage
 
-### AST generation
+### Quick start
 
-Generate the compact AST JSON using the Solidity compiler (`solc`):
+Pass a `.sol` file directly to ESBMC — it will automatically find and invoke `solc`:
+
+```sh
+esbmc example.sol --k-induction
+```
+
+ESBMC searches for `solc` in this order: `--solc-bin <path>` > `$SOLC` environment variable > `solc` in `$PATH`. You can specify a particular solc binary:
+
+```sh
+esbmc --solc-bin /path/to/solc example.sol --k-induction
+```
+
+### Manual AST generation (legacy)
+
+You can also generate the AST yourself and pass both files:
 
 ```sh
 solc --ast-compact-json example.sol > example.solast
+esbmc --sol example.sol example.solast --k-induction
 ```
-
-The frontend expects the contract source file and its AST JSON as inputs.
 
 Note that different versions of `solc` may produce slightly different AST formats and also support different Solidity syntaxes. The frontend is currently developed and tested against **Solidity 0.8.0**.
 
@@ -24,11 +37,9 @@ Note that different versions of `solc` may produce slightly different AST format
 
 ### Bug detection
 
-Enable the solidity frontend with the `--sol` option. Example:
-
 ```sh
 # use --multi-property if you want to report all found bugs at once
-esbmc --sol example.sol example.solast --k-induction
+esbmc example.sol --k-induction --multi-property
 ```
 
 As with ESBMC in general, ESBMC-Solidity supports common bug classes, including arithmetic overflow/underflow, division by zero, null-dereference, array-out-of-bounds, assertion violations, etc. Use ESBMC command-line options to enable or configure specific checks (e.g. overflow checks, pointer checks, etc.).
@@ -90,19 +101,19 @@ This mode is particularly useful for analysing the behaviour of a multi-contract
 * Detecting overflow/underflow:
 
 ```sh
-esbmc --sol MyContract.sol MyContract.solast --overflow-check --unsigned-overflow-check
+esbmc MyContract.sol --overflow-check --unsigned-overflow-check
 ```
 
 * Running k-induction with solidity frontend:
 
 ```sh
-esbmc --sol example.sol example.solast --k-induction --multi-property
+esbmc example.sol --k-induction --multi-property
 ```
 
 * Bounded analysis :
 
 ```sh
-esbmc --sol example.sol example.solast --bound --contract Vulnerable --function withdraw
+esbmc example.sol --bound --contract Vulnerable --function withdraw
 ```
 
 ## Notes

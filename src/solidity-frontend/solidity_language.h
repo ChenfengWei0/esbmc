@@ -32,6 +32,12 @@ public:
   std::string get_temp_file();
   bool convert_intrinsics(contextt &context);
 
+  // solc auto-invocation support
+  std::string find_solc() const;
+  std::string get_solc_version(const std::string &solc) const;
+  bool invoke_solc(const std::string &sol_path, std::string &solast_path);
+  bool parse_solast(const std::string &solast_path);
+
   languaget *new_language() const override
   {
     return new solidity_languaget;

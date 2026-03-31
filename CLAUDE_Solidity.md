@@ -28,6 +28,36 @@ The core converter is a single class `solidity_convertert` (declared in `solidit
 | `solidity_language.cpp/h` | Language plugin interface |
 | `pattern_check.cpp/h` | Vulnerability pattern detection (e.g. SWC-115 tx.origin) |
 
+## Running ESBMC on Solidity
+
+ESBMC supports two ways to verify Solidity contracts:
+
+```sh
+# Auto-invoke solc (recommended): ESBMC finds and runs solc automatically
+esbmc contract.sol --contract MyContract
+
+# Manual AST generation (legacy): user runs solc separately
+solc --ast-compact-json contract.sol > contract.solast
+esbmc --sol contract.sol contract.solast --contract MyContract
+```
+
+**solc discovery order**: `--solc-bin <path>` > `$SOLC` env var > `solc` in `$PATH`. When auto-invoked, ESBMC prints the solc path and version (e.g. `Compiling Solidity AST using: /usr/local/bin/solc (v0.8.30)`).
+
+**Version compatibility** (checked at AST level via `PragmaDirective`):
+- `< 0.5.0`: rejected (unsupported)
+- `0.5.0 – 0.7.0`: warning (may cause unexpected behaviour)
+- `>= 0.7.0`: fully supported (tested against 0.8.x)
+
+### Implementation
+
+Auto-solc is implemented in `solidity_language.cpp`:
+- `find_solc()`: searches for solc binary in priority order
+- `get_solc_version()`: extracts version string from `solc --version`
+- `invoke_solc()`: runs `solc --ast-compact-json` to temp file, displays errors on failure
+- `parse()`: detects `.sol` vs `.solast` input, auto-invokes solc for `.sol` files
+- `.sol` extension registered in `langapi/mode.cpp` alongside `.solast`
+- `esbmc_parseoptions.cpp`: auto-sets Solidity options (no-align-check, force-malloc-success) when `.sol` file detected in positional args
+
 ## Solidity Operational Models (c2goto)
 
 Solidity built-in types, variables, and functions are implemented as C operational models in `src/c2goto/library/solidity/`. These are pre-compiled into a **separate goto binary** (`sol64.goto`) via the c2goto pipeline and embedded into the ESBMC binary. At runtime, `add_cprover_library()` loads from `sol64_buf` (not the full `clib64`) for fast symbol loading.
@@ -188,6 +218,12 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 9. Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
 10. Improve k-induction performance for `sol_pow_uint` 256-bit loop (currently ~80s+ per step)
 
+**Performance bottlenecks** (slow THOROUGH tests):
+11. `transfer_send_2` (>1200s timeout) — k-induction + `--bound` cross-contract reasoning
+12. `typedef_1` (~420s) — k-induction with complex type aliases
+13. `continue_3`/`break_4` (~200-250s) — `--unwind 20` with nested control flow
+14. `bytes_17` (~175s) — bytes operations with `--bound` mode
+
 ## Code Architecture Notes
 
 ### Expression Conversion (`get_expr`)
@@ -306,7 +342,19 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-03-31)
 
-**356 total tests**: 355 pass, 1 THOROUGH fail (mapping_13 NULL deref in library code). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**357 total tests**: 355 pass, 1 THOROUGH fail (mapping_13), 1 KNOWNBUG (transfer_send_2 timeout). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+
+**Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
+
+| Test | Time | Root cause |
+|------|------|------------|
+| `transfer_send_2` | >1200s (KNOWNBUG) | k-induction + `--bound` causes solver timeout |
+| `typedef_1` | ~420s | k-induction with complex type aliasing |
+| `continue_3` | ~250s | `--unwind 20` with nested control flow |
+| `break_4` | ~200s | `--unwind 20` with nested control flow |
+| `bytes_17` | ~175s | `--unwind 6` with `--bound` and bytes operations |
+
+**Tip:** Use `ctest --timeout 60` to skip slow tests during development, or run targeted tests with `ctest -R "esbmc-solidity/test_name"`.
 
 **Adversarial tests added (2026-03-31):**
 

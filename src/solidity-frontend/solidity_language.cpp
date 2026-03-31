@@ -15,6 +15,8 @@ CC_DIAGNOSTIC_POP()
 #include "filesystem.h"
 #include <unordered_set>
 #include <unordered_map>
+#include <cstdlib>
+#include <regex>
 
 languaget *new_solidity_language()
 {
@@ -35,13 +37,11 @@ solidity_languaget::solidity_languaget()
   else
     contract_names = "";
 
+  // contract_path may be set explicitly via --sol, or derived later in parse()
+  // when the user passes a .sol file directly as a positional argument.
   std::string sol = config.options.get_option("sol");
-  if (sol.empty())
-  {
-    log_error("Please set the smart contract source file via --sol");
-    abort();
-  }
-  contract_path = sol;
+  if (!sol.empty())
+    contract_path = sol;
 }
 
 std::string solidity_languaget::get_temp_file()
@@ -79,18 +79,129 @@ int main() { return 0; }
   return p;
 }
 
-bool solidity_languaget::parse(const std::string &path)
+std::string solidity_languaget::find_solc() const
 {
-  // Phase 1: Parse a minimal C++ file through Clang to get ESBMC intrinsic
-  // symbols (nondet_bool, nondet_uint, __ESBMC_assert, etc.)
-  temp_path = get_temp_file();
-  auto sol_lang = std::exchange(config.language, {language_idt::CPP, ""});
-  if (clang_cpp_languaget::parse(temp_path))
-    return true;
-  config.language = std::move(sol_lang);
+  // Priority: --solc-bin > $SOLC > solc in $PATH
+  std::string bin = config.options.get_option("solc-bin");
+  if (!bin.empty())
+  {
+    if (!boost::filesystem::exists(bin))
+    {
+      log_error("solc binary not found at: {}", bin);
+      return "";
+    }
+    return bin;
+  }
 
-  // Phase 2: Parse Solidity AST JSON
+  const char *env = std::getenv("SOLC");
+  if (env && std::strlen(env) > 0)
+  {
+    if (!boost::filesystem::exists(env))
+    {
+      log_error("$SOLC points to non-existent path: {}", env);
+      return "";
+    }
+    return env;
+  }
+
+  // Search $PATH via "which solc"
+  FILE *pipe = popen("which solc 2>/dev/null", "r");
+  if (pipe)
+  {
+    char buf[512];
+    std::string result;
+    while (fgets(buf, sizeof(buf), pipe))
+      result += buf;
+    pclose(pipe);
+
+    // Trim trailing newline
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+      result.pop_back();
+
+    if (!result.empty() && boost::filesystem::exists(result))
+      return result;
+  }
+
+  return "";
+}
+
+std::string solidity_languaget::get_solc_version(const std::string &solc) const
+{
+  std::string cmd = solc + " --version 2>&1";
+  FILE *pipe = popen(cmd.c_str(), "r");
+  if (!pipe)
+    return "unknown";
+
+  char buf[512];
+  std::string output;
+  while (fgets(buf, sizeof(buf), pipe))
+    output += buf;
+  pclose(pipe);
+
+  // Extract version number (e.g. "0.8.28+commit...")
+  std::regex ver_re(R"((\d+\.\d+\.\d+))");
+  std::smatch match;
+  if (std::regex_search(output, match, ver_re))
+    return match[1].str();
+
+  return "unknown";
+}
+
+bool solidity_languaget::invoke_solc(
+  const std::string &sol_path,
+  std::string &solast_path)
+{
+  std::string solc = find_solc();
+  if (solc.empty())
+  {
+    log_error(
+      "solc not found. Install solc or specify its path with --solc-bin "
+      "or $SOLC environment variable.\n"
+      "Alternatively, generate the AST manually:\n"
+      "  solc --ast-compact-json {} > {}.solast\n"
+      "  esbmc --sol {} {}.solast",
+      sol_path,
+      sol_path,
+      sol_path,
+      sol_path);
+    return true;
+  }
+
+  std::string version = get_solc_version(solc);
+  log_status("Compiling Solidity AST using: {} (v{})", solc, version);
+
+  // Create temp directory for the .solast output
+  std::string tmp_dir =
+    file_operations::create_tmp_dir("esbmc_solast-%%%%-%%%%-%%%%").path();
+  boost::filesystem::create_directories(tmp_dir);
+  solast_path = tmp_dir + "/output.solast";
+
+  std::string cmd =
+    solc + " --ast-compact-json " + sol_path + " > " + solast_path + " 2>&1";
+  int ret = std::system(cmd.c_str());
+  if (ret != 0)
+  {
+    // Read and display solc error output
+    std::ifstream err_file(solast_path);
+    std::string err_output(
+      (std::istreambuf_iterator<char>(err_file)),
+      std::istreambuf_iterator<char>());
+    log_error("solc compilation failed:\n{}", err_output);
+    return true;
+  }
+
+  return false;
+}
+
+bool solidity_languaget::parse_solast(const std::string &path)
+{
   std::ifstream ast_json_file_stream(path);
+  if (!ast_json_file_stream.is_open())
+  {
+    log_error("Cannot open AST file: {}", path);
+    return true;
+  }
+
   std::string new_line;
   std::vector<nlohmann::json> json_blocks;
   std::string current_json_block;
@@ -99,9 +210,7 @@ bool solidity_languaget::parse(const std::string &path)
   while (getline(ast_json_file_stream, new_line))
   {
     if (new_line.find(".sol =======") != std::string::npos)
-    {
       break;
-    }
   }
   // Read and parse each JSON block separately
   while (getline(ast_json_file_stream, new_line))
@@ -122,16 +231,56 @@ bool solidity_languaget::parse(const std::string &path)
 
   // Parse the last JSON block
   if (!current_json_block.empty())
-  {
     json_blocks.push_back(nlohmann::json::parse(current_json_block));
-  }
 
   // Combine all parsed JSON blocks into one JSON array
   for (const auto &block : json_blocks)
-  {
     src_ast_json_array.push_back(block);
-  }
+
   return false;
+}
+
+bool solidity_languaget::parse(const std::string &path)
+{
+  // Phase 1: Parse a minimal C++ file through Clang to get ESBMC intrinsic
+  // symbols (nondet_bool, nondet_uint, __ESBMC_assert, etc.)
+  temp_path = get_temp_file();
+  auto sol_lang = std::exchange(config.language, {language_idt::CPP, ""});
+  if (clang_cpp_languaget::parse(temp_path))
+    return true;
+  config.language = std::move(sol_lang);
+
+  // Phase 2: Determine whether input is .sol (needs solc) or .solast (direct)
+  std::string solast_path;
+  bool is_sol_source =
+    (path.size() >= 4 && path.substr(path.size() - 4) == ".sol");
+
+  if (is_sol_source)
+  {
+    // Set contract_path to the .sol source if not already set via --sol
+    if (contract_path.empty())
+      contract_path = path;
+
+    // Auto-invoke solc to generate AST
+    if (invoke_solc(path, solast_path))
+      return true;
+  }
+  else
+  {
+    // Input is .solast — use directly
+    solast_path = path;
+
+    if (contract_path.empty())
+    {
+      log_error(
+        "When passing a .solast file directly, please also specify "
+        "the .sol source via --sol");
+      return true;
+    }
+  }
+
+  // Phase 3: Parse the Solidity AST JSON
+  return parse_solast(solast_path);
 }
 
 bool solidity_languaget::convert_intrinsics(contextt &context)
