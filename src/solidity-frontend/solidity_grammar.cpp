@@ -951,6 +951,10 @@ ExpressionT get_unary_expr_operator_t(const nlohmann::json &expr, bool uo_pre)
   {
     return UO_LNot;
   }
+  else if (expr["operator"] == "delete")
+  {
+    return UO_Delete;
+  }
   else
   {
     log_error(
@@ -1141,6 +1145,7 @@ const char *expression_to_str(ExpressionT type)
     ENUM_TO_STR(UO_Minus)
     ENUM_TO_STR(UO_Not)
     ENUM_TO_STR(UO_LNot)
+    ENUM_TO_STR(UO_Delete)
 
     ENUM_TO_STR(ConditionalOperatorClass)
 

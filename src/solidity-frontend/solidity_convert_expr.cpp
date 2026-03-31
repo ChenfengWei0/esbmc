@@ -2767,6 +2767,42 @@ bool solidity_convertert::get_unary_operator_expr(
     "	@@@ got uniop.getOpcode: SolidityGrammar::{}",
     SolidityGrammar::expression_to_str(opcode));
 
+  // Handle delete specially: its type is tuple() (void), not the operand type.
+  // Solidity `delete x` resets x to its default value (0, false, address(0), etc.)
+  if (opcode == SolidityGrammar::ExpressionT::UO_Delete)
+  {
+    exprt unary_sub;
+    if (get_expr(expr["subExpression"], literal_type, unary_sub))
+      return true;
+
+    // Resolve symbol types (e.g. structs) to their underlying type for gen_zero
+    typet resolved_type = unary_sub.type();
+    if (resolved_type.id() == "symbol")
+    {
+      const symbolt *s = ns.lookup(resolved_type.identifier());
+      if (s)
+        resolved_type = s->type;
+    }
+
+    exprt zero = gen_zero(resolved_type);
+    if (zero.is_nil())
+    {
+      log_error(
+        "delete: cannot generate default value for type {}",
+        resolved_type.id_string());
+      return true;
+    }
+
+    // For symbol-typed structs, cast back to the original symbol type
+    if (unary_sub.type().id() == "symbol" && resolved_type.id() == "struct")
+      zero.type() = unary_sub.type();
+
+    new_expr = side_effect_exprt("assign", unary_sub.type());
+    new_expr.operands().push_back(unary_sub);
+    new_expr.operands().push_back(zero);
+    return false;
+  }
+
   // 2. get type
   typet uniop_type;
   if (get_type_description(expr["typeDescriptions"], uniop_type))

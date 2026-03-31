@@ -322,6 +322,7 @@ enum ExpressionT
   UO_Minus,   // -
   UO_Not,     // ~
   UO_LNot,    // !
+  UO_Delete,  // delete
 
   //ternaryOperator
   ConditionalOperatorClass, // ?...:...
