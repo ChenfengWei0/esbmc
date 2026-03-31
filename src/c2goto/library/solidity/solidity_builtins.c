@@ -108,22 +108,6 @@ __ESBMC_HIDE:;
   return (address_t)hash;
 }
 
-// uint256_t _pow(unsigned int base, unsigned int exp) {
-// __ESBMC_HIDE:;
-//   uint256_t result = 1;
-//   uint256_t b = base;
-
-//   while (exp > 0) {
-//     if (exp & 1)
-//       result *= b;
-//     b *= b;
-//     exp >>= 1;
-//   }
-
-//   return result;
-// }
-double pow(double x, double y);
-
 /* selfdestruct */
 void selfdestruct()
 {
