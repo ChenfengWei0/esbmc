@@ -96,6 +96,12 @@ bool solidity_convertert::get_block(
   {
     const nlohmann::json &stmts = block["statements"];
 
+    // Track unchecked blocks: save/restore flag using RAII pattern
+    const bool is_unchecked = (block["nodeType"] == "UncheckedBlock");
+    const bool prev_unchecked = in_unchecked_block;
+    if (is_unchecked)
+      in_unchecked_block = true;
+
     code_blockt _block;
     unsigned ctr = 0;
     // items() returns a key-value pair with key being the index
@@ -103,6 +109,8 @@ bool solidity_convertert::get_block(
     {
       locationt cl;
       get_location_from_node(stmt_kv.value(), cl);
+      if (in_unchecked_block)
+        cl.set("#sol_unchecked", "1");
 
       exprt statement;
       if (get_statement(stmt_kv.value(), statement))
@@ -140,6 +148,9 @@ bool solidity_convertert::get_block(
 
     _block.end_location(location_end);
     new_expr = _block;
+
+    // Restore unchecked flag
+    in_unchecked_block = prev_unchecked;
     break;
   }
   case SolidityGrammar::BlockT::BlockForStatement:

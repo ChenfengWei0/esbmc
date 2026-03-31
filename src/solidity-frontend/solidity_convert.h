@@ -737,6 +737,9 @@ protected:
   // TODO: find a better way to deal with implicit type casting if it's not able to cope with complex rules
   std::stack<const nlohmann::json *> current_BinOp_type;
   std::string current_functionName;
+  // Track whether we are inside a Solidity "unchecked { ... }" block.
+  // When true, arithmetic overflow checks should be suppressed.
+  bool in_unchecked_block = false;
 
   // Auxiliary data structures:
   // Inheritance Order Record <contract_name, Contract_id>
