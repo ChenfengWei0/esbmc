@@ -2571,15 +2571,19 @@ bool solidity_convertert::get_binary_operator_expr(
     }
     else
     {
-      // Not sure why but it seems esbmc's pow works worse in solidity,
-      // so I write my own version
-      //? maybe this should convert this to BigInt too?
+      // Use integer power function to avoid fixedbv/floatbv type mismatch.
+      // Solidity ** is purely integer arithmetic.
+      unsignedbv_typet u256(256);
       side_effect_expr_function_callt call_expr;
       get_library_function_call_no_args(
-        "pow", "c:@F@pow", double_type(), lhs.location(), call_expr);
+        "sol_pow_uint",
+        "c:@F@sol_pow_uint",
+        u256,
+        lhs.location(),
+        call_expr);
 
-      call_expr.arguments().push_back(typecast_exprt(lhs, double_type()));
-      call_expr.arguments().push_back(typecast_exprt(rhs, double_type()));
+      call_expr.arguments().push_back(typecast_exprt(lhs, u256));
+      call_expr.arguments().push_back(typecast_exprt(rhs, u256));
 
       new_expr = call_expr;
     }

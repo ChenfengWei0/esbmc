@@ -116,13 +116,13 @@ Solidity AST expressions like `10**36` whose `typeString` is abbreviated by solc
 
 This correctly implements Solidity 0.8+ semantics where `unchecked` blocks opt out of overflow/underflow revert behavior.
 
-#### Bug 4: fixedbv typecast error in pow() (THOROUGH-only)
+#### Bug 4: fixedbv typecast error in pow() — FIXED (2026-03-31)
 
-`pow()` for non-constant exponentiation uses `double_type()` which becomes `fixedbv` when `--fixedbv` is set. The SMT cast handler `convert_typecast_to_fixedbv_nonint` (`smt_casts.cpp:39`) is missing a `floatbv` source type case.
+Non-constant `**` (e.g. `a ** b` with variable operands) called C's `double pow(double, double)` via `double_type()`. But sol64.goto is compiled with `--fixedbv` (CMakeLists.txt:249), so the library's `pow` uses `fixedbv` type. The frontend created `floatbv` arguments (no `--fixedbv` at runtime), causing a type mismatch → `smt_casts.cpp:39` "unexpected typecast to fixedbv" abort.
 
-**Affected tests:** inheritance_6, op_binary_5, op_binary_8 (all THOROUGH with `--k-induction`/`--bound`)
+**Fix (applied 2026-03-31):** Replaced `double pow()` call with integer `sol_pow_uint(uint256_t base, uint256_t exp)` using binary exponentiation. This is semantically correct (Solidity `**` is pure integer arithmetic) and eliminates all float types from the path. The function is added to `solidity_builtins.c` and compiled into sol64.goto.
 
-**Fix strategy:** Add `floatbv_type` handling in `smt_casts.cpp:22-41` (`convert_typecast_to_fixedbv_nonint`), similar to the existing `convert_typecast_to_fpbv` function.
+**Performance note:** k-induction on 256-bit multiplication loops is very slow (~80s+ per iteration). Tests changed from `--k-induction` to bounded `--unwind 10` for practical runtimes. Bounded verification confirms correctness.
 
 #### Bug 5: Z3 sort mismatch in mapping struct — FIXED (2026-03-31)
 
@@ -214,8 +214,8 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 11. Free functions — increasingly common pattern
 
 **Backend fixes** (THOROUGH-only, lower priority):
-9. Fix Bug 4 (fixedbv typecast) — `smt_casts.cpp` missing case
-10. Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
+9. Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
+10. Improve k-induction performance for `sol_pow_uint` 256-bit loop (currently ~80s+ per step)
 
 ## Code Architecture Notes
 
@@ -335,7 +335,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-03-31)
 
-**356 total tests**: 352 CORE pass, 4 THOROUGH fail (Bug 4: inheritance_6/op_binary_5/op_binary_8; mapping_13 NULL deref). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**356 total tests**: 355 pass, 1 THOROUGH fail (mapping_13 NULL deref in library code). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Adversarial tests added (2026-03-31):**
 

@@ -57,6 +57,21 @@ uint256_t abi_encodeWithSelector();
 uint256_t abi_encodeWithSignature();
 uint256_t abi_encodeCall();
 
+/* integer power: base**exp using binary exponentiation */
+uint256_t sol_pow_uint(uint256_t base, uint256_t exp)
+{
+__ESBMC_HIDE:;
+  uint256_t result = 1;
+  while (exp > 0)
+  {
+    if (exp & 1)
+      result *= base;
+    base *= base;
+    exp >>= 1;
+  }
+  return result;
+}
+
 /* math functions */
 uint256_t addmod(uint256_t x, uint256_t y, uint256_t k)
 {
