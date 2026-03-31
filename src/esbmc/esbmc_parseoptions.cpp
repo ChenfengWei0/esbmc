@@ -1997,6 +1997,39 @@ bool esbmc_parseoptionst::process_goto_program(
       for (size_t i = 1; i < cmdline.args.size(); i++)
         config.ansi_c.include_files.push_back(cmdline.args[i]);
 
+    // For Solidity coverage mode: neutralize the multi-transaction harness loop.
+    // The _ESBMC_Main_* functions contain a while(nondet_bool()) loop that calls
+    // user functions repeatedly. This causes massive symex overhead in coverage
+    // mode where we only need each function executed once. Convert backward GOTOs
+    // (loop back-edges) in _ESBMC_Main* functions to SKIPs so the loop body
+    // executes exactly once.
+    if (is_coverage)
+    {
+      bool is_sol = cmdline.isset("sol");
+      if (!is_sol)
+        for (const auto &arg : cmdline.args)
+          if (arg.size() >= 4 && arg.substr(arg.size() - 4) == ".sol")
+          {
+            is_sol = true;
+            break;
+          }
+      if (is_sol)
+      {
+        Forall_goto_functions (f_it, goto_functions)
+        {
+          std::string fname = f_it->first.as_string();
+          if (fname.find("_ESBMC_Main") == std::string::npos)
+            continue;
+          Forall_goto_program_instructions (it, f_it->second.body)
+          {
+            if (it->is_backwards_goto())
+              it->make_skip();
+          }
+        }
+        goto_functions.update();
+      }
+    }
+
     // Expand --no-standard-checks before goto_check (also expanded before
     // goto_convert in parse_goto_program; re-expanding here is idempotent
     // and covers the read_goto_binary path).
