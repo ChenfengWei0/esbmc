@@ -84,55 +84,26 @@ The converter uses two prefixes:
 - 6 THOROUGH tests fail due to C/C++ frontend differences in struct bit-field layout and `fixedbv` typecast handling. All CORE tests pass.
 - The `sol_llc_ret.x` field uses `unsigned int` (not `bool`) to avoid C/C++ bool representation mismatch.
 
-### Known Bugs (diagnosed 2026-03-31)
+### Resolved Bugs (2026-03-31)
 
-#### Bug 1: Sub-256-bit overflow check ineffective — FIXED (2026-03-31)
+All 5 diagnosed bugs have been fixed. Summary:
 
-`--unsigned-overflow-check` did not detect overflow for uint8/uint16/etc. Example: `uint8 x = 255; x + 1` reported VERIFICATION SUCCESSFUL.
+| Bug | Description | Root cause | Fix location |
+|-----|-------------|-----------|--------------|
+| **1** | Sub-256-bit overflow check missed `uint8`/`uint16` overflow | C integer promotion widens to `signed int` before arithmetic; `overflow2tc` checks at 32-bit width | `goto_check.cpp`: narrowing cast check + narrowing assignment check for `.sol` files; suppressed inside `unchecked` blocks |
+| **2** | Large constants like `10**36` silently evaluated to 0 | solc truncates `typeString` with `"..."` notation; `string2integer()` returns 0 for non-alphanumeric input | `solidity_grammar.cpp:785`: skip `LiteralWithRational` when `typeString` contains `"..."`, fall through to `BO_Pow` BigInt path |
+| **3** | `unchecked { }` blocks had no effect on overflow checking | `UncheckedBlock` AST nodes parsed as normal `Block` | `solidity_convert_stmt.cpp`: tag locations with `#sol_unchecked`; `goto_check.cpp`: skip overflow checks when tag present |
+| **4** | `a ** b` (non-constant) crashed with "unexpected typecast to fixedbv" | Frontend called `double pow()` (floatbv) but sol64.goto compiled with `--fixedbv` → type mismatch | `solidity_builtins.c`: new `sol_pow_uint(uint256_t, uint256_t)` integer pow; `solidity_convert_expr.cpp`: call `sol_pow_uint` instead of `pow` |
+| **5** | Z3 sort mismatch on mapping struct fields | c2goto padding shifted struct component indices; frontend used hardcoded `at(1)` | `solidity_mapping.c`: `__attribute__((packed))`; `solidity_convert_decl.cpp`: name-based component lookup |
 
-**Root cause:** C integer promotion widens uint8 operands to `signed int` (32-bit) before arithmetic. The GOTO program is `ASSIGN y=(unsigned char)((signed int)x + 1)`. The `overflow2tc` check runs at 32-bit width where `256` doesn't overflow.
+### Remaining Known Issue
 
-**Fix (applied 2026-03-31):** Two changes in `goto_check.cpp`:
-1. **Narrowing cast check:** `cast_overflow_check` now detects narrowing typecasts (dst_width < src_width) in `.sol` files. Uses `overflow_cast2tc(inner_operand, narrow_width)` to verify the pre-cast value fits in the destination type.
-2. **Narrowing assignment check:** For compound assignments (`x += 10`) where the target is a typecast wrapping a narrower variable, an explicit range check is inserted at the assignment level.
+- **mapping_13** (THOROUGH): NULL pointer dereference check in `map_get_raw` library function (`solidity_mapping.c:29`). ESBMC's pointer analysis cannot always infer that a pointer is non-NULL from a `while(ptr)` loop guard. Unrelated to struct layout.
 
-Both checks are suppressed inside `unchecked` blocks (see Bug 3 fix).
+### Design Notes
 
-#### Bug 2: Large constant-folded literals truncated to zero (MEDIUM severity)
-
-Solidity AST expressions like `10**36` whose `typeString` is abbreviated by solc (e.g. `"int_const 1000...(29 digits omitted)...0000"`) are silently evaluated to 0.
-
-**Root cause:** `solidity_grammar.cpp:783-787` classifies BinaryOperation nodes as `LiteralWithRational` when their `typeString` starts with `"int_const"` AND the node has no `"value"` field (BinaryOperations don't). The `LiteralWithRational` handler (`solidity_convert_expr.cpp:89-103`) extracts the value from the truncated `typeString` and calls `string2integer()` (`mp_arith.cpp:39-46`), which returns 0 for any string containing non-alphanumeric characters (`...`, `(`, `)`, spaces).
-
-**Fix (applied 2026-03-31):** Added `typeString.find("...") == std::string::npos` guard in `solidity_grammar.cpp:785`. When solc truncates a large constant's typeString with `...`, the expression now falls through to the BinaryOperatorClass path (e.g. `BO_Pow`), which correctly computes the value via BigInt arithmetic. Non-truncated rational expressions (e.g. `0.5 * 10 ether`) still use the `LiteralWithRational` path as before.
-
-#### Bug 3: `unchecked` block semantics not implemented — FIXED (2026-03-31)
-
-`unchecked { ... }` blocks were parsed as normal blocks with no effect on overflow checking.
-
-**Fix (applied 2026-03-31):** Two changes:
-1. **Frontend (`solidity_convert_stmt.cpp`):** `get_block()` detects `UncheckedBlock` AST nodes and sets `in_unchecked_block = true`. Statement locations inside unchecked blocks are tagged with `#sol_unchecked` attribute.
-2. **GOTO check (`goto_check.cpp`):** `overflow_check`, `cast_overflow_check`, and the narrowing assignment check all skip when `loc.get("#sol_unchecked") == "1"`.
-
-This correctly implements Solidity 0.8+ semantics where `unchecked` blocks opt out of overflow/underflow revert behavior.
-
-#### Bug 4: fixedbv typecast error in pow() — FIXED (2026-03-31)
-
-Non-constant `**` (e.g. `a ** b` with variable operands) called C's `double pow(double, double)` via `double_type()`. But sol64.goto is compiled with `--fixedbv` (CMakeLists.txt:249), so the library's `pow` uses `fixedbv` type. The frontend created `floatbv` arguments (no `--fixedbv` at runtime), causing a type mismatch → `smt_casts.cpp:39` "unexpected typecast to fixedbv" abort.
-
-**Fix (applied 2026-03-31):** Replaced `double pow()` call with integer `sol_pow_uint(uint256_t base, uint256_t exp)` using binary exponentiation. This is semantically correct (Solidity `**` is pure integer arithmetic) and eliminates all float types from the path. The function is added to `solidity_builtins.c` and compiled into sol64.goto.
-
-**Performance note:** k-induction on 256-bit multiplication loops is very slow (~80s+ per iteration). Tests changed from `--k-induction` to bounded `--unwind 10` for practical runtimes. Bounded verification confirms correctness.
-
-#### Bug 5: Z3 sort mismatch in mapping struct — FIXED (2026-03-31)
-
-`mapping_t` and `_ESBMC_Mapping` structs had no `__attribute__((packed))`, so c2goto's padding logic inserted alignment padding fields that shifted component indices. The frontend used hardcoded `components().at(1)` to access the `addr` field, which hit a padding field instead.
-
-**Fix (applied 2026-03-31):** Two changes:
-1. **C library (`solidity_mapping.c`):** Added `__attribute__((packed))` to `_ESBMC_Mapping` and `mapping_t` structs. Bitfields retained for `_ExtInt` types (removing bitfields triggers `ext_int_pad` insertion which causes name collisions).
-2. **Frontend (`solidity_convert_decl.cpp`):** Replaced hardcoded `components().at(0)`/`at(1)` with name-based lookup (`"base"`, `"addr"`) to be robust against any future padding changes.
-
-**Result:** mapping_16 and transfer_send_2 now pass. mapping_13 still fails due to a pre-existing NULL pointer dereference check in `map_get_raw` (unrelated to struct layout).
+- **No floating-point in Solidity pipeline:** sol64.goto is compiled with `--fixedbv` (CMakeLists.txt:249), but the Solidity frontend no longer generates any float/fixedbv types. The `--fixedbv` runtime flag is unnecessary for Solidity and should NOT be forced on — it has no performance benefit and risks side effects in shared code paths.
+- **`_ExtInt` struct alignment:** `_ExtInt(N)` types in C structs require bitfield notation (`: N`) to avoid `ext_int_pad` name collisions from ESBMC's padding logic (`padding.cpp:116-131`). Use `__attribute__((packed))` to prevent alignment padding on top of bitfields.
 
 ## Solidity Language Support Audit (2026-03-30)
 
