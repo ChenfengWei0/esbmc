@@ -146,16 +146,16 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | **Value types** | `bool`, `uint8`-`uint256`, `int8`-`int256`, `address`/`address payable`, `string`, `bytes1`-`bytes32`, `bytes` (dynamic) |
 | **Composite types** | `struct` (nested, with arrays), `enum`, fixed arrays `T[N]`, dynamic arrays `T[]` (push/pop/length), multi-dimensional arrays |
 | **Single-level mapping** | `mapping(K => V)` — modeled via infinite arrays |
-| **Operators** | All arithmetic (`+`,`-`,`*`,`/`,`%`,`**`), bitwise, comparison, logical, compound assignment (`+=` etc.), prefix/postfix `++`/`--`, ternary `?:` |
-| **Control flow** | `if`/`else`, `for`, `while`, `break`, `continue`, `return` (including multi-value via tuples) |
-| **Contract core** | Contract/library/interface definitions, functions (regular/constructor/receive/fallback), state variables, visibility (`public`/`private`/`internal`/`external`), state mutability (`pure`/`view`/`payable`) |
+| **Operators** | All arithmetic (`+`,`-`,`*`,`/`,`%`,`**`), bitwise, comparison, logical, compound assignment (`+=` etc.), prefix/postfix `++`/`--`, ternary `?:`, `delete` |
+| **Control flow** | `if`/`else`, `for`, `while`, `do-while`, `break`, `continue`, `return` (including multi-value via tuples) |
+| **Contract core** | Contract/library/interface definitions, functions (regular/constructor/receive/fallback), free functions, state variables, visibility (`public`/`private`/`internal`/`external`), state mutability (`pure`/`view`/`payable`) |
 | **Modifiers** | Definition, parameters, placeholder `_` expansion, chaining |
 | **Events** | `event` definition, `emit` (modeled as function calls) |
 | **Custom errors** | `error` definition, `revert CustomError(...)` (Solidity 0.8.4+) |
 | **Inheritance** | Multiple inheritance with C3 linearization, `virtual`/`override`, abstract contracts, interfaces |
 | **Libraries** | Library contracts, library function calls |
 | **Import** | Multi-file with topological sort (17 tests) |
-| **Globals** | `msg.sender`/`.value`/`.sig`/`.data`, `block.number`/`.timestamp`/`.coinbase`/`.difficulty`/`.gaslimit`/`.chainid`/`.basefee`, `tx.origin`/`.gasprice` |
+| **Globals** | `msg.sender`/`.value`/`.sig`/`.data`, `block.number`/`.timestamp`/`.coinbase`/`.difficulty`/`.gaslimit`/`.chainid`/`.basefee`/`.prevrandao`, `tx.origin`/`.gasprice` |
 | **Built-ins** | `require()`, `assert()`, `revert()`, `keccak256()`, `sha256()`, `ripemd160()`, `ecrecover()`, `addmod()`, `mulmod()`, `gasleft()`, `selfdestruct()` |
 | **ABI encoding** | `abi.encode()`, `abi.encodePacked()`, `abi.encodeWithSelector()`, `abi.encodeWithSignature()`, `abi.encodeCall()` |
 | **Address members** | `.balance`, `.code`, `.codehash`, `.transfer()`, `.send()`, `.call()`, `.delegatecall()`, `.staticcall()` |
@@ -183,17 +183,13 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 
 | Feature | Notes |
 |---------|-------|
-| **`do-while` loops** | No grammar entry, no handler |
 | **Inline assembly / Yul** | No handler at all — blocks many optimized production contracts (OpenZeppelin etc.) |
 | **`fixed`/`ufixed` types** | TODO stubs only (`solidity_grammar.h:213-214`); Solidity itself hasn't finalized these |
 | **`abi.decode()`** | No handler |
-| **`delete` operator** | No handler (reset storage to default) |
 | **Function types** | `function(uint) returns (bool)` as first-class values not supported |
-| **Free functions** | File-level functions (outside contracts) not supported (only file-level constants) |
 | **`bytes.concat()`** | Not handled (only `string.concat` via library) |
 | **`type(C).runtimeCode`** | Not handled |
 | **`type(I).interfaceId`** | Not handled |
-| **`block.prevrandao`** | Post-Merge replacement for `block.difficulty` not handled |
 | **`block.blobbasefee`** / `blobhash()` | EIP-4844, not handled |
 | **Transient storage** | EIP-1153 (`transient` keyword), not handled |
 | **Global `using for` + custom operators** | `using {add as +} for MyType global` not supported |
@@ -204,15 +200,13 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 
 **High impact** (blocks real-world contracts):
 1. Nested mapping — required by ERC20 (`allowance`), ERC721, most DeFi
-5. Inline assembly — used pervasively in optimized contracts
-6. `do-while` loops — simple to implement
-7. `delete` operator — common storage cleanup pattern
+2. Inline assembly — used pervasively in optimized contracts
 
 **Medium impact**:
-8. Try/Catch — DeFi error handling
-9. `abi.decode()` — low-level call return parsing
-10. Data location semantics — soundness improvement
-11. Free functions — increasingly common pattern
+3. Try/Catch — DeFi error handling
+4. `abi.decode()` — low-level call return parsing
+5. Data location semantics — soundness improvement
+6. Function overloading — same-name different-param functions
 
 **Backend fixes** (THOROUGH-only, lower priority):
 9. Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
@@ -340,9 +334,9 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 **Note:** Both `ENABLE_SOLIDITY_FRONTEND` and `ENABLE_REGRESSION` must be ON. The default build (`./scripts/build.sh`) sets `ENABLE_REGRESSION=OFF`, so regression tests won't appear in `ctest -N` unless explicitly enabled.
 
-### Test Baseline (2026-03-31)
+### Test Baseline (2026-04-01)
 
-**357 total tests**: 355 pass, 1 THOROUGH fail (mapping_13), 1 KNOWNBUG (transfer_send_2 timeout). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**365 total tests**: 363 pass, 1 THOROUGH fail (mapping_13), 1 KNOWNBUG (transfer_send_2 timeout). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
@@ -374,6 +368,14 @@ ctest -R "regression/esbmc-solidity/address_1"
 | `unchecked_block_3` | CORE | Overflow wrapping inside unchecked block |
 | `unchecked_block_4` | CORE | Checked overflow detected outside unchecked |
 | `perf_large_uint_1` | CORE | uint256 large arithmetic, chained ops, max value |
+| `prevrandao_1` | CORE | block.prevrandao access (SUCCESSFUL) |
+| `prevrandao_2` | CORE | block.prevrandao nondet value (FAILED) |
+| `do_while_1` | CORE | do-while sum loop (SUCCESSFUL) |
+| `do_while_2` | CORE | do-while at-least-once execution (FAILED) |
+| `delete_1` | CORE | delete resets uint/bool/uint8 (SUCCESSFUL) |
+| `delete_2` | CORE | delete value reset verification (FAILED) |
+| `free_function_1` | CORE | Free function call + composition (SUCCESSFUL) |
+| `free_function_2` | CORE | Division by zero in free function (FAILED) |
 
 **Coverage gaps** (no tests exist):
 - Bitwise operators on uint256 (OOM with default solver settings)
