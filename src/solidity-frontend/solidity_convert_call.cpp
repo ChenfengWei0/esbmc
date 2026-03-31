@@ -141,21 +141,26 @@ bool solidity_convertert::get_non_library_function_call(
 
   // Populating arguments
 
-  // this object
-  exprt this_object = nil_exprt();
-  if (current_functionDecl)
+  // this object — skip for free functions (no this pointer)
+  bool is_free_func = decl_ref.contains("kind") &&
+                      decl_ref["kind"].get<std::string>() == "freeFunction";
+  if (!is_free_func)
   {
-    if (get_func_decl_this_ref(*current_functionDecl, this_object))
-      return true;
-  }
-  else if (!caller.empty())
-  {
-    if (get_ctor_decl_this_ref(caller, this_object))
-      return true;
-  }
-  // otherwise, it's the auxiliary function we defined //e.g. call, delegatecall...
+    exprt this_object = nil_exprt();
+    if (current_functionDecl)
+    {
+      if (get_func_decl_this_ref(*current_functionDecl, this_object))
+        return true;
+    }
+    else if (!caller.empty())
+    {
+      if (get_ctor_decl_this_ref(caller, this_object))
+        return true;
+    }
+    // otherwise, it's the auxiliary function we defined //e.g. call, delegatecall...
 
-  call.arguments().push_back(this_object);
+    call.arguments().push_back(this_object);
+  }
 
   if (decl_ref.contains("parameters") && caller.contains("arguments"))
   {

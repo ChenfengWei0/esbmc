@@ -965,6 +965,12 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
     // for abstract contract
     add_empty_body_node(ast_node);
   }
+  else if (node_type == "FunctionDefinition")
+  {
+    // Free function (outside any contract)
+    if (get_function_definition(ast_node))
+      return true;
+  }
   else if (
     node_type == "ContractDefinition" && ast_node["contractKind"] == "library")
   {
@@ -1238,6 +1244,16 @@ void solidity_convertert::get_local_var_decl_name(
     assert(!current_functionName.empty());
     // As the local variable inside the function will not be inherited, we can use current_functionName
     id = "sol:@C@" + cname + "@F@" + current_functionName + "@" + name + "#" +
+         i2string(ast_node["id"].get<std::int16_t>());
+  }
+  else if (
+    (current_functionDecl || !current_functionName.empty()) && cname.empty())
+  {
+    // Free function (outside any contract): use sol:@F@funcName@varName#id
+    if (current_functionName.empty())
+      current_functionName = (*current_functionDecl)["name"];
+    assert(!current_functionName.empty());
+    id = "sol:@F@" + current_functionName + "@" + name + "#" +
          i2string(ast_node["id"].get<std::int16_t>());
   }
   else if (ast_node.contains("scope"))
