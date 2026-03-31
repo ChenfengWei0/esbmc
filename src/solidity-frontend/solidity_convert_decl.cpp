@@ -1144,6 +1144,12 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
     // for abstract contract
     add_empty_body_node(ast_node);
   }
+  else if (node_type == "FunctionDefinition")
+  {
+    // Free function (outside any contract)
+    if (get_function_definition(ast_node))
+      return true;
+  }
   else if (
     node_type == "FunctionDefinition" && current_baseContractName.empty())
   {
