@@ -499,15 +499,24 @@ bool solidity_convertert::get_var_decl(
 
     exprt op0 = symbol_expr(add_added_s);
     // array => &array[0]
-    solidity_gen_typecast(
-      ns, op0, to_struct_type(map_t).components().at(0).type());
-    inits.op0() = op0;
+    // Use name-based component lookup to be robust against padding fields
+    const struct_typet &map_struct = to_struct_type(map_t);
+    const auto &comps = map_struct.components();
+    unsigned base_idx = 0, addr_idx = 1;
+    for (unsigned i = 0; i < comps.size(); i++)
+    {
+      if (comps[i].get_name() == "base")
+        base_idx = i;
+      else if (comps[i].get_name() == "addr")
+        addr_idx = i;
+    }
+    solidity_gen_typecast(ns, op0, comps[base_idx].type());
+    inits.operands()[base_idx] = op0;
 
     // address => this->
     exprt addr_expr = member_exprt(this_expr, "$address", addr_t);
-    solidity_gen_typecast(
-      ns, addr_expr, to_struct_type(map_t).components().at(1).type());
-    inits.op1() = addr_expr;
+    solidity_gen_typecast(ns, addr_expr, comps[addr_idx].type());
+    inits.operands()[addr_idx] = addr_expr;
 
     added_symbol.value = inits;
     decl.operands().push_back(inits);

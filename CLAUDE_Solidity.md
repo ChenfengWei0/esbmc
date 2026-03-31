@@ -124,13 +124,15 @@ This correctly implements Solidity 0.8+ semantics where `unchecked` blocks opt o
 
 **Fix strategy:** Add `floatbv_type` handling in `smt_casts.cpp:22-41` (`convert_typecast_to_fixedbv_nonint`), similar to the existing `convert_typecast_to_fpbv` function.
 
-#### Bug 5: Z3 sort mismatch in mapping struct (THOROUGH-only)
+#### Bug 5: Z3 sort mismatch in mapping struct — FIXED (2026-03-31)
 
-`mapping_t` struct uses bitfield `address_t addr : 160` in the C library (`solidity_mapping.c:20`). The bitfield representation from the C frontend (c2goto) doesn't match the C++ frontend's `unsignedbv_typet(160)`, causing a Z3 sort mismatch during SMT encoding.
+`mapping_t` and `_ESBMC_Mapping` structs had no `__attribute__((packed))`, so c2goto's padding logic inserted alignment padding fields that shifted component indices. The frontend used hardcoded `components().at(1)` to access the `addr` field, which hit a padding field instead.
 
-**Affected tests:** mapping_13, mapping_16, transfer_send_2 (all THOROUGH)
+**Fix (applied 2026-03-31):** Two changes:
+1. **C library (`solidity_mapping.c`):** Added `__attribute__((packed))` to `_ESBMC_Mapping` and `mapping_t` structs. Bitfields retained for `_ExtInt` types (removing bitfields triggers `ext_int_pad` insertion which causes name collisions).
+2. **Frontend (`solidity_convert_decl.cpp`):** Replaced hardcoded `components().at(0)`/`at(1)` with name-based lookup (`"base"`, `"addr"`) to be robust against any future padding changes.
 
-**Fix strategy:** Remove the bitfield declaration in `solidity_mapping.c` — use `address_t addr;` instead of `address_t addr : 160;` since the bitfield width equals the type width and is redundant.
+**Result:** mapping_16 and transfer_send_2 now pass. mapping_13 still fails due to a pre-existing NULL pointer dereference check in `map_get_raw` (unrelated to struct layout).
 
 ## Solidity Language Support Audit (2026-03-30)
 
@@ -213,7 +215,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 
 **Backend fixes** (THOROUGH-only, lower priority):
 9. Fix Bug 4 (fixedbv typecast) — `smt_casts.cpp` missing case
-10. Fix Bug 5 (mapping bitfield mismatch) — `solidity_mapping.c` bitfield removal
+10. Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
 
 ## Code Architecture Notes
 
@@ -333,7 +335,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-03-31)
 
-**356 total tests**: 350 CORE pass, 6 THOROUGH fail (Bugs 4 & 5). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**356 total tests**: 352 CORE pass, 4 THOROUGH fail (Bug 4: inheritance_6/op_binary_5/op_binary_8; mapping_13 NULL deref). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Adversarial tests added (2026-03-31):**
 
