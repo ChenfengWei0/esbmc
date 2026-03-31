@@ -171,52 +171,96 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | **Nested mapping** | Not supported | `mapping(K1 => mapping(K2 => V))` rejected with error (`solidity_grammar.cpp:230`) |
 | **Try/Catch** | Recognized, not converted | AST node registered but conversion aborts: `"Try/Catch is not fully supported yet"` (`solidity_convert_stmt.cpp:631`) |
 | **Nested tuple destructuring** | Not supported | `((a,b),c) = ...` marked TODO (`solidity_convert_expr.cpp:2212`, `solidity_convert_tuple.cpp:59`) |
-| **Data location semantics** | Parsed, not modeled | `storage`/`memory`/`calldata` qualifiers recognized in typeStrings but reference-vs-copy and immutability semantics not enforced |
+| **Data location semantics** | Parsed, not modeled | `storage`/`memory`/`calldata` qualifiers recognized but reference-vs-copy and immutability semantics not enforced |
 | **`memory` param copy** | Known gap | TODO: memory type parameters should create copies (`solidity_convert_call.cpp:102`) |
 | **Mapping index range** | Truncated | Index limited to `unsigned long long` — keys >64-bit may collide (`solidity_convert_expr.cpp:1058`) |
 | **Crypto functions** | Abstracted | `keccak256` etc. return `nondet` values (standard model checking abstraction), not real hashes |
 | **`using A for B`** | Parsed, skipped | `UsingForDef` AST node handled but does not alter operator dispatch (`solidity_convert_decl.cpp:53`) |
 | **Bitwise on dynamic bytes** | Static only | Bitwise ops limited to `bytesN`, not dynamic `bytes` (`solidity_convert_expr.cpp:2155`) |
 | **`constant`/`immutable`** | Partial | `constant` handled at file and contract level; `immutable` may not enforce set-once semantics |
+| **Function overloading** | Partial | Same-name different-param functions may have resolution issues in `find_decl_ref` |
+| **`super` keyword** | Not supported | No handler for `super.funcName()` C3-linearized chain calls |
+| **Fallback with params** | Partial | Basic fallback exists, but `fallback(bytes calldata) returns (bytes memory)` parameters ignored |
+| **Array slices** | Not supported | `x[start:end]` on calldata arrays not handled |
 
 ### Not Supported
 
+Categorized by implementation difficulty (audited 2026-04-01 against Solidity 0.8.x docs).
+
+**Trivial** (< 20 lines each):
 | Feature | Notes |
 |---------|-------|
-| **Inline assembly / Yul** | No handler at all — blocks many optimized production contracts (OpenZeppelin etc.) |
-| **`fixed`/`ufixed` types** | TODO stubs only (`solidity_grammar.h:213-214`); Solidity itself hasn't finalized these |
-| **`abi.decode()`** | No handler |
-| **Function types** | `function(uint) returns (bool)` as first-class values not supported |
-| **`bytes.concat()`** | Not handled (only `string.concat` via library) |
-| **`type(C).runtimeCode`** | Not handled |
-| **`type(I).interfaceId`** | Not handled |
-| **`block.blobbasefee`** / `blobhash()` | EIP-4844, not handled |
-| **Transient storage** | EIP-1153 (`transient` keyword), not handled |
-| **Global `using for` + custom operators** | `using {add as +} for MyType global` not supported |
-| **`erc7201()`** | Storage namespace hash, not handled |
-| **Function overloading** | Same-name different-param functions within one contract may have resolution issues |
+| **`block.blobbasefee`** | EIP-7516 — add global variable like `block_prevrandao` |
+| **`blobhash(uint)`** | EIP-4844 — add builtin function returning nondet bytes32 |
+| **`type(C).name`** | Return contract name as string constant |
+
+**Easy** (~20-80 lines each):
+| Feature | Notes |
+|---------|-------|
+| **`bytes.concat()`** | Library function similar to existing `string_concat` |
+| **`type(C).runtimeCode`** | Return nondet bytes like `creationCode` |
+| **`type(I).interfaceId`** | Compute bytes4 from keccak256 of function selectors |
+
+**Moderate** (~80-300 lines each):
+| Feature | Notes |
+|---------|-------|
+| **User-defined value types** | `type C is V` with `.wrap()`/`.unwrap()` — type alias + conversion functions |
+| **`immutable` set-once** | Enforce assignment only in constructor, read-only afterwards |
+| **Create2 salt** | Model `new C{salt: s}()` deterministic address computation |
+| **Nested tuple destructuring** | Recursive tuple unpacking in assignment |
+| **`abi.decode()`** | ABI decoding — moderate if limited to basic types |
+
+**Hard** (~300-1000 lines each):
+| Feature | Notes |
+|---------|-------|
+| **Nested mapping** | Required by ERC20 allowance, ERC721, most DeFi — needs recursive infinite array model |
+| **Try/Catch** | Exception model, path splitting for catch clauses, error data encoding |
+| **Function overloading** | Name mangling or overload resolution table in `find_decl_ref` |
+| **`super` keyword** | C3-linearized dispatch chain across multiple inheritance |
+| **Data location semantics** | Reference tracking, copy-on-assign vs alias semantics for storage/memory/calldata |
+
+**Very hard** (>1000 lines, architectural changes):
+| Feature | Notes |
+|---------|-------|
+| **Inline assembly / Yul** | Entire sub-language parser + semantic translator — blocks many production contracts |
+| **Function types** | `function(uint) returns (bool)` as first-class values — function pointer model |
+| **`using for` + custom operators** | Operator dispatch table per type, global scope management |
+| **Transient storage (EIP-1153)** | New data location model, transaction-scoped lifetime |
+| **Custom storage layout (ERC-7201)** | Base slot offset computation, contract layout specifier syntax |
 
 ### Priority for Future Work
 
-**High impact** (blocks real-world contracts):
-1. Nested mapping — required by ERC20 (`allowance`), ERC721, most DeFi
-2. Inline assembly — used pervasively in optimized contracts
+**Critical** (blocks most real-world contracts):
+1. **Nested mapping** — required by ERC20 (`allowance`), ERC721, most DeFi
+2. **Inline assembly / Yul** — used pervasively in OpenZeppelin and optimized contracts
 
-**Medium impact**:
-3. Try/Catch — DeFi error handling
-4. `abi.decode()` — low-level call return parsing
-5. Data location semantics — soundness improvement
-6. Function overloading — same-name different-param functions
+**High** (blocks common patterns):
+3. **Try/Catch** — DeFi error handling
+4. **`abi.decode()`** — low-level call return parsing
+5. **`super` keyword** — inheritance chain calls
+6. **Function overloading** — same-name different-param functions
+
+**Medium** (soundness/completeness):
+7. Data location semantics — reference vs copy correctness
+8. User-defined value types — increasingly common in modern Solidity
+9. `immutable` set-once — correctness for verified invariants
+10. `bytes.concat()` / `string.concat()` — simple additions
+
+**Low** (niche/EVM evolution):
+11. `block.blobbasefee` / `blobhash()` — EIP-4844 support
+12. `type(C).name` / `type(I).interfaceId` — introspection
+13. Transient storage — EIP-1153
+14. Custom storage layout — ERC-7201
 
 **Backend fixes** (THOROUGH-only, lower priority):
-9. Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
-10. Improve k-induction performance for `sol_pow_uint` 256-bit loop (currently ~80s+ per step)
+- Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
+- Improve k-induction performance for `sol_pow_uint` 256-bit loop (currently ~80s+ per step)
 
 **Performance bottlenecks** (slow THOROUGH tests):
-11. `transfer_send_2` (>1200s timeout) — k-induction + `--bound` cross-contract reasoning
-12. `typedef_1` (~420s) — k-induction with complex type aliases
-13. `continue_3`/`break_4` (~200-250s) — `--unwind 20` with nested control flow
-14. `bytes_17` (~175s) — bytes operations with `--bound` mode
+- `transfer_send_2` (>1200s timeout) — k-induction + `--bound` cross-contract reasoning
+- `typedef_1` (~420s) — k-induction with complex type aliases
+- `continue_3`/`break_4` (~200-250s) — `--unwind 20` with nested control flow
+- `bytes_17` (~175s) — bytes operations with `--bound` mode
 
 ## Code Architecture Notes
 
