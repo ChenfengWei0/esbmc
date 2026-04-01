@@ -155,11 +155,11 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | **Inheritance** | Multiple inheritance with C3 linearization, `virtual`/`override`, abstract contracts, interfaces |
 | **Libraries** | Library contracts, library function calls |
 | **Import** | Multi-file with topological sort (17 tests) |
-| **Globals** | `msg.sender`/`.value`/`.sig`/`.data`, `block.number`/`.timestamp`/`.coinbase`/`.difficulty`/`.gaslimit`/`.chainid`/`.basefee`/`.prevrandao`, `tx.origin`/`.gasprice` |
-| **Built-ins** | `require()`, `assert()`, `revert()`, `keccak256()`, `sha256()`, `ripemd160()`, `ecrecover()`, `addmod()`, `mulmod()`, `gasleft()`, `selfdestruct()` |
+| **Globals** | `msg.sender`/`.value`/`.sig`/`.data`, `block.number`/`.timestamp`/`.coinbase`/`.difficulty`/`.gaslimit`/`.chainid`/`.basefee`/`.prevrandao`/`.blobbasefee`, `tx.origin`/`.gasprice` |
+| **Built-ins** | `require()`, `assert()`, `revert()`, `keccak256()`, `sha256()`, `ripemd160()`, `ecrecover()`, `addmod()`, `mulmod()`, `gasleft()`, `selfdestruct()`, `blobhash()` |
 | **ABI encoding** | `abi.encode()`, `abi.encodePacked()`, `abi.encodeWithSelector()`, `abi.encodeWithSignature()`, `abi.encodeCall()` |
 | **Address members** | `.balance`, `.code`, `.codehash`, `.transfer()`, `.send()`, `.call()`, `.delegatecall()`, `.staticcall()` |
-| **Type info** | `type(T).min`, `type(T).max`, `type(C).creationCode` |
+| **Type info** | `type(T).min`, `type(T).max`, `type(C).name`, `type(C).creationCode` |
 | **Units** | Ether (`wei`/`gwei`/`ether`), time (`seconds`/`minutes`/`hours`/`days`/`weeks`) |
 | **Unchecked** | `unchecked { ... }` blocks suppress overflow/underflow checks (Solidity 0.8+ semantics) |
 | **Verification** | Overflow/underflow (all integer widths including sub-256-bit), division-by-zero, reentrancy detection (mutex-based), bound/unbound address modes, whole-contract verification |
@@ -186,13 +186,6 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 ### Not Supported
 
 Categorized by implementation difficulty (audited 2026-04-01 against Solidity 0.8.x docs).
-
-**Trivial** (< 20 lines each):
-| Feature | Notes |
-|---------|-------|
-| **`block.blobbasefee`** | EIP-7516 — add global variable like `block_prevrandao` |
-| **`blobhash(uint)`** | EIP-4844 — add builtin function returning nondet bytes32 |
-| **`type(C).name`** | Return contract name as string constant |
 
 **Easy** (~20-80 lines each):
 | Feature | Notes |
@@ -247,10 +240,9 @@ Categorized by implementation difficulty (audited 2026-04-01 against Solidity 0.
 10. `bytes.concat()` / `string.concat()` — simple additions
 
 **Low** (niche/EVM evolution):
-11. `block.blobbasefee` / `blobhash()` — EIP-4844 support
-12. `type(C).name` / `type(I).interfaceId` — introspection
-13. Transient storage — EIP-1153
-14. Custom storage layout — ERC-7201
+11. `type(I).interfaceId` — ERC-165 introspection
+12. Transient storage — EIP-1153
+13. Custom storage layout — ERC-7201
 
 **Backend fixes** (THOROUGH-only, lower priority):
 - Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
@@ -380,7 +372,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-04-01)
 
-**365 total tests**: 363 pass, 1 THOROUGH fail (mapping_13), 1 KNOWNBUG (transfer_send_2 timeout). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**371 total tests**: 369 pass, 1 THOROUGH fail (mapping_13), 1 KNOWNBUG (transfer_send_2 timeout). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
