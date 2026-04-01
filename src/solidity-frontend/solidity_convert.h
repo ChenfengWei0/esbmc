@@ -535,6 +535,12 @@ protected:
   bool multi_transaction_verification(const std::string &contractName);
   bool multi_contract_verification_bound(std::set<std::string> &tgt_set);
   bool multi_contract_verification_unbound(std::set<std::string> &tgt_set);
+  bool prepare_harness_entry_functions(
+    const std::set<std::string> &cname_set,
+    std::vector<const symbolt *> &entry_syms);
+  bool register_harness_main(
+    const std::string &sol_id,
+    const codet &func_body);
   void reset_auxiliary_vars();
 
   // auxiliary functions
@@ -637,6 +643,12 @@ protected:
     const exprt &member,
     const exprt &_mem_call,
     const bool is_func_call,
+    exprt &new_expr);
+  bool get_bound_low_level_call(
+    const nlohmann::json &expr,
+    const nlohmann::json &literal_type,
+    const std::string &mem_name,
+    const exprt &base,
     exprt &new_expr);
   bool get_low_level_member_accsss(
     const nlohmann::json &expr,
@@ -781,6 +793,20 @@ protected:
 
   // bound setting
   bool is_bound;
+
+  // Check if a contract should use "new" expression semantics (dynamic allocation).
+  // In unbound mode with a single verification target, new-expressions are optimized
+  // away (treated as static instances) to reduce state space.
+  bool should_treat_as_new(const std::string &contract_name) const
+  {
+    if (!newContractSet.count(contract_name))
+      return false;
+    if (
+      !is_bound && tgt_cnt_set.count(contract_name) > 0 &&
+      tgt_cnt_set.size() == 1)
+      return false;
+    return true;
+  }
 
   // reentry-check setting
   bool is_reentry_check;

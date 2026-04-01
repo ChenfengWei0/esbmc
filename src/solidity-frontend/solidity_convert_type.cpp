@@ -367,14 +367,7 @@ bool solidity_convertert::get_type_description(
     */
     // we need to check if it's inside a contract used in a new expression statement
     assert(!current_baseContractName.empty());
-    bool is_new_expr = newContractSet.count(current_baseContractName);
-    if (is_new_expr)
-    {
-      if (
-        !is_bound && tgt_cnt_set.count(current_baseContractName) > 0 &&
-        tgt_cnt_set.size() == 1)
-        is_new_expr = false;
-    }
+    bool is_new_expr = should_treat_as_new(current_baseContractName);
 
     if (is_new_expr)
       new_type = symbol_typet(lib_prefix + "mapping_t");

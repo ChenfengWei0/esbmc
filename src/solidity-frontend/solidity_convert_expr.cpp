@@ -365,38 +365,8 @@ bool solidity_convertert::get_expr(
       }
       else
       {
-        const nlohmann::json &initial_func_call =
-          find_last_parent(src_ast_json["nodes"], expr);
-        const nlohmann::json *func_call = &initial_func_call;
-
-        if ((*func_call)["nodeType"] == "FunctionCallOptions")
-        {
-          const nlohmann::json &second_call =
-            find_last_parent(src_ast_json["nodes"], initial_func_call);
-          func_call = &second_call;
-        }
-
-        assert((*func_call)["nodeType"] == "FunctionCall");
-
-        if ((*func_call).empty() || (*func_call).is_null())
-        {
-          log_error("failed to resolve function call in member access");
-          return true;
-        }
-
-        exprt arg = nil_exprt();
-        assert((*func_call).contains("arguments"));
-
-        // only one possible arguemnt
-        if ((*func_call)["arguments"].size() > 0)
-        {
-          auto &arguments = (*func_call)["arguments"][0];
-          if (get_expr(arguments, expr["argumentTypes"][0], arg))
-            return true;
-        }
-
-        if (get_low_level_member_accsss(
-              expr, literal_type, mem_name, base, arg, new_expr))
+        if (get_bound_low_level_call(
+              expr, literal_type, mem_name, base, new_expr))
           return true;
       }
     }
@@ -1444,14 +1414,7 @@ bool solidity_convertert::get_contract_member_call_expr(
               pos))
           return true;
 
-        bool is_new_expr = newContractSet.count(base_cname);
-        if (is_new_expr)
-        {
-          if (
-            !is_bound && tgt_cnt_set.count(base_cname) > 0 &&
-            tgt_cnt_set.size() == 1)
-            is_new_expr = false;
-        }
+        bool is_new_expr = should_treat_as_new(base_cname);
         // get key/value type
         typet key_t, value_t;
         SolidityGrammar::SolType key_sol_type, val_sol_type;
@@ -1655,15 +1618,7 @@ bool solidity_convertert::get_index_access_expr(
       return true;
     if (get_sol_type(base_t) == SolidityGrammar::SolType::MAPPING)
     {
-      // hack to improve the verification speed
-      bool is_new_expr = newContractSet.count(current_contractName);
-      if (is_new_expr)
-      {
-        if (
-          !is_bound && tgt_cnt_set.count(current_contractName) > 0 &&
-          tgt_cnt_set.size() == 1)
-          is_new_expr = false;
-      }
+      bool is_new_expr = should_treat_as_new(current_contractName);
 
       // find mapping definition
       assert(base_json.contains("referencedDeclaration"));

@@ -902,6 +902,54 @@ bool solidity_convertert::get_high_level_member_access(
  * x.call{value: val}("")
  * @base: (this->)x
  * @mem_name: call
+/**
+ * Resolve a low-level call (.call/.send/.transfer/.delegatecall/.staticcall)
+ * in bound mode by finding the enclosing FunctionCall AST node, extracting
+ * arguments, and dispatching to get_low_level_member_accsss.
+ */
+bool solidity_convertert::get_bound_low_level_call(
+  const nlohmann::json &expr,
+  const nlohmann::json &literal_type,
+  const std::string &mem_name,
+  const exprt &base,
+  exprt &new_expr)
+{
+  // Walk up the AST to find the enclosing FunctionCall node.
+  // May need to skip an intermediate FunctionCallOptions node (for {value: X}).
+  const nlohmann::json &initial_func_call =
+    find_last_parent(src_ast_json["nodes"], expr);
+  const nlohmann::json *func_call = &initial_func_call;
+
+  if ((*func_call)["nodeType"] == "FunctionCallOptions")
+  {
+    const nlohmann::json &second_call =
+      find_last_parent(src_ast_json["nodes"], initial_func_call);
+    func_call = &second_call;
+  }
+
+  assert((*func_call)["nodeType"] == "FunctionCall");
+
+  if ((*func_call).empty() || (*func_call).is_null())
+  {
+    log_error("failed to resolve function call in member access");
+    return true;
+  }
+
+  exprt arg = nil_exprt();
+  assert((*func_call).contains("arguments"));
+
+  if ((*func_call)["arguments"].size() > 0)
+  {
+    auto &arguments = (*func_call)["arguments"][0];
+    if (get_expr(arguments, expr["argumentTypes"][0], arg))
+      return true;
+  }
+
+  return get_low_level_member_accsss(
+    expr, literal_type, mem_name, base, arg, new_expr);
+}
+
+/**
  * @options: val
  * @arg: ""
  */

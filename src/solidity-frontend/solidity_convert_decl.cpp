@@ -186,16 +186,8 @@ bool solidity_convertert::get_var_decl(
   bool is_contract =
     get_sol_type(t) == SolidityGrammar::SolType::CONTRACT ? true : false;
   bool is_mapping = get_sol_type(t) == SolidityGrammar::SolType::MAPPING ? true : false;
-  bool is_new_expr = newContractSet.count(current_contractName);
+  bool is_new_expr = should_treat_as_new(current_contractName);
   bool is_byte_static = is_bytesN_type(t);
-  if (is_new_expr)
-  {
-    // hack: check if it's unbound and the only verifying targets
-    if (
-      !is_bound && tgt_cnt_set.count(current_contractName) > 0 &&
-      tgt_cnt_set.size() == 1)
-      is_new_expr = false;
-  }
 
   // for mapping: populate the element type
   if (is_mapping && !is_new_expr)
