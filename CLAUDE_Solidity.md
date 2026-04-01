@@ -217,7 +217,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 |----------|----------|
 | **Value types** | `bool`, `uint8`-`uint256`, `int8`-`int256`, `address`/`address payable`, `string`, `bytes1`-`bytes32`, `bytes` (dynamic) |
 | **Composite types** | `struct` (nested, with arrays), `enum`, fixed arrays `T[N]`, dynamic arrays `T[]` (push/pop/length), multi-dimensional arrays |
-| **Single-level mapping** | `mapping(K => V)` — modeled via infinite arrays |
+| **Mapping** | `mapping(K => V)` and nested `mapping(K1 => mapping(K2 => V))` — modeled via (nested) infinite SMT arrays |
 | **Operators** | All arithmetic (`+`,`-`,`*`,`/`,`%`,`**`), bitwise, comparison, logical, compound assignment (`+=` etc.), prefix/postfix `++`/`--`, ternary `?:`, `delete` |
 | **Control flow** | `if`/`else`, `for`, `while`, `do-while`, `break`, `continue`, `return` (including multi-value via tuples) |
 | **Contract core** | Contract/library/interface definitions, functions (regular/constructor/receive/fallback), free functions, state variables, visibility (`public`/`private`/`internal`/`external`), state mutability (`pure`/`view`/`payable`) |
@@ -240,7 +240,6 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 
 | Feature | Status | Detail |
 |---------|--------|--------|
-| **Nested mapping** | Not supported | `mapping(K1 => mapping(K2 => V))` rejected with error (`solidity_grammar.cpp:230`) |
 | **Try/Catch** | Recognized, not converted | AST node registered but conversion aborts: `"Try/Catch is not fully supported yet"` (`solidity_convert_stmt.cpp:631`) |
 | **Nested tuple destructuring** | Not supported | `((a,b),c) = ...` marked TODO (`solidity_convert_expr.cpp:2212`, `solidity_convert_tuple.cpp:59`) |
 | **Data location semantics** | Parsed, not modeled | `storage`/`memory`/`calldata` qualifiers recognized but reference-vs-copy and immutability semantics not enforced |
@@ -278,7 +277,6 @@ Categorized by implementation difficulty (audited 2026-04-01 against Solidity 0.
 **Hard** (~300-1000 lines each):
 | Feature | Notes |
 |---------|-------|
-| **Nested mapping** | Required by ERC20 allowance, ERC721, most DeFi — needs recursive infinite array model |
 | **Try/Catch** | Exception model, path splitting for catch clauses, error data encoding |
 | **Function overloading** | Name mangling or overload resolution table in `find_decl_ref` |
 | **`super` keyword** | C3-linearized dispatch chain across multiple inheritance |
@@ -296,25 +294,24 @@ Categorized by implementation difficulty (audited 2026-04-01 against Solidity 0.
 ### Priority for Future Work
 
 **Critical** (blocks most real-world contracts):
-1. **Nested mapping** — required by ERC20 (`allowance`), ERC721, most DeFi
-2. **Inline assembly / Yul** — used pervasively in OpenZeppelin and optimized contracts
+1. **Inline assembly / Yul** — used pervasively in OpenZeppelin and optimized contracts
 
 **High** (blocks common patterns):
-3. **Try/Catch** — DeFi error handling
-4. **`abi.decode()`** — low-level call return parsing
-5. **`super` keyword** — inheritance chain calls
-6. **Function overloading** — same-name different-param functions
+2. **Try/Catch** — DeFi error handling
+3. **`abi.decode()`** — low-level call return parsing
+4. **`super` keyword** — inheritance chain calls
+5. **Function overloading** — same-name different-param functions
 
 **Medium** (soundness/completeness):
-7. Data location semantics — reference vs copy correctness
-8. User-defined value types — increasingly common in modern Solidity
-9. `immutable` set-once — correctness for verified invariants
-10. `bytes.concat()` / `string.concat()` — simple additions
+6. Data location semantics — reference vs copy correctness
+7. User-defined value types — increasingly common in modern Solidity
+8. `immutable` set-once — correctness for verified invariants
+9. `bytes.concat()` / `string.concat()` — simple additions
 
 **Low** (niche/EVM evolution):
-11. `type(I).interfaceId` — ERC-165 introspection
-12. Transient storage — EIP-1153
-13. Custom storage layout — ERC-7201
+10. `type(I).interfaceId` — ERC-165 introspection
+11. Transient storage — EIP-1153
+12. Custom storage layout — ERC-7201
 
 **Backend fixes** (THOROUGH-only, lower priority):
 - Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
