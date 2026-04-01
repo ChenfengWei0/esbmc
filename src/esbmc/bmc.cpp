@@ -562,6 +562,7 @@ static std::string prettify_solidity_expr(const std::string &expr)
     {std::regex(R"(\bblock_gaslimit\b)"), "block.gaslimit"},
     {std::regex(R"(\bblock_chainid\b)"), "block.chainid"},
     {std::regex(R"(\bblock_basefee\b)"), "block.basefee"},
+    {std::regex(R"(\bblock_blobbasefee\b)"), "block.blobbasefee"},
     {std::regex(R"(\bblock_prevrandao\b)"), "block.prevrandao"},
   };
   for (const auto &[re, repl] : name_map)

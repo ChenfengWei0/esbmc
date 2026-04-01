@@ -17,6 +17,7 @@ address_t tx_origin;
 
 /* block variables */
 uint256_t block_basefee;
+uint256_t block_blobbasefee;
 uint256_t block_chainid;
 address_t block_coinbase;
 uint256_t block_difficulty;
@@ -30,6 +31,13 @@ uint256_t blockhash(uint256_t x)
 {
 __ESBMC_HIDE:;
   return x;
+}
+
+/* blobhash (EIP-4844) */
+uint256_t blobhash(uint256_t index)
+{
+__ESBMC_HIDE:;
+  return nondet_uint();
 }
 
 /* gasleft */

@@ -15,6 +15,7 @@ extern uint256_t msg_value;
 extern uint256_t tx_gasprice;
 extern address_t tx_origin;
 extern uint256_t block_basefee;
+extern uint256_t block_blobbasefee;
 extern uint256_t block_chainid;
 extern address_t block_coinbase;
 extern uint256_t block_difficulty;
@@ -82,6 +83,7 @@ tx_gasprice = (uint256_t)nondet_uint();
 tx_origin = (address_t)nondet_uint();
 
 block_basefee = (uint256_t)nondet_uint();
+block_blobbasefee = (uint256_t)nondet_uint();
 block_chainid = (uint256_t)nondet_uint();
 block_coinbase = (address_t)nondet_uint();
 block_difficulty = (uint256_t)nondet_uint();
