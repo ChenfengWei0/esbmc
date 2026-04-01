@@ -425,11 +425,21 @@ bool solidity_convertert::construct_tuple_assigments(
     return true;
   }
 
-  // Build name → component map for the RHS struct
+  // Build component lookup for the RHS struct.
+  // For generated tuple structs, components are named "mem0", "mem1", etc.
+  // For library structs (sol_llc_ret), components have their own names (x, y, ...).
+  // We build both a name map and a positional list of non-padding components.
   const struct_typet &rhs_struct = to_struct_type(new_rhs.type());
-  std::map<std::string, exprt> rhs_components;
+  std::map<std::string, exprt> rhs_by_name;
+  std::vector<exprt> rhs_by_pos; // non-padding components in order
   for (const auto &comp : rhs_struct.components())
-    rhs_components[comp.get_name().as_string()] = comp;
+  {
+    std::string cname = comp.get_name().as_string();
+    rhs_by_name[cname] = comp;
+    // Skip padding components (anon_pad$N)
+    if (cname.find("anon_pad") == std::string::npos)
+      rhs_by_pos.push_back(comp);
+  }
 
   // Match LHS targets to RHS components by position
   std::set<exprt> assigned_symbol;
@@ -439,20 +449,24 @@ bool solidity_convertert::construct_tuple_assigments(
     if (lop.is_nil() || assigned_symbol.count(lop))
       continue;
 
-    // Look up RHS component by positional name "mem{i}"
+    // Try positional name "mem{i}" first (generated tuple structs),
+    // then fall back to positional index (library structs like sol_llc_ret).
     std::string mem_name = "mem" + std::to_string(i);
-    auto it = rhs_components.find(mem_name);
-    if (it == rhs_components.end())
+    exprt comp;
+    auto it = rhs_by_name.find(mem_name);
+    if (it != rhs_by_name.end())
+      comp = it->second;
+    else if (i < rhs_by_pos.size())
+      comp = rhs_by_pos[i];
+    else
     {
       log_error(
-        "tuple assignment: cannot find RHS component '{}' for position {}",
-        mem_name,
-        i);
+        "tuple assignment: cannot find RHS component for position {}", i);
       return true;
     }
 
     exprt rop;
-    if (get_tuple_member_call(new_rhs.identifier(), it->second, rop))
+    if (get_tuple_member_call(new_rhs.identifier(), comp, rop))
       return true;
 
     // Nested tuple: LHS operand is a code_blockt (inner tuple),
