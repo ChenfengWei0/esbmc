@@ -475,6 +475,10 @@ protected:
     const nlohmann::json &ast_node,
     const exprt &lhs,
     const exprt &rhs);
+  bool flatten_nested_tuple_assignment(
+    const nlohmann::json &expr,
+    const nlohmann::json &lhs_json,
+    const nlohmann::json &rhs_json);
   void
   get_tuple_assignment(const nlohmann::json &expr, const exprt &lop, exprt rop);
   void get_tuple_function_call(const exprt &op);

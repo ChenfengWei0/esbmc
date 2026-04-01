@@ -389,7 +389,6 @@ bool solidity_convertert::construct_tuple_assigments(
     exprt lop = lhs.operands().at(i);
     if (lop.is_nil() || assigned_symbol.count(lop))
       continue;
-    assigned_symbol.insert(lop);
 
     // Look up RHS component by positional name "mem{i}"
     std::string mem_name = "mem" + std::to_string(i);
@@ -407,8 +406,147 @@ bool solidity_convertert::construct_tuple_assigments(
     if (get_tuple_member_call(new_rhs.identifier(), it->second, rop))
       return true;
 
+    // Nested tuple: LHS operand is a code_blockt (inner tuple),
+    // RHS component is a tuple struct — recursively unpack.
+    if (
+      lop.type().is_code() && lop.is_code() &&
+      to_code(lop).statement() == "block" &&
+      get_sol_type(rop.type()) == SolidityGrammar::SolType::TUPLE_INSTANCE)
+    {
+      // rop is a tuple instance symbol — recursively assign inner members
+      if (construct_tuple_assigments(expr, lop, rop))
+        return true;
+      continue;
+    }
+
+    assigned_symbol.insert(lop);
     get_tuple_assignment(expr, lop, rop);
   }
+  return false;
+}
+
+bool solidity_convertert::flatten_nested_tuple_assignment(
+  const nlohmann::json &expr,
+  const nlohmann::json &lhs_json,
+  const nlohmann::json &rhs_json)
+{
+  // Flatten nested tuple assignments by walking LHS and RHS in parallel.
+  // For each leaf LHS target, resolve the corresponding RHS value and assign.
+  //
+  // Example: ((a, b), c) = (getPair(), 30)
+  //   LHS components: [TupleExpression(a,b), Identifier(c)]
+  //   RHS components: [FunctionCall(getPair), Literal(30)]
+  //   Result: call getPair() → a = tuple.mem0, b = tuple.mem1, c = 30
+
+  assert(lhs_json.value("nodeType", "") == "TupleExpression");
+  assert(lhs_json.contains("components"));
+
+  const auto &lhs_comps = lhs_json["components"];
+  const auto &rhs_comps = rhs_json["components"];
+
+  for (size_t i = 0; i < lhs_comps.size(); i++)
+  {
+    if (lhs_comps[i].is_null())
+      continue; // omitted slot
+
+    if (i >= rhs_comps.size())
+    {
+      log_error("nested tuple: LHS has more components than RHS");
+      return true;
+    }
+
+    if (lhs_comps[i].value("nodeType", "") == "TupleExpression")
+    {
+      // Nested LHS: ((a, b), ...) — RHS must be a tuple-returning function call
+      const auto &rhs_val = rhs_comps[i];
+      typet rhs_t;
+      if (get_type_description(rhs_val["typeDescriptions"], rhs_t))
+        return true;
+
+      if (get_sol_type(rhs_t) == SolidityGrammar::SolType::TUPLE_RETURNS)
+      {
+        // RHS is a function call returning tuple.
+        // 1. Call the function (populates its tuple instance)
+        exprt func_call;
+        if (get_expr(rhs_val, rhs_val["typeDescriptions"], func_call))
+          return true;
+        get_tuple_function_call(func_call);
+
+        // 2. Find the tuple instance for this function
+        assert(rhs_val.contains("expression"));
+        exprt tuple_inst;
+        if (get_tuple_function_ref(rhs_val["expression"], tuple_inst))
+          return true;
+
+        // 3. Assign inner LHS targets from the tuple instance members
+        const struct_typet &inner_struct = to_struct_type(tuple_inst.type());
+        const auto &inner_lhs_comps = lhs_comps[i]["components"];
+        size_t mem_idx = 0;
+        for (size_t j = 0; j < inner_lhs_comps.size(); j++)
+        {
+          if (inner_lhs_comps[j].is_null())
+          {
+            mem_idx++;
+            continue;
+          }
+
+          // Find component by name "mem{j}"
+          std::string mem_name = "mem" + std::to_string(j);
+          bool found = false;
+          for (const auto &comp : inner_struct.components())
+          {
+            if (comp.get_name().as_string() == mem_name)
+            {
+              exprt target;
+              if (get_expr(
+                    inner_lhs_comps[j],
+                    inner_lhs_comps[j]["typeDescriptions"],
+                    target))
+                return true;
+
+              exprt member;
+              if (get_tuple_member_call(
+                    tuple_inst.identifier(), comp, member))
+                return true;
+
+              get_tuple_assignment(expr, target, member);
+              found = true;
+              break;
+            }
+          }
+          if (!found)
+          {
+            log_error(
+              "nested tuple: cannot find inner component '{}'", mem_name);
+            return true;
+          }
+          mem_idx++;
+        }
+      }
+      else
+      {
+        // Nested LHS but RHS is a tuple literal — recurse
+        if (flatten_nested_tuple_assignment(expr, lhs_comps[i], rhs_comps[i]))
+          return true;
+      }
+    }
+    else
+    {
+      // Leaf LHS target — direct assignment
+      exprt target;
+      if (get_expr(
+            lhs_comps[i], lhs_comps[i]["typeDescriptions"], target))
+        return true;
+
+      exprt value;
+      if (get_expr(
+            rhs_comps[i], rhs_comps[i]["typeDescriptions"], value))
+        return true;
+
+      get_tuple_assignment(expr, target, value);
+    }
+  }
+
   return false;
 }
 

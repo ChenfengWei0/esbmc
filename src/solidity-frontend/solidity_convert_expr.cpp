@@ -2364,8 +2364,33 @@ bool solidity_convertert::get_binary_operator_expr(
   {
   case SolidityGrammar::ExpressionT::BO_Assign:
   {
-    // special handling for tuple-type assignment;
-    //TODO: handle nested tuple
+    // Nested tuple assignment: ((a,b), c) = (f(), 3)
+    // Detect by checking if the LHS TupleExpression contains nested TupleExpressions
+    if (
+      expr.contains("leftHandSide") &&
+      expr["leftHandSide"].value("nodeType", "") == "TupleExpression" &&
+      expr["leftHandSide"].contains("components"))
+    {
+      bool has_nested = false;
+      for (const auto &comp : expr["leftHandSide"]["components"])
+      {
+        if (!comp.is_null() && comp.value("nodeType", "") == "TupleExpression")
+        {
+          has_nested = true;
+          break;
+        }
+      }
+      if (has_nested)
+      {
+        if (flatten_nested_tuple_assignment(
+              expr, expr["leftHandSide"], expr["rightHandSide"]))
+          return true;
+        new_expr = code_skipt();
+        return false;
+      }
+    }
+
+    // Standard (non-nested) tuple assignment
     if (rt_sol == SolidityGrammar::SolType::TUPLE_INSTANCE || rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS)
     {
       construct_tuple_assigments(expr, lhs, rhs);
