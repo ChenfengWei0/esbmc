@@ -216,23 +216,57 @@ bool solidity_convertert::get_tuple_function_ref(
   const nlohmann::json &ast_node,
   exprt &new_expr)
 {
-  assert(ast_node.contains("nodeType") && ast_node["nodeType"] == "Identifier");
+  assert(ast_node.contains("nodeType"));
 
+  // Resolve the function declaration ID depending on the node type:
+  // - Identifier: direct function reference (e.g., func())
+  // - MemberAccess: cross-contract call (e.g., p.getPair())
+  int ref_decl_id;
+  if (ast_node["nodeType"] == "Identifier")
+  {
+    ref_decl_id = ast_node["referencedDeclaration"].get<int>();
+  }
+  else if (ast_node["nodeType"] == "MemberAccess")
+  {
+    ref_decl_id = ast_node["referencedDeclaration"].get<int>();
+  }
+  else
+  {
+    log_error(
+      "get_tuple_function_ref: unexpected nodeType '{}'",
+      ast_node["nodeType"].get<std::string>());
+    return true;
+  }
+
+  // The tuple instance was created when the callee function was processed.
+  // Look it up using the callee's contract name as scope.
+  // First try the current contract, then search all contracts.
   std::string c_name;
   get_current_contract_name(ast_node, c_name);
-  if (c_name.empty())
-    return true;
 
-  std::string name =
-    "tuple_instance$" +
-    std::to_string(ast_node["referencedDeclaration"].get<int>());
+  std::string name = "tuple_instance$" + std::to_string(ref_decl_id);
   std::string id = "sol:@C@" + c_name + "@" + name;
 
-  if (context.find_symbol(id) == nullptr)
-    return true;
+  if (context.find_symbol(id) != nullptr)
+  {
+    new_expr = symbol_expr(*context.find_symbol(id));
+    return false;
+  }
 
-  new_expr = symbol_expr(*context.find_symbol(id));
-  return false;
+  // For cross-contract calls, the tuple instance is in the callee's contract scope.
+  // Search all contracts for the tuple instance.
+  for (const auto &contract_name : contractNamesList)
+  {
+    std::string alt_id = "sol:@C@" + contract_name + "@" + name;
+    if (context.find_symbol(alt_id) != nullptr)
+    {
+      new_expr = symbol_expr(*context.find_symbol(alt_id));
+      return false;
+    }
+  }
+
+  log_error("cannot find tuple instance for declaration id {}", ref_decl_id);
+  return true;
 }
 
 // Knowing that there is a component x in the struct_tuple_instance A, we construct A.x
@@ -364,8 +398,23 @@ bool solidity_convertert::construct_tuple_assigments(
   {
     // (x,y) = func();
     // => func() populates tuple instance; then extract members
-    if (get_tuple_function_ref(expr["rightHandSide"]["expression"], new_rhs))
+    // The function call JSON is in "rightHandSide" (Assignment) or "initialValue" (VarDeclStmt)
+    const nlohmann::json *rhs_call_json = nullptr;
+    if (expr.contains("rightHandSide"))
+      rhs_call_json = &expr["rightHandSide"];
+    else if (expr.contains("initialValue"))
+      rhs_call_json = &expr["initialValue"];
+
+    if (rhs_call_json && rhs_call_json->contains("expression"))
+    {
+      if (get_tuple_function_ref((*rhs_call_json)["expression"], new_rhs))
+        return true;
+    }
+    else
+    {
+      log_error("tuple assignment: cannot locate function call in RHS");
       return true;
+    }
 
     get_tuple_function_call(rhs);
   }
