@@ -189,15 +189,31 @@ bool solidity_convertert::get_var_decl(
   bool is_new_expr = should_treat_as_new(current_contractName);
   bool is_byte_static = is_bytesN_type(t);
 
-  // for mapping: populate the element type
+  // for mapping: populate the element type (recursively for nested mappings)
   if (is_mapping && !is_new_expr)
   {
     assert(t.is_array());
-    const auto &val_type = ast_node["typeName"]["valueType"];
-    typet val_t;
-    if (get_type_description(val_type["typeDescriptions"], val_t))
-      return true;
-    t.subtype() = val_t;
+    // Walk the valueType chain to handle mapping(K1 => mapping(K2 => ... => V))
+    typet *cur_type = &t;
+    const nlohmann::json *cur_node = &ast_node["typeName"];
+    while (true)
+    {
+      const auto &val_json = (*cur_node)["valueType"];
+      typet val_t;
+      if (get_type_description(val_json["typeDescriptions"], val_t))
+        return true;
+      cur_type->subtype() = val_t;
+
+      // If inner value is also a mapping, continue recursion
+      if (get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
+          val_t.is_array())
+      {
+        cur_type = &cur_type->subtype();
+        cur_node = &val_json;
+      }
+      else
+        break;
+    }
   }
 
   // set const qualifier
@@ -819,9 +835,9 @@ bool solidity_convertert::get_struct_class_fields(
 
   if (get_sol_type(comp.type()) == SolidityGrammar::SolType::MAPPING && comp.type().is_array())
   {
-    //! hack: for the (non-nested) mapping from contract that is not used in a new expression
-    // we convert it to a global static infinity array
-    // thuse we do not populate it into the struct symbol
+    // Mappings (including nested) in contracts not used in `new` expressions
+    // are converted to global static infinite arrays.
+    // Cannot be struct members due to infinite size (breaks padding/gen_zero).
     return false;
   }
 

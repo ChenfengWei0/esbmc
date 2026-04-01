@@ -1597,9 +1597,15 @@ bool solidity_convertert::get_index_access_expr(
       if (get_expr(base_json, literal_type, array))
         return true;
     }
+    // 2.2 nested mapping: m[k1][k2] — base is itself an IndexAccess
+    else if (base_json.value("nodeType", "") == "IndexAccess")
+    {
+      if (get_expr(base_json, literal_type, array))
+        return true;
+    }
     else
     {
-      // 2.2 func()[n]
+      // 2.3 func()[n]
       const nlohmann::json &decl = base_json;
       nlohmann::json implicit_cast_expr =
         make_implicit_cast_expr(decl, "ArrayToPointerDecay");
@@ -1620,41 +1626,48 @@ bool solidity_convertert::get_index_access_expr(
     {
       bool is_new_expr = should_treat_as_new(current_contractName);
 
-      // find mapping definition
-      assert(base_json.contains("referencedDeclaration"));
-      const nlohmann::json &map_node = find_decl_ref(
-        base_json["referencedDeclaration"].get<int>());
-
-      // get key/value type
-      typet key_t, value_t;
-      SolidityGrammar::SolType key_sol_type, val_sol_type;
-      if (get_mapping_key_value_type(
-            map_node, key_t, value_t, key_sol_type, val_sol_type))
+      if (base_json.contains("referencedDeclaration"))
       {
-        log_error("cannot get mapping key/value type");
-        return true;
-      }
-      gen_mapping_key_typecast(current_contractName, pos, location, key_t);
+        // Direct mapping access: m[k]
+        const nlohmann::json &map_node = find_decl_ref(
+          base_json["referencedDeclaration"].get<int>());
 
-      if (!is_new_expr)
-      {
-        assert(array.type().is_array());
-        //TODO: the index type of ESBMC is limited to unsigned long long
-        // we need to extend such limit up to unsignedbv_type(256)
-        new_expr = index_exprt(array, pos, t);
+        // get key/value type
+        typet key_t, value_t;
+        SolidityGrammar::SolType key_sol_type, val_sol_type;
+        if (get_mapping_key_value_type(
+              map_node, key_t, value_t, key_sol_type, val_sol_type))
+        {
+          log_error("cannot get mapping key/value type");
+          return true;
+        }
+        gen_mapping_key_typecast(current_contractName, pos, location, key_t);
+
+        if (!is_new_expr)
+        {
+          assert(array.type().is_array());
+          new_expr = index_exprt(array, pos, t);
+        }
+        else
+        {
+          bool is_mapping_set = is_mapping_set_lvalue(expr);
+          if (get_new_mapping_index_access(
+                value_t,
+                val_sol_type,
+                is_mapping_set,
+                array,
+                pos,
+                location,
+                new_expr))
+            return true;
+        }
       }
       else
       {
-        bool is_mapping_set = is_mapping_set_lvalue(expr);
-        if (get_new_mapping_index_access(
-              value_t,
-              val_sol_type,
-              is_mapping_set,
-              array,
-              pos,
-              location,
-              new_expr))
-          return true;
+        // Nested mapping access: m[k1][k2] — base is itself an IndexAccess
+        // The inner access was already resolved; just index into the result.
+        solidity_gen_typecast(ns, pos, unsignedbv_typet(256));
+        new_expr = index_exprt(array, pos, t);
       }
       return false;
     }
