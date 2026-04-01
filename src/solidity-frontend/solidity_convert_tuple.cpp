@@ -342,8 +342,11 @@ void solidity_convertert::get_string_assignment(
 }
 
 /*
-  lhs: code_blockt
-  rhs: tuple_return / tuple_instancce
+  lhs: code_blockt — each operand is a target expr or nil (omitted slot)
+  rhs: tuple_return / tuple_instance — a struct symbol with mem0, mem1, ... components
+
+  Uses explicit position-based matching: LHS position i maps to RHS component "mem{i}".
+  This is robust regardless of which positions are omitted on either side.
 */
 bool solidity_convertert::construct_tuple_assigments(
   const nlohmann::json &expr,
@@ -352,60 +355,56 @@ bool solidity_convertert::construct_tuple_assigments(
 {
   log_debug("solidity", "Handling tuple assignment.");
 
-  typet lt = lhs.type();
   typet rt = rhs.type();
-  SolidityGrammar::SolType lt_sol = get_sol_type(lt);
   SolidityGrammar::SolType rt_sol = get_sol_type(rt);
 
-  assert(lt.is_code() && to_code(lhs).statement() == "block");
+  assert(lhs.type().is_code() && to_code(lhs).statement() == "block");
   exprt new_rhs = rhs;
   if (rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS)
   {
-    // e.g. (x,y) = func(); (x,y) = func(func2()); (x, (x,y)) = (x, func());
-    // ==>
-    //    func(); // this initializes the tuple instance
-    //    x = tuple.mem0;
-    //    y = tuple.mem1;
+    // (x,y) = func();
+    // => func() populates tuple instance; then extract members
     if (get_tuple_function_ref(expr["rightHandSide"]["expression"], new_rhs))
       return true;
 
-    // add function call
     get_tuple_function_call(rhs);
   }
 
-  // e.g. (x,y) = (1,2); (x,y) = (func(),x);
-  // =>
-  //  t.mem0 = 1; #1
-  //  t.mem1 = 2; #2
-  //  x = t.mem0; #3
-  //  y = t.mem1; #4
-  // where #1 and #2 are already in the expr_backBlockDecl
+  if (!new_rhs.type().is_struct())
+  {
+    log_error("expecting struct type for tuple RHS, got {}", new_rhs);
+    return true;
+  }
 
-  // do #3 #4
+  // Build name → component map for the RHS struct
+  const struct_typet &rhs_struct = to_struct_type(new_rhs.type());
+  std::map<std::string, exprt> rhs_components;
+  for (const auto &comp : rhs_struct.components())
+    rhs_components[comp.get_name().as_string()] = comp;
+
+  // Match LHS targets to RHS components by position
   std::set<exprt> assigned_symbol;
   for (size_t i = 0; i < lhs.operands().size(); i++)
   {
-    // e.g. (, x) = (1, 2)
-    //      null <=> tuple2.mem0
-    //         x <=> tuple2.mem1
     exprt lop = lhs.operands().at(i);
     if (lop.is_nil() || assigned_symbol.count(lop))
-      // e.g. (,y) = (1,2)
-      // or   (x,x) = (1, 2); assert(x==1) hold
-      // we skip the variable that has been assigned
       continue;
     assigned_symbol.insert(lop);
 
-    exprt rop;
-    if (!new_rhs.type().is_struct())
+    // Look up RHS component by positional name "mem{i}"
+    std::string mem_name = "mem" + std::to_string(i);
+    auto it = rhs_components.find(mem_name);
+    if (it == rhs_components.end())
     {
-      log_error("expecting struct type, got {}", new_rhs);
+      log_error(
+        "tuple assignment: cannot find RHS component '{}' for position {}",
+        mem_name,
+        i);
       return true;
     }
-    if (get_tuple_member_call(
-          new_rhs.identifier(),
-          to_struct_type(new_rhs.type()).components().at(i),
-          rop))
+
+    exprt rop;
+    if (get_tuple_member_call(new_rhs.identifier(), it->second, rop))
       return true;
 
     get_tuple_assignment(expr, lop, rop);
