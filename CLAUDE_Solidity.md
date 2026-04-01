@@ -48,7 +48,79 @@ esbmc --sol contract.sol contract.solast --contract MyContract
 - `0.5.0 – 0.7.0`: warning (may cause unexpected behaviour)
 - `>= 0.7.0`: fully supported (tested against 0.8.x)
 
-### Implementation
+### Address Binding Modes (`--bound` / default unbound)
+
+ESBMC supports two verification strategies for multi-contract Solidity programs, controlled by the `--bound` flag. The default is **unbound** mode.
+
+```sh
+# Unbound mode (default): external calls modeled as nondet (over-approximate)
+esbmc contract.sol --contract A --contract B --unwind 5
+
+# Bound mode: contracts linked together as a complete system
+esbmc contract.sol --contract A --contract B --bound --unwind 5
+```
+
+#### Unbound Mode (default)
+
+Each contract is verified **in isolation**. External calls (`.call()`, `.transfer()`, `.send()`, `.delegatecall()`) are abstracted to nondeterministic return values — the verifier does not model which contract actually receives the call. This is an **over-approximation**: any possible return value is considered, which is sound but may produce false positives.
+
+**Harness structure** (`_ESBMC_Main`):
+```
+_ESBMC_Main():
+  _ESBMC_Main_ContractA()    // verify A in isolation
+  _ESBMC_Main_ContractB()    // verify B in isolation
+```
+
+Each `_ESBMC_Main_X` creates a static instance `_ESBMC_Object_X`, calls its constructor, then enters a nondeterministic dispatch loop (`_ESBMC_Nondet_Extcall_X`) that can call any public/external function with nondet arguments.
+
+**Key behaviors:**
+- External call return values: `nondet` (bool for `.send()`, `(bool, bytes)` for `.call()`)
+- Address properties (`.balance`, `.codehash`): `nondet_uint`
+- Contract instances: each verified independently, no cross-contract state
+- Best for: single-contract verification, fastest performance
+
+#### Bound Mode (`--bound`)
+
+Contracts are **linked together as a complete system**. External calls can resolve to the correct target contract through runtime address binding. Each contract instance tracks its concrete type via a `_ESBMC_bind_cname` member variable.
+
+**Harness structure** (`_ESBMC_Main`):
+```
+_ESBMC_Main():
+  switch(nondet_uint()) {
+    case 0: _ESBMC_Main_ContractA(); break;
+    case 1: _ESBMC_Main_ContractB(); break;
+  }
+```
+
+The nondeterministic switch picks **one** contract to fully explore per verification run. Within that run, cross-contract calls are resolved through the binding mechanism.
+
+**Key behaviors:**
+- External calls: resolved to the actual target contract via `_ESBMC_bind_cname` lookup
+- Address binding: `x._ESBMC_bind_cname = "ContractName"` assigned at `new` expressions
+- Contract instances: share state, cross-contract interactions modeled
+- Polymorphism/inheritance dispatch: supported through binding
+- Best for: multi-contract interaction verification (e.g., token + exchange)
+
+#### Implementation Details
+
+| Component | File | Function |
+|-----------|------|----------|
+| `is_bound` flag | `solidity_convert.h:783` | Parsed from `config.options.get_option("bound")` |
+| Bound harness | `solidity_convert_contract.cpp:677` | `multi_contract_verification_bound()` |
+| Unbound harness | `solidity_convert_contract.cpp:819` | `multi_contract_verification_unbound()` |
+| Binding assignment | `solidity_convert_expr.cpp:1966` | `get_new_object_expr()` — sets `_ESBMC_bind_cname` |
+| Nondet dispatch | `solidity_convert_constructor.cpp:205` | `_ESBMC_Nondet_Extcall_X` function generation |
+| Ext call abstraction | `solidity_convert_call.cpp` | `.call()`/`.send()` → nondet in unbound |
+| Bind name list | `solidity_convert.cpp:754` | `$X_bind_cname_list` array + `initialize_X_bind_cname()` |
+| Static instances | `solidity_convert_contract.cpp:73` | `_ESBMC_Object_X` global instances |
+
+#### Performance Considerations
+
+- **Unbound** is significantly faster for single-contract verification since it avoids cross-contract symbolic exploration.
+- **Bound** mode can be very slow when contracts have complex interactions (e.g., `transfer_send_2` test: >1200s timeout with `--bound`).
+- When using `--bound` with `--contract A --contract B`, all contracts are instantiated and their constructors run, which increases the state space.
+
+### Implementation (auto-solc)
 
 Auto-solc is implemented in `solidity_language.cpp`:
 - `find_solc()`: searches for solc binary in priority order
