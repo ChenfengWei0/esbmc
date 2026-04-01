@@ -217,7 +217,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 |----------|----------|
 | **Value types** | `bool`, `uint8`-`uint256`, `int8`-`int256`, `address`/`address payable`, `string`, `bytes1`-`bytes32`, `bytes` (dynamic) |
 | **Composite types** | `struct` (nested, with arrays), `enum`, fixed arrays `T[N]`, dynamic arrays `T[]` (push/pop/length), multi-dimensional arrays |
-| **Mapping** | `mapping(K => V)` and nested `mapping(K1 => mapping(K2 => V))` — modeled via (nested) infinite SMT arrays |
+| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, and mapping-in-struct — modeled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays |
 | **Operators** | All arithmetic (`+`,`-`,`*`,`/`,`%`,`**`), bitwise, comparison, logical, compound assignment (`+=` etc.), prefix/postfix `++`/`--`, ternary `?:`, `delete` |
 | **Control flow** | `if`/`else`, `for`, `while`, `do-while`, `break`, `continue`, `return` (including multi-value via tuples) |
 | **Contract core** | Contract/library/interface definitions, functions (regular/constructor/receive/fallback), free functions, state variables, visibility (`public`/`private`/`internal`/`external`), state mutability (`pure`/`view`/`payable`) |
@@ -441,7 +441,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-04-01)
 
-**371 total tests**: 369 pass, 1 THOROUGH fail (mapping_13), 1 KNOWNBUG (transfer_send_2 timeout). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**374 total tests**: 372 pass, 1 THOROUGH fail (mapping_13), 1 KNOWNBUG (transfer_send_2 timeout). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
@@ -481,6 +481,13 @@ ctest -R "regression/esbmc-solidity/address_1"
 | `delete_2` | CORE | delete value reset verification (FAILED) |
 | `free_function_1` | CORE | Free function call + composition (SUCCESSFUL) |
 | `free_function_2` | CORE | Division by zero in free function (FAILED) |
+
+**Mapping-in-struct tests added (2026-04-01):**
+
+| Test | Type | What it verifies |
+|------|------|-----------------|
+| `mapping_18` | CORE | `mapping(uint => uint)` inside struct: set, get, assert (SUCCESSFUL) |
+| `mapping_19` | CORE | `mapping(uint => mapping(uint => uint))` (nested) inside struct (SUCCESSFUL) |
 
 **Coverage gaps** (no tests exist):
 - Bitwise operators on uint256 (OOM with default solver settings)
