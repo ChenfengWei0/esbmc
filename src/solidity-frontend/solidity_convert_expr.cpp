@@ -271,6 +271,80 @@ bool solidity_convertert::get_expr(
       return true;
 
     assert(comp.name() == expr["memberName"]);
+
+    // If the member is a mapping (infinite array in --bound mode),
+    // it was skipped from the struct type definition (breaks padding/gen_zero).
+    // Redirect to a global infinite array keyed by the struct variable path.
+    if (
+      get_sol_type(comp.type()) == SolidityGrammar::SolType::MAPPING &&
+      comp.type().is_array())
+    {
+      // Build path: base_name + "$" + field_name
+      std::string base_name;
+      if (caller_expr_json.contains("name"))
+        base_name = caller_expr_json["name"].get<std::string>();
+      else if (caller_expr_json.contains("memberName"))
+        base_name = caller_expr_json["memberName"].get<std::string>();
+      else
+        base_name =
+          std::to_string(expr["referencedDeclaration"].get<int>());
+
+      std::string field_name = expr["memberName"].get<std::string>();
+      std::string path_name = base_name + "$" + field_name;
+
+      std::string current_cName;
+      get_current_contract_name(expr, current_cName);
+
+      std::string arr_name, arr_id;
+      get_mapping_inf_arr_name(current_cName, path_name, arr_name, arr_id);
+
+      if (context.find_symbol(arr_id) == nullptr)
+      {
+        locationt loc;
+        get_start_location_from_stmt(expr, loc);
+        std::string mod = get_modulename_from_path(absolute_path);
+
+        // Populate the array subtype by walking the valueType chain,
+        // same as get_var_decl() does for direct mapping state variables.
+        typet arr_t = comp.type();
+        assert(struct_var_ref.contains("typeName"));
+        {
+          typet *cur_type = &arr_t;
+          const nlohmann::json *cur_node = &struct_var_ref["typeName"];
+          while (true)
+          {
+            const auto &val_json = (*cur_node)["valueType"];
+            typet val_t;
+            if (get_type_description(val_json["typeDescriptions"], val_t))
+              return true;
+            cur_type->subtype() = val_t;
+
+            if (
+              get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
+              val_t.is_array())
+            {
+              cur_type = &cur_type->subtype();
+              cur_node = &val_json;
+            }
+            else
+              break;
+          }
+        }
+
+        symbolt arr_sym;
+        get_default_symbol(
+          arr_sym, mod, arr_t, arr_name, arr_id, loc);
+        arr_sym.static_lifetime = true;
+        arr_sym.file_local = true;
+        arr_sym.lvalue = true;
+        auto &added = *move_symbol_to_context(arr_sym);
+        added.value = gen_zero(get_complete_type(arr_t, ns), true);
+      }
+
+      new_expr = symbol_expr(*context.find_symbol(arr_id));
+      break;
+    }
+
     new_expr = member_exprt(base, comp.name(), comp.type());
 
     break;
