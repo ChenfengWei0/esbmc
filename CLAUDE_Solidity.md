@@ -236,86 +236,184 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | **Unchecked** | `unchecked { ... }` blocks suppress overflow/underflow checks (Solidity 0.8+ semantics) |
 | **Verification** | Overflow/underflow (all integer widths including sub-256-bit), division-by-zero, reentrancy detection (mutex-based), bound/unbound address modes, whole-contract verification |
 
-### Partially Supported / Compromises
+### Known Limitations and Deficiencies (detailed audit 2026-04-01)
+
+#### A. Crypto Functions — Identity Abstraction
+
+`keccak256`, `sha256`, `ripemd160`, `ecrecover` are modeled as **deterministic identity functions** (not nondet):
+
+| Function | Model (`solidity_builtins.c`) | Properties |
+|----------|------|------------|
+| `keccak256(x)` | `return x;` | Same input → same output ✓; collision-free ✗ |
+| `sha256(x)` | `return x;` | Same input → same output ✓; collision-free ✗ |
+| `ripemd160(x)` | `return (address_t)x;` | 256→160 bit cast, marked "UNSAT abstraction" |
+| `ecrecover(hash,v,r,s)` | `return (address_t)hash;` | Ignores v/r/s entirely — no signature verification |
+
+**Impact**: Identity abstraction preserves determinism (`keccak256(a) == keccak256(a)` provable) but cannot distinguish different inputs (e.g., `keccak256(1) != keccak256(2)` is not provable). This is unsound for contracts that rely on hash collision resistance or hash-as-randomness. A nondet abstraction with memoization would be more precise but is not implemented.
+
+#### B. Multi-Dimensional Arrays — Experimental
+
+Only 1D static and 1D dynamic arrays are fully supported. Multi-dimensional arrays are marked experimental:
+
+| Pattern | Status | Issue |
+|---------|--------|-------|
+| `uint[N]` | ✓ Works | — |
+| `uint[]` | ✓ Works | push/pop/length supported |
+| `uint[N][]` | ⚠ Experimental | `solidity_grammar.cpp:239` logs "Experimental support" |
+| `uint[][N]` | ✗ Not detected | Grammar only checks `t_array$_t_array$` prefix |
+| `uint[N][M]` | ✗ Broken | `get_array_size()` regex captures only one dimension |
+| `uint[][][]` (3D+) | ✗ Broken | Type conversion recurses only one level via `baseType` |
+
+Root causes: `make_array_elementary_type()` has comment `"current implement does not consider Multi-Dimensional Arrays"` (`solidity_convert_util.cpp:387`); array size extraction regex `.*\\[([0-9]+)\\]` captures only one dimension (`solidity_convert_util.cpp:430`).
+
+#### C. Data Location Semantics — Parsed But Not Enforced
+
+`storage`/`memory`/`calldata` qualifiers are extracted from AST and tagged as `#sol_data_loc` metadata (`solidity_convert_type.cpp:417-422`) but **no semantic enforcement**:
+
+| Missing Semantics | Impact | Location |
+|-------------------|--------|----------|
+| **Memory copy on function call** | Memory params should be deep-copied; currently aliased | TODO at `solidity_convert_call.cpp:98-103` |
+| **Storage reference aliasing** | `Struct storage ref = map[key]` should alias original; treated as value copy | `solidity_convert_type.cpp:329-360` |
+| **Calldata immutability** | Calldata params should be read-only; no enforcement | — |
+| **Copy-on-assign for memory structs/arrays** | `memory` assignment should copy; may alias | — |
+
+This is a **soundness gap**: the verifier may miss bugs caused by unexpected aliasing or fail to detect mutations through storage references.
+
+#### D. Low-Level Call Return Values — bytes Data Unusable
+
+`.call()`, `.delegatecall()`, `.staticcall()` return `(bool success, bytes memory data)`. ESBMC models this as:
+
+```c
+struct sol_llc_ret { unsigned int x; unsigned int y; };  // solidity_types.h:22-26
+// x = nondet_bool (success), y = nondet_uint (data placeholder)
+```
+
+- `bool success` works correctly — `require(success)` patterns are verifiable
+- `bytes memory data` is `nondet_uint` — completely opaque, cannot be decoded
+- **Blocks**: `abi.decode(data, (uint))` on call return data; any pattern that inspects returned bytes
+- Comment: `"we cannot handle the string, therefore we only return bool"` (`solidity_convert_call.cpp:1155`)
+
+#### E. Tuple / Multi-Return Limitations
+
+**Working**: flat destructuring `(x, y) = func()`, partial skip `(x, ) = func()`, tuple swap `(x, y) = (y, x)`
+
+| Limitation | Detail | Location |
+|------------|--------|----------|
+| **Nested tuple destructuring** | `((a,b),c) = ...` not supported | TODO at `solidity_convert_tuple.cpp:55` |
+| **External call tuple returns** | `(a,b) = externalContract.f()` → error "Unsupported return tuple" | `solidity_convert_call.cpp:633-636` |
+| **Tuple return refactoring needed** | Current approach creates per-call struct types (`mem0`, `mem1`, ...); fragile for complex patterns | `solidity_convert_tuple.cpp:13-100` |
+
+The external call limitation is particularly impactful — cross-contract calls that return multiple values cannot be destructured.
+
+#### F. Mapping Library Efficiency
+
+Two implementations coexist:
+
+| Mode | Data Structure | Lookup | Per-op SMT cost |
+|------|---------------|--------|-----------------|
+| **Bound** (`--bound`) | Infinite SMT array | O(1) array index | Linear |
+| **Unbound** (default) | Linked list (`_ESBMC_Mapping`) | O(n) while-loop | Exponential in chain length |
+
+The unbound mode's `map_get_raw()` uses a `while(cur)` linked-list traversal (`solidity_mapping.c:27`). Each iteration adds branch conditions to the SMT solver, requiring `--unwind ≥ (max_chain_length + 1)`. This causes:
+- Timeout on multi-entry mappings with insufficient unwind
+- K-induction failure (chains grow non-deterministically, breaking invariants)
+- Each `map_set_raw` calls `malloc`, creating new symbolic allocation constraints
+
+**Recommendation**: Prefer `--bound` mode for mapping-heavy contracts; the infinite SMT array approach avoids loop unrolling entirely.
+
+#### G. Address / Contract Type Conversion
+
+Basic conversions work:
+- `address(contractInstance)` → extracts `$address` member ✓
+- `ContractType(addr)` → binds to static `_ESBMC_Object_*` instance ✓
+- `payable(addr)` ↔ `address` conversions ✓
+- Nested `uint8(bytes1(x))` chains ✓
+
+**Limitations**:
+- Address→contract conversion assumes all addresses are known static instances; unknown/external addresses cannot be properly converted
+- No runtime type checking that an address actually holds the expected contract type
+- Dynamic dispatch through address conversion is limited — `Base(address(derived))` binds to the static Base instance, not the actual derived instance
+
+#### H. uint256 Modeling Constraints
+
+256-bit integers (`_BitInt(256)`) are supported for arithmetic, but:
+
+| Issue | Detail | Location |
+|-------|--------|----------|
+| **Mapping key truncation** | Array indices limited to `unsigned long long` (64-bit); keys >2^64 collide | TODO at `solidity_convert_expr.cpp:1513-1514` |
+| **SMT solver performance** | 256-bit bitvector operations significantly slower than smaller widths; OOM possible for complex arithmetic | `README.md:123` |
+| **`--16` workaround** | Reducing to 16-bit improves speed but introduces precision loss | — |
+
+The key truncation is a **correctness issue**: two different uint256 keys that differ only above bit 64 will map to the same array index.
+
+#### I. `super` Keyword — Not Implemented
+
+No handling exists for `super.funcName()`. The inheritance infrastructure has C3-linearized base lists (`linearizedBaseList` in `solidity_convert_inheritance.cpp`) and override tracking (`overrideMap`), but there is no code path to:
+1. Detect `super.func()` as distinct from `this.func()`
+2. Resolve the next function in the C3 chain
+3. Route the call to the correct base contract
+
+#### J. Other Gaps
 
 | Feature | Status | Detail |
 |---------|--------|--------|
-| **Try/Catch** | Recognized, not converted | AST node registered but conversion aborts: `"Try/Catch is not fully supported yet"` (`solidity_convert_stmt.cpp:631`) |
-| **Nested tuple destructuring** | Not supported | `((a,b),c) = ...` marked TODO (`solidity_convert_expr.cpp:2212`, `solidity_convert_tuple.cpp:59`) |
-| **Data location semantics** | Parsed, not modeled | `storage`/`memory`/`calldata` qualifiers recognized but reference-vs-copy and immutability semantics not enforced |
-| **`memory` param copy** | Known gap | TODO: memory type parameters should create copies (`solidity_convert_call.cpp:102`) |
-| **Mapping index range** | Truncated | Index limited to `unsigned long long` — keys >64-bit may collide (`solidity_convert_expr.cpp:1058`) |
-| **Crypto functions** | Abstracted | `keccak256` etc. return `nondet` values (standard model checking abstraction), not real hashes |
-| **`using A for B`** | Parsed, skipped | `UsingForDef` AST node handled but does not alter operator dispatch (`solidity_convert_decl.cpp:53`) |
-| **Bitwise on dynamic bytes** | Static only | Bitwise ops limited to `bytesN`, not dynamic `bytes` (`solidity_convert_expr.cpp:2155`) |
-| **`constant`/`immutable`** | Partial | `constant` handled at file and contract level; `immutable` may not enforce set-once semantics |
-| **Function overloading** | Partial | Same-name different-param functions may have resolution issues in `find_decl_ref` |
-| **`super` keyword** | Not supported | No handler for `super.funcName()` C3-linearized chain calls |
-| **Fallback with params** | Partial | Basic fallback exists, but `fallback(bytes calldata) returns (bytes memory)` parameters ignored |
+| **Try/Catch** | Recognized, not converted | AST node registered but conversion aborts (`solidity_convert_stmt.cpp:631`) |
+| **`using A for B`** | Parsed, skipped | Does not alter operator dispatch (`solidity_convert_decl.cpp:53`) |
+| **Bitwise on dynamic bytes** | Static only | Ops limited to `bytesN`, not dynamic `bytes` (`solidity_convert_expr.cpp:2155`) |
+| **`constant`/`immutable`** | Partial | `constant` works; `immutable` may not enforce set-once |
+| **Function overloading** | Partial | Same-name different-param functions may misresolve in `find_decl_ref` |
+| **Fallback with params** | Partial | Basic fallback exists; `fallback(bytes calldata) returns (bytes memory)` params ignored |
 | **Array slices** | Not supported | `x[start:end]` on calldata arrays not handled |
+| **`abi.decode()`** | Not supported | No decoding mechanism; blocks low-level call data inspection |
+| **Inline assembly / Yul** | Not supported | Entire sub-language missing — blocks most production contracts |
+| **Function types** | Not supported | `function(uint) returns (bool)` as first-class values |
+| **`using for` + custom operators** | Not supported | Operator dispatch table per type |
+| **Transient storage (EIP-1153)** | Not supported | New data location model |
+| **User-defined value types** | Not supported | `type C is V` with `.wrap()`/`.unwrap()` |
 
-### Not Supported
+### Roadmap: Priority for Future Work
 
-Categorized by implementation difficulty (audited 2026-04-01 against Solidity 0.8.x docs).
+#### Tier 1 — Correctness Fixes (soundness gaps in current implementation)
 
-**Easy** (~20-80 lines each):
-| Feature | Notes |
-|---------|-------|
-| **`bytes.concat()`** | Library function similar to existing `string_concat` |
-| **`type(C).runtimeCode`** | Return nondet bytes like `creationCode` |
-| **`type(I).interfaceId`** | Compute bytes4 from keccak256 of function selectors |
+These are bugs or unsound abstractions in features we claim to support:
 
-**Moderate** (~80-300 lines each):
-| Feature | Notes |
-|---------|-------|
-| **User-defined value types** | `type C is V` with `.wrap()`/`.unwrap()` — type alias + conversion functions |
-| **`immutable` set-once** | Enforce assignment only in constructor, read-only afterwards |
-| **Create2 salt** | Model `new C{salt: s}()` deterministic address computation |
-| **Nested tuple destructuring** | Recursive tuple unpacking in assignment |
-| **`abi.decode()`** | ABI decoding — moderate if limited to basic types |
+| # | Task | Effort | Why |
+|---|------|--------|-----|
+| 1 | **Fix mapping key truncation** — extend index to 256-bit or add hashing | Moderate | Keys >2^64 silently collide — correctness bug |
+| 2 | **Fix crypto function abstraction** — replace identity with nondet+memoization | Moderate | `keccak256(1) == keccak256(2)` is currently provable, which is unsound |
+| 3 | **Fix external call tuple returns** — allow `(a,b) = ext.f()` | Moderate | Error on a supported Solidity pattern; breaks cross-contract verification |
+| 4 | **Low-level call bytes return** — model as `BytesDynamic` instead of nondet_uint | Moderate | Current model blocks any inspection of call return data |
 
-**Hard** (~300-1000 lines each):
-| Feature | Notes |
-|---------|-------|
-| **Try/Catch** | Exception model, path splitting for catch clauses, error data encoding |
-| **Function overloading** | Name mangling or overload resolution table in `find_decl_ref` |
-| **`super` keyword** | C3-linearized dispatch chain across multiple inheritance |
-| **Data location semantics** | Reference tracking, copy-on-assign vs alias semantics for storage/memory/calldata |
+#### Tier 2 — High-Impact Missing Features
 
-**Very hard** (>1000 lines, architectural changes):
-| Feature | Notes |
-|---------|-------|
-| **Inline assembly / Yul** | Entire sub-language parser + semantic translator — blocks many production contracts |
-| **Function types** | `function(uint) returns (bool)` as first-class values — function pointer model |
-| **`using for` + custom operators** | Operator dispatch table per type, global scope management |
-| **Transient storage (EIP-1153)** | New data location model, transaction-scoped lifetime |
-| **Custom storage layout (ERC-7201)** | Base slot offset computation, contract layout specifier syntax |
+| # | Task | Effort | Why |
+|---|------|--------|-----|
+| 5 | **`super` keyword** | Hard (~500 lines) | C3-linearized dispatch; infrastructure exists in `linearizedBaseList`/`overrideMap` |
+| 6 | **Try/Catch** | Hard (~500 lines) | Standard DeFi error handling pattern |
+| 7 | **`abi.decode()`** | Moderate (~200 lines) | Needed for low-level call data inspection |
+| 8 | **Function overloading** | Hard (~400 lines) | Name mangling or overload resolution table |
+| 9 | **Data location semantics** | Very hard (~1000+ lines) | storage ref aliasing, memory copy-on-call; soundness gap |
 
-### Priority for Future Work
+#### Tier 3 — Completeness / Usability
 
-**Critical** (blocks most real-world contracts):
-1. **Inline assembly / Yul** — used pervasively in OpenZeppelin and optimized contracts
+| # | Task | Effort | Why |
+|---|------|--------|-----|
+| 10 | **Multi-dimensional arrays** | Hard (~500 lines) | Recursive type/size extraction needed |
+| 11 | **Nested tuple destructuring** | Moderate (~150 lines) | `((a,b),c) = ...` pattern |
+| 12 | **User-defined value types** | Moderate (~200 lines) | Increasingly common in modern Solidity |
+| 13 | **`immutable` set-once enforcement** | Easy (~80 lines) | |
+| 14 | **`bytes.concat()` / `string.concat()`** | Easy (~50 lines) | |
+| 15 | **`type(C).runtimeCode` / `type(I).interfaceId`** | Easy (~50 lines) | |
 
-**High** (blocks common patterns):
-2. **Try/Catch** — DeFi error handling
-3. **`abi.decode()`** — low-level call return parsing
-4. **`super` keyword** — inheritance chain calls
-5. **Function overloading** — same-name different-param functions
+#### Tier 4 — Long-Term / Architectural
 
-**Medium** (soundness/completeness):
-6. Data location semantics — reference vs copy correctness
-7. User-defined value types — increasingly common in modern Solidity
-8. `immutable` set-once — correctness for verified invariants
-9. `bytes.concat()` / `string.concat()` — simple additions
-
-**Low** (niche/EVM evolution):
-10. `type(I).interfaceId` — ERC-165 introspection
-11. Transient storage — EIP-1153
-12. Custom storage layout — ERC-7201
-
-**Backend fixes** (THOROUGH-only, lower priority):
-- Fix mapping_13 NULL pointer dereference — `map_get_raw` dereference check in library code
-- Improve k-induction performance for `sol_pow_uint` 256-bit loop (currently ~80s+ per step)
+| # | Task | Effort | Why |
+|---|------|--------|-----|
+| 16 | **Inline assembly / Yul** | Very hard (>2000 lines) | Blocks most production contracts; needs sub-language parser |
+| 17 | **Mapping library optimization** — migrate unbound mode to SMT arrays | Hard | Eliminates linked-list loop unrolling overhead |
+| 18 | **Tuple return refactoring** — unified return value model | Hard | Current per-call struct approach is fragile |
+| 19 | **Function types** | Very hard | First-class function values |
+| 20 | **Transient storage / custom storage layout** | Very hard | EVM evolution features |
 
 **Performance bottlenecks** (slow THOROUGH tests):
 - `transfer_send_2` (>1200s timeout) — k-induction + `--bound` cross-contract reasoning
