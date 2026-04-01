@@ -411,6 +411,24 @@ bool solidity_convertert::get_sol_builtin_ref(
         new_expr.location() = l;
         return false;
       }
+      else if (name == "name")
+      {
+        // type(C).name returns the contract name as a string literal
+        std::string ts =
+          expr["expression"]["typeDescriptions"]["typeString"]
+            .get<std::string>();
+        // Extract name from "type(contract MyContract)" or "type(interface I)"
+        std::string cname;
+        auto pos = ts.rfind(' ');
+        if (pos != std::string::npos && ts.back() == ')')
+          cname = ts.substr(pos + 1, ts.size() - pos - 2);
+        else
+          cname = ts;
+
+        new_expr = string_constantt(cname);
+        new_expr.location() = l;
+        return false;
+      }
       else if (name == "wrap" || name == "unwrap")
       {
         // do nothhing, return operands
