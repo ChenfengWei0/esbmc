@@ -26,18 +26,20 @@ uint256_t block_number;
 uint256_t block_prevrandao;
 uint256_t block_timestamp;
 
-/* blockhash */
+/* blockhash — nondet abstraction (over-approximate) */
 uint256_t blockhash(uint256_t x)
 {
 __ESBMC_HIDE:;
-  return x;
+  uint256_t result;
+  return result;
 }
 
-/* blobhash (EIP-4844) */
+/* blobhash (EIP-4844) — nondet abstraction (over-approximate) */
 uint256_t blobhash(uint256_t index)
 {
 __ESBMC_HIDE:;
-  return nondet_uint();
+  uint256_t result;
+  return result;
 }
 
 /* gasleft */
@@ -93,27 +95,47 @@ __ESBMC_HIDE:;
 	return (x * y) % k;
 }
 
+/*
+ * Cryptographic hash functions — nondet over-approximation.
+ *
+ * Each call returns an unconstrained (nondet) value of the appropriate type.
+ * This is sound for safety verification: any real execution is included in
+ * the set of explored behaviours, so no real bug is missed (no false negatives).
+ *
+ * Limitations:
+ *  - No functional consistency: keccak256(x) called twice may yield different
+ *    nondet values, so properties that rely on "same input → same output"
+ *    cannot be verified and may produce false positives (spurious counter-
+ *    examples).
+ *  - The concrete hash value is never computed; assertions about specific
+ *    hash outputs (e.g. keccak256(0) == 0xc5d2...) will not be provable.
+ */
 uint256_t keccak256(uint256_t x)
 {
 __ESBMC_HIDE:;
-  return  x;
+  uint256_t result;
+  return result;
 }
 
 uint256_t sha256(uint256_t x)
 {
 __ESBMC_HIDE:;
-  return x;
+  uint256_t result;
+  return result;
 }
+
 address_t ripemd160(uint256_t x)
 {
 __ESBMC_HIDE:;
-  // UNSAT abstraction
-  return (address_t)x;
+  address_t result;
+  return result;
 }
+
 address_t ecrecover(uint256_t hash, unsigned int v, uint256_t r, uint256_t s)
 {
 __ESBMC_HIDE:;
-  return (address_t)hash;
+  address_t result;
+  return result;
 }
 
 /* selfdestruct */

@@ -123,6 +123,18 @@ esbmc example.sol --bound --contract Vulnerable --function withdraw
 * ESBMC's performance is currently affected by the integer bitwidth, especially when `mapping` is involved. For example, `mapping(uint256 => string)` requires more unwinding steps to solve compared to `mapping(uint8 => string)`. You can try the experimental option `--16` to set the machine word size to 16 bits and improve performance.
 * Since the minimal supported machine word size is 16, overflow/underflow checks for `uint8` and `int8` are not currently supported.
 
+### Cryptographic hash function abstraction
+
+ESBMC models `keccak256`, `sha256`, `ripemd160`, `ecrecover`, `blockhash`, and `blobhash` as **nondeterministic (nondet) functions**: each call returns a fully unconstrained symbolic value. The real hash algorithm is **not** computed.
+
+This is an **over-approximation** — the verifier considers every possible return value, including the real one. Consequences:
+
+* **No false negatives (sound for safety):** if the verifier reports VERIFICATION SUCCESSFUL, the property truly holds under all possible hash outputs.
+* **Possible false positives (spurious counterexamples):** the verifier may report VERIFICATION FAILED for properties that are actually safe, because it explores hash outputs that cannot occur in reality.
+* **No functional consistency:** two calls to `keccak256(x)` with identical `x` may return *different* nondet values. Properties that rely on "same input → same output" (e.g., commit-reveal patterns, hash-based equality checks) cannot be verified and will produce false alarms.
+
+The operational models are in `src/c2goto/library/solidity/solidity_builtins.c`.
+
 ## For Developers
 
 * The Solidity Frontend converts Solidity statements into CPP-style IR -- each contract is considered as a class. Yet no other C++ specific syntax are used, meaning all statements are converted to C-style IR. Data structures like `mapping`, `Bytes` are written as C-struct internally. Operational models are pre-compiled via the c2goto pipeline (see `src/c2goto/library/solidity/`).
