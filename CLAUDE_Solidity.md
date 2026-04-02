@@ -279,19 +279,20 @@ Root causes: `make_array_elementary_type()` has comment `"current implement does
 
 This is a **soundness gap**: the verifier may miss bugs caused by unexpected aliasing or fail to detect mutations through storage references.
 
-#### D. Low-Level Call Return Values — bytes Data Unusable
+#### D. Low-Level Call Return Values — bytes Data Partially Supported
 
 `.call()`, `.delegatecall()`, `.staticcall()` return `(bool success, bytes memory data)`. ESBMC models this as:
 
 ```c
-struct sol_llc_ret { unsigned int x; unsigned int y; };  // solidity_types.h:22-26
-// x = nondet_bool (success), y = nondet_uint (data placeholder)
+// solidity_types.h — BytesDynamic is a nondet struct
+typedef struct BytesDynamic { size_t offset; size_t length; size_t capacity; int initialized; } BytesDynamic;
+// success = nondet_bool(), data = nondet BytesDynamic (via llc_nondet_bytes())
 ```
 
 - `bool success` works correctly — `require(success)` patterns are verifiable
-- `bytes memory data` is `nondet_uint` — completely opaque, cannot be decoded
-- **Blocks**: `abi.decode(data, (uint))` on call return data; any pattern that inspects returned bytes
-- Comment: `"we cannot handle the string, therefore we only return bool"` (`solidity_convert_call.cpp:1155`)
+- `bytes memory data` is a nondet `BytesDynamic` struct — `data.length` is accessible and verifiable (fixed 2026-04-02)
+- **Blocks**: `abi.decode(data, (uint))` — decoded content inspection; Tier 2 #7
+- Key fix (2026-04-02): `data.length` member expression type was `uint32` instead of `size_t`; corrected in `solidity_convert_ref.cpp:482`
 
 #### E. Tuple / Multi-Return — Mostly Resolved (2026-04-02)
 
