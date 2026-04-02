@@ -1976,6 +1976,7 @@ bool solidity_convertert::get_index_access_expr(
         // Nested mapping access: m[k1][k2] — base is itself an IndexAccess
         // The inner access was already resolved; just index into the result.
         solidity_gen_typecast(ns, pos, unsignedbv_typet(256));
+        xor_fold_key_to_64bit(pos);
         new_expr = index_exprt(array, pos, t);
       }
     }
