@@ -1152,9 +1152,9 @@ bool solidity_convertert::get_call_definition(
   std::string call_name = "call";
   std::string call_id = "sol:@C@" + cname + "@F@$call#0";
   symbolt s;
-  // the return value should be (bool, string)
-  // however, we cannot handle the string, therefore we only return bool
-  // and make it (x.call(), nondet_uint_expr)
+  // The real return type is (bool success, bytes memory data).
+  // The inner function returns bool; the bytes component is added as a
+  // nondet BytesDynamic by get_llc_ret_tuple() at the call site.
   code_typet t;
   t.return_type() = bool_t;
   std::string debug_modulename = get_modulename_from_path(absolute_path);
@@ -1413,9 +1413,9 @@ bool solidity_convertert::get_call_value_definition(
   std::string call_name = "call";
   std::string call_id = "sol:@C@" + cname + "@F@$call#1";
   symbolt s;
-  // the return value should be (bool, string)
-  // however, we cannot handle the string, therefore we only return bool
-  // and make it (x.call(), nondet_uint_expr) later
+  // The real return type is (bool success, bytes memory data).
+  // The inner function returns bool; the bytes component is added as a
+  // nondet BytesDynamic by get_llc_ret_tuple() at the call site.
   code_typet t;
   t.return_type() = bool_t;
   std::string debug_modulename = get_modulename_from_path(absolute_path);

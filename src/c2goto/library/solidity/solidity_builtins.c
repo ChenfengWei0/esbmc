@@ -138,6 +138,28 @@ __ESBMC_HIDE:;
   return result;
 }
 
+/*
+ * llc_nondet_bytes — nondet abstraction for the `bytes memory data` component
+ * of a low-level `.call()` / `.staticcall()` / `.delegatecall()` return.
+ *
+ * The returned BytesDynamic has `initialized = 1` so that init-checks pass.
+ * All other fields (length, offset, capacity) are left uninitialized →
+ * ESBMC treats them as fresh nondet symbols.  In particular, `data.length`
+ * is fully unconstrained (any size_t value is possible).
+ *
+ * Over-approximation semantics (same as crypto hash abstraction):
+ *  - Sound for safety: no real return-data outcome is excluded.
+ *  - Possible false positives for properties that rely on the concrete
+ *    content or on specific length values.
+ */
+BytesDynamic llc_nondet_bytes(void)
+{
+__ESBMC_HIDE:;
+  BytesDynamic result;
+  result.initialized = 1;
+  return result;
+}
+
 /* selfdestruct */
 void selfdestruct()
 {

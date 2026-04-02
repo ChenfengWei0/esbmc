@@ -618,6 +618,17 @@ void solidity_convertert::get_tuple_assignment(
   const exprt &lop,
   exprt rop)
 {
+  // When the LHS is `bytes memory` but the RHS is not bytes (e.g. the `y`
+  // component of sol_llc_ret, which is a plain uint placeholder), substitute a
+  // fresh nondet BytesDynamic so that `data.length` has the correct type and a
+  // fully unconstrained symbolic length value.
+  // We use get_nondet_expr with lop.type() to avoid any sort mismatch that
+  // would arise from casting the uint placeholder to BytesDynamic.
+  if (is_bytes_type(lop.type()) && !is_bytes_type(rop.type()))
+  {
+    get_nondet_expr(lop.type(), rop);
+  }
+
   exprt assign_expr;
   if (get_sol_type(lop.type()) == SolidityGrammar::SolType::STRING)
     get_string_assignment(lop, rop, assign_expr);

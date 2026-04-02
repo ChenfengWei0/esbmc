@@ -304,7 +304,8 @@ struct sol_llc_ret { unsigned int x; unsigned int y; };  // solidity_types.h:22-
 
 | Remaining Limitation | Detail | Location |
 |----------------------|--------|----------|
-| **LLC bytes data unusable** | `sol_llc_ret.y` is `nondet_uint`, not `BytesDynamic` — blocks `abi.decode()` on call data | See Section D |
+| **LLC bytes data: `data.length` Z3 crash** | Comparing `data.length` hits a pre-existing 288-bit vs 256-bit Z3 sort mismatch in the SMT encoder for local `BytesDynamic` variables | Pre-existing ESBMC bug |
+| **`abi.decode()` unsupported** | Cannot decode the `bytes memory data` content; see Tier 2 #7 | See Section D |
 
 #### F. Mapping Library Efficiency
 
@@ -407,7 +408,7 @@ These are bugs or unsound abstractions in features we claim to support:
 | 1 | ~~**Fix mapping key truncation**~~ — XOR-fold 256→64 bit in frontend | ✅ Done | Resolved via `xor_fold_key_to_64bit()` (2026-04-02); 2^-64 collision rate |
 | 2 | ~~**Fix crypto function abstraction**~~ — nondet over-approximation for all hash/crypto functions | ✅ Done | Resolved via nondet locals (2026-04-02); see Section H. No functional consistency (possible false positives) |
 | 3 | ~~**Fix external call tuple returns**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
-| 4 | **Low-level call bytes return** — model as `BytesDynamic` instead of nondet_uint | Moderate | Current model blocks any inspection of call return data |
+| 4 | ~~**Low-level call bytes return**~~ — model as `BytesDynamic` instead of nondet_uint | ✅ Done | Resolved via `get_tuple_assignment` substitution (2026-04-02); `bytes memory data` is now a nondet `BytesDynamic`. Note: `data.length` comparisons hit a pre-existing Z3 sort mismatch (288-bit vs 256-bit); `abi.decode()` still unsupported (Tier 2 #7) |
 
 #### Tier 2 — High-Impact Missing Features
 
@@ -436,7 +437,7 @@ These are bugs or unsound abstractions in features we claim to support:
 |---|------|--------|-----|
 | 16 | **Inline assembly / Yul** | Very hard (>2000 lines) | Blocks most production contracts; needs sub-language parser |
 | 17 | **Mapping library optimization** — migrate unbound mode to SMT arrays | Hard | Eliminates linked-list loop unrolling overhead |
-| 18 | ~~**Tuple return refactoring**~~ — position-based matching + nested + external | ✅ Mostly done | Remaining: LLC bytes modeling (see Tier 1 #4) |
+| 18 | ~~**Tuple return refactoring**~~ — position-based matching + nested + external | ✅ Done | Completed including LLC bytes return (2026-04-02) |
 | 19 | **Function types** | Very hard | First-class function values |
 | 20 | **Transient storage / custom storage layout** | Very hard | EVM evolution features |
 

@@ -47,7 +47,8 @@ solidity_convertert::solidity_convertert(
     is_reentry_check(false),
     is_pointer_check(true),
     nondet_bool_expr(),
-    nondet_uint_expr()
+    nondet_uint_expr(),
+    nondet_bytes_dynamic_expr()
 {
   std::ifstream in(_contract_path);
   contract_contents.assign(
@@ -71,12 +72,18 @@ solidity_convertert::solidity_convertert(
   if (!no_pointer_check.empty())
     is_pointer_check = false;
 
-  // initialize nondet_bool
+  // initialize nondet_bool / nondet_uint
   if (
     context.find_symbol("c:@F@nondet_bool") == nullptr ||
     context.find_symbol("c:@F@nondet_uint") == nullptr)
   {
     log_error("Preprocessing error. Cannot find the NONDET symbol");
+    abort();
+  }
+  if (context.find_symbol("c:@F@llc_nondet_bytes") == nullptr)
+  {
+    log_error(
+      "Preprocessing error. Cannot find the llc_nondet_bytes symbol");
     abort();
   }
   locationt l;
@@ -103,6 +110,16 @@ solidity_convertert::solidity_convertert(
 
   byte_dynamic_t = symbol_typet(lib_prefix + "BytesDynamic");
   set_sol_type(byte_dynamic_t, SolidityGrammar::SolType::BYTES_DYN);
+
+  // initialize nondet_bytes_dynamic_expr — used for LLC return data field
+  get_library_function_call_no_args(
+    "llc_nondet_bytes",
+    "c:@F@llc_nondet_bytes",
+    byte_dynamic_t,
+    l,
+    nondet_bytes_dynamic_expr);
+  set_sol_type(
+    nondet_bytes_dynamic_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
 
   byte_static_t = symbol_typet(lib_prefix + "BytesStatic");
   set_sol_type(byte_static_t, SolidityGrammar::SolType::BYTES_STATIC);

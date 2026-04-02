@@ -822,6 +822,7 @@ protected:
   // NONDET
   side_effect_expr_function_callt nondet_bool_expr;
   side_effect_expr_function_callt nondet_uint_expr;
+  side_effect_expr_function_callt nondet_bytes_dynamic_expr;
 
   // type
   typet addr_t;

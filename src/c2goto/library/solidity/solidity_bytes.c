@@ -18,13 +18,6 @@ typedef struct BytesStatic {
     size_t length;
 } BytesStatic;
 
-typedef struct BytesDynamic {
-    size_t offset;
-    size_t length;
-    size_t capacity;
-    int initialized;
-} BytesDynamic;
-
 void bytes_dynamic_init_check(const int initialized)
 {
 __ESBMC_HIDE:;
