@@ -1510,8 +1510,7 @@ bool solidity_convertert::get_contract_member_call_expr(
         if (!is_new_expr)
         {
           assert(comp.type().is_array());
-          //TODO: the index type of ESBMC is limited to unsigned long long
-          // we need to extend such limit up to unsignedbv_type(256)
+          xor_fold_key_to_64bit(pos);
           new_expr = index_exprt(comp, pos, value_t);
         }
         else
@@ -1720,6 +1719,7 @@ bool solidity_convertert::get_index_access_expr(
         if (!is_new_expr)
         {
           assert(array.type().is_array());
+          xor_fold_key_to_64bit(pos);
           new_expr = index_exprt(array, pos, t);
         }
         else
@@ -1741,6 +1741,7 @@ bool solidity_convertert::get_index_access_expr(
         // Nested mapping access: m[k1][k2] — base is itself an IndexAccess
         // The inner access was already resolved; just index into the result.
         solidity_gen_typecast(ns, pos, unsignedbv_typet(256));
+        xor_fold_key_to_64bit(pos);
         new_expr = index_exprt(array, pos, t);
       }
       return false;

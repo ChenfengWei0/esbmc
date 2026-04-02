@@ -506,6 +506,7 @@ protected:
     exprt &pos,
     const locationt &l,
     const typet &key_type);
+  void xor_fold_key_to_64bit(exprt &key);
   bool get_new_mapping_index_access(
     const typet &value_t,
     SolidityGrammar::SolType val_sol_type,

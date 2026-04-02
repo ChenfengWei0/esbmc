@@ -293,17 +293,18 @@ struct sol_llc_ret { unsigned int x; unsigned int y; };  // solidity_types.h:22-
 - **Blocks**: `abi.decode(data, (uint))` on call return data; any pattern that inspects returned bytes
 - Comment: `"we cannot handle the string, therefore we only return bool"` (`solidity_convert_call.cpp:1155`)
 
-#### E. Tuple / Multi-Return Limitations
+#### E. Tuple / Multi-Return — Mostly Resolved (2026-04-02)
 
-**Working**: flat destructuring `(x, y) = func()`, partial skip `(x, ) = func()`, tuple swap `(x, y) = (y, x)`
+**Working** (after 4-phase refactoring):
+- Flat destructuring `(x, y) = func()`, partial skip `(x, ) = func()`, tuple swap `(x, y) = (y, x)`
+- Position-based component matching (name-based + positional fallback) — replaces fragile `at(i)` indexing
+- Nested tuple destructuring `((a,b),c) = ...` via `flatten_nested_tuple_assignment()`
+- External call tuple returns `(a,b) = externalContract.f()` — cross-contract and same-contract
+- Low-level call tuple `(bool success, ) = addr.call(...)` — positional matching for library structs
 
-| Limitation | Detail | Location |
-|------------|--------|----------|
-| **Nested tuple destructuring** | `((a,b),c) = ...` not supported | TODO at `solidity_convert_tuple.cpp:55` |
-| **External call tuple returns** | `(a,b) = externalContract.f()` → error "Unsupported return tuple" | `solidity_convert_call.cpp:633-636` |
-| **Tuple return refactoring needed** | Current approach creates per-call struct types (`mem0`, `mem1`, ...); fragile for complex patterns | `solidity_convert_tuple.cpp:13-100` |
-
-The external call limitation is particularly impactful — cross-contract calls that return multiple values cannot be destructured.
+| Remaining Limitation | Detail | Location |
+|----------------------|--------|----------|
+| **LLC bytes data unusable** | `sol_llc_ret.y` is `nondet_uint`, not `BytesDynamic` — blocks `abi.decode()` on call data | See Section D |
 
 #### F. Mapping Library Efficiency
 
@@ -340,11 +341,9 @@ Basic conversions work:
 
 | Issue | Detail | Location |
 |-------|--------|----------|
-| **Mapping key truncation** | Array indices limited to `unsigned long long` (64-bit); keys >2^64 collide | TODO at `solidity_convert_expr.cpp:1513-1514` |
+| ~~**Mapping key truncation**~~ | ✅ Fixed (2026-04-02): XOR-fold 256→64 bit via `xor_fold_key_to_64bit()`; collision rate 2^-64 | `solidity_convert_mapping.cpp` |
 | **SMT solver performance** | 256-bit bitvector operations significantly slower than smaller widths; OOM possible for complex arithmetic | `README.md:123` |
 | **`--16` workaround** | Reducing to 16-bit improves speed but introduces precision loss | — |
-
-The key truncation is a **correctness issue**: two different uint256 keys that differ only above bit 64 will map to the same array index.
 
 #### I. `super` Keyword — Not Implemented
 
@@ -379,9 +378,9 @@ These are bugs or unsound abstractions in features we claim to support:
 
 | # | Task | Effort | Why |
 |---|------|--------|-----|
-| 1 | **Fix mapping key truncation** — extend index to 256-bit or add hashing | Moderate | Keys >2^64 silently collide — correctness bug |
+| 1 | ~~**Fix mapping key truncation**~~ — XOR-fold 256→64 bit in frontend | ✅ Done | Resolved via `xor_fold_key_to_64bit()` (2026-04-02); 2^-64 collision rate |
 | 2 | **Fix crypto function abstraction** — replace identity with nondet+memoization | Moderate | `keccak256(1) == keccak256(2)` is currently provable, which is unsound |
-| 3 | **Fix external call tuple returns** — allow `(a,b) = ext.f()` | Moderate | Error on a supported Solidity pattern; breaks cross-contract verification |
+| 3 | ~~**Fix external call tuple returns**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
 | 4 | **Low-level call bytes return** — model as `BytesDynamic` instead of nondet_uint | Moderate | Current model blocks any inspection of call return data |
 
 #### Tier 2 — High-Impact Missing Features
@@ -399,7 +398,7 @@ These are bugs or unsound abstractions in features we claim to support:
 | # | Task | Effort | Why |
 |---|------|--------|-----|
 | 10 | **Multi-dimensional arrays** | Hard (~500 lines) | Recursive type/size extraction needed |
-| 11 | **Nested tuple destructuring** | Moderate (~150 lines) | `((a,b),c) = ...` pattern |
+| 11 | ~~**Nested tuple destructuring**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
 | 12 | **User-defined value types** | Moderate (~200 lines) | Increasingly common in modern Solidity |
 | 13 | **`immutable` set-once enforcement** | Easy (~80 lines) | |
 | 14 | **`bytes.concat()` / `string.concat()`** | Easy (~50 lines) | |
@@ -411,7 +410,7 @@ These are bugs or unsound abstractions in features we claim to support:
 |---|------|--------|-----|
 | 16 | **Inline assembly / Yul** | Very hard (>2000 lines) | Blocks most production contracts; needs sub-language parser |
 | 17 | **Mapping library optimization** — migrate unbound mode to SMT arrays | Hard | Eliminates linked-list loop unrolling overhead |
-| 18 | **Tuple return refactoring** — unified return value model | Hard | Current per-call struct approach is fragile |
+| 18 | ~~**Tuple return refactoring**~~ — position-based matching + nested + external | ✅ Mostly done | Remaining: LLC bytes modeling (see Tier 1 #4) |
 | 19 | **Function types** | Very hard | First-class function values |
 | 20 | **Transient storage / custom storage layout** | Very hard | EVM evolution features |
 
