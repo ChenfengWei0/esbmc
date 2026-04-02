@@ -479,7 +479,7 @@ bool solidity_convertert::get_sol_builtin_ref(
         }
         else if (is_byte_type(base_t))
         {
-          member_exprt len(base, "length", uint_type());
+          member_exprt len(base, "length", size_type());
           new_expr = len;
         }
         else
