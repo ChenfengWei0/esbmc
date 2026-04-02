@@ -335,7 +335,33 @@ Basic conversions work:
 - No runtime type checking that an address actually holds the expected contract type
 - Dynamic dispatch through address conversion is limited — `Base(address(derived))` binds to the static Base instance, not the actual derived instance
 
-#### H. uint256 Modeling Constraints
+#### H. Cryptographic Hash Function Abstraction (nondet over-approximation)
+
+All hash/crypto functions are modeled as **nondeterministic (nondet)** — each call returns an unconstrained symbolic value of the appropriate return type. This is an **over-approximation**: the verifier explores more behaviours than the real program, so it is sound for safety verification.
+
+| Function | Signature | Return type | Abstraction |
+|----------|-----------|-------------|-------------|
+| `keccak256` | `keccak256(bytes)` → `bytes32` | `uint256_t` | nondet `uint256_t` |
+| `sha256` | `sha256(bytes)` → `bytes32` | `uint256_t` | nondet `uint256_t` |
+| `ripemd160` | `ripemd160(bytes)` → `bytes20` | `address_t` | nondet `address_t` |
+| `ecrecover` | `ecrecover(bytes32,uint8,bytes32,bytes32)` → `address` | `address_t` | nondet `address_t` |
+| `blockhash` | `blockhash(uint)` → `bytes32` | `uint256_t` | nondet `uint256_t` |
+| `blobhash` | `blobhash(uint)` → `bytes32` | `uint256_t` | nondet `uint256_t` |
+
+**Consequence — possible false positives, no false negatives:**
+
+| Scenario | Verifier result | Correct? |
+|----------|----------------|----------|
+| `h = keccak256(x); assert(h % 10 < 10);` | SUCCESSFUL | ✓ Sound — holds for all nondet values |
+| `assert(keccak256(x) == 42);` | FAILED | False positive — nondet ≠ 42 but real hash might |
+| `h1 = keccak256(x); h2 = keccak256(x); assert(h1 == h2);` | FAILED | False positive — no functional consistency |
+| `h = keccak256(x); assert(h != x);` | FAILED | False positive — nondet could equal x |
+
+**Key limitation**: no functional consistency — two calls to the same hash function with the same argument return independent nondet values. Properties that depend on "same input → same output" (e.g., commit-reveal patterns, hash-based equality checks) **cannot be verified** and will produce spurious counterexamples.
+
+Implementation: `src/c2goto/library/solidity/solidity_builtins.c` (uninitialized local = nondet in ESBMC).
+
+#### I. uint256 Modeling Constraints
 
 256-bit integers (`_BitInt(256)`) are supported for arithmetic, but:
 
@@ -345,14 +371,14 @@ Basic conversions work:
 | **SMT solver performance** | 256-bit bitvector operations significantly slower than smaller widths; OOM possible for complex arithmetic | `README.md:123` |
 | **`--16` workaround** | Reducing to 16-bit improves speed but introduces precision loss | — |
 
-#### I. `super` Keyword — Not Implemented
+#### J. `super` Keyword — Not Implemented
 
 No handling exists for `super.funcName()`. The inheritance infrastructure has C3-linearized base lists (`linearizedBaseList` in `solidity_convert_inheritance.cpp`) and override tracking (`overrideMap`), but there is no code path to:
 1. Detect `super.func()` as distinct from `this.func()`
 2. Resolve the next function in the C3 chain
 3. Route the call to the correct base contract
 
-#### J. Other Gaps
+#### K. Other Gaps
 
 | Feature | Status | Detail |
 |---------|--------|--------|
@@ -379,7 +405,7 @@ These are bugs or unsound abstractions in features we claim to support:
 | # | Task | Effort | Why |
 |---|------|--------|-----|
 | 1 | ~~**Fix mapping key truncation**~~ — XOR-fold 256→64 bit in frontend | ✅ Done | Resolved via `xor_fold_key_to_64bit()` (2026-04-02); 2^-64 collision rate |
-| 2 | **Fix crypto function abstraction** — replace identity with nondet+memoization | Moderate | `keccak256(1) == keccak256(2)` is currently provable, which is unsound |
+| 2 | ~~**Fix crypto function abstraction**~~ — nondet over-approximation for all hash/crypto functions | ✅ Done | Resolved via nondet locals (2026-04-02); see Section H. No functional consistency (possible false positives) |
 | 3 | ~~**Fix external call tuple returns**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
 | 4 | **Low-level call bytes return** — model as `BytesDynamic` instead of nondet_uint | Moderate | Current model blocks any inspection of call return data |
 
