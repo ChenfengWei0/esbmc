@@ -1,15 +1,3 @@
-/**
- * @file solidity_language.cpp
- * @brief Implementation of the Solidity language plugin (solidity_languaget).
- *
- * Handles the full parse-to-symbol-table pipeline for a Solidity source file:
- *  1. Locates / invokes solc to produce a combined JSON AST (invoke_solc).
- *  2. Parses the resulting JSON into src_ast_json_array (parse_solast).
- *  3. Synthesises a temporary C++ stub so that Clang can populate built-in
- *     ESBMC intrinsic symbols (get_temp_file / convert_intrinsics).
- *  4. Constructs solidity_convertert and calls convert() to fill the ESBMC
- *     symbol table that the GOTO-program builder will later consume.
- */
 #include <util/compiler_defs.h>
 // Remove warnings from Clang headers
 CC_DIAGNOSTIC_PUSH()
@@ -159,35 +147,6 @@ std::string solidity_languaget::get_solc_version(const std::string &solc) const
   return "unknown";
 }
 
-std::string
-solidity_languaget::detect_project_root(const std::string &sol_path) const
-{
-  // Walk up from the .sol file's directory looking for project root markers.
-  // Foundry: foundry.toml    Hardhat: hardhat.config.*    General: remappings.txt
-  namespace fs = boost::filesystem;
-  fs::path dir = fs::absolute(fs::path(sol_path)).parent_path();
-
-  // Limit the upward search to avoid scanning all the way to /
-  for (int depth = 0; depth < 20 && !dir.empty(); ++depth)
-  {
-    if (
-      fs::exists(dir / "foundry.toml") ||
-      fs::exists(dir / "remappings.txt") ||
-      fs::exists(dir / "hardhat.config.js") ||
-      fs::exists(dir / "hardhat.config.ts"))
-    {
-      return dir.string();
-    }
-    fs::path parent = dir.parent_path();
-    if (parent == dir)
-      break;
-    dir = parent;
-  }
-
-  // Fallback: use the directory containing the .sol file itself
-  return fs::absolute(fs::path(sol_path)).parent_path().string();
-}
-
 bool solidity_languaget::invoke_solc(
   const std::string &sol_path,
   std::string &solast_path)
@@ -211,21 +170,14 @@ bool solidity_languaget::invoke_solc(
   std::string version = get_solc_version(solc);
   log_status("Compiling Solidity AST using: {} (v{})", solc, version);
 
-  // Detect project root for import resolution (Foundry, Hardhat, etc.)
-  std::string project_root = detect_project_root(sol_path);
-  log_status("Solidity project root: {}", project_root);
-
   // Create temp directory for the .solast output
   std::string tmp_dir =
     file_operations::create_tmp_dir("esbmc_solast-%%%%-%%%%-%%%%").path();
   boost::filesystem::create_directories(tmp_dir);
   solast_path = tmp_dir + "/output.solast";
 
-  // Pass --base-path so solc can resolve project-relative imports
-  // (e.g. "lib/openzeppelin-contracts/...").
-  std::string cmd = solc + " --ast-compact-json" + " --base-path " +
-                    project_root + " " + sol_path + " > " + solast_path +
-                    " 2>&1";
+  std::string cmd =
+    solc + " --ast-compact-json " + sol_path + " > " + solast_path + " 2>&1";
   int ret = std::system(cmd.c_str());
   if (ret != 0)
   {

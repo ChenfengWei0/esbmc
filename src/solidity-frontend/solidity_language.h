@@ -1,20 +1,3 @@
-/**
- * @file solidity_language.h
- * @brief Top-level language plugin for Solidity smart contract verification.
- *
- * Defines solidity_languaget, which integrates ESBMC's language framework with
- * the Solidity frontend.  It owns the raw JSON AST produced by solc, orchestrates
- * the parse → typecheck → GOTO-program pipeline, and manages the temporary Clang
- * intrinsics file needed by the underlying C++ frontend.
- *
- * Key responsibilities:
- *  - Invoke solc (or consume a pre-generated .json AST) via invoke_solc /
- *    parse_solast.
- *  - Drive typecheck(), which triggers solidity_convertert to populate the
- *    ESBMC symbol table.
- *  - Expose contract_names / func_name so the driver layer can restrict
- *    verification to a specific contract or entry function.
- */
 #ifndef SOLIDITY_FRONTEND_SOLIDITY_AST_LANGUAGE_H_
 #define SOLIDITY_FRONTEND_SOLIDITY_AST_LANGUAGE_H_
 
@@ -52,7 +35,6 @@ public:
   // solc auto-invocation support
   std::string find_solc() const;
   std::string get_solc_version(const std::string &solc) const;
-  std::string detect_project_root(const std::string &sol_path) const;
   bool invoke_solc(const std::string &sol_path, std::string &solast_path);
   bool parse_solast(const std::string &solast_path);
 
