@@ -23,7 +23,7 @@ struct mapping_t
 void *map_get_raw(struct _ESBMC_Mapping a[], address_t addr, uint256_t key)
 {
 __ESBMC_HIDE:;
-  struct _ESBMC_Mapping *cur = a[key].next;
+  struct _ESBMC_Mapping *cur = a[0].next;
   while (cur)
   {
     if (cur->addr == addr && cur->key == key)
@@ -41,8 +41,8 @@ __ESBMC_HIDE:;
   n->addr = addr;
   n->key = key;
   n->value = val;
-  n->next = a[key].next;
-  a[key].next = n;
+  n->next = a[0].next;
+  a[0].next = n;
 }
 
 /* uint256_t */
@@ -135,7 +135,7 @@ struct mapping_t_fast
 void *map_get_raw_fast(struct _ESBMC_Mapping_fast a[], uint256_t key)
 {
 __ESBMC_HIDE:;
-  struct _ESBMC_Mapping_fast *cur = a[key].next;
+  struct _ESBMC_Mapping_fast *cur = a[0].next;
   while (cur)
   {
     if (cur->key == key)
@@ -152,8 +152,8 @@ __ESBMC_HIDE:;
   struct _ESBMC_Mapping_fast *n = (struct _ESBMC_Mapping_fast *)malloc(sizeof *n);
   n->key = key;
   n->value = val;
-  n->next = a[key].next;
-  a[key].next = n;
+  n->next = a[0].next;
+  a[0].next = n;
 }
 
 /* uint256_t */
