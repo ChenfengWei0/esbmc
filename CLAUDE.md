@@ -21,6 +21,9 @@ ESBMC (Efficient SMT-based Context-Bounded Model Checker) is a formal verificati
 ./scripts/build.sh -b Debug build          # Debug build
 ./scripts/build.sh -s address build        # With AddressSanitizer
 ./scripts/build.sh -C deps build install   # SV-COMP build (extra solvers)
+
+# Enable CVC5 solver (required for Solidity 256-bit tests)
+cmake .. -DENABLE_CVC5=ON -DDOWNLOAD_DEPENDENCIES=ON
 ```
 
 The binary is installed to `./release/bin/esbmc`.
@@ -124,6 +127,10 @@ Before implementing any feature or bug fix, always work on a dedicated branch:
 1. Check the current branch — never work directly on `master`.
 2. Create a branch with a descriptive name (e.g. `feat/short-description` or `fix/short-description`).
 3. Confirm the branch is active before making any changes.
+
+## Solver Selection for Solidity
+
+Z3 struggles with 256-bit bitvector arithmetic (common in Solidity's `uint256`). CVC5 and Bitwuzla vastly outperform Z3 on QF_BV benchmarks. For Solidity tests involving 256-bit overflow checks, use `--cvc5` instead of the default Z3 solver.
 
 ## Code Style
 
