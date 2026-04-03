@@ -33,3 +33,4 @@ src/CPackConfig.cmake
 src/CPackSourceConfig.cmake
 /.mypy_cache/
 docs/
+final-year-project-master/
