@@ -826,7 +826,7 @@ const nlohmann::json &solidity_convertert::find_constructor_ref(int contract_id)
            ittr != ast_nodes.end();
            ++ittr)
       {
-        if ((*ittr)["kind"] == "constructor")
+        if ((*ittr).contains("kind") && (*ittr)["kind"] == "constructor")
           return *ittr;
       }
     }
@@ -854,7 +854,7 @@ solidity_convertert::find_constructor_ref(const std::string &contract_name)
            ittr != ast_nodes.end();
            ++ittr)
       {
-        if ((*ittr)["kind"] == "constructor")
+        if ((*ittr).contains("kind") && (*ittr)["kind"] == "constructor")
           return *ittr;
       }
     }

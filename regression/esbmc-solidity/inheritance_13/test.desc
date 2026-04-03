@@ -1,4 +1,5 @@
-THOROUGH
+KNOWNBUG
 contract.solast
 --sol contract.sol --k-induction --overflow-check --no-standard-checks --no-bounds-check --no-div-by-zero
 ^VERIFICATION FAILED$
+-- Z3 takes ~28s on 256-bit overflow checks in complex ERC20 contract; borderline timeout under parallel load

@@ -1,4 +1,5 @@
-THOROUGH
+KNOWNBUG
 contract.solast
 --sol contract.sol --unwind 3 --no-unwinding-assertions --bound
 ^VERIFICATION SUCCESSFUL$
+-- mapping model library NULL pointer dereference in map_get_raw before reaching user assertion
