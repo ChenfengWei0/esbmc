@@ -130,6 +130,12 @@ The `irep2` layer defines 170+ expression types and 20+ type constructors. Expre
 
 Z3 struggles with 256-bit bitvector arithmetic (common in Solidity's `uint256`). CVC5 and Bitwuzla vastly outperform Z3 on QF_BV benchmarks. For Solidity tests involving 256-bit overflow checks, use `--cvc5` instead of the default Z3 solver.
 
+## ERC20 Model
+
+A simplified ERC20 model is available at `regression/esbmc-solidity/ERC20.sol` for verifying contracts that inherit from OpenZeppelin's ERC20. It implements `balanceOf`, `transfer`, `transferFrom`, `approve`, `allowance`, `_transfer`, `_mint`, `_burn`, `_approve` using only ESBMC-supported Solidity features. To use it, copy the ERC20 contract definition into the same `.sol` file as the contract under verification and regenerate the `.solast` with `solc --ast-compact-json`.
+
+Note: `--function` mode skips the constructor. For ERC20 tests that depend on constructor initialization (e.g., `_mint` in constructor), omit `--function` and use `--contract` instead.
+
 ## Code Style
 
 - Modern C++ (C++11+), prefer const-correctness and RAII
