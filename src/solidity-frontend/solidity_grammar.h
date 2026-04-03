@@ -1,3 +1,11 @@
+/// \file solidity_grammar.h
+/// \brief Solidity grammar enumerations and classification helpers.
+///
+/// Defines enums that mirror the Solidity language grammar (type names,
+/// operators, statement kinds, expression kinds, etc.) and provides functions
+/// to classify solc JSON AST nodes into these categories. Used throughout the
+/// converter to dispatch on AST node types.
+
 #ifndef SOLIDITY_GRAMMAR_H_
 #define SOLIDITY_GRAMMAR_H_
 

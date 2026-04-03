@@ -1,3 +1,12 @@
+/// \file solidity_convert_ref.cpp
+/// \brief Reference and symbol resolution for the Solidity frontend.
+///
+/// Handles resolution of symbol references, declaration references, and
+/// function declaration references in the solc JSON AST. Looks up symbols
+/// in ESBMC's context (symbol table), resolves cross-contract references
+/// via the AST's referencedDeclaration IDs, and creates the corresponding
+/// irep2 symbol expressions.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

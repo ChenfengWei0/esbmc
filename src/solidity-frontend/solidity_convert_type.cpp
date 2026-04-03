@@ -1,3 +1,11 @@
+/// \file solidity_convert_type.cpp
+/// \brief Type conversion for the Solidity frontend.
+///
+/// Converts Solidity type descriptions (elementary types like uint256/bool/
+/// address/string/bytes, array types, mapping types, struct types, enum
+/// types, and contract types) from the solc JSON AST into ESBMC's irep2
+/// type system (typet).
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

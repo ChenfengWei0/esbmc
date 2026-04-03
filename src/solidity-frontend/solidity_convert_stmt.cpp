@@ -1,3 +1,11 @@
+/// \file solidity_convert_stmt.cpp
+/// \brief Statement conversion for the Solidity frontend.
+///
+/// Converts Solidity statements (blocks, if/else, for, while, do-while,
+/// return, break, continue, emit, revert, require/assert, variable
+/// declaration statements, expression statements, and try-catch) from
+/// the solc JSON AST into ESBMC's GOTO-level code representation.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

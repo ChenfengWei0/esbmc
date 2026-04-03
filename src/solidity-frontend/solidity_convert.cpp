@@ -1,3 +1,11 @@
+/// \file solidity_convert.cpp
+/// \brief Top-level conversion driver and static member initialization.
+///
+/// Contains the solidity_convertert constructor, the main convert() entry
+/// point that orchestrates the full AST-to-irep2 pipeline, and static member
+/// initialization. The convert() method iterates over top-level AST nodes,
+/// dispatching to contract, declaration, and utility conversion methods.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

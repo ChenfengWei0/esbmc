@@ -1,3 +1,11 @@
+/// \file solidity_convert_literals.cpp
+/// \brief Literal conversion for the Solidity frontend.
+///
+/// Converts Solidity literal values (integer literals, boolean literals,
+/// string literals, address literals, and rational/fixed-point number
+/// literals) from the solc JSON AST into ESBMC's constant expression
+/// representation with appropriate typing.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <util/arith_tools.h>
 #include <util/bitvector.h>

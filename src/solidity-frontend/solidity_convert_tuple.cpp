@@ -1,3 +1,11 @@
+/// \file solidity_convert_tuple.cpp
+/// \brief Tuple expression conversion for the Solidity frontend.
+///
+/// Converts Solidity tuple expressions and multi-return-value function calls
+/// from the solc JSON AST. Handles tuple declarations, tuple assignments
+/// (destructuring), and the creation of temporary variables for multi-valued
+/// returns.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

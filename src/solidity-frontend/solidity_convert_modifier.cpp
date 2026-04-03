@@ -1,3 +1,11 @@
+/// \file solidity_convert_modifier.cpp
+/// \brief Function and modifier definition conversion for the Solidity frontend.
+///
+/// Converts Solidity function definitions, modifier definitions, and fallback/
+/// receive functions from the solc JSON AST into ESBMC's symbol table and code
+/// representation. Handles parameter lists, return parameters, visibility,
+/// mutability, this-pointer injection, and modifier invocation inlining.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

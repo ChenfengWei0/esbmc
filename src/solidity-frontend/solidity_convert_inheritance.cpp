@@ -1,3 +1,12 @@
+/// \file solidity_convert_inheritance.cpp
+/// \brief Contract inheritance handling for the Solidity frontend.
+///
+/// Implements Solidity's C3-linearized contract inheritance model. Merges
+/// base contract members (state variables, functions, modifiers) into the
+/// derived contract's AST, handles virtual function override resolution,
+/// and adds inheritance labels to track which contract originally defined
+/// each member.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

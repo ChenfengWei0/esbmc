@@ -1,3 +1,12 @@
+/// \file solidity_language.h
+/// \brief Solidity language frontend interface for ESBMC.
+///
+/// Defines solidity_languaget, the top-level entry point for parsing Solidity
+/// source files. Inherits from clang_cpp_languaget and orchestrates the full
+/// frontend pipeline: invoking the solc compiler to produce a JSON AST,
+/// converting the AST to ESBMC's GOTO intermediate representation via
+/// solidity_convertert, and performing type-checking and finalization.
+
 #ifndef SOLIDITY_FRONTEND_SOLIDITY_AST_LANGUAGE_H_
 #define SOLIDITY_FRONTEND_SOLIDITY_AST_LANGUAGE_H_
 

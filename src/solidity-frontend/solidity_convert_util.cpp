@@ -1,3 +1,11 @@
+/// \file solidity_convert_util.cpp
+/// \brief Utility and helper functions for the Solidity converter.
+///
+/// Provides shared utility methods used across the converter: source location
+/// extraction, AST node search by ID, parent node lookup, contract name
+/// resolution, line number computation from source ranges, JSON AST traversal
+/// helpers, and various name/ID construction routines.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

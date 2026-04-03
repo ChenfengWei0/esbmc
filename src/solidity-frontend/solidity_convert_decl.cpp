@@ -1,3 +1,11 @@
+/// \file solidity_convert_decl.cpp
+/// \brief Declaration conversion for the Solidity frontend.
+///
+/// Converts Solidity variable declarations (state variables, local variables,
+/// parameters), non-contract top-level definitions (enums, structs, free
+/// functions, using-for directives), and struct/enum type definitions into
+/// ESBMC's symbol table and irep2 representation.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

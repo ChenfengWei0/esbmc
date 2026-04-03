@@ -1,3 +1,10 @@
+/// \file solidity_language.cpp
+/// \brief Implementation of the Solidity language frontend.
+///
+/// Handles solc invocation to obtain the JSON AST, multi-contract resolution,
+/// import flattening, and the parse/typecheck/final pipeline that converts
+/// Solidity source files into ESBMC's GOTO program representation.
+
 #include <util/compiler_defs.h>
 // Remove warnings from Clang headers
 CC_DIAGNOSTIC_PUSH()

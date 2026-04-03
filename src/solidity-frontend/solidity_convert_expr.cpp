@@ -1,3 +1,11 @@
+/// \file solidity_convert_expr.cpp
+/// \brief Expression conversion for the Solidity frontend.
+///
+/// Converts Solidity expressions (binary/unary operations, assignments,
+/// conditional expressions, index access, member access, type conversions,
+/// function calls, and identifier references) from the solc JSON AST into
+/// ESBMC's irep2 expression tree.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

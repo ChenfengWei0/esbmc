@@ -1,3 +1,11 @@
+/// \file solidity_convert_constructor.cpp
+/// \brief Constructor conversion for the Solidity frontend.
+///
+/// Handles parsing of explicit Solidity constructors and generation of
+/// implicit default constructors for contracts that lack one. Manages
+/// constructor parameter conversion, state variable initialization
+/// ordering, and base contract constructor chaining for inheritance.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

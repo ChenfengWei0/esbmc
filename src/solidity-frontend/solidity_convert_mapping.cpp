@@ -1,3 +1,11 @@
+/// \file solidity_convert_mapping.cpp
+/// \brief Mapping type conversion for the Solidity frontend.
+///
+/// Converts Solidity mapping types into ESBMC's representation using
+/// infinite arrays (modeled as arrays with nondet size). Handles nested
+/// mappings, mapping access expressions, and the generation of helper
+/// symbols for mapping state variables.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

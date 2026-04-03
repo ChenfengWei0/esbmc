@@ -1,3 +1,12 @@
+/// \file solidity_convert_contract.cpp
+/// \brief Contract-level conversion for the Solidity frontend.
+///
+/// Handles the top-level conversion of Solidity contracts: iterating over
+/// contract body elements (state variables, functions, structs, enums,
+/// events, errors, modifiers), registering the contract struct type in the
+/// symbol table, generating static lifetime initialization, and managing
+/// the contract-scoped conversion context.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

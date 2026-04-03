@@ -1,3 +1,13 @@
+/// \file solidity_convert.h
+/// \brief Core AST-to-irep2 converter for the Solidity frontend.
+///
+/// Declares solidity_convertert, which walks the solc JSON AST and translates
+/// Solidity contracts, functions, statements, expressions, and types into
+/// ESBMC's irep2 intermediate representation. This is the central class of
+/// the Solidity frontend; its methods are split across multiple .cpp files
+/// organized by conversion category (declarations, expressions, statements,
+/// types, references, builtins, etc.).
+
 #ifndef SOLIDITY_FRONTEND_SOLIDITY_CONVERT_H_
 #define SOLIDITY_FRONTEND_SOLIDITY_CONVERT_H_
 

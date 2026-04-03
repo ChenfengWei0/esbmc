@@ -1,3 +1,11 @@
+/// \file solidity_convert_call.cpp
+/// \brief Function call conversion for the Solidity frontend.
+///
+/// Converts Solidity function calls from the solc JSON AST into ESBMC's
+/// side_effect_expr_function_callt representation. Handles library function
+/// calls, using-for directive calls, and regular internal/external function
+/// calls with argument conversion and this-pointer injection.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>

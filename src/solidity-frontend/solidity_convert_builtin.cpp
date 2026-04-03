@@ -1,3 +1,12 @@
+/// \file solidity_convert_builtin.cpp
+/// \brief Built-in function and low-level call handling for the Solidity frontend.
+///
+/// Implements recognition and conversion of Solidity built-in operations:
+/// low-level calls (call, delegatecall, staticcall, transfer, send),
+/// built-in properties (msg.sender, msg.value, block.number, address.balance),
+/// type conversion functions, abi.encode/decode, keccak256/sha256, and the
+/// move_builtin_to_contract() helper for contract-scoped symbol registration.
+
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>
