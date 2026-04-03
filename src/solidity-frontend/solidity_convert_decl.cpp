@@ -562,6 +562,16 @@ bool solidity_convertert::get_var_decl(
     decl.operands().push_back(val);
   }
 
+  // For local variables without explicit initializer, Solidity guarantees
+  // zero-initialization.  Emit the zero value so the GOTO program gets
+  // an assignment (DECL alone leaves the variable uninitialised).
+  // Only add if no init operand was already pushed by a special-case handler above
+  // (arrays, dynarray, mapping, etc. handle their own initialization).
+  if (
+    !is_state_var && decl.operands().size() == 1 &&
+    !is_contract && !is_mapping)
+    decl.operands().push_back(gen_zero(get_complete_type(t, ns), true));
+
   // store state variable, which will be initialized in the constructor
   // note that for the state variables that do not have initializer
   // we have already set it as zero value
