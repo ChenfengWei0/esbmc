@@ -44,7 +44,6 @@ public:
   // solc auto-invocation support
   std::string find_solc() const;
   std::string get_solc_version(const std::string &solc) const;
-  std::string detect_project_root(const std::string &sol_path) const;
   bool invoke_solc(const std::string &sol_path, std::string &solast_path);
   bool parse_solast(const std::string &solast_path);
 
