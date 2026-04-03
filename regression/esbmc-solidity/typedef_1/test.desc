@@ -1,5 +1,4 @@
-KNOWNBUG
+CORE
 contract.solast
---sol contract.sol --unwind 2 --no-unwinding-assertions --no-standard-checks
+--sol contract.sol --unwind 2 --no-unwinding-assertions --no-standard-checks --cvc5
 ^VERIFICATION SUCCESSFUL$
--- constructor state not carried through; Z3 times out on 256-bit arithmetic with k-induction
