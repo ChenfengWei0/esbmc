@@ -32,8 +32,13 @@ Tests are run via CTest from the `build/` directory:
 ```bash
 cd build/
 
-# Run all regression tests
-ctest -j$(nproc) --progress --output-on-failure
+# IMPORTANT: Default ESBMC_REGRESS_TIMEOUT is 1200s (20 min).
+# Some tests (k-induction without bounds) will hang until that limit.
+# Always configure cmake with a shorter timeout for interactive use:
+cmake -DESBMC_REGRESS_TIMEOUT=30 ..
+
+# Run Solidity regression tests (preferred for Solidity frontend work)
+ctest -j$(nproc) -L "esbmc-solidity"
 
 # Run a specific test suite (label matches "folder/" pattern)
 ctest -j4 -L "esbmc-cpp/cpp"
@@ -41,6 +46,9 @@ ctest -j4 -L "python"
 
 # Run a single test by name
 ctest -R "regression/esbmc/00_bitshift_01"
+
+# Run all regression tests
+ctest -j$(nproc) --progress --output-on-failure
 
 # Exclude slow Python tests
 ctest -j4 -LE python-intensive
@@ -108,6 +116,14 @@ The `irep2` layer defines 170+ expression types and 20+ type constructors. Expre
 - Never use `Co-Authored-By: Claude` or any AI self-attribution in commit messages
 - Use the tag `Assisted-by: Claude-Opus4.6` at the end of commit messages (configured via `~/.claude/settings.json` attribution)
 - No AI-generated PR descriptions attribution either
+- **Every commit message must include a test results line**, e.g.:
+  ```
+  Test results (esbmc-solidity, timeout=30s):
+    389 total, 375 passed, 5 failed, 9 timeout (57s)
+    Failed: event_1, event_2, github_2564, inheritance_13, mapping_13
+    Timeout: transfer_send_2, typedef_1, break_3, break_4, continue_3, continue_4, bytes_16, bytes_17, import_15
+  ```
+- Never pollute the ESBMC frontend to accommodate a specific external project; use external scripts instead
 
 ## Code Style
 
