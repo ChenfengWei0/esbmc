@@ -32,8 +32,13 @@ Tests are run via CTest from the `build/` directory:
 ```bash
 cd build/
 
-# Run all regression tests
-ctest -j$(nproc) --progress --output-on-failure
+# IMPORTANT: Default ESBMC_REGRESS_TIMEOUT is 1200s (20 min).
+# Some tests (k-induction without bounds) will hang until that limit.
+# Always configure cmake with a shorter timeout for interactive use:
+cmake -DESBMC_REGRESS_TIMEOUT=30 ..
+
+# Run Solidity regression tests (preferred for Solidity frontend work)
+ctest -j$(nproc) -L "esbmc-solidity"
 
 # Run a specific test suite (label matches "folder/" pattern)
 ctest -j4 -L "esbmc-cpp/cpp"
@@ -41,6 +46,9 @@ ctest -j4 -L "python"
 
 # Run a single test by name
 ctest -R "regression/esbmc/00_bitshift_01"
+
+# Run all regression tests
+ctest -j$(nproc) --progress --output-on-failure
 
 # Exclude slow Python tests
 ctest -j4 -LE python-intensive
