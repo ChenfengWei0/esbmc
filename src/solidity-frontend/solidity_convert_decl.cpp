@@ -973,9 +973,11 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
     // for abstract contract
     add_empty_body_node(ast_node);
   }
-  else if (node_type == "FunctionDefinition")
+  else if (node_type == "FunctionDefinition" && current_baseContractName.empty())
   {
-    // Free function (outside any contract)
+    // Free function (outside any contract) — only handle at top-level scope.
+    // Contract-internal functions are handled by convert_ast_nodes after
+    // get_struct_class has registered the contract struct symbol.
     if (get_function_definition(ast_node))
       return true;
   }

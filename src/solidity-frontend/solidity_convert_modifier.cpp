@@ -137,7 +137,8 @@ bool solidity_convertert::get_function_definition(
     (ast_node["nodeType"] == "EventDefinition" ||
      ast_node["nodeType"] == "ErrorDefinition" ||
      SolidityGrammar::is_sol_library_function(ast_node["id"].get<int>()));
-  bool is_free_function = c_name.empty();
+  bool is_free_function = ast_node.contains("kind") &&
+                          ast_node["kind"].get<std::string>() == "freeFunction";
   if (!is_event_err_lib && !is_free_function)
     get_function_this_pointer_param(
       c_name, id, debug_modulename, location_begin, type);
