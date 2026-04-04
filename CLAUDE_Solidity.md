@@ -141,11 +141,11 @@ Solidity built-in types, variables, and functions are implemented as C operation
 | `solidity_builtins.c` | Integer exponentiation (`sol_pow_uint`), modular arithmetic (`addmod`/`mulmod` with 512-bit precision), `llc_nondet_bytes`, `selfdestruct` |
 | `solidity_crypto.c` | Cryptographic hash functions: keccak256, sha256, ripemd160, ecrecover (deterministic bijective abstraction) |
 | `solidity_abi.c` | ABI encoding/decoding models: `abi_encode`, `abi_encodePacked`, `abi_encodeWithSelector`, `abi_encodeWithSignature`, `abi_encodeCall` (identity), `abi_decode` (nondet) |
-| `solidity_bytes.c` | `BytesStatic`/`BytesDynamic` structs and 60+ byte manipulation functions |
+| `solidity_bytes.c` | `BytesStatic`/`BytesDynamic` structs, 60+ byte manipulation functions, `bytes_dynamic_concat` (pass-by-value for variadic nesting) |
 | `solidity_mapping.c` | Mapping data structures (`_ESBMC_Mapping`, `mapping_t`, and `_fast` variants) |
 | `solidity_array.c` | Dynamic array tracking: push, pop, length, arrcpy |
 | `solidity_units.c` | Ether/time unit conversions (wei, gwei, ether, seconds, days, etc.) |
-| `solidity_string.c` | String operations, integer-to-string, hex conversion |
+| `solidity_string.c` | String operations (`string_concat` for variadic concat), integer-to-string, hex conversion |
 | `solidity_address.c` | Address management, contract object tracking |
 | `solidity_misc.c` | Min/max (`_min`/`_max`), `_creationCode`/`_runtimeCode`/`_interfaceId` (nondet), reentrancy check, state initialization |
 
@@ -232,7 +232,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | **Libraries** | Library contracts, library function calls |
 | **Import** | Multi-file with topological sort (17 tests) |
 | **Globals** | `msg.sender`/`.value`/`.sig`/`.data`, `block.number`/`.timestamp`/`.coinbase`/`.difficulty`/`.gaslimit`/`.chainid`/`.basefee`/`.prevrandao`/`.blobbasefee`, `tx.origin`/`.gasprice` |
-| **Built-ins** | `require()`, `assert()`, `revert()`, `keccak256()`, `sha256()`, `ripemd160()`, `ecrecover()`, `addmod()`, `mulmod()`, `gasleft()`, `selfdestruct()`, `blobhash()` |
+| **Built-ins** | `require()`, `assert()`, `revert()`, `keccak256()`, `sha256()`, `ripemd160()`, `ecrecover()`, `addmod()`, `mulmod()`, `gasleft()`, `selfdestruct()`, `blobhash()`, `string.concat()` (variadic), `bytes.concat()` (variadic) |
 | **ABI encoding** | `abi.encode()`, `abi.encodePacked()`, `abi.encodeWithSelector()`, `abi.encodeWithSignature()`, `abi.encodeCall()` |
 | **Address members** | `.balance`, `.code`, `.codehash`, `.transfer()`, `.send()`, `.call()`, `.delegatecall()`, `.staticcall()` |
 | **Type info** | `type(T).min`, `type(T).max`, `type(C).name`, `type(C).creationCode`, `type(C).runtimeCode`, `type(I).interfaceId` (nondet bytes4) |
@@ -456,8 +456,8 @@ These are bugs or unsound abstractions in features we claim to support:
 | 11 | ~~**Nested tuple destructuring**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
 | 12 | **User-defined value types** | Moderate (~200 lines) | Increasingly common in modern Solidity |
 | 13 | **`immutable` set-once enforcement** | Easy (~80 lines) | |
-| 14 | **`bytes.concat()` / `string.concat()`** | Easy (~50 lines) | |
-| 15 | **`type(C).runtimeCode` / `type(I).interfaceId`** | Easy (~50 lines) | |
+| 14 | ~~**`bytes.concat()` / `string.concat()`**~~ | ✅ Done | Variadic support with nested binary calls (2026-04-04) |
+| 15 | ~~**`type(C).runtimeCode` / `type(I).interfaceId`**~~ | ✅ Done | Nondet over-approximation (2026-04-04) |
 
 #### Tier 4 — Long-Term / Architectural
 

@@ -1208,6 +1208,8 @@ bool solidity_convertert::get_call_expr(
           return false;
         if (func_id.compare(0, 11, "c:@F@bytes_") == 0)
           return false;
+        if (func_id == "c:@F@string_concat")
+          return false;
       }
       if (new_expr.is_member() && new_expr.component_name() == "length")
         return false;

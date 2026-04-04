@@ -223,17 +223,17 @@ __ESBMC_HIDE:;
     return b;
 }
 
-BytesDynamic bytes_dynamic_concat(const BytesDynamic* a, const BytesDynamic* b, BytesPool* pool) {
+BytesDynamic bytes_dynamic_concat(BytesDynamic a, BytesDynamic b, BytesPool* pool) {
 __ESBMC_HIDE:;
-    bytes_dynamic_init_check(a->initialized);
-    bytes_dynamic_init_check(b->initialized);
+    bytes_dynamic_init_check(a.initialized);
+    bytes_dynamic_init_check(b.initialized);
     BytesDynamic d = {0};
     d.offset = pool->pool_cursor;
-    d.length = a->length + b->length;
+    d.length = a.length + b.length;
     d.capacity = d.length;
     d.initialized = 1;
-    memcpy(&pool->pool[d.offset], &pool->pool[a->offset], a->length);
-    memcpy(&pool->pool[d.offset + a->length], &pool->pool[b->offset], b->length);
+    memcpy(&pool->pool[d.offset], &pool->pool[a.offset], a.length);
+    memcpy(&pool->pool[d.offset + a.length], &pool->pool[b.offset], b.length);
     pool->pool_cursor += d.length;
     return d;
 }

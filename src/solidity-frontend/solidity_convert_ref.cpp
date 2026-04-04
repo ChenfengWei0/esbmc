@@ -680,6 +680,112 @@ bool solidity_convertert::get_sol_builtin_ref(
         new_expr.location() = l;
         return false;
       }
+      else if (name == "concat")
+      {
+      // string.concat(...) or bytes.concat(...)
+      // Determine base type name from the ElementaryTypeNameExpression
+      std::string base_name;
+      if (
+        expr["expression"].contains("typeName") &&
+        expr["expression"]["typeName"].contains("name"))
+        base_name =
+          expr["expression"]["typeName"]["name"].get<std::string>();
+      else if (expr["expression"].contains("name"))
+        base_name = expr["expression"]["name"].get<std::string>();
+      else
+        return true;
+
+      // Get arguments from parent FunctionCall node
+      const nlohmann::json &func_call =
+        find_last_parent(src_ast_json["nodes"], expr);
+      assert(!func_call.empty() && func_call.contains("arguments"));
+
+      const auto &args_json = func_call["arguments"];
+      size_t nargs = args_json.size();
+      if (nargs < 2)
+        return true;
+
+      // Convert all arguments
+      std::vector<exprt> args;
+      for (const auto &arg : args_json)
+      {
+        exprt a;
+        if (get_expr(arg, arg["typeDescriptions"], a))
+          return true;
+        args.push_back(a);
+      }
+
+      if (base_name == "string")
+      {
+        // string.concat: fold N-ary into nested binary string_concat calls
+        const symbolt *sym = context.find_symbol("c:@F@string_concat");
+        if (!sym)
+          return true;
+
+        side_effect_expr_function_callt first;
+        get_library_function_call_no_args(
+          "string_concat", "c:@F@string_concat", sym->type, l, first);
+        first.arguments().push_back(args[0]);
+        first.arguments().push_back(args[1]);
+
+        exprt result = first;
+        for (size_t i = 2; i < nargs; i++)
+        {
+          side_effect_expr_function_callt next;
+          get_library_function_call_no_args(
+            "string_concat", "c:@F@string_concat", sym->type, l, next);
+          next.arguments().push_back(result);
+          next.arguments().push_back(args[i]);
+          result = next;
+        }
+        new_expr = result;
+      }
+      else if (base_name == "bytes")
+      {
+        // bytes.concat: fold into nested binary bytes_dynamic_concat calls
+        exprt pool_member;
+        if (get_dynamic_pool(expr, pool_member))
+          return true;
+
+        const symbolt *sym =
+          context.find_symbol("c:@F@bytes_dynamic_concat");
+        if (!sym)
+          return true;
+
+        side_effect_expr_function_callt first;
+        get_library_function_call_no_args(
+          "bytes_dynamic_concat",
+          "c:@F@bytes_dynamic_concat",
+          sym->type,
+          l,
+          first);
+        first.arguments().push_back(args[0]);
+        first.arguments().push_back(args[1]);
+        first.arguments().push_back(pool_member);
+
+        exprt result = first;
+        for (size_t i = 2; i < nargs; i++)
+        {
+          side_effect_expr_function_callt next;
+          get_library_function_call_no_args(
+            "bytes_dynamic_concat",
+            "c:@F@bytes_dynamic_concat",
+            sym->type,
+            l,
+            next);
+          next.arguments().push_back(result);
+          next.arguments().push_back(args[i]);
+          next.arguments().push_back(pool_member);
+          result = next;
+        }
+        new_expr = result;
+      }
+      else
+        return true;
+
+      new_expr.location() = l;
+      return false;
+    }
     }
     if (expr["expression"].contains("name"))
       bs = expr["expression"]["name"].get<std::string>();
