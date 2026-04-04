@@ -137,7 +137,8 @@ Solidity built-in types, variables, and functions are implemented as C operation
 | File | Content |
 |------|---------|
 | `solidity_types.h` | Type definitions: `int256_t`, `uint256_t`, `address_t` via `_BitInt(256)`, `sol_llc_ret` struct |
-| `solidity_builtins.c` | Global variables (msg/tx/block), modular arithmetic (addmod/mulmod with 512-bit precision), gasleft, selfdestruct |
+| `solidity_blockchain.c` | Block/tx/msg global variables, `blockhash`, `blobhash` (EIP-4844), `gasleft`/`gasConsume` — all nondet (over-approximate) |
+| `solidity_builtins.c` | Integer exponentiation (`sol_pow_uint`), modular arithmetic (`addmod`/`mulmod` with 512-bit precision), `llc_nondet_bytes`, `selfdestruct` |
 | `solidity_crypto.c` | Cryptographic hash functions: keccak256, sha256, ripemd160, ecrecover (deterministic bijective abstraction) |
 | `solidity_abi.c` | ABI encoding/decoding models: `abi_encode`, `abi_encodePacked`, `abi_encodeWithSelector`, `abi_encodeWithSignature`, `abi_encodeCall` (identity), `abi_decode` (nondet) |
 | `solidity_bytes.c` | `BytesStatic`/`BytesDynamic` structs and 60+ byte manipulation functions |
@@ -385,7 +386,7 @@ Hash/crypto functions use **deterministic bijective transformations** (see Secti
 | `keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))` | ↔ `s1 == s2` | ✓ String equality via hash |
 | `assert(keccak256(0) == 0xc5d2...);` | FAILED | Expected — concrete hash not computed |
 
-Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_crypto.c`, modular arithmetic in `solidity_builtins.c`, ABI functions in `solidity_abi.c`.
+Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_crypto.c`, modular arithmetic and `sol_pow_uint` in `solidity_builtins.c`, block/tx/msg context in `solidity_blockchain.c`, ABI functions in `solidity_abi.c`.
 
 #### I. uint256 Modeling Constraints
 
