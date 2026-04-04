@@ -238,18 +238,25 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 
 ### Known Limitations and Deficiencies (detailed audit 2026-04-01)
 
-#### A. Crypto Functions — Identity Abstraction
+#### A. Crypto Functions — Deterministic Bijective Abstraction (2026-04-04)
 
-`keccak256`, `sha256`, `ripemd160`, `ecrecover` are modeled as **deterministic identity functions** (not nondet):
+`keccak256`, `sha256`, `ripemd160`, `ecrecover` are modeled as **deterministic bijective functions** using simple bitvector transformations. Each function uses a distinct transformation to ensure cross-function outputs differ:
 
 | Function | Model (`solidity_builtins.c`) | Properties |
 |----------|------|------------|
-| `keccak256(x)` | `return x;` | Same input → same output ✓; collision-free ✗ |
-| `sha256(x)` | `return x;` | Same input → same output ✓; collision-free ✗ |
-| `ripemd160(x)` | `return (address_t)x;` | 256→160 bit cast, marked "UNSAT abstraction" |
-| `ecrecover(hash,v,r,s)` | `return (address_t)hash;` | Ignores v/r/s entirely — no signature verification |
+| `keccak256(x)` | `return ~x;` | Functional consistency ✓; bijective (zero collisions) ✓ |
+| `sha256(x)` | `return ~(x+1);` | Functional consistency ✓; bijective ✓; differs from keccak256 |
+| `ripemd160(x)` | `return (address_t)(~(x+2));` | 256→160 bit truncation after transform |
+| `ecrecover(hash,v,r,s)` | `return (address_t)(~hash);` | Ignores v/r/s — no signature verification |
 
-**Impact**: Identity abstraction preserves determinism (`keccak256(a) == keccak256(a)` provable) but cannot distinguish different inputs (e.g., `keccak256(1) != keccak256(2)` is not provable). This is unsound for contracts that rely on hash collision resistance or hash-as-randomness. A nondet abstraction with memoization would be more precise but is not implemented.
+`abi.encodePacked` (and other `abi.encode*` functions) are modeled as **identity functions** (`return x;`) so that `keccak256(abi.encodePacked(x))` is deterministic in `x`. Multi-argument `abi.encodePacked(a, b, c)` only captures the first argument; the rest are evaluated but discarded.
+
+**Properties:**
+- **Functional consistency**: `keccak256(x) == keccak256(x)` always holds ✓
+- **Injectivity**: `x != y → keccak256(x) != keccak256(y)` always holds ✓
+- **String equality via hash**: `keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))` ↔ `s1 == s2` ✓
+- **O(1) SMT cost**: single BV NOT operation per hash call
+- **Limitation**: concrete hash values are not computed; `assert(keccak256(0) == 0xc5d2...)` is not provable
 
 #### B. Multi-Dimensional Arrays — Experimental
 
@@ -336,31 +343,27 @@ Basic conversions work:
 - No runtime type checking that an address actually holds the expected contract type
 - Dynamic dispatch through address conversion is limited — `Base(address(derived))` binds to the static Base instance, not the actual derived instance
 
-#### H. Cryptographic Hash Function Abstraction (nondet over-approximation)
+#### H. Cryptographic Hash Function Abstraction — Deterministic Bijective (2026-04-04)
 
-All hash/crypto functions are modeled as **nondeterministic (nondet)** — each call returns an unconstrained symbolic value of the appropriate return type. This is an **over-approximation**: the verifier explores more behaviours than the real program, so it is sound for safety verification.
+Hash/crypto functions use **deterministic bijective transformations** (see Section A for details). `blockhash` and `blobhash` remain **nondet** since they depend on external blockchain state, not on program inputs.
 
-| Function | Signature | Return type | Abstraction |
-|----------|-----------|-------------|-------------|
-| `keccak256` | `keccak256(bytes)` → `bytes32` | `uint256_t` | nondet `uint256_t` |
-| `sha256` | `sha256(bytes)` → `bytes32` | `uint256_t` | nondet `uint256_t` |
-| `ripemd160` | `ripemd160(bytes)` → `bytes20` | `address_t` | nondet `address_t` |
-| `ecrecover` | `ecrecover(bytes32,uint8,bytes32,bytes32)` → `address` | `address_t` | nondet `address_t` |
-| `blockhash` | `blockhash(uint)` → `bytes32` | `uint256_t` | nondet `uint256_t` |
-| `blobhash` | `blobhash(uint)` → `bytes32` | `uint256_t` | nondet `uint256_t` |
-
-**Consequence — possible false positives, no false negatives:**
+| Function | Abstraction | Functional consistency |
+|----------|-------------|----------------------|
+| `keccak256` | `~x` (deterministic) | ✓ same input → same output |
+| `sha256` | `~(x+1)` (deterministic) | ✓ same input → same output |
+| `ripemd160` | `(address_t)(~(x+2))` (deterministic) | ✓ same input → same output |
+| `ecrecover` | `(address_t)(~hash)` (deterministic) | ✓ same hash → same output |
+| `blockhash` | nondet `uint256_t` | ✗ (external state) |
+| `blobhash` | nondet `uint256_t` | ✗ (external state) |
 
 | Scenario | Verifier result | Correct? |
 |----------|----------------|----------|
-| `h = keccak256(x); assert(h % 10 < 10);` | SUCCESSFUL | ✓ Sound — holds for all nondet values |
-| `assert(keccak256(x) == 42);` | FAILED | False positive — nondet ≠ 42 but real hash might |
-| `h1 = keccak256(x); h2 = keccak256(x); assert(h1 == h2);` | FAILED | False positive — no functional consistency |
-| `h = keccak256(x); assert(h != x);` | FAILED | False positive — nondet could equal x |
+| `h1 = keccak256(x); h2 = keccak256(x); assert(h1 == h2);` | SUCCESSFUL | ✓ Functional consistency |
+| `assert(keccak256(1) != keccak256(2));` | SUCCESSFUL | ✓ Injectivity (bijective) |
+| `keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))` | ↔ `s1 == s2` | ✓ String equality via hash |
+| `assert(keccak256(0) == 0xc5d2...);` | FAILED | Expected — concrete hash not computed |
 
-**Key limitation**: no functional consistency — two calls to the same hash function with the same argument return independent nondet values. Properties that depend on "same input → same output" (e.g., commit-reveal patterns, hash-based equality checks) **cannot be verified** and will produce spurious counterexamples.
-
-Implementation: `src/c2goto/library/solidity/solidity_builtins.c` (uninitialized local = nondet in ESBMC).
+Implementation: `src/c2goto/library/solidity/solidity_builtins.c`.
 
 #### I. uint256 Modeling Constraints
 
@@ -406,7 +409,7 @@ These are bugs or unsound abstractions in features we claim to support:
 | # | Task | Effort | Why |
 |---|------|--------|-----|
 | 1 | ~~**Fix mapping key truncation**~~ — XOR-fold 256→64 bit in frontend | ✅ Done | Resolved via `xor_fold_key_to_64bit()` (2026-04-02); 2^-64 collision rate |
-| 2 | ~~**Fix crypto function abstraction**~~ — nondet over-approximation for all hash/crypto functions | ✅ Done | Resolved via nondet locals (2026-04-02); see Section H. No functional consistency (possible false positives) |
+| 2 | ~~**Fix crypto function abstraction**~~ — deterministic bijective hash for all crypto functions | ✅ Done | Resolved via deterministic bijective transforms (2026-04-04); see Section A/H. Functional consistency ✓, injectivity ✓, O(1) SMT cost. `abi.encodePacked` changed from nondet to identity to complete the `keccak256(abi.encodePacked(x))` chain |
 | 3 | ~~**Fix external call tuple returns**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
 | 4 | ~~**Low-level call bytes return**~~ — model as `BytesDynamic` instead of nondet_uint | ✅ Done | Resolved via `get_tuple_assignment` substitution (2026-04-02); `bytes memory data` is now a nondet `BytesDynamic`. `data.length` comparisons work correctly (fixed 2026-04-02: `solidity_convert_ref.cpp` used `uint_type()` instead of `size_type()` for `.length` member type). `abi.decode()` still unsupported (Tier 2 #7) |
 
@@ -563,9 +566,9 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 **Note:** Both `ENABLE_SOLIDITY_FRONTEND` and `ENABLE_REGRESSION` must be ON. The default build (`./scripts/build.sh`) sets `ENABLE_REGRESSION=OFF`, so regression tests won't appear in `ctest -N` unless explicitly enabled.
 
-### Test Baseline (2026-04-01)
+### Test Baseline (2026-04-04)
 
-**374 total tests**: 372 pass, 1 THOROUGH fail (mapping_13), 1 KNOWNBUG (transfer_send_2 timeout). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**394 total tests**: 392 pass, 2 timeout (bytes_17, import_15). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
