@@ -137,7 +137,8 @@ Solidity built-in types, variables, and functions are implemented as C operation
 | File | Content |
 |------|---------|
 | `solidity_types.h` | Type definitions: `int256_t`, `uint256_t`, `address_t` via `_BitInt(256)`, `sol_llc_ret` struct |
-| `solidity_builtins.c` | Global variables (msg/tx/block), crypto hash functions (keccak256, sha256, etc.), gasleft, selfdestruct |
+| `solidity_builtins.c` | Global variables (msg/tx/block), modular arithmetic (addmod/mulmod with 512-bit precision), gasleft, selfdestruct |
+| `solidity_crypto.c` | Cryptographic hash functions: keccak256, sha256, ripemd160, ecrecover (deterministic bijective abstraction) |
 | `solidity_abi.c` | ABI encoding/decoding models: `abi_encode`, `abi_encodePacked`, `abi_encodeWithSelector`, `abi_encodeWithSignature`, `abi_encodeCall` (identity), `abi_decode` (nondet) |
 | `solidity_bytes.c` | `BytesStatic`/`BytesDynamic` structs and 60+ byte manipulation functions |
 | `solidity_mapping.c` | Mapping data structures (`_ESBMC_Mapping`, `mapping_t`, and `_fast` variants) |
@@ -244,12 +245,21 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 
 `keccak256`, `sha256`, `ripemd160`, `ecrecover` are modeled as **deterministic bijective functions** using simple bitvector transformations. Each function uses a distinct transformation to ensure cross-function outputs differ:
 
-| Function | Model (`solidity_builtins.c`) | Properties |
+| Function | Model (`solidity_crypto.c`) | Properties |
 |----------|------|------------|
 | `keccak256(x)` | `return ~x;` | Functional consistency ✓; bijective (zero collisions) ✓ |
 | `sha256(x)` | `return ~(x+1);` | Functional consistency ✓; bijective ✓; differs from keccak256 |
 | `ripemd160(x)` | `return (address_t)(~(x+2));` | 256→160 bit truncation after transform |
 | `ecrecover(hash,v,r,s)` | `return (address_t)(~hash);` | Ignores v/r/s — no signature verification |
+
+#### A2. Modular Arithmetic — 512-bit Arbitrary Precision (2026-04-04)
+
+`addmod` and `mulmod` use a 512-bit intermediate type (`_BitInt(512)`) to implement arbitrary-precision arithmetic per the Solidity spec (no wrap at 2^256):
+
+| Function | Model (`solidity_builtins.c`) | Properties |
+|----------|------|------------|
+| `addmod(x,y,k)` | `(uint512_t)x + (uint512_t)y) % (uint512_t)k` | Correct for all inputs ✓ |
+| `mulmod(x,y,k)` | `(uint512_t)x * (uint512_t)y) % (uint512_t)k` | Correct ✓; KNOWNBUG: MAX\*MAX crashes ESBMC constant evaluator (SIGFPE) |
 
 `abi.encode*` functions are modeled as **identity functions** (`return x;`) in `solidity_abi.c` so that `keccak256(abi.encodePacked(x))` is deterministic in `x`. Multi-argument `abi.encodePacked(a, b, c)` only captures the first argument; the rest are evaluated but discarded. `abi.decode` is modeled as **nondet** (over-approximation).
 
@@ -375,7 +385,7 @@ Hash/crypto functions use **deterministic bijective transformations** (see Secti
 | `keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))` | ↔ `s1 == s2` | ✓ String equality via hash |
 | `assert(keccak256(0) == 0xc5d2...);` | FAILED | Expected — concrete hash not computed |
 
-Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_builtins.c`, ABI functions in `src/c2goto/library/solidity/solidity_abi.c`.
+Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_crypto.c`, modular arithmetic in `solidity_builtins.c`, ABI functions in `solidity_abi.c`.
 
 #### I. uint256 Modeling Constraints
 
@@ -407,6 +417,7 @@ No handling exists for `super.funcName()`. The inheritance infrastructure has C3
 | **Array slices** | Not supported | `x[start:end]` on calldata arrays not handled |
 | **`abi.decode()`** | KNOWNBUG | Nondet model exists in `solidity_abi.c` but converter cannot parse `(uint256)` type tuple argument (`ElementaryTypeNameExpression` unsupported) |
 | **`abi.encodeCall()`** | KNOWNBUG | Identity model exists in `solidity_abi.c` but converter crashes on interface/function pointer syntax in AST |
+| **`mulmod(MAX,MAX,k)`** | KNOWNBUG | 512-bit model is correct but ESBMC constant evaluator crashes (SIGFPE) when both operands are near `type(uint256).max` |
 | **Inline assembly / Yul** | Not supported | Entire sub-language missing — blocks most production contracts |
 | **Function types** | Not supported | `function(uint) returns (bool)` as first-class values |
 | **`using for` + custom operators** | Not supported | Operator dispatch table per type |
@@ -581,7 +592,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-04-04)
 
-**412 total tests** (2026-04-04): 410 pass, 2 timeout (bytes_17, import_15). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**417 total tests** (2026-04-04): 414 pass, 2 timeout (bytes_17, import_15), 1 KNOWNBUG crash (mulmod_overflow_3). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 

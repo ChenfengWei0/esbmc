@@ -259,7 +259,10 @@ const static std::vector<std::string> solidity_c_models = {
   // abi (solidity_abi.c)
   "abi_encode", "abi_encodePacked", "abi_encodeWithSelector",
   "abi_encodeWithSignature", "abi_encodeCall", "abi_decode",
-  "addmod", "mulmod", "keccak256", "sha256", "ripemd160", "ecrecover",
+  // math (solidity_builtins.c)
+  "addmod", "mulmod",
+  // crypto (solidity_crypto.c)
+  "keccak256", "sha256", "ripemd160", "ecrecover",
   "selfdestruct", "string_concat",
   // bytes (solidity_bytes.c)
   "bytes_dynamic_init_check", "bytes_dynamic_bounds_check",
