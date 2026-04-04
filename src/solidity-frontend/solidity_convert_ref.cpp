@@ -424,6 +424,18 @@ bool solidity_convertert::get_sol_builtin_ref(
         new_expr.location() = l;
         return false;
       }
+      else if (name == "interfaceId")
+      {
+        // type(I).interfaceId — nondet bytes4 (over-approximate)
+        get_library_function_call_no_args(
+          "_interfaceId",
+          "c:@F@_interfaceId",
+          unsignedbv_typet(32),
+          l,
+          new_expr);
+        new_expr.location() = l;
+        return false;
+      }
       else if (name == "name")
       {
         // type(C).name returns the contract name as a string literal

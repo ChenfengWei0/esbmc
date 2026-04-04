@@ -147,7 +147,7 @@ Solidity built-in types, variables, and functions are implemented as C operation
 | `solidity_units.c` | Ether/time unit conversions (wei, gwei, ether, seconds, days, etc.) |
 | `solidity_string.c` | String operations, integer-to-string, hex conversion |
 | `solidity_address.c` | Address management, contract object tracking |
-| `solidity_misc.c` | Min/max, reentrancy check, state initialization |
+| `solidity_misc.c` | Min/max (`_min`/`_max`), `_creationCode`/`_runtimeCode`/`_interfaceId` (nondet), reentrancy check, state initialization |
 
 ### c2goto Architecture
 
@@ -235,7 +235,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | **Built-ins** | `require()`, `assert()`, `revert()`, `keccak256()`, `sha256()`, `ripemd160()`, `ecrecover()`, `addmod()`, `mulmod()`, `gasleft()`, `selfdestruct()`, `blobhash()` |
 | **ABI encoding** | `abi.encode()`, `abi.encodePacked()`, `abi.encodeWithSelector()`, `abi.encodeWithSignature()`, `abi.encodeCall()` |
 | **Address members** | `.balance`, `.code`, `.codehash`, `.transfer()`, `.send()`, `.call()`, `.delegatecall()`, `.staticcall()` |
-| **Type info** | `type(T).min`, `type(T).max`, `type(C).name`, `type(C).creationCode` |
+| **Type info** | `type(T).min`, `type(T).max`, `type(C).name`, `type(C).creationCode`, `type(C).runtimeCode`, `type(I).interfaceId` (nondet bytes4) |
 | **Units** | Ether (`wei`/`gwei`/`ether`), time (`seconds`/`minutes`/`hours`/`days`/`weeks`) |
 | **Unchecked** | `unchecked { ... }` blocks suppress overflow/underflow checks (Solidity 0.8+ semantics) |
 | **Verification** | Overflow/underflow (all integer widths including sub-256-bit), division-by-zero, reentrancy detection (mutex-based), bound/unbound address modes, whole-contract verification |

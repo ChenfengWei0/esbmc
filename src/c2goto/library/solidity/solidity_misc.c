@@ -62,6 +62,13 @@ __ESBMC_HIDE:;
   return nondet_uint();
 }
 
+/* type(I).interfaceId — nondet over-approximation (bytes4) */
+__uint32_t _interfaceId()
+{
+__ESBMC_HIDE:;
+  return (__uint32_t)nondet_uint();
+}
+
 void _ESBMC_check_reentrancy(const bool _ESBMC_mutex)
 {
 __ESBMC_HIDE:;

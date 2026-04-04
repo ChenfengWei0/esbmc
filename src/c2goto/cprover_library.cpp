@@ -316,7 +316,7 @@ const static std::vector<std::string> solidity_c_models = {
   "_ESBMC_get_obj", "update_addr_obj",
   "_ESBMC_get_unique_address", "_ESBMC_get_nondet_cont_name",
   // misc (solidity_misc.c)
-  "_max", "_min", "_creationCode", "_runtimeCode",
+  "_max", "_min", "_creationCode", "_runtimeCode", "_interfaceId",
   "_ESBMC_check_reentrancy", "initialize"};
 } // namespace
 
