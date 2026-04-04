@@ -137,7 +137,8 @@ Solidity built-in types, variables, and functions are implemented as C operation
 | File | Content |
 |------|---------|
 | `solidity_types.h` | Type definitions: `int256_t`, `uint256_t`, `address_t` via `_BitInt(256)`, `sol_llc_ret` struct |
-| `solidity_builtins.c` | Global variables (msg/tx/block) and built-in functions (keccak256, gasleft, etc.) |
+| `solidity_builtins.c` | Global variables (msg/tx/block), crypto hash functions (keccak256, sha256, etc.), gasleft, selfdestruct |
+| `solidity_abi.c` | ABI encoding/decoding models: `abi_encode`, `abi_encodePacked`, `abi_encodeWithSelector`, `abi_encodeWithSignature`, `abi_encodeCall` (identity), `abi_decode` (nondet) |
 | `solidity_bytes.c` | `BytesStatic`/`BytesDynamic` structs and 60+ byte manipulation functions |
 | `solidity_mapping.c` | Mapping data structures (`_ESBMC_Mapping`, `mapping_t`, and `_fast` variants) |
 | `solidity_array.c` | Dynamic array tracking: push, pop, length, arrcpy |
@@ -149,9 +150,10 @@ Solidity built-in types, variables, and functions are implemented as C operation
 ### c2goto Architecture
 
 - **Build pipeline**: Solidity `.c` files → `c2goto --64 --fixedbv` → `sol64.goto` (524KB) → `flail.py` → `sol64.c` (byte array) → linked into esbmc binary
+- **CMake auto-glob**: `file(GLOB_RECURSE c2goto_solidity_files ... "library/solidity/*.c")` in `src/c2goto/CMakeLists.txt:146-148` — any new `.c` file in the `library/solidity/` directory is automatically compiled into `sol64.goto`. No CMakeLists.txt changes needed when adding new model files. However, function names must be registered in `solidity_c_models` in `cprover_library.cpp`.
 - **Separate from clib64**: Solidity models are NOT compiled into `clib64.goto`. This avoids reading the full 1.9MB clib when only Solidity symbols are needed.
 - **Loading path**: `add_cprover_library()` in `cprover_library.cpp` detects `language->id() == "solidity_ast"` and reads from `sol64_buf` instead of `clib64_buf`. No whitelist filtering needed since sol64 contains only Solidity symbols.
-- **Whitelist**: The `solidity_c_models` vector in `cprover_library.cpp` is retained for reference but not used for filtering (all sol64 symbols are loaded directly).
+- **Whitelist**: The `solidity_c_models` vector in `cprover_library.cpp` lists all function names that should be extracted from sol64. New functions must be added here.
 - **Build flag**: `ENABLE_SOLIDITY_FRONTEND=ON` required for CMake to compile Solidity models and generate sol64.
 
 ### Symbol Naming (C vs C++ frontend)
@@ -249,7 +251,16 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | `ripemd160(x)` | `return (address_t)(~(x+2));` | 256→160 bit truncation after transform |
 | `ecrecover(hash,v,r,s)` | `return (address_t)(~hash);` | Ignores v/r/s — no signature verification |
 
-`abi.encodePacked` (and other `abi.encode*` functions) are modeled as **identity functions** (`return x;`) so that `keccak256(abi.encodePacked(x))` is deterministic in `x`. Multi-argument `abi.encodePacked(a, b, c)` only captures the first argument; the rest are evaluated but discarded.
+`abi.encode*` functions are modeled as **identity functions** (`return x;`) in `solidity_abi.c` so that `keccak256(abi.encodePacked(x))` is deterministic in `x`. Multi-argument `abi.encodePacked(a, b, c)` only captures the first argument; the rest are evaluated but discarded. `abi.decode` is modeled as **nondet** (over-approximation).
+
+| Function | Model (`solidity_abi.c`) | Status |
+|----------|------|--------|
+| `abi.encode(x)` | `return x;` (identity) | ✓ Working — 3 regression tests |
+| `abi.encodePacked(x)` | `return x;` (identity) | ✓ Working — 3 regression tests |
+| `abi.encodeWithSelector(sel, x)` | `return sel;` (identity, captures 1st arg = selector) | ✓ Working — 3 tests (2 CORE + 1 KNOWNBUG: `bytes4` struct type mismatch) |
+| `abi.encodeWithSignature(sig, x)` | `return sig;` (identity, captures 1st arg = signature) | ✓ Working — 3 regression tests |
+| `abi.encodeCall(fn, (x))` | `return fn;` (identity) | KNOWNBUG — interface/function pointer syntax crashes converter |
+| `abi.decode(data, (T))` | `uint256_t result;` (nondet) | KNOWNBUG — `ElementaryTypeNameExpression` type tuple not supported by converter |
 
 **Properties:**
 - **Functional consistency**: `keccak256(x) == keccak256(x)` always holds ✓
@@ -257,6 +268,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 - **String equality via hash**: `keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))` ↔ `s1 == s2` ✓
 - **O(1) SMT cost**: single BV NOT operation per hash call
 - **Limitation**: concrete hash values are not computed; `assert(keccak256(0) == 0xc5d2...)` is not provable
+- **Limitation**: `abi.decode` is nondet — decoded values are unconstrained; `encode(x) → decode → y` does not guarantee `y == x`
 
 #### B. Multi-Dimensional Arrays — Experimental
 
@@ -363,7 +375,7 @@ Hash/crypto functions use **deterministic bijective transformations** (see Secti
 | `keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))` | ↔ `s1 == s2` | ✓ String equality via hash |
 | `assert(keccak256(0) == 0xc5d2...);` | FAILED | Expected — concrete hash not computed |
 
-Implementation: `src/c2goto/library/solidity/solidity_builtins.c`.
+Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_builtins.c`, ABI functions in `src/c2goto/library/solidity/solidity_abi.c`.
 
 #### I. uint256 Modeling Constraints
 
@@ -393,7 +405,8 @@ No handling exists for `super.funcName()`. The inheritance infrastructure has C3
 | **Function overloading** | Partial | Same-name different-param functions may misresolve in `find_decl_ref` |
 | **Fallback with params** | Partial | Basic fallback exists; `fallback(bytes calldata) returns (bytes memory)` params ignored |
 | **Array slices** | Not supported | `x[start:end]` on calldata arrays not handled |
-| **`abi.decode()`** | Not supported | No decoding mechanism; blocks low-level call data inspection |
+| **`abi.decode()`** | KNOWNBUG | Nondet model exists in `solidity_abi.c` but converter cannot parse `(uint256)` type tuple argument (`ElementaryTypeNameExpression` unsupported) |
+| **`abi.encodeCall()`** | KNOWNBUG | Identity model exists in `solidity_abi.c` but converter crashes on interface/function pointer syntax in AST |
 | **Inline assembly / Yul** | Not supported | Entire sub-language missing — blocks most production contracts |
 | **Function types** | Not supported | `function(uint) returns (bool)` as first-class values |
 | **`using for` + custom operators** | Not supported | Operator dispatch table per type |
@@ -568,7 +581,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-04-04)
 
-**394 total tests**: 392 pass, 2 timeout (bytes_17, import_15). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**412 total tests** (2026-04-04): 410 pass, 2 timeout (bytes_17, import_15). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 

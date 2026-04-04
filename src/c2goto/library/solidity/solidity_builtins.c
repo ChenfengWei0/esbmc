@@ -60,40 +60,6 @@ __ESBMC_HIDE:;
   return (uint256_t)_gaslimit;
 }
 
-/* abi encoding functions — identity abstraction.
- *
- * In real Solidity, abi.encodePacked serializes arguments into raw bytes.
- * We model these as identity functions (return first argument unchanged)
- * so that keccak256(abi.encodePacked(x)) is deterministic in x.
- * Multi-argument calls: only the first argument is captured; the rest
- * are evaluated (for side effects) but not included in the return value.
- */
-uint256_t abi_encode(uint256_t x)
-{
-__ESBMC_HIDE:;
-  return x;
-}
-uint256_t abi_encodePacked(uint256_t x)
-{
-__ESBMC_HIDE:;
-  return x;
-}
-uint256_t abi_encodeWithSelector(uint256_t x)
-{
-__ESBMC_HIDE:;
-  return x;
-}
-uint256_t abi_encodeWithSignature(uint256_t x)
-{
-__ESBMC_HIDE:;
-  return x;
-}
-uint256_t abi_encodeCall(uint256_t x)
-{
-__ESBMC_HIDE:;
-  return x;
-}
-
 /* integer power: base**exp using binary exponentiation */
 uint256_t sol_pow_uint(uint256_t base, uint256_t exp)
 {

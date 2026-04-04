@@ -256,8 +256,9 @@ const static std::vector<std::string> python_c_models = {
 const static std::vector<std::string> solidity_c_models = {
   // builtins (solidity_builtins.c)
   "blockhash", "gasConsume", "gasleft",
+  // abi (solidity_abi.c)
   "abi_encode", "abi_encodePacked", "abi_encodeWithSelector",
-  "abi_encodeWithSignature", "abi_encodeCall",
+  "abi_encodeWithSignature", "abi_encodeCall", "abi_decode",
   "addmod", "mulmod", "keccak256", "sha256", "ripemd160", "ecrecover",
   "selfdestruct", "string_concat",
   // bytes (solidity_bytes.c)
