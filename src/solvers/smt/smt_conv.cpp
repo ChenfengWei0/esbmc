@@ -3010,7 +3010,7 @@ type2tc make_array_domain_type(const array_type2t &arr)
   // flattened — each level uses its own domain.  flatten_array_type()
   // already skips infinite arrays, so the domain must stay single-level.
   if (arr.size_is_infinite)
-    return get_uint_type(calculate_array_domain_width(arr));
+    return get_uint_type(array_domain_width_or_word_size(arr));
 
   // This is a finite array of arrays -- we're going to convert this into a
   // single array that has an extended domain. Work out that width.
@@ -4021,7 +4021,7 @@ smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
   {
     // Convert the inner array_of initializer directly (recursive)
     smt_astt inner = convert_ast(arrof.initializer);
-    array_size = calculate_array_domain_width(arrtype);
+    array_size = array_domain_width_or_word_size(arrtype);
     return array_api->convert_array_of(inner, array_size);
   }
 

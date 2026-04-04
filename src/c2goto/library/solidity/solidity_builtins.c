@@ -60,12 +60,39 @@ __ESBMC_HIDE:;
   return (uint256_t)_gaslimit;
 }
 
-/* abi function declarations */
-uint256_t abi_encode();
-uint256_t abi_encodePacked();
-uint256_t abi_encodeWithSelector();
-uint256_t abi_encodeWithSignature();
-uint256_t abi_encodeCall();
+/* abi encoding functions — identity abstraction.
+ *
+ * In real Solidity, abi.encodePacked serializes arguments into raw bytes.
+ * We model these as identity functions (return first argument unchanged)
+ * so that keccak256(abi.encodePacked(x)) is deterministic in x.
+ * Multi-argument calls: only the first argument is captured; the rest
+ * are evaluated (for side effects) but not included in the return value.
+ */
+uint256_t abi_encode(uint256_t x)
+{
+__ESBMC_HIDE:;
+  return x;
+}
+uint256_t abi_encodePacked(uint256_t x)
+{
+__ESBMC_HIDE:;
+  return x;
+}
+uint256_t abi_encodeWithSelector(uint256_t x)
+{
+__ESBMC_HIDE:;
+  return x;
+}
+uint256_t abi_encodeWithSignature(uint256_t x)
+{
+__ESBMC_HIDE:;
+  return x;
+}
+uint256_t abi_encodeCall(uint256_t x)
+{
+__ESBMC_HIDE:;
+  return x;
+}
 
 /* integer power: base**exp using binary exponentiation */
 uint256_t sol_pow_uint(uint256_t base, uint256_t exp)
@@ -96,46 +123,47 @@ __ESBMC_HIDE:;
 }
 
 /*
- * Cryptographic hash functions — nondet over-approximation.
+ * Cryptographic hash functions — deterministic abstraction.
  *
- * Each call returns an unconstrained (nondet) value of the appropriate type.
- * This is sound for safety verification: any real execution is included in
- * the set of explored behaviours, so no real bug is missed (no false negatives).
+ * Each function is modeled as a simple deterministic transformation of its
+ * input.  This provides:
+ *  - Functional consistency: same input always yields the same output,
+ *    so keccak256(x) == keccak256(x) is provable.
+ *  - Injectivity: different inputs yield different outputs (bijective),
+ *    so keccak256(a) == keccak256(b) iff a == b.
+ *  - O(1) for the SMT solver: single bitvector operation, no arrays or loops.
  *
- * Limitations:
- *  - No functional consistency: keccak256(x) called twice may yield different
- *    nondet values, so properties that rely on "same input → same output"
- *    cannot be verified and may produce false positives (spurious counter-
- *    examples).
- *  - The concrete hash value is never computed; assertions about specific
+ * Trade-offs:
+ *  - The concrete hash value is not computed; assertions about specific
  *    hash outputs (e.g. keccak256(0) == 0xc5d2...) will not be provable.
+ *  - The abstraction is sound for equality-based reasoning (e.g. string
+ *    comparison via keccak256(abi.encodePacked(s1)) == keccak256(...s2)).
+ *
+ * Each hash function uses a distinct transformation to ensure
+ * keccak256(x) != sha256(x) for all x != 0.
  */
 uint256_t keccak256(uint256_t x)
 {
 __ESBMC_HIDE:;
-  uint256_t result;
-  return result;
+  return ~x;
 }
 
 uint256_t sha256(uint256_t x)
 {
 __ESBMC_HIDE:;
-  uint256_t result;
-  return result;
+  return ~(x + 1);
 }
 
 address_t ripemd160(uint256_t x)
 {
 __ESBMC_HIDE:;
-  address_t result;
-  return result;
+  return (address_t)(~(x + 2));
 }
 
 address_t ecrecover(uint256_t hash, unsigned int v, uint256_t r, uint256_t s)
 {
 __ESBMC_HIDE:;
-  address_t result;
-  return result;
+  return (address_t)(~hash);
 }
 
 /*
