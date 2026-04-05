@@ -405,7 +405,22 @@ Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_crypto.c`
 1. For non-overriding case (base function merged into derived contract): use the merged copy directly — `this` type matches, no cast needed.
 2. For overriding case (derived contract overrides the same name): detect via ID mismatch after `find_decl_ref`, fall back to original in base contract via `find_contract_name_for_id()`, insert a `this` typecast.
 
-**Limitation**: Only single-level `super` is resolved. Multi-level diamond inheritance with multiple `super` chains across Parent1/Parent2 is not tested beyond basic verification.
+**Supported patterns**:
+- `super.method()` with no arguments, with arguments, with return values ✅
+- Non-overriding case: base function merged into derived contract, no cast needed ✅
+- Overriding case: derived overrides the same name, calls original base with `this` typecast ✅
+- Multi-level dispatch (e.g. `Child.abc() → p1() → super.myFunc()`) ✅
+
+**Known limitation — Cooperative super chain**: The pattern where each inheritance level calls `super` to accumulate state changes does **not** work:
+
+```solidity
+contract A { function inc() virtual { counter += 1; } }
+contract B is A { function inc() override { super.inc(); counter += 10; } }
+contract C is B { function test() { super.inc(); assert(counter == 11); } }
+// VERIFICATION FAILED — should be SUCCESSFUL
+```
+
+Root cause: ESBMC encodes struct field access by pointer type. `(A*)ptr->counter` and `(C*)ptr->counter` become different SMT variables even when pointing to the same address. The assignment in `A.inc` modifies the `A`-typed field, invisible to the `C`-typed assertion. This requires a change to ESBMC's core memory model — **not fixable at the frontend level**. In practice, this pattern is rare in DeFi verification scenarios.
 
 #### K. Other Gaps
 

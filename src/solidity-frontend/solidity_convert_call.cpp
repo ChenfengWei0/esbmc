@@ -2216,7 +2216,8 @@ bool solidity_convertert::get_super_function_call(
       return true;
 
     // The base function's formal 'this' expects base_cname* but the current
-    // function's this is Derived*.  Insert a typecast so the types match.
+    // function's this is Derived*.  Insert an explicit typecast so the
+    // intent is clear (ESBMC would insert an implicit one regardless).
     if (!call.arguments().empty())
     {
       typet base_ptr_t = gen_pointer_type(symbol_typet(prefix + base_cname));
