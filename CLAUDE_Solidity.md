@@ -437,13 +437,14 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | **`using A for B`** | Parsed, skipped | Does not alter operator dispatch (`solidity_convert_decl.cpp:53`) |
 | **Bitwise on dynamic bytes** | Static only | Ops limited to `bytesN`, not dynamic `bytes` (`solidity_convert_expr.cpp:2155`) |
 | **`constant`/`immutable`** | Partial | `constant` works; `immutable` may not enforce set-once |
+| **Named return parameters** | ✅ Fixed (2026-04-05) | Single named return: DECL + zero-init + implicit return. Tuple named returns still use existing tuple machinery. |
 | **Function overloading** | Partial | Same-name different-param functions may misresolve in `find_decl_ref` |
 | **Fallback with params** | Partial | Basic fallback exists; `fallback(bytes calldata) returns (bytes memory)` params ignored |
 | **Array slices** | Not supported | `x[start:end]` on calldata arrays not handled |
 | **`abi.decode()`** | KNOWNBUG | Nondet model exists in `solidity_abi.c` but converter cannot parse `(uint256)` type tuple argument (`ElementaryTypeNameExpression` unsupported) |
 | **`abi.encodeCall()`** | KNOWNBUG | Identity model exists in `solidity_abi.c` but converter crashes on interface/function pointer syntax in AST |
 | **`mulmod(MAX,MAX,k)`** | KNOWNBUG | 512-bit model is correct but ESBMC constant evaluator crashes (SIGFPE) when both operands are near `type(uint256).max` |
-| **Inline assembly / Yul** | Not supported | Entire sub-language missing — blocks most production contracts |
+| **Inline assembly / Yul** | ✅ Havoc (2026-04-05) | Over-approximated: all externally referenced variables are havoc'd to nondet. Does not model Yul semantics. |
 | **Function types** | Not supported | `function(uint) returns (bool)` as first-class values |
 | **`using for` + custom operators** | Not supported | Operator dispatch table per type |
 | **Transient storage (EIP-1153)** | Not supported | New data location model |
@@ -487,7 +488,7 @@ These are bugs or unsound abstractions in features we claim to support:
 
 | # | Task | Effort | Why |
 |---|------|--------|-----|
-| 16 | **Inline assembly / Yul** | Very hard (>2000 lines) | Blocks most production contracts; needs sub-language parser |
+| 16 | **Inline assembly / Yul** | ✅ Havoc (2026-04-05) | Over-approximated via nondet havoc; unblocks contracts with assembly |
 | 17 | **Mapping library optimization** — migrate unbound mode to SMT arrays | Hard | Eliminates linked-list loop unrolling overhead |
 | 18 | ~~**Tuple return refactoring**~~ — position-based matching + nested + external | ✅ Done | Completed including LLC bytes return (2026-04-02) |
 | 19 | **Function types** | Very hard | First-class function values |
