@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.solast
 --sol contract.sol --k-induction --contract NestedMapPass --unbound
 ^VERIFICATION SUCCESSFUL$

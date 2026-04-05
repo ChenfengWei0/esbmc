@@ -1752,7 +1752,9 @@ bool solidity_convertert::get_index_access_expr(
         {
           assert(array.type().is_array());
           xor_fold_key_to_64bit(pos);
-          new_expr = index_exprt(array, pos, t);
+          // Use the array's declared subtype rather than `t` from
+          // get_type_description, which may lack subtypes for nested mappings.
+          new_expr = index_exprt(array, pos, array.type().subtype());
         }
         else
         {
