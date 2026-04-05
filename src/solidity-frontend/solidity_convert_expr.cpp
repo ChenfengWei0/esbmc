@@ -1268,6 +1268,15 @@ bool solidity_convertert::get_call_expr(
       callee_expr_json.contains("nodeType") &&
       callee_expr_json["nodeType"] == "MemberAccess")
     {
+      // super.method() — bypass override map and call the base function directly
+      if (
+        callee_expr_json.contains("expression") &&
+        callee_expr_json["expression"].contains("name") &&
+        callee_expr_json["expression"]["name"] == "super")
+      {
+        return get_super_function_call(callee_expr_json, expr, new_expr);
+      }
+
       if (get_expr(callee_expr_json, literal_type, new_expr))
         return true;
       return false;

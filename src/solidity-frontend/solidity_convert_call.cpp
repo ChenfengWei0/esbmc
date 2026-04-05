@@ -2115,3 +2115,117 @@ bool solidity_convertert::get_send_definition(
 
   return false;
 }
+
+// Find the name of the contract that originally defines the function with
+// the given AST node id, by searching for the first non-inherited occurrence.
+std::string solidity_convertert::find_contract_name_for_id(int func_id)
+{
+  if (!src_ast_json.contains("nodes"))
+    return "";
+  for (const auto &node : src_ast_json["nodes"])
+  {
+    if (!node.is_object())
+      continue;
+    if (!node.contains("nodeType") || node["nodeType"] != "ContractDefinition")
+      continue;
+    if (!node.contains("nodes") || !node.contains("name"))
+      continue;
+    for (const auto &sub : node["nodes"])
+    {
+      if (!sub.is_object() || !sub.contains("id"))
+        continue;
+      // Nodes added by merge_inheritance_ast are tagged is_inherited:true.
+      // Skip those; we want only the original definition.
+      if (sub.contains("is_inherited") && sub["is_inherited"].get<bool>())
+        continue;
+      if (sub["id"].get<int>() == func_id)
+        return node["name"].get<std::string>();
+    }
+  }
+  return "";
+}
+
+// Handle a super.method() call.
+// The Solidity compiler has already resolved which base function to call via
+// C3 linearization; member_access["referencedDeclaration"] is that function's id.
+// We bypass the override map and call the base function directly on 'this'.
+bool solidity_convertert::get_super_function_call(
+  const nlohmann::json &member_access,
+  const nlohmann::json &call_expr,
+  exprt &new_expr)
+{
+  assert(member_access.contains("referencedDeclaration"));
+  int func_id = member_access["referencedDeclaration"].get<int>();
+
+  log_debug(
+    "solidity", "\t@@@ super call: resolving func_id={}", func_id);
+
+  // Strategy: prefer the merged copy of the base function that was folded into
+  // the derived contract (it carries the correct Derived* this type), unless
+  // the override map redirected the lookup to a different function (meaning the
+  // derived contract overrides this function).  In the override case we fall
+  // back to the original definition in the base contract and insert a typecast.
+
+  side_effect_expr_function_callt call;
+
+  // 1. Direct lookup in the current (derived) contract scope.
+  const nlohmann::json &direct = find_decl_ref(func_id);
+  if (
+    !direct.empty() && direct.contains("id") &&
+    direct["id"].get<int>() == func_id)
+  {
+    // Found the exact node (merged copy inside the derived contract).
+    // Its 'this' parameter already matches the derived contract type — no cast.
+    if (get_non_library_function_call(direct, call_expr, call))
+      return true;
+  }
+  else
+  {
+    // Either not found or override map redirected to a different function.
+    // Locate the original definition in the base contract and call it with a
+    // typecast on the 'this' argument.
+    std::string base_cname = find_contract_name_for_id(func_id);
+    if (base_cname.empty())
+    {
+      log_error(
+        "super call: cannot find original contract for function id {}",
+        func_id);
+      return true;
+    }
+    log_debug(
+      "solidity",
+      "\t@@@ super call: override case, func_id={} in contract {}",
+      func_id,
+      base_cname);
+
+    const nlohmann::json *decl_ptr;
+    {
+      ScopeGuard<std::string> guard(current_baseContractName, base_cname);
+      decl_ptr = &find_decl_ref(func_id);
+    }
+    if (decl_ptr->empty())
+    {
+      log_error(
+        "super call: cannot find function decl for id {} in contract {}",
+        func_id,
+        base_cname);
+      return true;
+    }
+
+    if (get_non_library_function_call(*decl_ptr, call_expr, call))
+      return true;
+
+    // The base function's formal 'this' expects base_cname* but the current
+    // function's this is Derived*.  Insert a typecast so the types match.
+    if (!call.arguments().empty())
+    {
+      typet base_ptr_t = gen_pointer_type(symbol_typet(prefix + base_cname));
+      exprt &this_arg = call.arguments().at(0);
+      if (this_arg.type() != base_ptr_t)
+        this_arg = typecast_exprt(this_arg, base_ptr_t);
+    }
+  }
+
+  new_expr = call;
+  return false;
+}

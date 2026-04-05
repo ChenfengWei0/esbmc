@@ -232,7 +232,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | **Libraries** | Library contracts, library function calls |
 | **Import** | Multi-file with topological sort (17 tests) |
 | **Globals** | `msg.sender`/`.value`/`.sig`/`.data`, `block.number`/`.timestamp`/`.coinbase`/`.difficulty`/`.gaslimit`/`.chainid`/`.basefee`/`.prevrandao`/`.blobbasefee`, `tx.origin`/`.gasprice` |
-| **Built-ins** | `require()`, `assert()`, `revert()`, `keccak256()`, `sha256()`, `ripemd160()`, `ecrecover()`, `addmod()`, `mulmod()`, `gasleft()`, `selfdestruct()`, `blobhash()`, `string.concat()` (variadic), `bytes.concat()` (variadic) |
+| **Built-ins** | `require()`, `assert()`, `revert()`, `keccak256()`, `sha256()`, `ripemd160()`, `ecrecover()`, `addmod()`, `mulmod()`, `gasleft()`, `selfdestruct()`, `blobhash()`, `string.concat()` (variadic), `bytes.concat()` (variadic), `super.method()` |
 | **ABI encoding** | `abi.encode()`, `abi.encodePacked()`, `abi.encodeWithSelector()`, `abi.encodeWithSignature()`, `abi.encodeCall()` |
 | **Address members** | `.balance`, `.code`, `.codehash`, `.transfer()`, `.send()`, `.call()`, `.delegatecall()`, `.staticcall()` |
 | **Type info** | `type(T).min`, `type(T).max`, `type(C).name`, `type(C).creationCode`, `type(C).runtimeCode`, `type(I).interfaceId` (nondet bytes4) |
@@ -398,12 +398,14 @@ Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_crypto.c`
 | **SMT solver performance** | 256-bit bitvector operations significantly slower than smaller widths; OOM possible for complex arithmetic | `README.md:123` |
 | **`--16` workaround** | Reducing to 16-bit improves speed but introduces precision loss | — |
 
-#### J. `super` Keyword — Not Implemented
+#### J. `super` Keyword — Implemented (2026-04-05)
 
-No handling exists for `super.funcName()`. The inheritance infrastructure has C3-linearized base lists (`linearizedBaseList` in `solidity_convert_inheritance.cpp`) and override tracking (`overrideMap`), but there is no code path to:
-1. Detect `super.func()` as distinct from `this.func()`
-2. Resolve the next function in the C3 chain
-3. Route the call to the correct base contract
+`super.funcName()` calls are now supported. Detection is in `get_call_expr()` (`solidity_convert_expr.cpp`) which checks for `MemberAccess` where `expression.name == "super"`. The dispatch logic is in `get_super_function_call()` (`solidity_convert_call.cpp`):
+
+1. For non-overriding case (base function merged into derived contract): use the merged copy directly — `this` type matches, no cast needed.
+2. For overriding case (derived contract overrides the same name): detect via ID mismatch after `find_decl_ref`, fall back to original in base contract via `find_contract_name_for_id()`, insert a `this` typecast.
+
+**Limitation**: Only single-level `super` is resolved. Multi-level diamond inheritance with multiple `super` chains across Parent1/Parent2 is not tested beyond basic verification.
 
 #### K. Other Gaps
 
@@ -442,7 +444,7 @@ These are bugs or unsound abstractions in features we claim to support:
 
 | # | Task | Effort | Why |
 |---|------|--------|-----|
-| 5 | **`super` keyword** | Hard (~500 lines) | C3-linearized dispatch; infrastructure exists in `linearizedBaseList`/`overrideMap` |
+| 5 | **`super` keyword** | ✅ Done (2026-04-05) | Basic support: non-override and override cases; `find_contract_name_for_id` + `get_super_function_call` |
 | 6 | **Try/Catch** | Hard (~500 lines) | Standard DeFi error handling pattern |
 | 7 | **`abi.decode()`** | Moderate (~200 lines) | Needed for low-level call data inspection |
 | 8 | **Function overloading** | Hard (~400 lines) | Name mangling or overload resolution table |

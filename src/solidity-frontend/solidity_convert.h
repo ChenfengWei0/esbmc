@@ -400,6 +400,11 @@ protected:
     const nlohmann::json &decl_ref,
     const nlohmann::json &caller,
     side_effect_expr_function_callt &call);
+  bool get_super_function_call(
+    const nlohmann::json &member_access,
+    const nlohmann::json &call_expr,
+    exprt &new_expr);
+  std::string find_contract_name_for_id(int func_id);
   bool get_ctor_call(
     const nlohmann::json &decl_ref,
     const nlohmann::json &epxr,
