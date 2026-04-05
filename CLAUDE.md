@@ -38,7 +38,7 @@ cd build/
 # IMPORTANT: Default ESBMC_REGRESS_TIMEOUT is 1200s (20 min).
 # Some tests (k-induction without bounds) will hang until that limit.
 # Always configure cmake with a shorter timeout for interactive use:
-cmake -DESBMC_REGRESS_TIMEOUT=30 ..
+cmake -DESBMC_REGRESS_TIMEOUT=60 ..
 
 # Run Solidity regression tests (preferred for Solidity frontend work)
 ctest -j$(nproc) -L "esbmc-solidity"
@@ -121,8 +121,8 @@ The `irep2` layer defines 170+ expression types and 20+ type constructors. Expre
 - No AI-generated PR descriptions attribution either
 - **Every commit message must include a test results line**, e.g.:
   ```
-  Test results (esbmc-solidity, timeout=30s):
-    389 total, 389 passed, 0 failed, 0 timeout (57s)
+  Test results (esbmc-solidity, timeout=60s):
+    429 total, 429 passed, 0 failed, 0 timeout (78s)
   ```
 - Never pollute the ESBMC frontend to accommodate a specific external project; use external scripts instead
 

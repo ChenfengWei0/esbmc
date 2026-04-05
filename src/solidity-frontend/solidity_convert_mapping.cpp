@@ -193,10 +193,15 @@ bool solidity_convertert::has_contract_bytes(const nlohmann::json &node)
   {
     if (
       node.contains("typeDescriptions") &&
-      node["typeDescriptions"].contains("typeString") &&
-      node["typeDescriptions"]["typeString"] == "bytes")
+      node["typeDescriptions"].contains("typeString"))
     {
-      return true;
+      const std::string &ts = node["typeDescriptions"]["typeString"];
+      // Match "bytes", "bytes storage pointer", "bytes memory", etc.
+      // Also match "string" variants since string uses BytesDynamic internally.
+      if (
+        ts == "bytes" || ts.substr(0, 6) == "bytes " ||
+        ts == "string" || ts.substr(0, 7) == "string ")
+        return true;
     }
 
     for (const auto &kv : node.items())

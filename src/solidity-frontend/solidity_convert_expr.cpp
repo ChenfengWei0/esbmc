@@ -172,6 +172,26 @@ bool solidity_convertert::get_expr(
     // }
     assert(expr.contains("expression"));
     nlohmann::json callee_expr_json = expr["expression"];
+
+    // Extract only the "value" option by matching names[].
+    // The AST has parallel arrays: names=["value","gas"], options=[expr1,expr2].
+    // We look up "value" by name so the order doesn't matter.
+    nlohmann::json value_opts = empty_json;
+    if (expr.contains("names") && expr.contains("options"))
+    {
+      const auto &names = expr["names"];
+      const auto &opts = expr["options"];
+      for (size_t i = 0; i < names.size(); ++i)
+      {
+        if (names[i] == "value")
+        {
+          value_opts = nlohmann::json::array();
+          value_opts.push_back(opts[i]);
+          break;
+        }
+      }
+    }
+
     if (SolidityGrammar::is_address_member_call(callee_expr_json))
     {
       if (!is_bound)
@@ -185,9 +205,7 @@ bool solidity_convertert::get_expr(
       }
       else
       {
-        assert(expr.contains("options"));
-        // pass the ["options"] to addressmembercall, via literal_type
-        if (get_expr(callee_expr_json, expr["options"], new_expr))
+        if (get_expr(callee_expr_json, value_opts, new_expr))
           return true;
       }
     }
@@ -202,15 +220,10 @@ bool solidity_convertert::get_expr(
       }
       else
       {
-        if (!expr.contains("options"))
-        {
-          log_error("Unsupported CallOptionsExprClass");
-          return true;
-        }
         // e.g. target.deposit{value: msg.value}();
         exprt memcall;
         // target.deposit
-        if (get_expr(callee_expr_json, expr["options"], memcall))
+        if (get_expr(callee_expr_json, value_opts, memcall))
           return true;
 
         new_expr = memcall;
