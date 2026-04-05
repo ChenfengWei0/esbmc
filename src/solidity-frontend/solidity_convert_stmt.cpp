@@ -278,11 +278,27 @@ bool solidity_convertert::get_statement(
         if (get_expr(initialValue, tuple_expr))
           return true;
 
+        // Build LHS block preserving original positions so that omitted
+        // elements (null in declarations) map to nil_exprt at the correct
+        // index.  construct_tuple_assigments uses positional "mem{i}" keys,
+        // so the indices must match the RHS tuple struct layout.
         code_blockt lhs_block;
-        for (auto &decl : decls.operands())
-          lhs_block.copy_to_operands(decl.op0()); // nil_expr;
+        unsigned decl_idx = 0;
+        for (const auto &it : declgroup.items())
+        {
+          if (it.value().is_null() || it.value().empty())
+          {
+            lhs_block.copy_to_operands(nil_exprt());
+          }
+          else
+          {
+            assert(decl_idx < decls.operands().size());
+            lhs_block.copy_to_operands(
+              decls.operands()[decl_idx].op0());
+            ++decl_idx;
+          }
+        }
 
-        //TODO FIXME: stmt might not contains right handside
         construct_tuple_assigments(stmt, lhs_block, tuple_expr);
       }
     }

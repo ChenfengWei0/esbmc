@@ -1121,15 +1121,19 @@ bool solidity_convertert::get_tuple_expr(
         assert(!current_rhsDecl);
 
         // we do not create struct-tuple instance for lhs
+        // Null components (omitted positions like `(x, , y)`) become nil_exprt
+        // to preserve positional alignment with the RHS tuple struct.
         code_blockt _block;
-        exprt op = nil_exprt();
-        for (auto i : expr["components"])
+        for (const auto &i : expr["components"])
         {
-          if (
-            i.contains("typeDescriptions") &&
-            get_expr(i, i["typeDescriptions"], op))
+          if (i.is_null() || !i.contains("typeDescriptions"))
+          {
+            _block.operands().push_back(nil_exprt());
+            continue;
+          }
+          exprt op;
+          if (get_expr(i, i["typeDescriptions"], op))
             return true;
-
           _block.operands().push_back(op);
         }
         new_expr = _block;

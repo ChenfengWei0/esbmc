@@ -327,7 +327,7 @@ typedef struct BytesDynamic { size_t offset; size_t length; size_t capacity; int
 #### E. Tuple / Multi-Return — Mostly Resolved (2026-04-02)
 
 **Working** (after 4-phase refactoring):
-- Flat destructuring `(x, y) = func()`, partial skip `(x, ) = func()`, tuple swap `(x, y) = (y, x)`
+- Flat destructuring `(x, y) = func()`, partial skip `(x, ) = func()`, tuple swap `(x, y) = (y, x)`, multi-position omit `(x, , y) = func()`
 - Position-based component matching (name-based + positional fallback) — replaces fragile `at(i)` indexing
 - Nested tuple destructuring `((a,b),c) = ...` via `flatten_nested_tuple_assignment()`
 - External call tuple returns `(a,b) = externalContract.f()` — cross-contract and same-contract
