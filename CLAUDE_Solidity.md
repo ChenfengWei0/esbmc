@@ -411,16 +411,23 @@ Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_crypto.c`
 - Overriding case: derived overrides the same name, calls original base with `this` typecast ✅
 - Multi-level dispatch (e.g. `Child.abc() → p1() → super.myFunc()`) ✅
 
-**Known limitation — Cooperative super chain**: The pattern where each inheritance level calls `super` to accumulate state changes does **not** work:
+**Cooperative super chain — Fully supported** (2026-04-05):
 
 ```solidity
-contract A { function inc() virtual { counter += 1; } }
+contract A { uint counter; function inc() virtual { counter += 1; } }
 contract B is A { function inc() override { super.inc(); counter += 10; } }
-contract C is B { function test() { super.inc(); assert(counter == 11); } }
-// VERIFICATION FAILED — should be SUCCESSFUL
+contract C is B {
+    function test() {
+        uint before = counter;
+        super.inc();
+        assert(counter == before + 11);  // VERIFICATION SUCCESSFUL ✅
+    }
+}
 ```
 
-Root cause: ESBMC encodes struct field access by pointer type. `(A*)ptr->counter` and `(C*)ptr->counter` become different SMT variables even when pointing to the same address. The assignment in `A.inc` modifies the `A`-typed field, invisible to the `C`-typed assertion. This requires a change to ESBMC's core memory model — **not fixable at the frontend level**. In practice, this pattern is rare in DeFi verification scenarios.
+This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) recognises that `A`, `B`, `C` contract structs all share the same prefix layout (inherited fields have identical name and type in order). When `A.inc` writes `counter` through an `(A*)this` pointer to a `C` object, `symex_assign_typecast` (`symex_assign.cpp:528`) generates `C_obj_new = with(C_obj_old, [counter := new_val])`, correctly updating the `C`-typed object. No backend change was needed.
+
+**Test design note**: Use relative assertions (`counter == before + 11`) rather than absolute values (`counter == 11`). With `--contract C`, ESBMC's non-deterministic main can call any public function (including inherited `inc()`) in any order before `test()`, so an absolute counter value is not guaranteed at entry to `test()`.
 
 #### K. Other Gaps
 
@@ -459,7 +466,7 @@ These are bugs or unsound abstractions in features we claim to support:
 
 | # | Task | Effort | Why |
 |---|------|--------|-----|
-| 5 | **`super` keyword** | ✅ Done (2026-04-05) | Basic support: non-override and override cases; `find_contract_name_for_id` + `get_super_function_call` |
+| 5 | **`super` keyword** | ✅ Done (2026-04-05) | Non-override and override cases; cooperative super chain; `find_contract_name_for_id` + `get_super_function_call`; backend `is_prefix_of` handles cross-type writes |
 | 6 | **Try/Catch** | Hard (~500 lines) | Standard DeFi error handling pattern |
 | 7 | **`abi.decode()`** | Moderate (~200 lines) | Needed for low-level call data inspection |
 | 8 | **Function overloading** | Hard (~400 lines) | Name mangling or overload resolution table |
