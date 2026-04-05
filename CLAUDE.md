@@ -38,7 +38,7 @@ cd build/
 # IMPORTANT: Default ESBMC_REGRESS_TIMEOUT is 1200s (20 min).
 # Some tests (k-induction without bounds) will hang until that limit.
 # Always configure cmake with a shorter timeout for interactive use:
-cmake -DESBMC_REGRESS_TIMEOUT=30 ..
+cmake -DESBMC_REGRESS_TIMEOUT=60 ..
 
 # Run Solidity regression tests (preferred for Solidity frontend work)
 ctest -j$(nproc) -L "esbmc-solidity"
