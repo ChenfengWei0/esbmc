@@ -272,7 +272,8 @@ enum StatementT
   RevertStatement,      // rule revert
   EmitStatement,        // rule emit
   PlaceholderStatement, //rule placeholder
-  TryStatement          // rule try
+  TryStatement,          // rule try
+  InlineAssemblyStatement // rule inline assembly (havoc)
 };
 StatementT get_statement_t(const nlohmann::json &stmt);
 const char *statement_to_str(StatementT type);

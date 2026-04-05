@@ -176,6 +176,43 @@ bool solidity_convertert::get_function_definition(
 
   added_symbol.type = type;
 
+  // 11.3 Declare named return parameters as local variables.
+  // Solidity allows `returns (uint result) { result = 42; }` where `result`
+  // is both a local variable and the implicit return value. We must emit
+  // DECL + zero-init for each named return parameter so that assignments to
+  // them work correctly in symex, and append an implicit return at the end.
+  std::vector<exprt> named_ret_decls;
+  std::vector<exprt> named_ret_syms;
+  bool has_named_returns = false;
+  if (
+    !is_ctor && ast_node.contains("returnParameters") &&
+    ast_node["returnParameters"].contains("parameters") &&
+    get_sol_type(type.return_type()) !=
+      SolidityGrammar::SolType::TUPLE_RETURNS)
+  {
+    for (const auto &rparam :
+         ast_node["returnParameters"]["parameters"])
+    {
+      std::string rname = rparam["name"].get<std::string>();
+      if (rname.empty())
+        continue; // unnamed return parameter — skip
+
+      has_named_returns = true;
+      exprt var_decl;
+      if (get_var_decl(rparam, var_decl))
+        return true;
+      named_ret_decls.push_back(var_decl);
+
+      // Retrieve the symbol we just created
+      std::string rvar_name, rvar_id;
+      if (get_var_decl_name(rparam, rvar_name, rvar_id))
+        return true;
+      const symbolt *sym = context.find_symbol(rvar_id);
+      assert(sym != nullptr);
+      named_ret_syms.push_back(symbol_expr(*sym));
+    }
+  }
+
   // 12. Convert body and embed the body into the same symbol
   // skip for 'unimplemented' functions which has no body,
   // e.g. asbstract/interface, the symbol value would be left as unset
@@ -206,6 +243,35 @@ bool solidity_convertert::get_function_definition(
         if (add_reentry_check(c_name, location_begin, body_exprt))
           return true;
       }
+    }
+
+    // Prepend named return parameter declarations at the start of the body
+    if (has_named_returns && body_exprt.is_code())
+    {
+      code_blockt new_body;
+      for (auto &decl : named_ret_decls)
+        new_body.copy_to_operands(decl);
+      for (auto &op : body_exprt.operands())
+        new_body.copy_to_operands(op);
+
+      // Append implicit return of the named return variable if the body
+      // does not already end with an explicit return statement.
+      bool has_explicit_return = false;
+      if (!new_body.operands().empty())
+      {
+        const exprt &last = new_body.operands().back();
+        if (last.is_code() && last.statement() == "return")
+          has_explicit_return = true;
+      }
+      if (!has_explicit_return && named_ret_syms.size() == 1)
+      {
+        code_returnt implicit_ret;
+        implicit_ret.return_value() = named_ret_syms[0];
+        implicit_ret.location() = location_begin;
+        new_body.copy_to_operands(implicit_ret);
+      }
+
+      body_exprt = new_body;
     }
   }
 

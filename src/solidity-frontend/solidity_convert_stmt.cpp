@@ -17,6 +17,7 @@
 #include <util/std_expr.h>
 #include <util/message.h>
 #include <fstream>
+#include <set>
 
 void solidity_convertert::reset_auxiliary_vars()
 {
@@ -836,6 +837,95 @@ bool solidity_convertert::get_statement(
     try_if.location() = loc;
 
     new_expr = try_if;
+    break;
+  }
+  case SolidityGrammar::StatementT::InlineAssemblyStatement:
+  {
+    // Over-approximate inline assembly by havocing all externally referenced
+    // variables. Assembly can read and write any referenced variable, so we
+    // conservatively assign nondet values to each one.
+    code_blockt havoc_block;
+
+    if (stmt.contains("externalReferences") &&
+        stmt["externalReferences"].is_array())
+    {
+      // Collect unique declaration IDs (a variable may appear multiple times)
+      std::set<int> seen_decls;
+      for (const auto &ref : stmt["externalReferences"])
+      {
+        if (!ref.contains("declaration"))
+          continue;
+        int decl_id = ref["declaration"].get<int>();
+        if (!seen_decls.insert(decl_id).second)
+          continue; // already processed
+
+        // Skip .slot/.offset references — we'll havoc the variable itself
+        if (ref.contains("isSlot") && ref["isSlot"].get<bool>())
+          continue;
+        if (ref.contains("isOffset") && ref["isOffset"].get<bool>())
+          continue;
+
+        const nlohmann::json &decl = find_decl_ref(decl_id);
+        if (decl.empty() || decl["nodeType"] != "VariableDeclaration")
+          continue;
+
+        // Resolve the variable to a symbol expression
+        bool is_state = decl.contains("stateVariable") &&
+                        decl["stateVariable"].get<bool>();
+        exprt var_expr;
+        if (get_var_decl_ref(decl, is_state, var_expr))
+          continue; // best-effort: skip if resolution fails
+
+        // Assign nondet value
+        exprt nondet_val;
+        get_nondet_expr(var_expr.type(), nondet_val);
+        code_assignt assign(var_expr, nondet_val);
+        assign.location() = loc;
+        havoc_block.copy_to_operands(assign);
+      }
+
+      // Also havoc variables referenced via .slot (state variables modified
+      // through sstore). Find their declaration and havoc the variable.
+      for (const auto &ref : stmt["externalReferences"])
+      {
+        if (!ref.contains("declaration"))
+          continue;
+        bool is_slot =
+          ref.contains("isSlot") && ref["isSlot"].get<bool>();
+        if (!is_slot)
+          continue;
+
+        int decl_id = ref["declaration"].get<int>();
+        if (seen_decls.count(decl_id))
+          continue; // already havoc'd above
+        seen_decls.insert(decl_id);
+
+        const nlohmann::json &decl = find_decl_ref(decl_id);
+        if (decl.empty() || decl["nodeType"] != "VariableDeclaration")
+          continue;
+
+        exprt var_expr;
+        if (get_var_decl_ref(decl, true, var_expr))
+          continue;
+
+        exprt nondet_val;
+        get_nondet_expr(var_expr.type(), nondet_val);
+        code_assignt assign(var_expr, nondet_val);
+        assign.location() = loc;
+        havoc_block.copy_to_operands(assign);
+      }
+    }
+
+    if (havoc_block.operands().empty())
+    {
+      // No external references — assembly only touches internal EVM state.
+      // Generate a skip (no-op).
+      new_expr = code_skipt();
+    }
+    else
+    {
+      new_expr = havoc_block;
+    }
     break;
   }
   case SolidityGrammar::StatementT::StatementTError:

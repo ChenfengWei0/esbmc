@@ -731,6 +731,10 @@ StatementT get_statement_t(const nlohmann::json &stmt)
   {
     return TryStatement;
   }
+  else if (stmt["nodeType"] == "InlineAssembly")
+  {
+    return InlineAssemblyStatement;
+  }
   else
   {
     log_error(
@@ -760,6 +764,7 @@ const char *statement_to_str(StatementT type)
     ENUM_TO_STR(EmitStatement)
     ENUM_TO_STR(PlaceholderStatement)
     ENUM_TO_STR(TryStatement)
+    ENUM_TO_STR(InlineAssemblyStatement)
   default:
   {
     assert(!"Unknown statement type");
