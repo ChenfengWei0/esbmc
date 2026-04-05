@@ -433,7 +433,7 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 
 | Feature | Status | Detail |
 |---------|--------|--------|
-| **Try/Catch** | Recognized, not converted | AST node registered but conversion aborts (`solidity_convert_stmt.cpp:631`) |
+| ~~**Try/Catch**~~ | ✅ Done (2026-04-05) | Modeled as `if(nondet_bool) { success } else { catch }` with nondet return values; supports multiple catch clauses (Error, Panic, catch-all) |
 | **`using A for B`** | Parsed, skipped | Does not alter operator dispatch (`solidity_convert_decl.cpp:53`) |
 | **Bitwise on dynamic bytes** | Static only | Ops limited to `bytesN`, not dynamic `bytes` (`solidity_convert_expr.cpp:2155`) |
 | **`constant`/`immutable`** | Partial | `constant` works; `immutable` may not enforce set-once |
@@ -467,7 +467,7 @@ These are bugs or unsound abstractions in features we claim to support:
 | # | Task | Effort | Why |
 |---|------|--------|-----|
 | 5 | **`super` keyword** | ✅ Done (2026-04-05) | Non-override and override cases; cooperative super chain; `find_contract_name_for_id` + `get_super_function_call`; backend `is_prefix_of` handles cross-type writes |
-| 6 | **Try/Catch** | Hard (~500 lines) | Standard DeFi error handling pattern |
+| 6 | ~~**Try/Catch**~~ | ✅ Done (2026-04-05) | Nondet success/fail branching with multi-clause catch support |
 | 7 | **`abi.decode()`** | Moderate (~200 lines) | Needed for low-level call data inspection |
 | 8 | **Function overloading** | Hard (~400 lines) | Name mangling or overload resolution table |
 | 9 | **Data location semantics** | Very hard (~1000+ lines) | storage ref aliasing, memory copy-on-call; soundness gap |

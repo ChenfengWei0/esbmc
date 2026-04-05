@@ -666,8 +666,177 @@ bool solidity_convertert::get_statement(
   }
   case SolidityGrammar::StatementT::TryStatement:
   {
-    log_error("Try/Catch is not fully supported yet. Aborting...");
-    return true;
+    // Model try/catch as:
+    //   if (nondet_bool()) { <success_block> } else { <catch_block(s)> }
+    //
+    // The external call result is nondeterministic since ESBMC verifies
+    // one contract at a time and cannot resolve cross-contract calls.
+    // Return variables in the success clause are assigned nondet values.
+
+    if (!stmt.contains("clauses") || !stmt["clauses"].is_array() ||
+        stmt["clauses"].size() < 2)
+    {
+      log_error("TryStatement must have at least 2 clauses "
+                "(success + catch)");
+      return true;
+    }
+
+    const auto &clauses = stmt["clauses"];
+
+    // --- success branch (first clause) ---
+    const auto &success_clause = clauses[0];
+    code_blockt success_block;
+
+    // Declare return parameters with nondet initial values
+    if (success_clause.contains("parameters") &&
+        success_clause["parameters"].contains("parameters"))
+    {
+      for (const auto &param :
+           success_clause["parameters"]["parameters"])
+      {
+        // Use get_var_decl to declare the variable in the symbol table
+        exprt var_decl;
+        if (get_var_decl(param, var_decl))
+          return true;
+
+        // The variable was declared; now assign it a nondet value
+        // matching its type
+        if (var_decl.is_code() && var_decl.statement() == "decl")
+        {
+          const symbolt &sym =
+            *context.find_symbol(var_decl.op0().identifier());
+          symbol_exprt sym_expr(sym.id, sym.type);
+
+          exprt nondet_val;
+          get_nondet_expr(sym.type, nondet_val);
+
+          code_assignt assign(sym_expr, nondet_val);
+          assign.location() = loc;
+
+          success_block.copy_to_operands(var_decl);
+          success_block.copy_to_operands(assign);
+        }
+        else
+        {
+          success_block.copy_to_operands(var_decl);
+        }
+      }
+    }
+
+    // Convert the success block body
+    exprt success_body;
+    if (get_block(success_clause["block"], success_body))
+      return true;
+    convert_expression_to_code(success_body);
+    success_block.copy_to_operands(success_body);
+
+    // --- catch branch(es) (remaining clauses) ---
+    exprt catch_expr;
+    if (clauses.size() == 2)
+    {
+      // Single catch clause
+      const auto &cc = clauses[1];
+
+      // Declare catch parameters if present (e.g. Error(string memory reason))
+      code_blockt catch_block;
+      if (cc.contains("parameters") &&
+          cc["parameters"].contains("parameters"))
+      {
+        for (const auto &param : cc["parameters"]["parameters"])
+        {
+          exprt var_decl;
+          if (get_var_decl(param, var_decl))
+            return true;
+
+          if (var_decl.is_code() && var_decl.statement() == "decl")
+          {
+            const symbolt &sym =
+              *context.find_symbol(var_decl.op0().identifier());
+            symbol_exprt sym_expr(sym.id, sym.type);
+            exprt nondet_val;
+            get_nondet_expr(sym.type, nondet_val);
+            code_assignt assign(sym_expr, nondet_val);
+            assign.location() = loc;
+            catch_block.copy_to_operands(var_decl);
+            catch_block.copy_to_operands(assign);
+          }
+          else
+          {
+            catch_block.copy_to_operands(var_decl);
+          }
+        }
+      }
+
+      exprt catch_body;
+      if (get_block(cc["block"], catch_body))
+        return true;
+      convert_expression_to_code(catch_body);
+      catch_block.copy_to_operands(catch_body);
+      catch_expr = catch_block;
+    }
+    else
+    {
+      // Multiple catch clauses: chain with nondet_bool
+      // Build right-to-left: last clause is the final else
+      const auto &last_cc = clauses[clauses.size() - 1];
+      code_blockt last_block;
+      if (last_cc.contains("parameters") &&
+          last_cc["parameters"].contains("parameters"))
+      {
+        for (const auto &param : last_cc["parameters"]["parameters"])
+        {
+          exprt var_decl;
+          if (get_var_decl(param, var_decl))
+            return true;
+          last_block.copy_to_operands(var_decl);
+        }
+      }
+      exprt last_body;
+      if (get_block(last_cc["block"], last_body))
+        return true;
+      convert_expression_to_code(last_body);
+      last_block.copy_to_operands(last_body);
+
+      catch_expr = last_block;
+
+      // Build if-else chain from second-to-last back to first catch clause
+      for (int i = static_cast<int>(clauses.size()) - 2; i >= 1; --i)
+      {
+        const auto &cc = clauses[i];
+        code_blockt clause_block;
+        if (cc.contains("parameters") &&
+            cc["parameters"].contains("parameters"))
+        {
+          for (const auto &param : cc["parameters"]["parameters"])
+          {
+            exprt var_decl;
+            if (get_var_decl(param, var_decl))
+              return true;
+            clause_block.copy_to_operands(var_decl);
+          }
+        }
+        exprt clause_body;
+        if (get_block(cc["block"], clause_body))
+          return true;
+        convert_expression_to_code(clause_body);
+        clause_block.copy_to_operands(clause_body);
+
+        codet if_catch("ifthenelse");
+        if_catch.copy_to_operands(nondet_bool_expr, clause_block, catch_expr);
+        if_catch.location() = loc;
+        catch_expr = if_catch;
+      }
+    }
+
+    convert_expression_to_code(catch_expr);
+
+    // Build top-level: if (nondet_bool()) { success } else { catch }
+    codet try_if("ifthenelse");
+    try_if.copy_to_operands(nondet_bool_expr, success_block, catch_expr);
+    try_if.location() = loc;
+
+    new_expr = try_if;
+    break;
   }
   case SolidityGrammar::StatementT::StatementTError:
   default:
