@@ -1291,8 +1291,8 @@ bool solidity_convertert::get_call_expr(
               continue;
             // Skip fixed bytesN (t_bytes1..t_bytes32) — struct in ESBMC
             if (
-              tid.compare(0, 6, "t_bytes") == 0 &&
-              tid.size() > 6 && std::isdigit(tid[6]))
+              tid.compare(0, 7, "t_bytes") == 0 &&
+              tid.size() > 7 && std::isdigit(tid[7]))
               continue;
 
             exprt single_arg;

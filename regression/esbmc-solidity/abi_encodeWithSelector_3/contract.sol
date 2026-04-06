@@ -2,7 +2,6 @@
 pragma solidity >=0.5.0;
 
 // Test abi.encodeWithSelector: nondet selector should produce nondet encoding.
-// KNOWNBUG: bytes4 type is passed as struct to uint256_t model, causing type mismatch.
 contract AbiEncodeWithSelectorDiff {
     function test(bytes4 sel) public pure {
         uint256 h = uint256(keccak256(abi.encodeWithSelector(sel, uint256(1))));
