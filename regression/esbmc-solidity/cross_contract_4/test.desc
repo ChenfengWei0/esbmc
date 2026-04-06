@@ -1,0 +1,8 @@
+KNOWNBUG
+contract.solast
+--sol contract.sol --contract OwnedToken --no-standard-checks --unwind 3 --no-unwinding-assertions --function test_inline_call
+^VERIFICATION SUCCESSFUL$
+--
+Inline contract type cast with method call crashes ESBMC.
+TokenCreator(address(creator)).isTokenTransferOK(...) triggers an assertion
+failure in get_contract_member_call_expr: missing "referencedDeclaration".

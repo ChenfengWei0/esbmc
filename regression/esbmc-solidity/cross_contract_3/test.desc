@@ -1,0 +1,8 @@
+KNOWNBUG
+contract.solast
+--sol contract.sol --contract OwnedToken --no-standard-checks --unwind 3 --no-unwinding-assertions --function test_address_cast
+^VERIFICATION SUCCESSFUL$
+--
+Contract-to-address type cast does not preserve the original address.
+owner and address(creator) are both derived from msg.sender but ESBMC
+assigns a different address to creator.$address.
