@@ -2096,12 +2096,19 @@ bool solidity_convertert::get_new_object_expr(
 
     new_expr = call;
     // check if the new expression has options
+    // Options (e.g. {value: amount}) live in the FunctionCallOptions node,
+    // which is expr["expression"] when present, not in the outer FunctionCall.
+    const nlohmann::json &opts_src =
+      (expr.contains("expression") &&
+       expr["expression"]["nodeType"] == "FunctionCallOptions")
+        ? expr["expression"]
+        : expr;
     if (
-      expr.contains("options") && expr.contains("names") &&
-      !expr["options"].empty() && !expr["names"].empty())
+      opts_src.contains("options") && opts_src.contains("names") &&
+      !opts_src["options"].empty() && !opts_src["names"].empty())
     {
-      const auto &options = expr["options"];
-      const auto &names = expr["names"];
+      const auto &options = opts_src["options"];
+      const auto &names = opts_src["names"];
 
       for (size_t i = 0; i < options.size(); ++i)
       {
@@ -2116,7 +2123,12 @@ bool solidity_convertert::get_new_object_expr(
             return true;
 
           exprt this_expr;
-          if (get_func_decl_this_ref(expr, this_expr))
+          if (current_functionDecl)
+          {
+            if (get_func_decl_this_ref(*current_functionDecl, this_expr))
+              return true;
+          }
+          else
           {
             if (get_ctor_decl_this_ref(expr, this_expr))
               return true;
@@ -2133,7 +2145,10 @@ bool solidity_convertert::get_new_object_expr(
                 back_block))
             return true;
 
-          move_to_back_block(back_block);
+          for (auto op : front_block.operands())
+            move_to_front_block(op);
+          for (auto op : back_block.operands())
+            move_to_back_block(op);
           break;
         }
       }

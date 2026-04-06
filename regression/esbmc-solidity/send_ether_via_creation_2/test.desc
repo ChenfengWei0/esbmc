@@ -1,4 +1,4 @@
-THOROUGH
-contract.solast 
+KNOWNBUG
+contract.solast
 --sol contract.sol --k-induction --contract C --bound
 ^VERIFICATION FAILED$
