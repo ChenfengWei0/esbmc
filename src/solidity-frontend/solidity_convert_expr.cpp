@@ -533,10 +533,12 @@ bool solidity_convertert::get_expr(
     const nlohmann::json &args_json =
       find_last_parent(src_ast_json["nodes"], expr);
     assert(args_json.contains("arguments"));
-    if (get_library_function_call(func_ref, args_json, call))
+    bool is_using_for =
+      !(base.is_code() && get_sol_type(base.type()) == SolidityGrammar::SolType::LIBRARY);
+    if (get_library_function_call(func_ref, args_json, call, is_using_for))
       return true;
 
-    if (!(base.is_code() && get_sol_type(base.type()) == SolidityGrammar::SolType::LIBRARY))
+    if (is_using_for)
       // this means it is a using for library
       call.arguments().insert(call.arguments().begin(), base);
 
@@ -1379,6 +1381,19 @@ bool solidity_convertert::get_call_expr(
     }
 
     // * check if it's the function inside library node
+    // Library functions have no this-pointer parameter, so use
+    // get_library_function_call instead of get_non_library_function_call.
+    if (SolidityGrammar::is_sol_library_function(
+          callee_expr_json["referencedDeclaration"].get<int>()))
+    {
+      log_debug("solidity", "\t\t@@@ got library-internal function call");
+      assert(expr.contains("arguments"));
+      if (get_library_function_call(callee_expr, type, decl_ref, expr, call))
+        return true;
+      new_expr = call;
+      return false;
+    }
+
     log_debug("solidity", "\t\t@@@ got normal function call");
     // * we had ruled out all the special cases
     // * we now confirm it is called by another contract inside current contract

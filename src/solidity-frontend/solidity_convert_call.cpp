@@ -21,7 +21,8 @@
 bool solidity_convertert::get_library_function_call(
   const nlohmann::json &decl_ref,
   const nlohmann::json &caller,
-  side_effect_expr_function_callt &call)
+  side_effect_expr_function_callt &call,
+  bool skip_first_param)
 {
   assert(!decl_ref.empty());
   assert(decl_ref.contains("returnParameters"));
@@ -34,7 +35,7 @@ bool solidity_convertert::get_library_function_call(
   if (get_type_description(decl_ref["returnParameters"], t.return_type()))
     return true;
 
-  return get_library_function_call(func, t, decl_ref, caller, call);
+  return get_library_function_call(func, t, decl_ref, caller, call, skip_first_param);
 }
 
 // library/error/event functions have no definition node
@@ -45,7 +46,8 @@ bool solidity_convertert::get_library_function_call(
   const typet &t,
   const nlohmann::json &decl_ref,
   const nlohmann::json &caller,
-  side_effect_expr_function_callt &call)
+  side_effect_expr_function_callt &call,
+  bool skip_first_param)
 {
   call.function() = func;
   if (t.is_code())
@@ -72,6 +74,12 @@ bool solidity_convertert::get_library_function_call(
       itr = param_nodes.begin();
       itr_end = param_nodes.end();
     }
+
+    // For "using for" calls (e.g. z.limb(1) => limb(z, 1)), the base object
+    // will be prepended as the first argument by the caller. Skip the first
+    // parameter so that remaining arguments match the correct parameter types.
+    if (skip_first_param && itr != itr_end)
+      ++itr;
 
     //  builtin functions do not need the this object as the first arguments
     for (const auto &arg : caller["arguments"].items())

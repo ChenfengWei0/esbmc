@@ -424,13 +424,15 @@ protected:
   bool get_library_function_call(
     const nlohmann::json &decl_ref,
     const nlohmann::json &caller,
-    side_effect_expr_function_callt &call);
+    side_effect_expr_function_callt &call,
+    bool skip_first_param = false);
   bool get_library_function_call(
     const exprt &func,
     const typet &t,
     const nlohmann::json &decl_ref,
     const nlohmann::json &caller,
-    side_effect_expr_function_callt &call);
+    side_effect_expr_function_callt &call,
+    bool skip_first_param = false);
   void get_library_function_call_no_args(
     const std::string &func_name,
     const std::string &func_id,
