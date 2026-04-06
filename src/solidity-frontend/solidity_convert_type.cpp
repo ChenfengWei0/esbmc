@@ -970,7 +970,6 @@ bool solidity_convertert::get_parameter_list(
 {
   // For Solidity rule parameter-list:
   //  - For non-empty param list, it may need to call get_elementary_type_name, since parameter-list is just a list of types
-  std::string c_type;
   SolidityGrammar::ParameterListT type =
     SolidityGrammar::get_parameter_list_t(type_name);
 
@@ -985,8 +984,7 @@ bool solidity_convertert::get_parameter_list(
   {
     // equivalent to clang's "void"
     new_type = empty_typet();
-    c_type = "void";
-    new_type.set("#cpp_type", c_type);
+    new_type.set("#cpp_type", "void");
     break;
   }
   case SolidityGrammar::ParameterListT::ONE_PARAM:
