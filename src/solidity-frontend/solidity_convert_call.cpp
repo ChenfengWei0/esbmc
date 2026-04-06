@@ -17,6 +17,7 @@
 #include <util/std_expr.h>
 #include <util/message.h>
 #include <fstream>
+#include <limits>
 
 bool solidity_convertert::get_library_function_call(
   const nlohmann::json &decl_ref,
@@ -81,9 +82,39 @@ bool solidity_convertert::get_library_function_call(
     if (skip_first_param && itr != itr_end)
       ++itr;
 
+    // Determine the maximum number of parameters the C model function accepts.
+    // Only apply this limit when the function type has explicitly declared
+    // parameters (size > 0). Builtins like assert/require have code_type with
+    // no declared params but still accept arguments from the caller.
+    size_t max_params = std::numeric_limits<size_t>::max();
+    if (decl_ref.empty() && t.is_code())
+    {
+      size_t declared = to_code_type(t).arguments().size();
+      if (declared > 0)
+        max_params = declared;
+    }
+
     //  builtin functions do not need the this object as the first arguments
     for (const auto &arg : caller["arguments"].items())
     {
+      // Stop collecting arguments once we have enough for the C model function.
+      if (call.arguments().size() >= max_params)
+        break;
+
+      // Skip non-value arguments that cannot be evaluated as expressions:
+      //  - type expressions (t_type$...): e.g. (uint256) in abi.decode
+      //  - function declarations (t_function_declaration_...): e.g.
+      //    ITarget.transfer in abi.encodeCall
+      if (arg.value().contains("typeDescriptions"))
+      {
+        std::string tid =
+          arg.value()["typeDescriptions"].value("typeIdentifier", "");
+        if (
+          tid.compare(0, 7, "t_type$") == 0 ||
+          tid.compare(0, 23, "t_function_declaration_") == 0)
+          continue;
+      }
+
       exprt single_arg;
       if (itr != itr_end && (*itr).contains("typeDescriptions"))
       {

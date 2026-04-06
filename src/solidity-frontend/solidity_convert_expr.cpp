@@ -1261,9 +1261,69 @@ bool solidity_convertert::get_call_expr(
       else
       {
         // other solidity built-in functions
-        if (get_library_function_call(
-              new_expr, new_expr.type(), empty_json, expr, call))
-          return true;
+        std::string func_id_str = new_expr.identifier().as_string();
+        bool is_abi_func =
+          func_id_str.find("c:@F@abi_") == 0;
+
+        if (is_abi_func)
+        {
+          // ABI C model functions accept a single uint256_t argument and
+          // use an identity abstraction. We need to pick the right Solidity
+          // argument to pass (skipping type expressions, function refs, etc.)
+          // and cast it to uint256_t.
+          call.function() = new_expr;
+          call.type() = to_code_type(new_expr.type()).return_type();
+          typet target_type = unsignedbv_typet(256);
+
+          bool found_arg = false;
+          for (const auto &arg : expr["arguments"])
+          {
+            std::string tid =
+              arg.value("typeDescriptions", nlohmann::json::object())
+                .value("typeIdentifier", "");
+            // Skip type expressions and function declarations
+            if (
+              tid.compare(0, 7, "t_type$") == 0 ||
+              tid.compare(0, 23, "t_function_declaration_") == 0)
+              continue;
+            // Skip dynamic bytes (t_bytes_memory_ptr etc.) — struct in ESBMC
+            if (tid.compare(0, 8, "t_bytes_") == 0)
+              continue;
+            // Skip fixed bytesN (t_bytes1..t_bytes32) — struct in ESBMC
+            if (
+              tid.compare(0, 6, "t_bytes") == 0 &&
+              tid.size() > 6 && std::isdigit(tid[6]))
+              continue;
+
+            exprt single_arg;
+            if (get_expr(arg, arg["typeDescriptions"], single_arg))
+              return true;
+
+            // Cast to uint256 if needed (e.g. string → uint256)
+            if (single_arg.type() != target_type)
+              solidity_gen_typecast(ns, single_arg, target_type);
+
+            call.arguments().push_back(single_arg);
+            found_arg = true;
+            break; // C model only takes one argument
+          }
+
+          if (!found_arg)
+          {
+            // No compatible argument found. Pass a nondet uint256
+            // (e.g. abi.decode where all args are type expressions).
+            exprt nondet_arg = exprt("sideeffect");
+            nondet_arg.type() = target_type;
+            nondet_arg.statement("nondet");
+            call.arguments().push_back(nondet_arg);
+          }
+        }
+        else
+        {
+          if (get_library_function_call(
+                new_expr, new_expr.type(), empty_json, expr, call))
+            return true;
+        }
       }
 
       new_expr = call;
@@ -1448,11 +1508,33 @@ bool solidity_convertert::get_contract_member_call_expr(
     auto callee_expr_json = expr;
     const nlohmann::json &caller_expr_json = callee_expr_json["expression"];
     assert(callee_expr_json.contains("referencedDeclaration"));
-    assert(caller_expr_json.contains("referencedDeclaration"));
+
+    // The caller expression is normally an Identifier with referencedDeclaration
+    // (e.g. `creator.method()`). But it can also be an inline type cast like
+    // `TokenCreator(address(creator)).method()`, which is a FunctionCall with
+    // kind "typeConversion". In that case, unwrap the cast chain to find the
+    // innermost contract variable reference.
+    nlohmann::json resolved_caller = caller_expr_json;
+    while (
+      resolved_caller.contains("nodeType") &&
+      resolved_caller["nodeType"] == "FunctionCall" &&
+      resolved_caller.value("kind", "") == "typeConversion" &&
+      resolved_caller.contains("arguments") &&
+      resolved_caller["arguments"].size() == 1)
+    {
+      resolved_caller = resolved_caller["arguments"][0];
+    }
+
+    if (!resolved_caller.contains("referencedDeclaration"))
+    {
+      log_error(
+        "cannot resolve contract variable reference in inline type cast");
+      return true;
+    }
 
     side_effect_expr_function_callt call;
     const int contract_var_id =
-      caller_expr_json["referencedDeclaration"].get<int>();
+      resolved_caller["referencedDeclaration"].get<int>();
     assert(!current_baseContractName.empty());
     const nlohmann::json &base_expr_json =
       find_decl_ref(contract_var_id); // contract
@@ -1464,7 +1546,7 @@ bool solidity_convertert::get_contract_member_call_expr(
     if (base_expr_json.empty())
     {
       // assume it's 'this'
-      if (contract_var_id < 0 && caller_expr_json["name"] == "this")
+      if (contract_var_id < 0 && resolved_caller.value("name", "") == "this")
       {
         exprt this_expr;
         assert(current_functionDecl);
