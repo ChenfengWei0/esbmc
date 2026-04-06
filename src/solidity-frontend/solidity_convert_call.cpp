@@ -1807,22 +1807,18 @@ bool solidity_convertert::get_transfer_definition(
     // skip interface/abstract contract/library
     if (nonContractNamesList.count(str) != 0 && str != cname)
       continue;
-    // Here, we only consider if there is receive and fallback function
-    // as the call with signature should be directly modelled.
-    // order:
-    // 1. match payable receive
-    // 2. match payable fallback
-    // 3. return false (revert)
+    // Check if this contract has a payable receive or fallback function.
+    // Balance updates always happen; the receive/fallback call is optional.
     nlohmann::json decl_ref;
+    bool has_payable_callback = false;
     if (has_target_function(str, "receive"))
       decl_ref = get_func_decl_ref(str, "receive");
     else if (has_target_function(str, "fallback"))
       decl_ref = get_func_decl_ref(str, "fallback");
-    else
-      // other payable function
-      continue;
-    if (decl_ref["stateMutability"] != "payable")
-      continue;
+    if (
+      !decl_ref.empty() && !decl_ref.is_null() &&
+      decl_ref["stateMutability"] == "payable")
+      has_payable_callback = true;
 
     code_blockt then;
 
@@ -1869,38 +1865,42 @@ bool solidity_convertert::get_transfer_definition(
     convert_expression_to_code(add_assign);
     then.move_to_operands(add_assign);
 
-    if (is_reentry_check)
+    // Only call receive/fallback if the contract has one
+    if (has_payable_callback)
     {
-      exprt _mutex;
-      get_contract_mutex_expr(cname, this_expr, _mutex);
+      if (is_reentry_check)
+      {
+        exprt _mutex;
+        get_contract_mutex_expr(cname, this_expr, _mutex);
 
-      // _ESBMC_mutex = true;
-      exprt assign_lock = side_effect_exprt("assign", bool_t);
-      //! Do not use gen_one(bool_type()) to replace true_exprt()
-      //! it will make the verification process stuck somehow
-      assign_lock.copy_to_operands(_mutex, true_exprt());
-      convert_expression_to_code(assign_lock);
-      then.move_to_operands(assign_lock);
-    }
+        // _ESBMC_mutex = true;
+        exprt assign_lock = side_effect_exprt("assign", bool_t);
+        //! Do not use gen_one(bool_type()) to replace true_exprt()
+        //! it will make the verification process stuck somehow
+        assign_lock.copy_to_operands(_mutex, true_exprt());
+        convert_expression_to_code(assign_lock);
+        then.move_to_operands(assign_lock);
+      }
 
-    // func_call, e.g. receive(&_ESBMC_Object_str)
-    side_effect_expr_function_callt call;
-    if (get_non_library_function_call(decl_ref, empty_json, call))
-      return true;
-    call.arguments().at(0) = static_ins;
-    convert_expression_to_code(call);
-    then.move_to_operands(call);
+      // func_call, e.g. receive(&_ESBMC_Object_str)
+      side_effect_expr_function_callt call;
+      if (get_non_library_function_call(decl_ref, empty_json, call))
+        return true;
+      call.arguments().at(0) = static_ins;
+      convert_expression_to_code(call);
+      then.move_to_operands(call);
 
-    if (is_reentry_check)
-    {
-      exprt _mutex;
-      get_contract_mutex_expr(cname, this_expr, _mutex);
+      if (is_reentry_check)
+      {
+        exprt _mutex;
+        get_contract_mutex_expr(cname, this_expr, _mutex);
 
-      // _ESBMC_mutex = false;
-      exprt assign_unlock = side_effect_exprt("assign", bool_t);
-      assign_unlock.copy_to_operands(_mutex, false_exprt());
-      convert_expression_to_code(assign_unlock);
-      then.move_to_operands(assign_unlock);
+        // _ESBMC_mutex = false;
+        exprt assign_unlock = side_effect_exprt("assign", bool_t);
+        assign_unlock.copy_to_operands(_mutex, false_exprt());
+        convert_expression_to_code(assign_unlock);
+        then.move_to_operands(assign_unlock);
+      }
     }
 
     // msg_value = old_value;
@@ -2035,22 +2035,18 @@ bool solidity_convertert::get_send_definition(
     // skip interface/abstract contract/library
     if (nonContractNamesList.count(str) != 0 && str != cname)
       continue;
-    // Here, we only consider if there is receive and fallback function
-    // as the call with signature should be directly modelled.
-    // order:
-    // 1. match payable receive
-    // 2. match payable fallback
-    // 3. return false (revert)
+    // Check if this contract has a payable receive or fallback function.
+    // Balance updates always happen; the receive/fallback call is optional.
     nlohmann::json decl_ref;
+    bool has_payable_callback = false;
     if (has_target_function(str, "receive"))
       decl_ref = get_func_decl_ref(str, "receive");
     else if (has_target_function(str, "fallback"))
       decl_ref = get_func_decl_ref(str, "fallback");
-    else
-      // other payable function
-      continue;
-    if (decl_ref["stateMutability"] != "payable")
-      continue;
+    if (
+      !decl_ref.empty() && !decl_ref.is_null() &&
+      decl_ref["stateMutability"] == "payable")
+      has_payable_callback = true;
 
     code_blockt then;
 
@@ -2098,36 +2094,40 @@ bool solidity_convertert::get_send_definition(
     convert_expression_to_code(add_assign);
     then.move_to_operands(add_assign);
 
-    if (is_reentry_check)
+    // Only call receive/fallback if the contract has one
+    if (has_payable_callback)
     {
-      exprt _mutex;
-      get_contract_mutex_expr(cname, this_expr, _mutex);
+      if (is_reentry_check)
+      {
+        exprt _mutex;
+        get_contract_mutex_expr(cname, this_expr, _mutex);
 
-      // _ESBMC_mutex = true;
-      exprt assign_lock = side_effect_exprt("assign", bool_t);
-      assign_lock.copy_to_operands(_mutex, true_exprt());
-      convert_expression_to_code(assign_lock);
-      then.move_to_operands(assign_lock);
-    }
+        // _ESBMC_mutex = true;
+        exprt assign_lock = side_effect_exprt("assign", bool_t);
+        assign_lock.copy_to_operands(_mutex, true_exprt());
+        convert_expression_to_code(assign_lock);
+        then.move_to_operands(assign_lock);
+      }
 
-    // func_call, e.g. receive(&_ESBMC_Object_str)
-    side_effect_expr_function_callt call;
-    if (get_non_library_function_call(decl_ref, empty_json, call))
-      return true;
-    call.arguments().at(0) = static_ins;
-    convert_expression_to_code(call);
-    then.move_to_operands(call);
+      // func_call, e.g. receive(&_ESBMC_Object_str)
+      side_effect_expr_function_callt call;
+      if (get_non_library_function_call(decl_ref, empty_json, call))
+        return true;
+      call.arguments().at(0) = static_ins;
+      convert_expression_to_code(call);
+      then.move_to_operands(call);
 
-    if (is_reentry_check)
-    {
-      exprt _mutex;
-      get_contract_mutex_expr(cname, this_expr, _mutex);
+      if (is_reentry_check)
+      {
+        exprt _mutex;
+        get_contract_mutex_expr(cname, this_expr, _mutex);
 
-      // _ESBMC_mutex = false;
-      exprt assign_unlock = side_effect_exprt("assign", bool_t);
-      assign_unlock.copy_to_operands(_mutex, false_exprt());
-      convert_expression_to_code(assign_unlock);
-      then.move_to_operands(assign_unlock);
+        // _ESBMC_mutex = false;
+        exprt assign_unlock = side_effect_exprt("assign", bool_t);
+        assign_unlock.copy_to_operands(_mutex, false_exprt());
+        convert_expression_to_code(assign_unlock);
+        then.move_to_operands(assign_unlock);
+      }
     }
 
     // msg_value = old_value;

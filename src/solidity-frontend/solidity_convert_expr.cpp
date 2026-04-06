@@ -2145,6 +2145,12 @@ bool solidity_convertert::get_new_object_expr(
                 back_block))
             return true;
 
+          // Remove the last front_block operand (base.$balance += value).
+          // For contract creation, the recipient's $balance is initialized
+          // to msg.value inside the payable constructor instead.
+          if (!front_block.operands().empty())
+            front_block.operands().pop_back();
+
           for (auto op : front_block.operands())
             move_to_front_block(op);
           for (auto op : back_block.operands())

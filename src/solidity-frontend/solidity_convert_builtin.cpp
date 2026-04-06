@@ -98,13 +98,34 @@ bool solidity_convertert::add_auxiliary_members(
     _ndt_uint,
     contract_name);
   // balance
-  get_builtin_symbol(
-    "$balance",
-    sol_prefix + "$balance",
-    unsignedbv_typet(256),
-    l,
-    _ndt_uint,
-    contract_name);
+  // For payable constructors, initialize $balance to msg.value so that
+  // ether sent via new D{value: amount}() is available during the constructor.
+  // For non-payable constructors, use nondet_uint as before.
+  {
+    exprt balance_init = _ndt_uint;
+    if (json.contains("nodes"))
+    {
+      for (const auto &node : json["nodes"])
+      {
+        if (
+          node["nodeType"] == "FunctionDefinition" &&
+          node.contains("kind") && node["kind"] == "constructor" &&
+          node.contains("stateMutability") &&
+          node["stateMutability"] == "payable")
+        {
+          balance_init = symbol_expr(*context.find_symbol("c:@msg_value"));
+          break;
+        }
+      }
+    }
+    get_builtin_symbol(
+      "$balance",
+      sol_prefix + "$balance",
+      unsignedbv_typet(256),
+      l,
+      balance_init,
+      contract_name);
+  }
   // code
   get_builtin_symbol(
     "$code",
