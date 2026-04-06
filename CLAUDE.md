@@ -153,6 +153,19 @@ Before implementing any feature or bug fix, always work on a dedicated branch:
 2. Create a branch with a descriptive name (e.g. `feat/short-description` or `fix/short-description`).
 3. Confirm the branch is active before making any changes.
 
+## Submitting PRs to ESBMC Upstream
+
+When submitting work from a specific commit to the ESBMC main repository:
+
+1. **Create a PR branch** from the target commit:
+   ```bash
+   git checkout <commit-hash>
+   git checkout -B solidity-pr upstream/solidity
+   ```
+2. **Run cppcheck** on all changed Solidity frontend files and fix any must-fix warnings (see [Static Analysis](#static-analysis-cppcheck) above).
+3. **Build and run all Solidity regression tests** — all tests must pass (`ctest -j$(nproc) -L "esbmc-solidity"`). Timeouts from known k-induction issues are acceptable, but zero actual failures.
+4. **Commit, push, and open the PR** against the upstream `solidity` branch.
+
 ## Solver Selection for Solidity
 
 Z3 struggles with 256-bit bitvector arithmetic (common in Solidity's `uint256`). CVC5 and Bitwuzla vastly outperform Z3 on QF_BV benchmarks. For Solidity tests involving 256-bit overflow checks, use `--cvc5` instead of the default Z3 solver.
