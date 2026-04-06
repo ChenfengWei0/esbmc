@@ -80,6 +80,31 @@ Every PR should include at least two test cases: one that passes and one that fa
 - Python: YAPF
 - CMake: cmakelint
 
+### Static Analysis (cppcheck)
+
+Before every commit, run cppcheck on **changed Solidity frontend files** to catch issues that Codacy will flag in PR review:
+
+```bash
+# Run on all changed .cpp/.h files in the Solidity frontend
+git diff --name-only --diff-filter=d HEAD | grep 'src/solidity-frontend/.*\.\(cpp\|h\)$' | \
+  xargs -r cppcheck --enable=style,warning \
+    --suppress=missingIncludeSystem --suppress=missingInclude \
+    --suppress=shadowVariable --suppress=useStlAlgorithm \
+    --template='{file}:{line}: ({severity}) {id}: {message}' --quiet
+
+# For unstaged changes, use: git diff --name-only --diff-filter=d
+# For staged changes, use:   git diff --cached --name-only --diff-filter=d
+```
+
+**Must-fix categories** (Codacy will block PRs for these):
+- `unreadVariable` — variable assigned but never read
+- `unusedVariable` — variable declared but never used
+- `variableScope` — variable scope can be reduced
+
+**Can-ignore categories** (noisy, suppressed above):
+- `shadowVariable` — common in ESBMC's codebase style
+- `useStlAlgorithm` — raw loops are fine for readability
+
 ## Architecture
 
 ### Verification Pipeline
@@ -116,6 +141,7 @@ The `irep2` layer defines 170+ expression types and 20+ type constructors. Expre
 
 ## Commit Convention
 
+- **All Solidity-related commits must use the `[Solidity]` prefix** in the commit message subject line, e.g. `[Solidity] fix: tuple destructuring position misalignment`. This matches the ESBMC upstream convention where each frontend prefixes with its language tag (e.g. `[c++]`, `[python]`).
 - Never use `Co-Authored-By: Claude` or any AI self-attribution in commit messages
 - Use the tag `Assisted-by: Claude-Opus4.6` at the end of commit messages (configured via `~/.claude/settings.json` attribution)
 - No AI-generated PR descriptions attribution either

@@ -146,17 +146,6 @@ bool solidity_convertert::get_func_decl_ref(
     decl["nodeType"] == "EventDefinition" ||
     decl["nodeType"] == "ErrorDefinition");
 
-  // find base contract name (empty for free functions)
-  bool is_free_function = decl.contains("kind") &&
-                          decl["kind"].get<std::string>() == "freeFunction";
-  std::string cname;
-  if (!is_free_function)
-  {
-    const auto contract_def = find_parent_contract(src_ast_json, decl);
-    assert(contract_def.contains("name"));
-    cname = contract_def["name"].get<std::string>();
-  }
-
   std::string name, id;
   get_function_definition_name(decl, name, id);
 
