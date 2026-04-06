@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.solast
---sol contract.sol --contract OwnedToken --no-standard-checks --unwind 3 --no-unwinding-assertions --function test_address_cast
+--sol contract.sol --contract OwnedToken --no-standard-checks --unwind 3 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$

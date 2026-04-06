@@ -1258,16 +1258,29 @@ void solidity_convertert::convert_type_expr(
       src_expr = member_exprt(src_expr, comp_name, t);
     }
     else if (
-      (SolidityGrammar::is_address_type(src_sol_type)) &&
+      (SolidityGrammar::is_address_type(src_sol_type) ||
+       (src_sol_type == SolidityGrammar::SolType::UNSET &&
+        src_type.is_unsignedbv())) &&
       dest_sol_type == SolidityGrammar::SolType::CONTRACT)
     {
       // E.g. for `Derive x = Derive(_addr)`:
       // => Derive* x = &_ESBMC_Obeject_Derive;
       // because in trusted mode, the address has been limited to the set of _ESBMC_Object
+      // Save the original address before overwriting src_expr
+      exprt original_addr = src_expr;
 
       exprt c_ins;
       std::string _cname = dest_type.get("#sol_contract").as_string();
       get_static_contract_instance_ref(_cname, c_ins);
+
+      // Propagate the cast address into the singleton's $address member
+      // so that address(ContractType(addr)) == addr holds.
+      member_exprt addr_member(c_ins, "$address", addr_t);
+      solidity_gen_typecast(ns, original_addr, addr_t);
+      exprt assign_addr = side_effect_exprt("assign", addr_t);
+      assign_addr.copy_to_operands(addr_member, original_addr);
+      convert_expression_to_code(assign_addr);
+      move_to_front_block(assign_addr);
 
       // type conversion
       src_expr = address_of_exprt(c_ins);
