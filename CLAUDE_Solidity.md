@@ -281,20 +281,25 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 - **Limitation**: concrete hash values are not computed; `assert(keccak256(0) == 0xc5d2...)` is not provable
 - **Limitation**: `abi.decode` is nondet — decoded values are unconstrained; `encode(x) → decode → y` does not guarantee `y == x`
 
-#### B. Multi-Dimensional Arrays — Experimental
+#### B. Multi-Dimensional Arrays — Partially Supported (2026-04-07)
 
-Only 1D static and 1D dynamic arrays are fully supported. Multi-dimensional arrays are marked experimental:
+1D static and 1D dynamic arrays are fully supported. 2D dynamic arrays (`T[][]`) now work after fixing the `NestedArrayTypeName` handler:
 
 | Pattern | Status | Issue |
 |---------|--------|-------|
 | `uint[N]` | ✓ Works | — |
 | `uint[]` | ✓ Works | push/pop/length supported |
-| `uint[N][]` | ⚠ Experimental | `solidity_grammar.cpp:239` logs "Experimental support" |
+| `uint[N][]` | ✓ Works | `solidity_grammar.cpp:239` logs "Experimental support" |
+| `uint[][]` | ✓ Works (2026-04-07) | Declaration, push, indexing, length, storage ref passing |
 | `uint[][N]` | ✗ Not detected | Grammar only checks `t_array$_t_array$` prefix |
 | `uint[N][M]` | ✗ Broken | `get_array_size()` regex captures only one dimension |
 | `uint[][][]` (3D+) | ✗ Broken | Type conversion recurses only one level via `baseType` |
 
-Root causes: `make_array_elementary_type()` has comment `"current implement does not consider Multi-Dimensional Arrays"` (`solidity_convert_util.cpp:387`); array size extraction regex `.*\\[([0-9]+)\\]` captures only one dimension (`solidity_convert_util.cpp:430`).
+**Fix (2026-04-07):** `NestedArrayTypeName` in `solidity_convert_type.cpp` had two bugs:
+1. Recursive call to `get_type_description` passed `decl["typeName"]` as `decl`, but the inner handler expects `decl["typeName"]` to exist — fixed by wrapping `baseType` in a synthetic `decl`
+2. Expression-context calls (no `decl` available) crashed — added string-based extraction with `rfind("_$dyn")` to find the outer array's suffix
+
+Root causes of remaining gaps: `make_array_elementary_type()` has comment `"current implement does not consider Multi-Dimensional Arrays"` (`solidity_convert_util.cpp:387`); array size extraction regex `.*\\[([0-9]+)\\]` captures only one dimension (`solidity_convert_util.cpp:430`).
 
 #### C. Data Location Semantics — Partially Implemented
 
@@ -460,7 +465,9 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | **`constant`/`immutable`** | Partial | `constant` works; `immutable` may not enforce set-once |
 | **Named return parameters** | ✅ Fixed (2026-04-05) | Single named return: DECL + zero-init + implicit return. Tuple named returns still use existing tuple machinery. |
 | **Function overloading** | Partial | Same-name different-param functions may misresolve in `find_decl_ref` |
+| **receive/fallback** | ✓ Works | `receive() external payable` and `fallback() external [payable]` fully supported; tests: `receive_1/2`, `fallback_1/2` |
 | **Fallback with params** | Partial | Basic fallback exists; `fallback(bytes calldata) returns (bytes memory)` params ignored |
+| **Custom storage layout** | ✓ Works (2026-04-07) | `contract C layout at <expr>` (Solidity 0.8.29+) — AST parses without error; ESBMC ignores storage slots (models state vars as struct members); tests: `layout_1/2` |
 | **Array slices** | Not supported | `x[start:end]` on calldata arrays not handled |
 | **`abi.decode()`** | KNOWNBUG | Nondet model exists in `solidity_abi.c` but converter cannot parse `(uint256)` type tuple argument (`ElementaryTypeNameExpression` unsupported) |
 | **`abi.encodeCall()`** | KNOWNBUG | Identity model exists in `solidity_abi.c` but converter crashes on interface/function pointer syntax in AST |
@@ -498,7 +505,7 @@ These are bugs or unsound abstractions in features we claim to support:
 
 | # | Task | Effort | Why |
 |---|------|--------|-----|
-| 10 | **Multi-dimensional arrays** | Hard (~500 lines) | Recursive type/size extraction needed |
+| 10 | **Multi-dimensional arrays** | Partial (2026-04-07): `T[][]` works (declaration, push, indexing, storage ref); `T[N][M]` and 3D+ still broken | Recursive type/size extraction needed for remaining cases |
 | 11 | ~~**Nested tuple destructuring**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
 | 12 | **User-defined value types** | Moderate (~200 lines) | Increasingly common in modern Solidity |
 | 13 | **`immutable` set-once enforcement** | Easy (~80 lines) | |
@@ -637,9 +644,9 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 **Note:** Both `ENABLE_SOLIDITY_FRONTEND` and `ENABLE_REGRESSION` must be ON. The default build (`./scripts/build.sh`) sets `ENABLE_REGRESSION=OFF`, so regression tests won't appear in `ctest -N` unless explicitly enabled.
 
-### Test Baseline (2026-04-04)
+### Test Baseline (2026-04-07)
 
-**417 total tests** (2026-04-04): 414 pass, 2 timeout (bytes_17, import_15), 1 KNOWNBUG crash (mulmod_overflow_3). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**464 total tests** (2026-04-07): 464 pass, 0 failed, 0 timeout (43s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
