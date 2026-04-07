@@ -476,7 +476,7 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | **Function types** | Not supported | `function(uint) returns (bool)` as first-class values |
 | **`using for` + custom operators** | Not supported | Operator dispatch table per type |
 | **Transient storage (EIP-1153)** | Not supported | New data location model |
-| **User-defined value types** | Not supported | `type C is V` with `.wrap()`/`.unwrap()` |
+| **User-defined value types** | ✓ Basic (2026-04-07) | `type C is V` with `.wrap()`/`.unwrap()` works; `using { f as op }` custom operators NOT supported; tests: `udv_type_1/2` |
 
 ### Roadmap: Priority for Future Work
 
@@ -507,7 +507,7 @@ These are bugs or unsound abstractions in features we claim to support:
 |---|------|--------|-----|
 | 10 | **Multi-dimensional arrays** | Partial (2026-04-07): `T[][]` works (declaration, push, indexing, storage ref); `T[N][M]` and 3D+ still broken | Recursive type/size extraction needed for remaining cases |
 | 11 | ~~**Nested tuple destructuring**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
-| 12 | **User-defined value types** | Moderate (~200 lines) | Increasingly common in modern Solidity |
+| 12 | **User-defined value types** | Partial (2026-04-07): `type C is V` + `wrap`/`unwrap` work; custom operators (`using { f as op }`) not supported | Increasingly common in modern Solidity |
 | 13 | **`immutable` set-once enforcement** | Easy (~80 lines) | |
 | 14 | ~~**`bytes.concat()` / `string.concat()`**~~ | ✅ Done | Variadic support with nested binary calls (2026-04-04) |
 | 15 | ~~**`type(C).runtimeCode` / `type(I).interfaceId`**~~ | ✅ Done | Nondet over-approximation (2026-04-04) |
@@ -646,7 +646,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-04-07)
 
-**464 total tests** (2026-04-07): 464 pass, 0 failed, 0 timeout (43s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**472 total tests** (2026-04-07): 472 pass, 0 failed, 0 timeout (42s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 

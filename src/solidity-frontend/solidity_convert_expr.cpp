@@ -1251,7 +1251,8 @@ bool solidity_convertert::get_call_expr(
       {
         // assume it's a wrap/unwrap
         exprt args;
-        if (get_expr(expr["arguments"][0], args))
+        const nlohmann::json &arg0 = expr["arguments"][0];
+        if (get_expr(arg0, arg0["typeDescriptions"], args))
           return true;
         new_expr.op0() = args;
         return false;
@@ -1259,6 +1260,10 @@ bool solidity_convertert::get_call_expr(
 
       if (new_expr.id() == "sideeffect")
       {
+        // mapping(K=>V)[] push/pop: already a complete assign expression
+        if (new_expr.statement() == "assign")
+          return false;
+
         std::string func_id = new_expr.op0().identifier().as_string();
         if (func_id == "c:@F@_ESBMC_array_push")
         {
@@ -2062,7 +2067,19 @@ bool solidity_convertert::get_index_access_expr(
       return false;
     }
 
-    new_expr = index_exprt(array, pos, t);
+    // For mapping arrays (mapping(K=>V)[]), use the array's declared subtype
+    // which has fully populated mapping subtypes, rather than `t` which lacks
+    // them.  This ensures the result carries the inner mapping's element type
+    // so that subsequent m[k] indexing works correctly.
+    if (
+      array.type().is_array() &&
+      array.type().get_bool("#sol_mapping_array") &&
+      array.type().has_subtype())
+    {
+      new_expr = index_exprt(array, pos, array.type().subtype());
+    }
+    else
+      new_expr = index_exprt(array, pos, t);
 
   return false;
 }
