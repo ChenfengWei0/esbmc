@@ -786,6 +786,9 @@ protected:
     structureTypingMap;
   // virtual-override
   std::unordered_map<std::string, std::unordered_map<int, int>> overrideMap;
+  // Storage reference aliases: maps a local storage variable's AST id
+  // to the AST id of its source (e.g. secondWrapper → wrapper).
+  std::unordered_map<int, int> storage_ref_aliases;
 
   // contract name list
   std::unordered_map<int, std::string> contractNamesMap;

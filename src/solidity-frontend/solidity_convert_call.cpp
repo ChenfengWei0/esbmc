@@ -137,7 +137,7 @@ bool solidity_convertert::get_library_function_call(
   return false;
 }
 
-/** 
+/**
     * call to a non-library function:
     *   this.func(); // func(&this)
     * @param decl_ref: the function declaration node

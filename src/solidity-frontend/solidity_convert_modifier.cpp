@@ -275,6 +275,54 @@ bool solidity_convertert::get_function_definition(
     }
   }
 
+  // For library functions with storage parameters, append copy-out
+  // assignments at the end of the body.  Each storage parameter value
+  // is written to a global bridge variable so that the caller can read
+  // the modified value after the function returns.
+  if (
+    is_event_err_lib && ast_node.contains("parameters") &&
+    ast_node["parameters"].contains("parameters"))
+  {
+    for (const auto &p : ast_node["parameters"]["parameters"])
+    {
+      if (
+        !p.contains("storageLocation") || p["storageLocation"] != "storage")
+        continue;
+      std::string p_name = p["name"].get<std::string>();
+      std::string p_sym_id = "sol:@C@" + c_name + "@F@" + name + "@" +
+                             p_name + "#" +
+                             std::to_string(p["id"].get<int>());
+      std::string out_id = p_sym_id + "$out";
+      std::string out_name = p_name + "$out";
+
+      const symbolt *param_sym = context.find_symbol(p_sym_id);
+      if (!param_sym)
+        continue;
+
+      // Create the global bridge symbol if it doesn't exist yet
+      if (context.find_symbol(out_id) == nullptr)
+      {
+        symbolt out_sym;
+        get_default_symbol(
+          out_sym, debug_modulename, param_sym->type, out_name, out_id,
+          location_begin);
+        out_sym.static_lifetime = true;
+        out_sym.lvalue = true;
+        out_sym.value = gen_zero(
+          get_complete_type(param_sym->type, ns), true);
+        move_symbol_to_context(out_sym);
+      }
+
+      // Append: out_sym = param at end of function body
+      code_assignt copy_out(
+        symbol_expr(*context.find_symbol(out_id)),
+        symbol_expr(*param_sym));
+      if (body_exprt.operands().empty())
+        body_exprt = code_blockt();
+      body_exprt.copy_to_operands(copy_out);
+    }
+  }
+
   added_symbol.value = body_exprt;
 
   // 13. Restore current_functionDecl

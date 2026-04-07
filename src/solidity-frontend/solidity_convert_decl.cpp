@@ -236,6 +236,24 @@ bool solidity_convertert::get_var_decl(
   bool is_state_var = ast_node["stateVariable"].get<bool>();
   t.set("#sol_state_var", std::to_string(is_state_var));
 
+  // For local storage reference variables (e.g. Wrapper storage ref = param),
+  // register an alias so that uses of 'ref' resolve to the source symbol.
+  if (
+    !is_state_var && ast_node.contains("storageLocation") &&
+    ast_node["storageLocation"] == "storage" &&
+    get_sol_type(t) == SolidityGrammar::SolType::STRUCT &&
+    !initialValue.empty() && initialValue.contains("referencedDeclaration"))
+  {
+    int src_id = initialValue["referencedDeclaration"].get<int>();
+    int this_id = ast_node["id"].get<int>();
+    storage_ref_aliases[this_id] = src_id;
+    log_debug(
+      "solidity",
+      "@@@ storage alias: {} -> {} (local storage ref)",
+      this_id,
+      src_id);
+  }
+
   bool is_inherited = ast_node.contains("is_inherited");
 
   // 2. populate id and name
