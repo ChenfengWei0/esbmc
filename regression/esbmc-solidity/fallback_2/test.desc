@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract FallbackFail --function fallback --unwind 2 --no-unwinding-assertions
+^VERIFICATION FAILED$

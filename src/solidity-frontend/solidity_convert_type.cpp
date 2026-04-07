@@ -169,19 +169,71 @@ bool solidity_convertert::get_type_description(
             * width: 32
             * #cpp_type: signed_int
     */
-    assert(decl["typeName"].contains("baseType"));
-
-    // get base: e.g. int256[4]
     typet base_type;
-    if (get_type_description(
-          decl["typeName"],
-          decl["typeName"]["baseType"]["typeDescriptions"],
-          base_type))
-      return true;
+    if (!decl.empty() && decl.contains("typeName") &&
+        decl["typeName"].contains("baseType"))
+    {
+      // From variable declaration: use AST baseType node directly
+      nlohmann::json inner_decl;
+      inner_decl["typeName"] = decl["typeName"]["baseType"];
+      if (get_type_description(
+            inner_decl,
+            decl["typeName"]["baseType"]["typeDescriptions"],
+            base_type))
+        return true;
 
-    // wrap it:
-    if (get_array_pointer_type(decl, base_type, new_type))
-      return true;
+      if (get_array_pointer_type(decl, base_type, new_type))
+        return true;
+    }
+    else
+    {
+      // From expression context (no decl): extract base type from strings.
+      // e.g. typeIdentifier "t_array$_t_array$_t_uint256_$dyn_storage_$dyn_storage"
+      //      typeString     "uint256[] storage ref[] storage ref"
+      // Base element is "uint256[]" / "t_array$_t_uint256_$dyn_storage"
+      const std::string prefix = "t_array$_";
+      std::string rest = typeIdentifier.substr(prefix.size());
+      // Use rfind to find the LAST _$dyn (the outer array's), not the
+      // inner array's _$dyn.
+      size_t dyn = rest.rfind("_$dyn");
+      std::string base_id = (dyn != std::string::npos)
+                              ? rest.substr(0, dyn)
+                              : rest;
+
+      // Extract base typeString: strip trailing "[]..." from typeString
+      std::string base_ts = typeString;
+      // Remove suffixes like " storage ref" or " memory"
+      auto strip_loc = [](std::string &s) {
+        for (const char *suf :
+             {" storage ref", " storage", " memory", " calldata"})
+        {
+          if (s.size() > strlen(suf) &&
+              s.compare(s.size() - strlen(suf), strlen(suf), suf) == 0)
+          {
+            s.erase(s.size() - strlen(suf));
+            return;
+          }
+        }
+      };
+      strip_loc(base_ts); // "uint256[] storage ref[]" → "uint256[] storage ref"
+                          // might need repeated stripping
+      // Remove the trailing "[]"
+      if (base_ts.size() >= 2 &&
+          base_ts.substr(base_ts.size() - 2) == "[]")
+        base_ts.erase(base_ts.size() - 2);
+      strip_loc(base_ts); // strip again for inner location qualifier
+
+      nlohmann::json base_json;
+      base_json["typeIdentifier"] = base_id;
+      base_json["typeString"] = base_ts;
+      if (get_type_description(base_json, base_type))
+        return true;
+
+      // Determine if outer array is dynamic or fixed
+      // Outer is dynamic if typeIdentifier ends with _$dyn_<location>
+      new_type = gen_pointer_type(base_type);
+      set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+    }
 
     break;
   }
@@ -277,9 +329,24 @@ bool solidity_convertert::get_type_description(
       if (get_type_description(new_json, sub_type))
         return true;
 
-      // 3. make pointer
-      new_type = gen_pointer_type(sub_type);
-      set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+      // 3. For mapping element types, model as 2D infinite array instead of
+      //    pointer.  mapping(K=>V)[] is semantically equivalent to
+      //    mapping(uint => mapping(K=>V)) + a length counter.  The pointer/
+      //    malloc model cannot handle infinite-sized mapping elements.
+      if (get_sol_type(sub_type) == SolidityGrammar::SolType::MAPPING &&
+          sub_type.is_array())
+      {
+        new_type = array_typet();
+        new_type.size(exprt("infinity"));
+        new_type.subtype() = sub_type;
+        new_type.set("#sol_mapping_array", true);
+        set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+      }
+      else
+      {
+        new_type = gen_pointer_type(sub_type);
+        set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+      }
     }
 
     break;
@@ -892,6 +959,23 @@ bool solidity_convertert::get_array_pointer_type(
   const typet &base_type,
   typet &new_type)
 {
+  // For dynamic arrays of mappings, model as 2D infinite array instead of
+  // pointer.  mapping(K=>V)[] is semantically mapping(uint => mapping(K=>V))
+  // + length counter.  The pointer/malloc model cannot handle infinite-sized
+  // mapping elements.
+  if (
+    !decl["typeName"].contains("length") &&
+    get_sol_type(base_type) == SolidityGrammar::SolType::MAPPING &&
+    base_type.is_array())
+  {
+    new_type = array_typet();
+    new_type.size(exprt("infinity"));
+    new_type.subtype() = base_type;
+    new_type.set("#sol_mapping_array", true);
+    set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+    return false;
+  }
+
   new_type = gen_pointer_type(base_type);
   if (decl["typeName"].contains("length"))
   {
