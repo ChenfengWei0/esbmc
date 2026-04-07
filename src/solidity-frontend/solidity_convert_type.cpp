@@ -241,21 +241,31 @@ bool solidity_convertert::get_type_description(
       auto pos = temp.find("[]"); // e.g. "uint256[] memory"
       const std::string new_typeString = temp.substr(0, pos);
 
-      // e.g. "t_array$_t_struct$_Message_$11_storage_$dyn_storage" =>
-      //      "$_t_struct$_Message_$11_storage_$"
+      // Extract element type identifier from array type identifier.
+      // e.g. "t_array$_t_uint256_$dyn_memory_ptr" => "t_uint256"
+      //      "t_array$_t_struct$_Message_$11_storage_$dyn_storage"
+      //        => "t_struct$_Message_$11_storage"
+      //      "t_array$_t_mapping$_t_uint256_$_t_uint256_$_$dyn_storage"
+      //        => "t_mapping$_t_uint256_$_t_uint256_$"
       auto extract = [](const std::string &s) -> std::string {
-        const std::string anchor = "$_t_struct";
-        size_t a = s.find(anchor);
-        if (a == std::string::npos)
+        // strip "t_array$_" prefix
+        const std::string prefix = "t_array$_";
+        if (s.compare(0, prefix.size(), prefix) != 0)
           return "";
-        size_t start = a + 2;
-        size_t dyn = s.rfind("$dyn");
-        if (dyn == std::string::npos || dyn < start)
-          return "";
-        size_t cut = s.rfind("_$", dyn);
-        if (cut == std::string::npos || cut < start)
-          return "";
-        return s.substr(start, cut - start);
+        std::string rest = s.substr(prefix.size());
+        // find "_$dyn" suffix and remove it (dynamic arrays)
+        size_t dyn = rest.find("_$dyn");
+        if (dyn != std::string::npos)
+          return rest.substr(0, dyn);
+        // fixed-size array: find "_$<digits>_" suffix
+        // scan backwards from end for "_$" followed by digits
+        for (size_t i = rest.size(); i >= 2; --i)
+        {
+          if (rest[i - 2] == '_' && rest[i - 1] == '$' && i < rest.size() &&
+              std::isdigit(rest[i]))
+            return rest.substr(0, i - 2);
+        }
+        return "";
       };
       const std::string new_typeIdentifier = extract(typeIdentifier);
       log_debug("solidity", "new_typeIdentifier = {}", new_typeIdentifier);

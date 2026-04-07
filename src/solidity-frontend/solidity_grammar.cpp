@@ -225,7 +225,7 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     {
       return TupleTypeName;
     }
-    else if (typeIdentifier.find("t_mapping$") != std::string::npos)
+    else if (typeIdentifier.compare(0, 10, "t_mapping$") == 0)
     {
       return MappingTypeName;
     }

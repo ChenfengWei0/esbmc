@@ -221,7 +221,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 |----------|----------|
 | **Value types** | `bool`, `uint8`-`uint256`, `int8`-`int256`, `address`/`address payable`, `string`, `bytes1`-`bytes32`, `bytes` (dynamic) |
 | **Composite types** | `struct` (nested, with arrays), `enum`, fixed arrays `T[N]`, dynamic arrays `T[]` (push/pop/length), multi-dimensional arrays |
-| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, and mapping-in-struct — modeled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays |
+| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, and mapping-in-struct — modeled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays. **Limitation:** `mapping(K => V)[]` (dynamic array of mappings) is KNOWNBUG — push/pop requires `sizeof(element)` which is undefined for infinite arrays |
 | **Operators** | All arithmetic (`+`,`-`,`*`,`/`,`%`,`**`), bitwise, comparison, logical, compound assignment (`+=` etc.), prefix/postfix `++`/`--`, ternary `?:`, `delete` |
 | **Control flow** | `if`/`else`, `for`, `while`, `do-while`, `break`, `continue`, `return` (including multi-value via tuples) |
 | **Contract core** | Contract/library/interface definitions, functions (regular/constructor/receive/fallback), free functions, state variables, visibility (`public`/`private`/`internal`/`external`), state mutability (`pure`/`view`/`payable`) |
@@ -296,18 +296,25 @@ Only 1D static and 1D dynamic arrays are fully supported. Multi-dimensional arra
 
 Root causes: `make_array_elementary_type()` has comment `"current implement does not consider Multi-Dimensional Arrays"` (`solidity_convert_util.cpp:387`); array size extraction regex `.*\\[([0-9]+)\\]` captures only one dimension (`solidity_convert_util.cpp:430`).
 
-#### C. Data Location Semantics — Parsed But Not Enforced
+#### C. Data Location Semantics — Partially Implemented
 
-`storage`/`memory`/`calldata` qualifiers are extracted from AST and tagged as `#sol_data_loc` metadata (`solidity_convert_type.cpp:417-422`) but **no semantic enforcement**:
+`storage`/`memory`/`calldata` qualifiers are extracted from AST and tagged as `#sol_data_loc` metadata (`solidity_convert_type.cpp:417-422`).
 
-| Missing Semantics | Impact | Location |
-|-------------------|--------|----------|
+**Storage reference semantics for library functions** — ✅ Implemented (2026-04-07):
+
+Library functions with `storage` struct parameters now correctly modify caller's state variables via a three-part mechanism:
+1. **Bridge variables** (`solidity_convert_modifier.cpp`): at function end, modified parameter values are stored in global `$out` bridge variables
+2. **Copy-back** (`solidity_convert_expr.cpp`): at call site, after the library call returns, the `$out` bridge values are copied back to the caller's state variable
+3. **Alias redirection** (`solidity_convert_decl.cpp`): local `Wrapper storage ref = param` declarations are redirected to the source parameter via `storage_ref_aliases` map
+
+Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.func()`) are supported. Tests: `storage_ref_1` through `storage_ref_4`.
+
+| Remaining Gaps | Impact | Location |
+|----------------|--------|----------|
 | **Memory copy on function call** | Memory params should be deep-copied; currently aliased | TODO at `solidity_convert_call.cpp:98-103` |
-| **Storage reference aliasing** | `Struct storage ref = map[key]` should alias original; treated as value copy | `solidity_convert_type.cpp:329-360` |
 | **Calldata immutability** | Calldata params should be read-only; no enforcement | — |
 | **Copy-on-assign for memory structs/arrays** | `memory` assignment should copy; may alias | — |
-
-This is a **soundness gap**: the verifier may miss bugs caused by unexpected aliasing or fail to detect mutations through storage references.
+| **Storage ref for non-library functions** | Storage params in regular contract functions not yet handled | — |
 
 #### D. Low-Level Call Return Values — bytes Data Partially Supported
 
@@ -352,6 +359,20 @@ The unbound mode's `map_get_raw()` uses a `while(cur)` linked-list traversal (`s
 - Each `map_set_raw` calls `malloc`, creating new symbolic allocation constraints
 
 **Recommendation**: Prefer `--bound` mode for mapping-heavy contracts; the infinite SMT array approach avoids loop unrolling entirely.
+
+#### F.1. Arrays of Mappings (`mapping(K => V)[]`) — KNOWNBUG
+
+Dynamic arrays of mappings crash during BMC because the dynamic array C model (`_ESBMC_array_push` in `solidity_array.c`) uses `malloc(sizeof(element))` + `memcpy`, but `sizeof(mapping)` = `sizeof(infinite_array)` is undefined — `type_byte_size.cpp:121` throws `inf_sized_array_excp`.
+
+**Fixes applied (2026-04-07)** — three crash-prevention fixes allow conversion to succeed:
+1. `solidity_grammar.cpp:228`: `get_type_name_t` used `find("t_mapping$")` which misclassified `t_array$_t_mapping$...` as MappingTypeName; fixed to prefix match `compare(0, 10, "t_mapping$")`
+2. `solidity_convert_type.cpp:246`: `extract` lambda only handled struct element types; generalized to extract any element type from `t_array$_<elem>_$dyn_...` identifiers
+3. `goto_convert.cpp:482`: `rewrite_vla_decl_size` tried to migrate `exprt("infinity")` as a VLA size expression; now skips infinity
+4. `expr_util.cpp:52`: `gen_zero` tried to parse `"infinity"` as a number for element count; now uses `array_of_exprt` for infinite arrays
+
+**Root cause (unfixed):** The dynamic array push/pop model is fundamentally incompatible with mapping elements because you cannot `malloc` an infinite array. Fixing this requires a frontend-level redesign: model `mapping[]` as a bounded pool of pre-allocated mapping state variables, where each `push()` activates the next mapping rather than allocating memory. This aligns with ESBMC's bounded verification (`--unwind N` limits push count).
+
+Test: `clearing_mapping_1` (KNOWNBUG).
 
 #### G. Address / Contract Type Conversion
 
@@ -434,7 +455,7 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | Feature | Status | Detail |
 |---------|--------|--------|
 | ~~**Try/Catch**~~ | ✅ Done (2026-04-05) | Modeled as `if(nondet_bool) { success } else { catch }` with nondet return values; supports multiple catch clauses (Error, Panic, catch-all) |
-| **`using A for B`** | Parsed, skipped | Does not alter operator dispatch (`solidity_convert_decl.cpp:53`) |
+| **`using A for B`** | Partial | Library function dispatch works (including storage ref copy-back); custom operator dispatch not supported |
 | **Bitwise on dynamic bytes** | Static only | Ops limited to `bytesN`, not dynamic `bytes` (`solidity_convert_expr.cpp:2155`) |
 | **`constant`/`immutable`** | Partial | `constant` works; `immutable` may not enforce set-once |
 | **Named return parameters** | ✅ Fixed (2026-04-05) | Single named return: DECL + zero-init + implicit return. Tuple named returns still use existing tuple machinery. |
@@ -471,7 +492,7 @@ These are bugs or unsound abstractions in features we claim to support:
 | 6 | ~~**Try/Catch**~~ | ✅ Done (2026-04-05) | Nondet success/fail branching with multi-clause catch support |
 | 7 | **`abi.decode()`** | Moderate (~200 lines) | Needed for low-level call data inspection |
 | 8 | **Function overloading** | Hard (~400 lines) | Name mangling or overload resolution table |
-| 9 | **Data location semantics** | Very hard (~1000+ lines) | storage ref aliasing, memory copy-on-call; soundness gap |
+| 9 | **Data location semantics** | Partial (2026-04-07): storage ref for library params done; memory copy-on-call, calldata immutability, non-library storage ref remain | soundness gap |
 
 #### Tier 3 — Completeness / Usability
 
