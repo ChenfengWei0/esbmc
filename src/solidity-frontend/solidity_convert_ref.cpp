@@ -59,9 +59,13 @@ bool solidity_convertert::get_var_decl_ref(
   if (get_type_description(decl, decl["typeName"]["typeDescriptions"], type))
     return true;
 
+  bool is_dynarray_state_var =
+    get_sol_type(type) == SolidityGrammar::SolType::DYNARRAY &&
+    decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
   bool is_global_static_mapping =
     (get_sol_type(type) == SolidityGrammar::SolType::MAPPING && type.is_array()) ||
-    type.get_bool("#sol_mapping_array");
+    type.get_bool("#sol_mapping_array") ||
+    is_dynarray_state_var;
 
   if (context.find_symbol(id) != nullptr)
     new_expr = symbol_expr(*context.find_symbol(id));
@@ -479,7 +483,19 @@ bool solidity_convertert::get_sol_builtin_ref(
             assert(len_sym);
             new_expr = symbol_expr(*len_sym);
           }
-          // dynamic array
+          // dynarray state var: return the auxiliary _dynarray_len variable
+          else if (solt == SolidityGrammar::SolType::DYNARRAY &&
+                   base.is_symbol() &&
+                   base.type().get_bool("#sol_dynarray_state"))
+          {
+            assert(base.is_symbol());
+            std::string len_id =
+              base.identifier().as_string() + "_dynarray_len";
+            const symbolt *len_sym = ns.lookup(len_id);
+            assert(len_sym);
+            new_expr = symbol_expr(*len_sym);
+          }
+          // dynamic array (pointer model)
           else if (solt == SolidityGrammar::SolType::DYNARRAY)
           {
             side_effect_expr_function_callt length_expr;
@@ -537,7 +553,6 @@ bool solidity_convertert::get_sol_builtin_ref(
           base_t.get_bool("#sol_mapping_array"))
         {
           // mapping(K=>V)[]: push increments length, pop decrements.
-          // No malloc needed — mappings are pre-existing infinite arrays.
           assert(base.is_symbol());
           std::string len_id =
             base.identifier().as_string() + "_mapping_arr_len";
@@ -565,11 +580,73 @@ bool solidity_convertert::get_sol_builtin_ref(
               gen_binary("-", unsignedbv_typet(256), len_ref, one));
           }
         }
+        else if (
+          solt == SolidityGrammar::SolType::DYNARRAY &&
+          base.is_symbol() &&
+          base.type().get_bool("#sol_dynarray_state"))
+        {
+          // Dynarray state var: write element at len, then increment len
+          assert(base.is_symbol());
+          std::string len_id =
+            base.identifier().as_string() + "_dynarray_len";
+          const symbolt *len_sym = ns.lookup(len_id);
+          assert(len_sym);
+          exprt len_ref = symbol_expr(*len_sym);
+          exprt one = constant_exprt(
+            integer2binary(1, bv_width(unsignedbv_typet(256))),
+            "1",
+            unsignedbv_typet(256));
+          if (name == "push")
+          {
+            // Get the push argument value
+            const nlohmann::json &func =
+              find_last_parent(src_ast_json["nodes"], expr);
+            assert(!func.empty());
+
+            typet elem_type = base_t.subtype();
+
+            // items[len] = value
+            exprt idx_expr = index_exprt(base, len_ref, elem_type);
+            exprt assign_elem = side_effect_exprt("assign", elem_type);
+
+            if (func["arguments"].size() == 0)
+            {
+              // push() with no args: zero value
+              exprt zero_val = gen_zero(elem_type);
+              assign_elem.copy_to_operands(idx_expr, zero_val);
+            }
+            else
+            {
+              exprt val;
+              if (get_expr(
+                    func["arguments"][0], expr["argumentTypes"][0], val))
+                return true;
+              solidity_gen_typecast(ns, val, elem_type);
+              assign_elem.copy_to_operands(idx_expr, val);
+            }
+            convert_expression_to_code(assign_elem);
+            move_to_front_block(assign_elem);
+
+            // len = len + 1
+            new_expr = side_effect_exprt("assign", len_ref.type());
+            new_expr.operands().push_back(len_ref);
+            new_expr.operands().push_back(
+              gen_binary("+", unsignedbv_typet(256), len_ref, one));
+          }
+          else
+          {
+            // pop: len = len - 1
+            new_expr = side_effect_exprt("assign", len_ref.type());
+            new_expr.operands().push_back(len_ref);
+            new_expr.operands().push_back(
+              gen_binary("-", unsignedbv_typet(256), len_ref, one));
+          }
+        }
         else if (solt == SolidityGrammar::SolType::ARRAY ||
             solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
             solt == SolidityGrammar::SolType::DYNARRAY)
         {
-          // Original array push/pop logic
+          // Original array push/pop logic (pointer-based model)
           assert(base_t.has_subtype());
           exprt size_of;
           get_size_of_expr(base_t.subtype(), size_of);

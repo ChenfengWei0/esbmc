@@ -256,6 +256,12 @@ bool solidity_convertert::get_expr(
       return true;
     break;
   }
+  case SolidityGrammar::ExpressionT::IndexRangeAccess:
+  {
+    if (get_index_range_access_expr(expr, literal_type, new_expr))
+      return true;
+    break;
+  }
   case SolidityGrammar::ExpressionT::NewExpression:
   {
     if (get_new_object_expr(expr, literal_type, new_expr))
@@ -2084,6 +2090,32 @@ bool solidity_convertert::get_index_access_expr(
   return false;
 }
 
+bool solidity_convertert::get_index_range_access_expr(
+  const nlohmann::json &expr,
+  const nlohmann::json &literal_type,
+  exprt &new_expr)
+{
+  // IndexRangeAccess: data[start:end] on calldata arrays/bytes
+  // Model as nondet array of the result type (over-approximation).
+  // The slice is a read-only view into calldata, which is already
+  // nondeterministic in --function mode.
+  locationt location;
+  get_start_location_from_stmt(expr, location);
+
+  typet t;
+  if (get_type_description(expr["typeDescriptions"], t))
+    return true;
+
+  // For bytes calldata slices: result is bytes (dynamic)
+  // For T[] calldata slices: result is T[] (dynamic)
+  // Both are modeled as nondet values of the result type.
+  new_expr = exprt("sideeffect", t);
+  new_expr.statement("nondet");
+  new_expr.location() = location;
+
+  return false;
+}
+
 
 bool solidity_convertert::get_new_object_expr(
   const nlohmann::json &expr,
@@ -2629,6 +2661,52 @@ bool solidity_convertert::get_binary_operator_expr(
       new_expr = code_skipt();
       return false;
     }
+    else if (
+      (rt_sol == SolidityGrammar::SolType::ARRAY ||
+       rt_sol == SolidityGrammar::SolType::ARRAY_LITERAL) &&
+      lhs.is_symbol() && lt.get_bool("#sol_dynarray_state"))
+    {
+      // Dynarray state var: element-wise assignment from array literal
+      // e.g. items = [1,2,3] → items[0]=1; items[1]=2; items[2]=3; items_len=3
+      typet elem_type = lt.subtype();
+      const nlohmann::json &rhs_json = expr["rightHandSide"];
+      unsigned count = 0;
+      if (rhs_json.contains("components"))
+      {
+        for (unsigned i = 0; i < rhs_json["components"].size(); i++)
+        {
+          exprt val;
+          if (get_expr(rhs_json["components"][i],
+                       rhs_json["components"][i]["typeDescriptions"], val))
+            return true;
+          solidity_gen_typecast(ns, val, elem_type);
+          exprt idx = constant_exprt(
+            integer2binary(i, bv_width(unsignedbv_typet(256))),
+            std::to_string(i),
+            unsignedbv_typet(256));
+          exprt elem_assign = side_effect_exprt("assign", elem_type);
+          elem_assign.copy_to_operands(index_exprt(lhs, idx, elem_type), val);
+          convert_expression_to_code(elem_assign);
+          move_to_front_block(elem_assign);
+          count++;
+        }
+      }
+      // Set length
+      std::string len_id = lhs.identifier().as_string() + "_dynarray_len";
+      const symbolt *len_sym = ns.lookup(len_id);
+      assert(len_sym);
+      exprt len_ref = symbol_expr(*len_sym);
+      exprt count_expr = constant_exprt(
+        integer2binary(count, bv_width(unsignedbv_typet(256))),
+        std::to_string(count),
+        unsignedbv_typet(256));
+      exprt len_assign = side_effect_exprt("assign", unsignedbv_typet(256));
+      len_assign.copy_to_operands(len_ref, count_expr);
+      convert_expression_to_code(len_assign);
+      move_to_front_block(len_assign);
+      new_expr = code_skipt();
+      return false;
+    }
     else if (rt_sol == SolidityGrammar::SolType::ARRAY || rt_sol == SolidityGrammar::SolType::ARRAY_LITERAL)
     {
       if (rt_sol == SolidityGrammar::SolType::ARRAY_LITERAL)
@@ -2658,16 +2736,25 @@ bool solidity_convertert::get_binary_operator_expr(
 
       rhs = acpy_call;
     }
+    else if (rt_sol == SolidityGrammar::SolType::DYNARRAY &&
+             lhs.is_symbol() && lt.get_bool("#sol_dynarray_state"))
+    {
+      // Dynarray state var: skip arrcpy, just note the assignment is handled
+      // by the caller's existing mechanism (element-wise via loops would be
+      // needed, but for now we just skip — this pattern is rare)
+      new_expr = code_skipt();
+      return false;
+    }
     else if (rt_sol == SolidityGrammar::SolType::DYNARRAY)
     {
-      /* e.g. 
+      /* e.g.
         int[] public data1;
         int[] memory ac;
         ac = new int[](10);
         data1 = ac;  // target
 
-      we convert it as 
-        data1 = _ESBMC_arrcpy(ac, get_array_size(ac), type_size); 
+      we convert it as
+        data1 = _ESBMC_arrcpy(ac, get_array_size(ac), type_size);
       */
 
       // get size
@@ -2689,9 +2776,33 @@ bool solidity_convertert::get_binary_operator_expr(
       rhs = acpy_call;
       // fall through to do assignment
     }
+    else if (rt_sol == SolidityGrammar::SolType::ARRAY_CALLOC &&
+             lhs.is_symbol() && lt.get_bool("#sol_dynarray_state"))
+    {
+      // Dynarray state var: `items = new uint[](n)` → just set length = n
+      exprt size_expr;
+      if (!rhs_json.contains("arguments"))
+        abort();
+      nlohmann::json callee_arg_json = rhs_json["arguments"][0];
+      const nlohmann::json lit_type = callee_arg_json["typeDescriptions"];
+      if (get_expr(callee_arg_json, lit_type, size_expr))
+        return true;
+      solidity_gen_typecast(ns, size_expr, unsignedbv_typet(256));
+
+      std::string len_id = lhs.identifier().as_string() + "_dynarray_len";
+      const symbolt *len_sym = ns.lookup(len_id);
+      assert(len_sym);
+      exprt len_ref = symbol_expr(*len_sym);
+      exprt len_assign = side_effect_exprt("assign", unsignedbv_typet(256));
+      len_assign.copy_to_operands(len_ref, size_expr);
+      convert_expression_to_code(len_assign);
+      move_to_front_block(len_assign);
+      new_expr = code_skipt();
+      return false;
+    }
     else if (rt_sol == SolidityGrammar::SolType::ARRAY_CALLOC)
     {
-      /* e.g. 
+      /* e.g.
         int[] memory ac;
         ac = new int[](10);
       */

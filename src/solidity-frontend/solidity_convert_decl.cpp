@@ -197,6 +197,12 @@ bool solidity_convertert::get_var_decl(
   bool is_mapping_array = t.get_bool("#sol_mapping_array");
   bool is_new_expr = should_treat_as_new(current_contractName);
   bool is_byte_static = is_bytesN_type(t);
+  // Detect state-var dynamic arrays: model as infinite SMT array + length var
+  bool is_state_var_check = ast_node.contains("stateVariable") &&
+                            ast_node["stateVariable"].get<bool>();
+  bool is_dynarray_state =
+    get_sol_type(t) == SolidityGrammar::SolType::DYNARRAY &&
+    is_state_var_check && !is_new_expr;
 
   // for mapping: populate the element type (recursively for nested mappings)
   if (is_mapping && !is_new_expr)
@@ -252,6 +258,16 @@ bool solidity_convertert::get_var_decl(
       else
         break;
     }
+  }
+
+  // For dynarray state vars: change type from pointer to infinite array
+  if (is_dynarray_state)
+  {
+    assert(t.is_pointer());
+    typet elem_type = t.subtype();
+    t = array_typet(elem_type, exprt("infinity"));
+    set_sol_type(t, SolidityGrammar::SolType::DYNARRAY);
+    t.set("#sol_dynarray_state", true);
   }
 
   // set const qualifier
@@ -325,6 +341,7 @@ bool solidity_convertert::get_var_decl(
   symbol.static_lifetime = current_contractName.empty() ||
                            (is_mapping && !is_new_expr) ||
                            (is_mapping_array && !is_new_expr) ||
+                           is_dynarray_state ||
                            (is_library && is_constant);
   symbol.file_local = true;
   symbol.is_extern = false;
@@ -356,6 +373,28 @@ bool solidity_convertert::get_var_decl(
   {
     std::string len_name = name + "_mapping_arr_len";
     std::string len_id = id + "_mapping_arr_len";
+    symbolt len_sym;
+    get_default_symbol(
+      len_sym,
+      debug_modulename,
+      unsignedbv_typet(256),
+      len_name,
+      len_id,
+      location_begin);
+    len_sym.lvalue = true;
+    len_sym.static_lifetime = true;
+    len_sym.file_local = true;
+    len_sym.is_extern = false;
+    len_sym.value = gen_zero(unsignedbv_typet(256));
+    len_sym.value.zero_initializer(true);
+    move_symbol_to_context(len_sym);
+  }
+
+  // 6c. for dynarray state vars, create auxiliary _dynarray_len variable
+  if (is_dynarray_state)
+  {
+    std::string len_name = name + "_dynarray_len";
+    std::string len_id = id + "_dynarray_len";
     symbolt len_sym;
     get_default_symbol(
       len_sym,
@@ -459,6 +498,34 @@ bool solidity_convertert::get_var_decl(
       added_symbol.value = calc_call;
       decl.operands().push_back(calc_call);
     }
+  }
+  else if (is_dynarray_state && set_init)
+  {
+    // Dynarray state var with init: just set the length variable.
+    // Elements are zero by default in the infinite SMT array.
+    // For `new uint[](n)`: set length = n
+    // For literal init like `= [1,2,3]`: handled in assignment expression
+    if (init_value.contains("nodeType") &&
+        init_value["nodeType"] == "FunctionCall" &&
+        init_value.contains("arguments") &&
+        init_value["arguments"].size() > 0)
+    {
+      nlohmann::json callee_arg_json = init_value["arguments"][0];
+      exprt size_expr;
+      const nlohmann::json lit_type = callee_arg_json["typeDescriptions"];
+      if (get_expr(callee_arg_json, lit_type, size_expr))
+        return true;
+      solidity_gen_typecast(ns, size_expr, unsignedbv_typet(256));
+
+      std::string len_id = id + "_dynarray_len";
+      const symbolt *len_sym = context.find_symbol(len_id);
+      assert(len_sym);
+      symbolt &len_mut = const_cast<symbolt &>(*len_sym);
+      len_mut.value = size_expr;
+    }
+    // Zero-initialize the infinite array so elements read as 0
+    added_symbol.value = gen_zero(get_complete_type(t, ns), true);
+    added_symbol.value.zero_initializer(true);
   }
   else if (t_sol_type == SolidityGrammar::SolType::DYNARRAY && set_init)
   {
@@ -650,7 +717,8 @@ bool solidity_convertert::get_var_decl(
   if (
     is_state_var && !is_inherited && !(is_contract && !has_init) &&
     !(is_mapping && !is_new_expr) &&
-    !(is_mapping_array && !is_new_expr))
+    !(is_mapping_array && !is_new_expr) &&
+    !is_dynarray_state)
     move_to_initializer(decl);
 
   decl.location() = location_begin;
@@ -931,6 +999,10 @@ bool solidity_convertert::get_struct_class_fields(
 
   // mapping(K=>V)[] is also modeled as a 2D infinite array (not a pointer)
   if (comp.type().get_bool("#sol_mapping_array"))
+    return false;
+
+  // dynarray state vars are modeled as global infinite arrays (not struct members)
+  if (comp.type().get_bool("#sol_dynarray_state"))
     return false;
 
   comp.id("component");

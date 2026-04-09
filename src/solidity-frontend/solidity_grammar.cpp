@@ -917,6 +917,10 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
   {
     return IndexAccess;
   }
+  else if (expr["nodeType"] == "IndexRangeAccess")
+  {
+    return IndexRangeAccess;
+  }
 
   // fall-through
   log_error(

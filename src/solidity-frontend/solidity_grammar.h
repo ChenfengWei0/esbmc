@@ -379,6 +379,9 @@ enum ExpressionT
   // Solidity does NOT provide such rule
   IndexAccess,
 
+  // Array slice access [start:end] on calldata arrays
+  IndexRangeAccess,
+
   // Create a temporary object by keywords 'new'
   // equivalent to clang::Stmt::CXXTemporaryObjectExprClass
   // i.e. Base x = new Base(args);

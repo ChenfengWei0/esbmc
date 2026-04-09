@@ -323,6 +323,10 @@ protected:
     const nlohmann::json &expr,
     const nlohmann::json &literal_type,
     exprt &new_expr);
+  bool get_index_range_access_expr(
+    const nlohmann::json &expr,
+    const nlohmann::json &literal_type,
+    exprt &new_expr);
   bool get_new_object_expr(
     const nlohmann::json &expr,
     const nlohmann::json &literal_type,
