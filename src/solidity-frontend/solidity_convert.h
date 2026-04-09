@@ -688,6 +688,8 @@ protected:
   bool get_call_value_definition(const std::string &cname, exprt &new_expr);
   bool get_transfer_definition(const std::string &cname, exprt &new_expr);
   bool get_send_definition(const std::string &cname, exprt &new_expr);
+  bool get_staticcall_definition(const std::string &cname, exprt &new_expr);
+  bool get_delegatecall_definition(const std::string &cname, exprt &new_expr);
   bool model_transaction(
     const nlohmann::json &expr,
     const exprt &this_expr,

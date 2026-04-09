@@ -60,7 +60,8 @@ bool solidity_convertert::get_var_decl_ref(
     return true;
 
   bool is_global_static_mapping =
-    get_sol_type(type) == SolidityGrammar::SolType::MAPPING && type.is_array();
+    (get_sol_type(type) == SolidityGrammar::SolType::MAPPING && type.is_array()) ||
+    type.get_bool("#sol_mapping_array");
 
   if (context.find_symbol(id) != nullptr)
     new_expr = symbol_expr(*context.find_symbol(id));
@@ -467,8 +468,19 @@ bool solidity_convertert::get_sol_builtin_ref(
             solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
             solt == SolidityGrammar::SolType::DYNARRAY)
         {
+          // mapping array: return the auxiliary _length variable
+          if (solt == SolidityGrammar::SolType::DYNARRAY &&
+              base_t.get_bool("#sol_mapping_array"))
+          {
+            assert(base.is_symbol());
+            std::string len_id =
+              base.identifier().as_string() + "_mapping_arr_len";
+            const symbolt *len_sym = ns.lookup(len_id);
+            assert(len_sym);
+            new_expr = symbol_expr(*len_sym);
+          }
           // dynamic array
-          if (solt == SolidityGrammar::SolType::DYNARRAY)
+          else if (solt == SolidityGrammar::SolType::DYNARRAY)
           {
             side_effect_expr_function_callt length_expr;
             get_library_function_call_no_args(
@@ -520,7 +532,40 @@ bool solidity_convertert::get_sol_builtin_ref(
         locationt l;
         get_location_from_node(expr, l);
 
-        if (solt == SolidityGrammar::SolType::ARRAY ||
+        if (
+          solt == SolidityGrammar::SolType::DYNARRAY &&
+          base_t.get_bool("#sol_mapping_array"))
+        {
+          // mapping(K=>V)[]: push increments length, pop decrements.
+          // No malloc needed — mappings are pre-existing infinite arrays.
+          assert(base.is_symbol());
+          std::string len_id =
+            base.identifier().as_string() + "_mapping_arr_len";
+          const symbolt *len_sym = ns.lookup(len_id);
+          assert(len_sym);
+          exprt len_ref = symbol_expr(*len_sym);
+          exprt one = constant_exprt(
+            integer2binary(1, bv_width(unsignedbv_typet(256))),
+            "1",
+            unsignedbv_typet(256));
+          if (name == "push")
+          {
+            // length++
+            new_expr = side_effect_exprt("assign", len_ref.type());
+            new_expr.operands().push_back(len_ref);
+            new_expr.operands().push_back(
+              gen_binary("+", unsignedbv_typet(256), len_ref, one));
+          }
+          else
+          {
+            // length--
+            new_expr = side_effect_exprt("assign", len_ref.type());
+            new_expr.operands().push_back(len_ref);
+            new_expr.operands().push_back(
+              gen_binary("-", unsignedbv_typet(256), len_ref, one));
+          }
+        }
+        else if (solt == SolidityGrammar::SolType::ARRAY ||
             solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
             solt == SolidityGrammar::SolType::DYNARRAY)
         {

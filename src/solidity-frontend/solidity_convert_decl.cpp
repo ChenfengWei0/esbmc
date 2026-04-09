@@ -194,6 +194,7 @@ bool solidity_convertert::get_var_decl(
   bool is_contract =
     get_sol_type(t) == SolidityGrammar::SolType::CONTRACT ? true : false;
   bool is_mapping = get_sol_type(t) == SolidityGrammar::SolType::MAPPING ? true : false;
+  bool is_mapping_array = t.get_bool("#sol_mapping_array");
   bool is_new_expr = should_treat_as_new(current_contractName);
   bool is_byte_static = is_bytesN_type(t);
 
@@ -215,6 +216,35 @@ bool solidity_convertert::get_var_decl(
       // If inner value is also a mapping, continue recursion
       if (get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
           val_t.is_array())
+      {
+        cur_type = &cur_type->subtype();
+        cur_node = &val_json;
+      }
+      else
+        break;
+    }
+  }
+
+  // for mapping arrays: populate the inner mapping's subtype chain
+  // mapping(K=>V)[] is modeled as array[inf] of (array[inf] of V)
+  if (is_mapping_array && !is_new_expr)
+  {
+    assert(t.is_array() && t.subtype().is_array());
+    // The AST has typeName.baseType pointing to the mapping
+    const nlohmann::json &map_node = ast_node["typeName"]["baseType"];
+    typet *cur_type = &t.subtype();
+    const nlohmann::json *cur_node = &map_node;
+    while (true)
+    {
+      const auto &val_json = (*cur_node)["valueType"];
+      typet val_t;
+      if (get_type_description(val_json["typeDescriptions"], val_t))
+        return true;
+      cur_type->subtype() = val_t;
+
+      if (
+        get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
+        val_t.is_array())
       {
         cur_type = &cur_type->subtype();
         cur_node = &val_json;
@@ -294,6 +324,7 @@ bool solidity_convertert::get_var_decl(
   // special case for mapping, even if it's inside a contract
   symbol.static_lifetime = current_contractName.empty() ||
                            (is_mapping && !is_new_expr) ||
+                           (is_mapping_array && !is_new_expr) ||
                            (is_library && is_constant);
   symbol.file_local = true;
   symbol.is_extern = false;
@@ -319,6 +350,28 @@ bool solidity_convertert::get_var_decl(
   // just like clang-c-frontend, we have to add the symbol before converting the initial assignment
   symbolt &added_symbol = *move_symbol_to_context(symbol);
   code_declt decl(symbol_expr(added_symbol));
+
+  // 6b. for mapping arrays, create auxiliary _length variable
+  if (is_mapping_array && !is_new_expr)
+  {
+    std::string len_name = name + "_mapping_arr_len";
+    std::string len_id = id + "_mapping_arr_len";
+    symbolt len_sym;
+    get_default_symbol(
+      len_sym,
+      debug_modulename,
+      unsignedbv_typet(256),
+      len_name,
+      len_id,
+      location_begin);
+    len_sym.lvalue = true;
+    len_sym.static_lifetime = true;
+    len_sym.file_local = true;
+    len_sym.is_extern = false;
+    len_sym.value = gen_zero(unsignedbv_typet(256));
+    len_sym.value.zero_initializer(true);
+    move_symbol_to_context(len_sym);
+  }
 
   // 7. populate init value if there is any
   // special handling for array/dynarray
@@ -596,7 +649,8 @@ bool solidity_convertert::get_var_decl(
   // For unintialized contract type, no need to move to the initializer
   if (
     is_state_var && !is_inherited && !(is_contract && !has_init) &&
-    !(is_mapping && !is_new_expr))
+    !(is_mapping && !is_new_expr) &&
+    !(is_mapping_array && !is_new_expr))
     move_to_initializer(decl);
 
   decl.location() = location_begin;
@@ -874,6 +928,10 @@ bool solidity_convertert::get_struct_class_fields(
     // Cannot be struct members due to infinite size (breaks padding/gen_zero).
     return false;
   }
+
+  // mapping(K=>V)[] is also modeled as a 2D infinite array (not a pointer)
+  if (comp.type().get_bool("#sol_mapping_array"))
+    return false;
 
   comp.id("component");
   // TODO: add bitfield

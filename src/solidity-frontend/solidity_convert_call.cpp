@@ -1110,6 +1110,47 @@ bool solidity_convertert::get_low_level_member_accsss(
 
     new_expr = call;
   }
+  else if (mem_name == "staticcall")
+  {
+    // staticcall(this, addr) — read-only call, same dispatch as call#0
+    exprt addr = base;
+    set_sol_type(addr.type(), SolidityGrammar::SolType::ADDRESS);
+
+    std::string func_name = "staticcall";
+    std::string func_id = "sol:@C@" + cname + "@F@$staticcall#0";
+    get_library_function_call_no_args(func_name, func_id, bool_t, loc, call);
+    call.arguments().push_back(this_object);
+    call.arguments().push_back(addr);
+
+    convert_expression_to_code(call);
+    move_to_front_block(call);
+
+    symbolt dump;
+    get_llc_ret_tuple(dump);
+    dump.value.op0() = call;
+    new_expr = symbol_expr(dump);
+  }
+  else if (mem_name == "delegatecall")
+  {
+    // delegatecall(this, addr) — runs in caller's context,
+    // msg.sender and msg.value are preserved
+    exprt addr = base;
+    set_sol_type(addr.type(), SolidityGrammar::SolType::ADDRESS);
+
+    std::string func_name = "delegatecall";
+    std::string func_id = "sol:@C@" + cname + "@F@$delegatecall#0";
+    get_library_function_call_no_args(func_name, func_id, bool_t, loc, call);
+    call.arguments().push_back(this_object);
+    call.arguments().push_back(addr);
+
+    convert_expression_to_code(call);
+    move_to_front_block(call);
+
+    symbolt dump;
+    get_llc_ret_tuple(dump);
+    dump.value.op0() = call;
+    new_expr = symbol_expr(dump);
+  }
   else
   {
     log_error("unsupported low-level call type {}", mem_name);
@@ -2152,6 +2193,264 @@ bool solidity_convertert::get_send_definition(
   added_symbol.value = func_body;
   new_expr = symbol_expr(added_symbol);
 
+  return false;
+}
+
+// add `staticcall(address _addr)` to the contract
+// Semantically identical to call#0: dispatches to target's public functions.
+// The EVM read-only enforcement is not modeled (state writes would revert
+// at runtime but are not checked by ESBMC).
+bool solidity_convertert::get_staticcall_definition(
+  const std::string &cname,
+  exprt &new_expr)
+{
+  std::string call_name = "staticcall";
+  std::string call_id = "sol:@C@" + cname + "@F@$staticcall#0";
+  symbolt s;
+  code_typet t;
+  t.return_type() = bool_t;
+  std::string debug_modulename = get_modulename_from_path(absolute_path);
+  get_default_symbol(s, debug_modulename, t, call_name, call_id, locationt());
+  auto &added_symbol = *move_symbol_to_context(s);
+  get_function_this_pointer_param(
+    cname, call_id, debug_modulename, locationt(), t);
+
+  // param: address _addr;
+  std::string addr_name = "_addr";
+  std::string addr_id = "sol:@C@" + cname + "@F@staticcall@" + addr_name +
+                        "#" + std::to_string(aux_counter++);
+  symbolt addr_s;
+  get_default_symbol(
+    addr_s, debug_modulename, addr_t, addr_name, addr_id, locationt());
+  auto addr_added_symbol = *move_symbol_to_context(addr_s);
+
+  code_typet::argumentt param = code_typet::argumentt();
+  param.type() = addr_t;
+  param.cmt_base_name(addr_name);
+  param.cmt_identifier(addr_id);
+  t.arguments().push_back(param);
+
+  added_symbol.type = t;
+
+  // body: same as call#0
+  code_blockt func_body;
+
+  code_labelt label;
+  label.set_label("__ESBMC_HIDE");
+  label.code() = code_skipt();
+  func_body.move_to_operands(label);
+
+  exprt addr_expr = symbol_expr(addr_added_symbol);
+  exprt msg_sender = symbol_expr(*context.find_symbol("c:@msg_sender"));
+  symbolt this_sym = *context.find_symbol(call_id + "#this");
+  exprt this_expr = symbol_expr(this_sym);
+  exprt this_address = member_exprt(this_expr, "$address", addr_t);
+
+  // uint160_t old_sender = msg_sender;
+  symbolt old_sender;
+  get_default_symbol(
+    old_sender,
+    debug_modulename,
+    addr_t,
+    "old_sender",
+    "sol:@C@" + cname + "@F@old_sender#" + std::to_string(aux_counter++),
+    locationt());
+  symbolt &added_old_sender = *move_symbol_to_context(old_sender);
+  code_declt old_sender_decl(symbol_expr(added_old_sender));
+  added_old_sender.value = msg_sender;
+  old_sender_decl.operands().push_back(msg_sender);
+  func_body.move_to_operands(old_sender_decl);
+
+  for (auto str : contractNamesList)
+  {
+    if (nonContractNamesList.count(str) != 0 && str != cname)
+      continue;
+
+    if (!has_callable_func(str))
+      continue;
+
+    code_blockt then;
+
+    // msg_sender = this.address;
+    exprt assign_sender = side_effect_exprt("assign", addr_t);
+    assign_sender.copy_to_operands(msg_sender, this_address);
+    convert_expression_to_code(assign_sender);
+    then.move_to_operands(assign_sender);
+
+    if (is_reentry_check)
+    {
+      exprt _mutex;
+      get_contract_mutex_expr(cname, this_expr, _mutex);
+      exprt assign_lock = side_effect_exprt("assign", bool_t);
+      assign_lock.copy_to_operands(_mutex, true_exprt());
+      convert_expression_to_code(assign_lock);
+      then.move_to_operands(assign_lock);
+    }
+
+    // _ESBMC_Nondet_Extcall_x();
+    code_function_callt call;
+    if (get_unbound_funccall(str, call))
+      return true;
+    then.move_to_operands(call);
+
+    if (is_reentry_check)
+    {
+      exprt _mutex;
+      get_contract_mutex_expr(cname, this_expr, _mutex);
+      exprt assign_unlock = side_effect_exprt("assign", bool_t);
+      assign_unlock.copy_to_operands(_mutex, false_exprt());
+      convert_expression_to_code(assign_unlock);
+      then.move_to_operands(assign_unlock);
+    }
+
+    // msg_sender = old_sender;
+    exprt assign_sender_restore = side_effect_exprt("assign", addr_t);
+    assign_sender_restore.copy_to_operands(
+      msg_sender, symbol_expr(added_old_sender));
+    convert_expression_to_code(assign_sender_restore);
+    then.move_to_operands(assign_sender_restore);
+
+    // return true;
+    code_returnt ret_true;
+    ret_true.return_value() = true_exprt();
+    then.move_to_operands(ret_true);
+
+    // _addr == _ESBMC_Object_str.$address
+    exprt static_ins;
+    get_static_contract_instance_ref(str, static_ins);
+    exprt mem_addr = member_exprt(static_ins, "$address", addr_t);
+    exprt _equal = exprt("=", bool_t);
+    _equal.operands().push_back(addr_expr);
+    _equal.operands().push_back(mem_addr);
+
+    codet if_expr("ifthenelse");
+    if_expr.copy_to_operands(_equal, then);
+    func_body.move_to_operands(if_expr);
+  }
+
+  code_returnt return_expr;
+  return_expr.return_value() = false_exprt();
+  func_body.move_to_operands(return_expr);
+
+  added_symbol.value = func_body;
+  new_expr = symbol_expr(added_symbol);
+  return false;
+}
+
+// add `delegatecall(address _addr)` to the contract
+// delegatecall runs target code in the CALLER's storage context.
+// msg.sender and msg.value are NOT changed (preserved from the original call).
+// No ether transfer occurs.
+// Note: true storage context switching is not modeled — the target's
+// functions execute against their own storage. This correctly models
+// reentrancy and control flow but not storage layout sharing.
+bool solidity_convertert::get_delegatecall_definition(
+  const std::string &cname,
+  exprt &new_expr)
+{
+  std::string call_name = "delegatecall";
+  std::string call_id = "sol:@C@" + cname + "@F@$delegatecall#0";
+  symbolt s;
+  code_typet t;
+  t.return_type() = bool_t;
+  std::string debug_modulename = get_modulename_from_path(absolute_path);
+  get_default_symbol(s, debug_modulename, t, call_name, call_id, locationt());
+  auto &added_symbol = *move_symbol_to_context(s);
+  get_function_this_pointer_param(
+    cname, call_id, debug_modulename, locationt(), t);
+
+  // param: address _addr;
+  std::string addr_name = "_addr";
+  std::string addr_id = "sol:@C@" + cname + "@F@delegatecall@" + addr_name +
+                        "#" + std::to_string(aux_counter++);
+  symbolt addr_s;
+  get_default_symbol(
+    addr_s, debug_modulename, addr_t, addr_name, addr_id, locationt());
+  auto addr_added_symbol = *move_symbol_to_context(addr_s);
+
+  code_typet::argumentt param = code_typet::argumentt();
+  param.type() = addr_t;
+  param.cmt_base_name(addr_name);
+  param.cmt_identifier(addr_id);
+  t.arguments().push_back(param);
+
+  added_symbol.type = t;
+
+  // body:
+  // Unlike call, delegatecall does NOT change msg.sender or msg.value.
+  // It dispatches to the target contract's functions directly.
+  code_blockt func_body;
+
+  code_labelt label;
+  label.set_label("__ESBMC_HIDE");
+  label.code() = code_skipt();
+  func_body.move_to_operands(label);
+
+  exprt addr_expr = symbol_expr(addr_added_symbol);
+
+  for (auto str : contractNamesList)
+  {
+    if (nonContractNamesList.count(str) != 0 && str != cname)
+      continue;
+
+    if (!has_callable_func(str))
+      continue;
+
+    code_blockt then;
+
+    symbolt this_sym = *context.find_symbol(call_id + "#this");
+    exprt this_expr = symbol_expr(this_sym);
+
+    if (is_reentry_check)
+    {
+      exprt _mutex;
+      get_contract_mutex_expr(cname, this_expr, _mutex);
+      exprt assign_lock = side_effect_exprt("assign", bool_t);
+      assign_lock.copy_to_operands(_mutex, true_exprt());
+      convert_expression_to_code(assign_lock);
+      then.move_to_operands(assign_lock);
+    }
+
+    // _ESBMC_Nondet_Extcall_x();
+    code_function_callt call;
+    if (get_unbound_funccall(str, call))
+      return true;
+    then.move_to_operands(call);
+
+    if (is_reentry_check)
+    {
+      exprt _mutex;
+      get_contract_mutex_expr(cname, this_expr, _mutex);
+      exprt assign_unlock = side_effect_exprt("assign", bool_t);
+      assign_unlock.copy_to_operands(_mutex, false_exprt());
+      convert_expression_to_code(assign_unlock);
+      then.move_to_operands(assign_unlock);
+    }
+
+    // return true;
+    code_returnt ret_true;
+    ret_true.return_value() = true_exprt();
+    then.move_to_operands(ret_true);
+
+    // _addr == _ESBMC_Object_str.$address
+    exprt static_ins;
+    get_static_contract_instance_ref(str, static_ins);
+    exprt mem_addr = member_exprt(static_ins, "$address", addr_t);
+    exprt _equal = exprt("=", bool_t);
+    _equal.operands().push_back(addr_expr);
+    _equal.operands().push_back(mem_addr);
+
+    codet if_expr("ifthenelse");
+    if_expr.copy_to_operands(_equal, then);
+    func_body.move_to_operands(if_expr);
+  }
+
+  code_returnt return_expr;
+  return_expr.return_value() = false_exprt();
+  func_body.move_to_operands(return_expr);
+
+  added_symbol.value = func_body;
+  new_expr = symbol_expr(added_symbol);
   return false;
 }
 

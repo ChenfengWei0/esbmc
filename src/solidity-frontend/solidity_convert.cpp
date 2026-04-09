@@ -1033,6 +1033,16 @@ bool solidity_convertert::populate_low_level_functions(const std::string &cname)
     return true;
   move_builtin_to_contract(cname, new_expr, true);
 
+  // staticcall()
+  if (get_staticcall_definition(cname, new_expr))
+    return true;
+  move_builtin_to_contract(cname, new_expr, true);
+
+  // delegatecall()
+  if (get_delegatecall_definition(cname, new_expr))
+    return true;
+  move_builtin_to_contract(cname, new_expr, true);
+
   return false;
 }
 
