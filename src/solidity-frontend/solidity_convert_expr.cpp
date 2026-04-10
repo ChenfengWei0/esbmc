@@ -548,58 +548,61 @@ bool solidity_convertert::get_expr(
       // this means it is a using for library
       call.arguments().insert(call.arguments().begin(), base);
 
-    // Generate copy-back assignments for storage reference parameters.
-    // After the library call, copy the modified parameter value back to
-    // the original argument to emulate delegatecall/storage reference semantics.
+    // For library calls, copy modified storage-reference parameters back to
+    // the caller's state variable via the global $out bridge created in
+    // solidity_convert_modifier.cpp. The bridge is needed because the
+    // parameter's SSA version is scoped to the function and not visible
+    // after the call returns.
     if (
+      func_ref.contains("id") &&
+      SolidityGrammar::is_sol_library_function(func_ref["id"].get<int>()) &&
       func_ref.contains("parameters") &&
       func_ref["parameters"].contains("parameters"))
     {
       const auto &params = func_ref["parameters"]["parameters"];
-      // Determine the library contract name for constructing param symbol IDs.
-      // Use func_ref["scope"] which points to the containing library/contract.
-      std::string lib_cname;
-      if (func_ref.contains("scope"))
+      bool has_storage_param = false;
+      for (const auto &p : params)
       {
-        const auto &lib_node =
-          find_node_by_id(src_ast_json, func_ref["scope"].get<int>());
-        if (!lib_node.empty() && lib_node.contains("name"))
-          lib_cname = lib_node["name"].get<std::string>();
+        if (p.contains("storageLocation") && p["storageLocation"] == "storage")
+        {
+          has_storage_param = true;
+          break;
+        }
       }
 
-      std::string func_name = func_ref.contains("name")
-                                 ? func_ref["name"].get<std::string>()
-                                 : "";
-
-      for (size_t i = 0; i < params.size() && i < call.arguments().size(); ++i)
+      if (has_storage_param)
       {
-        const auto &p = params[i];
-        if (
-          !p.contains("storageLocation") || p["storageLocation"] != "storage")
-          continue;
+        std::string lib_cname =
+          find_contract_name_for_id(func_ref["id"].get<int>());
+        std::string func_name = func_ref.value("name", std::string());
 
-        // Construct parameter symbol ID:
-        // sol:@C@<lib>@F@<func>@<param_name>#<param_ast_id>
-        std::string p_name = p["name"].get<std::string>();
-        std::string p_id =
-          "sol:@C@" + lib_cname + "@F@" + func_name + "@" + p_name + "#" +
-          std::to_string(p["id"].get<int>());
+        for (size_t i = 0;
+             i < params.size() && i < call.arguments().size();
+             ++i)
+        {
+          const auto &p = params[i];
+          if (
+            !p.contains("storageLocation") ||
+            p["storageLocation"] != "storage")
+            continue;
 
-        // Use the global bridge variable ($out) instead of the parameter
-        // directly, because the parameter's SSA version is scoped to the
-        // function and is not accessible after the call returns.
-        std::string out_id = p_id + "$out";
-        const symbolt *out_sym = context.find_symbol(out_id);
-        if (!out_sym)
-          continue;
+          std::string out_id = get_library_param_id(
+                                 lib_cname,
+                                 func_name,
+                                 p["name"].get<std::string>(),
+                                 p["id"].get<int>()) +
+                               "$out";
+          const symbolt *out_sym = context.find_symbol(out_id);
+          if (!out_sym)
+            continue;
 
-        // Generate: original_arg = out_sym (copy-out via bridge)
-        exprt &arg = call.arguments()[i];
-        if (arg.type() != out_sym->type)
-          continue;
+          exprt &arg = call.arguments()[i];
+          if (arg.type() != out_sym->type)
+            continue;
 
-        code_assignt copyback(arg, symbol_expr(*out_sym));
-        move_to_back_block(copyback);
+          move_to_back_block(
+            code_assignt(arg, symbol_expr(*out_sym)));
+        }
       }
     }
 
@@ -707,9 +710,12 @@ bool solidity_convertert::get_decl_ref_expr(
     {
       // Resolve storage reference aliases: if this identifier refers to a
       // local storage variable that aliases another, redirect to the source.
+      // Loop handles chained aliases (Wrapper storage a = b; ... = a;).
       int ref_id = expr["referencedDeclaration"].get<int>();
-      while (storage_ref_aliases.count(ref_id))
-        ref_id = storage_ref_aliases[ref_id];
+      for (auto it = storage_ref_aliases.find(ref_id);
+           it != storage_ref_aliases.end();
+           it = storage_ref_aliases.find(ref_id))
+        ref_id = it->second;
 
       // Solidity uses +ve odd numbers to refer to var or functions declared in the contract
       nlohmann::json decl = find_decl_ref(ref_id);

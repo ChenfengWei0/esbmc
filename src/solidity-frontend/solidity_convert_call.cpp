@@ -2454,6 +2454,16 @@ bool solidity_convertert::get_delegatecall_definition(
   return false;
 }
 
+std::string solidity_convertert::get_library_param_id(
+  const std::string &lib_cname,
+  const std::string &func_name,
+  const std::string &param_name,
+  int param_ast_id)
+{
+  return "sol:@C@" + lib_cname + "@F@" + func_name + "@" + param_name + "#" +
+         std::to_string(param_ast_id);
+}
+
 // Find the name of the contract that originally defines the function with
 // the given AST node id, by searching for the first non-inherited occurrence.
 std::string solidity_convertert::find_contract_name_for_id(int func_id)

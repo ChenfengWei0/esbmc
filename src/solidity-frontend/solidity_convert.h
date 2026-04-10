@@ -277,6 +277,15 @@ protected:
   void move_to_front_block(const exprt &expr);
   void move_to_back_block(const exprt &expr);
 
+  // Symbol id of a library function's formal parameter (pure — no reliance on
+  // current_functionName). Shared between the library function body builder
+  // and the call-site copy-back logic so the ID format stays in one place.
+  static std::string get_library_param_id(
+    const std::string &lib_cname,
+    const std::string &func_name,
+    const std::string &param_name,
+    int param_ast_id);
+
   // handle contract variables and functions
   bool
   get_struct_class_fields(const nlohmann::json &ast_node, struct_typet &type);

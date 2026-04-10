@@ -275,10 +275,10 @@ bool solidity_convertert::get_function_definition(
     }
   }
 
-  // For library functions with storage parameters, append copy-out
-  // assignments at the end of the body.  Each storage parameter value
-  // is written to a global bridge variable so that the caller can read
-  // the modified value after the function returns.
+  // For library functions with storage parameters, append a copy-out
+  // assignment to a global $out bridge at the end of the body. The
+  // matching call-site code in solidity_convert_expr.cpp reads from this
+  // bridge after the call to propagate modifications back to the caller.
   if (
     is_event_err_lib && ast_node.contains("parameters") &&
     ast_node["parameters"].contains("parameters"))
@@ -288,38 +288,36 @@ bool solidity_convertert::get_function_definition(
       if (
         !p.contains("storageLocation") || p["storageLocation"] != "storage")
         continue;
+
       std::string p_name = p["name"].get<std::string>();
-      std::string p_sym_id = "sol:@C@" + c_name + "@F@" + name + "@" +
-                             p_name + "#" +
-                             std::to_string(p["id"].get<int>());
+      std::string p_sym_id = get_library_param_id(
+        c_name, name, p_name, p["id"].get<int>());
       std::string out_id = p_sym_id + "$out";
-      std::string out_name = p_name + "$out";
 
       const symbolt *param_sym = context.find_symbol(p_sym_id);
       if (!param_sym)
-        continue;
+      {
+        log_error(
+          "storage-ref bridge: param symbol {} not found", p_sym_id);
+        return true;
+      }
 
-      // Create the global bridge symbol if it doesn't exist yet
       if (context.find_symbol(out_id) == nullptr)
       {
         symbolt out_sym;
         get_default_symbol(
-          out_sym, debug_modulename, param_sym->type, out_name, out_id,
-          location_begin);
+          out_sym, debug_modulename, param_sym->type, p_name + "$out",
+          out_id, location_begin);
         out_sym.static_lifetime = true;
         out_sym.lvalue = true;
-        out_sym.value = gen_zero(
-          get_complete_type(param_sym->type, ns), true);
+        out_sym.value =
+          gen_zero(get_complete_type(param_sym->type, ns), true);
         move_symbol_to_context(out_sym);
       }
 
-      // Append: out_sym = param at end of function body
-      code_assignt copy_out(
+      body_exprt.copy_to_operands(code_assignt(
         symbol_expr(*context.find_symbol(out_id)),
-        symbol_expr(*param_sym));
-      if (body_exprt.operands().empty())
-        body_exprt = code_blockt();
-      body_exprt.copy_to_operands(copy_out);
+        symbol_expr(*param_sym)));
     }
   }
 
