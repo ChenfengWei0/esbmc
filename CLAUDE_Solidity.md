@@ -62,7 +62,7 @@ esbmc contract.sol --contract A --contract B --bound --unwind 5
 
 #### Unbound Mode (default)
 
-Each contract is verified **in isolation**. External calls (`.call()`, `.transfer()`, `.send()`, `.delegatecall()`) are abstracted to nondeterministic return values — the verifier does not model which contract actually receives the call. This is an **over-approximation**: any possible return value is considered, which is sound but may produce false positives.
+Each contract is verified **in isolation**. Low-level calls (`.call()`, `.delegatecall()`, `.staticcall()`) do **not** dispatch to a concrete target contract: instead, `get_unbound_expr()` (`solidity_convert_constructor.cpp:159`) re-invokes the *current* contract's nondet dispatch `_ESBMC_Nondet_Extcall_<current_contract>` and returns a fresh nondet `(bool, bytes)` tuple. This models arbitrary reentrancy into the current contract plus an over-approximated return, but the target address argument is **ignored**.
 
 **Harness structure** (`_ESBMC_Main`):
 ```
@@ -74,14 +74,15 @@ _ESBMC_Main():
 Each `_ESBMC_Main_X` creates a static instance `_ESBMC_Object_X`, calls its constructor, then enters a nondeterministic dispatch loop (`_ESBMC_Nondet_Extcall_X`) that can call any public/external function with nondet arguments.
 
 **Key behaviors:**
-- External call return values: `nondet` (bool for `.send()`, `(bool, bytes)` for `.call()`)
+- Low-level call return values: nondet `(bool, BytesDynamic)` tuple; side effect = nondet reentrancy into the *current* contract (target ignored)
+- `.send()` / `.transfer()`: nondet bool return
 - Address properties (`.balance`, `.codehash`): `nondet_uint`
 - Contract instances: each verified independently, no cross-contract state
 - Best for: single-contract verification, fastest performance
 
 #### Bound Mode (`--bound`)
 
-Contracts are **linked together as a complete system**. External calls can resolve to the correct target contract through runtime address binding. Each contract instance tracks its concrete type via a `_ESBMC_bind_cname` member variable.
+Contracts are **linked together as a complete system**. Low-level calls resolve to the correct target contract by comparing the address argument against every known `_ESBMC_Object_X.$address`. Each contract instance tracks its concrete type via a `_ESBMC_bind_cname` member variable.
 
 **Harness structure** (`_ESBMC_Main`):
 ```
@@ -95,11 +96,13 @@ _ESBMC_Main():
 The nondeterministic switch picks **one** contract to fully explore per verification run. Within that run, cross-contract calls are resolved through the binding mechanism.
 
 **Key behaviors:**
-- External calls: resolved to the actual target contract via `_ESBMC_bind_cname` lookup
+- Low-level calls: `get_bound_low_level_call()` routes to a per-contract `$call#0` / `$delegatecall#0` / `$staticcall#0` function that generates an if-then-else chain over `contractNamesList`; on address match, the target's nondet dispatch `_ESBMC_Nondet_Extcall_<target>` is invoked (`solidity_convert_call.cpp:1220+`, `:2203`, `:2347`)
 - Address binding: `x._ESBMC_bind_cname = "ContractName"` assigned at `new` expressions
 - Contract instances: share state, cross-contract interactions modeled
 - Polymorphism/inheritance dispatch: supported through binding
 - Best for: multi-contract interaction verification (e.g., token + exchange)
+
+**⚠ Low-level call accuracy gaps (both modes):** See §D below for the specific semantic gaps that survived into bound mode — in particular, `delegatecall` does not swap storage context and `staticcall` does not enforce read-only.
 
 #### Implementation Details
 
@@ -357,15 +360,40 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 | **Copy-on-assign for memory structs/arrays** | `memory` assignment should copy; may alias | — |
 | **Storage ref for non-library functions** | Storage params in regular contract functions not yet handled | — |
 
-#### D. Low-Level Call Return Values — ✅ All Three Call Types Supported (2026-04-09)
+#### D. Low-Level Calls — Partial Modeling (2026-04-10)
 
-`.call()`, `.delegatecall()`, `.staticcall()` return `(bool success, bytes memory data)`. All three are now fully supported with distinct semantics:
+`.call()`, `.delegatecall()`, `.staticcall()` all return `(bool success, bytes memory data)`. The three are recognized and accepted by the frontend in both bound and unbound modes, but their semantic accuracy differs significantly by mode **and** by call kind. This table captures the ground truth as of 2026-04-10:
 
-- **`.call()`**: Updates `msg.sender` to caller's address, dispatches to target contract
-- **`.staticcall()`**: Same dispatch as `.call()`, updates `msg.sender` (EVM read-only enforcement not modeled)
-- **`.delegatecall()`**: Dispatches to target contract but does NOT change `msg.sender` or `msg.value` (preserves caller's context)
+| Aspect | `.call()` | `.delegatecall()` | `.staticcall()` |
+|---|---|---|---|
+| Unbound: target dispatch | closed-world: target address ignored (by design) | closed-world: target address ignored (by design) | closed-world: target address ignored (by design) |
+| Unbound: side effect | ✓ nondet reentry into *current* contract's nondet dispatch (models attacker callback) | ✓ same | ✓ same (strictly over-approx — staticcall target cannot mutate, but leaving it is harmless) |
+| Unbound: return value | nondet `(bool, BytesDynamic)` | nondet `(bool, BytesDynamic)` | nondet `(bool, BytesDynamic)` |
+| Bound: target dispatch | ✓ if-chain over `_ESBMC_Object_X.$address`, calls `_ESBMC_Nondet_Extcall_<target>` | ✓ same if-chain | ✓ same if-chain |
+| Bound: `msg.sender` | ✓ swapped to caller's `this.address`, restored after | ✓ **preserved** (correct EVM semantics) | ✓ swapped to caller's `this.address`, restored after |
+| Bound: **storage context** | ✓ correct — target code runs against `_ESBMC_Object_<target>` | ✗ **WRONG** — should run against *caller's* `_ESBMC_Object_<caller>` but still uses target's own instance | ✓ correct — target code runs against `_ESBMC_Object_<target>` |
+| Bound: **read-only enforcement** | N/A | N/A | ✗ **NOT enforced** — target may silently write its own state |
+| Function selector from ABI payload | ✗ ignored (nondet picks any public function) | ✗ ignored | ✗ ignored |
 
-Tests: `delegatecall_1/2`, `staticcall_1/2`.
+**Unbound-mode design note (not a bug):** Under the closed-world assumption, other contracts do not exist, so the target address is intentionally ignored. The side effect — nondet reentry into the current contract via `_ESBMC_Nondet_Extcall_<self>` — is the intentional over-approximation of "attacker-controlled external callee may call back into any of our public functions during the call". This is what enables detection of classic reentrancy bugs (SWC-107), because it exposes the state space where `withdraw()` is re-entered *before* the post-call balance update. The harness-level `while(nondet) { _ESBMC_Nondet_Extcall_self(); }` only explores *sequential* transactions and cannot reach this state space on its own. Test: `swc_107_2` relies on this behavior to detect the reentrancy vulnerability.
+
+**Concrete bound-mode failure modes:**
+
+1. **`delegatecall` storage context (silent correctness bug):** A caller using `logic.delegatecall(abi.encodeWithSignature("f()"))` expects its *own* state to be mutated. In the current model, `f()` runs against `_ESBMC_Object_logic`, so the caller's state is never touched. Verification silently accepts programs that would fail on real EVM. Affects programs that depend on delegatecall storage semantics (proxy patterns, upgradeable contracts).
+
+2. **`staticcall` read-only (soundness gap):** Since read-only is not enforced, a buggy target that writes during staticcall is not flagged, and the target's state *is* mutated in our model (which would revert on real EVM). Soundness gap for target-side invariants.
+
+3. **ABI selector ignored (all modes):** `.call(abi.encodeWithSignature("foo(uint)", 42))` does not constrain which target function runs — `_ESBMC_Nondet_Extcall_target` picks any public function with nondet arguments. The provided calldata is dropped entirely.
+
+**Implementation references:**
+- Unbound call lowering: `solidity_convert_expr.cpp:452` → `get_unbound_expr()` at `solidity_convert_constructor.cpp:159`
+- Bound dispatch dispatcher: `solidity_convert_expr.cpp:468` → `get_bound_low_level_call()` → per-kind definitions:
+  - `.call()`: `get_call_definition()` @ `solidity_convert_call.cpp:1220+`
+  - `.staticcall()`: `get_staticcall_definition()` @ `solidity_convert_call.cpp:2203`
+  - `.delegatecall()`: `get_delegatecall_definition()` @ `solidity_convert_call.cpp:2347` (explicit TODO comment on line 2344)
+- Per-target nondet dispatcher: `get_unbound_function()` @ `solidity_convert_constructor.cpp:213` — always binds `this = _ESBMC_Object_<target>`, which is why delegatecall cannot reach the caller's storage without further work
+
+**Tests:** `delegatecall_1/2`, `staticcall_1/2` — all run with `--unbound` and only assert `success || !success`, i.e., they exercise the lowering but verify no semantic property. **Zero tests cover delegatecall/staticcall in bound mode today.**
 
 ESBMC models the return as:
 
