@@ -82,7 +82,7 @@ Each `_ESBMC_Main_X` creates a static instance `_ESBMC_Object_X`, calls its cons
 
 #### Bound Mode (`--bound`)
 
-Contracts are **linked together as a complete system**. Low-level calls resolve to the correct target contract by comparing the address argument against every known `_ESBMC_Object_X.$address`. Each contract instance tracks its concrete type via a `_ESBMC_bind_cname` member variable.
+Contracts are **linked together as a complete system** under a **trusted closed-world assumption** — analogous to SMTChecker's `--model-checker-ext-calls=trusted` mode. The verifier assumes every callable address corresponds to one of the declared contracts in `contractNamesList`; low-level calls resolve to the correct target by comparing the address argument against every known `_ESBMC_Object_X.$address`. If no address matches, the call's `$call#0` / `$transfer#0` / `$send#0` / `$staticcall#0` / `$delegatecall#0` definition returns hard `false` (no nondet fallback), which prunes the caller's `require(success)` path. This is an **under-approximation** relative to real EVM (where unknown addresses might still succeed) but is sound under the trusted assumption. Each contract instance also tracks its concrete type via a `_ESBMC_bind_cname` member variable.
 
 **Harness structure** (`_ESBMC_Main`):
 ```
@@ -96,7 +96,8 @@ _ESBMC_Main():
 The nondeterministic switch picks **one** contract to fully explore per verification run. Within that run, cross-contract calls are resolved through the binding mechanism.
 
 **Key behaviors:**
-- Low-level calls: `get_bound_low_level_call()` routes to a per-contract `$call#0` / `$delegatecall#0` / `$staticcall#0` function that generates an if-then-else chain over `contractNamesList`; on address match, the target's nondet dispatch `_ESBMC_Nondet_Extcall_<target>` is invoked (`solidity_convert_call.cpp:1220+`, `:2203`, `:2347`)
+- Low-level calls: `get_bound_low_level_call()` routes to a per-contract `$call#0` / `$delegatecall#0` / `$staticcall#0` function that generates an if-then-else chain over `contractNamesList`; on address match, the target's nondet dispatch `_ESBMC_Nondet_Extcall_<target>` is invoked and `return true`; no address match → `return false` (trusted-closed-world under-approx) (`solidity_convert_call.cpp:1220+`, `:2203`, `:2347`)
+- Same pattern for `.transfer()` / `.send()` (`:1751`, `:1997`)
 - Address binding: `x._ESBMC_bind_cname = "ContractName"` assigned at `new` expressions
 - Contract instances: share state, cross-contract interactions modeled
 - Polymorphism/inheritance dispatch: supported through binding
@@ -225,6 +226,12 @@ All 5 diagnosed bugs have been fixed. Summary:
 ### Remaining Known Issue
 
 - **mapping_13** (THOROUGH): NULL pointer dereference check in `map_get_raw` library function (`solidity_mapping.c:29`). ESBMC's pointer analysis cannot always infer that a pointer is non-NULL from a `while(ptr)` loop guard. Unrelated to struct layout.
+
+- **`revert` / `require` do not roll back state.** The frontend models Solidity `revert`/`require`/failed `transfer()` as `__ESBMC_assume(false)`, which only marks the current path infeasible. Real EVM semantics roll back all state changes made in the current call (and sub-calls) before the revert. SSA assignments emitted before the `assume` are still in the constraint set.
+  - In pure single-path BMC the infeasibility propagates correctly, so unreachable code after the revert is not exercised.
+  - **Completeness gap**: `try/catch` bodies that depend on state having been rolled back cannot be reasoned about — the catch arm is also pruned along with the try arm.
+  - **Soundness gap (theoretical)**: partial state changes that would be rolled back in reality remain recorded in SSA. If another path of the same harness iteration observes the shared static contract instance, it can see "pre-revert" modifications that cannot actually occur on chain, leading to spurious counterexamples.
+  - Correct fix requires snapshot/restore: snapshot touched state on function entry, write back on revert. Deferred — the cost of snapshotting every potential revert boundary is non-trivial.
 
 ### Design Notes
 
@@ -377,13 +384,15 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 
 **Unbound-mode design note (not a bug):** Under the closed-world assumption, other contracts do not exist, so the target address is intentionally ignored. The side effect — nondet reentry into the current contract via `_ESBMC_Nondet_Extcall_<self>` — is the intentional over-approximation of "attacker-controlled external callee may call back into any of our public functions during the call". This is what enables detection of classic reentrancy bugs (SWC-107), because it exposes the state space where `withdraw()` is re-entered *before* the post-call balance update. The harness-level `while(nondet) { _ESBMC_Nondet_Extcall_self(); }` only explores *sequential* transactions and cannot reach this state space on its own. Test: `swc_107_2` relies on this behavior to detect the reentrancy vulnerability.
 
+**Bound-mode design philosophy:** Bound mode aligns with SMTChecker's `--model-checker-ext-calls=trusted` mode — external calls to addresses in `contractNamesList` are treated as deterministic dispatch to the declared contract. This is the "trusted" assumption: the user guarantees that callable addresses really do point to the declared contracts. Fallback is hard `return false`, not nondet over-approximation; programs that call unknown addresses have those paths pruned. This is sound under the trusted assumption and fast in practice.
+
 **Concrete bound-mode failure modes:**
 
-1. **`delegatecall` storage context (silent correctness bug):** A caller using `logic.delegatecall(abi.encodeWithSignature("f()"))` expects its *own* state to be mutated. In the current model, `f()` runs against `_ESBMC_Object_logic`, so the caller's state is never touched. Verification silently accepts programs that would fail on real EVM. Affects programs that depend on delegatecall storage semantics (proxy patterns, upgradeable contracts).
+1. **`delegatecall` storage context (silent correctness bug):** A caller using `logic.delegatecall(abi.encodeWithSignature("f()"))` expects its *own* state to be mutated. In the current model, `f()` runs against `_ESBMC_Object_logic`, so the caller's state is never touched. Verification silently accepts programs that would fail on real EVM. Affects proxy patterns and upgradeable contracts. **Planned fix (P1):** on address match, pre-copy caller's state-var fields (matched by name and type) into the target instance, run the target's nondet dispatch, then post-copy the modified matching fields back to the caller. Non-matching fields are left alone (acceptable for a first pass; typical proxy patterns use layout-compatible fields).
 
-2. **`staticcall` read-only (soundness gap):** Since read-only is not enforced, a buggy target that writes during staticcall is not flagged, and the target's state *is* mutated in our model (which would revert on real EVM). Soundness gap for target-side invariants.
+2. **`staticcall` read-only (soundness gap):** Since read-only is not enforced, a buggy target that writes during staticcall is not flagged, and the target's state *is* mutated in our model (which would revert on real EVM). Soundness gap for target-side invariants. **Planned fix (P2):** snapshot target state before dispatch, assert equality after.
 
-3. **ABI selector ignored (all modes):** `.call(abi.encodeWithSignature("foo(uint)", 42))` does not constrain which target function runs — `_ESBMC_Nondet_Extcall_target` picks any public function with nondet arguments. The provided calldata is dropped entirely.
+3. **ABI selector ignored (all modes):** `.call(abi.encodeWithSignature("foo(uint)", 42))` does not constrain which target function runs — `_ESBMC_Nondet_Extcall_target` picks any public function with nondet arguments. The provided calldata is dropped entirely. Even after P1/P2, delegatecall/staticcall will inherit this imprecision because they reuse the same nondet dispatcher.
 
 **Implementation references:**
 - Unbound call lowering: `solidity_convert_expr.cpp:452` → `get_unbound_expr()` at `solidity_convert_constructor.cpp:159`
