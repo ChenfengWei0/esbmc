@@ -114,6 +114,23 @@ The nondeterministic switch picks **one** contract to fully explore per verifica
 | Bind name list | `solidity_convert.cpp:754` | `$X_bind_cname_list` array + `initialize_X_bind_cname()` |
 | Static instances | `solidity_convert_contract.cpp:73` | `_ESBMC_Object_X` global instances |
 
+### `--function` Mode Semantics
+
+`--function funcName` verifies a single function in isolation, under **arbitrary initial state**. All state variables are initialized to nondeterministic (symbolic) values, NOT to their declared initializers or constructor-assigned values. This is by design: `--function` mode checks whether the function is correct for **all possible** contract states, not just post-constructor states.
+
+**Implications:**
+- `x = 42; assert(x == 42)` where `x` is a state variable will **fail** because the nondet external call dispatch (`_ESBMC_Nondet_Extcall`) can re-enter the function and modify state between the assignment and assertion
+- To verify state-dependent properties, use `--contract ContractName` instead (which runs the constructor first and then dispatches all public functions)
+- `--function` is best for verifying **function-local** properties (pure/view functions, local variable logic) and for **over-approximate** analysis where any input state is valid
+- `constant` state variable values are only available in `--contract` mode (where the initializer runs)
+
+**When to use which:**
+| Mode | State vars | Best for |
+|------|-----------|----------|
+| `--contract C` | Initialized by constructor | Testing contract invariants, state-dependent assertions |
+| `--function f` | Nondet (arbitrary) | Testing function-local logic, over-approximate soundness |
+| `--contract C --function f` | Initialized by constructor, then only `f` is called | Testing a specific function after proper initialization |
+
 #### Performance Considerations
 
 - **Unbound** is significantly faster for single-contract verification since it avoids cross-contract symbolic exploration.
@@ -221,7 +238,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 |----------|----------|
 | **Value types** | `bool`, `uint8`-`uint256`, `int8`-`int256`, `address`/`address payable`, `string`, `bytes1`-`bytes32`, `bytes` (dynamic) |
 | **Composite types** | `struct` (nested, with arrays), `enum`, fixed arrays `T[N]`, dynamic arrays `T[]` (push/pop/length), multi-dimensional arrays |
-| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, and mapping-in-struct — modeled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays. **Limitation:** `mapping(K => V)[]` (dynamic array of mappings) is KNOWNBUG — push/pop requires `sizeof(element)` which is undefined for infinite arrays |
+| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, mapping-in-struct, and `mapping(K => V)[]` (array of mappings) — modeled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays; mapping arrays use auxiliary `_mapping_arr_len` variable for push/pop |
 | **Operators** | All arithmetic (`+`,`-`,`*`,`/`,`%`,`**`), bitwise, comparison, logical, compound assignment (`+=` etc.), prefix/postfix `++`/`--`, ternary `?:`, `delete` |
 | **Control flow** | `if`/`else`, `for`, `while`, `do-while`, `break`, `continue`, `return` (including multi-value via tuples) |
 | **Contract core** | Contract/library/interface definitions, functions (regular/constructor/receive/fallback), free functions, state variables, visibility (`public`/`private`/`internal`/`external`), state mutability (`pure`/`view`/`payable`) |
@@ -281,6 +298,25 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 - **Limitation**: concrete hash values are not computed; `assert(keccak256(0) == 0xc5d2...)` is not provable
 - **Limitation**: `abi.decode` is nondet — decoded values are unconstrained; `encode(x) → decode → y` does not guarantee `y == x`
 
+#### A3. Dynamic Array State Variables — SMT Array Model (2026-04-09)
+
+State-variable dynamic arrays (`uint[] public items`) are now modeled as **infinite SMT arrays + auxiliary length variable** instead of the previous pointer + C model (`malloc`/`realloc`). This enables the solver to track element values through `push()` operations:
+
+```solidity
+items.push(100);
+assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓ (was 0 VCCs before)
+```
+
+**Implementation:**
+- `solidity_convert_decl.cpp`: State-var DYNARRAY type changed from `pointer_typet(elem)` to `array_typet(elem, infinity)` with `#sol_dynarray_state` flag; auxiliary `_dynarray_len` variable created
+- `solidity_convert_ref.cpp`: `push(v)` → `items[len] = v; len++`; `pop()` → `len--`; `.length` → `len`
+- `solidity_convert_expr.cpp`: Literal assignment `items = [1,2,3]` generates element-wise writes + length set; `new uint[](n)` sets length = n
+- Global static lifetime (like mappings): not a struct member, resolved directly via symbol
+
+**Semantic change:** The global length variable is visible to re-entrant calls in `--unbound` mode, which is MORE correct than the old model (where the C model's internal tracking was opaque to the solver). Test `github_2580_1` updated to use `--function` to avoid false reentrancy effects.
+
+Tests: `dynarray_push_1` (push + pop + length pass), `dynarray_push_2` (wrong value fail).
+
 #### B. Multi-Dimensional Arrays — Partially Supported (2026-04-07)
 
 1D static and 1D dynamic arrays are fully supported. 2D dynamic arrays (`T[][]`) now work after fixing the `NestedArrayTypeName` handler:
@@ -321,9 +357,17 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 | **Copy-on-assign for memory structs/arrays** | `memory` assignment should copy; may alias | — |
 | **Storage ref for non-library functions** | Storage params in regular contract functions not yet handled | — |
 
-#### D. Low-Level Call Return Values — bytes Data Partially Supported
+#### D. Low-Level Call Return Values — ✅ All Three Call Types Supported (2026-04-09)
 
-`.call()`, `.delegatecall()`, `.staticcall()` return `(bool success, bytes memory data)`. ESBMC models this as:
+`.call()`, `.delegatecall()`, `.staticcall()` return `(bool success, bytes memory data)`. All three are now fully supported with distinct semantics:
+
+- **`.call()`**: Updates `msg.sender` to caller's address, dispatches to target contract
+- **`.staticcall()`**: Same dispatch as `.call()`, updates `msg.sender` (EVM read-only enforcement not modeled)
+- **`.delegatecall()`**: Dispatches to target contract but does NOT change `msg.sender` or `msg.value` (preserves caller's context)
+
+Tests: `delegatecall_1/2`, `staticcall_1/2`.
+
+ESBMC models the return as:
 
 ```c
 // solidity_types.h — BytesDynamic is a nondet struct
@@ -365,19 +409,18 @@ The unbound mode's `map_get_raw()` uses a `while(cur)` linked-list traversal (`s
 
 **Recommendation**: Prefer `--bound` mode for mapping-heavy contracts; the infinite SMT array approach avoids loop unrolling entirely.
 
-#### F.1. Arrays of Mappings (`mapping(K => V)[]`) — KNOWNBUG
+#### F.1. Arrays of Mappings (`mapping(K => V)[]`) — ✅ Fixed (2026-04-09)
 
-Dynamic arrays of mappings crash during BMC because the dynamic array C model (`_ESBMC_array_push` in `solidity_array.c`) uses `malloc(sizeof(element))` + `memcpy`, but `sizeof(mapping)` = `sizeof(infinite_array)` is undefined — `type_byte_size.cpp:121` throws `inf_sized_array_excp`.
+Dynamic arrays of mappings previously crashed because the dynamic array C model used `malloc(sizeof(element))` + `memcpy`, but `sizeof(mapping)` = `sizeof(infinite_array)` is undefined.
 
-**Fixes applied (2026-04-07)** — three crash-prevention fixes allow conversion to succeed:
-1. `solidity_grammar.cpp:228`: `get_type_name_t` used `find("t_mapping$")` which misclassified `t_array$_t_mapping$...` as MappingTypeName; fixed to prefix match `compare(0, 10, "t_mapping$")`
-2. `solidity_convert_type.cpp:246`: `extract` lambda only handled struct element types; generalized to extract any element type from `t_array$_<elem>_$dyn_...` identifiers
-3. `goto_convert.cpp:482`: `rewrite_vla_decl_size` tried to migrate `exprt("infinity")` as a VLA size expression; now skips infinity
-4. `expr_util.cpp:52`: `gen_zero` tried to parse `"infinity"` as a number for element count; now uses `array_of_exprt` for infinite arrays
+**Solution (2026-04-09):** Redesigned to model `mapping(K=>V)[]` as a 2D infinite array with an auxiliary `_mapping_arr_len` variable for push/pop tracking. No `malloc` needed — mappings are pre-existing infinite arrays, so `push()` simply increments the length counter. The inner mapping's subtype chain is populated from the AST's `typeName.baseType` node.
 
-**Root cause (unfixed):** The dynamic array push/pop model is fundamentally incompatible with mapping elements because you cannot `malloc` an infinite array. Fixing this requires a frontend-level redesign: model `mapping[]` as a bounded pool of pre-allocated mapping state variables, where each `push()` activates the next mapping rather than allocating memory. This aligns with ESBMC's bounded verification (`--unwind N` limits push count).
+Implementation:
+- `solidity_convert_decl.cpp`: detect `#sol_mapping_array` flag, populate inner mapping subtypes from AST, create `_mapping_arr_len` auxiliary symbol, exclude from struct components and initializer
+- `solidity_convert_ref.cpp`: `.length` returns auxiliary length variable, `.push()`/`.pop()` increment/decrement it
+- `solidity_convert_decl.cpp`: `get_struct_class_fields` skips mapping array fields (same as regular mappings)
 
-Test: `clearing_mapping_1` (KNOWNBUG).
+Tests: `clearing_mapping_1` (write/read), `clearing_mapping_2` (push + index + assert pass), `clearing_mapping_3` (assert fail).
 
 #### G. Address / Contract Type Conversion
 
@@ -468,7 +511,7 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | **receive/fallback** | ✓ Works | `receive() external payable` and `fallback() external [payable]` fully supported; tests: `receive_1/2`, `fallback_1/2` |
 | **Fallback with params** | Partial | Basic fallback exists; `fallback(bytes calldata) returns (bytes memory)` params ignored |
 | **Custom storage layout** | ✓ Works (2026-04-07) | `contract C layout at <expr>` (Solidity 0.8.29+) — AST parses without error; ESBMC ignores storage slots (models state vars as struct members); tests: `layout_1/2` |
-| **Array slices** | Not supported | `x[start:end]` on calldata arrays not handled |
+| **Array slices (`IndexRangeAccess`)** | ✅ Over-approx (2026-04-09) | `data[:4]`, `data[1:3]` on calldata arrays/bytes — modeled as nondet; tests: `array_slice_1/2` |
 | **`abi.decode()`** | KNOWNBUG | Nondet model exists in `solidity_abi.c` but converter cannot parse `(uint256)` type tuple argument (`ElementaryTypeNameExpression` unsupported) |
 | **`abi.encodeCall()`** | KNOWNBUG | Identity model exists in `solidity_abi.c` but converter crashes on interface/function pointer syntax in AST |
 | **`mulmod(MAX,MAX,k)`** | KNOWNBUG | 512-bit model is correct but ESBMC constant evaluator crashes (SIGFPE) when both operands are near `type(uint256).max` |
@@ -506,6 +549,7 @@ These are bugs or unsound abstractions in features we claim to support:
 | # | Task | Effort | Why |
 |---|------|--------|-----|
 | 10 | **Multi-dimensional arrays** | Partial (2026-04-07): `T[][]` works (declaration, push, indexing, storage ref); `T[N][M]` and 3D+ still broken | Recursive type/size extraction needed for remaining cases |
+| 10b | **`mapping(K=>V)[]`** | ✅ Done (2026-04-09) | Modeled as 2D infinite array with auxiliary `_mapping_arr_len`; tests: `clearing_mapping_1/2/3` |
 | 11 | ~~**Nested tuple destructuring**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
 | 12 | **User-defined value types** | Partial (2026-04-07): `type C is V` + `wrap`/`unwrap` work; custom operators (`using { f as op }`) not supported | Increasingly common in modern Solidity |
 | 13 | **`immutable` set-once enforcement** | Easy (~80 lines) | |
@@ -644,9 +688,9 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 **Note:** Both `ENABLE_SOLIDITY_FRONTEND` and `ENABLE_REGRESSION` must be ON. The default build (`./scripts/build.sh`) sets `ENABLE_REGRESSION=OFF`, so regression tests won't appear in `ctest -N` unless explicitly enabled.
 
-### Test Baseline (2026-04-07)
+### Test Baseline (2026-04-09)
 
-**472 total tests** (2026-04-07): 472 pass, 0 failed, 0 timeout (42s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**476 total tests** (2026-04-09): 476 pass, 0 failed, 0 timeout (40s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
@@ -698,10 +742,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 - Bitwise operators on uint256 (OOM with default solver settings)
 - Signed integer arithmetic right-shift edge cases
 - ABI encoding/decoding operations
-- Hash function return values
-- Fallback/receive functions
 - Abstract contracts
-- Storage layout / packing
 
 ## Structural Coverage Analysis
 
