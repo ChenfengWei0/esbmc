@@ -392,7 +392,7 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 
 2. **`staticcall` read-only (soundness gap):** Since read-only is not enforced, a buggy target that writes during staticcall is not flagged, and the target's state *is* mutated in our model (which would revert on real EVM). Soundness gap for target-side invariants. **Planned fix (P2):** snapshot target state before dispatch, assert equality after.
 
-3. **ABI selector matching:** `.call(abi.encodeWithSignature("foo(uint)", 42))` now routes through a signature-based dispatch helper in bound mode (`try_get_signature_dispatched_call` @ `solidity_convert_call.cpp:~1830`) that resolves the literal signature to the matching target function and calls a typed shim with the provided argument values. `.delegatecall(abi.encodeWithSignature(...))` reuses the same signature extraction inside the storage shadow path. Dynamic signature strings and `encodeWithSelector`/`encodeCall` still fall back to the nondet dispatcher.
+3. **ABI selector matching:** `.call(abi.encodeWithSignature("foo(uint)", 42))` now routes through a signature-based dispatch helper in bound mode (`try_get_signature_dispatched_call` @ `solidity_convert_call.cpp:~1830`) that resolves the literal signature to the matching target function and calls a typed shim with the provided argument values. `.delegatecall(...)` reuses the same signature extraction inside the storage shadow path, and since 2026-04-11 (`extract_abi_encode_signature` v4) also accepts `abi.encodeWithSelector(FnRef.selector, args...)` and `abi.encodeCall(FnRef, (args...))` — the canonical signature is rebuilt from the referenced FunctionDefinition via `build_canonical_signature`. Dynamic signature strings (built at runtime from a `bytes` variable) still fall back to the nondet dispatcher.
 
 **Implementation references:**
 - Unbound call lowering: `solidity_convert_expr.cpp:452` → `get_unbound_expr()` at `solidity_convert_constructor.cpp:159`
@@ -435,9 +435,15 @@ The delegate-shadow fast path rewrites `caller_addr.delegatecall(abi.encodeWithS
 - For non-void helpers `new_expr` becomes `symbol_expr($dl_hret)` so RHS usage like `x = _helper(v)` still evaluates correctly. For void helpers it becomes `code_skipt()` since the only valid caller context is an expression statement where the result is discarded.
 - Helpers that live in a base contract of the target, helpers that return tuples, and helpers called through `this.foo()` (external self-call) still fall through to the normal call path.
 
-**Current v1/v2/v3 restrictions — fall back to `$delegatecall#0` on any miss:**
+**v4 additions** — `encodeWithSelector` and `encodeCall` (#1):
 
-- Payload must be a literal `abi.encodeWithSignature("sig(T,...)", ...)`. `encodeWithSelector`, `encodeCall`, and dynamic signature strings are unsupported.
+- `extract_abi_encode_signature` now recognises three payload shapes: the original `abi.encodeWithSignature("sig(T,...)", args...)` (literal), the selector form `abi.encodeWithSelector(Logic.f.selector, args...)`, and `abi.encodeCall(Logic.f, (args...))`. For the two new forms the canonical signature is rebuilt from the referenced `FunctionDefinition` via `build_canonical_signature`, using a full-AST lookup (`find_node_by_id`) instead of the scope-restricted `find_decl_ref` so cross-contract references resolve correctly from the caller.
+- `encodeCall` flattens a `TupleExpression` into its component args. A single-element parenthesised expression is accepted as a 1-arg tuple because solc collapses `(x)` to `x` in the AST.
+- Dynamic signature strings (e.g. passing a `bytes` variable built at runtime) still fall through to the generic `$delegatecall#0` helper.
+
+**Current restrictions — fall back to `$delegatecall#0` on any miss:**
+
+- Payload must be one of `abi.encodeWithSignature("sig(T,...)", ...)`, `abi.encodeWithSelector(FnRef.selector, ...)`, or `abi.encodeCall(FnRef, (...))`. Raw bytes variables and dynamic signature strings are unsupported.
 - Every state variable the target body reads or writes must exist on the caller with the same name and typeString. Rules out EIP-1967 / UUPS / Diamond layouts where the proxy uses dedicated storage slots.
 - Target and helper functions are inlined by body, not by byte layout. Contracts that use `assembly` / `sload` / `sstore` to access storage by slot index are not handled.
 - Only single-return functions are shadowed; tuple return values fall back to the generic path.
