@@ -378,9 +378,9 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 | Unbound: return value | nondet `(bool, BytesDynamic)` | nondet `(bool, BytesDynamic)` | nondet `(bool, BytesDynamic)` |
 | Bound: target dispatch | ✓ if-chain over `_ESBMC_Object_X.$address`, calls `_ESBMC_Nondet_Extcall_<target>` | ✓ same if-chain | ✓ same if-chain |
 | Bound: `msg.sender` | ✓ swapped to caller's `this.address`, restored after | ✓ **preserved** (correct EVM semantics) | ✓ swapped to caller's `this.address`, restored after |
-| Bound: **storage context** | ✓ correct — target code runs against `_ESBMC_Object_<target>` | ✗ **WRONG** — should run against *caller's* `_ESBMC_Object_<caller>` but still uses target's own instance | ✓ correct — target code runs against `_ESBMC_Object_<target>` |
+| Bound: **storage context** | ✓ correct — target code runs against `_ESBMC_Object_<target>` | ✓ **storage shadow** — target body is cloned into the caller's function context; state var reads/writes resolve by name against the caller's this pointer. Internal helpers inlined recursively. Falls back to the old target-instance dispatch when preconditions are not met (see v3 notes below). | ✓ correct — target code runs against `_ESBMC_Object_<target>` |
 | Bound: **read-only enforcement** | N/A | N/A | ✗ **NOT enforced** — target may silently write its own state |
-| Function selector from ABI payload | ✗ ignored (nondet picks any public function) | ✗ ignored | ✗ ignored |
+| Function selector from ABI payload | ✓ signature-based dispatch for `abi.encodeWithSignature` literal | ✓ signature-based shadow dispatch for `abi.encodeWithSignature` literal | ✗ ignored |
 
 **Unbound-mode design note (not a bug):** Under the closed-world assumption, other contracts do not exist, so the target address is intentionally ignored. The side effect — nondet reentry into the current contract via `_ESBMC_Nondet_Extcall_<self>` — is the intentional over-approximation of "attacker-controlled external callee may call back into any of our public functions during the call". This is what enables detection of classic reentrancy bugs (SWC-107), because it exposes the state space where `withdraw()` is re-entered *before* the post-call balance update. The harness-level `while(nondet) { _ESBMC_Nondet_Extcall_self(); }` only explores *sequential* transactions and cannot reach this state space on its own. Test: `swc_107_2` relies on this behavior to detect the reentrancy vulnerability.
 
@@ -388,21 +388,61 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 
 **Concrete bound-mode failure modes:**
 
-1. **`delegatecall` storage context (silent correctness bug):** A caller using `logic.delegatecall(abi.encodeWithSignature("f()"))` expects its *own* state to be mutated. In the current model, `f()` runs against `_ESBMC_Object_logic`, so the caller's state is never touched. Verification silently accepts programs that would fail on real EVM. Affects proxy patterns and upgradeable contracts. **Planned fix (P1):** on address match, pre-copy caller's state-var fields (matched by name and type) into the target instance, run the target's nondet dispatch, then post-copy the modified matching fields back to the caller. Non-matching fields are left alone (acceptable for a first pass; typical proxy patterns use layout-compatible fields).
+1. **`delegatecall` storage context — fixed in bound mode via the delegate-shadow fast path.** See the dedicated subsection below for v1/v2/v3 mechanics and restrictions. The generic `$delegatecall#0` dispatcher (which runs the target against `_ESBMC_Object_<target>`) is retained as the fallback when the shadow preconditions are not met.
 
 2. **`staticcall` read-only (soundness gap):** Since read-only is not enforced, a buggy target that writes during staticcall is not flagged, and the target's state *is* mutated in our model (which would revert on real EVM). Soundness gap for target-side invariants. **Planned fix (P2):** snapshot target state before dispatch, assert equality after.
 
-3. **ABI selector ignored (all modes):** `.call(abi.encodeWithSignature("foo(uint)", 42))` does not constrain which target function runs — `_ESBMC_Nondet_Extcall_target` picks any public function with nondet arguments. The provided calldata is dropped entirely. Even after P1/P2, delegatecall/staticcall will inherit this imprecision because they reuse the same nondet dispatcher.
+3. **ABI selector matching:** `.call(abi.encodeWithSignature("foo(uint)", 42))` now routes through a signature-based dispatch helper in bound mode (`try_get_signature_dispatched_call` @ `solidity_convert_call.cpp:~1830`) that resolves the literal signature to the matching target function and calls a typed shim with the provided argument values. `.delegatecall(abi.encodeWithSignature(...))` reuses the same signature extraction inside the storage shadow path. Dynamic signature strings and `encodeWithSelector`/`encodeCall` still fall back to the nondet dispatcher.
 
 **Implementation references:**
 - Unbound call lowering: `solidity_convert_expr.cpp:452` → `get_unbound_expr()` at `solidity_convert_constructor.cpp:159`
 - Bound dispatch dispatcher: `solidity_convert_expr.cpp:468` → `get_bound_low_level_call()` → per-kind definitions:
-  - `.call()`: `get_call_definition()` @ `solidity_convert_call.cpp:1220+`
+  - `.call()`: `get_call_definition()` @ `solidity_convert_call.cpp:1220+` (generic fallback) + `try_get_signature_dispatched_call` for literal signatures
+  - `.delegatecall()`: `try_get_delegate_shadow_call` @ `solidity_convert_call.cpp:~1700` (fast path) + `get_delegatecall_definition()` @ `solidity_convert_call.cpp:2347` (generic fallback)
   - `.staticcall()`: `get_staticcall_definition()` @ `solidity_convert_call.cpp:2203`
-  - `.delegatecall()`: `get_delegatecall_definition()` @ `solidity_convert_call.cpp:2347` (explicit TODO comment on line 2344)
-- Per-target nondet dispatcher: `get_unbound_function()` @ `solidity_convert_constructor.cpp:213` — always binds `this = _ESBMC_Object_<target>`, which is why delegatecall cannot reach the caller's storage without further work
+- Per-target nondet dispatcher: `get_unbound_function()` @ `solidity_convert_constructor.cpp:213` — always binds `this = _ESBMC_Object_<target>`, used by the fallback paths
 
-**Tests:** `delegatecall_1/2`, `staticcall_1/2` — all run with `--unbound` and only assert `success || !success`, i.e., they exercise the lowering but verify no semantic property. **Zero tests cover delegatecall/staticcall in bound mode today.**
+**Tests:** `delegatecall_1/2`, `staticcall_1/2` — unbound-mode lowering smoke tests. `delegate_shadow_1..9` — bound-mode storage-shadow regression tests (happy path, value propagation, layout mismatch fallback, return value, early return in conditional branches, internal helper inlining with swapped Proxy layout, nested helpers with return values, adversarial wrong-assertion cases).
+
+---
+
+##### Delegate-shadow fast path (bound mode only)
+
+Real EVM `delegatecall` runs the target function's code **in the caller's storage context**: state writes inside the target land on the caller's slots, `msg.sender` and `msg.value` are preserved, and `address(this)` stays pointing at the caller. The previous bound-mode model executed the target function against its own static instance `_ESBMC_Object_<target>`, which is wrong for library and proxy patterns and silently accepts programs that would fail on chain.
+
+The delegate-shadow fast path rewrites `caller_addr.delegatecall(abi.encodeWithSignature("f(T,...)", args))` into a sequence of inlined dispatch arms guarded by address comparisons. Entry point: `try_get_delegate_shadow_call` @ `solidity_convert_call.cpp`. On any unsupported shape it returns `true`, and `get_low_level_member_accsss` falls back to the generic `$delegatecall#0` dispatcher.
+
+**v1 mechanics** (`ba18f79173`):
+
+1. Extract the literal `sig` string via `extract_abi_encode_signature`. Each encoded argument JSON node is retained for later conversion.
+2. Walk `contractNamesList`; for each candidate whose `find_function_by_signature(str, sig)` finds a matching external/public function with a body, run `validate_delegate_shadow_compatible` to reject state-var references whose name+typeString do not exist on the caller. Candidates that fail validation are skipped (but other candidates may still match).
+3. For each surviving candidate, allocate `$dl_arg_i` locals from the caller's supplied arguments, plus a `$dl_success` bool. The target body is converted via `get_block` with `current_baseContractName` temporarily swapped to the target contract (so `find_decl_ref` still resolves the target's parameter AST ids) while `current_functionDecl` stays on the caller (so `this` keeps resolving to the caller's this pointer).
+4. `delegate_shadow_param_remap` maps each target-formal-parameter AST id to the matching `$dl_arg_i` local id. `get_decl_ref_expr` consults this map before its normal AST lookup, so parameter references in the inlined body pick up the caller-side locals.
+5. Each dispatch arm becomes `if (_addr == _ESBMC_Object_cand.$address) { inlined_body; $dl_success = true; }`. The whole sequence is staged into a single wrapper code_blockt and pushed to `front_block` as one unit — pushing decls individually would be unsafe because nested `get_block` calls inside the body (e.g. for an `if` at the head of the target function) flush `front_block` at their first statement and would scramble decl order.
+6. The call expression itself evaluates to the existing `(bool, bytes)` tuple shape, with the bool slot filled in from `$dl_success`.
+
+**v2 additions** — return-value support (`66f90bb04e`):
+
+- `rewrite_returns_for_delegate_shadow` walks the converted body in-place and replaces every `return X;` with `{ $dl_ret$slot$i = X; goto $dl_end$slot$i; }`. Bare `return;` becomes just the goto. A `$dl_end$slot$i:` label is emitted at the tail of each arm so the goto lands inside the arm, not outside the enclosing caller function.
+- `delegate_shadow_target_return_params` is a scoped override consulted by the ReturnStatement handler in `solidity_convert_stmt.cpp`. While the target body is being converted, it points at the target function's `returnParameters` node so the return expression is typed against the target's signature, not the caller's (which is usually void). Without this, returning a literal like `return 999;` crashes with `cannot use operator[] with a string argument with null` because `make_return_type_from_typet` is given an empty parameter list.
+- Only single-return functions are handled by the shadow; tuple returns fall through to the generic path.
+
+**v3 additions** — internal helper inlining (`c9b6b6697f`):
+
+- `get_call_expr` checks `delegate_shadow_target_cname` early: if set, and the callee resolves to a `FunctionDefinition` whose `scope` matches the target contract, `try_inline_delegate_shadow_helper_call` is invoked instead of building a normal function call. The generic path would otherwise emit `helper((Target*)this, args)`, and the `(Target*)this` cast silently depends on struct-layout coincidences between caller and target. Swap the field order on one side and writes land on the wrong slots — the v1/v2 tests happened to pass because Proxy and Logic declared fields in the same order.
+- The helper inliner allocates fresh `$dl_harg_i` locals for the helper's parameters (separate slot from the outer body's `$dl_arg_i`), optionally a `$dl_hret` for single-return helpers, and a `$dl_hend$slot` end label. It swaps `delegate_shadow_param_remap` and `delegate_shadow_target_return_params` to the helper's shape, recursively calls `get_block` on the helper body, runs the return-rewrite with the helper's own `$dl_hret`/`$dl_hend`, and pushes the whole thing to `front_block` as a single wrapper.
+- Nested helpers (A calls B calls C) inline naturally: each hook activation saves/restores the remap and return-params state, so deeper helpers see their own formal parameters without clobbering the outer remap.
+- For non-void helpers `new_expr` becomes `symbol_expr($dl_hret)` so RHS usage like `x = _helper(v)` still evaluates correctly. For void helpers it becomes `code_skipt()` since the only valid caller context is an expression statement where the result is discarded.
+- Helpers that live in a base contract of the target, helpers that return tuples, and helpers called through `this.foo()` (external self-call) still fall through to the normal call path.
+
+**Current v1/v2/v3 restrictions — fall back to `$delegatecall#0` on any miss:**
+
+- Payload must be a literal `abi.encodeWithSignature("sig(T,...)", ...)`. `encodeWithSelector`, `encodeCall`, and dynamic signature strings are unsupported.
+- Every state variable the target body reads or writes must exist on the caller with the same name and typeString. Rules out EIP-1967 / UUPS / Diamond layouts where the proxy uses dedicated storage slots.
+- Target and helper functions are inlined by body, not by byte layout. Contracts that use `assembly` / `sload` / `sstore` to access storage by slot index are not handled.
+- Only single-return functions are shadowed; tuple return values fall back to the generic path.
+- Helpers defined in a base contract of the target (not the target itself) fall through to the generic path, which reintroduces the `(Target*)this` cast soundness issue for those particular calls.
+- `return` statements inside the inlined body are rewritten to neutralise the "escape the caller" hazard, but the rewrite only walks `codet` children. Returns hidden inside statement expressions, inline assembly, or try/catch bodies are not rewritten.
 
 ESBMC models the return as:
 
