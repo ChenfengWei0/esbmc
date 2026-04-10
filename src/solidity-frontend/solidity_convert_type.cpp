@@ -191,18 +191,75 @@ bool solidity_convertert::get_type_description(
       // e.g. typeIdentifier "t_array$_t_array$_t_uint256_$dyn_storage_$dyn_storage"
       //      typeString     "uint256[] storage ref[] storage ref"
       // Base element is "uint256[]" / "t_array$_t_uint256_$dyn_storage"
+      //
+      // Also handles fixed outer arrays:
+      // e.g. typeIdentifier "t_array$_t_array$_t_uint256_$dyn_storage_$3_storage"
+      //      typeString     "uint256[] storage ref[3] storage ref"
+      // Base element is "uint256[]" / "t_array$_t_uint256_$dyn_storage"
       const std::string prefix = "t_array$_";
       std::string rest = typeIdentifier.substr(prefix.size());
-      // Use rfind to find the LAST _$dyn (the outer array's), not the
-      // inner array's _$dyn.
-      size_t dyn = rest.rfind("_$dyn");
-      std::string base_id = (dyn != std::string::npos)
-                              ? rest.substr(0, dyn)
-                              : rest;
 
-      // Extract base typeString: strip trailing "[]..." from typeString
+      // Find the outer array's delimiter: the last "_$" followed by
+      // "dyn" or digits, then "_storage"/"_memory"/etc.
+      // This correctly skips inner type delimiters.
+      // e.g. rest = "t_array$_t_uint256_$dyn_storage_$3_storage"
+      //   → find last "_$" at the "_$3" position, outer_size = "3"
+      // e.g. rest = "t_array$_t_uint256_$dyn_storage_$dyn_storage"
+      //   → find last "_$" at the "_$dyn" (outer), outer is dynamic
+      std::string base_id;
+      bool outer_is_dynamic = true;
+      std::string outer_size_str;
+      // Scan backwards for the last "_$" that starts the outer delimiter
+      size_t last_delim = rest.rfind("_$");
+      if (last_delim != std::string::npos)
+      {
+        std::string after_delim = rest.substr(last_delim + 2);
+        if (after_delim.compare(0, 3, "dyn") == 0)
+        {
+          base_id = rest.substr(0, last_delim);
+          outer_is_dynamic = true;
+        }
+        else if (!after_delim.empty() && std::isdigit(after_delim[0]))
+        {
+          // Fixed-size: extract digits
+          size_t digit_end = 0;
+          while (digit_end < after_delim.size() &&
+                 std::isdigit(after_delim[digit_end]))
+            digit_end++;
+          outer_size_str = after_delim.substr(0, digit_end);
+          base_id = rest.substr(0, last_delim);
+          outer_is_dynamic = false;
+        }
+        else
+        {
+          // Not a valid delimiter; try second-to-last "_$"
+          size_t prev_delim = rest.rfind("_$", last_delim - 1);
+          if (prev_delim != std::string::npos)
+          {
+            std::string after = rest.substr(prev_delim + 2);
+            if (after.compare(0, 3, "dyn") == 0)
+            {
+              base_id = rest.substr(0, prev_delim);
+              outer_is_dynamic = true;
+            }
+            else
+            {
+              base_id = rest.substr(0, prev_delim);
+            }
+          }
+          else
+          {
+            base_id = rest;
+          }
+        }
+      }
+      else
+      {
+        base_id = rest;
+      }
+
+      // Extract base typeString: strip trailing "[<size>]" from typeString
       std::string base_ts = typeString;
-      // Remove suffixes like " storage ref" or " memory"
       auto strip_loc = [](std::string &s) {
         for (const char *suf :
              {" storage ref", " storage", " memory", " calldata"})
@@ -215,12 +272,11 @@ bool solidity_convertert::get_type_description(
           }
         }
       };
-      strip_loc(base_ts); // "uint256[] storage ref[]" → "uint256[] storage ref"
-                          // might need repeated stripping
-      // Remove the trailing "[]"
-      if (base_ts.size() >= 2 &&
-          base_ts.substr(base_ts.size() - 2) == "[]")
-        base_ts.erase(base_ts.size() - 2);
+      strip_loc(base_ts);
+      // Remove trailing "[<optional_size>]"
+      auto last_bracket = base_ts.rfind('[');
+      if (last_bracket != std::string::npos)
+        base_ts.erase(last_bracket);
       strip_loc(base_ts); // strip again for inner location qualifier
 
       nlohmann::json base_json;
@@ -229,10 +285,23 @@ bool solidity_convertert::get_type_description(
       if (get_type_description(base_json, base_type))
         return true;
 
-      // Determine if outer array is dynamic or fixed
-      // Outer is dynamic if typeIdentifier ends with _$dyn_<location>
-      new_type = gen_pointer_type(base_type);
-      set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+      if (outer_is_dynamic)
+      {
+        new_type = gen_pointer_type(base_type);
+        set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+      }
+      else
+      {
+        unsigned z_ext_value = std::stoul(outer_size_str, nullptr);
+        new_type = array_typet(
+          base_type,
+          constant_exprt(
+            integer2binary(z_ext_value, bv_width(int_type())),
+            integer2string(z_ext_value),
+            int_type()));
+        new_type.set("#sol_array_size", outer_size_str);
+        set_sol_type(new_type, SolidityGrammar::SolType::ARRAY);
+      }
     }
 
     break;

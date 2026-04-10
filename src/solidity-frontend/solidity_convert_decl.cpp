@@ -202,7 +202,8 @@ bool solidity_convertert::get_var_decl(
                             ast_node["stateVariable"].get<bool>();
   bool is_dynarray_state =
     get_sol_type(t) == SolidityGrammar::SolType::DYNARRAY &&
-    is_state_var_check && !is_new_expr;
+    is_state_var_check && !is_new_expr &&
+    !t.get_bool("#sol_mapping_array");
 
   // for mapping: populate the element type (recursively for nested mappings)
   if (is_mapping && !is_new_expr)
