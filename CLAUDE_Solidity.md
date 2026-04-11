@@ -129,11 +129,29 @@ The nondeterministic switch picks **one** contract to fully explore per verifica
 - `constant` state variable values are only available in `--contract` mode (where the initializer runs)
 
 **When to use which:**
-| Mode | State vars | Best for |
-|------|-----------|----------|
-| `--contract C` | Initialized by constructor | Testing contract invariants, state-dependent assertions |
-| `--function f` | Nondet (arbitrary) | Testing function-local logic, over-approximate soundness |
-| `--contract C --function f` | Initialized by constructor, then only `f` is called | Testing a specific function after proper initialization |
+| Mode | State vars | Harness | Best for |
+|------|-----------|---------|----------|
+| `--contract C` | Initialized by constructor | Constructor + nondet dispatch of all public/external functions | Testing contract invariants, state-dependent assertions |
+| `--function f` | Nondet (arbitrary) | No constructor, no dispatch loop; `f` is called once with symbolic state | Function-local logic, over-approximate soundness |
+| `--contract C --focus-function f` | Initialized by constructor | Constructor + nondet dispatch restricted to `f` only | Verifying `f` after proper construction without exploring other public functions |
+
+### `--focus-function` Mode Semantics
+
+`--focus-function funcName` sits between `--contract` and `--function`:
+
+- **Like `--contract`**: the constructor runs, state variables get their declared initializers, inheritance linearization applies, and the whole `_ESBMC_Main_<C>` harness is built.
+- **Like `--function`**: only the named function is verified — but unlike `--function`, constructor state is preserved.
+- **Unlike both**: the nondet dispatch loop inside `_ESBMC_Nondet_Extcall_<C>` filters out every public/external method except `funcName`, so the BMC engine never explores paths that call other functions on the target contract. This is a pure verification-cost optimization.
+
+**Requirements:**
+- Requires `--contract <name>` to pick the target contract when the source declares more than one contract. If the source has exactly one (non-library, non-interface) contract, `--contract` is auto-inferred.
+- Incompatible with `--function` — the two modes have opposite semantics (nondet state vs. constructor-initialized state).
+- `funcName` must be a `public` or `external` method on the target contract (not the constructor, not `receive`/`fallback`).
+- Works with both `--bound` and `--unbound`. In `--bound` mode, other contracts reached via cross-contract calls still dispatch their full public surface — the filter only applies to the focus target contract's own harness.
+
+**Implementation:** the filter lives in `solidity_convert_constructor.cpp:get_unbound_function()` inside the `for (const auto &method : methods)` loop: when `focus_func` is set and `c_name == *tgt_cnt_set.begin()`, methods whose name differs from `focus_func` are skipped before the if-branch is emitted. Validation (contract disambiguation, function existence, `--function` conflict) happens in `solidity_convert.cpp:convert()` right after `populate_auxiliary_vars()`.
+
+**Tests:** see `focus_function_1..4` for: focus-function isolates `f` after construction (pass), full harness exposes a `g`-before-`f` violation that focus-function hides (fail), `--function f` misses constructor init (fail), unbound single-contract auto-inference (pass).
 
 #### Performance Considerations
 

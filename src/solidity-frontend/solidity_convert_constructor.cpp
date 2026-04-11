@@ -287,6 +287,10 @@ bool solidity_convertert::get_unbound_function(
         // focus-function mode: skip all non-focus functions on the target
         // contract to avoid unnecessary verification overhead.
         continue;
+      if (focus_applies && func_name != focus_func)
+        // focus-function mode: skip all non-focus functions on the target
+        // contract to avoid unnecessary verification overhead.
+        continue;
 
       // then: function_call
       // do member access
