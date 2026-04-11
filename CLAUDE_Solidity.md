@@ -295,10 +295,10 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 |----------|------|--------|
 | `abi.encode(x)` | `return x;` (identity) | ✓ Working — 3 regression tests |
 | `abi.encodePacked(x)` | `return x;` (identity) | ✓ Working — 3 regression tests |
-| `abi.encodeWithSelector(sel, x)` | `return sel;` (identity, captures 1st arg = selector) | ✓ Working — 3 tests (2 CORE + 1 KNOWNBUG: `bytes4` struct type mismatch) |
+| `abi.encodeWithSelector(sel, x)` | `return sel;` (identity, captures 1st arg = selector) | ✓ Working — 3 CORE regression tests |
 | `abi.encodeWithSignature(sig, x)` | `return sig;` (identity, captures 1st arg = signature) | ✓ Working — 3 regression tests |
-| `abi.encodeCall(fn, (x))` | `return fn;` (identity) | KNOWNBUG — interface/function pointer syntax crashes converter |
-| `abi.decode(data, (T))` | `uint256_t result;` (nondet) | KNOWNBUG — `ElementaryTypeNameExpression` type tuple not supported by converter |
+| `abi.encodeCall(fn, (x))` | `return fn;` (identity) | ✓ Working — 3 CORE regression tests (interface/function pointer accepted by converter) |
+| `abi.decode(data, (T))` | `uint256_t result;` (nondet) | ✓ Working — 3 CORE regression tests (type tuple accepted by converter) |
 
 **Properties:**
 - **Functional consistency**: `keccak256(x) == keccak256(x)` always holds ✓
@@ -306,7 +306,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 - **String equality via hash**: `keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))` ↔ `s1 == s2` ✓
 - **O(1) SMT cost**: single BV NOT operation per hash call
 - **Limitation**: concrete hash values are not computed; `assert(keccak256(0) == 0xc5d2...)` is not provable
-- **Limitation**: `abi.decode` is nondet — decoded values are unconstrained; `encode(x) → decode → y` does not guarantee `y == x`
+- **Limitation**: `abi.decode` is nondet — decoded values are unconstrained; `encode(x) → decode → y` does not guarantee `y == x`. Guarded round-trips still work (e.g. `require(decoded > 0); assert(decoded > 0);`); see `abi_decode_1/2/3` tests.
 
 #### A3. Dynamic Array State Variables — SMT Array Model (2026-04-09)
 
@@ -379,7 +379,7 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 | Bound: target dispatch | ✓ if-chain over `_ESBMC_Object_X.$address`, calls `_ESBMC_Nondet_Extcall_<target>` | ✓ same if-chain | ✓ same if-chain |
 | Bound: `msg.sender` | ✓ swapped to caller's `this.address`, restored after | ✓ **preserved** (correct EVM semantics) | ✓ swapped to caller's `this.address`, restored after |
 | Bound: **storage context** | ✓ correct — target code runs against `_ESBMC_Object_<target>` | ✓ **storage shadow** — target body is cloned into the caller's function context; state var reads/writes resolve by name against the caller's this pointer. Internal helpers inlined recursively. Falls back to the old target-instance dispatch when preconditions are not met (see v3 notes below). | ✓ correct — target code runs against `_ESBMC_Object_<target>` |
-| Bound: **read-only enforcement** | N/A | N/A | ✗ **NOT enforced** — target may silently write its own state |
+| Bound: **read-only enforcement** | N/A | N/A | ✓ **enforced via snapshot+rollback** — target struct is snapshotted before dispatch and restored after, so any writes performed by the nondet extcall are invisible to the caller. Tests: `staticcall_readonly_1/2`. |
 | Function selector from ABI payload | ✓ signature-based dispatch for `abi.encodeWithSignature` literal | ✓ signature-based shadow dispatch for `abi.encodeWithSignature` literal | ✗ ignored |
 
 **Unbound-mode design note (not a bug):** Under the closed-world assumption, other contracts do not exist, so the target address is intentionally ignored. The side effect — nondet reentry into the current contract via `_ESBMC_Nondet_Extcall_<self>` — is the intentional over-approximation of "attacker-controlled external callee may call back into any of our public functions during the call". This is what enables detection of classic reentrancy bugs (SWC-107), because it exposes the state space where `withdraw()` is re-entered *before* the post-call balance update. The harness-level `while(nondet) { _ESBMC_Nondet_Extcall_self(); }` only explores *sequential* transactions and cannot reach this state space on its own. Test: `swc_107_2` relies on this behavior to detect the reentrancy vulnerability.
@@ -390,7 +390,7 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 
 1. **`delegatecall` storage context — fixed in bound mode via the delegate-shadow fast path.** See the dedicated subsection below for v1/v2/v3 mechanics and restrictions. The generic `$delegatecall#0` dispatcher (which runs the target against `_ESBMC_Object_<target>`) is retained as the fallback when the shadow preconditions are not met.
 
-2. **`staticcall` read-only (soundness gap):** Since read-only is not enforced, a buggy target that writes during staticcall is not flagged, and the target's state *is* mutated in our model (which would revert on real EVM). Soundness gap for target-side invariants. **Planned fix (P2):** snapshot target state before dispatch, assert equality after.
+2. **`staticcall` read-only — fixed via snapshot+rollback.** `get_staticcall_definition` now emits a per-arm full-struct snapshot of `_ESBMC_Object_<target>` before the nondet extcall and restores it immediately after, so any writes the target performs during dispatch are invisible to the caller. This matches real EVM semantics (write attempts inside a staticcall context revert) without needing per-field assertions. The nondet extcall is still invoked so path exploration and reentrancy modelling behave identically to `.call()` otherwise. Mutex toggling for reentrancy checks is no longer needed inside the staticcall arm because the rollback guarantees the target's observed state is invariant across the call boundary. Tests: `staticcall_readonly_1/2` (bound-mode verify/refute of target state invariance). **Not yet handled:** surfacing "target tried to write" as an explicit verification failure — the current model silently rolls back, which is sound but loses detection of buggy targets.
 
 3. **ABI selector matching:** `.call(abi.encodeWithSignature("foo(uint)", 42))` now routes through a signature-based dispatch helper in bound mode (`try_get_signature_dispatched_call` @ `solidity_convert_call.cpp:~1830`) that resolves the literal signature to the matching target function and calls a typed shim with the provided argument values. `.delegatecall(...)` reuses the same signature extraction inside the storage shadow path, and since 2026-04-11 (`extract_abi_encode_signature` v4) also accepts `abi.encodeWithSelector(FnRef.selector, args...)` and `abi.encodeCall(FnRef, (args...))` — the canonical signature is rebuilt from the referenced FunctionDefinition via `build_canonical_signature`. Dynamic signature strings (built at runtime from a `bytes` variable) still fall back to the nondet dispatcher.
 
@@ -402,7 +402,7 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
   - `.staticcall()`: `get_staticcall_definition()` @ `solidity_convert_call.cpp:2203`
 - Per-target nondet dispatcher: `get_unbound_function()` @ `solidity_convert_constructor.cpp:213` — always binds `this = _ESBMC_Object_<target>`, used by the fallback paths
 
-**Tests:** `delegatecall_1/2`, `staticcall_1/2` — unbound-mode lowering smoke tests. `delegate_shadow_1..9` — bound-mode storage-shadow regression tests (happy path, value propagation, layout mismatch fallback, return value, early return in conditional branches, internal helper inlining with swapped Proxy layout, nested helpers with return values, adversarial wrong-assertion cases).
+**Tests:** `delegatecall_1/2`, `staticcall_1/2` — unbound-mode lowering smoke tests. `staticcall_readonly_1/2` — bound-mode staticcall read-only enforcement via snapshot+rollback (target.modify writes get rolled back). `delegate_shadow_1..9` — bound-mode storage-shadow regression tests (happy path, value propagation, layout mismatch fallback, return value, early return in conditional branches, internal helper inlining with swapped Proxy layout, nested helpers with return values, adversarial wrong-assertion cases).
 
 ---
 
@@ -460,7 +460,7 @@ typedef struct BytesDynamic { size_t offset; size_t length; size_t capacity; int
 
 - `bool success` works correctly — `require(success)` patterns are verifiable
 - `bytes memory data` is a nondet `BytesDynamic` struct — `data.length` is accessible and verifiable (fixed 2026-04-02)
-- **Blocks**: `abi.decode(data, (uint))` — decoded content inspection; Tier 2 #7
+- `abi.decode(data, (T))` is supported as a nondet over-approximation — decoded content is unconstrained but the call parses and type-checks cleanly
 - Key fix (2026-04-02): `data.length` member expression type was `uint32` instead of `size_t`; corrected in `solidity_convert_ref.cpp:482`
 
 #### E. Tuple / Multi-Return — Mostly Resolved (2026-04-02)
@@ -474,7 +474,7 @@ typedef struct BytesDynamic { size_t offset; size_t length; size_t capacity; int
 
 | Remaining Limitation | Detail | Location |
 |----------------------|--------|----------|
-| **`abi.decode()` unsupported** | Cannot decode the `bytes memory data` content; see Tier 2 #7 | See Section D |
+| **`abi.decode()` is nondet** | Parses and type-checks, but decoded content is unconstrained (over-approximation) | See Section D |
 
 #### F. Mapping Library Efficiency
 
@@ -595,8 +595,8 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | **Fallback with params** | Partial | Basic fallback exists; `fallback(bytes calldata) returns (bytes memory)` params ignored |
 | **Custom storage layout** | ✓ Works (2026-04-07) | `contract C layout at <expr>` (Solidity 0.8.29+) — AST parses without error; ESBMC ignores storage slots (models state vars as struct members); tests: `layout_1/2` |
 | **Array slices (`IndexRangeAccess`)** | ✅ Over-approx (2026-04-09) | `data[:4]`, `data[1:3]` on calldata arrays/bytes — modeled as nondet; tests: `array_slice_1/2` |
-| **`abi.decode()`** | KNOWNBUG | Nondet model exists in `solidity_abi.c` but converter cannot parse `(uint256)` type tuple argument (`ElementaryTypeNameExpression` unsupported) |
-| **`abi.encodeCall()`** | KNOWNBUG | Identity model exists in `solidity_abi.c` but converter crashes on interface/function pointer syntax in AST |
+| **`abi.decode()`** | ✓ Nondet (CORE) | Parses `(T)` type tuple via `ElementaryTypeNameExpression`; result is an unconstrained nondet value. Tests: `abi_decode_1/2/3` |
+| **`abi.encodeCall()`** | ✓ Identity (CORE) | Interface/function pointer (`ITarget.transfer`) accepted by converter; canonical signature rebuilt from referenced `FunctionDefinition`. Tests: `abi_encodeCall_1/2/3` |
 | **`mulmod(MAX,MAX,k)`** | KNOWNBUG | 512-bit model is correct but ESBMC constant evaluator crashes (SIGFPE) when both operands are near `type(uint256).max` |
 | **Inline assembly / Yul** | ✅ Havoc (2026-04-05) | Over-approximated: all externally referenced variables are havoc'd to nondet. Does not model Yul semantics. |
 | **Function types** | Not supported | `function(uint) returns (bool)` as first-class values |
@@ -615,7 +615,7 @@ These are bugs or unsound abstractions in features we claim to support:
 | 1 | ~~**Fix mapping key truncation**~~ — XOR-fold 256→64 bit in frontend | ✅ Done | Resolved via `xor_fold_key_to_64bit()` (2026-04-02); 2^-64 collision rate |
 | 2 | ~~**Fix crypto function abstraction**~~ — deterministic bijective hash for all crypto functions | ✅ Done | Resolved via deterministic bijective transforms (2026-04-04); see Section A/H. Functional consistency ✓, injectivity ✓, O(1) SMT cost. `abi.encodePacked` changed from nondet to identity to complete the `keccak256(abi.encodePacked(x))` chain |
 | 3 | ~~**Fix external call tuple returns**~~ | ✅ Done | Resolved in 4-phase tuple refactoring (2026-04-02) |
-| 4 | ~~**Low-level call bytes return**~~ — model as `BytesDynamic` instead of nondet_uint | ✅ Done | Resolved via `get_tuple_assignment` substitution (2026-04-02); `bytes memory data` is now a nondet `BytesDynamic`. `data.length` comparisons work correctly (fixed 2026-04-02: `solidity_convert_ref.cpp` used `uint_type()` instead of `size_type()` for `.length` member type). `abi.decode()` still unsupported (Tier 2 #7) |
+| 4 | ~~**Low-level call bytes return**~~ — model as `BytesDynamic` instead of nondet_uint | ✅ Done | Resolved via `get_tuple_assignment` substitution (2026-04-02); `bytes memory data` is now a nondet `BytesDynamic`. `data.length` comparisons work correctly (fixed 2026-04-02: `solidity_convert_ref.cpp` used `uint_type()` instead of `size_type()` for `.length` member type). `abi.decode()` converter support landed since — see Tier 2 #7 |
 
 #### Tier 2 — High-Impact Missing Features
 
@@ -623,7 +623,7 @@ These are bugs or unsound abstractions in features we claim to support:
 |---|------|--------|-----|
 | 5 | **`super` keyword** | ✅ Done (2026-04-05) | Non-override and override cases; cooperative super chain; `find_contract_name_for_id` + `get_super_function_call`; backend `is_prefix_of` handles cross-type writes |
 | 6 | ~~**Try/Catch**~~ | ✅ Done (2026-04-05) | Nondet success/fail branching with multi-clause catch support |
-| 7 | **`abi.decode()`** | Moderate (~200 lines) | Needed for low-level call data inspection |
+| 7 | ~~**`abi.decode()`**~~ | ✅ Done | Converter accepts `(T)` type tuple; model is nondet over-approximation (guarded round-trips work via `require`). Tests: `abi_decode_1/2/3`. Tighter encode/decode round-trip remains future work if concrete payloads are ever needed. |
 | 8 | **Function overloading** | Hard (~400 lines) | Name mangling or overload resolution table |
 | 9 | **Data location semantics** | Partial (2026-04-07): storage ref for library params done; memory copy-on-call, calldata immutability, non-library storage ref remain | soundness gap |
 
@@ -771,9 +771,9 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 **Note:** Both `ENABLE_SOLIDITY_FRONTEND` and `ENABLE_REGRESSION` must be ON. The default build (`./scripts/build.sh`) sets `ENABLE_REGRESSION=OFF`, so regression tests won't appear in `ctest -N` unless explicitly enabled.
 
-### Test Baseline (2026-04-09)
+### Test Baseline (2026-04-11)
 
-**476 total tests** (2026-04-09): 476 pass, 0 failed, 0 timeout (40s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**503 total tests** (2026-04-11): 503 pass, 0 failed, 0 timeout (46s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
