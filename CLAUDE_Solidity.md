@@ -570,6 +570,27 @@ Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_crypto.c`
 
 **Automatic solver selection (2026-04-11):** When the user does not pass an explicit solver flag, the Solidity frontend auto-selects `bitwuzla > cvc5 > boolector > z3` (first available). Z3 is kept as the default only when `--k-induction`, `--k-induction-parallel`, `--incremental-bmc`, or `--falsification` is set, because those modes rely heavily on incremental SMT queries where Z3 is more robust. The chosen backend is logged at startup with an override hint. Implementation: `src/esbmc/esbmc_parseoptions.cpp` inside the Solidity detection block after `get_command_line_options()`.
 
+Observed regression-suite timings at 60s CTest timeout (same machine, 509 tests):
+
+| Default backend | Wall time | Notes |
+|-----------------|----------:|-------|
+| z3 (old default) | 47s | baseline |
+| cvc5 | 45s | 2 THOROUGH tests time out and need `--z3` pin: `import_15`, `mul_cnt_ver_2` |
+| **bitwuzla** | **39s** | fastest; both previously-pinned THOROUGH tests also finish in 3–5s with `--bitwuzla` |
+
+The `--z3` pin on `import_15` and `mul_cnt_ver_2` is preserved so minimal builds (only `z3 + cvc5`, no bitwuzla/boolector) still pass the suite. On a full build the auto-select picks bitwuzla and those tests would pass without the pin as well.
+
+**Build requirements for bitwuzla backend (Ubuntu/WSL):**
+
+```bash
+sudo apt install -y libgmp-dev
+pip install --user --break-system-packages meson ninja
+cd build && cmake -DENABLE_BITWUZLA=ON -DDOWNLOAD_DEPENDENCIES=ON ..
+cmake --build . -j$(nproc) --target esbmc
+```
+
+`libgmp-dev` is required for the bitwuzla pkg-config check; `meson`/`ninja` are required by bitwuzla's upstream build (it is compiled from source by CPM).
+
 #### J. `super` Keyword — Implemented (2026-04-05)
 
 `super.funcName()` calls are now supported. Detection is in `get_call_expr()` (`solidity_convert_expr.cpp`) which checks for `MemberAccess` where `expression.name == "super"`. The dispatch logic is in `get_super_function_call()` (`solidity_convert_call.cpp`):

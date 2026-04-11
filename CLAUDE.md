@@ -24,6 +24,12 @@ ESBMC (Efficient SMT-based Context-Bounded Model Checker) is a formal verificati
 
 # Enable CVC5 solver (required for Solidity 256-bit tests)
 cmake .. -DENABLE_CVC5=ON -DDOWNLOAD_DEPENDENCIES=ON
+
+# Enable Bitwuzla solver (preferred default for Solidity; auto-selected)
+# Requires: libgmp-dev (apt) + meson/ninja (pip, for bitwuzla's upstream build)
+sudo apt install -y libgmp-dev
+pip install --user --break-system-packages meson ninja
+cmake .. -DENABLE_BITWUZLA=ON -DDOWNLOAD_DEPENDENCIES=ON
 ```
 
 The binary is installed to `./release/bin/esbmc`.
