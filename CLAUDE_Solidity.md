@@ -118,6 +118,29 @@ The nondeterministic switch picks **one** contract to fully explore per verifica
 | Bind name list | `solidity_convert.cpp:754` | `$X_bind_cname_list` array + `initialize_X_bind_cname()` |
 | Static instances | `solidity_convert_contract.cpp:73` | `_ESBMC_Object_X` global instances |
 
+### `--function` Mode Semantics
+
+`--function funcName` verifies a single function in isolation, under **arbitrary initial state**. All state variables are initialized to nondeterministic (symbolic) values, NOT to their declared initializers or constructor-assigned values. This is by design: `--function` mode checks whether the function is correct for **all possible** contract states, not just post-constructor states.
+
+**Implications:**
+- `x = 42; assert(x == 42)` where `x` is a state variable will **fail** because nondet state can be re-entered between assignment and assertion
+- `--function` is best for verifying **function-local** properties (pure/view functions, local variable logic) and for **over-approximate** analysis where any input state is valid
+- `constant` state variable values are only available in `--contract` mode (where the initializer runs)
+- To verify state-dependent properties, use `--contract ContractName` instead (which runs the constructor first and then dispatches all public functions); to narrow verification to a single function without dropping the constructor, use `--focus-function` (below)
+
+**When to use which:**
+| Mode | State vars | Harness | Best for |
+|------|-----------|---------|----------|
+| `--contract C` | Initialized by constructor | Constructor + nondet dispatch of all public/external functions | Testing contract invariants, state-dependent assertions |
+| `--function f` | Nondet (arbitrary) | No constructor, no dispatch loop; `f` is called once with symbolic state | Function-local over-approximate soundness, quick sanity checks on pure functions |
+| `--contract C --focus-function f` | Initialized by constructor | Constructor + nondet dispatch restricted to `f` only | Verifying `f` after proper construction without exploring other public functions |
+
+> **🚫 Hard rule — never use `--function` in regression tests.**
+>
+> `--function` fabricates nondet initial state, which makes the verifier's job dramatically easier (no pre-state from the constructor, no cross-function interaction, no dispatch loop pressure on the solver). That turns adversarial tests into toy benchmarks and hides real performance and soundness weaknesses in the Solidity frontend / SMT backends.
+>
+> Regression tests must verify the contract under realistic post-construction state. Use `--contract` for whole-contract verification and `--focus-function` when you need to narrow assertions to a single function while keeping the constructor + harness. `--function` remains available as an interactive / research knob — just not in `regression/esbmc-solidity/**/test.desc`.
+
 ### `--focus-function` Mode Semantics
 
 `--focus-function funcName` narrows verification to a single function while keeping the full contract harness:
