@@ -118,40 +118,21 @@ The nondeterministic switch picks **one** contract to fully explore per verifica
 | Bind name list | `solidity_convert.cpp:754` | `$X_bind_cname_list` array + `initialize_X_bind_cname()` |
 | Static instances | `solidity_convert_contract.cpp:73` | `_ESBMC_Object_X` global instances |
 
-### `--function` Mode Semantics
-
-`--function funcName` verifies a single function in isolation, under **arbitrary initial state**. All state variables are initialized to nondeterministic (symbolic) values, NOT to their declared initializers or constructor-assigned values. This is by design: `--function` mode checks whether the function is correct for **all possible** contract states, not just post-constructor states.
-
-**Implications:**
-- `x = 42; assert(x == 42)` where `x` is a state variable will **fail** because the nondet external call dispatch (`_ESBMC_Nondet_Extcall`) can re-enter the function and modify state between the assignment and assertion
-- To verify state-dependent properties, use `--contract ContractName` instead (which runs the constructor first and then dispatches all public functions)
-- `--function` is best for verifying **function-local** properties (pure/view functions, local variable logic) and for **over-approximate** analysis where any input state is valid
-- `constant` state variable values are only available in `--contract` mode (where the initializer runs)
-
-**When to use which:**
-| Mode | State vars | Harness | Best for |
-|------|-----------|---------|----------|
-| `--contract C` | Initialized by constructor | Constructor + nondet dispatch of all public/external functions | Testing contract invariants, state-dependent assertions |
-| `--function f` | Nondet (arbitrary) | No constructor, no dispatch loop; `f` is called once with symbolic state | Function-local logic, over-approximate soundness |
-| `--contract C --focus-function f` | Initialized by constructor | Constructor + nondet dispatch restricted to `f` only | Verifying `f` after proper construction without exploring other public functions |
-
 ### `--focus-function` Mode Semantics
 
-`--focus-function funcName` sits between `--contract` and `--function`:
+`--focus-function funcName` narrows verification to a single function while keeping the full contract harness:
 
-- **Like `--contract`**: the constructor runs, state variables get their declared initializers, inheritance linearization applies, and the whole `_ESBMC_Main_<C>` harness is built.
-- **Like `--function`**: only the named function is verified — but unlike `--function`, constructor state is preserved.
-- **Unlike both**: the nondet dispatch loop inside `_ESBMC_Nondet_Extcall_<C>` filters out every public/external method except `funcName`, so the BMC engine never explores paths that call other functions on the target contract. This is a pure verification-cost optimization.
+- The constructor runs, state variables get their declared initializers, inheritance linearization applies, and the whole `_ESBMC_Main_<C>` harness is built.
+- Only the named function is verified: the nondet dispatch loop inside `_ESBMC_Nondet_Extcall_<C>` filters out every public/external method except `funcName`, so the BMC engine never explores paths that call other functions on the target contract. This is a pure verification-cost optimization; no state is fabricated as nondet.
 
 **Requirements:**
 - Requires `--contract <name>` to pick the target contract when the source declares more than one contract. If the source has exactly one (non-library, non-interface) contract, `--contract` is auto-inferred.
-- Incompatible with `--function` — the two modes have opposite semantics (nondet state vs. constructor-initialized state).
 - `funcName` must be a `public` or `external` method on the target contract (not the constructor, not `receive`/`fallback`).
 - Works with both `--bound` and `--unbound`. In `--bound` mode, other contracts reached via cross-contract calls still dispatch their full public surface — the filter only applies to the focus target contract's own harness.
 
-**Implementation:** the filter lives in `solidity_convert_constructor.cpp:get_unbound_function()` inside the `for (const auto &method : methods)` loop: when `focus_func` is set and `c_name == *tgt_cnt_set.begin()`, methods whose name differs from `focus_func` are skipped before the if-branch is emitted. Validation (contract disambiguation, function existence, `--function` conflict) happens in `solidity_convert.cpp:convert()` right after `populate_auxiliary_vars()`.
+**Implementation:** the filter lives in `solidity_convert_constructor.cpp:get_unbound_function()` inside the `for (const auto &method : methods)` loop: when `focus_func` is set and `c_name == *tgt_cnt_set.begin()`, methods whose name differs from `focus_func` are skipped before the if-branch is emitted. Validation (contract disambiguation, function existence) happens in `solidity_convert.cpp:convert()` right after `populate_auxiliary_vars()`.
 
-**Tests:** see `focus_function_1..4` for: focus-function isolates `f` after construction (pass), full harness exposes a `g`-before-`f` violation that focus-function hides (fail), `--function f` misses constructor init (fail), unbound single-contract auto-inference (pass).
+**Tests:** see `focus_function_1`, `focus_function_2`, `focus_function_4` for: focus-function isolates `f` after construction (pass), full harness exposes a `g`-before-`f` violation that focus-function hides (fail), unbound single-contract auto-inference (pass).
 
 #### Performance Considerations
 
@@ -341,7 +322,7 @@ assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓ (was 0 VCCs before)
 - `solidity_convert_expr.cpp`: Literal assignment `items = [1,2,3]` generates element-wise writes + length set; `new uint[](n)` sets length = n
 - Global static lifetime (like mappings): not a struct member, resolved directly via symbol
 
-**Semantic change:** The global length variable is visible to re-entrant calls in `--unbound` mode, which is MORE correct than the old model (where the C model's internal tracking was opaque to the solver). Test `github_2580_1` updated to use `--function` to avoid false reentrancy effects.
+**Semantic change:** The global length variable is visible to re-entrant calls in `--unbound` mode, which is MORE correct than the old model (where the C model's internal tracking was opaque to the solver). Test `github_2580_1` is currently `KNOWNBUG` because multi-dispatch of `test()` accumulates length across iterations.
 
 Tests: `dynarray_push_1` (push + pop + length pass), `dynarray_push_2` (wrong value fail).
 
@@ -875,23 +856,22 @@ ESBMC supports all 4 coverage criteria on Solidity contracts. See `CLAUDE_COVERA
 ### Quick Reference
 
 ```bash
-# Branch coverage (recommended: use --function for targeted analysis)
-esbmc contract.sol --contract MyContract --function myFunc \
+# Branch coverage (use --focus-function for targeted analysis)
+esbmc contract.sol --contract MyContract --focus-function myFunc \
   --branch-coverage-claims --unwind 10 --no-unwinding-assertions
 
-# Condition coverage (works without --function)
+# Condition coverage (whole-contract)
 esbmc contract.sol --contract MyContract \
   --condition-coverage-claims --unwind 10 --no-unwinding-assertions
 
 # Assertion coverage
-esbmc contract.sol --contract MyContract --function myFunc \
+esbmc contract.sol --contract MyContract --focus-function myFunc \
   --assertion-coverage-claims --unwind 10 --no-unwinding-assertions
 ```
 
 ### Solidity-Specific Handling
 
-- **Multi-tx harness auto-disabled**: The `_ESBMC_Main*` while-loop is neutralized in coverage mode so `--function` is optional (but recommended for performance)
-- **Modifier prefix matching**: `--function deposit` matches `deposit_onlyPositive`
+- **Multi-tx harness auto-disabled**: The `_ESBMC_Main*` while-loop is neutralized in coverage mode; `--focus-function` is optional but recommended for performance
 - **Pretty-printed expressions**: C casts and internal names are mapped to Solidity equivalents in coverage output (e.g., `msg_sender` → `msg.sender`, `this->owner` → `owner`)
 - **`require()` invisible to branch coverage**: Modeled as `assume`, not a branch — this is correct Solidity semantics
 - **Zero-goal summary**: Coverage summary always printed, even for straight-line code with no branches

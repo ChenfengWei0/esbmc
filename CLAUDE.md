@@ -180,7 +180,7 @@ Z3 struggles with 256-bit bitvector arithmetic (common in Solidity's `uint256`).
 
 A simplified ERC20 model is available at `regression/esbmc-solidity/ERC20.sol` for verifying contracts that inherit from OpenZeppelin's ERC20. It implements `balanceOf`, `transfer`, `transferFrom`, `approve`, `allowance`, `_transfer`, `_mint`, `_burn`, `_approve` using only ESBMC-supported Solidity features. To use it, copy the ERC20 contract definition into the same `.sol` file as the contract under verification and regenerate the `.solast` with `solc --ast-compact-json`.
 
-Note: `--function` mode skips the constructor. For ERC20 tests that depend on constructor initialization (e.g., `_mint` in constructor), omit `--function` and use `--contract` instead.
+Note: always use `--contract` (with optional `--focus-function`) to keep the constructor in scope.
 
 ## Code Style
 
