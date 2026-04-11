@@ -568,6 +568,8 @@ Implementation: crypto hashes in `src/c2goto/library/solidity/solidity_crypto.c`
 | **SMT solver performance** | 256-bit bitvector operations significantly slower than smaller widths; OOM possible for complex arithmetic | `README.md:123` |
 | **`--16` workaround** | Reducing to 16-bit improves speed but introduces precision loss | — |
 
+**Automatic solver selection (2026-04-11):** When the user does not pass an explicit solver flag, the Solidity frontend auto-selects `bitwuzla > cvc5 > boolector > z3` (first available). Z3 is kept as the default only when `--k-induction`, `--k-induction-parallel`, `--incremental-bmc`, or `--falsification` is set, because those modes rely heavily on incremental SMT queries where Z3 is more robust. The chosen backend is logged at startup with an override hint. Implementation: `src/esbmc/esbmc_parseoptions.cpp` inside the Solidity detection block after `get_command_line_options()`.
+
 #### J. `super` Keyword — Implemented (2026-04-05)
 
 `super.funcName()` calls are now supported. Detection is in `get_call_expr()` (`solidity_convert_expr.cpp`) which checks for `MemberAccess` where `expression.name == "super"`. The dispatch logic is in `get_super_function_call()` (`solidity_convert_call.cpp`):
