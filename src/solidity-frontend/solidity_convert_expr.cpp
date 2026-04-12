@@ -2865,9 +2865,10 @@ bool solidity_convertert::get_binary_operator_expr(
       if (get_expr(callee_arg_json, literal_type, size_expr))
         return true;
 
-      // get sizeof
+      // get sizeof — use LHS element type, not RHS (which is void*
+      // from calloc, giving sizeof(void)=1 instead of the real element size)
       exprt size_of_expr;
-      get_size_of_expr(rt.subtype(), size_of_expr);
+      get_size_of_expr(lt.subtype(), size_of_expr);
 
       // do array copy
       side_effect_expr_function_callt acpy_call;
