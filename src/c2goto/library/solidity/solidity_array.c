@@ -1,4 +1,15 @@
-/* Solidity dynamic array operations */
+/* Solidity dynamic array operations — inline-header design.
+ *
+ * Each dynamic array allocation reserves sizeof(size_t) bytes BEFORE
+ * the data for an inline length header.  All length queries are O(1)
+ * pointer arithmetic — no global lookup table, no loops, immune to
+ * --unwind truncation.
+ *
+ * Memory layout:
+ *   [ size_t length | element[0] | element[1] | ... ]
+ *                    ^
+ *                    returned pointer (what Solidity code sees)
+ */
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -7,6 +18,8 @@
 #include <assert.h>
 #include "solidity_types.h"
 
+/* Legacy globals — kept as zero-initialized dummies so that any old
+ * GOTO code referencing them still links, but they are unused. */
 __attribute__((annotate("__ESBMC_inf_size"))) void *esbmc_array_ptrs[1];
 __attribute__((annotate("__ESBMC_inf_size"))) size_t esbmc_array_lengths[1];
 unsigned int esbmc_array_count;

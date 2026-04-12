@@ -2787,41 +2787,49 @@ bool solidity_convertert::get_binary_operator_expr(
       rt_sol == SolidityGrammar::SolType::DYNARRAY && lhs.is_symbol() &&
       lt.get_bool("#sol_dynarray_state"))
     {
-      // Dynarray state var: skip arrcpy, just note the assignment is handled
-      // by the caller's existing mechanism (element-wise via loops would be
-      // needed, but for now we just skip — this pattern is rare)
+      // Dynarray state var (infinite-size array): cannot use arrcpy
+      // (element-level copy triggers inf_sized_array_excp). For state
+      // vars the assignment semantics differ from memory arrays.
+      // TODO: implement proper element-wise copy for state var dynarrays.
       new_expr = code_skipt();
       return false;
     }
     else if (rt_sol == SolidityGrammar::SolType::DYNARRAY)
     {
-      /* e.g.
-        int[] public data1;
-        int[] memory ac;
-        ac = new int[](10);
-        data1 = ac;  // target
+      /* Dynarray-to-dynarray assignment.
+       *
+       * Storage target (data1 = ac): deep copy via _ESBMC_arrcpy so
+       * the storage gets its own allocation independent of memory.
+       *
+       * Memory target (r.limbs = newLimbs): Solidity memory arrays
+       * are reference types — assignment is just a pointer copy.
+       * No arrcpy needed; fall through to plain assignment.  */
+      bool lhs_is_state = lhs.is_symbol() && lt.get_bool("#sol_dynarray_state");
+      if (lhs_is_state)
+      {
+        // get size
+        exprt size_expr;
+        get_size_expr(rhs, size_expr);
 
-      we convert it as
-        data1 = _ESBMC_arrcpy(ac, get_array_size(ac), type_size);
-      */
+        // get sizeof
+        exprt size_of_expr;
+        get_size_of_expr(lt.subtype(), size_of_expr);
 
-      // get size
-      exprt size_expr;
-      get_size_expr(rhs, size_expr);
+        // do array copy
+        side_effect_expr_function_callt acpy_call;
+        get_arrcpy_function_call(lhs.location(), acpy_call);
+        acpy_call.arguments().push_back(rhs);
+        acpy_call.arguments().push_back(size_expr);
+        acpy_call.arguments().push_back(size_of_expr);
+        solidity_gen_typecast(ns, acpy_call, lt);
 
-      // get sizeof
-      exprt size_of_expr;
-      get_size_of_expr(rt.subtype(), size_of_expr);
-
-      // do array copy
-      side_effect_expr_function_callt acpy_call;
-      get_arrcpy_function_call(lhs.location(), acpy_call);
-      acpy_call.arguments().push_back(rhs);
-      acpy_call.arguments().push_back(size_expr);
-      acpy_call.arguments().push_back(size_of_expr);
-      solidity_gen_typecast(ns, acpy_call, lt);
-
-      rhs = acpy_call;
+        rhs = acpy_call;
+      }
+      else
+      {
+        // Memory-to-memory: just typecast and assign pointer directly
+        solidity_gen_typecast(ns, rhs, lt);
+      }
       // fall through to do assignment
     }
     else if (
@@ -2854,32 +2862,13 @@ bool solidity_convertert::get_binary_operator_expr(
       /* e.g.
         int[] memory ac;
         ac = new int[](10);
-      */
-      exprt size_expr;
-      if (!rhs_json.contains("arguments"))
-        abort();
-      nlohmann::json callee_arg_json = rhs_json["arguments"][0];
-      const nlohmann::json literal_type = callee_arg_json["typeDescriptions"];
 
-      // get new array
-      if (get_expr(callee_arg_json, literal_type, size_expr))
-        return true;
-
-      // get sizeof — use LHS element type, not RHS (which is void*
-      // from calloc, giving sizeof(void)=1 instead of the real element size)
-      exprt size_of_expr;
-      get_size_of_expr(lt.subtype(), size_of_expr);
-
-      // do array copy
-      side_effect_expr_function_callt acpy_call;
-      get_arrcpy_function_call(lhs.location(), acpy_call);
-
-      acpy_call.arguments().push_back(rhs);
-      acpy_call.arguments().push_back(size_expr);
-      acpy_call.arguments().push_back(size_of_expr);
-      solidity_gen_typecast(ns, acpy_call, lt);
-
-      rhs = acpy_call;
+       _ESBMC_alloc_array already allocated the array with an inline
+       header.  No arrcpy needed — just assign the pointer directly.
+       The _ESBMC_store_array call (emitted separately by the frontend)
+       updates the header if the count differs. */
+      solidity_gen_typecast(ns, rhs, lt);
+      // fall through to do plain pointer assignment
     }
     else if (lt_sol == SolidityGrammar::SolType::STRING)
     {

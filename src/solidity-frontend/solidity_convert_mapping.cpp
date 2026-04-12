@@ -657,8 +657,8 @@ void solidity_convertert::get_calloc_function_call(
   const locationt &loc,
   side_effect_expr_function_callt &calc_call)
 {
-  const std::string calc_name = "calloc";
-  const std::string calc_id = "c:@F@calloc";
+  const std::string calc_name = "_ESBMC_alloc_array";
+  const std::string calc_id = "c:@F@_ESBMC_alloc_array";
   const symbolt &calc_sym = *context.find_symbol(calc_id);
   get_library_function_call_no_args(
     calc_name, calc_id, symbol_expr(calc_sym).type(), loc, calc_call);
