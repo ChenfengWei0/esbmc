@@ -301,12 +301,18 @@ void c_linkt::duplicate_symbol(symbolt &in_context, symbolt &new_symbol)
     }
     else
     {
-      log_error(
-        "duplicate_symbol: in_context is not extern, never seen in tests, "
-        "aborting.");
-      in_context.dump();
-      new_symbol.dump();
-      abort();
+      if (new_symbol.is_extern)
+      {
+        // new symbol is extern, existing is defined — keep existing
+      }
+      else
+      {
+        // both are non-extern definitions — keep existing (first-definition-wins)
+        log_debug(
+          "c_link",
+          "duplicate non-extern symbol '{}', keeping existing definition",
+          in_context.name);
+      }
     }
   }
 }
