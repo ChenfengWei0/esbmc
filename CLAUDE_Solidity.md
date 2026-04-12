@@ -388,6 +388,10 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 | **Calldata immutability** | Calldata params should be read-only; no enforcement | — |
 | **Copy-on-assign for memory structs/arrays** | `memory` assignment should copy; may alias | — |
 | **Storage ref for non-library functions** | Storage params in regular contract functions not yet handled | — |
+| **Storage ref write to mapping element** | `Campaign storage c = campaigns[0]; c.field = val;` — reads work, writes don't propagate back to mapping. The alias mechanism (`storage_ref_aliases`) only handles simple `referencedDeclaration` sources, not `IndexAccess` expressions | `solidity_convert_decl.cpp:288-302` — condition requires `get_sol_type(t) == STRUCT && initialValue.contains("referencedDeclaration")`, so mapping index expressions are not aliased. KNOWNBUG: `storage_ref_mapping_write_1` |
+| **Local storage ref to dynamic array** | `uint[] storage ptr = s[0]` — CONVERSION ERROR "Unexpect initialization for dynamic array". The storage ref alias code only handles `STRUCT` type, and DYNARRAY local variables with initializers fall through to the regular init path which doesn't recognize `IndexAccess` results | `solidity_convert_decl.cpp:291` checks `get_sol_type(t) == STRUCT`; `solidity_convert_decl.cpp:610-614` hits fallthrough error. KNOWNBUG: `dangling_ref_1` |
+| **`new T[N][](size)` expression** | Dynamic allocation of fixed-size sub-arrays crashes with json `type_error` — null field where array size expected | JSON field access for nested `ArrayTypeName` size. KNOWNBUG: `new_fixdyn_array_1` |
+| **Struct with dynarray member via storage ref** | `StructType { uint[] contents; } s; StructType storage g = s; g.contents = c;` — Null Element Pointer assertion failure when assigning memory array to struct's dynarray member | `solidity_array.c:23` `_ESBMC_element_null_check`. KNOWNBUG: `struct_dynarray_member_1` |
 
 #### D. Low-Level Calls — Partial Modeling (2026-04-10)
 
@@ -699,6 +703,21 @@ These are bugs or unsound abstractions in features we claim to support:
 - `typedef_1` (~420s) — k-induction with complex type aliases
 - `continue_3`/`break_4` (~200-250s) — `--unwind 20` with nested control flow
 - `bytes_17` (~175s) — bytes operations with `--bound` mode
+
+### Solidity Documentation Examples (2026-04-12)
+
+Tests sourced from the official Solidity documentation (Arrays, Structs, Mapping Types, Dangling References sections). All use `--multi-property` for stress testing.
+
+| Test | Source | Status | Notes |
+|------|--------|--------|-------|
+| `mapping_erc20_1` | Docs: Mapping Types (ERC20-style) | ✅ CORE | Nested mappings, require guards, events |
+| `array_flags_1` | Docs: Arrays (ArrayContract) | ✅ CORE | `bool[2][]` push/set/resize/delete |
+| `array_bytes_1` | Docs: Arrays (ArrayContract.byteArrays) | ✅ CORE | bytes push, index write, delete element |
+| `struct_mapping_direct_1` | Docs: Structs (CrowdFunding) | ✅ CORE | Struct-in-mapping with direct field writes |
+| `dangling_ref_1` | Docs: Dangling References | KNOWNBUG | Local storage ref to dynarray element — conversion error |
+| `new_fixdyn_array_1` | Docs: Arrays (ArrayContract.clear/createMemoryArray) | KNOWNBUG | `new T[N][](size)` — json type_error crash |
+| `struct_dynarray_member_1` | Docs: Arrays (ArrayContract.StructType) | KNOWNBUG | Struct with `uint[]` member — Null Element Pointer |
+| `storage_ref_mapping_write_1` | Docs: Structs (CrowdFunding pattern) | KNOWNBUG | Storage ref write to mapping element — not propagated |
 
 ## Code Architecture Notes
 

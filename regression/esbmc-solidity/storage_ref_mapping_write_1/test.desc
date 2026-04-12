@@ -1,0 +1,4 @@
+KNOWNBUG
+contract.sol
+--contract CrowdFunding --no-standard-checks --multi-property --unwind 3 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
