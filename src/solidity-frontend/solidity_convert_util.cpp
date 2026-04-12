@@ -256,14 +256,15 @@ solidity_convertert::make_pointee_type(const nlohmann::json &sub_expr)
     sub_expr["typeString"].get<std::string>().find("function") !=
     std::string::npos)
   {
-    // Add more special functions here
+    // Match all function types by their typeIdentifier prefix.
+    // Function types with parameters (e.g. function(uint) pure returns(uint))
+    // are handled as FunctionNoProto (losing param info) — sufficient for
+    // FunctionToPointer decay even though indirect calls are not yet supported.
     if (
       sub_expr["typeString"].get<std::string>().find("function ()") !=
         std::string::npos ||
-      sub_expr["typeIdentifier"].get<std::string>().find(
-        "t_function_assert_pure$") != std::string::npos ||
-      sub_expr["typeIdentifier"].get<std::string>().find(
-        "t_function_internal_pure$") != std::string::npos)
+      sub_expr["typeIdentifier"].get<std::string>().find("t_function_") !=
+        std::string::npos)
     {
       // e.g. FunctionNoProto: "typeString": "function () returns (uint8)" with () empty after keyword 'function'
       // "function ()" contains the function args in the parentheses.
@@ -309,8 +310,18 @@ solidity_convertert::make_pointee_type(const nlohmann::json &sub_expr)
                 "typeString": ")" +
             matches[1].str() + R"("
               })");
-          adjusted_expr["returnParameters"]["parameters"][0]
-                       ["typeDescriptions"] = j2;
+          auto rtn_params = R"(
+              {
+                "nodeType": "ParameterList",
+                "parameters": [
+                  {
+                    "typeDescriptions": {}
+                  }
+                ]
+              }
+            )"_json;
+          rtn_params["parameters"][0]["typeDescriptions"] = j2;
+          adjusted_expr["returnParameters"] = rtn_params;
         }
         else if (
           sub_expr["typeString"].get<std::string>().find("returns (contract") !=
@@ -455,10 +466,16 @@ solidity_convertert::get_array_size(const nlohmann::json &type_descrpt)
 
 bool solidity_convertert::is_dyn_array(const nlohmann::json &ast_node)
 {
+  if (!ast_node.contains("typeDescriptions"))
+    return false;
+  auto type =
+    SolidityGrammar::get_type_name_t(ast_node["typeDescriptions"]);
+  if (type == SolidityGrammar::DynArrayTypeName)
+    return true;
   if (
-    ast_node.contains("typeDescriptions") &&
-    SolidityGrammar::get_type_name_t(ast_node["typeDescriptions"]) ==
-      SolidityGrammar::DynArrayTypeName)
+    type == SolidityGrammar::NestedArrayTypeName &&
+    ast_node.contains("nodeType") &&
+    ast_node["nodeType"] == "ArrayTypeName" && !ast_node.contains("length"))
     return true;
   return false;
 }

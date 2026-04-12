@@ -874,6 +874,10 @@ protected:
   // Storage reference aliases: maps a local storage variable's AST id
   // to the AST id of its source (e.g. secondWrapper → wrapper).
   std::unordered_map<int, int> storage_ref_aliases;
+  // Expression-based storage ref aliases: for storage refs initialized from
+  // complex expressions (e.g. campaigns[0]), stores the initializer JSON
+  // so uses can be resolved by re-evaluating the expression.
+  std::unordered_map<int, nlohmann::json> storage_ref_expr_aliases;
 
   // Delegate-shadow parameter remap: when inlining a target function body
   // at a .delegatecall(...) call site, references to the target function's

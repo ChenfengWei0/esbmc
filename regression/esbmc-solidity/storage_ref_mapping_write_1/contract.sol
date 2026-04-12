@@ -5,9 +5,6 @@ pragma solidity >=0.8.0 <0.9.0;
 // `Campaign storage c = campaigns[0]; c.field = val;` should
 // propagate back to the mapping.
 // From Solidity docs "Structs" section (CrowdFunding pattern).
-// KNOWNBUG: ESBMC's storage ref aliasing for mapping-indexed struct
-// elements only works for reads, not writes. Writing `c.fundingGoal = 100`
-// does not update `campaigns[0].fundingGoal`.
 
 contract CrowdFunding {
     struct Campaign {

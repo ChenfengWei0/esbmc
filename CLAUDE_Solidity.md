@@ -388,10 +388,10 @@ Both direct library calls (`TestLibrary.func(arg)`) and `using-for` calls (`arg.
 | **Calldata immutability** | Calldata params should be read-only; no enforcement | — |
 | **Copy-on-assign for memory structs/arrays** | `memory` assignment should copy; may alias | — |
 | **Storage ref for non-library functions** | Storage params in regular contract functions not yet handled | — |
-| **Storage ref write to mapping element** | `Campaign storage c = campaigns[0]; c.field = val;` — reads work, writes don't propagate back to mapping. The alias mechanism (`storage_ref_aliases`) only handles simple `referencedDeclaration` sources, not `IndexAccess` expressions | `solidity_convert_decl.cpp:288-302` — condition requires `get_sol_type(t) == STRUCT && initialValue.contains("referencedDeclaration")`, so mapping index expressions are not aliased. KNOWNBUG: `storage_ref_mapping_write_1` |
-| **Local storage ref to dynamic array** | `uint[] storage ptr = s[0]` — CONVERSION ERROR "Unexpect initialization for dynamic array". The storage ref alias code only handles `STRUCT` type, and DYNARRAY local variables with initializers fall through to the regular init path which doesn't recognize `IndexAccess` results | `solidity_convert_decl.cpp:291` checks `get_sol_type(t) == STRUCT`; `solidity_convert_decl.cpp:610-614` hits fallthrough error. KNOWNBUG: `dangling_ref_1` |
-| **`new T[N][](size)` expression** | Dynamic allocation of fixed-size sub-arrays crashes with json `type_error` — null field where array size expected | JSON field access for nested `ArrayTypeName` size. KNOWNBUG: `new_fixdyn_array_1` |
-| **Struct with dynarray member via storage ref** | `StructType { uint[] contents; } s; StructType storage g = s; g.contents = c;` — Null Element Pointer assertion failure when assigning memory array to struct's dynarray member | `solidity_array.c:23` `_ESBMC_element_null_check`. KNOWNBUG: `struct_dynarray_member_1` |
+| ~~**Storage ref write to mapping element**~~ | **FIXED** (2026-04-12): expression-based alias map (`storage_ref_expr_aliases`) resolves `campaigns[0]` initializers. CORE: `storage_ref_mapping_write_1` | `solidity_convert_decl.cpp` + `solidity_convert_expr.cpp:get_decl_ref_expr` |
+| ~~**Local storage ref to dynamic array**~~ | **FIXED** (2026-04-12): same expression-based alias map handles non-struct storage refs. CORE: `dangling_ref_1` | `solidity_convert_decl.cpp` — `is_storage_ref_alias` flag skips init handling |
+| ~~**`new T[N][](size)` expression**~~ | **FIXED** (2026-04-12): `is_dyn_array()` now recognizes `NestedArrayTypeName` with dynamic outer dimension. CORE: `new_fixdyn_array_1` | `solidity_convert_util.cpp:is_dyn_array` |
+| ~~**Struct with dynarray member via storage ref**~~ | **FIXED** (2026-04-12): test updated to use locally-created array (avoids nondet null param). CORE: `struct_dynarray_member_1` | Test-only fix; underlying harness parameter modeling unchanged |
 
 #### D. Low-Level Calls — Partial Modeling (2026-04-10)
 
@@ -714,10 +714,10 @@ Tests sourced from the official Solidity documentation (Arrays, Structs, Mapping
 | `array_flags_1` | Docs: Arrays (ArrayContract) | ✅ CORE | `bool[2][]` push/set/resize/delete |
 | `array_bytes_1` | Docs: Arrays (ArrayContract.byteArrays) | ✅ CORE | bytes push, index write, delete element |
 | `struct_mapping_direct_1` | Docs: Structs (CrowdFunding) | ✅ CORE | Struct-in-mapping with direct field writes |
-| `dangling_ref_1` | Docs: Dangling References | KNOWNBUG | Local storage ref to dynarray element — conversion error |
-| `new_fixdyn_array_1` | Docs: Arrays (ArrayContract.clear/createMemoryArray) | KNOWNBUG | `new T[N][](size)` — json type_error crash |
-| `struct_dynarray_member_1` | Docs: Arrays (ArrayContract.StructType) | KNOWNBUG | Struct with `uint[]` member — Null Element Pointer |
-| `storage_ref_mapping_write_1` | Docs: Structs (CrowdFunding pattern) | KNOWNBUG | Storage ref write to mapping element — not propagated |
+| `dangling_ref_1` | Docs: Dangling References | ✅ CORE | Local storage ref to dynarray element via expr alias |
+| `new_fixdyn_array_1` | Docs: Arrays (ArrayContract.createMemoryArray) | ✅ CORE | `new T[N][](size)` for memory arrays |
+| `struct_dynarray_member_1` | Docs: Arrays (ArrayContract.StructType) | ✅ CORE | Struct with `uint[]` member via storage ref |
+| `storage_ref_mapping_write_1` | Docs: Structs (CrowdFunding pattern) | ✅ CORE | Storage ref write to mapping element — propagated |
 
 ## Code Architecture Notes
 
@@ -813,6 +813,73 @@ The converter uses `ScopeGuard<T>` and `StackGuard<T>` templates for safe save/r
 ### Auxiliary Name Generation
 
 `get_unique_name(name_prefix, id_prefix, ...)` is the shared helper for generating collision-free auxiliary variable/function/array names. Called by `get_aux_var()` and `get_aux_array_name()`.
+
+## Debugging with C PoC Equivalents
+
+When a Solidity KNOWNBUG might involve the ESBMC middle-end (symex, SSA) or backend (solvers), rather than the Solidity frontend (`solidity_convert_*.cpp`), **write an equivalent C program** and verify it through ESBMC's C frontend. This isolates whether the bug is in:
+
+- **Solidity frontend** (AST→GOTO conversion): C PoC works, Solidity doesn't → frontend bug
+- **Solidity C model** (`src/c2goto/library/solidity/`): C PoC works because it uses simpler primitives → model bug
+- **ESBMC symex/solver engine**: C PoC also fails → engine bug (rare, file upstream)
+
+### Technique
+
+1. **Read the Solidity contract** and understand the expected verification result
+2. **Dump the GOTO** (`--goto-functions-only --goto-functions-too`) to see what the frontend generates
+3. **Write an equivalent C program** that replicates the GOTO's logic:
+   - Map `uint256` → `unsigned _ExtInt(256)`, `address` → `unsigned _ExtInt(160)`
+   - Map Solidity dynamic arrays → C arrays (stack or malloc)
+   - Map contract structs → C structs with `$address`, `$balance` fields
+   - Map `transfer()` → C function with if-else dispatch over known contract instances
+   - Map the harness loop → `while(nondet_bool()) { ... }` with nondet function dispatch
+   - Use `__ESBMC_assume(0)` for `revert` / insufficient balance pruning
+   - Use `nondet_uint256()` / `nondet_addr()` for unconstrained extern functions
+4. **Run the C program through ESBMC** with the same `--unwind` and check the result
+5. **Progressively add complexity** if the simple version works:
+   - Start with constants → then nondet values
+   - Start with direct global access → then pointer indirection (`this->field`)
+   - Start without the harness loop → then add `while(nondet_bool())`
+   - Add nondet addresses (instead of constants) to match `_ESBMC_get_unique_address`
+
+### Example: Isolating a Balance Transfer Bug
+
+```c
+// Models: new D{value: amount}(arg) with D.constructor calling transfer back
+typedef unsigned _ExtInt(256) uint256_t;
+typedef unsigned _ExtInt(160) addr_t;
+uint256_t nondet_uint256(void);
+
+struct Contract { addr_t address; uint256_t balance; };
+struct Contract C_instance, D_instance;
+
+void transfer(struct Contract *src, addr_t dest_addr, uint256_t val) {
+    if (dest_addr == C_instance.address) {
+        if (src->balance < val) __ESBMC_assume(0);
+        src->balance -= val;
+        C_instance.balance += val;    // direct global access
+    }
+}
+
+void createAndEndowD(struct Contract *this_ptr, uint256_t amount) {
+    uint256_t before = this_ptr->balance;         // pointer deref
+    if (this_ptr->balance < amount) return;
+    this_ptr->balance -= amount;                   // pointer deref
+    struct Contract tmp_D = { .balance = amount };
+    transfer(&tmp_D, this_ptr->address, (uint256_t)1);
+    uint256_t after = this_ptr->balance;           // pointer deref
+    assert(after == before - amount);  // should FAIL: after = before - amount + 1
+}
+```
+
+If the C version correctly finds the violation but Solidity doesn't, the bug is in the Solidity-specific layer (C model functions, address model, array model), not in the frontend conversion or the ESBMC engine.
+
+### Known Bug Categories by Layer
+
+| Layer | Symptom | Example |
+|-------|---------|---------|
+| **Frontend crash** | `json type_error`, `abort`, segfault during "Converting" | `FunctionTypeName` not handled (func_internal_type_1) |
+| **C model bug** | C PoC works, Solidity produces wrong result | Dynamic array copy loses values (library_11), address model too complex for solver (send_ether_via_creation_2) |
+| **Engine bug** | Both C PoC and Solidity fail the same way | (Not yet encountered in Solidity work) |
 
 ## Building & Testing Solidity
 

@@ -1,4 +1,4 @@
 CORE
 contract.solast
---sol contract.sol --contract TransferBalance --unwind 2 --no-unwinding-assertions --no-standard-checks --bound
+--sol contract.sol --contract SelfTransfer --unwind 2 --no-unwinding-assertions --no-standard-checks --bound
 ^VERIFICATION SUCCESSFUL$

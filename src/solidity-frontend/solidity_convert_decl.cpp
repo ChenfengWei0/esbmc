@@ -286,20 +286,33 @@ bool solidity_convertert::get_var_decl(
 
   // For local storage reference variables (e.g. Wrapper storage ref = param),
   // register an alias so that uses of 'ref' resolve to the source symbol.
+  bool is_storage_ref_alias = false;
   if (
     !is_state_var && ast_node.contains("storageLocation") &&
-    ast_node["storageLocation"] == "storage" &&
-    get_sol_type(t) == SolidityGrammar::SolType::STRUCT &&
-    !initialValue.empty() && initialValue.contains("referencedDeclaration"))
+    ast_node["storageLocation"] == "storage" && !initialValue.empty())
   {
-    int src_id = initialValue["referencedDeclaration"].get<int>();
     int this_id = ast_node["id"].get<int>();
-    storage_ref_aliases[this_id] = src_id;
-    log_debug(
-      "solidity",
-      "@@@ storage alias: {} -> {} (local storage ref)",
-      this_id,
-      src_id);
+    if (initialValue.contains("referencedDeclaration") &&
+        get_sol_type(t) == SolidityGrammar::SolType::STRUCT)
+    {
+      int src_id = initialValue["referencedDeclaration"].get<int>();
+      storage_ref_aliases[this_id] = src_id;
+      is_storage_ref_alias = true;
+      log_debug(
+        "solidity",
+        "@@@ storage alias: {} -> {} (local storage ref)",
+        this_id,
+        src_id);
+    }
+    else if (!initialValue.contains("referencedDeclaration"))
+    {
+      storage_ref_expr_aliases[this_id] = initialValue;
+      is_storage_ref_alias = true;
+      log_debug(
+        "solidity",
+        "@@@ storage expr alias: {} (local storage ref to expression)",
+        this_id);
+    }
   }
 
   bool is_inherited = ast_node.contains("is_inherited");
@@ -353,7 +366,7 @@ bool solidity_convertert::get_var_decl(
   // For inherited ones, the initial value will be set in "move_inheritance_to_ctor()"
   // e.g. D.x = B.x
   // Therefore, even if the copied json nodes contain init_value (has_init = true), we still skip such settings.
-  bool set_init = has_init && !is_inherited;
+  bool set_init = has_init && !is_inherited && !is_storage_ref_alias;
   const nlohmann::json init_value =
     ast_node.contains("value") ? ast_node["value"] : initialValue;
   const nlohmann::json literal_type = ast_node["typeDescriptions"];

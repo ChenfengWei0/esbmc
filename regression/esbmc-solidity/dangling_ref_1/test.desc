@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.sol
 --contract DanglingRef --no-standard-checks --multi-property --unwind 3 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$

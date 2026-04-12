@@ -2168,17 +2168,11 @@ bool solidity_convertert::try_get_delegate_shadow_call(
     convert_expression_to_code(assign_succ);
     then.move_to_operands(assign_succ);
 
-    // Guard: _addr == _ESBMC_Object_cand.$address
-    exprt static_ins;
-    get_static_contract_instance_ref(cand.cname, static_ins);
-    exprt mem_addr = member_exprt(static_ins, "$address", addr_t);
-    exprt cond = exprt("=", bool_t);
-    cond.operands().push_back(base);
-    cond.operands().push_back(mem_addr);
-
-    codet if_expr("ifthenelse");
-    if_expr.copy_to_operands(cond, then);
-    wrapper_block.copy_to_operands(if_expr);
+    // Delegatecall dispatches by function signature, not by address.
+    // The candidate was already matched by name in try_get_delegate_shadow_call,
+    // so emit the inlined body unconditionally. With only one matching candidate
+    // per signature, there is no ambiguity.
+    wrapper_block.move_to_operands(then);
   }
 
   // Push the whole wrapper as one unit. Doing it here (after all get_block

@@ -1,0 +1,5 @@
+KNOWNBUG
+contract.sol
+--contract OracleUser --no-standard-checks --multi-property --unwind 3 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
+-- External function types: passing function references as values not supported
