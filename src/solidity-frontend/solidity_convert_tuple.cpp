@@ -22,14 +22,12 @@ bool solidity_convertert::get_tuple_definition(const nlohmann::json &ast_node)
 {
   log_debug("solidity", "\t@@@ Parsing tuple...");
 
+  // Free functions (outside any contract) also produce tuple types
+  // (e.g. `function unpackTokenId(...) returns (uint256, uint32)`).
+  // The tuple struct type is keyed only by ast node id, so the
+  // current-contract check is not actually needed here.
   std::string current_contractName;
   get_current_contract_name(ast_node, current_contractName);
-  if (current_contractName.empty())
-  {
-    log_error(
-      "Cannot get the contract name. Tuple should always within a contract.");
-    return true;
-  }
 
   struct_typet t = struct_typet();
 
@@ -207,8 +205,10 @@ bool solidity_convertert::get_tuple_instance_name(
 {
   std::string c_name;
   get_current_contract_name(ast_node, c_name);
+  // Free functions have no owning contract; use a synthetic scope
+  // so multi-return free functions still get a distinct tuple instance.
   if (c_name.empty())
-    return true;
+    c_name = "__free__";
 
   name = "tuple_instance$" + std::to_string(ast_node["id"].get<int>());
   id = "sol:@C@" + c_name + "@" + name;

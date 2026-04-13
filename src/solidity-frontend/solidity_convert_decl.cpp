@@ -1183,6 +1183,26 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
     // instead, we only populate the entity and functions
     std::string old = current_baseContractName;
     current_baseContractName = lib_name;
+
+    // Register inner error/event/struct/enum symbols first, so that
+    // get_struct_class's body iteration can resolve them as references.
+    // Regular contracts do this in get_contract_definition; libraries
+    // previously skipped the pre-pass and crashed on `error Foo();`.
+    if (ast_node.contains("nodes"))
+    {
+      for (auto &sub : ast_node["nodes"])
+      {
+        const std::string nt = sub["nodeType"].get<std::string>();
+        if (
+          nt == "ErrorDefinition" || nt == "EventDefinition" ||
+          nt == "StructDefinition" || nt == "EnumDefinition")
+        {
+          if (get_noncontract_defition(sub))
+            return true;
+        }
+      }
+    }
+
     if (get_struct_class(ast_node))
       return true;
 

@@ -937,12 +937,23 @@ bool solidity_convertert::get_elementary_type_name(
   }
   case SolidityGrammar::ElementaryTypeNameT::STRING_LITERAL:
   {
-    // it's fine even if the json is not the exact parent
-    auto json = find_last_parent(src_ast_json, type_name);
-    assert(!json.empty());
-    string_constantt x(json["value"].get<std::string>());
-    set_sol_type(x.type(), SolidityGrammar::SolType::STRING_LITERAL);
-    new_type = x.type();
+    // Try to locate the owning Literal node to recover the exact
+    // char-array type. find_last_parent uses deep equality, so if the
+    // same typeDescriptions appears under an arguments[] array the
+    // returned parent can itself be that array (no "value" key).
+    // Fall back to the generic string_t (char*) in that case.
+    const auto &json = find_last_parent(src_ast_json, type_name);
+    if (json.is_object() && json.contains("value") && json["value"].is_string())
+    {
+      string_constantt x(json["value"].get<std::string>());
+      set_sol_type(x.type(), SolidityGrammar::SolType::STRING_LITERAL);
+      new_type = x.type();
+    }
+    else
+    {
+      new_type = string_t;
+      set_sol_type(new_type, SolidityGrammar::SolType::STRING_LITERAL);
+    }
 
     break;
   }
