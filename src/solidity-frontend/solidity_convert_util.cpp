@@ -16,6 +16,8 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
+#include <cctype>
+#include <cstring>
 #include <regex>
 #include <optional>
 
@@ -409,23 +411,91 @@ nlohmann::json solidity_convertert::make_array_elementary_type(
   nlohmann::json elementary_type;
   const std::string typeIdentifier =
     type_descrpt["typeIdentifier"].get<std::string>();
+  const std::string typeString = type_descrpt.contains("typeString")
+                                   ? type_descrpt["typeString"].get<std::string>()
+                                   : "";
 
-  // 2. extract type info
-  // e.g.
-  //  bytes[] memory x => "t_array$_t_bytes_$dyn_storage_ptr"  => t_bytes
-  //  [1,2,3]          => "t_array$_t_uint8_$3_memory_ptr      => t_uint8
+  // 2. extract element identifier by scanning the typeIdentifier from the
+  // back for the outer array's size delimiter "_$<dyn|digits>".  Anything
+  // before it is the element type identifier (which may itself carry a
+  // location suffix for reference types like string/bytes/struct).
+  // Examples:
+  //   t_array$_t_uint256_$dyn_memory_ptr           → t_uint256
+  //   t_array$_t_string_memory_ptr_$2_memory_ptr   → t_string_memory_ptr
+  //   t_array$_t_bytes_$dyn_storage_ptr            → t_bytes
   assert(typeIdentifier.substr(0, 8) == "t_array$");
-  std::regex rgx("\\$_\\w*_\\$");
+  const std::string prefix = "t_array$_";
+  std::string rest = typeIdentifier.substr(prefix.size());
 
-  std::smatch match;
-  if (!std::regex_search(typeIdentifier, match, rgx))
-    assert(!"Cannot find array element type in typeIdentifier");
-  std::string sub_match = match[0];
-  std::string t_type = sub_match.substr(2, sub_match.length() - 4);
-  std::string type = t_type.substr(2);
+  std::string elem_id;
+  size_t last = rest.rfind("_$");
+  while (last != std::string::npos)
+  {
+    std::string after = rest.substr(last + 2);
+    if (
+      after.compare(0, 3, "dyn") == 0 ||
+      (!after.empty() && std::isdigit(static_cast<unsigned char>(after[0]))))
+    {
+      elem_id = rest.substr(0, last);
+      break;
+    }
+    if (last < 2)
+      break;
+    last = rest.rfind("_$", last - 1);
+  }
+  if (elem_id.empty())
+    elem_id = rest;
 
-  // 3. populate node
-  elementary_type = {{"typeIdentifier", t_type}, {"typeString", type}};
+  // 3. strip trailing data-location suffix from the element identifier so it
+  // maps back to a plain elementary/reference type recognised by
+  // get_type_name_t (e.g. t_string_memory_ptr → t_string).
+  static const char *const loc_suffixes[] = {
+    "_memory_ptr",
+    "_storage_ptr",
+    "_calldata_ptr",
+    "_memory",
+    "_storage",
+    "_calldata"};
+  for (const char *suf : loc_suffixes)
+  {
+    size_t slen = std::strlen(suf);
+    if (
+      elem_id.size() > slen &&
+      elem_id.compare(elem_id.size() - slen, slen, suf) == 0)
+    {
+      elem_id.erase(elem_id.size() - slen);
+      break;
+    }
+  }
+
+  // 4. derive element typeString: strip data-location qualifier and the
+  // trailing "[<size>]" from the array typeString.
+  std::string elem_ts = typeString;
+  auto strip_loc = [](std::string &s) {
+    for (const char *suf : {" storage ref",
+                            " storage pointer",
+                            " storage",
+                            " memory",
+                            " calldata"})
+    {
+      size_t slen = std::strlen(suf);
+      if (s.size() > slen && s.compare(s.size() - slen, slen, suf) == 0)
+      {
+        s.erase(s.size() - slen);
+        return;
+      }
+    }
+  };
+  strip_loc(elem_ts);
+  auto last_bracket = elem_ts.rfind('[');
+  if (last_bracket != std::string::npos)
+    elem_ts.erase(last_bracket);
+  strip_loc(elem_ts);
+  if (elem_ts.empty() && elem_id.compare(0, 2, "t_") == 0)
+    elem_ts = elem_id.substr(2);
+
+  // 5. populate node
+  elementary_type = {{"typeIdentifier", elem_id}, {"typeString", elem_ts}};
 
   return elementary_type;
 }
