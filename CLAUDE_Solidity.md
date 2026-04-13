@@ -847,15 +847,15 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | **Fallback with params** | Partial | Basic fallback exists; `fallback(bytes calldata) returns (bytes memory)` params ignored |
 | **Custom storage layout** | ✓ Works (2026-04-07) | `contract C layout at <expr>` (Solidity 0.8.29+) — AST parses without error; ESBMC ignores storage slots (models state vars as struct members); tests: `layout_1/2` |
 | **Array slices (`IndexRangeAccess`)** | ✅ Over-approx (2026-04-09) | `data[:4]`, `data[1:3]` on calldata arrays/bytes — modeled as nondet; tests: `array_slice_1/2` |
-| **`abi.decode()`** | ✓ Nondet (CORE) | Parses `(T)` type tuple via `ElementaryTypeNameExpression`; result is an unconstrained nondet value. Tests: `abi_decode_1/2/3` |
+| **`abi.decode()`** | ✓ Nondet (CORE, extended 2026-04-13) | Parses `(T)` type tuple via `ElementaryTypeNameExpression`; result is an unconstrained nondet value. Tuple-shaped return position (`return abi.decode(data, (uint256, bytes));`) and tuple-destructuring assignment (`(a,b,...) = abi.decode(...)`) both fall back to nondet-per-member. Tests: `abi_decode_1/2/3`, `stress_libsol_abi_decode_simple` |
 | **`abi.encodeCall()`** | ✓ Identity (CORE) | Interface/function pointer (`ITarget.transfer`) accepted by converter; canonical signature rebuilt from referenced `FunctionDefinition`. Tests: `abi_encodeCall_1/2/3` |
 | **`mulmod(MAX,MAX,k)`** | KNOWNBUG | 512-bit model is correct but ESBMC constant evaluator crashes (SIGFPE) when both operands are near `type(uint256).max` |
 | **Inline assembly / Yul** | ✅ Havoc (2026-04-05) | Over-approximated: all externally referenced variables are havoc'd to nondet. Does not model Yul semantics. |
 | **Function types (internal)** | ✓ Parses, nondet calls (2026-04-13) | `function(uint) pure returns (uint) f` parameters / struct fields lowered to opaque `void *`; indirect calls `f(x)` return a nondet value of the declared return type (no crash). Precise semantics (function inlining / monomorphization) not implemented — tests that assert specific computed values through `.map(fn).reduce(fn)` remain KNOWNBUG. See `func_internal_type_1` |
-| **Function types (external)** | KNOWNBUG | Passing a function reference (`this.callback`) as an argument still crashes during argument marshalling in `get_non_library_function_call`. Separate from the internal-types fix above. Test: `func_external_type_1` |
+| **Function types (external)** | Partial (2026-04-13) | `.address` on a function-typed variable returns nondet (opaque void* lowering cannot recover the bound contract). `.address` on a fresh reference (`this.f.address`) reads the instance `$address`. Passing a function reference (`this.callback`) as an argument still crashes during argument marshalling in `get_non_library_function_call`. Tests: `func_external_type_1`, `stress_libsol_ext_fn_to_address` |
 | **`using for` + custom operators** | Not supported | Operator dispatch table per type |
 | **Transient storage (EIP-1153)** | Not supported | New data location model |
-| **User-defined value types** | ✓ Basic (2026-04-07) | `type C is V` with `.wrap()`/`.unwrap()` works; `using { f as op }` custom operators NOT supported; tests: `udv_type_1/2` |
+| **User-defined value types** | ✓ Basic (2026-04-07, extended 2026-04-13) | `type C is V` with `.wrap()`/`.unwrap()` works, both file-scope and contract-scope (`contract C { type T is int; }`) registered in `UserDefinedVarMap`; bare `T.wrap;` expression statement no longer crashes (elided as skip in ExprStmt handler); `using { f as op }` custom operators NOT supported; tests: `udv_type_1/2`, `stress_libsol_udvt_wrap_unwrap` |
 
 ### Roadmap: Priority for Future Work
 
@@ -1108,7 +1108,7 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 ### Test Baseline (2026-04-13)
 
-**542 total tests** (2026-04-13): 542 pass, 0 failed, 0 timeout (43s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**570 total tests** (2026-04-13): 570 pass, 0 failed, 0 timeout (~45s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
@@ -1157,12 +1157,30 @@ Eight `stress_*` contracts exercising calldata-array corners, library multi-retu
 |------|------|--------|
 | `stress_calldata_struct_lib_1` | CORE | Library multi-return `L.reverse(s)` — fixed via `nonContractNamesList` tuple fallback |
 | `stress_calldata_array_overload_1` | CORE | Overloaded `f(uint[])/f(uint[][])/f(uint[2])` |
-| `stress_calldata_bytes_return_slice_1` | KNOWNBUG | `this.test(x)[2]` — calldata bytes content is nondet, bounds check fails |
-| `stress_calldata_bytes_overload_inner_1` | KNOWNBUG | internal/external `f(bytes calldata b, uint)` — same nondet-length OOB |
-| `stress_free_fn_longdata_asm_1` | KNOWNBUG | Frontend now accepts free-function + using-for; BMC crashes in `value_sett::make_member` when assigning long-string return to `bytes` state var |
-| `stress_free_fn_longdata_asm_2` | KNOWNBUG | Same as asm_1 (duplicate upstream test w/ TODO comment) |
-| `stress_func_ptr_longdata_1` | KNOWNBUG | `function() pure returns(bytes memory) f` state var + `f = S.longdata` — function pointer state var assignment triggers type coercion crash in `get_binary_operator_expr` |
+| `stress_calldata_bytes_return_slice_1` | CORE | `this.test(x)[2]` — nondet-length OOB fixed via `llc_nondet_bytes` length bound |
+| `stress_calldata_bytes_overload_inner_1` | CORE | internal/external `f(bytes calldata b, uint)` — fixed via overload-aware lookup in nondet extcall dispatcher |
+| `stress_free_fn_longdata_asm_1` | CORE | Free-function + using-for with long-string return assigned to `bytes` state var |
+| `stress_free_fn_longdata_asm_2` | CORE | Duplicate of asm_1 |
+| `stress_func_ptr_longdata_1` | CORE | `function() pure returns(bytes memory) f` state var + `f = S.longdata` |
 | `stress_calldata_slice_abi_1` | KNOWNBUG | `abi.encode(data[start:end])` — calldata slicing + abi.encode crashes in BMC |
+
+**libsolidity semantic-test stress tests added (2026-04-13):**
+
+Unmodified examples copied from `solidity/test/libsolidity/semanticTests/` to
+stress ESBMC frontend coverage against upstream corner cases. No
+`--function` / `--focus-function` cheats.
+
+| Test | Type | Status |
+|------|------|--------|
+| `stress_libsol_uninit_fnptr_legacy` | KNOWNBUG | Uninit internal-fn-ptr legacy codegen — relies on solc-specific nonzero init |
+| `stress_libsol_uninit_fnptr_yul` | KNOWNBUG | Uninit internal-fn-ptr yul codegen — relies on solc-specific zero init |
+| `stress_libsol_fntype_inline_array_value_call` | KNOWNBUG | `[this.f, this.g][0]{value:1}()` with `msg.value` assertion — fails under nondet extcall `msg.value` |
+| `stress_libsol_ext_fn_to_address` | CORE | `.address` on external function-typed variable — fixed via nondet-address fallback |
+| `stress_libsol_abi_decode_simple` | CORE | `return abi.decode(data, (uint256, bytes));` — fixed by skipping unused get_expr in nondet-tuple return path |
+| `stress_libsol_udvt_wrap_unwrap` | CORE | `MyAddress.wrap;` as bare statement — fixed by eliding empty-op0 typecast in ExprStmt + full UDVT plumbing |
+| `stress_libsol_udvt_abicodec` | KNOWNBUG | UDVT in function signature + `abi.decode` tuple — frontend now converts, but concrete-value assertions unsatisfiable under nondet `abi.decode` |
+| `stress_libsol_try_return_function` | KNOWNBUG | `C(address(0x1234)).fun` inline contract cast + try/catch with function-type return |
+| `stress_libsol_calldata_string_array` | KNOWNBUG | (Earlier batch) dynamic string array in calldata |
 
 **Mapping-in-struct tests added (2026-04-01):**
 
