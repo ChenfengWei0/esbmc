@@ -48,6 +48,134 @@ esbmc --sol contract.sol contract.solast --contract MyContract
 - `0.5.0 – 0.7.0`: warning (may cause unexpected behaviour)
 - `>= 0.7.0`: fully supported (tested against 0.8.x)
 
+### Verification Modes — cheat sheet
+
+Solidity runs under several orthogonal switches. Two dimensions matter:
+
+1. **Entry-point selection**: what code does ESBMC actually enter?
+   — controlled by (nothing) vs `--contract` vs `--function` vs `--focus-function`.
+2. **External-call resolution**: how are `addr.call(...)` / `A(x).f()` modelled?
+   — controlled by `--bound` vs the default unbound.
+
+These compose: e.g. `--contract A --focus-function f --bound` is valid,
+`--function` is incompatible with `--focus-function` (see below). The
+dimensions are documented in detail in the subsections that follow; this
+table is the quick reference.
+
+#### Entry-point dimension
+
+| Invocation | State vars at entry | Harness that runs | What is verified | Soundness posture (entry dimension) |
+|---|---|---|---|---|
+| `esbmc contract.sol` (no `--contract`, no `--function`) | Constructor-initialised for every declared contract | Multi-contract wrapper (bound or unbound — see below); each contract gets its own `_ESBMC_Main_<C>` harness. In unbound mode, the wrapper calls them sequentially (`A`, then `B`, …). In bound mode, it uses a nondet switch to pick one per run. | Every public/external function of every contract, called from arbitrary order, arbitrary msg.sender/value. | **OVER** — all state-space false positives of `--contract` apply, compounded across contracts. |
+| `esbmc contract.sol --contract C` | Constructor of `C` runs first, `C`'s state vars reflect constructor output; other contracts' state stays default. | `_ESBMC_Main_C()` = constructor + `while (nondet_bool) _ESBMC_Nondet_Extcall_C()`. Each loop iteration is one transaction; every public/external method of `C` is dispatched nondet-guarded inside the loop body. | Per-transaction invariants on `C` under an arbitrary sequence of externally-visible calls after construction. | **OVER** (harness over-approximates ordering, msg.sender/value, return values of outbound calls). See ledger row 7. VERIFICATION SUCCESSFUL is sound for safety under the single-transaction model; VERIFICATION FAILED may be a spurious call-ordering or nondet-context counterexample. |
+| `esbmc contract.sol --contract C --focus-function f` | Constructor of `C` runs first, same as `--contract C`. | Same `_ESBMC_Main_C` harness, but the internal nondet dispatch loop of `_ESBMC_Nondet_Extcall_C` **filters** every public/external method except `f`. `f` is still called from inside the loop (so re-entry is possible), construction still happens. Not a state-space change — purely a verification-cost optimisation. | Safety of `f` reached from a *constructed* contract state, where the only callable entry in the nondet loop is `f` itself. | **OVER, identical strength to `--contract C` for `f`'s paths**. Sound for safety. VERIFICATION SUCCESSFUL is sound. VERIFICATION FAILED is real if it does not rely on a call-context over-approximation (ledger row 7). Other functions of `C` are never exercised, so bugs in them are invisible by construction — that is an intentional scoping decision, not an unsoundness of `f`'s proof. |
+| `esbmc contract.sol --contract C --function f` | **Nondet (fully symbolic)** — the constructor does NOT run, no state initialiser applies, no harness is built. | `f` is made the GOTO entry point and called once with nondet parameters. State variables start at unconstrained nondet of their declared type. | Safety of `f` over *every conceivable* initial state of `C`, regardless of whether such a state is reachable from the constructor. | **OVER on state space (sound for safety)** — see the call-out below. This is the only mode where VERIFICATION SUCCESSFUL gives a stronger guarantee than the other modes, at the cost of possible false-positive counterexamples. |
+
+##### ⚠ `--function` mode soundness call-out (important)
+
+`--function` replaces the constructor with "all state variables are
+fresh nondet of their declared type". This is **strictly more
+permissive** than any real execution of `C`:
+
+- Every state reachable from `constructor() → f()` under any tx
+  sequence is also reachable under `--function`, because nondet
+  contains all of those states.
+- Additionally, many states that the constructor never produces
+  (e.g. violating a declared invariant, skipping a required
+  initialisation) are also explored.
+
+Consequences:
+
+- **VERIFICATION SUCCESSFUL under `--function` is a real safety
+  proof.** Sound. If the function is safe under every conceivable
+  state, it is a fortiori safe under the states the constructor
+  actually produces. This is the strongest positive result any of the
+  modes can give — it is equivalent to proving a per-function
+  inductive invariant, quantified universally over the class
+  invariant.
+- **VERIFICATION FAILED under `--function` may be a false positive.**
+  The counterexample could rely on a combination of state-variable
+  values that is unreachable from `constructor() → (any tx sequence)`.
+  Before trusting the trace, re-verify with `--contract C
+  --focus-function f` (or remove `--function` entirely): if that run
+  ALSO fails, the bug is real; if it passes, the `--function` trace
+  was spurious state-space expansion.
+- The correct interpretation is: `--function` gives a cheaper,
+  cleaner OVER-approximation in the state-space dimension, at the
+  cost of false positives. It says nothing about the correctness of
+  the constructor or about cross-function state invariants.
+
+This is why `--function` is **banned from regression test.desc**
+files (see `### --function Mode Semantics` below for the enforcement
+note and the rationale): regression tests must exercise the full
+constructor + dispatch harness, otherwise adversarial tests
+degenerate into trivial benchmarks and the frontend / solver
+weaknesses they were designed to expose stop showing up.
+
+##### `--function` vs `--focus-function` — pick one
+
+|   | `--function f` | `--focus-function f` |
+|---|---|---|
+| Constructor runs? | No | Yes |
+| State vars at entry | Nondet | Constructor-initialised |
+| Harness | None (`f` is the entry) | Full `_ESBMC_Main_C` with dispatch loop filtered to only `f` |
+| Re-entry into `f` during its own execution | No (single call) | Yes (via the nondet dispatch loop) |
+| VERIFICATION SUCCESSFUL means | `f` is safe under *every* initial state — strongest positive result available | `f` is safe under the post-constructor state reachable by re-entering only `f` |
+| VERIFICATION FAILED may be spurious because | Counterexample state may be unreachable from any constructor+tx sequence | Counterexample relies on ledger row 7 (call-context nondet) |
+| Compatibility | Must not combine with `--focus-function` (`convert()` rejects the combination) | Must combine with `--contract` (or exactly one contract in source) |
+| Best for | Quick property checks on *pure*/*view* functions, or over-approximate safety claims for a single function | Narrowing verification cost to one function while keeping a faithful harness |
+
+Combining `--function` and `--focus-function` is rejected at convert
+time (`solidity_convert.cpp:165`) — the two flags express different
+intents and would silently cancel out. Pick one.
+
+#### External-call dimension
+
+`--bound` and its absence (unbound) are orthogonal to the entry-point
+choice and can be combined with any entry-point mode.
+
+| Flag | `addr.call(data)` / cross-contract dispatch | State shared across contracts? | Soundness posture (ext-call dimension) |
+|---|---|---|---|
+| default (unbound) | `get_unbound_expr()` re-enters the *current* contract's nondet dispatch and returns a nondet `(bool, bytes)` tuple. Target address is **ignored**. | No — each contract verified independently. | **OVER** on reentrancy and on return values. Safe for single-contract safety; cross-contract invariants are invisible. |
+| `--bound` | `get_bound_low_level_call()` emits an if-then-else chain over `contractNamesList`; address match dispatches to that contract's `_ESBMC_Nondet_Extcall_<target>`. No match → hard `false` return (trusted-closed-world). | Yes — static instances share storage; `_ESBMC_bind_cname` tracks concrete type per address. | **UNDER** relative to real EVM (unknown addresses cannot succeed), **sound under the trusted closed-world assumption**. Strictly more precise than unbound *for properties involving known callees*; strictly less precise for attacker-controlled addresses. |
+
+Both modes currently share the same low-level-call semantic gaps
+listed in §D (no storage context swap for `delegatecall`, no
+read-only enforcement for `staticcall`).
+
+#### Composition cheat sheet
+
+| Command | Entry posture | Ext-call posture | Typical use |
+|---|---|---|---|
+| `esbmc c.sol --contract C` | --contract (OVER, sound) | unbound (OVER) | Default single-contract verification |
+| `esbmc c.sol --contract C --bound` | --contract | bound (UNDER, trusted) | Single-contract that makes cross-contract calls, when callee shapes matter |
+| `esbmc c.sol --contract A --contract B --bound` | multi-contract | bound | Multi-contract interaction (token + exchange) |
+| `esbmc c.sol --contract C --focus-function f` | focus-function (same as --contract for `f`) | unbound | Cut verification cost by skipping unrelated functions |
+| `esbmc c.sol --contract C --function f` | **nondet state** (OVER on state) | unbound | Over-approximate safety proof for a pure/view function. **Interactive only — banned in regression tests.** |
+| `esbmc c.sol` (no `--contract`, no `--function`) | all declared contracts | depends on `--bound` | Verify every contract declared in the file; useful for quick smoke tests. |
+
+#### Interpreting results
+
+- **VERIFICATION SUCCESSFUL** under `--contract` / `--focus-function` /
+  `--function` is a safety proof *within the frontend's approximation
+  ledger*. Consult that ledger (previous section) to understand what
+  classes of bugs are outside the model.
+- **VERIFICATION FAILED**:
+  - Under `--contract` / `--focus-function`: likely real unless the
+    counterexample depends on ledger row 7 (call-context nondet),
+    row 16 (revert-without-rollback), or row 5 (non-monotonic block
+    context).
+  - Under `--function`: treat as tentative — re-run with
+    `--focus-function` (or plain `--contract`) to confirm. A trace
+    that fails under `--function` but passes under
+    `--focus-function` is a spurious state-space expansion; the real
+    contract cannot reach that state.
+  - Under `--bound`: check that the counterexample does not depend on
+    an untracked address — if it does, the unknown-address branch is
+    hard-`false` in the model, and the CE is exercising a known
+    callee. If the property is about attacker-controlled addresses,
+    re-verify under unbound.
+
 ### Address Binding Modes (`--bound` / default unbound)
 
 ESBMC supports two verification strategies for multi-contract Solidity programs, controlled by the `--bound` flag. The default is **unbound** mode.
