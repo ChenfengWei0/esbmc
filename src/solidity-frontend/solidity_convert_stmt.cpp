@@ -562,7 +562,47 @@ bool solidity_convertert::get_statement(
       get_aux_array(rhs, elem_type, aux);
       rhs = aux;
     }
-    solidity_gen_typecast(ns, rhs, return_type);
+    // `return "literal";` from a function returning `bytes memory` produces
+    // a plain string_constantt (array of signed char). c_typecast cannot
+    // convert that to a BytesDynamic struct, so the raw byte array would
+    // leak into the GOTO `RETURN` and crash symex on the type mismatch.
+    // Narrow the repair to cases where rhs is actually a string constant
+    // (array of signed char) so that builtins already returning a pointer
+    // or BytesDynamic keep their existing path.
+    bool rhs_is_string_constant =
+      rhs.id() == "string-constant" ||
+      (rhs.type().is_array() && rhs.type().subtype().is_signedbv() &&
+       to_signedbv_type(rhs.type().subtype()).get_width() == 8);
+    if (
+      get_sol_type(return_type) == SolidityGrammar::SolType::BYTES_DYN &&
+      rhs_is_string_constant)
+    {
+      // convert_type_expr aborts when no containing contract supplies a
+      // dynamic pool (e.g. free functions declared outside any contract
+      // via `using { f } for T;`). In that case the precise string→bytes
+      // conversion is not representable, so we over-approximate the
+      // return value with llc_nondet_bytes() — a BytesDynamic with
+      // length ∈ [32, 1024] and initialized == 1. [APPROX: OVER]
+      // Recorded in CLAUDE_Solidity.md approximation ledger #21.
+      exprt dummy_pool;
+      if (get_dynamic_pool(stmt["expression"], dummy_pool))
+      {
+        locationt loc;
+        get_start_location_from_stmt(stmt, loc);
+        side_effect_expr_function_callt nondet_b;
+        get_library_function_call_no_args(
+          "llc_nondet_bytes",
+          "c:@F@llc_nondet_bytes",
+          return_type,
+          loc,
+          nondet_b);
+        rhs = nondet_b;
+      }
+      else
+        convert_type_expr(ns, rhs, return_type, stmt["expression"]);
+    }
+    else
+      solidity_gen_typecast(ns, rhs, return_type);
     ret_expr.return_value() = rhs;
 
     new_expr = ret_expr;
