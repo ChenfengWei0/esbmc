@@ -579,6 +579,21 @@ bool solidity_convertert::get_expr(
     if (get_expr(caller_expr_json, literal_type, base))
       return true;
 
+    // If func_ref doesn't point at a real FunctionDefinition (e.g. the
+    // MemberAccess was a builtin like `string.concat` with a null
+    // referencedDeclaration) fail loudly instead of feeding an empty
+    // node into get_library_function_call, which would dereference
+    // missing `name`/`parameters` fields.
+    if (
+      func_ref.empty() || !func_ref.contains("nodeType") ||
+      func_ref["nodeType"] != "FunctionDefinition")
+    {
+      log_error(
+        "TypeMemberCall: referencedDeclaration does not point at a "
+        "FunctionDefinition (likely an unsupported builtin member access)");
+      return true;
+    }
+
     side_effect_expr_function_callt call;
 
     const nlohmann::json &args_json =
@@ -724,6 +739,19 @@ bool solidity_convertert::get_expr(
     // e.g. (, x) = (1, 2);
     // the first component in lhs is nil
     new_expr = nil_exprt();
+    break;
+  }
+  case SolidityGrammar::ExpressionT::ElementaryTypeNameExpr:
+  {
+    // A bare type used as an expression value
+    // (e.g. `string` in `string.concat(...)`). There is no runtime
+    // value; callers read the type off of typeDescriptions.
+    typet type;
+    if (get_type_description(expr["typeDescriptions"], type))
+      return true;
+    exprt dump;
+    dump.type() = type;
+    new_expr = dump;
     break;
   }
   default:

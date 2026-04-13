@@ -898,8 +898,18 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
     assert(expr.contains("expression"));
     SolidityGrammar::TypeNameT type_name =
       get_type_name_t(expr["expression"]["typeDescriptions"]);
-    if (
+    // A null/missing referencedDeclaration means there is no
+    // user-defined declaration to point at — the member is a
+    // Solidity builtin (e.g. `string.concat`, `abi.encode`,
+    // `.length`, `addr.code`, `addr.balance`, `block.number`).
+    // Address-typed builtins (.code/.codehash/.balance/.call/...)
+    // still need AddressMemberCall, so we check that first.
+    const bool has_ref_decl =
       expr.contains("referencedDeclaration") &&
+      expr["referencedDeclaration"].is_number_integer() &&
+      expr["referencedDeclaration"].get<int>() > 0;
+    if (
+      has_ref_decl &&
       is_sol_library_function(expr["referencedDeclaration"].get<int>()))
       return LibraryMemberCall;
     else if (type_name == SolidityGrammar::TypeNameT::StructTypeName)
@@ -910,12 +920,11 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
       return ContractMemberCall;
     else if (is_address_member_call(expr))
       return AddressMemberCall;
+    else if (!has_ref_decl)
+      return BuiltinMemberCall;
     else if (type_name == SolidityGrammar::TypeNameT::TypeConversionName)
       return TypeMemberCall;
     else
-      //TODO Assume it's a builtin member
-      // due to that the BuiltinTypeName cannot cover all the builtin member
-      // e.g. string.concat ==> TypeConversionName
       return BuiltinMemberCall;
   }
   else if (expr["nodeType"] == "ImplicitCastExprClass")
@@ -929,6 +938,12 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
   else if (expr["nodeType"] == "IndexRangeAccess")
   {
     return IndexRangeAccess;
+  }
+  else if (expr["nodeType"] == "ElementaryTypeNameExpression")
+  {
+    // A raw elementary type expression (e.g. `string` in
+    // `string.concat(...)`, `bytes` in `type(bytes).max`).
+    return ElementaryTypeNameExpr;
   }
 
   // fall-through
@@ -1197,6 +1212,7 @@ const char *expression_to_str(ExpressionT type)
     ENUM_TO_STR(TypeConversionExpression)
     ENUM_TO_STR(TypePropertyExpression)
     ENUM_TO_STR(NullExpr)
+    ENUM_TO_STR(ElementaryTypeNameExpr)
     ENUM_TO_STR(ExpressionTError)
   default:
   {
