@@ -210,6 +210,27 @@ bool solidity_convertert::get_unbound_expr(
 }
 
 // construct the unbound verification harness
+/* [APPROX: OVER] Unbound nondet entry-harness.
+ *
+ * For each public/external method of a contract, the harness emits a
+ * nondet-guarded call with nondet parameters. msg.sender / msg.value /
+ * tx.origin / block.* are all nondet. This is the default `--contract`
+ * mode and is sound for safety (every reachable state of every external
+ * call is explored in one transaction).
+ *
+ * False positives: the harness can call every public method in any order,
+ *   so protocol invariants that assume a specific call ordering (e.g.
+ *   "must call init() before transfer()") report spurious violations
+ *   unless the contract enforces ordering internally.
+ * False positives: each method is called with arbitrary nondet msg.value,
+ *   so a payable branch `assert(msg.value > 0)` at the top of a function
+ *   will fire even if the original test only invoked it with a positive
+ *   value (see stress_libsol_fntype_inline_array_value_call).
+ * False negatives: bugs reachable only through a multi-transaction
+ *   sequence with state carried across transactions are NOT explored —
+ *   the harness is single-transaction per loop iteration. Use
+ *   --multi-transaction for multi-tx modes (where applicable).
+ */
 bool solidity_convertert::get_unbound_function(
   const std::string &c_name,
   symbolt &sym)

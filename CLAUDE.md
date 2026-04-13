@@ -170,7 +170,15 @@ When submitting work from a specific commit to the ESBMC main repository:
    ```
 2. **Run cppcheck** on all changed Solidity frontend files and fix any must-fix warnings (see [Static Analysis](#static-analysis-cppcheck) above).
 3. **Build and run all Solidity regression tests** — all tests must pass (`ctest -j$(nproc) -L "esbmc-solidity"`). Timeouts from known k-induction issues are acceptable, but zero actual failures.
-4. **Commit, push, and open the PR** against the upstream `solidity` branch.
+4. **Push the PR branch to `origin` (personal fork) and open the PR** against the upstream `solidity` branch via the GitHub web UI. Do NOT push directly to the `upstream` remote — see below.
+
+### Push Policy (MUST follow)
+
+- **NEVER push any branch to `upstream`** (`git@github.com:esbmc/esbmc`). Upstream is read-only from this checkout; PRs are opened from `origin` (the personal fork) via GitHub's web UI.
+- **NEVER push the local `solidity` branch to `upstream`** under any circumstance. The local `solidity` branch carries project-specific work that must not be pushed to the shared upstream.
+- The `upstream` remote in this checkout has its push URL configured to an invalid scheme (`DISABLED://...`) as a hard safety net; any `git push upstream` will fail fast with a git command error. Do not "fix" this configuration — it is intentional.
+- To inspect/verify: `git remote -v` should show `upstream` with a `DISABLED://` push URL. If a future operation needs to repair the fetch URL, only touch the fetch side, never the push side.
+- When Claude Code or the user is asked to push, the default target is `origin` unless the user explicitly names another remote. If the user says "push", confirm the target before running the command if there is any ambiguity.
 
 ## Solver Selection for Solidity
 

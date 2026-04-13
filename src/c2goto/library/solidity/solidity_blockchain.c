@@ -1,8 +1,22 @@
-/*
- * Solidity block, transaction, and message context variables & functions.
+/* [APPROX: OVER] Solidity block / transaction / message context.
  *
- * All properties are modelled as unconstrained nondeterministic values,
- * which is sound (over-approximate) for safety verification.
+ * All msg.*, tx.*, block.* variables and blockhash/blobhash are
+ * unconstrained nondet uint256_t / address_t. This is sound (over-
+ * approximate) for safety verification: every concrete miner/attacker
+ * choice is a possible realisation.
+ *
+ * Consequences:
+ *  - No relationship between successive block.number reads (they are NOT
+ *    monotonic in the model). Properties of the form
+ *    `assert(block.number >= block.number_prev)` cannot be verified.
+ *  - No relationship between block.timestamp and block.number.
+ *  - msg.sender can be any address on every call, including contracts
+ *    that should not exist yet.
+ *  - gasleft() decreases monotonically via `gasConsume()` within a call,
+ *    but is reset to a nondet ceiling at each entry.
+ *
+ * False positives: invariants over sequences of block values.
+ * False negatives: none expected for safety properties.
  */
 #include <stddef.h>
 #include <stdlib.h>

@@ -910,9 +910,20 @@ bool solidity_convertert::get_statement(
   }
   case SolidityGrammar::StatementT::InlineAssemblyStatement:
   {
-    // Over-approximate inline assembly by havocing all externally referenced
-    // variables. Assembly can read and write any referenced variable, so we
-    // conservatively assign nondet values to each one.
+    // [APPROX: OVER] Inline assembly is not executed. We over-approximate by
+    // havocing every externally referenced variable (each becomes nondet of
+    // its declared type). Pure-EVM blocks with no external refs become skips.
+    //
+    // Soundness: sound for *reads* — the havoc admits every value the block
+    //   could possibly produce.
+    // Completeness: false positives possible when the block enforces a
+    //   constraint on the havoc'd variable (e.g. assembly-driven invariants
+    //   checked later). Assembly that deliberately computes a specific value
+    //   (e.g. `z := t` reading a fn-ptr slot tag) cannot be verified — see
+    //   `regression/esbmc-solidity/stress_libsol_uninit_fnptr_*`.
+    // Notes: .slot/.offset references to state variables havoc the backing
+    //   state variable itself; opcodes that touch only EVM intrinsics (gas,
+    //   selfbalance, etc.) produce no havoc and become a skip.
     code_blockt havoc_block;
 
     if (

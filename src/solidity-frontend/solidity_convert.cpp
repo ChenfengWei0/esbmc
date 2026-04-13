@@ -364,7 +364,7 @@ void solidity_convertert::merge_multi_files()
   // Path to JSON object mapping
   std::unordered_map<std::string, nlohmann::json> path_to_json;
   // Constructing an import relationship diagram
-  for (auto &ast_json : src_ast_json_array)
+  for (const auto &ast_json : src_ast_json_array)
   {
     std::string path = ast_json["absolutePath"];
     path_to_json[path] = ast_json;
@@ -435,10 +435,7 @@ void solidity_convertert::topological_sort(
   // Calculate the in-degree for each node
   for (const auto &pair : graph)
   {
-    if (in_degree.find(pair.first) == in_degree.end())
-    {
-      in_degree[pair.first] = 0;
-    }
+    in_degree.try_emplace(pair.first, 0);
     for (const auto &neighbor : pair.second)
     {
       if (pair.first != neighbor)
@@ -687,7 +684,7 @@ bool solidity_convertert::check_sol_ver()
       min_version.patch);
     return true;
   }
-  else if (min_version >= v050 && min_version < v070)
+  else if (min_version < v070)
   {
     log_warning(
       "The minimum solidity version ({}.{}.{}) < 0.7.0 may cause unexpected "

@@ -1,19 +1,26 @@
-/*
- * Solidity ABI Encoding and Decoding — operational models.
+/* [APPROX: OVER + UNDER] Solidity ABI encode/decode.
  *
- * ABI encoding functions use an **identity abstraction**: they return the
- * first argument unchanged.  This is sound for equality-based reasoning
- * (e.g. keccak256(abi.encodePacked(x)) == keccak256(abi.encodePacked(x)))
- * because the transformation is deterministic and injective.
+ * abi.encode / abi.encodePacked / abi.encodeWithSelector /
+ * abi.encodeWithSignature / abi.encodeCall are modelled as identity on
+ * the first argument (cast to uint256_t). Remaining arguments are
+ * evaluated for side effects and discarded. This is:
+ *  - OVER-approx for equality reasoning: determinism + injectivity give
+ *    `encode(x) == encode(x)` and `encode(a) == encode(b) ⇒ a == b`.
+ *  - UNDER-approx for properties of the packed byte layout: two distinct
+ *    encodings with identical first argument (e.g. different selectors
+ *    or different trailing args) look the same to the model.
  *
- * Multi-argument calls: only the first argument is captured by the model;
- * remaining arguments are evaluated for side effects but discarded.
- * This is an over-approximation — properties that depend on the packed
- * byte layout of multiple arguments may yield false positives.
+ * abi.decode returns a nondet uint256_t — fully unconstrained.
+ *  - OVER-approx: admits every possible decoded value, so any concrete
+ *    buggy decode outcome is explored.
+ *  - UNDER-approx for round-trip properties: the link between the bytes
+ *    produced by abi.encode and the result of a later abi.decode is lost.
  *
- * abi.decode is modeled as nondet (over-approximation): the decoded values
- * are unconstrained.  This is sound because any concrete decoded value is
- * a possible result of the nondet abstraction.
+ * False positives: properties that depend on the exact packed byte layout
+ *   of multi-argument calls will not hold.
+ * False negatives: properties that rely on the identity/uniqueness of a
+ *   multi-argument encoding (e.g. function-selector dispatch) may report
+ *   spurious success.
  */
 
 #include <stdint.h>

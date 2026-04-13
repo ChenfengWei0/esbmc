@@ -2227,10 +2227,14 @@ bool solidity_convertert::get_index_range_access_expr(
   const nlohmann::json &literal_type,
   exprt &new_expr)
 {
-  // IndexRangeAccess: data[start:end] on calldata arrays/bytes
-  // Model as nondet array of the result type (over-approximation).
-  // The slice is a read-only view into calldata, which is already
-  // nondeterministic in --function mode.
+  // [APPROX: OVER] IndexRangeAccess: data[start:end] on calldata
+  // arrays/bytes. Model as a fresh nondet value of the result type —
+  // the slice is detached from the source array, so indexing b[s:e]
+  // and the parent `b` share no content. Also no bound relationship
+  // between `start`, `end` and the original length is enforced.
+  // False positives: slice-range bounds assertions on user code that
+  //   does its own check cannot be verified.
+  // False negatives: none for safety.
   locationt location;
   get_start_location_from_stmt(expr, location);
 
