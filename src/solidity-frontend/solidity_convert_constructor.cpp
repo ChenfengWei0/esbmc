@@ -317,8 +317,60 @@ bool solidity_convertert::get_unbound_function(
       // do member access
       exprt mem_access = member_exprt(contract_var, method.id, method.type);
 
-      // find function definition json node
-      nlohmann::json decl_ref = get_func_decl_ref(c_name, func_name);
+      // Overload-aware lookup: method.id is of the form
+      // "sol:@C@<cname>@F@<fname>#<ast_node_id>". Match by AST node id so
+      // that overloaded functions (same name, different params) resolve to
+      // the exact declaration recorded in funcSignatures. The name-only
+      // fallback `get_func_decl_ref(c_name, func_name)` returns the first
+      // FunctionDefinition with a matching name, which for an overloaded
+      // external function could silently bind to a different overload
+      // (e.g. an internal one) and call it with nondet arguments whose
+      // shape does not match the callee — resulting in spurious OOB or
+      // type errors at symex time.
+      nlohmann::json decl_ref = empty_json;
+      int target_node_id = -1;
+      {
+        auto hash_pos = method.id.rfind('#');
+        if (hash_pos != std::string::npos)
+        {
+          try
+          {
+            target_node_id = std::stoi(method.id.substr(hash_pos + 1));
+          }
+          catch (...)
+          {
+            target_node_id = -1;
+          }
+        }
+      }
+      if (target_node_id >= 0)
+      {
+        for (auto &top_node : src_ast_json["nodes"])
+        {
+          if (
+            top_node.contains("nodeType") &&
+            top_node["nodeType"] == "ContractDefinition" &&
+            top_node.contains("name") && top_node["name"] == c_name)
+          {
+            for (auto &inner : top_node["nodes"])
+            {
+              if (
+                inner.contains("nodeType") &&
+                inner["nodeType"] == "FunctionDefinition" &&
+                inner.contains("id") &&
+                inner["id"].get<int>() == target_node_id)
+              {
+                decl_ref = inner;
+                break;
+              }
+            }
+            if (!decl_ref.empty())
+              break;
+          }
+        }
+      }
+      if (decl_ref.empty())
+        decl_ref = get_func_decl_ref(c_name, func_name);
       if (decl_ref.empty())
       {
         log_error(
