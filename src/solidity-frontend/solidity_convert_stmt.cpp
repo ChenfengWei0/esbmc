@@ -526,6 +526,30 @@ bool solidity_convertert::get_statement(
     if (get_expr(implicit_cast_expr, literal_type, rhs))
       return true;
 
+    // If rhs is an inline array literal (id("array")) being returned
+    // from a fixed-size Solidity array return type, the frontend models
+    // the return type as a pointer and c_typecast's array→pointer decay
+    // produces `&{...}[0]` — an address-of indexing into an inline
+    // initializer that the dereference pass cannot simplify, recursing
+    // unboundedly on member/index chains nested under the literal.
+    //
+    // Materialize the literal into a static auxiliary array first, then
+    // let the regular implicit cast turn that aux symbol into a normal
+    // pointer.
+    if (
+      rhs.id() == "array" && return_type.id() == typet::id_pointer &&
+      rhs.type().is_array())
+    {
+      const typet &elem_type = return_type.subtype();
+      for (auto &op : rhs.operands())
+        solidity_gen_typecast(ns, op, elem_type);
+      // Make sure the array's element type matches the destination
+      // before stamping it into a static aux symbol.
+      to_array_type(rhs.type()).subtype() = elem_type;
+      exprt aux;
+      get_aux_array(rhs, elem_type, aux);
+      rhs = aux;
+    }
     solidity_gen_typecast(ns, rhs, return_type);
     ret_expr.return_value() = rhs;
 
