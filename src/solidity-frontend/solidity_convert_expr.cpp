@@ -528,6 +528,54 @@ bool solidity_convertert::get_expr(
       break;
     };
 
+    // Handle qualified struct constructor: e.g. `Pairing.G1Point(1, 2)`.
+    // The MemberAccess's referencedDeclaration points at a StructDefinition,
+    // not a function. Build a struct-valued initializer from the positional
+    // arguments and return early — the struct-constructor handler in the
+    // generic CallExprClass branch (below) is only reached for unqualified
+    // struct calls like `G1Point(1, 2)`.
+    if (
+      !func_ref.empty() && func_ref.contains("nodeType") &&
+      func_ref["nodeType"] == "StructDefinition")
+    {
+      const nlohmann::json &parent_call =
+        find_last_parent(src_ast_json["nodes"], expr);
+      assert(parent_call.contains("arguments"));
+
+      typet struct_t;
+      if (get_type_description(parent_call["typeDescriptions"], struct_t))
+        return true;
+      // get_type_description returns a symbol_typet for struct types; resolve
+      // via the namespace to the underlying struct_typet.
+      const typet &resolved = ns.follow(struct_t);
+      if (resolved.id() != irept::id_struct)
+      {
+        log_error("expected struct type for qualified struct constructor");
+        return true;
+      }
+      struct_t = resolved;
+
+      exprt inits = gen_zero(struct_t);
+      const nlohmann::json &members = func_ref["members"];
+      const nlohmann::json &ctor_args = parent_call["arguments"];
+      for (size_t i = 0;
+           i < inits.operands().size() && i < ctor_args.size() &&
+           i < members.size();
+           i++)
+      {
+        exprt init;
+        if (get_expr(ctor_args.at(i), members.at(i)["typeDescriptions"], init))
+          return true;
+        const struct_union_typet::componentt *c =
+          &to_struct_type(struct_t).components().at(i);
+        solidity_gen_typecast(ns, init, c->type());
+        inits.operands().at(i) = init;
+      }
+
+      new_expr = inits;
+      break;
+    }
+
     if (get_expr(caller_expr_json, literal_type, base))
       return true;
 
