@@ -648,7 +648,8 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | **`abi.encodeCall()`** | ✓ Identity (CORE) | Interface/function pointer (`ITarget.transfer`) accepted by converter; canonical signature rebuilt from referenced `FunctionDefinition`. Tests: `abi_encodeCall_1/2/3` |
 | **`mulmod(MAX,MAX,k)`** | KNOWNBUG | 512-bit model is correct but ESBMC constant evaluator crashes (SIGFPE) when both operands are near `type(uint256).max` |
 | **Inline assembly / Yul** | ✅ Havoc (2026-04-05) | Over-approximated: all externally referenced variables are havoc'd to nondet. Does not model Yul semantics. |
-| **Function types** | Not supported | `function(uint) returns (bool)` as first-class values |
+| **Function types (internal)** | ✓ Parses, nondet calls (2026-04-13) | `function(uint) pure returns (uint) f` parameters / struct fields lowered to opaque `void *`; indirect calls `f(x)` return a nondet value of the declared return type (no crash). Precise semantics (function inlining / monomorphization) not implemented — tests that assert specific computed values through `.map(fn).reduce(fn)` remain KNOWNBUG. See `func_internal_type_1` |
+| **Function types (external)** | KNOWNBUG | Passing a function reference (`this.callback`) as an argument still crashes during argument marshalling in `get_non_library_function_call`. Separate from the internal-types fix above. Test: `func_external_type_1` |
 | **`using for` + custom operators** | Not supported | Operator dispatch table per type |
 | **Transient storage (EIP-1153)** | Not supported | New data location model |
 | **User-defined value types** | ✓ Basic (2026-04-07) | `type C is V` with `.wrap()`/`.unwrap()` works; `using { f as op }` custom operators NOT supported; tests: `udv_type_1/2` |

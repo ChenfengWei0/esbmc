@@ -1,53 +1,50 @@
 # func_internal_type_1 KNOWNBUG Investigation
 
-## Summary
+## Current status (2026-04-13)
 
-Frontend crash when converting FunctionTypeName parameters (e.g., `function (uint) pure returns (uint) f`).
-This is a **Solidity frontend bug**, not a backend/symex issue.
+**Frontend crash FIXED.** The Solidity frontend now accepts `FunctionTypeName`
+AST nodes for parameters and struct fields — they are lowered to an opaque
+`void *` in `solidity_convert_type.cpp` (Pointer case), and indirect calls
+through them are rewritten at the call site to a `nondet()` expression of the
+declared return type (`solidity_convert_expr.cpp`).
 
-## Error
+The test stays **KNOWNBUG** because the Pyramid example asserts specific
+computed values:
 
-```
-terminate called after throwing an instance of 'nlohmann::json_abi_v3_11_3::detail::type_error'
-  what():  [json.exception.type_error.305] cannot use operator[] with a string argument with number
-```
-
-The crash occurs during AST-to-IR conversion when the frontend encounters a `FunctionTypeName`
-node used as a function parameter type. The `get_func_decl_ref()` / `make_pointee_type()` path
-does not fully handle the FunctionTypeName AST structure.
-
-## C Equivalent PoC
-
-The equivalent C program using function pointers works correctly:
-
-```c
-void map(unsigned *self, unsigned len, unsigned (*f)(unsigned), unsigned *result) {
-    for (unsigned i = 0; i < len; i++)
-        result[i] = f(self[i]);
-}
-unsigned square(unsigned x) { return x * x; }
-// ... pyramid(4) == 14 => VERIFICATION SUCCESSFUL
+```solidity
+assert(pyramid(4) == 14); // range -> map(square) -> reduce(sum)
 ```
 
-**Result**: `VERIFICATION SUCCESSFUL` — ESBMC's C backend correctly handles function pointers
-as parameters and indirect calls through them.
+With indirect calls returning nondet, `map(f)` and `reduce(f)` cannot compute
+real values — the assertion fails as `VERIFICATION FAILED` instead of the
+expected `VERIFICATION SUCCESSFUL`.
 
-## Root Cause
+## What would fix the precision gap
 
-The bug is entirely in the **Solidity frontend** (`solidity_convert_*.cpp`).
-The ESBMC middle-end and backend fully support function pointers and indirect calls.
+Full support requires function-pointer lowering + call resolution in the
+frontend. Approaches, roughly in order of cost:
 
-Fixing this requires:
-1. Handling `FunctionTypeName` AST nodes in `get_type_name_t()` / `make_pointee_type()`
-2. Generating function-pointer typed parameters in the IR
-3. Resolving indirect calls: at each call site `f(x)`, either:
-   - Generate a direct call if `f` can be statically resolved, or
-   - Generate an if-else dispatch over all possible target functions
+1. **Source-level monomorphization (Hack 2 in the plan)**: when the converter
+   sees `arr.map(square).reduce(sum)`, clone `map`/`reduce` into specialized
+   copies `map__square`/`reduce__sum` with the callback inlined, and call the
+   clones directly. Works whenever the callback is statically known at each
+   call site (true for all Solidity docs examples). Estimated 200-400 lines
+   plus call-site rewriting for method chains.
 
-## Complexity
+2. **Full function-pointer IR**: represent internal function types as
+   `code_typet` pointers, emit an enum-dispatch table of candidate targets,
+   and translate each indirect call to a switch over the candidates. More
+   general but heavier.
 
-High. Requires function pointer representation + call resolution in the frontend.
+## Related
+
+- See `CLAUDE_Solidity.md` → "Function types (internal)" row.
+- Same Hack-1 strategy will **not** unblock `func_external_type_1`: passing a
+  function reference as an argument (`ORACLE_CONST.query("USD", this.callback)`)
+  still crashes during argument marshalling in `get_non_library_function_call`
+  — a separate code path that does not route through the Pointer type case.
 
 ## Date
 
-2026-04-12
+2026-04-13 (Hack 1 implemented; frontend no longer crashes)
+2026-04-12 (original KNOWNBUG report — frontend crash)

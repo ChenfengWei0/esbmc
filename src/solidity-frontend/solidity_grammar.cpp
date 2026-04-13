@@ -332,6 +332,15 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     {
       return ParameterList;
     }
+    else if (type_name["nodeType"] == "FunctionTypeName")
+    {
+      // Internal/external function-type parameters and struct fields
+      // (e.g. `function(uint) pure returns (uint) f`). Lowered to an
+      // opaque pointer in the frontend — indirect calls through these
+      // parameters are not executed, they return nondet values (see
+      // get_type_description Pointer case and convert_call handling).
+      return Pointer;
+    }
     else
     {
       log_error(

@@ -65,6 +65,19 @@ bool solidity_convertert::get_type_description(
   }
   case SolidityGrammar::TypeNameT::Pointer:
   {
+    // FunctionTypeName parameter / struct field (internal or external
+    // function types, e.g. `function(uint) pure returns (uint) f`).
+    // Lowered to an opaque void* — indirect calls through it return
+    // nondet values (handled in convert_call).
+    if (
+      type_name.contains("nodeType") &&
+      type_name["nodeType"] == "FunctionTypeName")
+    {
+      new_type = gen_pointer_type(empty_typet());
+      new_type.set("#sol_func_ptr", true);
+      break;
+    }
+
     // auxiliary type: pointer (FuncToPtr decay)
     // This part is for FunctionToPointer decay only
     assert(
