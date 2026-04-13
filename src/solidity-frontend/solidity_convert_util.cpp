@@ -779,9 +779,15 @@ bool solidity_convertert::get_empty_array_ref(
   if (get_expr(callee_arg_json, literal_type, size))
     return true;
 
-  // 3. do calloc
+  // 3. do alloc — pick calloc (zero-init) for constant sizes, malloc
+  // (symbolic-safe) otherwise. calloc's internal memset loop creates a
+  // VLA-typed backing when the size is symbolic, which loses indexed
+  // write/read tracking through later pointer reassignment.
   side_effect_expr_function_callt calc_call;
-  get_calloc_function_call(location_begin, calc_call);
+  if (size.is_constant())
+    get_calloc_function_call(location_begin, calc_call);
+  else
+    get_malloc_array_function_call(location_begin, calc_call);
 
   exprt size_of_expr;
   get_size_of_expr(elem_type, size_of_expr);

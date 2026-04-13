@@ -460,6 +460,9 @@ protected:
   void get_calloc_function_call(
     const locationt &loc,
     side_effect_expr_function_callt &_call);
+  void get_malloc_array_function_call(
+    const locationt &loc,
+    side_effect_expr_function_callt &_call);
   void get_arrcpy_function_call(
     const locationt &loc,
     side_effect_expr_function_callt &calc_call);

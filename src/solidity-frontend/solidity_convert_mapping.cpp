@@ -664,6 +664,17 @@ void solidity_convertert::get_calloc_function_call(
     calc_name, calc_id, symbol_expr(calc_sym).type(), loc, calc_call);
 }
 
+void solidity_convertert::get_malloc_array_function_call(
+  const locationt &loc,
+  side_effect_expr_function_callt &malc_call)
+{
+  const std::string malc_name = "_ESBMC_alloc_array_sym";
+  const std::string malc_id = "c:@F@_ESBMC_alloc_array_sym";
+  const symbolt &malc_sym = *context.find_symbol(malc_id);
+  get_library_function_call_no_args(
+    malc_name, malc_id, symbol_expr(malc_sym).type(), loc, malc_call);
+}
+
 void solidity_convertert::get_arrcpy_function_call(
   const locationt &loc,
   side_effect_expr_function_callt &calc_call)
