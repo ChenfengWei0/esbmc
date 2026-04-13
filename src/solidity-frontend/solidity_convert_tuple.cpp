@@ -229,12 +229,27 @@ bool solidity_convertert::get_tuple_function_ref(
   // - Identifier: direct function reference (e.g., func())
   // - MemberAccess: cross-contract call (e.g., p.getPair())
   int ref_decl_id;
-  if (ast_node["nodeType"] == "Identifier")
+  if (
+    ast_node["nodeType"] == "Identifier" ||
+    ast_node["nodeType"] == "MemberAccess")
   {
-    ref_decl_id = ast_node["referencedDeclaration"].get<int>();
-  }
-  else if (ast_node["nodeType"] == "MemberAccess")
-  {
+    // Builtin low-level calls (`addr.call`, `addr.delegatecall`,
+    // `addr.staticcall`) and other builtin tuple-producing members
+    // are MemberAccess nodes with no referencedDeclaration. The
+    // tuple instance for their (bool, bytes) return is synthesised
+    // by the low-level call path, not by the per-function tuple
+    // registry — fail softly so the caller falls back.
+    if (
+      !ast_node.contains("referencedDeclaration") ||
+      ast_node["referencedDeclaration"].is_null())
+    {
+      log_debug(
+        "solidity",
+        "get_tuple_function_ref: callee has no referencedDeclaration "
+        "(nodeType={}), cannot resolve tuple instance",
+        ast_node["nodeType"].get<std::string>());
+      return true;
+    }
     ref_decl_id = ast_node["referencedDeclaration"].get<int>();
   }
   else
