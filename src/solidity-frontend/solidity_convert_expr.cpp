@@ -2787,10 +2787,86 @@ bool solidity_convertert::get_binary_operator_expr(
       rt_sol == SolidityGrammar::SolType::DYNARRAY && lhs.is_symbol() &&
       lt.get_bool("#sol_dynarray_state"))
     {
-      // Dynarray state var (infinite-size array): cannot use arrcpy
-      // (element-level copy triggers inf_sized_array_excp). For state
-      // vars the assignment semantics differ from memory arrays.
-      // TODO: implement proper element-wise copy for state var dynarrays.
+      // Dynarray state var (infinite-size array): copy elements from
+      // memory dynarray (pointer + inline header) into the infinite
+      // array via a bounded for-loop, then update _dynarray_len.
+      // The loop is bounded by --unwind (fundamental BMC limitation).
+      typet elem_type = lt.subtype();
+      locationt loc = lhs.location();
+      std::string debug_modulename = get_modulename_from_path(absolute_path);
+
+      // 1. _copy_len = _ESBMC_array_length(rhs)
+      side_effect_expr_function_callt length_call;
+      get_library_function_call_no_args(
+        "_ESBMC_array_length",
+        "c:@F@_ESBMC_array_length",
+        uint_type(),
+        loc,
+        length_call);
+      length_call.arguments().push_back(rhs);
+      // _ESBMC_array_length returns uint32; cast to uint256 for consistency
+      // with the loop counter and _dynarray_len.
+      solidity_gen_typecast(ns, length_call, unsignedbv_typet(256));
+      exprt len_var = make_aux_var(length_call, loc);
+
+      // 2. Create loop counter: uint256 _i
+      std::string ctr_name, ctr_id;
+      get_aux_var(ctr_name, ctr_id);
+      symbolt ctr_sym;
+      get_default_symbol(
+        ctr_sym, debug_modulename, unsignedbv_typet(256),
+        ctr_name, ctr_id, loc);
+      ctr_sym.lvalue = true;
+      ctr_sym.file_local = true;
+      ctr_sym.value = gen_zero(unsignedbv_typet(256));
+      auto &added_ctr = *move_symbol_to_context(ctr_sym);
+      exprt ctr_ref = symbol_expr(added_ctr);
+
+      // Declare counter
+      code_declt ctr_decl(ctr_ref);
+      ctr_decl.operands().push_back(gen_zero(unsignedbv_typet(256)));
+      move_to_front_block(ctr_decl);
+
+      // init: _i = 0
+      code_assignt init_assign(ctr_ref, gen_zero(unsignedbv_typet(256)));
+
+      // cond: _i < _copy_len
+      exprt cond = gen_binary("<", bool_typet(), ctr_ref, len_var);
+
+      // iter: _i = _i + 1
+      exprt one = constant_exprt(
+        integer2binary(1, bv_width(unsignedbv_typet(256))),
+        "1",
+        unsignedbv_typet(256));
+      code_assignt iter_assign(
+        ctr_ref,
+        gen_binary("+", unsignedbv_typet(256), ctr_ref, one));
+
+      // body: data1[_i] = rhs[_i]
+      exprt lhs_elem = index_exprt(lhs, ctr_ref, elem_type);
+      exprt rhs_elem = index_exprt(rhs, ctr_ref, elem_type);
+      solidity_gen_typecast(ns, rhs_elem, elem_type);
+      code_assignt body_assign(lhs_elem, rhs_elem);
+
+      // Emit for-loop
+      code_fort copy_loop;
+      copy_loop.init() = init_assign;
+      copy_loop.cond() = cond;
+      copy_loop.iter() = iter_assign;
+      copy_loop.body() = body_assign;
+      move_to_front_block(copy_loop);
+
+      // 3. _dynarray_len = _copy_len
+      std::string dlen_id = lhs.identifier().as_string() + "_dynarray_len";
+      const symbolt *dlen_sym = ns.lookup(dlen_id);
+      assert(dlen_sym);
+      exprt dlen_ref = symbol_expr(*dlen_sym);
+      exprt dlen_assign = side_effect_exprt("assign", unsignedbv_typet(256));
+      solidity_gen_typecast(ns, len_var, unsignedbv_typet(256));
+      dlen_assign.copy_to_operands(dlen_ref, len_var);
+      convert_expression_to_code(dlen_assign);
+      move_to_front_block(dlen_assign);
+
       new_expr = code_skipt();
       return false;
     }
