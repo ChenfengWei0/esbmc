@@ -244,7 +244,11 @@ __ESBMC_HIDE:;
 unsigned int nondet_uint();
 char nondet_char();
 
-__attribute__((annotate("__ESBMC_inf_size"))) char _ESBMC_rand_str[1];
+/* Fixed-size buffer (not __ESBMC_inf_size) so a concrete NUL at index
+ * _ESBMC_NONDET_STRING_MAX guarantees strlen() terminates without the
+ * generic scan loop unwinding indefinitely. */
+#define _ESBMC_NONDET_STRING_MAX 32
+char _ESBMC_rand_str[_ESBMC_NONDET_STRING_MAX + 1];
 
 char *nondet_string()
 {
