@@ -185,6 +185,10 @@ bool solidity_convertert::get_function_definition(
   std::vector<exprt> named_ret_decls;
   std::vector<exprt> named_ret_syms;
   bool has_named_returns = false;
+  // Emit DECL + zero-init for named return parameters in both the
+  // single-return and tuple-return cases. For tuples, this ensures that
+  // body code (including inline assembly, which havocs via symbol
+  // lookup) can refer to the named outputs as regular local variables.
   if (
     !is_ctor && ast_node.contains("returnParameters") &&
     ast_node["returnParameters"].contains("parameters") &&
