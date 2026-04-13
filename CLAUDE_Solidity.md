@@ -367,7 +367,11 @@ Tests: `dynarray_push_1` (push + pop + length pass), `dynarray_push_2` (wrong va
 1. Recursive call to `get_type_description` passed `decl["typeName"]` as `decl`, but the inner handler expects `decl["typeName"]` to exist — fixed by wrapping `baseType` in a synthetic `decl`
 2. Expression-context calls (no `decl` available) crashed — added string-based extraction with `rfind("_$dyn")` to find the outer array's suffix
 
-Root causes of remaining gaps: `make_array_elementary_type()` has comment `"current implement does not consider Multi-Dimensional Arrays"` (`solidity_convert_util.cpp:387`); array size extraction regex `.*\\[([0-9]+)\\]` captures only one dimension (`solidity_convert_util.cpp:430`).
+Root causes of remaining gaps: array size extraction regex `.*\\[([0-9]+)\\]` in `solidity_convert_util.cpp` captures only one dimension, blocking `uint[N][M]`.
+
+**Fix (2026-04-13):** `make_array_elementary_type()` previously used a greedy regex `\$_\w*_\$` that mis-parsed nested identifiers like `t_array$_t_string_memory_ptr_$2_memory_ptr` (producing element id `t_string_memory_ptr` with typeString `"string_memory_ptr"`), crashing downstream `get_type_name_t`. Rewrote it to scan backwards for the outer `_$<size>` delimiter and strip `_memory_ptr`/`_storage_ptr`/`_calldata_ptr` suffixes from both identifier and typeString. Unblocks `string[2][]` and fixed-size arrays of reference-type elements.
+
+**Fix (2026-04-13):** Qualified struct constructor calls like `Pairing.G1Point(1, 2)` previously crashed with `nlohmann::json type_error 305` because the `TypeMemberCall` branch in `solidity_convert_expr.cpp` fed `StructDefinition` AST nodes into `get_func_decl_ref_t`, which dereferenced a non-existent `decl["parameters"]["parameters"]`. Added a StructDefinition branch that resolves the struct type via `ns.follow()`, then populates fields by walking `parent_call["arguments"]` against the struct members.
 
 #### C. Data Location Semantics — Partially Implemented
 
@@ -502,6 +506,8 @@ typedef struct BytesDynamic { size_t offset; size_t length; size_t capacity; int
 |----------------------|--------|----------|
 | **`abi.decode()` is nondet** | Parses and type-checks, but decoded content is unconstrained (over-approximation) | See Section D |
 
+**Fix (2026-04-13):** Library multi-return tuple lookup. Library functions like `library L { function reverse(S calldata) returns (uint, uint) { ... } }` create a tuple instance under the library's scope (`sol:@C@L@tuple_instance$<id>`), but `get_tuple_function_ref` only iterated `contractNamesList` — which deliberately `continue`s past libraries in `populate_auxiliary_vars`. Cross-library tuple returns therefore hit `cannot find tuple instance for declaration id N` and failed with CONVERSION ERROR. Added a second fallback pass over `nonContractNamesList` (libraries, interfaces, abstract contracts). Test: `stress_calldata_struct_lib_1` (CORE).
+
 #### F. Mapping Library Efficiency
 
 Two implementations coexist:
@@ -635,7 +641,7 @@ This works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) reco
 | Feature | Status | Detail |
 |---------|--------|--------|
 | ~~**Try/Catch**~~ | ✅ Done (2026-04-05) | Modeled as `if(nondet_bool) { success } else { catch }` with nondet return values; supports multiple catch clauses (Error, Panic, catch-all) |
-| **`using A for B`** | Partial | Library function dispatch works (including storage ref copy-back); custom operator dispatch not supported |
+| **`using A for B`** | Partial (2026-04-13) | Library function dispatch works (including storage ref copy-back). Free-function binding `using { f } for S` — where `x.f(args)` calls a top-level `function f(S, ...)` — now rewritten in `get_call_expr` to `f(x, args)` before the normal call path. Previously fed the `FunctionDefinition` decl into `get_var_decl_ref`, abusing its `VariableDeclaration` assertion and crashing in `nlohmann::json` bool/number coercions (`solidity_convert_decl.cpp:1453`). Custom operator dispatch (`using { f as op }`) still not supported. |
 | **Bitwise on dynamic bytes** | Static only | Ops limited to `bytesN`, not dynamic `bytes` (`solidity_convert_expr.cpp:2155`) |
 | **`constant`/`immutable`** | Partial | `constant` works; `immutable` may not enforce set-once |
 | **Named return parameters** | ✅ Fixed (2026-04-05) | Single named return: DECL + zero-init + implicit return. Tuple named returns still use existing tuple machinery. |
@@ -878,7 +884,7 @@ If the C version correctly finds the violation but Solidity doesn't, the bug is 
 
 | Layer | Symptom | Example |
 |-------|---------|---------|
-| **Frontend crash** | `json type_error`, `abort`, segfault during "Converting" | `FunctionTypeName` not handled (func_internal_type_1) |
+| **Frontend crash** | `json type_error`, `abort`, segfault during "Converting" | Unhandled AST node kinds in type/expr converters (historically: `FunctionTypeName`, nested `make_array_elementary_type`, qualified struct constructor — all fixed 2026-04-13) |
 | **C model bug** | C PoC works, Solidity produces wrong result | Dynamic array copy loses values (library_11), address model too complex for solver (send_ether_via_creation_2) |
 | **Engine bug** | Both C PoC and Solidity fail the same way | (Not yet encountered in Solidity work) |
 
@@ -903,9 +909,9 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 **Note:** Both `ENABLE_SOLIDITY_FRONTEND` and `ENABLE_REGRESSION` must be ON. The default build (`./scripts/build.sh`) sets `ENABLE_REGRESSION=OFF`, so regression tests won't appear in `ctest -N` unless explicitly enabled.
 
-### Test Baseline (2026-04-11)
+### Test Baseline (2026-04-13)
 
-**503 total tests** (2026-04-11): 503 pass, 0 failed, 0 timeout (46s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**542 total tests** (2026-04-13): 542 pass, 0 failed, 0 timeout (43s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
@@ -945,6 +951,21 @@ ctest -R "regression/esbmc-solidity/address_1"
 | `delete_2` | CORE | delete value reset verification (FAILED) |
 | `free_function_1` | CORE | Free function call + composition (SUCCESSFUL) |
 | `free_function_2` | CORE | Division by zero in free function (FAILED) |
+
+**Calldata / free-function stress tests added (2026-04-13):**
+
+Eight `stress_*` contracts exercising calldata-array corners, library multi-returns, using-for free function binding, function pointers, and calldata slicing. See commit `c50754e6c4`.
+
+| Test | Type | Status |
+|------|------|--------|
+| `stress_calldata_struct_lib_1` | CORE | Library multi-return `L.reverse(s)` — fixed via `nonContractNamesList` tuple fallback |
+| `stress_calldata_array_overload_1` | CORE | Overloaded `f(uint[])/f(uint[][])/f(uint[2])` |
+| `stress_calldata_bytes_return_slice_1` | KNOWNBUG | `this.test(x)[2]` — calldata bytes content is nondet, bounds check fails |
+| `stress_calldata_bytes_overload_inner_1` | KNOWNBUG | internal/external `f(bytes calldata b, uint)` — same nondet-length OOB |
+| `stress_free_fn_longdata_asm_1` | KNOWNBUG | Frontend now accepts free-function + using-for; BMC crashes in `value_sett::make_member` when assigning long-string return to `bytes` state var |
+| `stress_free_fn_longdata_asm_2` | KNOWNBUG | Same as asm_1 (duplicate upstream test w/ TODO comment) |
+| `stress_func_ptr_longdata_1` | KNOWNBUG | `function() pure returns(bytes memory) f` state var + `f = S.longdata` — function pointer state var assignment triggers type coercion crash in `get_binary_operator_expr` |
+| `stress_calldata_slice_abi_1` | KNOWNBUG | `abi.encode(data[start:end])` — calldata slicing + abi.encode crashes in BMC |
 
 **Mapping-in-struct tests added (2026-04-01):**
 
