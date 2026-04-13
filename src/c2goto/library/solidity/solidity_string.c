@@ -215,6 +215,8 @@ __ESBMC_HIDE:;
   return k0 ^ k1 ^ k2 ^ k3;
 }
 
+#define _ESBMC_SOL_STR_MAX 64
+
 // string assign
 void _str_assign(char **str1, const char *str2)
 {

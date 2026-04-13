@@ -20,6 +20,12 @@ typedef struct BytesStatic
   size_t length;
 } BytesStatic;
 
+/* Hard cap for BytesStatic loop unrolling. Solidity's bytes1..bytes32
+ * never exceed 32 bytes, so using the static array size as the concrete
+ * loop bound lets symex unwind deterministically even when .length is
+ * symbolic (e.g. when a BytesStatic flows in from a nondet parameter). */
+#define _ESBMC_BYTES_STATIC_MAX 32
+
 void bytes_dynamic_init_check(const int initialized)
 {
 __ESBMC_HIDE:;
