@@ -272,6 +272,18 @@ bool solidity_convertert::get_tuple_function_ref(
     }
   }
 
+  // Libraries / interfaces / abstract contracts are not in contractNamesList
+  // but their tuple instances are still emitted under their own scope.
+  for (const auto &lib_name : nonContractNamesList)
+  {
+    std::string alt_id = "sol:@C@" + lib_name + "@" + name;
+    if (context.find_symbol(alt_id) != nullptr)
+    {
+      new_expr = symbol_expr(*context.find_symbol(alt_id));
+      return false;
+    }
+  }
+
   // Free functions (outside any contract) have their tuple instance
   // stored under the synthetic "__free__" scope by
   // get_tuple_instance_name().
