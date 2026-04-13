@@ -114,6 +114,26 @@ bool solidity_convertert::get_library_function_call(
           tid.compare(0, 7, "t_type$") == 0 ||
           tid.compare(0, 23, "t_function_declaration_") == 0)
           continue;
+        // Function references passed by name as r-values (internal or
+        // external function types), e.g. Utils.sum in
+        // Utils.reduce(x, Utils.sum, 0). Cannot be converted by
+        // get_expr (would recurse into TypeMemberCall and crash).
+        // Substitute an opaque nondet pointer — indirect calls
+        // through the parameter inside the callee are already modelled
+        // as nondet by the function-pointer indirect-call path in
+        // get_call_expr.
+        if (
+          tid.compare(0, 20, "t_function_internal_") == 0 ||
+          tid.compare(0, 20, "t_function_external_") == 0)
+        {
+          exprt nondet_fp = exprt("sideeffect", gen_pointer_type(empty_typet()));
+          nondet_fp.type().set("#sol_func_ptr", true);
+          nondet_fp.statement("nondet");
+          call.arguments().push_back(nondet_fp);
+          if (itr != itr_end)
+            ++itr;
+          continue;
+        }
       }
 
       exprt single_arg;

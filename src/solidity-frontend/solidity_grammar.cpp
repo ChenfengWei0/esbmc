@@ -271,6 +271,7 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
       typeString == "string" || typeString.starts_with("literal_string") ||
       typeString == "string storage ref" ||
       typeString == "string storage pointer" || typeString == "string memory" ||
+      typeString == "string calldata" ||
       typeString == "address payable" || typeString == "address" ||
       typeString.starts_with("bytes"))
     {
@@ -425,7 +426,8 @@ ElementaryTypeNameT get_elementary_type_name_t(const nlohmann::json &type_name)
   }
   if (
     typeString == "string" || typeString == "string storage ref" ||
-    typeString == "string memory" || typeString == "string storage pointer")
+    typeString == "string memory" || typeString == "string storage pointer" ||
+    typeString == "string calldata")
   {
     return STRING;
   }
