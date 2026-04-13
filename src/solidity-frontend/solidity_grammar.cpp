@@ -128,6 +128,14 @@ ContractBodyElementT get_contract_body_element_t(const nlohmann::json &element)
   {
     return ModifierDef;
   }
+  else if (element["nodeType"] == "UserDefinedValueTypeDefinition")
+  {
+    // Contract-scoped `type T is <elementary>;`. The type is pre-
+    // registered in UserDefinedVarMap during top-level AST setup,
+    // and references are resolved through that map — the body
+    // iteration just needs to skip the definition node.
+    return UserDefinedValueTypeDef;
+  }
   else
   {
     log_error(
@@ -151,6 +159,7 @@ const char *contract_body_element_to_str(ContractBodyElementT type)
     ENUM_TO_STR(EventDef)
     ENUM_TO_STR(UsingForDef)
     ENUM_TO_STR(ModifierDef)
+    ENUM_TO_STR(UserDefinedValueTypeDef)
     ENUM_TO_STR(ContractBodyElementTError)
   default:
   {

@@ -55,6 +55,7 @@ bool solidity_convertert::get_non_function_decl(
   case SolidityGrammar::ContractBodyElementT::ErrorDef:
   case SolidityGrammar::ContractBodyElementT::EventDef:
   case SolidityGrammar::ContractBodyElementT::UsingForDef:
+  case SolidityGrammar::ContractBodyElementT::UserDefinedValueTypeDef:
   {
     break;
   }
@@ -97,6 +98,7 @@ bool solidity_convertert::get_function_decl(const nlohmann::json &ast_node)
   case SolidityGrammar::ContractBodyElementT::EventDef:
   case SolidityGrammar::ContractBodyElementT::UsingForDef:
   case SolidityGrammar::ContractBodyElementT::ModifierDef:
+  case SolidityGrammar::ContractBodyElementT::UserDefinedValueTypeDef:
   {
     break;
   }
@@ -894,6 +896,7 @@ bool solidity_convertert::get_struct_class(const nlohmann::json &struct_def)
     case SolidityGrammar::ContractBodyElementT::EnumDef:
     case SolidityGrammar::ContractBodyElementT::UsingForDef:
     case SolidityGrammar::ContractBodyElementT::ModifierDef:
+    case SolidityGrammar::ContractBodyElementT::UserDefinedValueTypeDef:
     {
       // skip as it do not need to be populated to the value of the struct
       break;

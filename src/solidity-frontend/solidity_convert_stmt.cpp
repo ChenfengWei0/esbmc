@@ -224,6 +224,19 @@ bool solidity_convertert::get_statement(
     if (get_expr(
           stmt["expression"], stmt["expression"]["typeDescriptions"], new_expr))
       return true;
+    // Bare expression-statement forms that reduce to no-op exprt shapes
+    // (e.g. `MyAddress.wrap;` — a MemberAccess naming a UDVT wrap/unwrap
+    // function reference without invoking it) produce a typecast_exprt
+    // whose op0 is never populated by the wrap/unwrap handler in
+    // solidity_convert_ref.cpp (the comment there says "we will set the
+    // op0 later"; "later" only happens inside the FunctionCall path).
+    // typecast_exprt's constructor leaves op0 as a default-constructed
+    // empty exprt, which has no meaningful side effect and trips
+    // migrate_expr during GOTO generation. Replace with a skip.
+    if (new_expr.id() == "typecast" &&
+        (new_expr.operands().empty() ||
+         new_expr.op0().id().as_string().empty()))
+      new_expr = code_skipt();
     break;
   }
   case SolidityGrammar::StatementT::VariableDeclStatement:

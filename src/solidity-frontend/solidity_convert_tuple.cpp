@@ -440,7 +440,21 @@ bool solidity_convertert::construct_tuple_assigments(
 
   assert(lhs.type().is_code() && to_code(lhs).statement() == "block");
   exprt new_rhs = rhs;
-  if (rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS)
+  bool rhs_is_nondet = false;
+
+  // If the RHS is already a non-struct sideeffect (e.g. abi.decode(data,
+  // (T,U,...)) lowered by the builtin path to a single-uint256 identity
+  // call), we cannot split it into tuple members the normal way. Treat
+  // it as a fully nondet tuple RHS — matches the over-approximation
+  // documented in src/c2goto/library/solidity/solidity_abi.c and the
+  // sibling fallback in the return-statement tuple path.
+  if (
+    rt_sol != SolidityGrammar::SolType::TUPLE_RETURNS &&
+    !new_rhs.type().is_struct() && new_rhs.id() == "sideeffect")
+  {
+    rhs_is_nondet = true;
+  }
+  else if (rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS)
   {
     // (x,y) = func();
     // => func() populates tuple instance; then extract members
@@ -454,7 +468,13 @@ bool solidity_convertert::construct_tuple_assigments(
     if (rhs_call_json && rhs_call_json->contains("expression"))
     {
       if (get_tuple_function_ref((*rhs_call_json)["expression"], new_rhs))
-        return true;
+      {
+        // Builtin tuple-producing callee (abi.decode(data, (T,U,...)),
+        // addr.call(...), ...) has no per-function tuple instance.
+        // Over-approximate each LHS slot as nondet — matches the
+        // corresponding fallback in the return-statement tuple path.
+        rhs_is_nondet = true;
+      }
     }
     else
     {
@@ -462,7 +482,23 @@ bool solidity_convertert::construct_tuple_assigments(
       return true;
     }
 
-    get_tuple_function_call(rhs);
+    if (!rhs_is_nondet)
+      get_tuple_function_call(rhs);
+  }
+
+  if (rhs_is_nondet)
+  {
+    // No RHS struct to pull components from — synthesise an independent
+    // nondet value for every non-nil LHS slot and return.
+    for (const auto &lop : lhs.operands())
+    {
+      if (lop.is_nil())
+        continue;
+      exprt rop;
+      get_nondet_expr(lop.type(), rop);
+      get_tuple_assignment(expr, lop, rop);
+    }
+    return false;
   }
 
   if (!new_rhs.type().is_struct())

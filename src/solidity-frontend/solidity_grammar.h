@@ -26,8 +26,9 @@ enum ContractBodyElementT
   EnumDef,     // rule enum-definition
   ErrorDef,    // rule error-definition
   EventDef,    // rule event-definition
-  UsingForDef, // rule using-for-directive
-  ModifierDef, // rule modifier-definition
+  UsingForDef,            // rule using-for-directive
+  ModifierDef,            // rule modifier-definition
+  UserDefinedValueTypeDef, // `type T is <elementary>;` (pre-registered)
   ContractBodyElementTError
 };
 ContractBodyElementT get_contract_body_element_t(const nlohmann::json &element);

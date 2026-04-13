@@ -775,17 +775,55 @@ bool solidity_convertert::populate_auxiliary_vars()
   }
 
   // setUp UserDefinedVarMap
+  //
+  // UserDefinedValueTypeDefinition nodes can appear either at file level
+  // (`type MyInt is int;`) or nested inside a contract/library/interface
+  // (`contract C { type MyInt is int; ... }`). References to the former
+  // use the bare name (`MyInt`) while contract-scoped UDVTs are referred
+  // to via the fully-qualified form (`C.MyInt`) in `typeDescriptions`.
+  // Register both keys for contract-scoped UDVTs so that
+  //   - UserDefinedTypeName resolution in solidity_grammar.cpp (which
+  //     keys by the reference's typeString, `C.MyInt`) succeeds, and
+  //   - MemberAccess lookup in solidity_convert_ref.cpp (which keys by
+  //     the identifier name used in `MyInt.wrap(...)`, just `MyInt`)
+  //     also succeeds.
+  auto register_udvt = [&](const nlohmann::json &def,
+                           const std::string &scope) -> bool {
+    typet t;
+    if (get_type_description(def["underlyingType"]["typeDescriptions"], t))
+      return true;
+    const std::string name = def["name"].get<std::string>();
+    UserDefinedVarMap[name] = t;
+    if (!scope.empty())
+      UserDefinedVarMap[scope + "." + name] = t;
+    return false;
+  };
+
   for (auto &t_node : nodes)
   {
-    if (
-      t_node.contains("nodeType") &&
-      t_node["nodeType"] == "UserDefinedValueTypeDefinition")
+    if (!t_node.contains("nodeType"))
+      continue;
+    const std::string nt = t_node["nodeType"].get<std::string>();
+    if (nt == "UserDefinedValueTypeDefinition")
     {
-      typet t;
-      if (get_type_description(t_node["underlyingType"]["typeDescriptions"], t))
+      if (register_udvt(t_node, /*scope=*/""))
         return true;
-      std::string udv = t_node["name"].get<std::string>();
-      UserDefinedVarMap[udv] = t;
+    }
+    else if (
+      (nt == "ContractDefinition") && t_node.contains("nodes") &&
+      t_node.contains("name"))
+    {
+      const std::string cname = t_node["name"].get<std::string>();
+      for (auto &inner : t_node["nodes"])
+      {
+        if (
+          inner.contains("nodeType") &&
+          inner["nodeType"] == "UserDefinedValueTypeDefinition")
+        {
+          if (register_udvt(inner, cname))
+            return true;
+        }
+      }
     }
   }
 
