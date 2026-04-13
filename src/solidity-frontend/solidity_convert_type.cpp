@@ -700,26 +700,51 @@ bool solidity_convertert::get_array_to_pointer_type(
   const nlohmann::json &type_descriptor,
   typet &new_type)
 {
-  // Function to get the base type in ArrayToPointer decay
-  //  - unrolled the get_type...
-  if (
-    type_descriptor["typeString"].get<std::string>().find("uint8") !=
-    std::string::npos)
-  {
-    new_type = unsigned_char_type();
-    new_type.set("#cpp_type", "unsigned_char");
-  }
-  else
-  {
-    log_error("Unsupported types in ArrayToPointer decay");
+  // Function to get the base type in ArrayToPointer decay.
+  // Recognise the common element-type prefixes in Solidity's
+  // typeString (e.g. "uint8[]", "uint256[] calldata",
+  // "int256[]", "address[]") and map to the matching scalar type.
+  const std::string ts =
+    type_descriptor["typeString"].get<std::string>();
+
+  // uintN / intN
+  auto try_int_width = [&](const std::string &prefix, bool is_signed) -> bool {
+    auto pos = ts.find(prefix);
+    if (pos == std::string::npos)
+      return false;
+    size_t e = pos + prefix.size();
+    size_t start = e;
+    while (e < ts.size() && std::isdigit(static_cast<unsigned char>(ts[e])))
+      ++e;
+    if (e == start)
+      return false;
+    unsigned bits = std::stoul(ts.substr(start, e - start));
+    if (bits == 0 || bits > 256 || (bits % 8) != 0)
+      return false;
+    new_type = is_signed ? (typet)signedbv_typet(bits)
+                         : (typet)unsignedbv_typet(bits);
+    new_type.set("#cpp_type", is_signed ? "signed_int" : "unsigned_int");
     return true;
+  };
+
+  if (try_int_width("uint", false))
+    return false;
+  if (try_int_width("int", true))
+    return false;
+  if (ts.find("address") != std::string::npos)
+  {
+    new_type = unsignedbv_typet(160);
+    new_type.set("#cpp_type", "unsigned_int");
+    return false;
+  }
+  if (ts.find("bool") != std::string::npos)
+  {
+    new_type = bool_typet();
+    return false;
   }
 
-  // TODO: More var decl attributes checks:
-  //    - Constant
-  //    - Volatile
-  //    - isRestrict
-  return false;
+  log_error("Unsupported types in ArrayToPointer decay: {}", ts);
+  return true;
 }
 
 // parse a tuple to struct
