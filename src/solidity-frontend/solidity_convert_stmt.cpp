@@ -423,14 +423,27 @@ bool solidity_convertert::get_statement(
         }
 
         // add function call
+        //
+        // Only when we have a real tuple instance for the callee (i.e.
+        // !rhs_is_nondet) do we need to materialise the function call
+        // and emit it via get_tuple_function_call. For builtin tuple-
+        // producing callees (`addr.call(...)`, `abi.decode(data, (T,U))`
+        // etc.) the result is over-approximated by independent nondet
+        // per member, so the call exprt itself is never used downstream.
+        // Skipping get_expr in that case also avoids migrate failures
+        // when the builtin's lowered return type (e.g. abi_decode's
+        // single-uint256 identity) does not match the Solidity tuple
+        // shape expected by the rest of the return path.
         exprt func_call;
-        if (get_expr(
-              stmt["expression"],
-              stmt["expression"]["typeDescriptions"],
-              func_call))
-          return true;
         if (!rhs_is_nondet)
+        {
+          if (get_expr(
+                stmt["expression"],
+                stmt["expression"]["typeDescriptions"],
+                func_call))
+            return true;
           get_tuple_function_call(func_call);
+        }
 
         size_t ls = to_struct_type(lhs.type()).components().size();
         size_t rs =
