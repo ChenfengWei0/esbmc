@@ -272,6 +272,18 @@ bool solidity_convertert::get_tuple_function_ref(
     }
   }
 
+  // Free functions (outside any contract) have their tuple instance
+  // stored under the synthetic "__free__" scope by
+  // get_tuple_instance_name().
+  {
+    std::string free_id = "sol:@C@__free__@" + name;
+    if (context.find_symbol(free_id) != nullptr)
+    {
+      new_expr = symbol_expr(*context.find_symbol(free_id));
+      return false;
+    }
+  }
+
   log_error("cannot find tuple instance for declaration id {}", ref_decl_id);
   return true;
 }

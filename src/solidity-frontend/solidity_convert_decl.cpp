@@ -624,6 +624,39 @@ bool solidity_convertert::get_var_decl(
         store_update_dyn_array(symbol_expr(added_symbol), size_expr, func_call);
       move_to_back_block(func_call);
     }
+    else if (val.id() == "sideeffect")
+    {
+      // e.g. `uint[] memory xs = someFunc();` where someFunc
+      // returns `uint[] memory`. The side-effect expression is
+      // the function call; assign it directly and compute the
+      // length via _ESBMC_array_length on the result.
+      solidity_gen_typecast(ns, val, t);
+      added_symbol.value = val;
+      decl.operands().push_back(val);
+
+      // store length: len = _ESBMC_array_length(val)
+      locationt loc;
+      get_location_from_node(init_value, loc);
+      side_effect_expr_function_callt length_call;
+      get_library_function_call_no_args(
+        "_ESBMC_array_length",
+        "c:@F@_ESBMC_array_length",
+        uint_type(),
+        loc,
+        length_call);
+      length_call.arguments().push_back(val);
+
+      exprt func_call;
+      if (is_state_var)
+        store_update_dyn_array(
+          member_exprt(this_expr, added_symbol.name, added_symbol.type),
+          length_call,
+          func_call);
+      else
+        store_update_dyn_array(
+          symbol_expr(added_symbol), length_call, func_call);
+      move_to_back_block(func_call);
+    }
     else
     {
       log_error("Unexpect initialization for dynamic array");

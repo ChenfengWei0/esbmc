@@ -427,9 +427,15 @@ bool solidity_convertert::get_expr(
     case SolidityGrammar::TypeConversionExpression:
     case SolidityGrammar::DeclRefExprClass:
     case SolidityGrammar::BuiltinMemberCall:
+    case SolidityGrammar::StructMemberCall:
+    case SolidityGrammar::IndexAccess:
+    case SolidityGrammar::CallExprClass:
     {
       // e.g.
-      // - address(msg.sender)
+      // - address(msg.sender).call
+      // - details.solver.call             (StructMemberCall base)
+      // - leaders[i].call                 (IndexAccess base)
+      // - getAddr().call                  (CallExprClass base)
       if (get_expr(caller_expr_json, base))
         return true;
       break;
@@ -1751,6 +1757,17 @@ bool solidity_convertert::get_contract_member_call_expr(
 
       assert(!current_contractName.empty());
       base_cname = current_contractName;
+    }
+    else if (
+      base_expr_json.contains("nodeType") &&
+      base_expr_json["nodeType"] == "ContractDefinition")
+    {
+      // Static function reference: `ContractName.funcName` (e.g.
+      // `ERC721TokenReceiver.onERC721Received.selector`). There is
+      // no instance — use the contract name as the scope and leave
+      // base as nil.
+      base_cname = base_expr_json.value("name", "");
+      assert(!base_cname.empty());
     }
     else
     {
