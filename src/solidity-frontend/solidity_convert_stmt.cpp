@@ -413,8 +413,14 @@ bool solidity_convertert::get_statement(
 
         // get rhs
         exprt rhs;
+        bool rhs_is_nondet = false;
         if (get_tuple_function_ref(stmt["expression"]["expression"], rhs))
-          return true;
+        {
+          // Builtin tuple-producing callee (e.g. `addr.call(...)` returning
+          // `(bool, bytes memory)`) has no referencedDeclaration and no
+          // tuple_instance symbol. Fall back to nondet-per-member.
+          rhs_is_nondet = true;
+        }
 
         // add function call
         exprt func_call;
@@ -423,10 +429,12 @@ bool solidity_convertert::get_statement(
               stmt["expression"]["typeDescriptions"],
               func_call))
           return true;
-        get_tuple_function_call(func_call);
+        if (!rhs_is_nondet)
+          get_tuple_function_call(func_call);
 
         size_t ls = to_struct_type(lhs.type()).components().size();
-        size_t rs = to_struct_type(rhs.type()).components().size();
+        size_t rs =
+          rhs_is_nondet ? ls : to_struct_type(rhs.type()).components().size();
         if (ls != rs)
         {
           log_error("Unexpected tuple structure");
@@ -443,9 +451,13 @@ bool solidity_convertert::get_statement(
                 lop))
             return true;
 
-          // rop: struct member call (e.g. tupleB.men0)
+          // rop: struct member call (e.g. tupleB.men0), or nondet fallback
           exprt rop;
-          if (get_tuple_member_call(
+          if (rhs_is_nondet)
+          {
+            get_nondet_expr(lop.type(), rop);
+          }
+          else if (get_tuple_member_call(
                 rhs.identifier(),
                 to_struct_type(rhs.type()).components().at(i),
                 rop))

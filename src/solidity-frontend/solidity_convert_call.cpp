@@ -481,6 +481,23 @@ bool solidity_convertert::assign_param_nondet(
           nondet_str);
         call.arguments().push_back(nondet_str);
       }
+      else if (get_sol_type(t) == SolidityGrammar::SolType::BYTES_DYN)
+      {
+        // For `bytes calldata` / `bytes memory` entry-harness parameters,
+        // build a bounded nondet BytesDynamic via llc_nondet_bytes() so that
+        // init/bounds checks inside the callee do not fire spuriously on
+        // fully-unconstrained length values. Direct declarations in user
+        // code (e.g. `bytes memory x;`) still flow through the normal
+        // struct-init path and keep precise bounds/init checks.
+        side_effect_expr_function_callt nondet_b;
+        get_library_function_call_no_args(
+          "llc_nondet_bytes",
+          "c:@F@llc_nondet_bytes",
+          t,
+          locationt(),
+          nondet_b);
+        call.arguments().push_back(nondet_b);
+      }
       else
         call.arguments().push_back(static_cast<const exprt &>(get_nil_irep()));
     }

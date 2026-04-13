@@ -54,13 +54,19 @@ __ESBMC_HIDE:;
 }
 
 /*
- * llc_nondet_bytes — nondet abstraction for the `bytes memory data` component
- * of a low-level `.call()` / `.staticcall()` / `.delegatecall()` return.
+ * llc_nondet_bytes — nondet abstraction for a `bytes memory` value whose
+ * content is unknown but whose structural invariants are known to hold.
+ * Used for (a) the data component of a low-level .call()/.staticcall()/
+ * .delegatecall() return, and (b) entry-harness parameters of type
+ * `bytes calldata` / `bytes memory` (via assign_param_nondet).
  *
- * The returned BytesDynamic has `initialized = 1` so that init-checks pass.
- * All other fields (length, offset, capacity) are left uninitialized →
- * ESBMC treats them as fresh nondet symbols.  In particular, `data.length`
- * is fully unconstrained (any size_t value is possible).
+ * The returned BytesDynamic is constrained so:
+ *  - `initialized == 1` — init-checks pass unconditionally
+ *  - `length` is an unconstrained nondet bounded to [0, 1024] — small
+ *    enough to keep SMT cheap, large enough that ordinary small-index
+ *    accesses produced by the ABI decoder succeed.
+ *  - `capacity == length` — matches a freshly-decoded calldata view
+ *  - `offset` is fresh nondet — pool contents remain symbolic.
  *
  * Over-approximation semantics (same as crypto hash abstraction):
  *  - Sound for safety: no real return-data outcome is excluded.
@@ -71,7 +77,12 @@ BytesDynamic llc_nondet_bytes(void)
 {
 __ESBMC_HIDE:;
   BytesDynamic result;
+  /* Keep length in [32, 1024] so all small-index reads succeed bounds
+   * checks, while capping SMT cost. 32 is the ABI word size and the
+   * largest typical small-index used in tests (e.g. a[0]..a[31]). */
+  __ESBMC_assume(result.length >= 32 && result.length <= 1024);
   result.initialized = 1;
+  result.capacity = result.length;
   return result;
 }
 

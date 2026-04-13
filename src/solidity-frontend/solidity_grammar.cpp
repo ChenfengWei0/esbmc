@@ -1452,6 +1452,7 @@ const char *sol_type_to_str(SolType t)
     SOL_ENUM_TO_STR(STRUCT)
     SOL_ENUM_TO_STR(CONTRACT)
     SOL_ENUM_TO_STR(LIBRARY)
+    SOL_ENUM_TO_STR(FUNC_PTR)
     SOL_ENUM_TO_STR(TUPLE_RETURNS)
     SOL_ENUM_TO_STR(TUPLE_INSTANCE)
     SOL_ENUM_TO_STR(UNSET)
@@ -1577,6 +1578,7 @@ SolType str_to_sol_type(const std::string &s)
     {"STRUCT", SolType::STRUCT},
     {"CONTRACT", SolType::CONTRACT},
     {"LIBRARY", SolType::LIBRARY},
+    {"FUNC_PTR", SolType::FUNC_PTR},
     {"TUPLE_RETURNS", SolType::TUPLE_RETURNS},
     {"TUPLE_INSTANCE", SolType::TUPLE_INSTANCE},
   };

@@ -621,6 +621,9 @@ enum class SolType
   CONTRACT,
   LIBRARY,
 
+  // opaque function pointer (internal/external fn type)
+  FUNC_PTR,
+
   // tuples (ESBMC internal)
   TUPLE_RETURNS,
   TUPLE_INSTANCE,

@@ -75,6 +75,21 @@ bool solidity_convertert::get_type_description(
     {
       new_type = gen_pointer_type(empty_typet());
       new_type.set("#sol_func_ptr", true);
+      set_sol_type(new_type, SolidityGrammar::SolType::FUNC_PTR);
+      break;
+    }
+
+    // typeDescriptions-only form (e.g. mapping value type, struct field
+    // stored only as a typeIdentifier/typeString pair): detect internal or
+    // external function types by typeIdentifier prefix and lower to the
+    // same opaque fn-ptr shape as the FunctionTypeName case above.
+    if (
+      typeIdentifier.compare(0, 20, "t_function_internal_") == 0 ||
+      typeIdentifier.compare(0, 20, "t_function_external_") == 0)
+    {
+      new_type = gen_pointer_type(empty_typet());
+      new_type.set("#sol_func_ptr", true);
+      set_sol_type(new_type, SolidityGrammar::SolType::FUNC_PTR);
       break;
     }
 
