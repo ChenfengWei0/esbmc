@@ -34,9 +34,27 @@ bool solidity_convertert::get_function_params(
   exprt &param)
 {
   // 1. get parameter type
+  // Route through the decl-aware overload when the parameter AST carries a
+  // typeName node. Mirrors get_parameter_list (used for return types) and
+  // get_var_decl (used for locals); both reach get_array_pointer_type for
+  // array shapes, which lowers fixed and dynamic arrays uniformly to
+  // pointers. The plain `pd["typeDescriptions"]` form falls into the
+  // typeIdentifier-string parser, which builds a real array_typet for
+  // fixed-outer NestedArrayTypeName and disagrees with the local-var /
+  // call-site representation — see `f(uint[3][2] calldata s)`, where the
+  // caller passes `uint**` but the parameter symbol used to be `uint[3][2]`.
   typet param_type;
-  if (get_type_description(pd["typeDescriptions"], param_type))
-    return true;
+  if (pd.contains("typeName"))
+  {
+    if (get_type_description(
+          pd, pd["typeName"]["typeDescriptions"], param_type))
+      return true;
+  }
+  else
+  {
+    if (get_type_description(pd["typeDescriptions"], param_type))
+      return true;
+  }
 
   // 2a. get id and name
   std::string id, name;

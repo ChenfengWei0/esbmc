@@ -449,9 +449,24 @@ bool solidity_convertert::assign_param_nondet(
   {
     if (p_node.contains("typeDescriptions"))
     {
+      // Mirror get_function_params: when the parameter AST carries a
+      // typeName, route through the decl-aware overload so the resulting
+      // type matches what the callee's parameter symbol uses (pointer for
+      // arrays, not a real array_typet). Without this the harness builds
+      // a different shape than the callee expects, and downstream checks
+      // either silently miscompile or trip type-equality assertions.
       typet t;
-      if (get_type_description(p_node["typeDescriptions"], t))
-        return true;
+      if (p_node.contains("typeName"))
+      {
+        if (get_type_description(
+              p_node, p_node["typeName"]["typeDescriptions"], t))
+          return true;
+      }
+      else
+      {
+        if (get_type_description(p_node["typeDescriptions"], t))
+          return true;
+      }
       if (get_sol_type(t) == SolidityGrammar::SolType::CONTRACT)
       {
         /*
@@ -504,6 +519,41 @@ bool solidity_convertert::assign_param_nondet(
           locationt(),
           nondet_b);
         call.arguments().push_back(nondet_b);
+      }
+      else if (
+        (get_sol_type(t) == SolidityGrammar::SolType::ARRAY ||
+         get_sol_type(t) == SolidityGrammar::SolType::DYNARRAY) &&
+        t.is_pointer() && !t.subtype().is_pointer() &&
+        !t.get("#sol_array_size").empty())
+      {
+        // 1D fixed-size array parameter (e.g. `uint8[3] memory`): synthesize
+        // a backing allocation so the callee body can read/write through
+        // the pointer without dereferencing a nil arg. Without this the
+        // harness would call `f(nil)` on every external entry that takes
+        // an array, and any in-body `_ESBMC_arrcpy` / `_ESBMC_element_*`
+        // call would trip a null-pointer assertion against a value the
+        // user never authored. The contents stay zero-initialised, which
+        // is a sound under-approximation of "an external caller passed
+        // some array of the declared length".
+        // Multi-dim and dynamic-array shapes still fall through to nil for
+        // now — the inner allocations would have to be wired recursively.
+        std::string sz_str = t.get("#sol_array_size").as_string();
+        unsigned long sz_val = std::stoul(sz_str);
+        exprt size_expr = constant_exprt(
+          integer2binary(sz_val, bv_width(uint_type())),
+          sz_str,
+          uint_type());
+
+        exprt sizeof_expr;
+        get_size_of_expr(t.subtype(), sizeof_expr);
+
+        side_effect_expr_function_callt alloc;
+        get_calloc_function_call(locationt(), alloc);
+        alloc.arguments().push_back(size_expr);
+        alloc.arguments().push_back(sizeof_expr);
+
+        exprt cast_alloc = typecast_exprt(alloc, t);
+        call.arguments().push_back(cast_alloc);
       }
       else
         call.arguments().push_back(static_cast<const exprt &>(get_nil_irep()));

@@ -78,10 +78,26 @@ bool solidity_convertert::get_tuple_definition(const nlohmann::json &ast_node)
                                "@" + mem_name + "#" +
                                i2string(ast_node["id"].get<std::int16_t>());
 
-    // get type
+    // get type — route through the decl-aware overload when the tuple
+    // component's AST carries a typeName, so array shapes flow through
+    // get_array_pointer_type and end up as pointers (consistent with
+    // get_function_params and get_var_decl). The plain typeDescriptions
+    // path lowers fixed-outer NestedArrayTypeName to a real array_typet,
+    // which then fights the rest of the call/assignment plumbing.
     typet mem_type;
-    if (get_type_description(arg.value()["typeDescriptions"], mem_type))
-      return true;
+    if (arg.value().contains("typeName"))
+    {
+      if (get_type_description(
+            arg.value(),
+            arg.value()["typeName"]["typeDescriptions"],
+            mem_type))
+        return true;
+    }
+    else
+    {
+      if (get_type_description(arg.value()["typeDescriptions"], mem_type))
+        return true;
+    }
 
     // construct comp
     comp.type() = mem_type;
