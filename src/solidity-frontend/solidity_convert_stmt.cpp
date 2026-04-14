@@ -277,6 +277,13 @@ bool solidity_convertert::get_statement(
         (new_expr.operands().empty() ||
          new_expr.op0().id().as_string().empty()))
       new_expr = code_skipt();
+    // Bare value-expression statements (`this;`, `hax;`, `tuple_instance$0;`)
+    // are used in Solidity to suppress unused-variable / state-mutability
+    // warnings; they have no side effects. Without this, they reach symex
+    // as raw symbol exprs in OTHER instructions and trip
+    // `goto_symext: unexpected statement: symbol`.
+    if (new_expr.id() == "symbol")
+      new_expr = code_skipt();
     break;
   }
   case SolidityGrammar::StatementT::VariableDeclStatement:

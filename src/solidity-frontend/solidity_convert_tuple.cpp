@@ -327,6 +327,30 @@ bool solidity_convertert::get_tuple_function_ref(
     }
   }
 
+  // The callee's FunctionDefinition has not been processed yet (e.g. the
+  // call site is reached during inline-method-population for an inheriting
+  // contract before we walk the callee's owning contract). Materialise the
+  // tuple struct + instance on demand so the lookup can proceed.
+  const nlohmann::json &fn_def =
+    find_node_by_id(src_ast_json["nodes"], ref_decl_id);
+  if (
+    fn_def.is_object() &&
+    fn_def.value("nodeType", "") == "FunctionDefinition" &&
+    fn_def.contains("returnParameters"))
+  {
+    typet rt;
+    if (!get_type_description(fn_def["returnParameters"], rt) &&
+        get_sol_type(rt) == SolidityGrammar::SolType::TUPLE_RETURNS)
+    {
+      exprt dump;
+      if (!get_tuple_definition(fn_def) && !get_tuple_instance(fn_def, dump))
+      {
+        new_expr = dump;
+        return false;
+      }
+    }
+  }
+
   log_error("cannot find tuple instance for declaration id {}", ref_decl_id);
   return true;
 }

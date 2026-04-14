@@ -332,11 +332,15 @@ bool solidity_convertert::get_var_decl(
   }
 
   // if we have already populated the var symbol, we do not need to re-parse
-  // however, we need to return the symbol info
+  // however, we still need to return a code_declt so callers in statement
+  // contexts (VariableDeclStatement, parameter lists) end up with a proper
+  // declaration node — returning a bare symbol_exprt leaks an OTHER
+  // instruction with a raw symbol payload into goto-symex, which then trips
+  // `goto_symext: unexpected statement: symbol`.
   if (context.find_symbol(id) != nullptr)
   {
     log_debug("solidity", "Found parsed symbol, skip parsing");
-    new_expr = symbol_expr(*context.find_symbol(id));
+    new_expr = code_declt(symbol_expr(*context.find_symbol(id)));
     return false;
   }
 
