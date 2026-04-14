@@ -675,14 +675,28 @@ bool solidity_convertert::check_sol_ver()
 
   if (min_version < v050)
   {
-    log_error(
-      "The minimum Solidity version ({}.{}.{}) < 0.5.0 is not supported. It is "
-      "recommended "
-      "to use a more recent Solidity version",
+    // The pragma's *lower* bound is pre-0.5. That alone isn't a
+    // hard failure: if the pragma also has an upper bound allowing
+    // 0.5+ (e.g. `pragma solidity >=0.4.0 <0.9.0;`), solc has
+    // already compiled it with a modern compiler and the AST is
+    // fine to ingest. Only reject when the contract is *pinned*
+    // to pre-0.5 (no upper bound ≥ 0.5).
+    if (!upper_bound.has_value() || upper_bound.value() < v050)
+    {
+      log_error(
+        "The minimum Solidity version ({}.{}.{}) < 0.5.0 is not supported. It "
+        "is recommended to use a more recent Solidity version",
+        min_version.major,
+        min_version.minor,
+        min_version.patch);
+      return true;
+    }
+    log_warning(
+      "The Solidity pragma lower bound ({}.{}.{}) is pre-0.5; accepting "
+      "because the upper bound permits a modern compiler.",
       min_version.major,
       min_version.minor,
       min_version.patch);
-    return true;
   }
   else if (min_version < v070)
   {
