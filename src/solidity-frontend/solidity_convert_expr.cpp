@@ -590,6 +590,47 @@ bool solidity_convertert::get_expr(
     // referencedDeclaration) fail loudly instead of feeding an empty
     // node into get_library_function_call, which would dereference
     // missing `name`/`parameters` fields.
+    // Events and errors qualified by their containing library/contract
+    // (e.g. `L.Ev(arg)` from `emit L.Ev(arg)`) reference an
+    // EventDefinition / ErrorDefinition rather than a FunctionDefinition.
+    // Events have no runtime effect in our model and errors lower to a
+    // bottom assertion at the emit/revert site, so the call can be
+    // modelled as a no-op skip here.
+    if (
+      !func_ref.empty() && func_ref.contains("nodeType") &&
+      (func_ref["nodeType"] == "EventDefinition" ||
+       func_ref["nodeType"] == "ErrorDefinition"))
+    {
+      new_expr = code_skipt();
+      return false;
+    }
+
+    // `C.x` where x is a state variable of the contract type C — e.g.
+    // `C.x = g;` referencing a function-typed state variable. The
+    // member access lowers to an opaque nondet of the variable's type;
+    // assignments through it lose their effect (UNDER-approximation of
+    // function-pointer storage), but the program becomes verifiable.
+    if (
+      !func_ref.empty() && func_ref.contains("nodeType") &&
+      func_ref["nodeType"] == "VariableDeclaration")
+    {
+      typet var_t;
+      if (
+        func_ref.contains("typeName") &&
+        func_ref["typeName"].contains("typeDescriptions"))
+      {
+        if (get_type_description(
+              func_ref["typeName"]["typeDescriptions"], var_t))
+          return true;
+      }
+      else
+      {
+        var_t = empty_typet();
+      }
+      get_nondet_expr(var_t, new_expr);
+      return false;
+    }
+
     if (
       func_ref.empty() || !func_ref.contains("nodeType") ||
       func_ref["nodeType"] != "FunctionDefinition")
