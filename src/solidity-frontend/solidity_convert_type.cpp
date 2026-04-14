@@ -80,12 +80,11 @@ bool solidity_convertert::get_type_description(
     }
 
     // typeDescriptions-only form (e.g. mapping value type, struct field
-    // stored only as a typeIdentifier/typeString pair): detect internal or
-    // external function types by typeIdentifier prefix and lower to the
-    // same opaque fn-ptr shape as the FunctionTypeName case above.
-    if (
-      typeIdentifier.compare(0, 20, "t_function_internal_") == 0 ||
-      typeIdentifier.compare(0, 20, "t_function_external_") == 0)
+    // stored only as a typeIdentifier/typeString pair, or a builtin
+    // function reference such as `abi.encode` captured as a tuple
+    // component): any `t_function_*` kind is lowered to the same opaque
+    // fn-ptr shape as the FunctionTypeName case above.
+    if (typeIdentifier.compare(0, 11, "t_function_") == 0)
     {
       new_type = gen_pointer_type(empty_typet());
       new_type.set("#sol_func_ptr", true);
@@ -384,7 +383,19 @@ bool solidity_convertert::get_type_description(
         return true;
 
       std::string the_size = get_array_size(type_name);
-      unsigned z_ext_value = std::stoul(the_size, nullptr);
+      unsigned z_ext_value = 0;
+      try
+      {
+        z_ext_value = std::stoul(the_size, nullptr);
+      }
+      catch (const std::exception &)
+      {
+        // Size does not fit in unsigned long (e.g. uint[2**100]).
+        // Degrade to a dynamic-array pointer model so we don't crash.
+        new_type = gen_pointer_type(the_type);
+        set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+        break;
+      }
       new_type = array_typet(
         the_type,
         constant_exprt(
@@ -1143,25 +1154,18 @@ bool solidity_convertert::get_array_pointer_type(
     const auto &len_node = decl["typeName"]["length"];
     if (len_node.contains("value") && len_node["value"].is_string())
       length = len_node["value"].get<std::string>();
-    else if (
-      len_node.contains("referencedDeclaration") &&
-      len_node["referencedDeclaration"].is_number_integer() &&
-      len_node["referencedDeclaration"].get<int>() > 0)
+
+    // Prefer the array type's own typeString first: solc has already
+    // constant-folded the length (e.g. "uint256[10]"), so this is the
+    // authoritative post-folding size and avoids chasing constant refs
+    // through TupleExpression/BinaryOperation value nodes that
+    // get_constant_value cannot handle.
+    if (length.empty())
     {
-      if (get_constant_value(
-            len_node["referencedDeclaration"], length))
-        return true;
-    }
-    else
-    {
-      // The length is a constant-folded expression like `(a / b) * b` —
-      // solc has already evaluated it, but the AST node is a
-      // BinaryOperation/TupleExpression with no `value` field. Recover
-      // the folded result from the array type's own typeString
-      // (e.g. "uint256[10]"), which carries the post-folding size.
       const std::string ts =
         decl["typeName"].contains("typeDescriptions") &&
-            decl["typeName"]["typeDescriptions"].contains("typeString")
+            decl["typeName"]["typeDescriptions"].contains("typeString") &&
+            decl["typeName"]["typeDescriptions"]["typeString"].is_string()
           ? decl["typeName"]["typeDescriptions"]["typeString"].get<std::string>()
           : std::string();
       auto lb = ts.rfind('[');
@@ -1175,12 +1179,25 @@ bool solidity_convertert::get_array_pointer_type(
             }))
           length = inner;
       }
-      if (length.empty())
-      {
-        log_error(
-          "cannot resolve fixed-array length from non-literal expression");
-        return true;
-      }
+    }
+
+    // Last resort: follow the constant reference (simple literal chains).
+    if (
+      length.empty() && len_node.contains("referencedDeclaration") &&
+      len_node["referencedDeclaration"].is_number_integer() &&
+      len_node["referencedDeclaration"].get<int>() > 0)
+    {
+      if (get_constant_value(
+            len_node["referencedDeclaration"].get<int>(), length))
+        length.clear();
+    }
+
+    if (length.empty())
+    {
+      // Could not resolve the fixed length — degrade to dynamic array
+      // so the frontend does not crash on huge/unresolvable sizes.
+      set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+      return false;
     }
     new_type.set("#sol_array_size", length);
     set_sol_type(new_type, SolidityGrammar::SolType::ARRAY);

@@ -177,18 +177,26 @@ bool solidity_convertert::get_constant_value(
   nlohmann::json tmp = find_node_by_id(src_ast_json, ref_id);
   while (!tmp.empty() && tmp.contains("value"))
   {
-    auto val_json = tmp["value"];
-    if (!val_json.contains("value"))
+    const auto &val_json = tmp["value"];
+    if (val_json.is_object() && val_json.contains("value") &&
+        val_json["value"].is_string())
     {
-      assert(val_json.contains("referencedDeclaration"));
-      int new_ref_id = val_json["referencedDeclaration"].get<int>();
-      tmp = find_node_by_id(src_ast_json, new_ref_id);
-    }
-    else
-    {
-      value = tmp["value"]["value"].get<std::string>();
+      value = val_json["value"].get<std::string>();
       return false;
     }
+    // Follow simple Identifier chains; anything else (TupleExpression,
+    // BinaryOperation, ...) is not resolvable here.
+    if (val_json.is_object() &&
+        val_json.contains("referencedDeclaration") &&
+        val_json["referencedDeclaration"].is_number_integer())
+    {
+      int new_ref_id = val_json["referencedDeclaration"].get<int>();
+      if (new_ref_id <= 0)
+        return true;
+      tmp = find_node_by_id(src_ast_json, new_ref_id);
+      continue;
+    }
+    return true;
   }
 
   return true;
@@ -434,7 +442,18 @@ nlohmann::json solidity_convertert::make_array_elementary_type(
   //   t_array$_t_uint256_$dyn_memory_ptr           → t_uint256
   //   t_array$_t_string_memory_ptr_$2_memory_ptr   → t_string_memory_ptr
   //   t_array$_t_bytes_$dyn_storage_ptr            → t_bytes
-  assert(typeIdentifier.substr(0, 8) == "t_array$");
+  // Guard: callers occasionally hand us a typeDescriptions whose
+  // identifier is not an array (e.g. degenerate tuple contexts such as
+  // `return (a, [1,2,3][0])`, where the element typeDescriptions bubbled
+  // up one level). Return an empty element descriptor so the caller's
+  // recovery path (typeString/fallback) kicks in instead of crashing
+  // inside substr below.
+  if (typeIdentifier.compare(0, 9, "t_array$_") != 0)
+  {
+    elementary_type = {{"typeIdentifier", typeIdentifier},
+                       {"typeString", typeString}};
+    return elementary_type;
+  }
   const std::string prefix = "t_array$_";
   std::string rest = typeIdentifier.substr(prefix.size());
 

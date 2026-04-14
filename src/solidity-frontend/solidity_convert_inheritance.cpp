@@ -109,11 +109,22 @@ void solidity_convertert::merge_inheritance_ast(
         if (i.contains("kind") && i["kind"].get<std::string>() == "constructor")
           continue;
 
+        // Inherited-node filter: this merge path only handles member
+        // declarations that carry a `name` (functions, state vars,
+        // events, errors, etc.). Non-named nodes such as UsingForDirective
+        // live in the base but are not merge candidates — skip them so
+        // the `.name` access below cannot throw.
+        if (!i.contains("name") || !i["name"].is_string())
+          continue;
+
         // for virtual/override function
-        assert(i.contains("name"));
         std::string i_name = i["name"].get<std::string>() == ""
-                               ? i["kind"].get<std::string>()
+                               ? (i.contains("kind") && i["kind"].is_string()
+                                    ? i["kind"].get<std::string>()
+                                    : std::string())
                                : i["name"].get<std::string>();
+        if (i_name.empty())
+          continue;
         assert(!i_name.empty());
         if (i.contains("nodeType") && i["nodeType"] == "FunctionDefinition")
         {
