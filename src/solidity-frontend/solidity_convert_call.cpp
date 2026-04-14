@@ -523,25 +523,29 @@ bool solidity_convertert::assign_param_nondet(
       else if (
         (get_sol_type(t) == SolidityGrammar::SolType::ARRAY ||
          get_sol_type(t) == SolidityGrammar::SolType::DYNARRAY) &&
-        t.is_pointer() && !t.subtype().is_pointer() &&
-        !t.get("#sol_array_size").empty())
+        t.is_pointer() && !t.subtype().is_pointer())
       {
-        // 1D fixed-size array parameter (e.g. `uint8[3] memory`): synthesize
-        // a backing allocation so the callee body can read/write through
-        // the pointer without dereferencing a nil arg. Without this the
-        // harness would call `f(nil)` on every external entry that takes
-        // an array, and any in-body `_ESBMC_arrcpy` / `_ESBMC_element_*`
-        // call would trip a null-pointer assertion against a value the
-        // user never authored. The contents stay zero-initialised, which
-        // is a sound under-approximation of "an external caller passed
-        // some array of the declared length".
-        // Multi-dim and dynamic-array shapes still fall through to nil for
-        // now — the inner allocations would have to be wired recursively.
+        // 1D array parameter (fixed or dynamic, e.g. `uint8[3] memory`,
+        // `uint256[] calldata`): synthesize a backing allocation so the
+        // callee body can read/write through the pointer without
+        // dereferencing a nil arg. Without this the harness would call
+        // `f(nil)` on every external entry that takes an array, and any
+        // in-body element read or _ESBMC_arrcpy would trip a null-pointer
+        // assertion against a value the user never authored. The contents
+        // stay zero-initialised, which is a sound under-approximation of
+        // "an external caller passed some array of the declared length".
+        // Fixed-length: take N from #sol_array_size.
+        // Dynamic-length: pick a small constant (kHarnessDynLen). The
+        // length is recorded in the array header, so `a.length` reads
+        // the same value.
+        constexpr unsigned long kHarnessDynLen = 4;
         std::string sz_str = t.get("#sol_array_size").as_string();
-        unsigned long sz_val = std::stoul(sz_str);
+        unsigned long sz_val =
+          sz_str.empty() ? kHarnessDynLen : std::stoul(sz_str);
+        std::string sz_repr = sz_str.empty() ? std::to_string(sz_val) : sz_str;
         exprt size_expr = constant_exprt(
           integer2binary(sz_val, bv_width(uint_type())),
-          sz_str,
+          sz_repr,
           uint_type());
 
         exprt sizeof_expr;
@@ -551,6 +555,56 @@ bool solidity_convertert::assign_param_nondet(
         get_calloc_function_call(locationt(), alloc);
         alloc.arguments().push_back(size_expr);
         alloc.arguments().push_back(sizeof_expr);
+
+        exprt cast_alloc = typecast_exprt(alloc, t);
+        call.arguments().push_back(cast_alloc);
+      }
+      else if (
+        (get_sol_type(t) == SolidityGrammar::SolType::ARRAY ||
+         get_sol_type(t) == SolidityGrammar::SolType::DYNARRAY) &&
+        t.is_pointer() && t.subtype().is_pointer() &&
+        !t.subtype().subtype().is_pointer())
+      {
+        // 2D array parameter (any combination of fixed/dynamic outer and
+        // inner). Routes through the _ESBMC_alloc_nested_2d helper so the
+        // outer pointer's slots actually point at allocated inner buffers
+        // — passing nil here would null-deref on the first `a[i][j]`
+        // read, and a single-level alloc would null-deref on the second
+        // index. Same bounded-content over-approximation as the 1D case.
+        constexpr unsigned long kHarnessDynLen = 4;
+        std::string outer_sz = t.get("#sol_array_size").as_string();
+        std::string inner_sz = t.subtype().get("#sol_array_size").as_string();
+        unsigned long outer_n =
+          outer_sz.empty() ? kHarnessDynLen : std::stoul(outer_sz);
+        unsigned long inner_n =
+          inner_sz.empty() ? kHarnessDynLen : std::stoul(inner_sz);
+        std::string outer_repr =
+          outer_sz.empty() ? std::to_string(outer_n) : outer_sz;
+        std::string inner_repr =
+          inner_sz.empty() ? std::to_string(inner_n) : inner_sz;
+
+        exprt outer_expr = constant_exprt(
+          integer2binary(outer_n, bv_width(uint_type())),
+          outer_repr,
+          uint_type());
+        exprt inner_expr = constant_exprt(
+          integer2binary(inner_n, bv_width(uint_type())),
+          inner_repr,
+          uint_type());
+
+        exprt elem_sizeof;
+        get_size_of_expr(t.subtype().subtype(), elem_sizeof);
+
+        side_effect_expr_function_callt alloc;
+        get_library_function_call_no_args(
+          "_ESBMC_alloc_nested_2d",
+          "c:@F@_ESBMC_alloc_nested_2d",
+          pointer_typet(empty_typet()),
+          locationt(),
+          alloc);
+        alloc.arguments().push_back(outer_expr);
+        alloc.arguments().push_back(inner_expr);
+        alloc.arguments().push_back(elem_sizeof);
 
         exprt cast_alloc = typecast_exprt(alloc, t);
         call.arguments().push_back(cast_alloc);
