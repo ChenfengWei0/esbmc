@@ -134,9 +134,44 @@ solidity_convertert::solidity_convertert(
   set_sol_type(byte_static_t, SolidityGrammar::SolType::BYTES_STATIC);
 }
 
+// Recursively erase all JSON-null object fields. solc 0.6.x emits many
+// optional fields (subdenomination, falseBody, body for interface methods,
+// arguments for parent specifiers, overrides, length, contractScope,
+// inner typeIdentifier/typeString on ElementaryTypeName, ...) as JSON null,
+// whereas 0.8.x omits them. The whole frontend is sprinkled with
+// `if (x.contains("k")) ... = x["k"]` which assumes "contains() implies
+// non-null"; that assumption only holds for 0.8.x. Stripping nulls up
+// front lets every existing `contains()` check behave identically across
+// solc versions without spreading null guards through every accessor.
+static void strip_nulls(nlohmann::json &n)
+{
+  if (n.is_object())
+  {
+    for (auto it = n.begin(); it != n.end();)
+    {
+      if (it.value().is_null())
+        it = n.erase(it);
+      else
+      {
+        strip_nulls(it.value());
+        ++it;
+      }
+    }
+  }
+  else if (n.is_array())
+  {
+    for (auto &el : n)
+      strip_nulls(el);
+  }
+}
+
 // Convert smart contracts into symbol tables
 bool solidity_convertert::convert()
 {
+  // Normalize 0.6.x AST quirks (see strip_nulls).
+  for (auto &j : src_ast_json_array)
+    strip_nulls(j);
+
   // merge the input files
   merge_multi_files();
 

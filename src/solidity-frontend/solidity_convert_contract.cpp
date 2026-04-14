@@ -253,10 +253,10 @@ void solidity_convertert::get_inherit_ctor_definition(
         node["nodes"].push_back(ctor_json);
     }
 
+    // 0.6.x emits `body: null` for unimplemented functions; treat as missing.
     if (
-      (*current_functionDecl).contains("body") ||
-      ((*current_functionDecl).contains("implemented") &&
-       (*current_functionDecl)["implemented"] == true))
+      (*current_functionDecl).contains("body") &&
+      !(*current_functionDecl)["body"].is_null())
     {
       log_debug(
         "solidity", "@@@ parsing function {}'s body", current_functionName);
@@ -346,7 +346,13 @@ void solidity_convertert::get_inherit_static_contract_instance(
   get_new_object(symbol_typet(prefix + c_name), this_object);
   call.arguments().push_back(this_object);
 
-  if (args_list.contains("arguments"))
+  // 0.6.x emits `arguments: null` for parent specifiers with no constructor
+  // arguments (e.g. `contract C is IFoo`); 0.8.x omits the field. Treat
+  // both as "no args" so we don't try to look up an interface's missing
+  // constructor.
+  if (
+    args_list.contains("arguments") && !args_list["arguments"].is_null() &&
+    !args_list["arguments"].empty())
   {
     // get param type
     auto &decl_ref = find_constructor_ref(c_name);

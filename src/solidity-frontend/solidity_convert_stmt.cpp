@@ -756,8 +756,10 @@ bool solidity_convertert::get_statement(
     codet if_expr("ifthenelse");
     if_expr.copy_to_operands(cond, then);
 
-    // 3. Else: make a exprt for "falseBody" if the if-statement node contains an "else" block
-    if (stmt.contains("falseBody"))
+    // 3. Else: make a exprt for "falseBody" if the if-statement node contains an "else" block.
+    // solc 0.6.x always emits the field, with `null` when there is no else;
+    // 0.8.x omits it. Treat both as "no else".
+    if (stmt.contains("falseBody") && !stmt["falseBody"].is_null())
     {
       exprt else_expr;
       if (get_statement(stmt["falseBody"], else_expr))

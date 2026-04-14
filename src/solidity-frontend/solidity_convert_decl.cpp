@@ -1345,11 +1345,16 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
 void solidity_convertert::add_empty_body_node(nlohmann::json &ast_node)
 {
   //? will this affect find_decl_ref?
+  // 0.6.x emits `body: null` for unimplemented functions (interface / abstract);
+  // 0.8.x omits the field entirely. Either form means "no body".
+  auto missing_body = [](const nlohmann::json &n) {
+    return !n.contains("body") || n["body"].is_null();
+  };
+
   if (ast_node["nodeType"] == "EventDefinition")
   {
     // for event-definition
-    if (!ast_node.contains("body"))
-
+    if (missing_body(ast_node))
       ast_node["body"] = {
         {"nodeType", "Block"},
         {"statements", nlohmann::json::array()},
@@ -1362,7 +1367,7 @@ void solidity_convertert::add_empty_body_node(nlohmann::json &ast_node)
     {
       if (
         (subNode["nodeType"] == "FunctionDefinition") &&
-        !subNode.contains("body"))
+        missing_body(subNode))
         subNode["body"] = {
           {"nodeType", "Block"},
           {"statements", nlohmann::json::array()},
@@ -1376,7 +1381,7 @@ void solidity_convertert::add_empty_body_node(nlohmann::json &ast_node)
     {
       if (
         (subNode["nodeType"] == "FunctionDefinition") &&
-        !subNode.contains("body"))
+        missing_body(subNode))
         subNode["body"] = {
           {"nodeType", "Block"},
           {"statements", nlohmann::json::array()},

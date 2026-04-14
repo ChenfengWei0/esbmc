@@ -1985,7 +1985,8 @@ bool solidity_convertert::try_inline_delegate_shadow_helper_call(
   exprt &new_expr)
 {
   // Must have a body to inline. Abstract/virtual functions fall through.
-  if (!fdecl.contains("body"))
+  // 0.6.x emits `body: null` for unimplemented functions; treat as missing.
+  if (!fdecl.contains("body") || fdecl["body"].is_null())
     return true;
   if (
     !fdecl.contains("parameters") ||
@@ -2170,7 +2171,7 @@ bool solidity_convertert::try_get_delegate_shadow_call(
       find_function_by_signature(str, target_sig);
     if (decl_ref.empty() || decl_ref.is_null())
       continue;
-    if (!decl_ref.contains("body"))
+    if (!decl_ref.contains("body") || decl_ref["body"].is_null())
       continue;
     if (validate_delegate_shadow_compatible(caller_cname, decl_ref["body"]))
       continue;

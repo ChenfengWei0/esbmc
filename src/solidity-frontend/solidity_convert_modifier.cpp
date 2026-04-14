@@ -220,10 +220,11 @@ bool solidity_convertert::get_function_definition(
   // skip for 'unimplemented' functions which has no body,
   // e.g. asbstract/interface, the symbol value would be left as unset
 
+  // solc 0.6.x always emits the `body` field with JSON null for unimplemented
+  // (interface / abstract) functions; 0.8.x omits it. Treat both as "no body".
+  bool has_body = ast_node.contains("body") && !ast_node["body"].is_null();
   exprt body_exprt = code_blockt();
-  if (
-    ast_node.contains("body") ||
-    (ast_node.contains("implemented") && ast_node["implemented"] == true))
+  if (has_body)
   {
     log_debug(
       "solidity", "\t parsing function {}'s body", current_functionName);
@@ -541,7 +542,7 @@ bool solidity_convertert::get_func_modifier(
     // (e.g. all overrides are also virtual), skip this modifier entirely
     // — better than dereferencing the missing `body` key downstream and
     // crashing get_block with a json type_error.
-    if (!mod_def.contains("body"))
+    if (!mod_def.contains("body") || mod_def["body"].is_null())
     {
       const std::string mod_name = mod_def["name"].get<std::string>();
       bool resolved = false;
@@ -564,7 +565,7 @@ bool solidity_convertert::get_func_modifier(
             if (
               member.value("nodeType", "") == "ModifierDefinition" &&
               member.value("name", "") == mod_name &&
-              member.contains("body"))
+              member.contains("body") && !member["body"].is_null())
             {
               mod_def = member;
               resolved = true;

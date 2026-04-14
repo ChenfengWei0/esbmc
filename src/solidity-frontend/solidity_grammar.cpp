@@ -858,7 +858,7 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
   }
   else if (expr["nodeType"] == "Literal")
   {
-    if (expr.contains("subdenomination"))
+    if (expr.contains("subdenomination") && !expr["subdenomination"].is_null())
     {
       std::string unit = expr["subdenomination"];
 

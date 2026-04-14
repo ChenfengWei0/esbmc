@@ -103,6 +103,13 @@ bool solidity_convertert::add_auxiliary_members(
   // For non-payable constructors, use nondet_uint as before.
   {
     exprt balance_init = _ndt_uint;
+    // 0.6.x emits null for some optional string fields (e.g. "kind") on
+    // non-constructor nodes; guard each access defensively.
+    auto str_field = [](const nlohmann::json &n, const char *k) {
+      if (!n.contains(k) || !n[k].is_string())
+        return std::string();
+      return n[k].get<std::string>();
+    };
     if (json.contains("nodes"))
     {
       for (const auto &node : json["nodes"])
