@@ -470,9 +470,13 @@ bool solidity_convertert::get_type_description(
   case SolidityGrammar::TypeNameT::ContractTypeName:
   {
     // e.g. ContractName tmp = new ContractName(Args);
+    // typeString is normally "contract ContractName" but `super`
+    // inside a derived contract arrives here as
+    // "contract super ContractName" (typeIdentifier `t_super$_X_$N`).
+    // Take the last whitespace-separated token as the contract name.
 
     std::string constructor_name = typeString;
-    size_t pos = constructor_name.find(" ");
+    size_t pos = constructor_name.rfind(" ");
     std::string cname = constructor_name.substr(pos + 1);
     std::string id = prefix + cname;
 

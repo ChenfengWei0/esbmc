@@ -499,6 +499,39 @@ bool solidity_convertert::get_expr(
     // - A.call(); // A is a contract or library
     // - enum ActionChoices { GoLeft, GoRight, GoStraight, SitStill }
     //   ActionChoices constant defaultChoice = ActionChoices.GoStraight;
+
+    // `super.f` captured as an r-value (e.g.
+    // `function() internal returns (uint) x = super.f;`) — not a call.
+    // The super-call path in get_call_expr only triggers when the
+    // MemberAccess is actually the callee of a FunctionCall; for
+    // r-value captures we must produce an opaque fn-ptr here.
+    // [APPROX: UNDER] Indirect calls through the captured pointer
+    // return nondet values (same treatment as other fn-ptr stores).
+    if (
+      expr.contains("expression") && expr["expression"].is_object() &&
+      expr["expression"].contains("name") &&
+      expr["expression"]["name"].is_string() &&
+      expr["expression"]["name"].get<std::string>() == "super")
+    {
+      typet ptr_t = gen_pointer_type(empty_typet());
+      ptr_t.set("#sol_func_ptr", true);
+      set_sol_type(ptr_t, SolidityGrammar::SolType::FUNC_PTR);
+      int fn_id = expr.value("referencedDeclaration", -1);
+      if (fn_id >= 0)
+      {
+        exprt id_const = constant_exprt(
+          integer2binary(fn_id + 1, bv_width(size_type())),
+          integer2string(fn_id + 1),
+          size_type());
+        new_expr = typecast_exprt(id_const, ptr_t);
+      }
+      else
+      {
+        get_nondet_expr(ptr_t, new_expr);
+      }
+      break;
+    }
+
     exprt base;
     const nlohmann::json caller_expr_json = expr["expression"];
     typet t;

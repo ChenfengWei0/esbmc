@@ -295,6 +295,20 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     {
       return ContractTypeName;
     }
+    else if (typeIdentifier.compare(0, 8, "t_super$") == 0)
+    {
+      // `super` inside a derived contract is typed
+      // `type(contract super X)` (with typeIdentifier
+      // `t_type$_t_super$_X_$N_$`). After the TypeConversionName
+      // branch strips the outer `type(...)` wrapper we arrive here
+      // with the naked `t_super$...` form. Treat it as the enclosing
+      // contract — downstream member-access lowering for `super.f`
+      // already bypasses the override map via the dedicated
+      // super-path in get_call_expr / get_super_function_call, so
+      // reporting ContractTypeName here is sufficient to let the
+      // type survive initial resolution.
+      return ContractTypeName;
+    }
 
     else if (typeString.find("int_const") != std::string::npos)
     {
