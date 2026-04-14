@@ -258,9 +258,64 @@ bool solidity_convertert::get_enum_member_ref(
   exprt &new_expr)
 {
   assert(decl["nodeType"] == "EnumValue");
-  assert(decl.contains("Value"));
 
-  const std::string rhs = decl["Value"].get<std::string>();
+  // The integer value lives in `Value`, but only when add_enum_member_val
+  // has been run on the parent EnumDefinition. That preprocessing is
+  // currently driven from get_contract_definition's per-contract loop and
+  // never fires for enums declared inside an interface (or any other
+  // contract whose name doesn't match the current verification target),
+  // so cross-contract references like `I.Direction.Right` from a sibling
+  // library/contract used to crash with a json type_error here. Compute
+  // the value lazily by walking back to the enclosing EnumDefinition and
+  // taking the member's index — that's exactly what add_enum_member_val
+  // would have written.
+  std::string rhs;
+  if (decl.contains("Value"))
+    rhs = decl["Value"].get<std::string>();
+  else
+  {
+    const int member_id = decl["id"].get<int>();
+    bool found = false;
+    std::function<void(const nlohmann::json &)> scan;
+    scan = [&](const nlohmann::json &n) {
+      if (found)
+        return;
+      if (n.is_object())
+      {
+        if (
+          n.value("nodeType", "") == "EnumDefinition" &&
+          n.contains("members") && n["members"].is_array())
+        {
+          int idx = 0;
+          for (const auto &m : n["members"])
+          {
+            if (m.value("id", 0) == member_id)
+            {
+              rhs = std::to_string(idx);
+              found = true;
+              return;
+            }
+            ++idx;
+          }
+        }
+        for (const auto &kv : n.items())
+          scan(kv.value());
+      }
+      else if (n.is_array())
+      {
+        for (const auto &e : n)
+          scan(e);
+      }
+    };
+    scan(src_ast_json);
+    if (!found)
+    {
+      log_error(
+        "get_enum_member_ref: cannot resolve enum member id {} to a value",
+        member_id);
+      return true;
+    }
+  }
 
   new_expr = constant_exprt(
     integer2binary(string2integer(rhs), bv_width(int_type())), rhs, int_type());

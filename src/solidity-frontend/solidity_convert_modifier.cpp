@@ -534,6 +534,52 @@ bool solidity_convertert::get_func_modifier(
     assert(!mod_def.is_null());
     assert(!mod_def.empty());
 
+    // `modifier mod virtual;` declares the modifier without a body — the
+    // actual definition lives in a derived contract that overrides it.
+    // Walk the linearizedBaseContracts of the current contract and pick
+    // the first concrete override with the same name. If none is found
+    // (e.g. all overrides are also virtual), skip this modifier entirely
+    // — better than dereferencing the missing `body` key downstream and
+    // crashing get_block with a json type_error.
+    if (!mod_def.contains("body"))
+    {
+      const std::string mod_name = mod_def["name"].get<std::string>();
+      bool resolved = false;
+      // Find current contract node and walk linearizedBaseContracts.
+      for (const auto &top : src_ast_json["nodes"])
+      {
+        if (
+          top.value("nodeType", "") != "ContractDefinition" ||
+          top.value("name", "") != c_name)
+          continue;
+        if (!top.contains("linearizedBaseContracts"))
+          break;
+        for (const auto &base_id : top["linearizedBaseContracts"])
+        {
+          const nlohmann::json base_node = find_decl_ref(base_id.get<int>());
+          if (base_node.is_null() || !base_node.contains("nodes"))
+            continue;
+          for (const auto &member : base_node["nodes"])
+          {
+            if (
+              member.value("nodeType", "") == "ModifierDefinition" &&
+              member.value("name", "") == mod_name &&
+              member.contains("body"))
+            {
+              mod_def = member;
+              resolved = true;
+              break;
+            }
+          }
+          if (resolved)
+            break;
+        }
+        break;
+      }
+      if (!resolved)
+        continue;
+    }
+
     std::string func_name = f_name;
     std::string mod_name = mod_def["name"];
     std::string aux_func_name, aux_func_id;
