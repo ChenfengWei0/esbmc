@@ -798,14 +798,41 @@ bool solidity_convertert::get_expr(
     typet type;
     exprt from_expr;
 
-    // 1. get source expr
-    //! assume: only one argument
-    assert(expr["arguments"].size() == 1);
-    if (get_expr(expr["arguments"][0], literal_type, from_expr))
+    // 2. get target type (compute first so we can use it to pick a safe
+    //    literal_type to pass down to the argument)
+    if (get_type_description(conv_expr["typeDescriptions"], type))
       return true;
 
-    // 2. get target type
-    if (get_type_description(conv_expr["typeDescriptions"], type))
+    // 1. get source expr.
+    //
+    // Default: forward the outer caller's `literal_type` so that downstream
+    // literal handlers (e.g. `bytes32(0)` → bytes-zero helper) keep working.
+    //
+    // Exception: if the *outer* literal_type is a contract pointer (the
+    // caller is, e.g., comparing this conversion's result against a state
+    // var of a contract type), passing it down for a nested cast like
+    // `Pool(address(0))` cascades to `convert_integer_literal`, which
+    // calls `bv_width(pointer)` on the literal `0` and emits a
+    // constant_exprt whose value() slot is empty — that then trips
+    // `migrate expr failed` in the goto layer. Strip the contract-pointer
+    // hint and let the argument be sized against its own typeDescriptions.
+    nlohmann::json arg_literal_type = literal_type;
+    {
+      typet hint_type;
+      if (
+        literal_type != nullptr && !literal_type.is_null() &&
+        !get_type_description(literal_type, hint_type) &&
+        get_sol_type(hint_type) == SolidityGrammar::SolType::CONTRACT &&
+        hint_type.is_pointer())
+      {
+        arg_literal_type = expr["arguments"][0].contains("typeDescriptions")
+                             ? expr["arguments"][0]["typeDescriptions"]
+                             : nlohmann::json(nullptr);
+      }
+    }
+    //! assume: only one argument
+    assert(expr["arguments"].size() == 1);
+    if (get_expr(expr["arguments"][0], arg_literal_type, from_expr))
       return true;
 
     // 3. generate the type casting expr
