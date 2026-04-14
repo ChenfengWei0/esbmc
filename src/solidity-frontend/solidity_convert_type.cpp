@@ -1111,12 +1111,16 @@ bool solidity_convertert::get_array_pointer_type(
   const typet &base_type,
   typet &new_type)
 {
-  // For dynamic arrays of mappings, model as 2D infinite array instead of
-  // pointer.  mapping(K=>V)[] is semantically mapping(uint => mapping(K=>V))
-  // + length counter.  The pointer/malloc model cannot handle infinite-sized
-  // mapping elements.
+  // For arrays whose element is a mapping, model the WHOLE array as an
+  // infinite-sized 2D array instead of a pointer or fixed-size struct
+  // member.  `mapping(K=>V)[N]` is semantically a finite map from
+  // [0..N) to mapping(K=>V); the mapping element is itself unbounded,
+  // so the pointer/malloc model cannot allocate it (and trying to lay
+  // it out as a fixed-size struct member trips
+  // array_type2t::get_width on the inner mapping during state-var
+  // initialisation). The same treatment already applies to dynamic
+  // arrays of mappings.
   if (
-    !decl["typeName"].contains("length") &&
     get_sol_type(base_type) == SolidityGrammar::SolType::MAPPING &&
     base_type.is_array())
   {
