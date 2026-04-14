@@ -323,7 +323,21 @@ bool solidity_convertert::get_type_description(
       }
       else
       {
-        unsigned z_ext_value = std::stoul(outer_size_str, nullptr);
+        // Pathological huge sizes (e.g. `T[2**240]`) overflow `unsigned
+        // long` and crash stoul. We cannot materialise that many elements
+        // anyway, so degrade to DYNARRAY (pointer model) and let downstream
+        // accesses lower to nondet reads. Sound over-approximation.
+        unsigned long z_ext_value = 0;
+        try
+        {
+          z_ext_value = std::stoul(outer_size_str, nullptr);
+        }
+        catch (const std::exception &)
+        {
+          new_type = gen_pointer_type(base_type);
+          set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+          break;
+        }
         new_type = array_typet(
           base_type,
           constant_exprt(

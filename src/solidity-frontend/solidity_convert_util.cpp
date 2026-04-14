@@ -915,6 +915,10 @@ const nlohmann::json &solidity_convertert::find_last_parent(
   const nlohmann::json &root,
   const nlohmann::json &target)
 {
+  // Walks the AST tree to find the closest parent OBJECT that contains
+  // `target` (as a direct field value, or as an element of one of its
+  // array fields). Always returns an object, never an array — callers
+  // expect to look up keys like `arguments`, `src`, etc. on the result.
   using Frame = const nlohmann::json *; // Pointer to a node
   std::stack<Frame> stack;
   stack.push(&root);
@@ -931,18 +935,24 @@ const nlohmann::json &solidity_convertert::find_last_parent(
         const auto &value = it.value();
         if (value == target)
           return *node;
-
+        if (value.is_array())
+        {
+          for (const auto &element : value)
+            if (element == target)
+              return *node;
+        }
         if (value.is_structured())
           stack.push(&value);
       }
     }
     else if (node->is_array())
     {
+      // Arrays should normally be reached via their owning object so the
+      // object-branch above already inspected them. Keep this branch only
+      // to recurse into nested structured elements when the root itself
+      // happens to be an array.
       for (const auto &element : *node)
       {
-        if (element == target)
-          return *node;
-
         if (element.is_structured())
           stack.push(&element);
       }
