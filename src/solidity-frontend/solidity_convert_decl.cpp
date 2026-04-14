@@ -583,6 +583,104 @@ bool solidity_convertert::get_var_decl(
         store_update_dyn_array(symbol_expr(added_symbol), size_expr, func_call);
       move_to_back_block(func_call);
     }
+    else if (
+      val.is_typecast() && val.operands().size() > 0 &&
+      !val.operands()[0].type().is_pointer() &&
+      !val.operands()[0].type().is_array())
+    {
+      // Scalar→pointer cast: the RHS is a scalar value masquerading as
+      // a dynamic-array pointer. The canonical case is
+      //   uint[][] m = abi.decode(corrupt, (uint[][]));
+      // where abi.decode is lowered to the uint256 identity in
+      // solidity_abi.c. We cannot copy from a scalar through arrcpy and
+      // we cannot read its array length — both would deref garbage. Over-
+      // approximate the same way assign_param_nondet does for harness
+      // entry points: allocate a fresh small backing of the destination
+      // shape (zero contents, declared length recorded in the header).
+      // 1D vs 2D is dispatched on whether the leaf element is itself a
+      // pointer; 3D+ falls through to nil so the existing
+      // "Unexpect initialization for dynamic array" error fires (no
+      // silent miscompile).
+      constexpr unsigned long kInitNondetLen = 4;
+
+      exprt alloc_expr;
+      bool built = false;
+
+      if (t.is_pointer() && !t.subtype().is_pointer())
+      {
+        // 1D dyn: alloc(kInitNondetLen, sizeof(elem))
+        exprt size_expr = constant_exprt(
+          integer2binary(kInitNondetLen, bv_width(uint_type())),
+          std::to_string(kInitNondetLen),
+          uint_type());
+
+        exprt sizeof_expr;
+        get_size_of_expr(t.subtype(), sizeof_expr);
+
+        side_effect_expr_function_callt alloc;
+        get_calloc_function_call(location_begin, alloc);
+        alloc.arguments().push_back(size_expr);
+        alloc.arguments().push_back(sizeof_expr);
+
+        alloc_expr = typecast_exprt(alloc, t);
+        built = true;
+      }
+      else if (
+        t.is_pointer() && t.subtype().is_pointer() &&
+        !t.subtype().subtype().is_pointer())
+      {
+        // 2D dyn: alloc_nested_2d(kInitNondetLen, kInitNondetLen, sizeof(leaf))
+        exprt outer_expr = constant_exprt(
+          integer2binary(kInitNondetLen, bv_width(uint_type())),
+          std::to_string(kInitNondetLen),
+          uint_type());
+        exprt inner_expr = outer_expr;
+
+        exprt elem_sizeof;
+        get_size_of_expr(t.subtype().subtype(), elem_sizeof);
+
+        side_effect_expr_function_callt alloc;
+        get_library_function_call_no_args(
+          "_ESBMC_alloc_nested_2d",
+          "c:@F@_ESBMC_alloc_nested_2d",
+          pointer_typet(empty_typet()),
+          location_begin,
+          alloc);
+        alloc.arguments().push_back(outer_expr);
+        alloc.arguments().push_back(inner_expr);
+        alloc.arguments().push_back(elem_sizeof);
+
+        alloc_expr = typecast_exprt(alloc, t);
+        built = true;
+      }
+
+      if (built)
+      {
+        added_symbol.value = alloc_expr;
+        decl.operands().push_back(alloc_expr);
+
+        exprt size_expr_for_hdr = constant_exprt(
+          integer2binary(kInitNondetLen, bv_width(uint_type())),
+          std::to_string(kInitNondetLen),
+          uint_type());
+        exprt func_call;
+        if (is_state_var)
+          store_update_dyn_array(
+            member_exprt(this_expr, added_symbol.name, added_symbol.type),
+            size_expr_for_hdr,
+            func_call);
+        else
+          store_update_dyn_array(
+            symbol_expr(added_symbol), size_expr_for_hdr, func_call);
+        move_to_back_block(func_call);
+      }
+      else
+      {
+        log_error("Unexpect initialization for dynamic array");
+        log_debug("solidity", "{}", val);
+        return true;
+      }
+    }
     else if (val.id() == "sideeffect")
     {
       // e.g. `uint[] memory xs = someFunc();` where someFunc
