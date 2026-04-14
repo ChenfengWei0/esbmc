@@ -411,11 +411,24 @@ bool solidity_convertert::get_sol_builtin_ref(
   if (expr["nodeType"].get<std::string>() == "FunctionCall")
   {
     //  e.g. gasleft() <=> c:@F@gasleft
-    if (expr["expression"]["nodeType"].get<std::string>() != "Identifier")
+    // The callee can be wrapped in redundant parens, e.g.
+    // `(blockhash)(x)`, which parses the callee as a 1-component
+    // TupleExpression around the real Identifier. Unwrap before
+    // looking at nodeType.
+    const nlohmann::json *callee = &expr["expression"];
+    while (callee->is_object() &&
+           callee->value("nodeType", "") == "TupleExpression" &&
+           callee->contains("components") &&
+           (*callee)["components"].is_array() &&
+           (*callee)["components"].size() == 1 &&
+           !(*callee)["components"][0].is_null())
+      callee = &(*callee)["components"][0];
+
+    if ((*callee)["nodeType"].get<std::string>() != "Identifier")
       // this means it's not a builtin function
       return true;
 
-    std::string name = expr["expression"]["name"].get<std::string>();
+    std::string name = (*callee)["name"].get<std::string>();
     std::string id = "c:@F@" + name;
     if (context.find_symbol(id) == nullptr)
       return true;
