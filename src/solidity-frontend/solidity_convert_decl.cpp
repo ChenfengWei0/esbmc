@@ -583,49 +583,6 @@ bool solidity_convertert::get_var_decl(
         store_update_dyn_array(symbol_expr(added_symbol), size_expr, func_call);
       move_to_back_block(func_call);
     }
-    else if (val.is_symbol())
-    {
-      /** 
-      uint[] zzz;           // uint* zzz; // will not reach here actually
-                            // 
-      uint[] zzzz = [1,2];  // memcpy(zzzz, tmp2, 2*sizeof(uint));
-                            // uint* zzzzz = 0;
-      uint[] zzzzzz = zzz;  // memcpy(zzzzzz, zzz, zzz.size * sizeof(uint));
-
-      Theoretically we can convert it to something like int *z = new int[2]{0,1};
-      However, this feature seems to be not fully supported in current esbmc-cpp (v7.6.1)
-    */
-      // get size
-      exprt size_expr;
-      get_size_expr(val, size_expr);
-
-      // get sizeof
-      exprt size_of_expr;
-      get_size_of_expr(t.subtype(), size_of_expr);
-
-      side_effect_expr_function_callt acpy_call;
-      // we will store the array inside the copy function
-      get_arrcpy_function_call(location_begin, acpy_call);
-      acpy_call.arguments().push_back(val);
-      acpy_call.arguments().push_back(size_expr);
-      acpy_call.arguments().push_back(size_of_expr);
-      // typecast
-      solidity_gen_typecast(ns, acpy_call, t);
-      // set as rvalue
-      added_symbol.value = acpy_call;
-      decl.operands().push_back(acpy_call);
-
-      // store length
-      exprt func_call;
-      if (is_state_var)
-        store_update_dyn_array(
-          member_exprt(this_expr, added_symbol.name, added_symbol.type),
-          size_expr,
-          func_call);
-      else
-        store_update_dyn_array(symbol_expr(added_symbol), size_expr, func_call);
-      move_to_back_block(func_call);
-    }
     else if (val.id() == "sideeffect")
     {
       // e.g. `uint[] memory xs = someFunc();` where someFunc
@@ -657,6 +614,40 @@ bool solidity_convertert::get_var_decl(
       else
         store_update_dyn_array(
           symbol_expr(added_symbol), length_call, func_call);
+      move_to_back_block(func_call);
+    }
+    else if (val.type().is_pointer() || val.type().is_array())
+    {
+      // Any other dynamic-array-shaped initializer: bare symbol, member
+      // access, index access on an outer dynamic array, etc. Examples:
+      //   uint[] zzzzzz = zzz;       // existing variable
+      //   uint[] m = a[i];           // inner array of uint[][]
+      //   uint[] m = s.field;        // struct field
+      // All collapse to "copy a pointer + propagate the runtime length
+      // tracked by _ESBMC_array_length" — _ESBMC_arrcpy does both.
+      exprt size_expr;
+      get_size_expr(val, size_expr);
+
+      exprt size_of_expr;
+      get_size_of_expr(t.subtype(), size_of_expr);
+
+      side_effect_expr_function_callt acpy_call;
+      get_arrcpy_function_call(location_begin, acpy_call);
+      acpy_call.arguments().push_back(val);
+      acpy_call.arguments().push_back(size_expr);
+      acpy_call.arguments().push_back(size_of_expr);
+      solidity_gen_typecast(ns, acpy_call, t);
+      added_symbol.value = acpy_call;
+      decl.operands().push_back(acpy_call);
+
+      exprt func_call;
+      if (is_state_var)
+        store_update_dyn_array(
+          member_exprt(this_expr, added_symbol.name, added_symbol.type),
+          size_expr,
+          func_call);
+      else
+        store_update_dyn_array(symbol_expr(added_symbol), size_expr, func_call);
       move_to_back_block(func_call);
     }
     else
