@@ -1329,10 +1329,37 @@ void solidity_convertert::convert_type_expr(
       // byte4("123") -> string
       // bytes(x)  -> string literal
       // bytes2(0x1234) -> int literal
+      // uint256-result -> bytes (e.g. abi.encode/encodeCall lowered to
+      //                  the uint256 identity in solidity_abi.c being
+      //                  used in a `bytes` context)
 
       locationt loc = src_expr.location();
       if (is_bytes_type(dest_type))
       {
+        // bytes_dynamic_from_string expects a `const char *`. A scalar
+        // (e.g. the abi.encode* identity uint256, or any other non-pointer
+        // value being narrowed to bytes) cannot be safely dereferenced
+        // through that path — it would either crash symex with an invalid
+        // dereference or silently read garbage. Fall back to the bounded
+        // nondet bytes harness used by other approximation sites — sound
+        // OVER-approximation: "the encoder produced some bytes of length
+        // ∈ [32, 1024] with initialized==1". Same rationale as the
+        // string-constant fallback in the return-statement handler.
+        if (!src_type.is_pointer() && !src_type.is_array())
+        {
+          side_effect_expr_function_callt nondet_b;
+          get_library_function_call_no_args(
+            "llc_nondet_bytes",
+            "c:@F@llc_nondet_bytes",
+            dest_type,
+            loc,
+            nondet_b);
+          src_expr = make_aux_var(nondet_b, loc);
+          set_sol_type(
+            src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
+          return;
+        }
+
         side_effect_expr_function_callt call;
         get_library_function_call_no_args(
           "bytes_dynamic_from_string",

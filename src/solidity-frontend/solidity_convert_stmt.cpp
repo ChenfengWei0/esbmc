@@ -617,9 +617,23 @@ bool solidity_convertert::get_statement(
       rhs.id() == "string-constant" ||
       (rhs.type().is_array() && rhs.type().subtype().is_signedbv() &&
        to_signedbv_type(rhs.type().subtype()).get_width() == 8);
+    // Same OVER-approximation for "scalar uint256 returned where the
+    // function declares `bytes memory`": canonical case is
+    //   function f() ... returns (bytes memory) {
+    //     return abi.encodeCall(this.g, (...));
+    //   }
+    // where abi.encodeCall is the uint256 identity in solidity_abi.c.
+    // c_typecast cannot promote a 256-bit scalar into a BytesDynamic
+    // struct, and any naive cast leaks the raw int through `RETURN`
+    // — symex then segfaults on the struct-vs-scalar shape mismatch
+    // when the caller assigns it into a BytesDynamic temporary.
+    bool rhs_is_scalar_to_bytes =
+      get_sol_type(return_type) == SolidityGrammar::SolType::BYTES_DYN &&
+      !rhs.type().is_pointer() && !rhs.type().is_array() &&
+      !rhs.type().is_struct() && !rhs_is_string_constant;
     if (
       get_sol_type(return_type) == SolidityGrammar::SolType::BYTES_DYN &&
-      rhs_is_string_constant)
+      (rhs_is_string_constant || rhs_is_scalar_to_bytes))
     {
       // convert_type_expr aborts when no containing contract supplies a
       // dynamic pool (e.g. free functions declared outside any contract
