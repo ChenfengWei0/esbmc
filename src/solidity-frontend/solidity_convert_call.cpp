@@ -239,6 +239,7 @@ bool solidity_convertert::get_non_library_function_call(
 
     nlohmann::json param_nodes = decl_ref["parameters"]["parameters"];
     nlohmann::json param = nullptr;
+    const nlohmann::json *param_decl = nullptr;
     nlohmann::json::iterator itr = param_nodes.begin();
 
     for (const auto &arg : caller["arguments"].items())
@@ -249,6 +250,7 @@ bool solidity_convertert::get_non_library_function_call(
         {
           param = (*itr)["typeDescriptions"];
         }
+        param_decl = &(*itr);
         ++itr;
       }
 
@@ -256,8 +258,43 @@ bool solidity_convertert::get_non_library_function_call(
       if (get_expr(arg.value(), param, single_arg))
         return true;
 
+      // Coerce the argument to the formal parameter's type. Built-in
+      // model functions (e.g. abi.encode / abi.encodeCall / keccak256
+      // → uint256 identity in solidity_abi.c, and address.call result
+      // → tuple struct) return a different concrete shape than the
+      // declared Solidity argument type. Without an explicit cast the
+      // raw uint256 / scalar leaks into the call and goto-symex's
+      // type check aborts at the boundary, e.g.
+      //   abi.encodeCall(this.g, (...)) → uint256, then
+      //   removeSignature(bytes calldata x) expects BytesDynamic.
+      // convert_type_expr already knows how to wrap uint256 → bytes
+      // via bytes_dynamic_from_uint and the various other shape
+      // conversions, so just dispatch through it once we have the
+      // formal parameter type.
+      if (param_decl != nullptr)
+      {
+        typet formal_t;
+        bool got_formal = false;
+        if (param_decl->contains("typeName"))
+        {
+          if (!get_type_description(
+                *param_decl, (*param_decl)["typeName"]["typeDescriptions"],
+                formal_t))
+            got_formal = true;
+        }
+        else if (!param.is_null())
+        {
+          if (!get_type_description(param, formal_t))
+            got_formal = true;
+        }
+
+        if (got_formal && single_arg.type() != formal_t)
+          convert_type_expr(ns, single_arg, formal_t, arg.value());
+      }
+
       call.arguments().push_back(single_arg);
       param = nullptr;
+      param_decl = nullptr;
     }
   }
   else
