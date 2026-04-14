@@ -1199,6 +1199,39 @@ bool solidity_convertert::get_array_pointer_type(
       set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
       return false;
     }
+    // Solidity allows arbitrarily large static array sizes (e.g.
+    // `uint[2**253]`), which blow up downstream when GOTO/SMT tries to
+    // materialize the element-count-by-element-width product. Clang's
+    // C frontend caps static arrays around 2^58 elements; match that
+    // and degrade to DYNARRAY above the cap so verification can still
+    // proceed on benign code paths that never actually index such an
+    // array with a concrete large value.
+    {
+      constexpr unsigned long long kMaxStaticArrayElems = 1ULL << 56;
+      bool too_big = length.size() > 19; // > max uint64 digit count
+      if (!too_big)
+      {
+        try
+        {
+          unsigned long long n = std::stoull(length);
+          if (n > kMaxStaticArrayElems)
+            too_big = true;
+        }
+        catch (const std::exception &)
+        {
+          too_big = true;
+        }
+      }
+      if (too_big)
+      {
+        log_warning(
+          "Solidity array length {} exceeds supported static size; "
+          "modelling as dynamic array",
+          length);
+        set_sol_type(new_type, SolidityGrammar::SolType::DYNARRAY);
+        return false;
+      }
+    }
     new_type.set("#sol_array_size", length);
     set_sol_type(new_type, SolidityGrammar::SolType::ARRAY);
   }
