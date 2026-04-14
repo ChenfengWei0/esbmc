@@ -294,8 +294,22 @@ bool solidity_convertert::get_var_decl(
     ast_node["storageLocation"] == "storage" && !initialValue.empty())
   {
     int this_id = ast_node["id"].get<int>();
-    if (initialValue.contains("referencedDeclaration") &&
-        get_sol_type(t) == SolidityGrammar::SolType::STRUCT)
+    // The simple int-id alias path (`storage_ref_aliases`) only works when
+    // the RHS is itself an Identifier — then we can resolve the alias by
+    // chasing referencedDeclaration to another VariableDeclaration. For a
+    // compound expression like `self.data` (MemberAccess), the RHS *also*
+    // carries a referencedDeclaration (pointing at the struct field), but
+    // following that id loses the `self.` base and yields a bare symbol
+    // referencing the struct field as if it were a free variable — which
+    // then crashes goto-symex with `phi_function: no symbol`. Always take
+    // the expression-alias path for non-Identifier RHSes.
+    const bool init_is_identifier =
+      initialValue.contains("nodeType") &&
+      initialValue["nodeType"] == "Identifier";
+    if (
+      init_is_identifier &&
+      initialValue.contains("referencedDeclaration") &&
+      get_sol_type(t) == SolidityGrammar::SolType::STRUCT)
     {
       int src_id = initialValue["referencedDeclaration"].get<int>();
       storage_ref_aliases[this_id] = src_id;
@@ -306,7 +320,7 @@ bool solidity_convertert::get_var_decl(
         this_id,
         src_id);
     }
-    else if (!initialValue.contains("referencedDeclaration"))
+    else
     {
       storage_ref_expr_aliases[this_id] = initialValue;
       is_storage_ref_alias = true;
@@ -1589,7 +1603,32 @@ void solidity_convertert::get_local_var_decl_name(
   assert(ast_node.contains("name"));
 
   name = ast_node["name"].get<std::string>();
-  if ((current_functionDecl || !current_functionName.empty()) && !cname.empty())
+  // Struct/error fields carry a `scope` pointing to the StructDefinition
+  // (or ErrorDefinition) AST node id, which we registered in
+  // member_entity_scope when walking the struct.  Detect that *before*
+  // the function-local branch, otherwise a field VariableDeclaration that
+  // happens to be re-walked from inside a function body (e.g. via
+  // get_var_decl_ref while resolving `self.field` for a storage-ref
+  // alias) gets a `sol:@C@<cname>@F@<func>@<field>#<id>` naming and
+  // collides with the local-variable namespace — the resulting symbol
+  // never lands in the symbol table (the struct field's symbol is
+  // recorded under its struct-qualified id) and goto-symex later trips
+  // `phi_function: no symbol for ...` when merging branches that
+  // assigned through the alias.
+  if (
+    ast_node.contains("scope") &&
+    member_entity_scope.count(ast_node["scope"].get<int>()) > 0)
+  {
+    int scp = ast_node["scope"].get<int>();
+    std::string struct_name = member_entity_scope.at(scp);
+    if (cname.empty())
+      id = "sol:@" + struct_name + "@" + name + "#" +
+           i2string(ast_node["id"].get<std::int16_t>());
+    else
+      id = "sol:@C@" + cname + "@" + struct_name + "@" + name + "#" +
+           i2string(ast_node["id"].get<std::int16_t>());
+  }
+  else if ((current_functionDecl || !current_functionName.empty()) && !cname.empty())
   {
     // converting local variable inside a function
     // For non-state functions, we give it different id.
