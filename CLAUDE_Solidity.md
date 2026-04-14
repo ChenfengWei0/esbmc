@@ -44,7 +44,8 @@ esbmc --sol contract.sol contract.solast --contract MyContract
 **solc discovery order**: `--solc-bin <path>` > `$SOLC` env var > `solc` in `$PATH`. When auto-invoked, ESBMC prints the solc path and version (e.g. `Compiling Solidity AST using: /usr/local/bin/solc (v0.8.30)`).
 
 **Version compatibility** (checked at AST level via `PragmaDirective`):
-- `< 0.5.0`: rejected (unsupported)
+- pragma *pinned* to `< 0.5.0` (no upper bound, or upper bound also < 0.5.0): rejected
+- pragma with pre-0.5 lower bound but upper bound ≥ 0.5.0 (e.g. `pragma solidity >=0.4.0 <0.9.0;`): warning, accepted (solc has already compiled with a modern compiler — see `solidity_convert.cpp::check_min_version`)
 - `0.5.0 – 0.7.0`: warning (may cause unexpected behaviour)
 - `>= 0.7.0`: fully supported (tested against 0.8.x)
 
@@ -734,6 +735,8 @@ Implementation:
 
 Tests: `clearing_mapping_1` (write/read), `clearing_mapping_2` (push + index + assert pass), `clearing_mapping_3` (assert fail).
 
+**Extension (2026-04-14):** Fixed-size variant `mapping(K=>V)[N]` now uses the same inf-array model. Previously fell through to the standard pointer-with-fixed-size path and crashed `array_type2t::get_width` during state-var zero-initialisation (the inner mapping is itself an infinite-sized array). The `get_array_pointer_type` special-case now drops the `!decl["typeName"].contains("length")` guard. Test: `stress_libsol_array_mapping_struct`.
+
 #### G. Address / Contract Type Conversion
 
 Basic conversions work:
@@ -814,6 +817,7 @@ cmake --build . -j$(nproc) --target esbmc
 - Non-overriding case: base function merged into derived contract, no cast needed ✅
 - Overriding case: derived overrides the same name, calls original base with `this` typecast ✅
 - Multi-level dispatch (e.g. `Child.abc() → p1() → super.myFunc()`) ✅
+- **`super.f` as r-value (fn-ptr capture)** (2026-04-14): `function() internal returns (uint) x = super.f;` lowers to an opaque func_ptr (typecast of `referencedDeclaration + 1`). Indirect calls through the captured pointer return nondet, same UNDER-approximation as other fn-ptr captures. Required three frontend tweaks: (a) `t_super$_X_$N` typeIdentifier classified as `ContractTypeName` in `solidity_grammar.cpp`; (b) `ContractTypeName` extraction in `solidity_convert_type.cpp` switched to `rfind(" ")` to strip the `super` qualifier; (c) `get_expr` TypeMemberCall branch detects the bare `super` Identifier child and emits the func_ptr directly. Tests: `stress_libsol_super_in_ctor_assign`, `stress_libsol_super_function_deployed`, `stress_libsol_virtual_function_deployed`.
 
 **Cooperative super chain — Fully supported** (2026-04-05):
 
@@ -1106,9 +1110,11 @@ ctest -R "regression/esbmc-solidity/address_1"
 
 **Note:** Both `ENABLE_SOLIDITY_FRONTEND` and `ENABLE_REGRESSION` must be ON. The default build (`./scripts/build.sh`) sets `ENABLE_REGRESSION=OFF`, so regression tests won't appear in `ctest -N` unless explicitly enabled.
 
-### Test Baseline (2026-04-13)
+### Test Baseline (2026-04-14)
 
-**570 total tests** (2026-04-13): 570 pass, 0 failed, 0 timeout (~45s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+**607 total tests** (2026-04-14): 607 pass, 0 failed, 0 timeout (~45s). Test flags: always use `--unwind N --no-unwinding-assertions` for bounded verification; omitting `--unwind` causes OOM on the SMT solver.
+
+Growth from 570 → 607 (2026-04-14) reflects 37 new `stress_libsol_*` regression tests added during a libsolidity semanticTests sweep. After the fixes below, the full libsolidity stress sweep (1663 single-source files) shows **0 frontend crashes**.
 
 **Slow THOROUGH tests** (>60s, avoid running in tight iteration loops):
 
@@ -1181,6 +1187,40 @@ stress ESBMC frontend coverage against upstream corner cases. No
 | `stress_libsol_udvt_abicodec` | KNOWNBUG | UDVT in function signature + `abi.decode` tuple — frontend now converts, but concrete-value assertions unsatisfiable under nondet `abi.decode` |
 | `stress_libsol_try_return_function` | KNOWNBUG | `C(address(0x1234)).fun` inline contract cast + try/catch with function-type return |
 | `stress_libsol_calldata_string_array` | KNOWNBUG | (Earlier batch) dynamic string array in calldata |
+
+**libsolidity stress sweep — round 2 (2026-04-14):**
+
+Hand-pulled from `solidity/test/libsolidity/semanticTests/` after a full
+1663-file sweep with `--contract <first>` discovered residual frontend
+crashes/conversion errors. Each row is one fix → one regression test.
+After this round, the sweep reports 0 frontend crashes.
+
+| Test | What it exercises | Frontend fix |
+|------|-------------------|--------------|
+| `stress_libsol_library_struct_as_expr` | bare `Arst.Foo;` (library struct as no-op stmt) | ExpressionStatement skips `type(...)`-valued sub-exprs |
+| `stress_libsol_external_public_calldata` | abstract→memory override of `uint256[] calldata` returns | `add_offset(src, ...)` correctly slices second field of `start:length:index` (single-digit start no longer crashes `stoul`) |
+| `stress_libsol_nested_tuples` | `((a,b))=(2,true)`, `(((a,),))=...`, mixed-shape nested tuple LHS | `flatten_nested_tuple_assignment` unwraps redundant outer parens; tuple-literal RHS no longer mis-classified as TUPLE_RETURNS |
+| `stress_libsol_udvt_in_paren` | `(MyInt).wrap(...)`, `(MyInt).unwrap(...)` | UDVT wrap/unwrap base resolution walks paren TupleExpression wrappers |
+| `stress_libsol_udvt_via_contract_name` | `C.T.wrap(x)` where `C` is the containing contract | UDVT base accepts MemberAccess and falls back to typeString |
+| `stress_libsol_address_code_length` | `address(this).code.length`, `addr.code.length` | `.length` on a uint256-modeled bytes container falls back to nondet uint (only when base.type is unsignedbv/signedbv — bytes structs keep precise path) |
+| `stress_libsol_modifier_local_uint8_void` | `modifier mod1 { uint8 a; uint8 b; _; } modifier mod2(bool a) { if (a) return; else _; }` | Bare `return;` inside a value-returning modifier path no longer becomes a symbol-typed assignment; replaced with `code_skipt` |
+| `stress_libsol_consteval_array_length` | `uint[(a/b)*b]` constant-folded length | `get_array_pointer_type` recovers folded size from typeString when length AST node is a BinaryOperation |
+| `stress_libsol_inline_array_return` | `return ([1, 2, 3, 4, 5]);` (paren-wrapped inline array) | `get_tuple_expr` strips paren around inline-array literal at function entry |
+| `stress_libsol_lib_internal_call_parens` / `stress_libsol_lib_attached_call_parens` | `(L.f)()` | `find_last_parent` returns the owning OBJECT (was returning the array node when the target was an array element); `get_call_expr` unwraps paren wrappers around the callee |
+| `stress_libsol_struct_event_emit` | `emit L.Ev(Item(1))` from a library | TypeMemberCall branch handles EventDefinition / ErrorDefinition referenced declarations as `code_skipt` |
+| `stress_libsol_base_access_fnptr_var` | `C.x = g;` where x is a function-typed state variable | TypeMemberCall branch handles VariableDeclaration referencedDeclaration as nondet of declared type (UNDER for fn-ptr storage) |
+| `stress_libsol_modifier_tuple_return_ref` / `stress_libsol_modifier_tuple_return_complex` | `function f() public m1(...) returns (uint x, uint y) {}` | Modifier-wrapped tuple-returning functions: detect empty/TUPLE_RETURNS aux return type and treat as void (no aux return variable, no return rewrite) |
+| `stress_libsol_array_mapping_struct` | `mapping(K=>V)[3] n;` | Fixed-size mapping arrays now use the inf-array model (was crashing `array_type2t::get_width` during state-var zero-init); aligns with the existing dynamic mapping-array path |
+| `stress_libsol_super_in_ctor_assign` / `stress_libsol_super_function_deployed` / `stress_libsol_virtual_function_deployed` | `function() internal returns (uint) x = super.f;` | `super` r-value capture (see Section J) |
+| `stress_libsol_uncalled_blockhash` / `stress_libsol_uncalled_blobhash` | `(blockhash)(block.number - 1)` | `get_sol_builtin_ref` unwraps paren TupleExpression around the FunctionCall callee before symbol lookup |
+| `stress_libsol_err_named_params_shadow` | `error E2(EnumType StructType, StructType EnumType); revert E2({EnumType: ..., StructType: ...});` | Event/error call branch in `get_call_expr` now reorders named arguments via `reorder_arguments` (was only applied to normal function calls) |
+| `stress_libsol_pragma_range_legacy` | `pragma solidity >=0.4.0 <0.9.0;` | Version gate accepts pre-0.5 lower bound when the upper bound permits 0.5+ |
+
+Other fixes from the same round that didn't get a dedicated regression test (e.g. cumulative refactors covered by the tests above):
+
+- `find_last_parent` arrays-of-mappings cleanup (always return owning object).
+- `get_type_description` huge-dimension `T[2**240]` no longer crashes `stoul`; degrades to DYNARRAY (sound over-approximation).
+- `get_func_modifier`: `aux_var = <empty>` for bare `return;` replaced with `code_skipt` so symex never sees a symbol-typed assignment.
 
 **Mapping-in-struct tests added (2026-04-01):**
 
