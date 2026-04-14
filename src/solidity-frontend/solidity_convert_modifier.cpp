@@ -610,6 +610,22 @@ bool solidity_convertert::get_func_modifier(
       if (get_type_description(
             ast_node["returnParameters"], aux_type.return_type()))
         return true;
+      // Multi-return functions lower their return type to empty_typet
+      // (TUPLE_RETURNS) — get_parameter_list returns void for tuples.
+      // The aux-return-variable rewrite below would create a void-typed
+      // symbol and assign to it, which symex resolves through a
+      // symbol_typet that nothing fills in (symbolic_type_excp). Treat
+      // tuple-returning modifier-wrapped functions as void here: the
+      // tuple instance struct already carries the named outputs.
+      if (
+        aux_type.return_type().is_empty() ||
+        get_sol_type(aux_type.return_type()) ==
+          SolidityGrammar::SolType::TUPLE_RETURNS)
+      {
+        has_return = false;
+        aux_type.return_type() = empty_typet();
+        aux_type.set("cpp_type", "void");
+      }
     }
     else
     {
