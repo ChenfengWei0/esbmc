@@ -501,8 +501,55 @@ bool solidity_convertert::get_sol_builtin_ref(
       else if (name == "wrap" || name == "unwrap")
       {
         // do nothhing, return operands
-        std::string udv = expr["expression"]["name"].get<std::string>();
-        assert(UserDefinedVarMap.count(udv) > 0);
+        // The base expression for `<UDVT>.wrap` / `.unwrap` may be:
+        //   - Identifier  : `MyInt.wrap(...)`
+        //   - TupleExpression wrapping an Identifier : `(MyInt).wrap(...)`
+        //   - MemberAccess (qualified via contract): `C.T.wrap(...)`
+        // Walk through paren wrappers and resolve via referencedDeclaration
+        // when a plain `name` field isn't available.
+        const nlohmann::json *base = &expr["expression"];
+        while (base->is_object() &&
+               base->value("nodeType", "") == "TupleExpression" &&
+               base->contains("components") &&
+               (*base)["components"].is_array() &&
+               (*base)["components"].size() == 1 &&
+               !(*base)["components"][0].is_null())
+          base = &(*base)["components"][0];
+
+        std::string udv;
+        if (base->is_object() && base->contains("name") &&
+            (*base)["name"].is_string())
+          udv = (*base)["name"].get<std::string>();
+        else if (
+          base->is_object() && base->value("nodeType", "") == "MemberAccess" &&
+          base->contains("memberName") && (*base)["memberName"].is_string())
+          udv = (*base)["memberName"].get<std::string>();
+
+        if (udv.empty() || UserDefinedVarMap.count(udv) == 0)
+        {
+          // Fall back to the typeString. For `(MyInt).wrap`, the base's
+          // typeString is `type(MyInt)`. For `C.T.wrap`, typeString is
+          // `type(C.T)`. Strip the wrapping `type(...)` and any leading
+          // contract qualifier.
+          if (base->is_object() && base->contains("typeDescriptions") &&
+              (*base)["typeDescriptions"].contains("typeString"))
+          {
+            std::string ts =
+              (*base)["typeDescriptions"]["typeString"].get<std::string>();
+            if (ts.compare(0, 5, "type(") == 0 && ts.back() == ')')
+              ts = ts.substr(5, ts.size() - 6);
+            auto dot = ts.rfind('.');
+            if (dot != std::string::npos)
+              ts = ts.substr(dot + 1);
+            udv = ts;
+          }
+        }
+
+        if (udv.empty() || UserDefinedVarMap.count(udv) == 0)
+        {
+          log_error("UDVT wrap/unwrap: cannot resolve base type '{}'", udv);
+          return true;
+        }
         typet t = UserDefinedVarMap[udv];
         new_expr = typecast_exprt(t); // we will set the op0 later
         new_expr.location() = l;
@@ -573,8 +620,22 @@ bool solidity_convertert::get_sol_builtin_ref(
         }
         else if (is_byte_type(base_t))
         {
-          member_exprt len(base, "length", size_type());
-          new_expr = len;
+          // The bytes container is normally a struct with a `length` field.
+          // But some sources of bytes (e.g. `address.code`, modeled as a
+          // uint256 identity token in get_builtin_property_expr) lower to
+          // a uint256 primitive that has no such field. In those cases
+          // emitting a member_exprt produces an ill-typed access that the
+          // SMT layer dereferences and aborts on. Fall back to a nondet
+          // uint length — sound for unconstrained external bytes.
+          if (base.type().is_unsignedbv() || base.type().is_signedbv())
+          {
+            get_nondet_expr(uint_type(), new_expr);
+          }
+          else
+          {
+            member_exprt len(base, "length", size_type());
+            new_expr = len;
+          }
         }
         else
         {

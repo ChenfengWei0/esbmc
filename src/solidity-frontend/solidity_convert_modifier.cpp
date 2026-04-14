@@ -695,17 +695,31 @@ bool solidity_convertert::get_func_modifier(
       // ret_decl.operands().push_back(func_modifier);
       mod_body.operands().insert(mod_body.operands().begin(), ret_decl);
 
-      // 2. replace every "return x" to "aux_var = x"
+      // 2. replace every "return x" to "aux_var = x". Bare `return;` inside
+      // a value-returning modifier path (e.g. `if (a) return; else _;`) has
+      // no operand; emitting `aux_var = <empty>` produces a symbol-typed
+      // assignment that crashes symex with symbolic_type_excp. Replace it
+      // with a no-op so the modifier just falls through to the implicit
+      // `return aux_var` we add below — leaving aux_var at its zero
+      // initialisation, which is the value-returning equivalent of "skip
+      // the body".
       for (auto op = mod_body.operands().begin();
            op != mod_body.operands().end();
            ++op)
       {
         if (op->is_code() && op->statement() == "return")
         {
-          // make assignment
-          exprt rhs = op->op0();
-          code_assignt assign(symbol_expr(ret_sym), rhs);
-          *op = assign;
+          if (op->operands().empty() ||
+              op->op0().type().id().as_string().empty())
+          {
+            *op = code_skipt();
+          }
+          else
+          {
+            exprt rhs = op->op0();
+            code_assignt assign(symbol_expr(ret_sym), rhs);
+            *op = assign;
+          }
         }
       }
 

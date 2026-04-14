@@ -1118,15 +1118,47 @@ bool solidity_convertert::get_array_pointer_type(
   if (decl["typeName"].contains("length"))
   {
     std::string length;
-    if (decl["typeName"]["length"].contains("value"))
-      length = decl["typeName"]["length"]["value"].get<std::string>();
+    const auto &len_node = decl["typeName"]["length"];
+    if (len_node.contains("value") && len_node["value"].is_string())
+      length = len_node["value"].get<std::string>();
+    else if (
+      len_node.contains("referencedDeclaration") &&
+      len_node["referencedDeclaration"].is_number_integer() &&
+      len_node["referencedDeclaration"].get<int>() > 0)
+    {
+      if (get_constant_value(
+            len_node["referencedDeclaration"], length))
+        return true;
+    }
     else
     {
-      // assume it's a constant
-      assert(decl["typeName"]["length"].contains("referencedDeclaration"));
-      if (get_constant_value(
-            decl["typeName"]["length"]["referencedDeclaration"], length))
+      // The length is a constant-folded expression like `(a / b) * b` —
+      // solc has already evaluated it, but the AST node is a
+      // BinaryOperation/TupleExpression with no `value` field. Recover
+      // the folded result from the array type's own typeString
+      // (e.g. "uint256[10]"), which carries the post-folding size.
+      const std::string ts =
+        decl["typeName"].contains("typeDescriptions") &&
+            decl["typeName"]["typeDescriptions"].contains("typeString")
+          ? decl["typeName"]["typeDescriptions"]["typeString"].get<std::string>()
+          : std::string();
+      auto lb = ts.rfind('[');
+      auto rb = ts.rfind(']');
+      if (lb != std::string::npos && rb != std::string::npos && rb > lb + 1)
+      {
+        const std::string inner = ts.substr(lb + 1, rb - lb - 1);
+        if (!inner.empty() &&
+            std::all_of(inner.begin(), inner.end(), [](unsigned char ch) {
+              return std::isdigit(ch);
+            }))
+          length = inner;
+      }
+      if (length.empty())
+      {
+        log_error(
+          "cannot resolve fixed-array length from non-literal expression");
         return true;
+      }
     }
     new_type.set("#sol_array_size", length);
     set_sol_type(new_type, SolidityGrammar::SolType::ARRAY);

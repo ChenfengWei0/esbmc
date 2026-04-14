@@ -1139,7 +1139,7 @@ bool solidity_convertert::get_literal_expr(
 }
 
 bool solidity_convertert::get_tuple_expr(
-  const nlohmann::json &expr,
+  const nlohmann::json &expr_in,
   const nlohmann::json &literal_type,
   exprt &new_expr)
 {
