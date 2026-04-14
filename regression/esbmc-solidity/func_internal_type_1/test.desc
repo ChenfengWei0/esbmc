@@ -1,5 +1,4 @@
-KNOWNBUG
+CORE
 contract.sol
 --contract Pyramid --no-standard-checks --multi-property --unwind 6 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
--- FunctionTypeName: indirect calls through function-pointer parameters not supported

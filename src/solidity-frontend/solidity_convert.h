@@ -132,6 +132,11 @@ protected:
   bool contract_precheck();
   bool check_sol_ver();
   bool populate_auxiliary_vars();
+  // AST preprocessing: specialize internal function-pointer parameters at
+  // static-callback call sites by cloning the callee with the fn-ptr
+  // parameters erased and their indirect calls rewritten to direct calls.
+  // Runs before symbol registration. See solidity_monomorphize.cpp.
+  bool monomorphize_fn_ptr_params();
   bool
   populate_function_signature(nlohmann::json &json, const std::string &cname);
   bool populate_low_level_functions(const std::string &cname);

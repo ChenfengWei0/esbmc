@@ -17,6 +17,7 @@ add_library(solidityfrontend_stuff
   solidity_convert_call.cpp
   solidity_convert_util.cpp
   solidity_convert_literals.cpp
+  solidity_monomorphize.cpp
   solidity_grammar.cpp
   pattern_check.cpp
 )

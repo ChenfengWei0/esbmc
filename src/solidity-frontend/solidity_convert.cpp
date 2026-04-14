@@ -147,6 +147,13 @@ bool solidity_convertert::convert()
     return true;
 
   absolute_path = src_ast_json["absolutePath"].get<std::string>();
+
+  // AST rewrite: specialize internal function-pointer parameters whose
+  // callback is statically known at the call site. Runs before symbol
+  // registration so clones participate in the normal conversion pipeline.
+  if (monomorphize_fn_ptr_params())
+    return true;
+
   nlohmann::json &nodes = src_ast_json["nodes"];
 
   // store auxiliary info
