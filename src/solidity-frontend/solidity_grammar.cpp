@@ -342,10 +342,15 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     }
     else
     {
+      // Unsupported type-name (fixed-point literals, rational_const,
+      // "string calldata slice", "function () external returns (contract)"
+      // etc.). Return the error sentinel so get_type_description's
+      // default branch can emit a clean CONVERSION ERROR instead of
+      // aborting the process.
       log_error(
         "Got type-name typeString={}. Unsupported type-name type",
         type_name["typeString"].get<std::string>());
-      abort();
+      return TypeNameTError;
     }
   }
   else
@@ -370,7 +375,7 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
       log_error(
         "Got type-name nodeType={}. Unsupported type-name type",
         type_name["nodeType"].get<std::string>());
-      abort();
+      return TypeNameTError;
     }
   }
 
