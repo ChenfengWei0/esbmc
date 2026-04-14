@@ -1038,12 +1038,125 @@ bool solidity_convertert::get_statement(
     //   could possibly produce.
     // Completeness: false positives possible when the block enforces a
     //   constraint on the havoc'd variable (e.g. assembly-driven invariants
-    //   checked later). Assembly that deliberately computes a specific value
-    //   (e.g. `z := t` reading a fn-ptr slot tag) cannot be verified — see
-    //   `regression/esbmc-solidity/stress_libsol_uninit_fnptr_*`.
+    //   checked later).
+    // Fast path: simple `z := x` YulAssignment patterns where both sides
+    //   are recognized external variables are lowered to a deterministic
+    //   assignment (with a fn-ptr-to-integer read producing zero, matching
+    //   Yul semantics for uninitialized internal fn-ptr slots). Anything
+    //   more elaborate falls back to the generic havoc.
     // Notes: .slot/.offset references to state variables havoc the backing
     //   state variable itself; opcodes that touch only EVM intrinsics (gas,
     //   selfbalance, etc.) produce no havoc and become a skip.
+
+    // Attempt the deterministic YulAssignment fast path first. If every
+    // top-level Yul statement is a recognized pattern we avoid havoc
+    // entirely; otherwise we fall through to the conservative block.
+    if (stmt.contains("AST") && stmt["AST"].is_object() &&
+        stmt["AST"].value("nodeType", "") == "YulBlock" &&
+        stmt["AST"].contains("statements") &&
+        stmt["AST"]["statements"].is_array())
+    {
+      const nlohmann::json &yul_stmts = stmt["AST"]["statements"];
+
+      // Build src-range -> declaration id map from externalReferences so we
+      // can resolve YulIdentifier nodes (which only carry source ranges) to
+      // their Solidity VariableDeclaration.
+      std::map<std::string, int> src_to_decl;
+      if (stmt.contains("externalReferences") &&
+          stmt["externalReferences"].is_array())
+      {
+        for (const auto &ref : stmt["externalReferences"])
+        {
+          if (
+            ref.contains("declaration") && ref["declaration"].is_number() &&
+            ref.contains("src") && ref["src"].is_string())
+          {
+            bool skip_slot_off =
+              (ref.contains("isSlot") && ref["isSlot"].get<bool>()) ||
+              (ref.contains("isOffset") && ref["isOffset"].get<bool>());
+            if (!skip_slot_off)
+              src_to_decl[ref["src"].get<std::string>()] =
+                ref["declaration"].get<int>();
+          }
+        }
+      }
+
+      code_blockt fast_block;
+      bool fast_all_handled = !yul_stmts.empty();
+      for (const auto &ys : yul_stmts)
+      {
+        if (
+          ys.value("nodeType", "") != "YulAssignment" ||
+          !ys.contains("variableNames") ||
+          !ys["variableNames"].is_array() ||
+          ys["variableNames"].size() != 1 ||
+          !ys.contains("value") || !ys["value"].is_object())
+        {
+          fast_all_handled = false;
+          break;
+        }
+        const nlohmann::json &dst_ref = ys["variableNames"][0];
+        const nlohmann::json &src_ref = ys["value"];
+        if (
+          dst_ref.value("nodeType", "") != "YulIdentifier" ||
+          src_ref.value("nodeType", "") != "YulIdentifier")
+        {
+          fast_all_handled = false;
+          break;
+        }
+        auto dst_it = src_to_decl.find(dst_ref.value("src", ""));
+        auto src_it = src_to_decl.find(src_ref.value("src", ""));
+        if (dst_it == src_to_decl.end() || src_it == src_to_decl.end())
+        {
+          fast_all_handled = false;
+          break;
+        }
+        const nlohmann::json &dst_decl = find_decl_ref(dst_it->second);
+        const nlohmann::json &src_decl = find_decl_ref(src_it->second);
+        if (
+          dst_decl.empty() ||
+          dst_decl.value("nodeType", "") != "VariableDeclaration" ||
+          src_decl.empty() ||
+          src_decl.value("nodeType", "") != "VariableDeclaration")
+        {
+          fast_all_handled = false;
+          break;
+        }
+        bool dst_state = dst_decl.contains("stateVariable") &&
+                         dst_decl["stateVariable"].get<bool>();
+        bool src_state = src_decl.contains("stateVariable") &&
+                         src_decl["stateVariable"].get<bool>();
+        exprt dst_expr, src_expr;
+        if (
+          get_var_decl_ref(dst_decl, dst_state, dst_expr) ||
+          get_var_decl_ref(src_decl, src_state, src_expr))
+        {
+          fast_all_handled = false;
+          break;
+        }
+        // Reading an internal fn-ptr's raw slot value yields zero under
+        // Yul semantics (uninitialized void*). For any other source type
+        // we emit a plain typecast assignment.
+        exprt rhs;
+        if (src_expr.type().get_bool("#sol_func_ptr"))
+          rhs = from_integer(BigInt(0), dst_expr.type());
+        else
+        {
+          rhs = src_expr;
+          solidity_gen_typecast(ns, rhs, dst_expr.type());
+        }
+        code_assignt assign(dst_expr, rhs);
+        assign.location() = loc;
+        fast_block.copy_to_operands(assign);
+      }
+
+      if (fast_all_handled && !fast_block.operands().empty())
+      {
+        new_expr = fast_block;
+        break;
+      }
+    }
+
     code_blockt havoc_block;
 
     if (

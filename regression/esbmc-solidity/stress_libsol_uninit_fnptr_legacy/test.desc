@@ -2,3 +2,7 @@ KNOWNBUG
 contract.solast
 --sol contract.sol --contract Test --unwind 2 --no-unwinding-assertions --no-standard-checks
 ^VERIFICATION SUCCESSFUL$
+-- Tests legacy EVM codegen's non-zero trap-tag encoding for uninitialized
+-- internal fn-ptr slots. ESBMC models internal fn-ptrs as void*/null, which
+-- matches Yul semantics (see stress_libsol_uninit_fnptr_yul, now CORE).
+-- Fixing this would require modeling solc's legacy codegen slot-tag format.
