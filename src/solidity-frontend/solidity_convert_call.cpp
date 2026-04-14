@@ -96,6 +96,7 @@ bool solidity_convertert::get_library_function_call(
     }
 
     //  builtin functions do not need the this object as the first arguments
+    const nlohmann::json *param_decl = nullptr;
     for (const auto &arg : caller["arguments"].items())
     {
       // Stop collecting arguments once we have enough for the C model function.
@@ -142,6 +143,7 @@ bool solidity_convertert::get_library_function_call(
       if (itr != itr_end && (*itr).contains("typeDescriptions"))
       {
         param = (*itr)["typeDescriptions"];
+        param_decl = &(*itr);
         ++itr;
       }
       else if (arg.value().contains("commonType"))
@@ -152,8 +154,39 @@ bool solidity_convertert::get_library_function_call(
       if (get_expr(arg.value(), param, single_arg))
         return true;
 
+      // Coerce the actual argument to the formal parameter's type, mirroring
+      // the same fixup in get_non_library_function_call. Without this,
+      // built-in lowerings whose result type differs from the declared
+      // Solidity type — e.g. abi.encodeWithSelector → uint256 identity (see
+      // solidity_abi.c) being passed to a `bytes memory` parameter
+      // (BytesDynamic struct) — leak a scalar through the call boundary
+      // and goto-symex aborts at the function-arg type check with
+      // `type mismatch: got unsignedbv, expected struct`. SafeERC20's
+      // _callOptionalReturn(IERC20, bytes memory) is the canonical case.
+      if (param_decl != nullptr)
+      {
+        typet formal_t;
+        bool got_formal = false;
+        if (param_decl->contains("typeName"))
+        {
+          if (!get_type_description(
+                *param_decl, (*param_decl)["typeName"]["typeDescriptions"],
+                formal_t))
+            got_formal = true;
+        }
+        else if (!param.is_null())
+        {
+          if (!get_type_description(param, formal_t))
+            got_formal = true;
+        }
+
+        if (got_formal && single_arg.type() != formal_t)
+          convert_type_expr(ns, single_arg, formal_t, arg.value());
+      }
+
       call.arguments().push_back(single_arg);
       param = nullptr;
+      param_decl = nullptr;
     }
   }
 
