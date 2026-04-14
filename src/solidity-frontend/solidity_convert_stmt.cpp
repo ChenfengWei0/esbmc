@@ -239,6 +239,28 @@ bool solidity_convertert::get_statement(
   }
   case SolidityGrammar::StatementT::ExpressionStatement:
   {
+    // Bare type-valued expressions such as `Arst.Foo;` or `C;` have no
+    // runtime effect — their typeString is `type(...)`. Trying to lower
+    // them through the normal ContractMemberCall / Identifier paths
+    // trips on JSON fields that only exist for value-producing member
+    // accesses (e.g. a struct-definition member looked up via
+    // `contract_var.structName`). Skip them cleanly here.
+    {
+      const nlohmann::json &inner = stmt["expression"];
+      if (
+        inner.contains("typeDescriptions") &&
+        inner["typeDescriptions"].contains("typeString") &&
+        inner["typeDescriptions"]["typeString"].is_string())
+      {
+        const std::string ts =
+          inner["typeDescriptions"]["typeString"].get<std::string>();
+        if (ts.compare(0, 5, "type(") == 0)
+        {
+          new_expr = code_skipt();
+          break;
+        }
+      }
+    }
     if (get_expr(
           stmt["expression"], stmt["expression"]["typeDescriptions"], new_expr))
       return true;

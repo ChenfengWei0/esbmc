@@ -106,10 +106,21 @@ unsigned int solidity_convertert::add_offset(
   unsigned int start_position)
 {
   // extract the length from "start:length:index"
-  std::string offset = src.substr(1, src.find(":"));
-  // already added 1 in start_position
-  unsigned int end_position = start_position + std::stoul(offset);
-  return end_position;
+  // The previous implementation was `src.substr(1, src.find(":"))`,
+  // which only worked by accident for multi-digit start positions and
+  // crashed (`stoul` invalid_argument) when the start digit count made
+  // the substring begin at or past the first colon (e.g. src="5:3:0"
+  // yielded ":" → stoul throws). Properly slice the *second* field.
+  const auto first = src.find(":");
+  if (first == std::string::npos)
+    return start_position;
+  const auto second = src.find(":", first + 1);
+  const std::string offset = (second == std::string::npos)
+                               ? src.substr(first + 1)
+                               : src.substr(first + 1, second - first - 1);
+  if (offset.empty() || !std::isdigit(static_cast<unsigned char>(offset[0])))
+    return start_position;
+  return start_position + std::stoul(offset);
 }
 
 std::string

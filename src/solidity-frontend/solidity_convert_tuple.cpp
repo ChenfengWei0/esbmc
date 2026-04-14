@@ -602,8 +602,35 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
   assert(lhs_json.value("nodeType", "") == "TupleExpression");
   assert(lhs_json.contains("components"));
 
-  const auto &lhs_comps = lhs_json["components"];
-  const auto &rhs_comps = rhs_json["components"];
+  // Strip redundant outer parens. `((a, b)) = (2, true)` parses as a
+  // 1-component TupleExpression wrapping the real 2-tuple. Without unwrapping
+  // we'd recurse into the leaf branch with a non-tuple RHS and crash on
+  // rhs["components"]. Unwrap whenever a single-element tuple contains a
+  // tuple (or until LHS/RHS arity matches).
+  auto unwrap_paren_tuple = [](const nlohmann::json &n) -> const nlohmann::json & {
+    const nlohmann::json *cur = &n;
+    while (cur->is_object() && cur->value("nodeType", "") == "TupleExpression" &&
+           cur->contains("components") && (*cur)["components"].is_array() &&
+           (*cur)["components"].size() == 1 && !(*cur)["components"][0].is_null() &&
+           (*cur)["components"][0].is_object() &&
+           (*cur)["components"][0].value("nodeType", "") == "TupleExpression")
+      cur = &(*cur)["components"][0];
+    return *cur;
+  };
+  const nlohmann::json &lhs_unwrapped = unwrap_paren_tuple(lhs_json);
+  const nlohmann::json &rhs_unwrapped =
+    rhs_json.is_object() ? unwrap_paren_tuple(rhs_json) : rhs_json;
+
+  const auto &lhs_comps = lhs_unwrapped["components"];
+  if (
+    !rhs_unwrapped.is_object() ||
+    rhs_unwrapped.value("nodeType", "") != "TupleExpression" ||
+    !rhs_unwrapped.contains("components"))
+  {
+    log_error("nested tuple: RHS is not a TupleExpression after unwrapping");
+    return true;
+  }
+  const auto &rhs_comps = rhs_unwrapped["components"];
 
   for (size_t i = 0; i < lhs_comps.size(); i++)
   {
@@ -624,7 +651,17 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
       if (get_type_description(rhs_val["typeDescriptions"], rhs_t))
         return true;
 
-      if (get_sol_type(rhs_t) == SolidityGrammar::SolType::TUPLE_RETURNS)
+      // Only treat the RHS as a tuple-returning function call when it
+      // actually *is* a FunctionCall node. A tuple LITERAL (e.g.
+      // `((1, 2), 3)`) has typeString `tuple(...)` too, which would
+      // otherwise misclassify as TUPLE_RETURNS and trip on the absent
+      // `.expression` field inside get_tuple_function_ref.
+      const bool rhs_is_fn_call =
+        rhs_val.is_object() &&
+        rhs_val.value("nodeType", "") == "FunctionCall";
+      if (
+        rhs_is_fn_call &&
+        get_sol_type(rhs_t) == SolidityGrammar::SolType::TUPLE_RETURNS)
       {
         // RHS is a function call returning tuple.
         // 1. Call the function (populates its tuple instance)
