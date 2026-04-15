@@ -364,8 +364,9 @@ The converter uses two prefixes:
 
 ### Resolved Bugs (2026-03-31 / 2026-04-15)
 
-Bugs 1-5 fixed 2026-03-31 (targeted regression work). Bugs 6-8 fixed
-2026-04-15 while stress-testing the frontend on 1inch swap-vm. Summary:
+Bugs 1-5 fixed 2026-03-31 (targeted regression work). Bugs 6-9 fixed
+2026-04-15 while stress-testing the frontend on 1inch swap-vm and
+fusion-protocol. Summary:
 
 | Bug | Description | Root cause | Fix location |
 |-----|-------------|-----------|--------------|
@@ -377,6 +378,7 @@ Bugs 1-5 fixed 2026-03-31 (targeted regression work). Bugs 6-8 fixed
 | **6** | Multi-file import cycle silently drops files (e.g. `ISwapVM.sol ↔ MakerTraits.sol`) causing downstream "failed to find reference AST node" | `topological_sort()` uses Kahn's algorithm, which leaves cycle-participating nodes stuck at `in_degree > 0` and never emitted | `solidity_convert.cpp::topological_sort`: after main Kahn loop, force-drain remaining nodes by repeatedly picking the lowest-residual-`in_degree` node (commit `4461578016`) |
 | **7** | Interface-nested `struct`/`enum`/`error`/`event` unresolved when a round-1 library references them as a return type (core dump on `IB.Order memory` in library signatures) | Interfaces only processed in round 2 of `convert()`; round-1 libraries look up nested types that haven't been registered yet | `solidity_convert.cpp::convert`: pre-round walk registers interface-nested type children before round 1; `solidity_convert_decl.cpp::get_noncontract_defition`: interface branch recurses into nested decls (commit `db74a7652c`) |
 | **8** | `TypeMemberCall` crash on function reference used as r-value inside an inline function-pointer array (e.g. `[_self, Base._b, _self]`) | `TypeMemberCall` handler asserted `args_json.contains("arguments")`; when the parent is a `TupleExpression`/inline array it has `components`, not `arguments` | `solidity_convert_expr.cpp` (line ~691): detect non-call-target use via `find_last_parent`, emit opaque `void*` typecast tagged `#sol_func_ptr` mirroring the existing `super.f` r-value lowering (commit `53affdd290`) |
+| **9** | **SOUNDNESS** — tuple-LHS `(x, y) = cond ? (a, b) : (b, a);` was silently dropped, leaving x/y at default zero and producing unsound `VERIFICATION SUCCESSFUL`. Affected SwapVM/Aqua/Limit routers (6 statements across 3 files) and any contract using the common binary-reorder idiom | `construct_tuple_assigments` in the `TUPLE_RETURNS` branch only understood FunctionCall-shaped RHS (`.expression` callee lookup); Conditional RHS hit `log_error("cannot locate function call in RHS"); return true` whose error bit was ignored by callers → statement became a no-op | `solidity_convert_tuple.cpp`: detect Conditional RHS before function-call extraction. Both branches TupleExpression → decompose element-wise into per-slot ternaries `lhs[i] = cond ? t_comps[i] : f_comps[i]`; other shapes → fall back to existing `rhs_is_nondet` sound over-approximation (commit `106c0e9c22`) |
 
 ### Remaining Known Issue
 
