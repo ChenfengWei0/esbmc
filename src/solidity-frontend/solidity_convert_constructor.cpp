@@ -746,11 +746,20 @@ bool solidity_convertert::move_inheritance_to_ctor(
           auto _ctor = ctor_node["modifiers"];
           for (const auto &c_mdf : _ctor)
           {
-            // solc 0.6.x may omit "kind" on ModifierInvocation nodes that
-            // refer to a base constructor. Guard the field access so we
-            // don't trip nlohmann::json's const operator[] assertion.
+            // solc 0.8.x tags base-ctor modifier invocations with
+            // kind=="baseConstructorSpecifier"; solc 0.6.x omits the field
+            // entirely on the same node. Only apply the kind filter when it
+            // is present — otherwise fall through to the name check below,
+            // which matches against c_name from linearizedBaseList and so
+            // only fires on actual base contracts. Requiring kind here
+            // silently drops all 0.6.x base-ctor invocations, leaving
+            // get_inherit_static_contract_instance with an empty args_list
+            // and producing calls with fewer actuals than the callee's
+            // formal params (→ symex "not enough arguments").
+            if (!c_mdf.contains("modifierName"))
+              continue;
             if (
-              !c_mdf.contains("modifierName") || !c_mdf.contains("kind") ||
+              c_mdf.contains("kind") &&
               c_mdf["kind"] != "baseConstructorSpecifier")
               continue;
 

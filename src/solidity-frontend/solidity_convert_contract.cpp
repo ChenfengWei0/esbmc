@@ -389,6 +389,27 @@ void solidity_convertert::get_inherit_static_contract_instance(
       param = nullptr;
     }
   }
+  else
+  {
+    // Abstract/intermediate contract that inherits from a ctor-bearing base
+    // without supplying base-ctor args in its own header or modifier list.
+    // Example: `abstract contract G is ERC20, Ownable { constructor(X x) {} }`
+    // — ERC20's (name, symbol) are supplied by the concrete descendant, not
+    // by G. We still synthesise an `_ESBMC_aux_ERC20` copy helper for G so
+    // that field copy works, and that helper's call must match the callee's
+    // formal arity (this + N user params + aux bool). Pad with nondet
+    // placeholders via assign_param_nondet so symex's
+    // argument_assignments doesn't trip "function call: not enough
+    // arguments". The helper's value is only used to copy fields over, so
+    // exact argument values don't matter — only the shape does.
+    auto &decl_ref = find_constructor_ref(c_name);
+    if (!decl_ref.empty() && !decl_ref.is_null())
+    {
+      if (assign_param_nondet(decl_ref, call))
+        log_error(
+          "failed to pad nondet args for inherited ctor of {}", c_name);
+    }
+  }
 
   call.arguments().push_back(true_exprt());
 
