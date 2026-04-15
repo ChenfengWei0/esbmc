@@ -1298,6 +1298,37 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
     // for abstract contract
     add_empty_body_node(ast_node);
   }
+  else if (
+    node_type == "ContractDefinition" &&
+    ast_node["contractKind"] == "interface")
+  {
+    // Round-1 interface handling: the interface itself is later processed
+    // in round 2 (get_contract_definition), but its nested type children —
+    // struct / enum / error / event — must be registered *now* so that
+    // round-1 libraries whose function signatures reference `IFoo.Bar` can
+    // resolve the symbol. Without this pre-pass, a library returning an
+    // interface-nested struct would crash on named-return declaration.
+    add_empty_body_node(ast_node);
+
+    if (ast_node.contains("nodes"))
+    {
+      std::string if_name = ast_node["name"].get<std::string>();
+      std::string old = current_baseContractName;
+      current_baseContractName = if_name;
+      for (auto &sub : ast_node["nodes"])
+      {
+        const std::string nt = sub["nodeType"].get<std::string>();
+        if (
+          nt == "ErrorDefinition" || nt == "EventDefinition" ||
+          nt == "StructDefinition" || nt == "EnumDefinition")
+        {
+          if (get_noncontract_defition(sub))
+            return true;
+        }
+      }
+      current_baseContractName = old;
+    }
+  }
   else if (node_type == "FunctionDefinition" && current_baseContractName.empty())
   {
     // Free function (outside any contract) — only handle at top-level scope.
@@ -1565,9 +1596,9 @@ void solidity_convertert::get_state_var_decl_name(
   name = ast_node["name"].get<std::string>();
   if (!cname.empty())
     id = "sol:@C@" + cname + "@" + name + "#" +
-         i2string(ast_node["id"].get<std::int16_t>());
+         i2string(ast_node["id"].get<int>());
   else
-    id = "sol:@" + name + "#" + i2string(ast_node["id"].get<std::int16_t>());
+    id = "sol:@" + name + "#" + i2string(ast_node["id"].get<int>());
 }
 
 bool solidity_convertert::get_var_decl_name(
@@ -1623,10 +1654,10 @@ void solidity_convertert::get_local_var_decl_name(
     std::string struct_name = member_entity_scope.at(scp);
     if (cname.empty())
       id = "sol:@" + struct_name + "@" + name + "#" +
-           i2string(ast_node["id"].get<std::int16_t>());
+           i2string(ast_node["id"].get<int>());
     else
       id = "sol:@C@" + cname + "@" + struct_name + "@" + name + "#" +
-           i2string(ast_node["id"].get<std::int16_t>());
+           i2string(ast_node["id"].get<int>());
   }
   else if ((current_functionDecl || !current_functionName.empty()) && !cname.empty())
   {
@@ -1638,7 +1669,7 @@ void solidity_convertert::get_local_var_decl_name(
     assert(!current_functionName.empty());
     // As the local variable inside the function will not be inherited, we can use current_functionName
     id = "sol:@C@" + cname + "@F@" + current_functionName + "@" + name + "#" +
-         i2string(ast_node["id"].get<std::int16_t>());
+         i2string(ast_node["id"].get<int>());
   }
   else if (
     (current_functionDecl || !current_functionName.empty()) && cname.empty())
@@ -1648,7 +1679,7 @@ void solidity_convertert::get_local_var_decl_name(
       current_functionName = (*current_functionDecl)["name"];
     assert(!current_functionName.empty());
     id = "sol:@F@" + current_functionName + "@" + name + "#" +
-         i2string(ast_node["id"].get<std::int16_t>());
+         i2string(ast_node["id"].get<int>());
   }
   else if (ast_node.contains("scope"))
   {
@@ -1663,10 +1694,10 @@ void solidity_convertert::get_local_var_decl_name(
     std::string struct_name = member_entity_scope.at(scp);
     if (cname.empty())
       id = "sol:@" + struct_name + "@" + name + "#" +
-           i2string(ast_node["id"].get<std::int16_t>());
+           i2string(ast_node["id"].get<int>());
     else
       id = "sol:@C@" + cname + "@" + struct_name + "@" + name + "#" +
-           i2string(ast_node["id"].get<std::int16_t>());
+           i2string(ast_node["id"].get<int>());
   }
   else
   {
@@ -1704,7 +1735,7 @@ void solidity_convertert::get_function_definition_name(
   if (contract_name.empty())
   {
     name = ast_node["name"].get<std::string>();
-    id = "sol:@F@" + name + "#" + i2string(ast_node["id"].get<std::int16_t>());
+    id = "sol:@F@" + name + "#" + i2string(ast_node["id"].get<int>());
     return;
   }
 
@@ -1723,7 +1754,7 @@ void solidity_convertert::get_function_definition_name(
     name = ast_node["name"] == "" ? ast_node["kind"] : ast_node["name"];
 
   id = "sol:@C@" + contract_name + "@F@" + name + "#" +
-       i2string(ast_node["id"].get<std::int16_t>());
+       i2string(ast_node["id"].get<int>());
 
   log_debug("solidity", "\t\t@@@ got function name {}", name);
 }

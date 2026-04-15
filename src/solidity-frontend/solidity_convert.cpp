@@ -285,6 +285,40 @@ bool solidity_convertert::convert()
   add_unique(absolute_path);
 
   std::string old_path = absolute_path;
+
+  // Pre-round: walk every interface and register its nested
+  // struct / enum / error / event symbols up front. Libraries processed
+  // later in round 1 can have function signatures referencing
+  // `IFoo.Bar` types, and those references would otherwise be unresolved
+  // (the interface itself is only fully processed in round 2). Without
+  // this pass, a library returning an interface-nested struct crashes on
+  // named-return declaration. Order-independent: the interface body is
+  // not fully converted here, only type-child symbols are registered.
+  for (nlohmann::json::iterator itr = nodes.begin(); itr != nodes.end(); ++itr)
+  {
+    if (
+      (*itr)["nodeType"] == "ContractDefinition" &&
+      (*itr).contains("contractKind") &&
+      (*itr)["contractKind"] == "interface" && (*itr).contains("nodes"))
+    {
+      std::string if_name = (*itr)["name"].get<std::string>();
+      std::string old = current_baseContractName;
+      current_baseContractName = if_name;
+      for (auto &sub : (*itr)["nodes"])
+      {
+        const std::string nt = sub["nodeType"].get<std::string>();
+        if (
+          nt == "ErrorDefinition" || nt == "EventDefinition" ||
+          nt == "StructDefinition" || nt == "EnumDefinition")
+        {
+          if (get_noncontract_defition(sub))
+            return true;
+        }
+      }
+      current_baseContractName = old;
+    }
+  }
+
   // first round: handle definitions that can be outside of the contract
   // including struct, enum, interface, event, error, library, constant...
   // noted that some can also be inside the contract, e.g. struct, enum...
