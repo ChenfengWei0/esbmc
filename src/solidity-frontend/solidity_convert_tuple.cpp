@@ -76,7 +76,7 @@ bool solidity_convertert::get_tuple_definition(const nlohmann::json &ast_node)
     const std::string mem_name = "mem" + std::to_string(counter);
     const std::string mem_id = "sol:@C@" + current_contractName + "@" + name +
                                "@" + mem_name + "#" +
-                               i2string(ast_node["id"].get<std::int16_t>());
+                               i2string(ast_node["id"].get<int>());
 
     // get type — route through the decl-aware overload when the tuple
     // component's AST carries a typeName, so array shapes flow through
@@ -267,6 +267,25 @@ bool solidity_convertert::get_tuple_function_ref(
       return true;
     }
     ref_decl_id = ast_node["referencedDeclaration"].get<int>();
+
+    // Call through a function-pointer variable: the referencedDeclaration
+    // points to a VariableDeclaration of FunctionTypeName, not to any
+    // FunctionDefinition. No per-callee tuple_instance symbol exists for
+    // these (we do not inline the target), so fail softly and let the
+    // caller fall back to nondet-per-member over-approximation.
+    const nlohmann::json &ref_node =
+      find_node_by_id(src_ast_json["nodes"], ref_decl_id);
+    if (
+      ref_node.is_object() &&
+      ref_node.value("nodeType", "") == "VariableDeclaration")
+    {
+      log_debug(
+        "solidity",
+        "get_tuple_function_ref: callee is a function-pointer variable "
+        "(refDecl={}), falling back to nondet tuple",
+        ref_decl_id);
+      return true;
+    }
   }
   else
   {
