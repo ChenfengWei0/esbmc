@@ -93,6 +93,11 @@ unsigned int solidity_convertert::get_line_number(
     byte_position = add_offset(src, byte_position);
 
   // the line number can be calculated by counting the number of line breaks prior to the identifier.
+  // Clamp byte_position to contract_contents.size() to avoid heap-buffer-overflow
+  // when AST nodes carry synthetic/out-of-range src offsets (observed on
+  // auxiliary vars populated before typechecking in large import closures).
+  if (byte_position > contract_contents.size())
+    byte_position = contract_contents.size();
   unsigned int loc = std::count(
                        contract_contents.begin(),
                        (contract_contents.begin() + byte_position),
