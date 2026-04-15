@@ -674,6 +674,51 @@ bool solidity_convertert::get_expr(
       return true;
     }
 
+    // Function reference used as a VALUE rather than as a call target.
+    // e.g. `Base._b` stored in a function-pointer array literal or
+    // assigned to a function-typed variable: the nearest parent is a
+    // TupleExpression / VariableDeclarationStatement / Assignment, not a
+    // FunctionCall whose `.expression` is this MemberAccess. Mirror the
+    // `super.f` r-value lowering above — emit an opaque void* typecast
+    // of the referenced FunctionDefinition's AST id so identity
+    // comparisons stay sound; indirect calls through the pointer already
+    // lower to nondet returns in convert_call.
+    //
+    // Without this branch, the assert below fires (the TupleExpression
+    // has `components`, not `arguments`) and the converter crashes.
+    {
+      const nlohmann::json &parent_json =
+        find_last_parent(src_ast_json["nodes"], expr);
+      bool used_as_call_target =
+        !parent_json.empty() && parent_json.contains("nodeType") &&
+        (parent_json["nodeType"] == "FunctionCall" ||
+         parent_json["nodeType"] == "FunctionCallOptions") &&
+        parent_json.contains("expression") &&
+        parent_json["expression"].contains("id") &&
+        expr.contains("id") &&
+        parent_json["expression"]["id"] == expr["id"];
+      if (!used_as_call_target)
+      {
+        typet ptr_t = gen_pointer_type(empty_typet());
+        ptr_t.set("#sol_func_ptr", true);
+        set_sol_type(ptr_t, SolidityGrammar::SolType::FUNC_PTR);
+        int fn_id = expr.value("referencedDeclaration", -1);
+        if (fn_id >= 0)
+        {
+          exprt id_const = constant_exprt(
+            integer2binary(fn_id + 1, bv_width(size_type())),
+            integer2string(fn_id + 1),
+            size_type());
+          new_expr = typecast_exprt(id_const, ptr_t);
+        }
+        else
+        {
+          get_nondet_expr(ptr_t, new_expr);
+        }
+        break;
+      }
+    }
+
     side_effect_expr_function_callt call;
 
     const nlohmann::json &args_json =
