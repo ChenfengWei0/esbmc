@@ -16,6 +16,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
+#include <limits>
 #include <regex>
 #include <optional>
 
@@ -497,24 +498,60 @@ void solidity_convertert::topological_sort(
     }
   }
   // Process nodes in the queue
-  while (!zero_in_degree_queue.empty())
-  {
-    std::string node = zero_in_degree_queue.front();
-    zero_in_degree_queue.pop();
-    // add the node's corresponding JSON file to the sorted result
-    sorted_files.push_back(path_to_json[node]);
-    // Update the in-degree of neighbouring nodes and add the new node with in-degree 0 to the queue
-    for (const auto &neighbor : graph[node])
+  std::unordered_set<std::string> visited;
+  auto drain_queue = [&]() {
+    while (!zero_in_degree_queue.empty())
     {
-      if (node != neighbor)
-      { // Ignore the case of importing itself.
-        in_degree[neighbor]--;
-        if (in_degree[neighbor] == 0)
-        {
-          zero_in_degree_queue.push(neighbor);
+      std::string node = zero_in_degree_queue.front();
+      zero_in_degree_queue.pop();
+      if (!visited.insert(node).second)
+        continue;
+      // add the node's corresponding JSON file to the sorted result
+      sorted_files.push_back(path_to_json[node]);
+      // Update the in-degree of neighbouring nodes and add the new node with in-degree 0 to the queue
+      for (const auto &neighbor : graph[node])
+      {
+        if (node != neighbor)
+        { // Ignore the case of importing itself.
+          in_degree[neighbor]--;
+          if (in_degree[neighbor] == 0)
+          {
+            zero_in_degree_queue.push(neighbor);
+          }
         }
       }
     }
+  };
+  drain_queue();
+
+  // Cycle handling: Kahn's algorithm leaves nodes that participate in an
+  // import cycle stuck at in_degree > 0, silently dropping them from the
+  // merged AST. Modern Solidity idioms routinely produce such cycles
+  // (interface Foo holds a struct used by library Bar; library Bar returns
+  // Foo's types → Foo ↔ Bar). Break the deadlock by repeatedly forcing the
+  // remaining node with the lowest residual in_degree into the queue and
+  // re-draining. The order within a cycle does not matter for later symbol
+  // resolution: find_decl_ref walks all top-level nodes regardless.
+  while (visited.size() < graph.size())
+  {
+    std::string pick;
+    int best = std::numeric_limits<int>::max();
+    for (const auto &pair : graph)
+    {
+      if (visited.count(pair.first))
+        continue;
+      int d = in_degree[pair.first];
+      if (d < best)
+      {
+        best = d;
+        pick = pair.first;
+      }
+    }
+    if (pick.empty())
+      break;
+    in_degree[pick] = 0;
+    zero_in_degree_queue.push(pick);
+    drain_queue();
   }
 }
 
