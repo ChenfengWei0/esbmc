@@ -1063,29 +1063,38 @@ bool solidity_convertert::get_high_level_member_access(
     {
       assert(!member.name().empty());
 
-      if (inheritanceMap[_cname].count(str))
+      // Verify the target struct actually has this component. solc 0.6.x
+      // using-for attaches library methods to contract-typed variables,
+      // producing a high-level member access whose cname_set can include
+      // the library itself (UniERC20). Libraries have no state, so e.g.
+      // an accidental `$address` access on them would abort in
+      // get_component_number. Treat a missing component as revert.
+      bool struct_has_member = false;
+      const symbolt *struct_sym = context.find_symbol(prefix + str);
+      if (struct_sym != nullptr && struct_sym->type.id() == "struct")
+        struct_has_member =
+          to_struct_type(struct_sym->type).has_component(member.name());
+
+      if (struct_has_member && inheritanceMap[_cname].count(str))
         memcall = member_exprt(_base, member.name(), member.type());
+      else if (
+        struct_has_member &&
+        is_var_getter_matched(str, member.name().as_string(), member.type()))
+      {
+        memcall = member_exprt(_base, member.name(), member.type());
+      }
       else
       {
-        // check if the state variable exsist in the target contract
-        // signature: type + name
-        // this is due to that the structureTypeMap only ensure the function signature matched
-        if (is_var_getter_matched(
-              str, member.name().as_string(), member.type()))
-          memcall = member_exprt(_base, member.name(), member.type());
-        else
-        {
-          // this should be a revert
-          // however, esbmc-kind havs trouble in __ESBMC_asusme(false) (v7.8)
-          side_effect_expr_function_callt call;
-          get_library_function_call_no_args(
-            "__ESBMC_assume", "c:@F@__ESBMC_assume", empty_typet(), l, call);
+        // this should be a revert
+        // however, esbmc-kind havs trouble in __ESBMC_asusme(false) (v7.8)
+        side_effect_expr_function_callt call;
+        get_library_function_call_no_args(
+          "__ESBMC_assume", "c:@F@__ESBMC_assume", empty_typet(), l, call);
 
-          exprt arg = false_exprt();
-          call.arguments().push_back(arg);
-          memcall = call;
-          is_revert = true;
-        }
+        exprt arg = false_exprt();
+        call.arguments().push_back(arg);
+        memcall = call;
+        is_revert = true;
       }
     }
     rhs = memcall;
