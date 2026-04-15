@@ -2169,7 +2169,14 @@ bool solidity_convertert::get_index_access_expr(
       {
         // Nested mapping access: m[k1][k2] — base is itself an IndexAccess
         // The inner access was already resolved; just index into the result.
-        solidity_gen_typecast(ns, pos, unsignedbv_typet(256));
+        // Route through gen_mapping_key_typecast so bytesN / string / bytes
+        // keys go through their dedicated mapping-key lowerings
+        // (bytes_static_to_mapping_key, str2uint, bytes_dynamic_to_mapping_key),
+        // not a raw solidity_gen_typecast that leaves the struct in place
+        // and trips xor_fold_key_to_64bit on an irep2-unmappable
+        // shr(struct, uint256). The lowered helpers already return uint256.
+        gen_mapping_key_typecast(
+          current_contractName, pos, location, pos.type());
         xor_fold_key_to_64bit(pos);
         new_expr = index_exprt(array, pos, t);
       }

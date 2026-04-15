@@ -400,16 +400,6 @@ bool solidity_convertert::insert_modifier_json(
 
       const nlohmann::json returnParameters = ast_node["returnParameters"];
       const nlohmann::json src = ast_node["src"];
-      /*
-        append below node to the contract_nodes
-        {
-          nodeType: FunctionDefinition
-          id: 0
-          name: fname
-          returnParameters: returnParameters
-          src: src
-        }
-      */
       nlohmann::json new_function = {
         {"nodeType", "FunctionDefinition"},
         {"id", 0},
@@ -644,6 +634,26 @@ bool solidity_convertert::get_func_modifier(
     symbolt &a_sym = *move_symbol_to_context(added_sym);
     get_function_this_pointer_param(
       c_name, aux_func_id, debug_mode, loc, aux_type);
+    // Pass through the wrapped function's own parameters so the inlined
+    // body (which references them by id with the aux function's scope
+    // prefix) can resolve to real parameter symbols. Without this, symex
+    // hits `value_set: unknown symbol` on e.g.
+    // preInteraction_onlyLimitOrderProtocol@extraData#64.
+    // current_functionName/Decl have already been switched to the aux
+    // above, so get_function_params will register the param symbols
+    // under the aux function's scope (sol:@C@<c>@F@<aux>@<name>#id).
+    if (
+      ast_node.contains("parameters") &&
+      ast_node["parameters"].contains("parameters"))
+    {
+      for (const auto &param : ast_node["parameters"]["parameters"])
+      {
+        code_typet::argumentt arg;
+        if (get_function_params(param, c_name, arg))
+          return true;
+        aux_type.arguments().push_back(arg);
+      }
+    }
     for (const auto &param : mod_def["parameters"]["parameters"])
     {
       code_typet::argumentt arg;
@@ -653,6 +663,35 @@ bool solidity_convertert::get_func_modifier(
     }
     a_sym.type = aux_type;
     move_builtin_to_contract(c_name, symbol_expr(a_sym), "internal", true);
+
+    // If the wrapped function returns a tuple, register a tuple instance
+    // for the synthetic aux as well. get_tuple_instance_name builds
+    // `tuple_instance$<current_functionDecl.id>` so a modifier-wrapped
+    // tuple-returning function (id=0 in insert_modifier_json) otherwise
+    // looks up `tuple_instance$0` which was never created, aborting with
+    // "cannot find tuple instance symbol". The aux function's own return
+    // type was already coerced to void above (see comment there); check
+    // the ORIGINAL function's return parameters instead.
+    {
+      typet orig_ret_type;
+      bool orig_is_tuple = false;
+      if (ast_node.contains("returnParameters"))
+      {
+        if (!get_type_description(
+              ast_node["returnParameters"], orig_ret_type) &&
+            get_sol_type(orig_ret_type) ==
+              SolidityGrammar::SolType::TUPLE_RETURNS)
+          orig_is_tuple = true;
+      }
+      if (orig_is_tuple)
+      {
+        exprt dump;
+        if (get_tuple_definition(*current_functionDecl))
+          return true;
+        if (get_tuple_instance(*current_functionDecl, dump))
+          return true;
+      }
+    }
 
     // same as origin function body
     if (body_exprt.operands().empty())
@@ -804,6 +843,34 @@ bool solidity_convertert::get_func_modifier(
       if (get_func_decl_this_ref(c_name, f_id, this_ptr))
         return true;
       func_modifier.arguments().push_back(this_ptr);
+
+      // Pass through the wrapped function's own parameters. Order must
+      // match aux_type.arguments(): [this, wrapped_params..., mod_params...].
+      // At this point current_functionDecl/Name are back to the original
+      // function (reset above), so get_local_var_decl_name produces the
+      // original scope's ids and the symbols exist from the main param
+      // loop in get_function_definition.
+      if (
+        ast_node.contains("parameters") &&
+        ast_node["parameters"].contains("parameters"))
+      {
+        for (const auto &param : ast_node["parameters"]["parameters"])
+        {
+          std::string pname, pid;
+          get_local_var_decl_name(param, c_name, pname, pid);
+          const symbolt *psym = context.find_symbol(pid);
+          if (psym == nullptr)
+          {
+            log_error(
+              "modifier wrapper: missing parameter symbol `{}` for function "
+              "`{}`",
+              pid,
+              f_name);
+            return true;
+          }
+          func_modifier.arguments().push_back(symbol_expr(*psym));
+        }
+      }
 
       for (const auto &arg_json : (*it)["arguments"])
       {

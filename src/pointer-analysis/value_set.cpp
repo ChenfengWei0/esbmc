@@ -859,6 +859,12 @@ void value_sett::get_reference_set_rec(const expr2tc &expr, object_mapt &dest)
     if (is_symbol2t(expr))
     {
       const symbolt *sym = ns.lookup(to_symbol2t(expr).thename);
+      if (!sym)
+      {
+        log_error(
+          "value_set: unknown symbol `{}`",
+          to_symbol2t(expr).thename.as_string());
+      }
       assert(sym);
       const irept &a = sym->type.find("alignment");
       if (a.is_not_nil())
