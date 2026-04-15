@@ -1277,3 +1277,116 @@ esbmc contract.sol --contract MyContract --focus-function myFunc \
 
 **Needs new code (medium-large effort):**
 - Solidity testcase generator — new `solidity_testcase_generator` class (~2000-3000 lines). Current `pytest_generator` and `ctest_generator` are Python/C-specific (type mappings, variable name mangling, output format). Solidity would need: uint256/address/bytes32 type mapping, contract state initialization, ABI encoding, and choice of test framework (Hardhat/Foundry)
+
+## 1inch liquidity-protocol Scan (archived)
+
+The `liquidity-protocol-master/` tree used for stress testing has been removed
+from the working copy. Empirical findings from that scan, captured here so
+they survive the deletion:
+
+### Best known flags for 1inch Solidity contracts
+
+```
+esbmc <contract>.solast --sol <contract>.sol --contract <Name> \
+  --no-standard-checks --unwind 1 --no-unwinding-assertions --cvc5
+```
+
+**Why these flags and not others**:
+- **Z3** (default fallback) fails with `Z3 error datatype is not well-founded`
+  on the recursive struct datatypes ESBMC emits for Solidity storage. Affects
+  most contracts in the repo.
+- **Bitwuzla** (currently auto-selected by `esbmc_parseoptions.cpp` for
+  Solidity) prints `[bzla] warning: Equality over constant arrays not fully
+  supported yet` and then aborts with `ERROR: SMT solver failed` on any
+  contract that touches mappings via const-array equality. Do NOT rely on
+  bitwuzla for mapping-heavy code.
+- **CVC5** is the only backend that reaches verdicts on most of this repo —
+  pass `--cvc5` explicitly to override the bitwuzla auto-select.
+- **`--unwind 1` instead of 2**: the synthesized `_ESBMC_Nondet_Extcall_*`
+  harness forms a mutually-recursive external-call graph through the
+  contract-to-contract dispatch. Under `--unwind 2`, symex fans out and
+  times out. Under `--unwind 1`, symex finishes in 40-100s per contract.
+  `--unwind 1` does NOT lose coverage here — the harness is already an
+  over-approximation.
+
+### Scan result (post-fix)
+
+Of 8 business contracts: 6 reach a verdict, 2 hit independent ESBMC bugs
+unrelated to the frontend itself.
+
+| Contract | Outcome | Notes |
+|----------|---------|-------|
+| BalanceAccounting | ✅ verdict | |
+| FarmingVoter | ✅ verdict | required `94013c6517` (get_line_number OOB) |
+| FarmingRewards | ✅ verdict | same fix |
+| MooniswapFactoryGovernance | ✅ verdict | required `4c4f1a57e9` (bitwuzla auto-select under k-induction) |
+| ReferralFeeReceiver | ✅ FAILED | reports `function call: not enough arguments` at MooniswapGovernance.sol line 1 — real frontend bug (stub called with wrong arity), worth chasing but NOT a crash |
+| MooniswapDeployer | ✅ FAILED | same arity-mismatch pattern |
+| Mooniswap | ❌ crash | see below |
+| MooniswapFactory | ❌ crash | see below |
+
+### Open bugs (liquidity-protocol)
+
+Both are deterministic crashes, not slow runs — widening timeouts or
+adjusting `--unwind` / `--slice-formula` / `--no-*-check` does NOT help.
+
+**Mooniswap — SMT-encoding SIGSEGV (release path)**:
+- Release build: reaches "Encoding remaining VCC(s) using bit-vector/
+  floating-point arithmetic", then SIGSEGV in the SMT encoder.
+- ASAN build: hits a DIFFERENT failure first — `Looking up index of
+  nonexistant member "$address" in struct/union "UniERC20"` in
+  `get_high_level_member_access` because `structureTypingMap[_cname]`'s
+  `cname_set` can include a `using-for` library (UniERC20) whose struct
+  has no `$address` field. Commit `ddc7a84712` guards that path with
+  `has_component()`, which unblocks ASAN — but release still SIGSEGVs
+  later at SMT encoding. Root cause of the release segv is NOT the
+  `$address` site; it is a separate encoder-level bug that needs gdb or
+  valgrind on a release build with debug symbols to locate.
+- Next step: `./scripts/build.sh -b RelWithDebInfo build` then attach gdb
+  or run under valgrind against Mooniswap.solast.
+
+**MooniswapFactory — CVC5ApiException**:
+- Aborts with `terminate called after throwing an instance of
+  'cvc5::CVC5ApiException' what(): Given sort is not associated with the
+  node manager of this solver`.
+- This is a CVC5 backend bug in `src/solvers/cvc5/`: a sort created in
+  one solver-instance context is later handed to a different context.
+  Independent of the frontend.
+- Next step: add assertions in `src/solvers/cvc5/cvc5_conv.cpp` on
+  every Sort created/consumed to trace the cross-context leak.
+
+### Debug-only frontend fixes landed during this scan
+
+These were masked in release builds by `NDEBUG` and only fired under
+Debug / Sanitizer builds, but each was a real bug that made the
+sanitizer useless on the 1inch codebase:
+
+- `94013c6517` — `get_line_number` heap-buffer-overflow: unconditionally
+  did `contract_contents.begin() + (stoul(pos)+1)` and handed the result
+  to `std::count`. Clamp `byte_position` to `contract_contents.size()`
+  before the count.
+- `537c5d6b07` — three asserts on solc 0.6.x AST nodes:
+  1. `has_modifier_invocation` asserted `m.contains("kind")` when the
+     very next line already guards `m.contains("kind") && ...`.
+     Base-constructor ModifierInvocation nodes from solc 0.6.x legitimately
+     omit "kind".
+  2. `move_inheritance_to_ctor` bare-accessed `c_mdf["kind"]` without
+     `contains("kind")`. Same root cause.
+  3. `get_statement` / Return asserted
+     `current_functionDecl.returnParameters.id == stmt.functionReturnParameters`
+     — does not hold for solc-inlined base-contract bodies reached through
+     modifiers or internal trampolines.
+- `ddc7a84712` — `get_high_level_member_access` crashed on using-for library
+  attachment (described above).
+
+### Never do
+
+- Do NOT reintroduce the `incremental_mode` guard in
+  `esbmc_parseoptions.cpp`'s bitwuzla auto-select — `4c4f1a57e9` removed
+  it because k-induction on recursive Solidity datatypes was pinned to
+  Z3 and thus ALWAYS crashed with "not well-founded". Bitwuzla is a
+  strict improvement there.
+- Do NOT try to fix the Mooniswap/MooniswapFactory crashes by tuning
+  timeouts or flag combinations — they are crashes in ESBMC code, not
+  verification timeouts.
+

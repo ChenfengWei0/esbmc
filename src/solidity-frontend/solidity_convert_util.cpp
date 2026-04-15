@@ -1126,14 +1126,18 @@ const nlohmann::json &solidity_convertert::find_decl_ref(int ref_id)
                        node.contains("name") &&
                        node["name"] == current_baseContractName;
 
-        // Only search inside matching contract or library
-        if (is_base || is_library)
+        // Search inside the current base, libraries, and interfaces.
+        // Interfaces routinely host struct definitions that are referenced
+        // by member access from other contracts (e.g. 1inch limit-order-
+        // protocol: `struct Order` lives in `interface IOrderMixin` and
+        // every extension accesses `order.maker` through it).
+        if (is_base || is_library || is_interface)
         {
           const auto &result = find_node_by_id(node, id);
           if (!result.empty())
             return result;
         }
-        // Skip other contracts
+        // Skip other non-base, non-interface, non-library contracts
       }
       else
       {
