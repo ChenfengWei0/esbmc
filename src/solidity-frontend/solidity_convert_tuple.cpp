@@ -524,7 +524,73 @@ bool solidity_convertert::construct_tuple_assigments(
     else if (expr.contains("initialValue"))
       rhs_call_json = &expr["initialValue"];
 
-    if (rhs_call_json && rhs_call_json->contains("expression"))
+    // Conditional RHS: (x, y) = cond ? (a, b) : (c, d);
+    // The rest of this block only understands FunctionCall-shaped RHS
+    // (looking up the callee via `.expression`). For a Conditional whose
+    // branches are both TupleExpressions we decompose element-wise into
+    // per-slot ternaries before the function-call path can drop the
+    // statement. Other Conditional shapes (e.g. function-call branches)
+    // fall back to nondet-per-slot — sound over-approximation.
+    if (
+      rhs_call_json && rhs_call_json->is_object() &&
+      rhs_call_json->value("nodeType", "") == "Conditional")
+    {
+      const nlohmann::json &cond_j = (*rhs_call_json)["condition"];
+      const nlohmann::json &true_j = (*rhs_call_json)["trueExpression"];
+      const nlohmann::json &false_j = (*rhs_call_json)["falseExpression"];
+
+      const bool both_tuple_literals =
+        true_j.is_object() && false_j.is_object() &&
+        true_j.value("nodeType", "") == "TupleExpression" &&
+        false_j.value("nodeType", "") == "TupleExpression" &&
+        true_j.contains("components") && false_j.contains("components");
+
+      if (both_tuple_literals)
+      {
+        exprt cond_expr;
+        if (get_expr(cond_j, cond_expr))
+          return true;
+
+        const auto &t_comps = true_j["components"];
+        const auto &f_comps = false_j["components"];
+
+        for (size_t i = 0; i < lhs.operands().size(); ++i)
+        {
+          exprt lop = lhs.operands().at(i);
+          if (lop.is_nil())
+            continue;
+          if (
+            i >= t_comps.size() || i >= f_comps.size() ||
+            t_comps[i].is_null() || f_comps[i].is_null())
+          {
+            log_error(
+              "tuple conditional assignment: branch arity mismatch at slot {}",
+              i);
+            return true;
+          }
+          exprt t_val, f_val;
+          if (get_expr(t_comps[i], t_val))
+            return true;
+          if (get_expr(f_comps[i], f_val))
+            return true;
+
+          // Align both branches to the LHS slot type before building the
+          // ternary so the if_expr has a single well-defined type.
+          convert_type_expr(ns, t_val, lop, empty_json);
+          convert_type_expr(ns, f_val, lop, empty_json);
+
+          exprt ternary("if", lop.type());
+          ternary.copy_to_operands(cond_expr, t_val, f_val);
+
+          get_tuple_assignment(expr, lop, ternary);
+        }
+        return false;
+      }
+
+      // Unhandled Conditional shape: fall through to nondet fallback.
+      rhs_is_nondet = true;
+    }
+    else if (rhs_call_json && rhs_call_json->contains("expression"))
     {
       if (get_tuple_function_ref((*rhs_call_json)["expression"], new_rhs))
       {
