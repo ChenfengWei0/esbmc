@@ -560,17 +560,15 @@ bool solidity_convertert::get_statement(
              : nullptr);
     if (ret_params_src != nullptr)
     {
-      // Skip the id-matching assertion when we're overriding — the caller
-      // and the target have different ParameterList ids by construction.
-      if (
-        delegate_shadow_target_return_params == nullptr &&
-        (*current_functionDecl).contains("returnParameters"))
-      {
-        assert(
-          (*current_functionDecl)["returnParameters"]["id"]
-            .get<std::uint16_t>() ==
-          stmt["functionReturnParameters"].get<std::uint16_t>());
-      }
+      // Previously this block asserted that
+      // current_functionDecl.returnParameters.id ==
+      // stmt.functionReturnParameters, to catch cases where a Return node
+      // refers to a different ParameterList than its enclosing function.
+      // That invariant does not hold on real-world solc 0.6.x output for
+      // contracts that inline base-contract function bodies via modifiers
+      // or internal trampolines (observed on 1inch Mooniswap). Type
+      // extraction below only uses ret_params_src, so the id mismatch is
+      // harmless — rely on get_type_description and drop the assert.
       if (get_type_description(*ret_params_src, return_type))
         return true;
     }

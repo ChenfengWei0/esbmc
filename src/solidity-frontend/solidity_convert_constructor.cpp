@@ -746,8 +746,11 @@ bool solidity_convertert::move_inheritance_to_ctor(
           auto _ctor = ctor_node["modifiers"];
           for (const auto &c_mdf : _ctor)
           {
+            // solc 0.6.x may omit "kind" on ModifierInvocation nodes that
+            // refer to a base constructor. Guard the field access so we
+            // don't trip nlohmann::json's const operator[] assertion.
             if (
-              !c_mdf.contains("modifierName") ||
+              !c_mdf.contains("modifierName") || !c_mdf.contains("kind") ||
               c_mdf["kind"] != "baseConstructorSpecifier")
               continue;
 

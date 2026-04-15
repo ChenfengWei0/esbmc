@@ -451,7 +451,8 @@ bool solidity_convertert::has_modifier_invocation(
   nlohmann::json modifiers = nlohmann::json::array();
   for (const auto &m : ast_node["modifiers"])
   {
-    assert(m.contains("kind"));
+    // solc 0.6.x ModifierInvocation nodes may omit "kind" for base-constructor
+    // calls; the guarded check below already handles the missing field.
     if (m.contains("kind") && m["kind"] == "modifierInvocation")
     {
       modifiers.push_back(m);
