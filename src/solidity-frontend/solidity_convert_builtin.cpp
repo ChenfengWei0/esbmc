@@ -101,10 +101,19 @@ bool solidity_convertert::add_auxiliary_members(
   // For payable constructors, initialize $balance to msg.value so that
   // ether sent via new D{value: amount}() is available during the constructor.
   // For non-payable constructors, use nondet_uint as before.
+  //
+  // NOTE (SMTChecker parity): SMTChecker models address(this).balance as
+  // nondet with assume(balance >= msg.value), accounting for pre-existing
+  // funds from selfdestruct/coinbase. ESBMC does NOT yet model this because:
+  // 1. address(this).balance in user code resolves through
+  //    get_aux_property_function (returning a fresh nondet) rather than
+  //    reading this->$balance — so an assume on $balance doesn't constrain
+  //    the user-visible expression.
+  // 2. Changing $balance to nondet breaks inter-contract balance tracking
+  //    (e.g., new D{value: amount}() expects D.$balance == amount).
+  // Prerequisite: fix address(this).balance to read this->$balance.
   {
     exprt balance_init = _ndt_uint;
-    // 0.6.x emits null for some optional string fields (e.g. "kind") on
-    // non-constructor nodes; guard each access defensively.
     auto str_field = [](const nlohmann::json &n, const char *k) {
       if (!n.contains(k) || !n[k].is_string())
         return std::string();

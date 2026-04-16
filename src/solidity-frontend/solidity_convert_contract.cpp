@@ -641,6 +641,15 @@ bool solidity_convertert::multi_transaction_verification(
   code_function_callt func_call;
   if (get_unbound_funccall(c_name, func_call))
     return true;
+
+  // TODO (Phase 2): EVM per-transaction balance model.
+  // Between transactions, the contract's balance may increase without any
+  // call (selfdestruct target, coinbase reward). At the start of each new
+  // transaction, msg.value is added. The proper model would re-seed
+  // msg_value and assume(new_balance >= old_balance + msg_value) per
+  // iteration. Deferred: requires careful symbol timing (msg_value from
+  // the C model is not in the symbol table during frontend conversion).
+
   while_body.move_to_operands(func_call);
 
   // while-cond:
