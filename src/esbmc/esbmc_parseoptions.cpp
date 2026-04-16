@@ -18,6 +18,9 @@ extern "C"
 
 #include <esbmc/bmc.h>
 #include <esbmc/esbmc_parseoptions.h>
+#ifdef ENABLE_SOLIDITY_FRONTEND
+#  include <solidity-frontend/solidity_tod_harness.h>
+#endif
 #include <cctype>
 #include <clang-c-frontend/clang_c_language.h>
 #include <util/config.h>
@@ -810,6 +813,118 @@ int esbmc_parseoptionst::doit()
       }
     }
   }
+
+#ifdef ENABLE_SOLIDITY_FRONTEND
+  // --dump-harness: generate TOD harness and exit without verification
+  if (cmdline.isset("dump-harness") && cmdline.isset("tod-functions"))
+  {
+    // Determine source and AST paths
+    std::string sol_path, solast_path;
+    if (cmdline.isset("sol"))
+      sol_path = cmdline.getval("sol");
+    for (const auto &arg : cmdline.args)
+    {
+      if (arg.size() >= 4 && arg.substr(arg.size() - 4) == ".sol")
+      {
+        if (sol_path.empty())
+          sol_path = arg;
+      }
+      else if (
+        arg.size() >= 7 && arg.substr(arg.size() - 7) == ".solast")
+        solast_path = arg;
+    }
+    if (sol_path.empty())
+    {
+      log_error("--dump-harness requires a .sol source file");
+      return 1;
+    }
+
+    // Read source
+    std::ifstream sol_file(sol_path);
+    if (!sol_file.is_open())
+    {
+      log_error("Cannot open source file: {}", sol_path);
+      return 1;
+    }
+    std::string sol_source(
+      (std::istreambuf_iterator<char>(sol_file)),
+      std::istreambuf_iterator<char>());
+
+    // If no .solast given, invoke solc
+    if (solast_path.empty())
+    {
+      solast_path = sol_path + "ast";
+      std::string cmd =
+        "solc --ast-compact-json " + sol_path + " > " + solast_path;
+      if (cmdline.isset("solc-bin"))
+        cmd = std::string(cmdline.getval("solc-bin")) +
+              " --ast-compact-json " + sol_path + " > " + solast_path;
+      if (system(cmd.c_str()) != 0)
+      {
+        log_error("solc failed: {}", cmd);
+        return 1;
+      }
+    }
+
+    // Parse AST JSON (simplified: take first JSON block)
+    std::ifstream ast_file(solast_path);
+    if (!ast_file.is_open())
+    {
+      log_error("Cannot open AST file: {}", solast_path);
+      return 1;
+    }
+    nlohmann::json ast;
+    {
+      std::string line, json_block;
+      // Skip header until first "======="
+      while (getline(ast_file, line))
+        if (line.find(".sol =======") != std::string::npos)
+          break;
+      while (getline(ast_file, line))
+      {
+        if (line.find(".sol =======") != std::string::npos)
+          break;
+        json_block += line + "\n";
+      }
+      if (json_block.empty())
+      {
+        log_error("No JSON block found in {}", solast_path);
+        return 1;
+      }
+      ast = nlohmann::json::parse(json_block);
+    }
+
+    // Parse function pair
+    std::string tod_funcs = cmdline.getval("tod-functions");
+    auto comma = tod_funcs.find(',');
+    if (comma == std::string::npos)
+    {
+      log_error("--tod-functions expects two comma-separated names (e.g., \"A,B\")");
+      return 1;
+    }
+    std::string func_a = tod_funcs.substr(0, comma);
+    std::string func_b = tod_funcs.substr(comma + 1);
+
+    // Get contract name
+    std::string contract_name;
+    if (cmdline.isset("contract"))
+      contract_name = cmdline.getval("contract");
+    if (contract_name.empty())
+    {
+      log_error("--dump-harness requires --contract to specify the target contract");
+      return 1;
+    }
+
+    // Generate harness
+    std::string harness = generate_tod_harness(
+      sol_source, ast, contract_name, func_a, func_b);
+    if (harness.empty())
+      return 1;
+
+    std::cout << harness;
+    return 0;
+  }
+#endif
 
   // Create and preprocess a GOTO program
   if (get_goto_program(options, goto_functions))
