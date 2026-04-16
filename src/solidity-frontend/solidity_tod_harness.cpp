@@ -1,6 +1,7 @@
 #include <solidity-frontend/solidity_tod_harness.h>
 #include <util/message.h>
 #include <map>
+#include <set>
 #include <sstream>
 #include <regex>
 
@@ -77,53 +78,6 @@ static std::string soltype_to_source(const std::string &ts)
   return ts;
 }
 
-/// Emit a Solidity parameter list string like "uint256 a, address b".
-static std::string emit_params(const nlohmann::json &func_def)
-{
-  std::string out;
-  if (
-    !func_def.contains("parameters") ||
-    !func_def["parameters"].contains("parameters"))
-    return out;
-  bool first = true;
-  for (const auto &p : func_def["parameters"]["parameters"])
-  {
-    std::string ts =
-      p.value("typeDescriptions", nlohmann::json{}).value("typeString", "");
-    std::string name = p.value("name", "");
-    std::string st = soltype_to_source(ts);
-    if (st.empty())
-      continue;
-    if (!first)
-      out += ", ";
-    first = false;
-    out += st + " " + name;
-  }
-  return out;
-}
-
-/// Emit just the argument names for forwarding: "a, b".
-static std::string emit_args(const nlohmann::json &func_def)
-{
-  std::string out;
-  if (
-    !func_def.contains("parameters") ||
-    !func_def["parameters"].contains("parameters"))
-    return out;
-  bool first = true;
-  for (const auto &p : func_def["parameters"]["parameters"])
-  {
-    std::string name = p.value("name", "");
-    if (name.empty())
-      continue;
-    if (!first)
-      out += ", ";
-    first = false;
-    out += name;
-  }
-  return out;
-}
-
 /// Prefix parameter names to avoid collisions between funcA and funcB.
 /// Returns e.g. "uint256 a_a, address a_b".
 static std::string emit_prefixed_params(
@@ -182,8 +136,31 @@ struct StateVar
   std::string name;
   std::string type_string;
   bool is_mapping;
+  int id; // AST id, used to detect references from function bodies
   std::vector<std::string> mapping_key_types; // for (nested) mappings
 };
+
+/// Recursively walk an AST node and collect every `referencedDeclaration`
+/// integer.  This captures any identifier whose binding points to another
+/// declaration (state vars, locals, functions, modifiers, ...).
+static void collect_referenced_decls(
+  const nlohmann::json &node,
+  std::set<int> &ids)
+{
+  if (node.is_object())
+  {
+    auto it = node.find("referencedDeclaration");
+    if (it != node.end() && it->is_number_integer())
+      ids.insert(it->get<int>());
+    for (auto kv = node.begin(); kv != node.end(); ++kv)
+      collect_referenced_decls(kv.value(), ids);
+  }
+  else if (node.is_array())
+  {
+    for (const auto &child : node)
+      collect_referenced_decls(child, ids);
+  }
+}
 
 /// Walk a Mapping typeName node to collect all key types.
 static void collect_mapping_keys(
@@ -221,6 +198,7 @@ static std::vector<StateVar> collect_public_state_vars(
     sv.type_string =
       node.value("typeDescriptions", nlohmann::json{}).value("typeString", "");
     sv.is_mapping = false;
+    sv.id = node.value("id", -1);
 
     if (
       node.contains("typeName") &&
@@ -335,6 +313,40 @@ std::string generate_tod_harness(
   auto state_vars = collect_public_state_vars(*cdef);
   const nlohmann::json *ctor = find_constructor(*cdef);
 
+  // Phase 3: targeted assertions.  Walk both function bodies, gather every
+  // referenced declaration id, and keep only those state vars that appear
+  // in BOTH (the "shared" set).  A var only one function touches cannot
+  // exhibit order-dependent behaviour by construction.
+  std::set<int> ids_a, ids_b;
+  if (fa->contains("body"))
+    collect_referenced_decls((*fa)["body"], ids_a);
+  if (fb->contains("body"))
+    collect_referenced_decls((*fb)["body"], ids_b);
+  std::set<int> shared_ids;
+  for (int id : ids_a)
+    if (ids_b.count(id))
+      shared_ids.insert(id);
+
+  std::vector<StateVar> shared_vars;
+  std::vector<std::string> skipped_vars;
+  for (const auto &sv : state_vars)
+  {
+    if (sv.id >= 0 && shared_ids.count(sv.id))
+      shared_vars.push_back(sv);
+    else
+      skipped_vars.push_back(sv.name);
+  }
+  state_vars.swap(shared_vars);
+
+  if (state_vars.empty())
+    log_warning(
+      "TOD harness: no public state variable is referenced by both "
+      "'{}' and '{}'.  The harness will contain no equality assertion; "
+      "verification will trivially succeed (no TOD via shared state "
+      "is observable).",
+      func_a,
+      func_b);
+
   // Constructor params
   std::string ctor_params_decl;
   std::string ctor_args;
@@ -386,7 +398,24 @@ std::string generate_tod_harness(
   out << "// If VERIFICATION FAILED, a TOD vulnerability exists:\n";
   out << "//   the counterexample shows inputs where swapping the\n";
   out << "//   execution order of " << func_a << " and " << func_b
-      << " produces different state.\n\n";
+      << " produces different state.\n";
+  out << "//\n";
+  out << "// Targeted state variables (referenced by BOTH functions):";
+  if (state_vars.empty())
+    out << " <none>\n";
+  else
+  {
+    out << "\n";
+    for (const auto &sv : state_vars)
+      out << "//   - " << sv.name << "\n";
+  }
+  if (!skipped_vars.empty())
+  {
+    out << "// Skipped (touched by at most one function):\n";
+    for (const auto &n : skipped_vars)
+      out << "//   - " << n << "\n";
+  }
+  out << "\n";
   out << "// SPDX-License-Identifier: MIT\n";
   out << "pragma solidity >=0.8.0;\n\n";
 

@@ -815,8 +815,10 @@ int esbmc_parseoptionst::doit()
   }
 
 #ifdef ENABLE_SOLIDITY_FRONTEND
-  // --dump-harness: generate TOD harness and exit without verification
-  if (cmdline.isset("dump-harness") && cmdline.isset("tod-functions"))
+  // TOD harness generation: shared by --dump-harness (print + exit) and the
+  // implicit auto-verify path (write to a temp .sol, swap input args, fall
+  // through to normal verification).
+  if (cmdline.isset("tod-functions"))
   {
     // Determine source and AST paths
     std::string sol_path, solast_path;
@@ -835,7 +837,7 @@ int esbmc_parseoptionst::doit()
     }
     if (sol_path.empty())
     {
-      log_error("--dump-harness requires a .sol source file");
+      log_error("--tod-functions requires a .sol source file");
       return 1;
     }
 
@@ -911,7 +913,7 @@ int esbmc_parseoptionst::doit()
       contract_name = cmdline.getval("contract");
     if (contract_name.empty())
     {
-      log_error("--dump-harness requires --contract to specify the target contract");
+      log_error("--tod-functions requires --contract to specify the target contract");
       return 1;
     }
 
@@ -921,8 +923,52 @@ int esbmc_parseoptionst::doit()
     if (harness.empty())
       return 1;
 
-    std::cout << harness;
-    return 0;
+    // --dump-harness: print and exit, no verification
+    if (cmdline.isset("dump-harness"))
+    {
+      std::cout << harness;
+      return 0;
+    }
+
+    // Auto-verify path: write the harness next to the source, then redirect
+    // the verification pipeline at the new file.
+    std::string harness_basename =
+      "tod_" + func_a + "_" + func_b + "_harness.sol";
+    std::string harness_path;
+    {
+      // Place the file in the same directory as the original source so any
+      // relative imports the user wrote keep resolving.
+      auto slash = sol_path.find_last_of("/\\");
+      std::string dir =
+        (slash == std::string::npos) ? std::string(".")
+                                     : sol_path.substr(0, slash);
+      harness_path = dir + "/" + harness_basename;
+    }
+    {
+      std::ofstream out(harness_path);
+      if (!out.is_open())
+      {
+        log_error("Cannot write harness to {}", harness_path);
+        return 1;
+      }
+      out << harness;
+    }
+    log_status("TOD harness written to {}", harness_path);
+
+    // Swap the verification target.
+    std::string harness_contract = "TOD_" + func_a + "_" + func_b;
+    cmdline.args.clear();
+    cmdline.args.push_back(harness_path);
+    config.cname = harness_contract;
+    options.set_option("contract", harness_contract);
+    // Force the option set the harness needs.  Don't overwrite values
+    // the user explicitly set on the command line.
+    options.set_option("bound", true);
+    options.set_option("no-standard-checks", true);
+    options.set_option("no-unwinding-assertions", true);
+    if (!cmdline.isset("unwind") && options.get_option("unwind").empty())
+      options.set_option("unwind", "2");
+    config.options = options;
   }
 #endif
 

@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Counter --tod-functions add,mul
+^VERIFICATION FAILED$
