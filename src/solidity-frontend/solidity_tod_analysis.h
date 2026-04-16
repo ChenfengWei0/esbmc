@@ -9,8 +9,17 @@
 namespace solidity_tod
 {
 
+/// Virtual id for the contract's ETH balance (`address(this).balance`).
+/// Real Solidity AST ids are positive; we use a negative sentinel so it
+/// can flow through the same R/W set machinery as ordinary state vars
+/// without a separate field.  Picked specifically to not collide with
+/// the negative ids solc assigns to built-ins like `this` (-28),
+/// `msg` (-15), etc.
+constexpr int kBalanceId = -2;
+
 /// Read/write footprint of a single function over the contract's
-/// (public/private) state variables, identified by AST id.
+/// (public/private) state variables, identified by AST id.  Negative
+/// ids are reserved for virtual tokens (currently only kBalanceId).
 struct RWSet
 {
   std::set<int> reads;

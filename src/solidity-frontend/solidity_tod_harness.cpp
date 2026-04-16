@@ -326,6 +326,11 @@ static bool emit_harness_contract(
     else
       skipped_vars.push_back(sv.name);
   }
+  // Phase 4: TOD-Balance.  If the closed footprint puts the virtual
+  // __balance token in the shared set, both functions touch ETH balance —
+  // emit `assert(address(c1).balance == address(c2).balance)`.
+  bool emit_balance_assert =
+    shared_ids.count(solidity_tod::kBalanceId) != 0;
 
   // Constructor params
   std::string ctor_params_decl;
@@ -378,12 +383,25 @@ static bool emit_harness_contract(
     for (const auto &n : skipped_vars)
       out << "//   - " << n << "\n";
   }
+  if (emit_balance_assert)
+    out << "// Plus: address(this).balance (TOD-Balance check)\n";
 
   std::string harness_name = "TOD_" + func_a + "_" + func_b;
+  // For TOD-Balance with a payable constructor, fund both copies with the
+  // same nondet initial balance so transfers in the function bodies don't
+  // get pruned by the `balance < value -> assume(false)` revert model.
+  // Requires the test() function itself to be payable so msg.value can
+  // cover both `new C{value: __initBal}()` calls.
+  bool ctor_payable =
+    ctor && ctor->value("stateMutability", "") == "payable";
+  bool fund_copies = emit_balance_assert && ctor_payable;
+
   out << "contract " << harness_name << " {\n";
   out << "    function test(\n";
 
   std::vector<std::string> all_params;
+  if (fund_copies)
+    all_params.push_back("uint __initBal");
   if (!ctor_params_decl.empty())
     all_params.push_back(ctor_params_decl);
   if (!fa_params.empty())
@@ -398,12 +416,22 @@ static bool emit_harness_contract(
       out << ",";
     out << "\n";
   }
-  out << "    ) public {\n";
+  out << "    ) public" << (fund_copies ? " payable {\n" : " {\n");
 
-  out << "        " << c1_name << " c1 = new " << c1_name << "("
-      << ctor_args << ");\n";
-  out << "        " << c2_name << " c2 = new " << c2_name << "("
-      << ctor_args << ");\n\n";
+  if (fund_copies)
+  {
+    out << "        " << c1_name << " c1 = new " << c1_name
+        << "{value: __initBal}(" << ctor_args << ");\n";
+    out << "        " << c2_name << " c2 = new " << c2_name
+        << "{value: __initBal}(" << ctor_args << ");\n\n";
+  }
+  else
+  {
+    out << "        " << c1_name << " c1 = new " << c1_name << "("
+        << ctor_args << ");\n";
+    out << "        " << c2_name << " c2 = new " << c2_name << "("
+        << ctor_args << ");\n\n";
+  }
 
   out << "        // Order 1: " << func_a << " then " << func_b << "\n";
   out << "        c1." << func_a << "(" << fa_args << ");\n";
@@ -463,15 +491,17 @@ static bool emit_harness_contract(
           << " == c2." << sv.name << "());\n";
     }
   }
+  if (emit_balance_assert)
+    out << "        assert(address(c1).balance == address(c2).balance);\n";
 
   out << "    }\n";
   out << "}\n\n";
 
-  if (shared_vars.empty())
+  if (shared_vars.empty() && !emit_balance_assert)
     log_warning(
-      "TOD harness: no public state variable is referenced by both "
-      "'{}' and '{}'.  The harness contains no equality assertion; "
-      "verification will trivially succeed.",
+      "TOD harness: no public state variable nor ETH balance is touched "
+      "by both '{}' and '{}'.  The harness contains no equality "
+      "assertion; verification will trivially succeed.",
       func_a,
       func_b);
   return true;

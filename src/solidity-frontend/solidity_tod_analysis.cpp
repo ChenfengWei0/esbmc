@@ -155,13 +155,67 @@ static void walk(Walker &w, const nlohmann::json &node, bool is_write_target)
 
   if (nt == "MemberAccess")
   {
+    // Detect `<addr>.balance` reads — record on the virtual __balance
+    // token so candidate-pair analysis can flag balance-only TOD even
+    // when no public state variable changes.
+    const std::string mname = node.value("memberName", "");
+    if (mname == "balance" && node.contains("expression"))
+    {
+      const auto &expr = node["expression"];
+      const std::string et = expr.value("typeDescriptions", nlohmann::json{})
+                               .value("typeString", "");
+      if (et == "address" || et == "address payable")
+        w.rw.reads.insert(kBalanceId);
+    }
     if (node.contains("expression"))
       walk(w, node["expression"], is_write_target);
     return;
   }
 
+  if (nt == "FunctionCallOptions")
+  {
+    // `addr.call{value: x}(args)` — record balance W on the virtual
+    // __balance token.  The wrapped call expression / option values are
+    // walked below so any state vars used as the value source are still
+    // captured as reads.
+    if (node.contains("names") && node["names"].is_array())
+    {
+      for (const auto &n : node["names"])
+        if (n.is_string() && n.get<std::string>() == "value")
+        {
+          w.rw.writes.insert(kBalanceId);
+          break;
+        }
+    }
+    walk_children(w, node, false);
+    return;
+  }
+
   if (nt == "FunctionCall")
   {
+    // Detect direct value-transferring builtins on an address-typed
+    // base: `<addr>.transfer(v)` and `<addr>.send(v)` both decrement
+    // `this->$balance` in the model, so flag W on __balance.
+    if (node.contains("expression") && node["expression"].is_object())
+    {
+      const auto &callee = node["expression"];
+      if (callee.value("nodeType", "") == "MemberAccess")
+      {
+        const std::string mname = callee.value("memberName", "");
+        if (
+          (mname == "transfer" || mname == "send") &&
+          callee.contains("expression"))
+        {
+          const auto &base = callee["expression"];
+          const std::string bt =
+            base.value("typeDescriptions", nlohmann::json{})
+              .value("typeString", "");
+          if (bt == "address" || bt == "address payable")
+            w.rw.writes.insert(kBalanceId);
+        }
+      }
+    }
+
     // Direct internal call?  expression is Identifier whose
     // referencedDeclaration is one of our same-contract callables.
     if (node.contains("expression"))
@@ -231,6 +285,12 @@ static std::map<int, LocalInfo> compute_local(
     if (fn.contains("modifiers"))
       for (const auto &mi : fn["modifiers"])
         walk(w, mi, false);
+    // A `payable` function (or `receive` / `fallback` payable) implicitly
+    // credits `this->$balance` with `msg.value` on entry — record W on
+    // the virtual __balance token so candidate analysis pairs it up with
+    // anything else that touches balance.
+    if (fn.value("stateMutability", "") == "payable")
+      w.rw.writes.insert(kBalanceId);
     out[id] = {w.rw, w.callees};
   }
   return out;

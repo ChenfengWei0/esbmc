@@ -951,6 +951,8 @@ protected:
   // Check whether a VariableDeclaration JSON was initialized via `new C()`.
   // Returns true when the decl has `value: { nodeType: "FunctionCall",
   //   expression: { nodeType: "NewExpression" } }`.
+  // Only handles state-variable declarations (where the init lives directly
+  // on the VariableDeclaration).  For locals use is_new_created_decl(id).
   static bool is_new_created_var(const nlohmann::json &var_decl)
   {
     if (!var_decl.contains("value"))
@@ -959,6 +961,13 @@ protected:
     return val.value("nodeType", "") == "FunctionCall" && val.contains("expression") &&
            val["expression"].value("nodeType", "") == "NewExpression";
   }
+
+  // Same intent as is_new_created_var but works for both state-variable
+  // declarations (init is on the VariableDeclaration's `value` field) AND
+  // local-variable declarations (init lives on the parent
+  // VariableDeclarationStatement's `initialValue`, with the var listed in
+  // `declarations`).  Walks src_ast_json to find the parent statement.
+  bool is_new_created_decl(int decl_id) const;
 
   // reentry-check setting
   bool is_reentry_check;

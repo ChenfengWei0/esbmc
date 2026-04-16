@@ -8,6 +8,7 @@
 
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
+#include <functional>
 #include <util/arith_tools.h>
 #include <util/bitvector.h>
 #include <util/c_types.h>
@@ -850,6 +851,74 @@ void solidity_convertert::store_update_dyn_array(
   length_expr.arguments().push_back(dyn_arr);
   length_expr.arguments().push_back(size_expr);
   store_call = length_expr;
+}
+
+// Detect `new C(...)` initialization for any variable declaration id,
+// covering both shapes:
+//   1. State var:  VariableDeclaration { id, value: FunctionCall(NewExpr) }
+//   2. Local var:  VariableDeclarationStatement {
+//                    declarations: [{ id }],
+//                    initialValue: FunctionCall(NewExpr) }
+// Walks src_ast_json once per call.  Used by the auto-bind logic so cross-
+// contract calls on `new`-created locals execute the callee body in unbound
+// mode (matching SMTChecker).
+bool solidity_convertert::is_new_created_decl(int decl_id) const
+{
+  // Recognise both shapes:
+  //   new C(args)            -> FunctionCall(NewExpression, args)
+  //   new C{value: v}(args)  -> FunctionCall(FunctionCallOptions(NewExpression), args)
+  auto is_new_call = [](const nlohmann::json &v) {
+    if (!v.is_object() || v.value("nodeType", "") != "FunctionCall" ||
+        !v.contains("expression"))
+      return false;
+    const auto &inner = v["expression"];
+    if (!inner.is_object())
+      return false;
+    if (inner.value("nodeType", "") == "NewExpression")
+      return true;
+    if (
+      inner.value("nodeType", "") == "FunctionCallOptions" &&
+      inner.contains("expression") && inner["expression"].is_object() &&
+      inner["expression"].value("nodeType", "") == "NewExpression")
+      return true;
+    return false;
+  };
+
+  std::function<bool(const nlohmann::json &)> walk =
+    [&](const nlohmann::json &node) -> bool {
+    if (node.is_object())
+    {
+      const std::string nt = node.value("nodeType", "");
+      if (nt == "VariableDeclaration" && node.value("id", -1) == decl_id)
+      {
+        if (node.contains("value") && is_new_call(node["value"]))
+          return true;
+      }
+      if (nt == "VariableDeclarationStatement" && node.contains("declarations"))
+      {
+        for (const auto &d : node["declarations"])
+        {
+          if (d.is_object() && d.value("id", -1) == decl_id)
+          {
+            if (
+              node.contains("initialValue") && is_new_call(node["initialValue"]))
+              return true;
+          }
+        }
+      }
+      for (auto it = node.begin(); it != node.end(); ++it)
+        if (walk(it.value()))
+          return true;
+    }
+    else if (node.is_array())
+    {
+      for (const auto &c : node)
+        if (walk(c))
+          return true;
+    }
+    return false;
+  };
+  return walk(src_ast_json);
 }
 
 // convert new array rhs
