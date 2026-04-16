@@ -477,8 +477,34 @@ bool solidity_convertert::get_expr(
     else if (is_low_level_property(mem_name))
     {
       // property i.e balance/codehash
-      if (!is_bound)
-        // make it as a NODET_UINT
+      //
+      // For address(this).balance and address(<localContractInstance>).balance
+      // we know the underlying contract instance, so route to
+      // get_builtin_property_expr in BOTH bound and unbound modes — that path
+      // emits `this->$balance` (the same SSA cell the constructor wrote)
+      // instead of allocating a fresh nondet that no constraint connects to
+      // the constructor's balance initialization.
+      //
+      // For opaque addresses (msg.sender, address values that came from
+      // outside the closed-world view), we keep the unbound nondet to stay
+      // sound under the over-approximate model.
+      bool know_instance = false;
+      if (
+        _type == SolidityGrammar::TypeConversionExpression &&
+        caller_expr_json.contains("arguments") &&
+        caller_expr_json["arguments"].is_array() &&
+        caller_expr_json["arguments"].size() == 1)
+      {
+        const auto &inner = caller_expr_json["arguments"][0];
+        const std::string ts = inner.value("typeDescriptions", nlohmann::json{})
+                                 .value("typeString", "");
+        // typeString starts with "contract " for both `this` and any
+        // declared contract-typed local (V x = new V(); ... address(x).balance)
+        if (ts.rfind("contract ", 0) == 0)
+          know_instance = true;
+      }
+
+      if (!is_bound && !know_instance)
         new_expr = nondet_uint_expr;
       else
         get_builtin_property_expr(
