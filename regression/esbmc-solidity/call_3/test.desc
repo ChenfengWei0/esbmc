@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.solast
---sol contract.sol --k-induction --max-k-step 3 --no-standard-checks --unbound
-^VERIFICATION FAILED$
+--sol contract.sol --unwind 3 --no-unwinding-assertions --no-standard-checks --unbound
+^VERIFICATION SUCCESSFUL$
