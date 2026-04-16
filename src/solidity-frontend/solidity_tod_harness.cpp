@@ -248,6 +248,45 @@ static std::string rename_contract(
   return std::regex_replace(text, re, new_name);
 }
 
+/// Inject a synthetic `function __tod_bal() public view returns (uint) {
+/// return address(this).balance; }` immediately before the contract's
+/// closing `}`.
+///
+/// Needed because the TOD harness uses `new`-allocated dynamic instances
+/// (c1 / c2), but ESBMC's Two-Copy Rename routes method calls through
+/// the renamed contract's *singleton* (_ESBMC_Object_V_C1) — state
+/// reads on the dynamic pointer (`c1->$balance`) therefore see a
+/// never-updated nondet value, while the singleton tracks the real
+/// balance.  By asserting equality through a call (`c1.__tod_bal()`)
+/// we go through the dispatch; inside the callee `address(this).balance`
+/// resolves against `this = &singleton` (see the AddressMemberCall fix
+/// in solidity_convert_expr.cpp) and returns the up-to-date value.
+static std::string inject_tod_bal_getter(const std::string &contract_src)
+{
+  auto last_brace = contract_src.rfind('}');
+  if (last_brace == std::string::npos)
+    return contract_src;
+  // Inject TWO synthetic getters:
+  //   __tod_bal()  -> singleton's $balance (via address(this).balance)
+  //   __tod_addr() -> singleton's $address (via address(this))
+  // Both go through the contract-call dispatch so the result reflects
+  // the singleton state, not the dynamic-struct field accessed
+  // directly via `c1->$balance` / `address(c1)` from outside.  The
+  // address getter is needed for the harness's isolation guards:
+  // `address(c1)` in the harness reads c1's dynamic $address (one
+  // nondet), while the transfer dispatcher matches on the singleton's
+  // $address (a different nondet).  Routing the require() comparison
+  // through __tod_addr() makes both sides see the SAME (singleton)
+  // address.
+  std::string injected =
+    "\n    function __tod_bal() public view returns (uint) { "
+    "return address(this).balance; }\n"
+    "    function __tod_addr() public view returns (address) { "
+    "return address(this); }\n";
+  return contract_src.substr(0, last_brace) + injected +
+         contract_src.substr(last_brace);
+}
+
 /// Extract constructor parameters from a ContractDefinition.
 static const nlohmann::json *find_constructor(const nlohmann::json &contract)
 {
@@ -433,6 +472,50 @@ static bool emit_harness_contract(
         << ctor_args << ");\n\n";
   }
 
+  // For TOD-Balance, exclude harness-internal addresses from any
+  // address-typed parameter so the two copies stay isolated under
+  // ETH transfers.  Without this guard, e.g. a_to == address(c1)
+  // would route c2's payment back into c1, breaking the symmetry the
+  // harness relies on.
+  if (emit_balance_assert)
+  {
+    auto collect_addr_params = [](const nlohmann::json &fdef,
+                                  const std::string &prefix,
+                                  std::vector<std::string> &out_list) {
+      if (!fdef.contains("parameters") ||
+          !fdef["parameters"].contains("parameters"))
+        return;
+      for (const auto &p : fdef["parameters"]["parameters"])
+      {
+        const std::string ts = p.value("typeDescriptions", nlohmann::json{})
+                                 .value("typeString", "");
+        const std::string name = p.value("name", "");
+        if (
+          (ts == "address" || ts == "address payable") && !name.empty())
+          out_list.push_back(prefix + "_" + name);
+      }
+    };
+    std::vector<std::string> addr_params;
+    collect_addr_params(*fa, "a", addr_params);
+    collect_addr_params(*fb, "b", addr_params);
+    if (ctor)
+      collect_addr_params(*ctor, "ctor", addr_params);
+    if (!addr_params.empty())
+    {
+      // Cache the singleton-side addresses through __tod_addr() once;
+      // each subsequent require() against the cached locals is just an
+      // address compare.
+      out << "        address __c1_addr = c1.__tod_addr();\n";
+      out << "        address __c2_addr = c2.__tod_addr();\n";
+      for (const auto &p : addr_params)
+      {
+        out << "        require(" << p << " != __c1_addr && " << p
+            << " != __c2_addr, \"isolate copies\");\n";
+      }
+      out << "\n";
+    }
+  }
+
   out << "        // Order 1: " << func_a << " then " << func_b << "\n";
   out << "        c1." << func_a << "(" << fa_args << ");\n";
   out << "        c1." << func_b << "(" << fb_args << ");\n\n";
@@ -492,7 +575,7 @@ static bool emit_harness_contract(
     }
   }
   if (emit_balance_assert)
-    out << "        assert(address(c1).balance == address(c2).balance);\n";
+    out << "        assert(c1.__tod_bal() == c2.__tod_bal());\n";
 
   out << "    }\n";
   out << "}\n\n";
@@ -547,6 +630,32 @@ std::string generate_tod_harness_multi(
   // Compute closed R/W footprints once per contract; emit_harness_contract
   // re-uses this map for every (a, b) pair.
   auto rw_by_name = solidity_tod::compute_rw_sets(*cdef);
+
+  // If ANY pair will emit a balance assertion, inject the __tod_bal()
+  // view-getter into both renamed copies.  Cheap enough to always inject
+  // when any pair touches balance — no need to inject per-pair.
+  bool any_balance = false;
+  for (const auto &p : pairs)
+  {
+    auto it_a = rw_by_name.find(p.first);
+    auto it_b = rw_by_name.find(p.second);
+    bool a_bal = it_a != rw_by_name.end() &&
+                 (it_a->second.reads.count(solidity_tod::kBalanceId) ||
+                  it_a->second.writes.count(solidity_tod::kBalanceId));
+    bool b_bal = it_b != rw_by_name.end() &&
+                 (it_b->second.reads.count(solidity_tod::kBalanceId) ||
+                  it_b->second.writes.count(solidity_tod::kBalanceId));
+    if (a_bal && b_bal)
+    {
+      any_balance = true;
+      break;
+    }
+  }
+  if (any_balance)
+  {
+    copy1 = inject_tod_bal_getter(copy1);
+    copy2 = inject_tod_bal_getter(copy2);
+  }
 
   std::ostringstream out;
   out << "// Auto-generated TOD (Transaction Order Dependence) harness\n";

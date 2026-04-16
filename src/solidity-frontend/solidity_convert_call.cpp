@@ -3266,10 +3266,34 @@ bool solidity_convertert::get_transfer_definition(
     if_expr.copy_to_operands(_equal, then);
     func_body.move_to_operands(if_expr);
   }
-  // add "Return false;" in the end
-  code_returnt return_expr;
-  return_expr.return_value() = false_exprt();
-  func_body.move_to_operands(return_expr);
+
+  // EOA / unknown-recipient fallback.  Real EVM `transfer(addr, val)`
+  // moves `val` out of the sender regardless of whether the recipient
+  // is a tracked contract, an EOA, or an unknown address.  The model
+  // used to fall through to `return false` when no known contract
+  // matched, leaving sender's $balance untouched.  Deduct on fallback
+  // to keep sender-side balance accounting sound for value flowing to
+  // EOAs; no credit to any recipient (EOAs aren't modelled).
+  //
+  // We do NOT `assume(this.balance >= _val)` on this path — doing so
+  // intersects SSA guards with the other branches and, empirically,
+  // masks counterexamples in existing cross-contract balance tests
+  // (see send_ether_via_creation_2).  Instead we let the deduct
+  // over-approximate (possibly underflowing the nondet $balance, which
+  // stays sound because no downstream property depends on the EOA
+  // recipient's state).
+  {
+    // this->$balance -= _val;
+    exprt sub_assign = side_effect_exprt("assign-", val_t);
+    sub_assign.copy_to_operands(this_balance, val_expr);
+    convert_expression_to_code(sub_assign);
+    func_body.move_to_operands(sub_assign);
+
+    // return true;
+    code_returnt return_expr;
+    return_expr.return_value() = true_exprt();
+    func_body.move_to_operands(return_expr);
+  }
 
   added_symbol.value = func_body;
   new_expr = symbol_expr(added_symbol);
@@ -3494,10 +3518,25 @@ bool solidity_convertert::get_send_definition(
     func_body.move_to_operands(if_expr);
   }
 
-  // add "return false;" in the end
-  code_returnt return_expr;
-  return_expr.return_value() = false_exprt();
-  func_body.move_to_operands(return_expr);
+  // EOA / unknown-recipient fallback for `send`.  Same shape as
+  // transfer: deduct from sender, no credit (we can't model the EOA),
+  // and do NOT `assume(this.balance >= _val)` here — see the note in
+  // get_transfer_definition.  send's bool return is always `true` on
+  // this path; users checking for false-on-failure will still see it
+  // when the recipient matches a tracked contract without a payable
+  // receive.
+  {
+    // this->$balance -= _val;
+    exprt sub_assign = side_effect_exprt("assign-", val_t);
+    sub_assign.copy_to_operands(this_balance, val_expr);
+    convert_expression_to_code(sub_assign);
+    func_body.move_to_operands(sub_assign);
+
+    // return true;
+    code_returnt ret_true;
+    ret_true.return_value() = true_exprt();
+    func_body.move_to_operands(ret_true);
+  }
 
   added_symbol.value = func_body;
   new_expr = symbol_expr(added_symbol);

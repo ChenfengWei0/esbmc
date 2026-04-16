@@ -452,20 +452,27 @@ bool solidity_convertert::get_expr(
     // case 1, which is a type conversion node
     if (is_low_level_call(mem_name))
     {
-      if (!is_bound)
+      // `transfer` / `send` move ETH out of the sender regardless of who
+      // receives it.  The bound model implements this correctly (deduct
+      // from this->$balance, credit known recipients, fall back to
+      // EOA-deduct for unknown addresses).  The unbound model used to
+      // skip the deduct entirely and only emit the nondet re-entry, which
+      // makes any balance-monotonicity / TOD-Balance property vacuously
+      // hold.  Route value-moving builtins through the bound model in
+      // both modes; keep `call` / `staticcall` / `delegatecall` /
+      // `callcode` on the legacy unbound path because they may carry no
+      // value and the existing nondet harness is the right
+      // over-approximation for their reentry semantics.
+      const bool moves_value = (mem_name == "transfer" || mem_name == "send");
+      if (!is_bound && !moves_value)
       {
         if (get_unbound_expr(expr, current_contractName, new_expr))
           return true;
 
-        if (mem_name == "send")
-          new_expr = nondet_bool_expr;
-        else
-        {
-          // call, staticcall ...
-          symbolt dump;
-          get_llc_ret_tuple(dump);
-          new_expr = symbol_expr(dump);
-        }
+        // call, staticcall ...
+        symbolt dump;
+        get_llc_ret_tuple(dump);
+        new_expr = symbol_expr(dump);
       }
       else
       {
