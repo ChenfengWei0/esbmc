@@ -1397,147 +1397,209 @@ sanitizer useless on the 1inch codebase:
   timeouts or flag combinations — they are crashes in ESBMC code, not
   verification timeouts.
 
-## TOD (Transaction Order Dependence) Detection — Implementation Plan
+## TOD (Transaction Order Dependence) Detection
 
 Reference paper: *TransRacer: Function Dependence-Guided Transaction Race Detection
 for Smart Contracts* (ESEC/FSE 2023).
 
-### Goal
+### Status snapshot
 
-Add two CLI options to ESBMC:
-- `--TOD-Balance-check` — detect ordering-dependent differences in asset-related
-  state (balances, token transfers, extractable profits).
-- `--TOD-State-check` — detect ordering-dependent differences in any
-  security-related state (allowance, owner, supply, lock flags, etc.).
+| Capability | State |
+|---|---|
+| TOD-State (any public state var differs after reordering) | **Shipped** (Phase 1–3) |
+| Auto-discovery of candidate function pairs | **Shipped** (Phase 2, Tier-2 algorithm) |
+| Targeted assertions (only on shared footprint) | **Shipped** (Phase 3) |
+| One-shot auto-verify (internal solc invocation, no manual chain) | **Shipped** (Phase 3) |
+| TOD-Balance (`address(this).balance` differs after reordering) | **Not implemented** — blocked by SMTChecker balance model fix |
+| Multi-sender harness (different `msg.sender` per call) | **Not implemented** — Phase 4 |
+| Setup phase (nondet calls reach non-initial states) | **Not implemented** — Phase 4 |
+| Cross-contract TOD | Out of scope (same as TransRacer) |
 
-Plus `--dump-harness` to output the generated Solidity harness as a compilable
-`.sol` file for inspection.
+### CLI surface (3 flags)
 
-### Core idea: harness-based reduction to assertion checking
+| Option | Value | Purpose |
+|---|---|---|
+| `--tod-functions` | `f1,f2` | Explicit single function pair |
+| `--tod-auto` | flag | Auto-discover all candidate pairs in the contract |
+| `--dump-harness` | flag | Modifier: print the generated Solidity harness to stdout instead of verifying |
 
-Given contract `V` with functions `A` and `B`, the TOD problem is:
+`--contract <name>` is required by both `--tod-functions` and `--tod-auto`.
+The user may want to fold these three flags into a single `--tod=<mode>`
+spelling once TOD-Balance lands — track in the open work list below.
 
-> ∃ args_a, args_b such that:
+### Four work modes (matrix of the 3 flags)
+
+| # | Command | What it does |
+|---|---|---|
+| **A** | `--contract C --tod-functions A,B` | Generate harness, write `tod_A_B_harness.sol` next to source, redirect cmdline to it, set `--bound --no-standard-checks --no-unwinding-assertions --unwind 2`, run BMC in-process. One verdict. |
+| **B** | `--contract C --tod-functions A,B --dump-harness` | Same generation, print to stdout, no verification. |
+| **C** | `--contract C --tod-auto` | R/W footprint analysis → list candidate pairs → write a multi-harness `tod_auto_C_harness.sol` → subprocess loop ESBMC over each `TOD_<a>_<b>` → summary line `N pair(s) — X clean, Y TOD found, Z error` + list of failing pairs. Exit non-zero if any pair fails. |
+| **D** | `--contract C --tod-auto --dump-harness` | Print candidate list + multi-pair harness, no verification. |
+
+### Core idea: harness-based reduction to BMC
+
+Given contract `V` with functions `A` and `B`:
+
+> ∃ args_a, args_b such that
 >   state(init → A(args_a) → B(args_b)) ≠ state(init → B(args_b) → A(args_a))
 
-This is an existential query — perfect for BMC. Generate a harness that calls
-both orderings and asserts state equivalence. If the assertion fails, ESBMC
-produces a counterexample (witness transactions).
+This is an existential query — perfect for BMC. We materialise both orderings
+in a generated harness and assert state equality at the end; a counterexample
+is the witness pair of transactions that reveals TOD.
 
 ### Critical ESBMC constraint: singleton aliasing
 
 ESBMC creates ONE global static instance per contract type (`_ESBMC_Object_<Name>`).
-Two `new V()` calls share the same singleton — their state is aliased. This means
+Two `new V()` calls share the same singleton — their state is aliased. So
 `V c1 = new V(); V c2 = new V(); c1.setX(1); c2.setX(2); assert(c1.getX()==1)`
 **incorrectly fails** because both write to `_ESBMC_Object_V.x`.
 
-**Workaround**: Two-Copy Rename — duplicate the contract source with different
+**Workaround — Two-Copy Rename**: duplicate the contract source with different
 names (`V_C1`, `V_C2`). Each gets its own singleton. Only the contract name
-changes; all internal logic is identical.
+changes; all internal logic is identical. Multi-pair harnesses share these two
+copies (emitted once) across all `TOD_<a>_<b>` test contracts.
 
-### Critical ESBMC constraint: `--bound` required
+### Resolved ESBMC constraint: auto-bind for `new`-created instances
 
-In unbound mode (default `--contract`), cross-contract calls return nondet
-**without executing the function body**. The TOD harness needs side effects to
-actually happen, so `--bound` is mandatory.
+Previously, in unbound mode (default `--contract`), cross-contract calls
+returned nondet **without executing the function body**, which caused TOD
+harnesses to silently report SUCCESSFUL even on real bugs. **Fixed in
+`59176dd`**: the three `!is_bound` branches in `get_contract_member_call_expr()`
+(`solidity_convert_expr.cpp`) now check `is_new_created_var(base_expr_json)`
+and dispatch to the bound path when the base instance was created via `new`.
+The `_ESBMC_bind_cname` assignment in `get_new_object_expr` is unconditional.
 
-**Known bug (to fix)**: `new`-created instances should auto-bind even in unbound
-mode. Currently, `v = new V(); v.func()` in unbound mode → nondet. SMTChecker
-binds `new`-created instances. Fix: in the `!is_bound` branches of
-`get_contract_member_call_expr()` (lines 2607, 2642, 2779 of
-`solidity_convert_expr.cpp`), check whether the base variable was created via
-`new`; if so, dispatch to bound mode (`get_high_level_member_access`).
+Effect: a TOD harness no longer needs the user to pass `--bound` manually
+for the `new V()` setup pattern. (We still pass `--bound` in the harness
+auto-verify pipeline for consistency.)
 
-### Harness output format (`--dump-harness`)
+### Algorithm: Tier-2 R/W footprint with intra-contract callgraph closure
+
+Module: `src/solidity-frontend/solidity_tod_analysis.{h,cpp}`.
+
+**Step 1 — per-callable R/W footprint** (single AST walk):
+- `Assignment.leftHandSide` → write target (recurse with `is_write_target=true`)
+- `Assignment.rightHandSide` → read context
+- Compound assignment (`+=` etc.) → re-visit LHS as a read too
+- `UnaryOperation` with `++` / `--` / `delete` → write on argument
+- `IndexAccess.baseExpression` / `MemberAccess.expression` → inherit parent
+  write context (so `m[k] = v` writes `m`, reads `k`)
+- Any `Identifier` whose `referencedDeclaration` is a state variable id → R or W
+- `FunctionCall` whose callee is a same-contract callable → call edge
+- `ModifierInvocation` → modifier body folded in via call edge
+
+**Step 2 — call-graph closure**:
+```
+footprint(f) = local(f) ∪ ⋃_{c ∈ callees(f)} footprint(c)
+```
+Iterated to a fixed point. External calls (`c.foo()`, `this.foo()`) are
+**conservatively skipped** — out of scope for Tier 2 (would belong in Tier 3).
+
+**Step 3 — pair candidacy**:
+```
+W(a) ∩ (R(b) ∪ W(b))  ∪  W(b) ∩ (R(a) ∪ W(a))  ≠ ∅
+```
+Pair filters:
+- Both functions must be `public` or `external`
+- Skip `view` / `pure` (no writes by definition)
+- Skip `constructor` / `fallback` / `receive` (cannot be reordered)
+- Skip self-pairs and symmetric duplicates (sort lexicographically, `a < b`)
+
+### Harness emission (`solidity_tod_harness.{h,cpp}`)
+
+Layout of an auto-generated `.sol`:
 
 ```solidity
-// Auto-generated TOD harness
+// Header: pair list + verify command
+// SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0;
 
-// ===== Copy 1 (rename V → V_C1) =====
-contract V_C1 {
-    // [original contract source verbatim, only contract name changed]
-    // + auto-generated getters for private state vars:
-    //   function _tod_get_secret() public view returns (uint) { return _secret; }
-}
+// ===== Copy 1 (V renamed to V_C1) =====
+contract V_C1 { /* original verbatim */ }
+// ===== Copy 2 =====
+contract V_C2 { /* identical, V renamed to V_C2 */ }
 
-// ===== Copy 2 (rename V → V_C2) =====
-contract V_C2 { /* identical to V_C1 but named V_C2 */ }
-
-// ===== Harness =====
-contract TOD_Harness_A_B {
-    function test(
-        /* constructor args (same for both copies) */
-        /* funcA args */
-        /* funcB args */
-    ) public {
-        V_C1 c1 = new V_C1(ctorArgs);
-        V_C2 c2 = new V_C2(ctorArgs);
-
-        c1.A(args_a);  c1.B(args_b);   // Order 1: A → B
-        c2.B(args_b);  c2.A(args_a);   // Order 2: B → A
-
-        // TOD assertions (only on shared state variables):
+// ===== TOD Harness contracts =====
+// Targeted state variables (referenced by BOTH functions):
+//   - x
+contract TOD_A_B {
+    function test(/* ctor + A + B params, prefixed to avoid collisions */) public {
+        V_C1 c1 = new V_C1(...);
+        V_C2 c2 = new V_C2(...);
+        c1.A(...); c1.B(...);   // order 1
+        c2.B(...); c2.A(...);   // order 2
         assert(c1.x() == c2.x());
-        assert(c1.balances(addr) == c2.balances(addr));
     }
 }
+// ... one TOD_<a>_<b> per discovered pair
 ```
 
-Verify with: `esbmc harness.sol --contract TOD_Harness_A_B --bound`
+**Targeted assertions** consume the **closure-closed** R/W footprint, not just
+body-local references. So a public function that only writes `x` via an
+internal helper still produces the right `assert(c1.x() == c2.x())`.
 
-### Implementation phases
+**Mapping handling** (`mapping(K => V)` and `mapping(K1 => mapping(K2 => V))`):
+the harness collects every parameter of type `K` from `A` and `B`, emits one
+assertion per Cartesian-product key tuple. Three or more nested levels are
+skipped with an explanatory comment.
 
-**Phase 1 — MVP: `--dump-harness` + manual function pair**
-- CLI: `esbmc contract.sol --contract V --TOD-Balance-check --tod-functions "A,B" --dump-harness`
-- New file: `src/solidity-frontend/solidity_tod_harness.cpp` + `.h`
-- Core function: `generate_tod_harness(ast_json, source, funcA, funcB, mode) → string`
-- Reads AST for: contract name, state variables, function signatures, constructor params
-- Outputs compilable Solidity harness
-- User manually runs `solc` + `esbmc --bound` on the output
+### What "TOD" means in the current implementation
 
-**Phase 2 — Static filtering + multi-harness**
-- CLI: `esbmc contract.sol --contract V --TOD-Balance-check --dump-harness` (no `--tod-functions` → auto-enumerate)
-- For each function, collect read/write state variable sets by DFS over AST body
-- Filter: only generate harness for pairs with shared state access (write ∩ (read ∪ write) ≠ ∅)
-- Output: single `.sol` file with multiple `TOD_Harness_X_Y` contracts
-- User selects with `--contract TOD_Harness_X_Y`
+**TOD-State only.** The harness asserts equality on every public state variable
+in the closure intersection. Any field of type `uint` / `int` / `address` /
+`bool` / `bytes32` / `mapping(...)` qualifies — including a state variable
+literally named `balance` (declared as `uint public balance;`).
 
-**Phase 3 — Targeted assertions + auto-verify**
-- Assert only on state variables relevant to the function pair (not all)
-- Mapping key extraction: compare at all parameter values matching the key type + `msg.sender`
-- ESBMC internally invokes `solc` and verifies in one step (no manual solc)
-- `--bound` auto-enabled when `--TOD-*-check` is set
+**TOD-Balance is NOT covered.** Real ETH balance lives in the contract's hidden
+`$balance` field, not in user-declared state vars. The R/W analyser does not
+flag `transfer` / `send` / `call{value:}` / `selfdestruct` as writes; the
+harness does not emit `assert(address(c1).balance == address(c2).balance)`.
+Adding it requires:
 
-**Phase 4 — Multi-sender + setup**
-- Proxy contracts to model different `msg.sender` for each call
-  (needed for approve/transferFrom TOD where two different actors call)
-- Optional setup phase (nondet calls before detection phase) to reach non-initial states
-  (TransRacer's "function dependency" analysis)
+1. Fixing the SMTChecker-style balance model so `address(this).balance` reads
+   from `this->$balance` instead of allocating a fresh nondet via
+   `get_aux_property_function`. **This is a prerequisite, not optional.**
+   See "Balance model gap" docs in `solidity_convert_builtin.cpp:100-115` and
+   `solidity_convert_contract.cpp:645-654`.
+2. Extending `solidity_tod_analysis` to mark the value-transferring builtins
+   as W on a virtual `__balance` token, so the candidate finder pairs up
+   value-transferring functions correctly.
+3. Emitting balance equality asserts in `emit_harness_contract` whenever
+   `__balance` is in the shared footprint.
 
-### Known limitations
+### Open work list (priority order)
 
-- **Same-sender only (Phase 1-3)**: all calls share the same `msg.sender`; misses
-  TOD requiring distinct senders (e.g., approve+transferFrom)
-- **Constructor-state only (Phase 1-3)**: no setup; misses TOD reachable only from
-  non-initial states (TransRacer reports 63.1% of races require state exploration)
-- **No cross-contract TOD**: only intra-contract function pairs (same as TransRacer)
-- **Singleton aliasing**: same-type multi-instance not supported; workaround via rename
+1. **SMTChecker balance model fix** (prerequisite for everything below)
+2. **TOD-Balance** detection
+3. **Option consolidation**: 3 flags × 4 modes is starting to confuse users.
+   Likely target: a single `--tod` flag with sub-spellings (`--tod=auto`,
+   `--tod=A,B`), and `--dump-harness` as the only modifier. Decide after
+   TOD-Balance lands so we know the final option surface.
+4. **Phase 4 — multi-sender / setup phase**: proxy contracts for distinct
+   `msg.sender` per call; optional nondet setup-phase call sequence to reach
+   non-initial states (TransRacer reports 63.1% of races need state
+   exploration).
 
-### `msg.sender` semantics in the harness
+### Known limitations of the current implementation
 
-When the harness calls `c1.funcA(args)`, `msg.sender` inside `funcA` is the
-harness contract address (same for both orderings — correct for TOD detection).
-For TOD scenarios requiring different senders (Phase 4), use proxy contracts:
+- **Same-sender only**: all harness calls share `msg.sender = address(this)`
+  (the harness contract). Misses TOD requiring distinct senders (e.g.
+  `approve` + `transferFrom`).
+- **Constructor-state only**: no setup phase between constructor and the
+  reordered call pair.
+- **External calls dropped from R/W closure**: `c.foo()` and `this.foo()`
+  contribute nothing to the footprint, so a pair that interacts only through
+  an external surface may not be flagged as a candidate.
+- **3+ level nested mapping**: assertions are skipped with a comment.
 
-```solidity
-contract Proxy1 {
-    function call_A(V_C1 c, uint arg) external { c.A(arg); }
-    // msg.sender inside A = address(Proxy1)
-}
-contract Proxy2 {
-    function call_B(V_C2 c, uint arg) external { c.B(arg); }
-    // msg.sender inside B = address(Proxy2)
-}
-```
+### Regression coverage
+
+| Test | Mode | Property |
+|---|---|---|
+| `tod_counter_fail` | A (single pair, auto-verify) | Both functions write `x` → FAILED |
+| `tod_disjoint_pass` | A | Disjoint state → SUCCESSFUL |
+| `tod_auto_multi` | C | Two independent pairs both flagged |
+| `tod_auto_closure` | C | Footprint closure across internal helpers |
+| `tod_auto_clean` | C | Disjoint state → "0 candidates, exit cleanly" |
+| `ext_call_new_autobind_pass` / `_fail` | n/a | Auto-bind fix prerequisite |
 
