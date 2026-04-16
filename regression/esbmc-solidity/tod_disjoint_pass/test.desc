@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Fund --tod-functions withdraw,setRecipient
+--contract Fund --tod=withdraw,setRecipient
 ^VERIFICATION SUCCESSFUL$

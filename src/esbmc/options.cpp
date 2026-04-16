@@ -155,15 +155,15 @@ const struct group_opt_templ all_cmd_options[] = {
     {"negating-property",
      boost::program_options::value<std::string>()->value_name("fname"),
      "Convert the assert(cond) to assert(!cond)"},
-    {"tod-functions",
-     boost::program_options::value<std::string>()->value_name("f1,f2"),
-     "Specify two functions for TOD (Transaction Order Dependence) detection"},
-    {"tod-auto",
-     NULL,
-     "Auto-discover TOD-candidate function pairs in --contract and verify "
-     "each one (intra-contract R/W footprint analysis with internal "
-     "call-graph closure).  Combine with --dump-harness to emit the "
-     "multi-pair harness without verifying."},
+    {"tod",
+     boost::program_options::value<std::string>()
+       ->value_name("auto|f1,f2")
+       ->implicit_value("auto"),
+     "Run TOD (Transaction Order Dependence) detection on --contract.  "
+     "--tod or --tod=auto auto-discovers candidate pairs via intra-contract "
+     "R/W footprint analysis with internal call-graph closure; --tod=f1,f2 "
+     "targets a single function pair.  Combine with --dump-harness to emit "
+     "the harness without verifying."},
     {"dump-harness",
      NULL,
      "Output the TOD harness as compilable Solidity source and exit"}}},

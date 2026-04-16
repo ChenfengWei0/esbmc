@@ -1415,26 +1415,26 @@ for Smart Contracts* (ESEC/FSE 2023).
 | Setup phase (nondet calls reach non-initial states) | **Not implemented** — Phase 4 |
 | Cross-contract TOD | Out of scope (same as TransRacer) |
 
-### CLI surface (3 flags)
+### CLI surface (2 flags)
 
 | Option | Value | Purpose |
 |---|---|---|
-| `--tod-functions` | `f1,f2` | Explicit single function pair |
-| `--tod-auto` | flag | Auto-discover all candidate pairs in the contract |
+| `--tod` | `auto` \| `f1,f2` | Run TOD detection; `auto` (or bare `--tod`) auto-discovers pairs, `f1,f2` targets one pair |
 | `--dump-harness` | flag | Modifier: print the generated Solidity harness to stdout instead of verifying |
 
-`--contract <name>` is required by both `--tod-functions` and `--tod-auto`.
-The user may want to fold these three flags into a single `--tod=<mode>`
-spelling once TOD-Balance lands — track in the open work list below.
+`--contract <name>` is required. Use `--tod=auto` (or plain `--tod`) for
+auto-discovery, or `--tod=f1,f2` for an explicit pair. Use `=` between
+`--tod` and its value; space-separated (`--tod auto`) is ambiguous with
+positional args and not supported.
 
-### Four work modes (matrix of the 3 flags)
+### Four work modes (matrix of the 2 flags)
 
 | # | Command | What it does |
 |---|---|---|
-| **A** | `--contract C --tod-functions A,B` | Generate harness, write `tod_A_B_harness.sol` next to source, redirect cmdline to it, set `--bound --no-standard-checks --no-unwinding-assertions --unwind 2`, run BMC in-process. One verdict. |
-| **B** | `--contract C --tod-functions A,B --dump-harness` | Same generation, print to stdout, no verification. |
-| **C** | `--contract C --tod-auto` | R/W footprint analysis → list candidate pairs → write a multi-harness `tod_auto_C_harness.sol` → subprocess loop ESBMC over each `TOD_<a>_<b>` → summary line `N pair(s) — X clean, Y TOD found, Z error` + list of failing pairs. Exit non-zero if any pair fails. |
-| **D** | `--contract C --tod-auto --dump-harness` | Print candidate list + multi-pair harness, no verification. |
+| **A** | `--contract C --tod=A,B` | Generate harness, write `tod_A_B_harness.sol` next to source, redirect cmdline to it, set `--bound --no-standard-checks --no-unwinding-assertions --unwind 2`, run BMC in-process. One verdict. |
+| **B** | `--contract C --tod=A,B --dump-harness` | Same generation, print to stdout, no verification. |
+| **C** | `--contract C --tod=auto` (or `--tod`) | R/W footprint analysis → list candidate pairs → write a multi-harness `tod_auto_C_harness.sol` → subprocess loop ESBMC over each `TOD_<a>_<b>` → summary line `N pair(s) — X clean, Y TOD found, Z error` + list of failing pairs. Exit non-zero if any pair fails. |
+| **D** | `--contract C --tod=auto --dump-harness` | Print candidate list + multi-pair harness, no verification. |
 
 ### Core idea: harness-based reduction to BMC
 
@@ -1569,12 +1569,11 @@ Adding it requires:
 
 ### Open work list (priority order)
 
-1. **SMTChecker balance model fix** (prerequisite for everything below)
-2. **TOD-Balance** detection
-3. **Option consolidation**: 3 flags × 4 modes is starting to confuse users.
-   Likely target: a single `--tod` flag with sub-spellings (`--tod=auto`,
-   `--tod=A,B`), and `--dump-harness` as the only modifier. Decide after
-   TOD-Balance lands so we know the final option surface.
+1. ~~**SMTChecker balance model fix**~~ — done (`f507686`).
+2. ~~**TOD-Balance** detection~~ — done (`c492d09`).
+3. ~~**Option consolidation**~~ — done: folded `--tod-functions` and
+   `--tod-auto` into a single `--tod[=auto|=f1,f2]` with `--dump-harness`
+   as the only modifier.
 4. **Phase 4 — multi-sender / setup phase**: proxy contracts for distinct
    `msg.sender` per call; optional nondet setup-phase call sequence to reach
    non-initial states (TransRacer reports 63.1% of races need state

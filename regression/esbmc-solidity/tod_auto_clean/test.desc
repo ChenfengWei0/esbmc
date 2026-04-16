@@ -1,5 +1,5 @@
 CORE
 contract.sol
---contract Fund --tod-auto
-^--tod-auto: discovered 0 candidate pair\(s\) in 'Fund'$
-^--tod-auto: no order-dependent pairs detected — done\.$
+--contract Fund --tod=auto
+^--tod: discovered 0 candidate pair\(s\) in 'Fund'$
+^--tod: no order-dependent pairs detected — done\.$

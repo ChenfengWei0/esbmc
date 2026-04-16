@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Bal --tod-functions payA,payB
+--contract Bal --tod=payA,payB
 ^VERIFICATION SUCCESSFUL$

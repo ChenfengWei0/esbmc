@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0;
 
-// Two independent TOD pairs.  --tod-auto should discover both
+// Two independent TOD pairs.  --tod=auto should discover both
 // (addX,mulX share x; doubleY,setY share y) and verify both as TOD.
 contract MultiTod {
     uint public x;

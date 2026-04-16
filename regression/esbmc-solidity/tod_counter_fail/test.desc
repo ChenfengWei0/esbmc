@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Counter --tod-functions add,mul
+--contract Counter --tod=add,mul
 ^VERIFICATION FAILED$

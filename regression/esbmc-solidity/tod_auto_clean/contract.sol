@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0;
 
-// withdraw and setRecipient touch disjoint state -> --tod-auto should
+// withdraw and setRecipient touch disjoint state -> --tod=auto should
 // find zero candidates and exit cleanly.
 contract Fund {
     address public recipient;

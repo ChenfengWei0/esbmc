@@ -816,16 +816,16 @@ int esbmc_parseoptionst::doit()
   }
 
 #ifdef ENABLE_SOLIDITY_FRONTEND
-  // TOD harness generation: shared entry point for
-  //   --tod-functions A,B   (single pair)
-  //   --tod-auto            (auto-discover pairs via R/W footprint)
-  // Either one can be combined with --dump-harness to print + exit.
+  // TOD harness generation, driven by --tod:
+  //   --tod  or  --tod=auto   -> auto-discover pairs via R/W footprint
+  //   --tod=f1,f2             -> verify one specific pair
+  // Combine with --dump-harness to print and exit.
   // Without --dump-harness:
   //   single pair  -> in-process: write the harness next to the source,
   //                   redirect cmdline.args, fall through to normal verify
-  //   multi-pair   -> subprocess loop, one ESBMC invocation per pair,
+  //   auto/multi   -> subprocess loop, one ESBMC invocation per pair,
   //                   summarized at the end
-  if (cmdline.isset("tod-functions") || cmdline.isset("tod-auto"))
+  if (cmdline.isset("tod"))
   {
     // ---- shared: locate .sol / .solast paths ----
     std::string sol_path, solast_path;
@@ -844,7 +844,7 @@ int esbmc_parseoptionst::doit()
     }
     if (sol_path.empty())
     {
-      log_error("--tod-functions / --tod-auto requires a .sol source file");
+      log_error("--tod requires a .sol source file");
       return 1;
     }
 
@@ -910,7 +910,8 @@ int esbmc_parseoptionst::doit()
 
     // ---- decide pair list ----
     std::vector<std::pair<std::string, std::string>> pairs;
-    bool auto_mode = cmdline.isset("tod-auto");
+    std::string tod_val = cmdline.getval("tod");
+    bool auto_mode = (tod_val == "auto");
 
     if (auto_mode)
     {
@@ -927,12 +928,12 @@ int esbmc_parseoptionst::doit()
       if (!cdef)
       {
         log_error(
-          "--tod-auto: contract '{}' not found in AST", contract_name);
+          "--tod: contract '{}' not found in AST", contract_name);
         return 1;
       }
       auto candidates = solidity_tod::find_tod_candidates(*cdef);
       log_status(
-        "--tod-auto: discovered {} candidate pair(s) in '{}'",
+        "--tod: discovered {} candidate pair(s) in '{}'",
         candidates.size(),
         contract_name);
       for (const auto &p : candidates)
@@ -942,22 +943,22 @@ int esbmc_parseoptionst::doit()
       }
       if (pairs.empty())
       {
-        log_status("--tod-auto: no order-dependent pairs detected — done.");
+        log_status("--tod: no order-dependent pairs detected — done.");
         return 0;
       }
     }
     else
     {
-      std::string tod_funcs = cmdline.getval("tod-functions");
-      auto comma = tod_funcs.find(',');
+      auto comma = tod_val.find(',');
       if (comma == std::string::npos)
       {
         log_error(
-          "--tod-functions expects two comma-separated names (e.g., \"A,B\")");
+          "--tod expects 'auto' or two comma-separated function names "
+          "(e.g., --tod=auto or --tod=f1,f2)");
         return 1;
       }
       pairs.emplace_back(
-        tod_funcs.substr(0, comma), tod_funcs.substr(comma + 1));
+        tod_val.substr(0, comma), tod_val.substr(comma + 1));
     }
 
     // ---- generate harness source (single or multi) ----
@@ -1039,7 +1040,7 @@ int esbmc_parseoptionst::doit()
       {
         std::string c = "TOD_" + p.first + "_" + p.second;
         std::string cmd = base + " --contract " + c + " 2>&1";
-        log_status("--tod-auto: verifying {} ...", c);
+        log_status("--tod: verifying {} ...", c);
         FILE *fp = popen(cmd.c_str(), "r");
         if (!fp)
         {
@@ -1072,7 +1073,7 @@ int esbmc_parseoptionst::doit()
         }
       }
       log_status(
-        "--tod-auto summary: {} pair(s) — {} clean, {} TOD found, {} error",
+        "--tod summary: {} pair(s) — {} clean, {} TOD found, {} error",
         pairs.size(),
         succ_count,
         fail_count,

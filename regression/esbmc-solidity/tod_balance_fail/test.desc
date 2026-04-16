@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Bal --tod-functions payFixed,payIfRich
+--contract Bal --tod=payFixed,payIfRich
 ^VERIFICATION FAILED$
