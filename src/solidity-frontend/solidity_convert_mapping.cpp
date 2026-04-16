@@ -292,6 +292,35 @@ void solidity_convertert::gen_mapping_key_typecast(
   solidity_gen_typecast(ns, pos, unsignedbv_typet(256));
 }
 
+void solidity_convertert::combine_mapping_keys_256(
+  const std::vector<exprt> &folded_keys_64,
+  exprt &combined)
+{
+  // Pack folded 64-bit keys into successive 64-bit lanes of a uint256.
+  // Lane assignment for lane i = i mod 4 (so lanes 0..3 are unique, then
+  // lanes 4+ XOR-collide back into lane 0..3).  Lane mod-4 collision is
+  // acceptable for nesting depths > 4: it merely conflates distinct
+  // chains, which becomes a TOD false positive — never a crash, never
+  // a missed write/read pairing for fixed depth ≤ 4.
+  const typet u256 = unsignedbv_typet(256);
+  combined = from_integer(0, u256);
+  for (size_t i = 0; i < folded_keys_64.size(); ++i)
+  {
+    exprt k = folded_keys_64[i];
+    solidity_gen_typecast(ns, k, u256);
+    if ((i % 4) > 0)
+    {
+      exprt shift = from_integer(64 * (i % 4), u256);
+      exprt shifted("shl", u256);
+      shifted.copy_to_operands(k, shift);
+      k = shifted;
+    }
+    exprt or_expr("bitor", u256);
+    or_expr.copy_to_operands(combined, k);
+    combined = or_expr;
+  }
+}
+
 void solidity_convertert::xor_fold_key_to_64bit(exprt &key)
 {
   // Fold a 256-bit mapping key to 64-bit to avoid SMT performance issues
@@ -452,6 +481,19 @@ bool solidity_convertert::get_new_mapping_index_access(
   }
   else if (val_flg == "generic")
   {
+    // Nested mapping (mapping(K1=>mapping(K2=>V))): the inner value type
+    // is itself a MAPPING whose identifier is empty — routing through
+    // the struct-shaped generic_get helper below would hit an empty
+    // `substr(prefix.length())` and crash. The caller
+    // (get_contract_member_call_expr / get_index_access_expr nested
+    // branches) applies an additional index_exprt on top of this result,
+    // so we hand back the raw map_generic_get(void*) call unchanged.
+    if (val_sol_type == SolidityGrammar::SolType::MAPPING)
+    {
+      new_expr = call;
+      return false;
+    }
+
     /* generic_get:
           case 2: users[msg.sender].age; =>
             DECL struct temp = map_users_get(&array, pos);

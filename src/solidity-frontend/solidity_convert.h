@@ -547,6 +547,15 @@ protected:
     const locationt &l,
     const typet &key_type);
   void xor_fold_key_to_64bit(exprt &key);
+  // Pack a sequence of already-folded 64-bit mapping keys (outer→inner) into
+  // a single uint256 by laying each key into a successive 64-bit lane. Keeps
+  // 2-level nested mappings (the common case: balances, allowances, ...)
+  // collision-free and lets nested reads/writes share a single linked-list
+  // entry in the mapping_t backing store. 3+ levels reuse lower lanes via
+  // XOR — collisions degrade to TOD false positives, never crashes.
+  void combine_mapping_keys_256(
+    const std::vector<exprt> &folded_keys_64,
+    exprt &combined);
   bool get_new_mapping_index_access(
     const typet &value_t,
     SolidityGrammar::SolType val_sol_type,
