@@ -1397,3 +1397,147 @@ sanitizer useless on the 1inch codebase:
   timeouts or flag combinations — they are crashes in ESBMC code, not
   verification timeouts.
 
+## TOD (Transaction Order Dependence) Detection — Implementation Plan
+
+Reference paper: *TransRacer: Function Dependence-Guided Transaction Race Detection
+for Smart Contracts* (ESEC/FSE 2023).
+
+### Goal
+
+Add two CLI options to ESBMC:
+- `--TOD-Balance-check` — detect ordering-dependent differences in asset-related
+  state (balances, token transfers, extractable profits).
+- `--TOD-State-check` — detect ordering-dependent differences in any
+  security-related state (allowance, owner, supply, lock flags, etc.).
+
+Plus `--dump-harness` to output the generated Solidity harness as a compilable
+`.sol` file for inspection.
+
+### Core idea: harness-based reduction to assertion checking
+
+Given contract `V` with functions `A` and `B`, the TOD problem is:
+
+> ∃ args_a, args_b such that:
+>   state(init → A(args_a) → B(args_b)) ≠ state(init → B(args_b) → A(args_a))
+
+This is an existential query — perfect for BMC. Generate a harness that calls
+both orderings and asserts state equivalence. If the assertion fails, ESBMC
+produces a counterexample (witness transactions).
+
+### Critical ESBMC constraint: singleton aliasing
+
+ESBMC creates ONE global static instance per contract type (`_ESBMC_Object_<Name>`).
+Two `new V()` calls share the same singleton — their state is aliased. This means
+`V c1 = new V(); V c2 = new V(); c1.setX(1); c2.setX(2); assert(c1.getX()==1)`
+**incorrectly fails** because both write to `_ESBMC_Object_V.x`.
+
+**Workaround**: Two-Copy Rename — duplicate the contract source with different
+names (`V_C1`, `V_C2`). Each gets its own singleton. Only the contract name
+changes; all internal logic is identical.
+
+### Critical ESBMC constraint: `--bound` required
+
+In unbound mode (default `--contract`), cross-contract calls return nondet
+**without executing the function body**. The TOD harness needs side effects to
+actually happen, so `--bound` is mandatory.
+
+**Known bug (to fix)**: `new`-created instances should auto-bind even in unbound
+mode. Currently, `v = new V(); v.func()` in unbound mode → nondet. SMTChecker
+binds `new`-created instances. Fix: in the `!is_bound` branches of
+`get_contract_member_call_expr()` (lines 2607, 2642, 2779 of
+`solidity_convert_expr.cpp`), check whether the base variable was created via
+`new`; if so, dispatch to bound mode (`get_high_level_member_access`).
+
+### Harness output format (`--dump-harness`)
+
+```solidity
+// Auto-generated TOD harness
+pragma solidity >=0.8.0;
+
+// ===== Copy 1 (rename V → V_C1) =====
+contract V_C1 {
+    // [original contract source verbatim, only contract name changed]
+    // + auto-generated getters for private state vars:
+    //   function _tod_get_secret() public view returns (uint) { return _secret; }
+}
+
+// ===== Copy 2 (rename V → V_C2) =====
+contract V_C2 { /* identical to V_C1 but named V_C2 */ }
+
+// ===== Harness =====
+contract TOD_Harness_A_B {
+    function test(
+        /* constructor args (same for both copies) */
+        /* funcA args */
+        /* funcB args */
+    ) public {
+        V_C1 c1 = new V_C1(ctorArgs);
+        V_C2 c2 = new V_C2(ctorArgs);
+
+        c1.A(args_a);  c1.B(args_b);   // Order 1: A → B
+        c2.B(args_b);  c2.A(args_a);   // Order 2: B → A
+
+        // TOD assertions (only on shared state variables):
+        assert(c1.x() == c2.x());
+        assert(c1.balances(addr) == c2.balances(addr));
+    }
+}
+```
+
+Verify with: `esbmc harness.sol --contract TOD_Harness_A_B --bound`
+
+### Implementation phases
+
+**Phase 1 — MVP: `--dump-harness` + manual function pair**
+- CLI: `esbmc contract.sol --contract V --TOD-Balance-check --tod-functions "A,B" --dump-harness`
+- New file: `src/solidity-frontend/solidity_tod_harness.cpp` + `.h`
+- Core function: `generate_tod_harness(ast_json, source, funcA, funcB, mode) → string`
+- Reads AST for: contract name, state variables, function signatures, constructor params
+- Outputs compilable Solidity harness
+- User manually runs `solc` + `esbmc --bound` on the output
+
+**Phase 2 — Static filtering + multi-harness**
+- CLI: `esbmc contract.sol --contract V --TOD-Balance-check --dump-harness` (no `--tod-functions` → auto-enumerate)
+- For each function, collect read/write state variable sets by DFS over AST body
+- Filter: only generate harness for pairs with shared state access (write ∩ (read ∪ write) ≠ ∅)
+- Output: single `.sol` file with multiple `TOD_Harness_X_Y` contracts
+- User selects with `--contract TOD_Harness_X_Y`
+
+**Phase 3 — Targeted assertions + auto-verify**
+- Assert only on state variables relevant to the function pair (not all)
+- Mapping key extraction: compare at all parameter values matching the key type + `msg.sender`
+- ESBMC internally invokes `solc` and verifies in one step (no manual solc)
+- `--bound` auto-enabled when `--TOD-*-check` is set
+
+**Phase 4 — Multi-sender + setup**
+- Proxy contracts to model different `msg.sender` for each call
+  (needed for approve/transferFrom TOD where two different actors call)
+- Optional setup phase (nondet calls before detection phase) to reach non-initial states
+  (TransRacer's "function dependency" analysis)
+
+### Known limitations
+
+- **Same-sender only (Phase 1-3)**: all calls share the same `msg.sender`; misses
+  TOD requiring distinct senders (e.g., approve+transferFrom)
+- **Constructor-state only (Phase 1-3)**: no setup; misses TOD reachable only from
+  non-initial states (TransRacer reports 63.1% of races require state exploration)
+- **No cross-contract TOD**: only intra-contract function pairs (same as TransRacer)
+- **Singleton aliasing**: same-type multi-instance not supported; workaround via rename
+
+### `msg.sender` semantics in the harness
+
+When the harness calls `c1.funcA(args)`, `msg.sender` inside `funcA` is the
+harness contract address (same for both orderings — correct for TOD detection).
+For TOD scenarios requiring different senders (Phase 4), use proxy contracts:
+
+```solidity
+contract Proxy1 {
+    function call_A(V_C1 c, uint arg) external { c.A(arg); }
+    // msg.sender inside A = address(Proxy1)
+}
+contract Proxy2 {
+    function call_B(V_C2 c, uint arg) external { c.B(arg); }
+    // msg.sender inside B = address(Proxy2)
+}
+```
+

@@ -948,6 +948,18 @@ protected:
     return true;
   }
 
+  // Check whether a VariableDeclaration JSON was initialized via `new C()`.
+  // Returns true when the decl has `value: { nodeType: "FunctionCall",
+  //   expression: { nodeType: "NewExpression" } }`.
+  static bool is_new_created_var(const nlohmann::json &var_decl)
+  {
+    if (!var_decl.contains("value"))
+      return false;
+    const auto &val = var_decl["value"];
+    return val.value("nodeType", "") == "FunctionCall" && val.contains("expression") &&
+           val["expression"].value("nodeType", "") == "NewExpression";
+  }
+
   // reentry-check setting
   bool is_reentry_check;
 
