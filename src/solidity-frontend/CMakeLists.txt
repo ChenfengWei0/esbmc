@@ -21,6 +21,7 @@ add_library(solidityfrontend_stuff
   solidity_grammar.cpp
   pattern_check.cpp
   solidity_tod_harness.cpp
+  solidity_tod_analysis.cpp
 )
 target_include_directories(solidityfrontend_stuff
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}

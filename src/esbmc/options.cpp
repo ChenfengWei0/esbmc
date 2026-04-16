@@ -158,6 +158,12 @@ const struct group_opt_templ all_cmd_options[] = {
     {"tod-functions",
      boost::program_options::value<std::string>()->value_name("f1,f2"),
      "Specify two functions for TOD (Transaction Order Dependence) detection"},
+    {"tod-auto",
+     NULL,
+     "Auto-discover TOD-candidate function pairs in --contract and verify "
+     "each one (intra-contract R/W footprint analysis with internal "
+     "call-graph closure).  Combine with --dump-harness to emit the "
+     "multi-pair harness without verifying."},
     {"dump-harness",
      NULL,
      "Output the TOD harness as compilable Solidity source and exit"}}},

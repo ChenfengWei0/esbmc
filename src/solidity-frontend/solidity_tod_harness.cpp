@@ -1,4 +1,5 @@
 #include <solidity-frontend/solidity_tod_harness.h>
+#include <solidity-frontend/solidity_tod_analysis.h>
 #include <util/message.h>
 #include <map>
 #include <set>
@@ -263,89 +264,68 @@ static const nlohmann::json *find_constructor(const nlohmann::json &contract)
 }
 
 // ---------------------------------------------------------------------------
-// Main generator
+// Per-pair harness contract emission (used by both single and multi)
 // ---------------------------------------------------------------------------
 
-std::string generate_tod_harness(
-  const std::string &sol_source,
-  const nlohmann::json &ast,
-  const std::string &contract,
+/// Emit a single `contract TOD_<a>_<b> { function test(...) { ... } }` block
+/// to `out`, using the V_C1/V_C2 deployment names supplied by the caller.
+/// Returns false on lookup error (function missing); the caller can decide
+/// whether to abort or continue with the remaining pairs.
+///
+/// `rw_by_name` is the call-graph-closed R/W footprint computed once per
+/// contract by the caller.  Targeted assertions use it so that vars touched
+/// only via internal helpers still get asserted.
+static bool emit_harness_contract(
+  std::ostringstream &out,
+  const nlohmann::json &cdef,
+  const std::vector<StateVar> &all_state_vars,
+  const std::map<std::string, solidity_tod::RWSet> &rw_by_name,
+  const nlohmann::json *ctor,
+  const std::string &c1_name,
+  const std::string &c2_name,
   const std::string &func_a,
   const std::string &func_b)
 {
-  // 1. Find the contract
-  const nlohmann::json *cdef = find_contract(ast, contract);
-  if (!cdef)
+  const nlohmann::json *fa = find_function(cdef, func_a);
+  const nlohmann::json *fb = find_function(cdef, func_b);
+  if (!fa || !fb)
   {
-    log_error("TOD harness: contract '{}' not found in AST", contract);
-    return {};
+    log_error(
+      "TOD harness: function '{}' or '{}' not found",
+      func_a,
+      func_b);
+    return false;
   }
 
-  // 2. Find functions A and B
-  const nlohmann::json *fa = find_function(*cdef, func_a);
-  const nlohmann::json *fb = find_function(*cdef, func_b);
-  if (!fa)
+  // Phase 3: keep only state vars referenced by BOTH functions, using the
+  // call-graph-closed footprint so writes hidden in internal helpers count.
+  std::set<int> footprint_a, footprint_b;
+  auto it_a = rw_by_name.find(func_a);
+  if (it_a != rw_by_name.end())
   {
-    log_error("TOD harness: function '{}' not found in contract '{}'", func_a, contract);
-    return {};
+    footprint_a.insert(it_a->second.reads.begin(), it_a->second.reads.end());
+    footprint_a.insert(it_a->second.writes.begin(), it_a->second.writes.end());
   }
-  if (!fb)
+  auto it_b = rw_by_name.find(func_b);
+  if (it_b != rw_by_name.end())
   {
-    log_error("TOD harness: function '{}' not found in contract '{}'", func_b, contract);
-    return {};
+    footprint_b.insert(it_b->second.reads.begin(), it_b->second.reads.end());
+    footprint_b.insert(it_b->second.writes.begin(), it_b->second.writes.end());
   }
-
-  // 3. Extract contract source text using AST src field
-  std::string contract_src = extract_src(sol_source, cdef->value("src", ""));
-  if (contract_src.empty())
-  {
-    log_error("TOD harness: cannot extract contract source text");
-    return {};
-  }
-
-  // 4. Create two renamed copies
-  std::string c1_name = contract + "_C1";
-  std::string c2_name = contract + "_C2";
-  std::string copy1 = rename_contract(contract_src, contract, c1_name);
-  std::string copy2 = rename_contract(contract_src, contract, c2_name);
-
-  // 5. Collect metadata
-  auto state_vars = collect_public_state_vars(*cdef);
-  const nlohmann::json *ctor = find_constructor(*cdef);
-
-  // Phase 3: targeted assertions.  Walk both function bodies, gather every
-  // referenced declaration id, and keep only those state vars that appear
-  // in BOTH (the "shared" set).  A var only one function touches cannot
-  // exhibit order-dependent behaviour by construction.
-  std::set<int> ids_a, ids_b;
-  if (fa->contains("body"))
-    collect_referenced_decls((*fa)["body"], ids_a);
-  if (fb->contains("body"))
-    collect_referenced_decls((*fb)["body"], ids_b);
   std::set<int> shared_ids;
-  for (int id : ids_a)
-    if (ids_b.count(id))
+  for (int id : footprint_a)
+    if (footprint_b.count(id))
       shared_ids.insert(id);
 
   std::vector<StateVar> shared_vars;
   std::vector<std::string> skipped_vars;
-  for (const auto &sv : state_vars)
+  for (const auto &sv : all_state_vars)
   {
     if (sv.id >= 0 && shared_ids.count(sv.id))
       shared_vars.push_back(sv);
     else
       skipped_vars.push_back(sv.name);
   }
-  state_vars.swap(shared_vars);
-
-  if (state_vars.empty())
-    log_warning(
-      "TOD harness: no public state variable is referenced by both "
-      "'{}' and '{}'.  The harness will contain no equality assertion; "
-      "verification will trivially succeed (no TOD via shared state "
-      "is observable).",
-      func_a,
-      func_b);
 
   // Constructor params
   std::string ctor_params_decl;
@@ -356,16 +336,15 @@ std::string generate_tod_harness(
     ctor_args = emit_prefixed_args(*ctor, "ctor");
   }
 
-  // Function params (prefixed to avoid name collisions)
+  // Function params (prefixed to avoid name collisions).
   std::string fa_params = emit_prefixed_params(*fa, "a");
   std::string fb_params = emit_prefixed_params(*fb, "b");
   std::string fa_args = emit_prefixed_args(*fa, "a");
   std::string fb_args = emit_prefixed_args(*fb, "b");
 
-  // Collect params by type for mapping key comparison.
-  // For each mapping key type, gather all matching params from both functions.
+  // For each mapping key type, gather all matching params from both funcs.
   std::map<std::string, std::vector<std::string>> params_by_type;
-  for (const auto &sv : state_vars)
+  for (const auto &sv : shared_vars)
   {
     if (!sv.is_mapping)
       continue;
@@ -382,31 +361,15 @@ std::string generate_tod_harness(
     }
   }
 
-  // 6. Build the harness
-  std::ostringstream out;
-  out << "// Auto-generated TOD (Transaction Order Dependence) harness\n";
-  out << "// Contract: " << contract << "\n";
-  out << "// Functions: " << func_a << ", " << func_b << "\n";
-  out << "//\n";
-  out << "// Verify with:\n";
-  out << "//   solc --ast-compact-json <this-file>.sol > <this-file>.solast\n";
-  out << "//   esbmc <this-file>.solast --sol <this-file>.sol "
-      << "--contract TOD_" << func_a << "_" << func_b
-      << " --bound --no-standard-checks --unwind 2 "
-      << "--no-unwinding-assertions\n";
-  out << "//\n";
-  out << "// If VERIFICATION FAILED, a TOD vulnerability exists:\n";
-  out << "//   the counterexample shows inputs where swapping the\n";
-  out << "//   execution order of " << func_a << " and " << func_b
-      << " produces different state.\n";
-  out << "//\n";
+  // Per-pair audit comment block.
+  out << "// ----- " << func_a << " vs " << func_b << " -----\n";
   out << "// Targeted state variables (referenced by BOTH functions):";
-  if (state_vars.empty())
+  if (shared_vars.empty())
     out << " <none>\n";
   else
   {
     out << "\n";
-    for (const auto &sv : state_vars)
+    for (const auto &sv : shared_vars)
       out << "//   - " << sv.name << "\n";
   }
   if (!skipped_vars.empty())
@@ -415,27 +378,11 @@ std::string generate_tod_harness(
     for (const auto &n : skipped_vars)
       out << "//   - " << n << "\n";
   }
-  out << "\n";
-  out << "// SPDX-License-Identifier: MIT\n";
-  out << "pragma solidity >=0.8.0;\n\n";
 
-  // Copy 1
-  out << "// ===== Copy 1 =====\n";
-  out << copy1 << "\n\n";
-
-  // Copy 2
-  out << "// ===== Copy 2 =====\n";
-  out << copy2 << "\n\n";
-
-  // Harness contract
   std::string harness_name = "TOD_" + func_a + "_" + func_b;
-  out << "// ===== TOD Harness =====\n";
   out << "contract " << harness_name << " {\n";
-
-  // test function
   out << "    function test(\n";
 
-  // Combine all params
   std::vector<std::string> all_params;
   if (!ctor_params_decl.empty())
     all_params.push_back(ctor_params_decl);
@@ -453,32 +400,24 @@ std::string generate_tod_harness(
   }
   out << "    ) public {\n";
 
-  // Deploy two copies
-  out << "        " << c1_name << " c1 = new " << c1_name << "(";
-  out << ctor_args << ");\n";
-  out << "        " << c2_name << " c2 = new " << c2_name << "(";
-  out << ctor_args << ");\n\n";
+  out << "        " << c1_name << " c1 = new " << c1_name << "("
+      << ctor_args << ");\n";
+  out << "        " << c2_name << " c2 = new " << c2_name << "("
+      << ctor_args << ");\n\n";
 
-  // Order 1: A → B
   out << "        // Order 1: " << func_a << " then " << func_b << "\n";
   out << "        c1." << func_a << "(" << fa_args << ");\n";
   out << "        c1." << func_b << "(" << fb_args << ");\n\n";
 
-  // Order 2: B → A
   out << "        // Order 2: " << func_b << " then " << func_a << "\n";
   out << "        c2." << func_b << "(" << fb_args << ");\n";
   out << "        c2." << func_a << "(" << fa_args << ");\n\n";
 
-  // Assertions on state variables
   out << "        // State comparison — if any assert fails, TOD exists\n";
-  for (const auto &sv : state_vars)
+  for (const auto &sv : shared_vars)
   {
     if (sv.is_mapping && !sv.mapping_key_types.empty())
     {
-      // For each combination of keys matching the mapping's key types,
-      // generate an assertion.
-      // For a single-level mapping(K => V): compare at each param of type K.
-      // For nested mapping(K1 => mapping(K2 => V)): Cartesian product.
       std::vector<std::vector<std::string>> key_sets;
       bool skip = false;
       for (const auto &kt : sv.mapping_key_types)
@@ -497,26 +436,19 @@ std::string generate_tod_harness(
         continue;
       }
 
-      // Generate Cartesian product of key sets
-      // For simplicity, handle 1-level and 2-level mappings explicitly.
       if (key_sets.size() == 1)
       {
         for (const auto &k : key_sets[0])
-        {
           out << "        assert(c1." << sv.name << "(" << k << ")"
               << " == c2." << sv.name << "(" << k << "));\n";
-        }
       }
       else if (key_sets.size() == 2)
       {
         for (const auto &k1 : key_sets[0])
           for (const auto &k2 : key_sets[1])
-          {
-            out << "        assert(c1." << sv.name << "(" << k1
-                << ", " << k2 << ")"
-                << " == c2." << sv.name << "(" << k1 << ", " << k2
-                << "));\n";
-          }
+            out << "        assert(c1." << sv.name << "(" << k1 << ", "
+                << k2 << ") == c2." << sv.name << "(" << k1 << ", "
+                << k2 << "));\n";
       }
       else
       {
@@ -533,7 +465,102 @@ std::string generate_tod_harness(
   }
 
   out << "    }\n";
-  out << "}\n";
+  out << "}\n\n";
+
+  if (shared_vars.empty())
+    log_warning(
+      "TOD harness: no public state variable is referenced by both "
+      "'{}' and '{}'.  The harness contains no equality assertion; "
+      "verification will trivially succeed.",
+      func_a,
+      func_b);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Top-level generators
+// ---------------------------------------------------------------------------
+
+std::string generate_tod_harness_multi(
+  const std::string &sol_source,
+  const nlohmann::json &ast,
+  const std::string &contract,
+  const std::vector<std::pair<std::string, std::string>> &pairs)
+{
+  if (pairs.empty())
+  {
+    log_error("TOD harness: no function pairs supplied");
+    return {};
+  }
+
+  const nlohmann::json *cdef = find_contract(ast, contract);
+  if (!cdef)
+  {
+    log_error("TOD harness: contract '{}' not found in AST", contract);
+    return {};
+  }
+
+  std::string contract_src = extract_src(sol_source, cdef->value("src", ""));
+  if (contract_src.empty())
+  {
+    log_error("TOD harness: cannot extract contract source text");
+    return {};
+  }
+
+  std::string c1_name = contract + "_C1";
+  std::string c2_name = contract + "_C2";
+  std::string copy1 = rename_contract(contract_src, contract, c1_name);
+  std::string copy2 = rename_contract(contract_src, contract, c2_name);
+
+  auto state_vars = collect_public_state_vars(*cdef);
+  const nlohmann::json *ctor = find_constructor(*cdef);
+  // Compute closed R/W footprints once per contract; emit_harness_contract
+  // re-uses this map for every (a, b) pair.
+  auto rw_by_name = solidity_tod::compute_rw_sets(*cdef);
+
+  std::ostringstream out;
+  out << "// Auto-generated TOD (Transaction Order Dependence) harness\n";
+  out << "// Contract: " << contract << "\n";
+  out << "// Pairs (" << pairs.size() << "):\n";
+  for (const auto &p : pairs)
+    out << "//   - " << p.first << " vs " << p.second << "\n";
+  out << "//\n";
+  out << "// Verify each TOD_<a>_<b> contract with:\n";
+  out << "//   esbmc <this-file>.sol --contract TOD_<a>_<b> "
+      << "--bound --no-standard-checks --unwind 2 "
+      << "--no-unwinding-assertions\n";
+  out << "// Or let ESBMC drive all pairs via --tod-auto.\n\n";
+  out << "// SPDX-License-Identifier: MIT\n";
+  out << "pragma solidity >=0.8.0;\n\n";
+
+  out << "// ===== Copy 1 =====\n";
+  out << copy1 << "\n\n";
+  out << "// ===== Copy 2 =====\n";
+  out << copy2 << "\n\n";
+
+  out << "// ===== TOD Harness contracts =====\n";
+  for (const auto &p : pairs)
+    emit_harness_contract(
+      out,
+      *cdef,
+      state_vars,
+      rw_by_name,
+      ctor,
+      c1_name,
+      c2_name,
+      p.first,
+      p.second);
 
   return out.str();
+}
+
+std::string generate_tod_harness(
+  const std::string &sol_source,
+  const nlohmann::json &ast,
+  const std::string &contract,
+  const std::string &func_a,
+  const std::string &func_b)
+{
+  return generate_tod_harness_multi(
+    sol_source, ast, contract, {{func_a, func_b}});
 }

@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--contract Closure --tod-auto
+^--tod-auto: discovered 1 candidate pair\(s\) in 'Closure'$
+^--tod-auto summary: 1 pair\(s\) — 0 clean, 1 TOD found, 0 error$
