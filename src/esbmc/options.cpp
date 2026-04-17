@@ -180,7 +180,7 @@ const struct group_opt_templ all_cmd_options[] = {
      "single _ESBMC_Object_<C> singleton.  Enabled automatically by --tod-* "
      "flags and forwarded to the verification subprocess."},
     {"tod-jobs",
-     boost::program_options::value<unsigned int>()->value_name("N"),
+     boost::program_options::value<std::string>()->value_name("N"),
      "Number of parallel ESBMC subprocesses to run in --tod-*-check=auto "
      "mode.  Defaults to min(hardware_concurrency, pair_count).  Use 1 to "
      "force sequential execution."}}},

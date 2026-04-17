@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--contract Fund --tod-race-check=auto --tod-jobs=1 --unwind 2 --no-unwinding-assertions
+^--tod-race-check: discovered 0 candidate pair\(s\) in 'Fund'$
+^--tod-race-check: no race TOD pairs detected — done\.$
