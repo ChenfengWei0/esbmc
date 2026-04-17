@@ -770,6 +770,13 @@ static bool emit_harness_contract_race(
       std::vector<std::string> all;
       all.insert(all.end(), ka.begin(), ka.end());
       all.insert(all.end(), kb.begin(), kb.end());
+      // For address keys, also enumerate `address(this)`: functions called
+      // through c1/c2 see msg.sender == address(this) of the harness, so
+      // mappings keyed by msg.sender (e.g. ERC20 allowed[msg.sender][...])
+      // land in slot (address(this), _spender).  Without this the writes
+      // from approve / increaseApproval are never asserted on.
+      if (kt == "address" || kt == "address payable")
+        all.push_back("address(this)");
       params_by_type[kt] = all;
     }
   }
