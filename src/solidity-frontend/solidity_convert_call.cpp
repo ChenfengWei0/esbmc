@@ -406,6 +406,24 @@ void solidity_convertert::extract_new_contracts()
       current_baseContractName = old;
     }
   }
+
+  // --contract-param-fresh: every contract-typed function parameter is
+  // allocated via cpp_new at assign_param_nondet time, so every contract
+  // effectively has a `new` call-site.  Force newContractSet to cover all
+  // declared contracts so the mapping dispatch picks the pointer-based
+  // store shape (not the global infinity-array fallback).
+  if (config.options.get_bool_option("contract-param-fresh"))
+  {
+    for (const auto &top_level_node : src_ast_json["nodes"])
+    {
+      if (
+        top_level_node.contains("nodeType") &&
+        top_level_node["nodeType"] == "ContractDefinition" &&
+        top_level_node.contains("name"))
+        newContractSet.insert(
+          top_level_node["name"].get<std::string>());
+    }
+  }
 }
 
 bool solidity_convertert::get_base_contract_name(
@@ -539,20 +557,27 @@ bool solidity_convertert::assign_param_nondet(
       }
       if (get_sol_type(t) == SolidityGrammar::SolType::CONTRACT)
       {
-        /*
-            e.g. function run(Base x)
-            ==>
-            if(nondet_bool())
-            {
-              __ESBMC_Object_m.run(_ESBMC_Object_Base) 
-              / / where its cname = ["Base", "Derive"]
-            }
-          */
         std::string base_cname = t.get("#sol_contract").as_string();
         assert(!base_cname.empty());
-        exprt s;
-        get_static_contract_instance_ref(base_cname, s);
-        call.arguments().push_back(s);
+        // --contract-param-fresh: allocate a fresh heap instance per
+        // contract-typed param so `function test(C c1, C c2)` does not
+        // alias both args to the `_ESBMC_Object_<C>` singleton.
+        const bool fresh_mode =
+          config.options.get_bool_option("contract-param-fresh");
+        if (fresh_mode)
+        {
+          exprt new_contract;
+          if (get_new_object_ctor_call(
+                base_cname, empty_json, false, new_contract))
+            return true;
+          call.arguments().push_back(new_contract);
+        }
+        else
+        {
+          exprt s;
+          get_static_contract_instance_ref(base_cname, s);
+          call.arguments().push_back(s);
+        }
       }
       else if (
         get_sol_type(t) == SolidityGrammar::SolType::STRING && is_pointer_check)

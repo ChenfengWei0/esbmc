@@ -155,18 +155,35 @@ const struct group_opt_templ all_cmd_options[] = {
     {"negating-property",
      boost::program_options::value<std::string>()->value_name("fname"),
      "Convert the assert(cond) to assert(!cond)"},
-    {"tod",
+    {"tod-balance-check",
      boost::program_options::value<std::string>()
        ->value_name("auto|f1,f2")
        ->implicit_value("auto"),
-     "Run TOD (Transaction Order Dependence) detection on --contract.  "
-     "--tod or --tod=auto auto-discovers candidate pairs via intra-contract "
-     "R/W footprint analysis with internal call-graph closure; --tod=f1,f2 "
-     "targets a single function pair.  Combine with --dump-harness to emit "
-     "the harness without verifying."},
+     "Detect balance-based TOD on --contract: pairs whose shared footprint "
+     "includes address(this).balance.  auto discovers candidate pairs "
+     "automatically; f1,f2 targets a specific pair."},
+    {"tod-race-check",
+     boost::program_options::value<std::string>()
+       ->value_name("auto|f1,f2")
+       ->implicit_value("auto"),
+     "Detect TransRacer-style storage-race TOD on --contract: pairs whose "
+     "shared footprint includes at least one non-balance state variable.  "
+     "auto discovers candidate pairs automatically; f1,f2 targets a "
+     "specific pair."},
     {"dump-harness",
      NULL,
-     "Output the TOD harness as compilable Solidity source and exit"}}},
+     "Output the TOD harness as compilable Solidity source and exit"},
+    {"contract-param-fresh",
+     NULL,
+     "Give each contract-typed function parameter its own freshly allocated "
+     "storage so two params of the same contract type do not alias the "
+     "single _ESBMC_Object_<C> singleton.  Enabled automatically by --tod-* "
+     "flags and forwarded to the verification subprocess."},
+    {"tod-jobs",
+     boost::program_options::value<unsigned int>()->value_name("N"),
+     "Number of parallel ESBMC subprocesses to run in --tod-*-check=auto "
+     "mode.  Defaults to min(hardware_concurrency, pair_count).  Use 1 to "
+     "force sequential execution."}}},
 #endif
   {"Frontend",
    {{"include,I",

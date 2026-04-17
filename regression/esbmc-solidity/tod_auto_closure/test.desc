@@ -1,5 +1,5 @@
 CORE
 contract.sol
---contract Closure --tod=auto
-^--tod: discovered 1 candidate pair\(s\) in 'Closure'$
-^--tod summary: 1 pair\(s\) — 0 clean, 1 TOD found, 0 error$
+--contract Closure --tod-race-check=auto --unwind 2 --no-unwinding-assertions
+^--tod-race-check: discovered 1 candidate pair\(s\) in 'Closure'$
+^--tod-race-check summary: 1 pair\(s\) — 0 clean, 1 TOD found, 0 error$

@@ -43,11 +43,24 @@ struct Pair
 std::map<std::string, RWSet> compute_rw_sets(
   const nlohmann::json &contract_def);
 
+/// Mode filter for find_tod_candidates().
+///   Any         — any non-empty overlap qualifies.
+///   BalanceOnly — the shared footprint must include kBalanceId.
+///   RaceOnly    — the shared footprint must include at least one
+///                 non-balance state variable id.
+enum class Mode
+{
+  Any,
+  BalanceOnly,
+  RaceOnly,
+};
+
 /// Find pairs of public/external functions whose footprints satisfy
 ///   W(f1) ∩ (R(f2) ∪ W(f2))  ∪  W(f2) ∩ (R(f1) ∪ W(f1))  ≠ ∅
 /// Skips view/pure functions, the constructor, fallback and receive.
 /// Pairs are returned sorted with `func_a < func_b` lexicographically.
 std::vector<Pair> find_tod_candidates(
-  const nlohmann::json &contract_def);
+  const nlohmann::json &contract_def,
+  Mode mode = Mode::Any);
 
 } // namespace solidity_tod

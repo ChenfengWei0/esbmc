@@ -387,17 +387,14 @@ static bool body_may_revert_explicitly(const nlohmann::json &node)
 }
 
 // ---------------------------------------------------------------------------
-// Per-pair harness contract emission (used by both single and multi)
+// Per-pair harness contract emission
 // ---------------------------------------------------------------------------
 
-/// Emit a single `contract TOD_<a>_<b> { function test(...) { ... } }` block
-/// to `out`, using the V_C1/V_C2 deployment names supplied by the caller.
-/// Returns false on lookup error (function missing); the caller can decide
-/// whether to abort or continue with the remaining pairs.
-///
-/// `rw_by_name` is the call-graph-closed R/W footprint computed once per
-/// contract by the caller.  Targeted assertions use it so that vars touched
-/// only via internal helpers still get asserted.
+/// Balance mode harness: uses two renamed copies of the target contract
+/// (<contract>_C1 / <contract>_C2) so ETH transfers on distinct singletons
+/// do not alias.  Kept as the balance-TOD backend because the ETH balance
+/// model lives on `_ESBMC_Object_<C>.$balance` and the harness needs two
+/// separate singletons.
 static bool emit_harness_contract(
   std::ostringstream &out,
   const nlohmann::json &cdef,
@@ -699,22 +696,203 @@ static bool emit_harness_contract(
   return true;
 }
 
+/// Race mode harness: single target contract + `function test(C c1, C c2,
+/// ...)` parameters.  Independent storage per `c1`/`c2` comes from
+/// ESBMC's --contract-param-fresh flag (assign_param_nondet allocates a
+/// fresh heap instance per contract-typed parameter).  The `ctor_args`
+/// parameter list is still threaded through so the harness body can call
+/// `c1.someCtorPublicGetter()` with the same constants if that ever
+/// becomes useful — for the basic race check we only exercise f_a and
+/// f_b, not the ctor.
+///
+/// TOD classification is surfaced through helper functions named
+/// `__tod_race_check`/`__tod_balance_check`; their bodies are a plain
+/// `assert(cond)` so Solidity compiles, and the function name appears
+/// on the ESBMC counter-example stack, distinguishing race from balance
+/// TOD in the verdict output.
+static bool emit_harness_contract_race(
+  std::ostringstream &out,
+  const nlohmann::json &cdef,
+  const std::vector<StateVar> &all_state_vars,
+  const std::map<std::string, solidity_tod::RWSet> &rw_by_name,
+  const std::string &contract,
+  const std::string &func_a,
+  const std::string &func_b)
+{
+  const nlohmann::json *fa = find_function(cdef, func_a);
+  const nlohmann::json *fb = find_function(cdef, func_b);
+  if (!fa || !fb)
+  {
+    log_error(
+      "TOD harness: function '{}' or '{}' not found", func_a, func_b);
+    return false;
+  }
+
+  // Assert on the UNION of writes: a TOD-Race exposes divergence on any
+  // state variable WRITTEN by either function, not just the intersection.
+  // Pair SELECTION still uses the overlap criterion — but the witness
+  // check compares the full post-state footprint so we don't miss cases
+  // like `f_a writes pot, f_b reads pot and writes winner` where the
+  // divergence is on winner (touched by only one side).
+  std::set<int> asserted_ids;
+  auto it_a = rw_by_name.find(func_a);
+  if (it_a != rw_by_name.end())
+    asserted_ids.insert(
+      it_a->second.writes.begin(), it_a->second.writes.end());
+  auto it_b = rw_by_name.find(func_b);
+  if (it_b != rw_by_name.end())
+    asserted_ids.insert(
+      it_b->second.writes.begin(), it_b->second.writes.end());
+
+  std::vector<StateVar> shared_vars;
+  for (const auto &sv : all_state_vars)
+    if (sv.id >= 0 && asserted_ids.count(sv.id))
+      shared_vars.push_back(sv);
+
+  // Function params (prefixed so fa/fb argument names don't collide).
+  std::string fa_params = emit_prefixed_params(*fa, "a");
+  std::string fb_params = emit_prefixed_params(*fb, "b");
+  std::string fa_args = emit_prefixed_args(*fa, "a");
+  std::string fb_args = emit_prefixed_args(*fb, "b");
+
+  // Per mapping key type, gather matching params from both functions.
+  std::map<std::string, std::vector<std::string>> params_by_type;
+  for (const auto &sv : shared_vars)
+  {
+    if (!sv.is_mapping)
+      continue;
+    for (const auto &kt : sv.mapping_key_types)
+    {
+      if (params_by_type.count(kt))
+        continue;
+      auto ka = collect_params_by_type(*fa, "a", kt);
+      auto kb = collect_params_by_type(*fb, "b", kt);
+      std::vector<std::string> all;
+      all.insert(all.end(), ka.begin(), ka.end());
+      all.insert(all.end(), kb.begin(), kb.end());
+      params_by_type[kt] = all;
+    }
+  }
+
+  out << "// ----- " << func_a << " vs " << func_b << " -----\n";
+  out << "// Shared state variables (touched by both):\n";
+  if (shared_vars.empty())
+    out << "//   <none — assertion is trivially true>\n";
+  for (const auto &sv : shared_vars)
+    out << "//   - " << sv.name << "\n";
+
+  std::string harness_name = "TOD_" + func_a + "_" + func_b;
+  out << "contract " << harness_name << " {\n";
+  out << "    function test(\n";
+  out << "        " << contract << " c1,\n";
+  out << "        " << contract << " c2";
+  if (!fa_params.empty())
+    out << ",\n        " << fa_params;
+  if (!fb_params.empty())
+    out << ",\n        " << fb_params;
+  out << "\n    ) public {\n";
+  // Require distinct $address so any mapping state var (keyed by
+  // (addr, key) in the _ESBMC_Mapping store) does not alias between
+  // the two deployments.
+  out << "        require(address(c1) != address(c2), \"isolate c1/c2\");\n";
+
+  const bool wrap_a = body_may_revert_explicitly(*fa);
+  const bool wrap_b = body_may_revert_explicitly(*fb);
+  auto emit_call = [&](std::ostringstream &o, const std::string &c,
+                       const std::string &fn, const std::string &args,
+                       bool wrap) {
+    if (wrap)
+      o << "        try " << c << "." << fn << "(" << args
+        << ") {} catch {}\n";
+    else
+      o << "        " << c << "." << fn << "(" << args << ");\n";
+  };
+
+  out << "        // Order 1: c1 runs " << func_a << " then " << func_b
+      << "\n";
+  emit_call(out, "c1", func_a, fa_args, wrap_a);
+  emit_call(out, "c1", func_b, fb_args, wrap_b);
+  out << "\n        // Order 2: c2 runs " << func_b << " then " << func_a
+      << "\n";
+  emit_call(out, "c2", func_b, fb_args, wrap_b);
+  emit_call(out, "c2", func_a, fa_args, wrap_a);
+  out << "\n        // Race check: if any shared state differs the pair is "
+         "order-dependent\n";
+
+  for (const auto &sv : shared_vars)
+  {
+    if (sv.is_mapping && !sv.mapping_key_types.empty())
+    {
+      std::vector<std::vector<std::string>> key_sets;
+      bool skip = false;
+      for (const auto &kt : sv.mapping_key_types)
+      {
+        if (!params_by_type.count(kt) || params_by_type[kt].empty())
+        {
+          skip = true;
+          break;
+        }
+        key_sets.push_back(params_by_type[kt]);
+      }
+      if (skip)
+      {
+        out << "        // Skipped: " << sv.name
+            << " (no matching key params)\n";
+        continue;
+      }
+      if (key_sets.size() == 1)
+      {
+        for (const auto &k : key_sets[0])
+          out << "        __tod_race_check(c1." << sv.name << "(" << k
+              << ") == c2." << sv.name << "(" << k << "));\n";
+      }
+      else if (key_sets.size() == 2)
+      {
+        for (const auto &k1 : key_sets[0])
+          for (const auto &k2 : key_sets[1])
+            out << "        __tod_race_check(c1." << sv.name << "(" << k1
+                << ", " << k2 << ") == c2." << sv.name << "(" << k1 << ", "
+                << k2 << "));\n";
+      }
+      else
+      {
+        out << "        // Skipped: " << sv.name
+            << " (deeply nested mapping, " << key_sets.size()
+            << " levels)\n";
+      }
+    }
+    else if (!sv.is_mapping)
+    {
+      out << "        __tod_race_check(c1." << sv.name << "() == c2."
+          << sv.name << "());\n";
+    }
+  }
+
+  out << "    }\n";
+  out << "}\n\n";
+
+  if (shared_vars.empty())
+    log_warning(
+      "TOD race harness: no public state variable is touched by both '{}' "
+      "and '{}'.  Harness contains no equality assertion; verification "
+      "trivially succeeds.",
+      func_a,
+      func_b);
+  return true;
+}
+
 // ---------------------------------------------------------------------------
-// Top-level generators
+// Top-level generator (single pair -> single .sol file)
 // ---------------------------------------------------------------------------
 
-std::string generate_tod_harness_multi(
+std::string generate_tod_harness(
   const std::string &sol_source,
   const nlohmann::json &ast,
   const std::string &contract,
-  const std::vector<std::pair<std::string, std::string>> &pairs)
+  const std::string &func_a,
+  const std::string &func_b,
+  TodHarnessMode mode)
 {
-  if (pairs.empty())
-  {
-    log_error("TOD harness: no function pairs supplied");
-    return {};
-  }
-
   const nlohmann::json *cdef = find_contract(ast, contract);
   if (!cdef)
   {
@@ -729,99 +907,96 @@ std::string generate_tod_harness_multi(
     return {};
   }
 
-  std::string c1_name = contract + "_C1";
-  std::string c2_name = contract + "_C2";
-  std::string copy1 = rename_contract(contract_src, contract, c1_name);
-  std::string copy2 = rename_contract(contract_src, contract, c2_name);
-
   auto state_vars = collect_public_state_vars(*cdef);
-  const nlohmann::json *ctor = find_constructor(*cdef);
-  // Compute closed R/W footprints once per contract; emit_harness_contract
-  // re-uses this map for every (a, b) pair.
   auto rw_by_name = solidity_tod::compute_rw_sets(*cdef);
-
-  // If ANY pair will emit a balance assertion, inject the __tod_bal()
-  // view-getter into both renamed copies.  Cheap enough to always inject
-  // when any pair touches balance — no need to inject per-pair.
-  bool any_balance = false;
-  for (const auto &p : pairs)
-  {
-    auto it_a = rw_by_name.find(p.first);
-    auto it_b = rw_by_name.find(p.second);
-    bool a_bal = it_a != rw_by_name.end() &&
-                 (it_a->second.reads.count(solidity_tod::kBalanceId) ||
-                  it_a->second.writes.count(solidity_tod::kBalanceId));
-    bool b_bal = it_b != rw_by_name.end() &&
-                 (it_b->second.reads.count(solidity_tod::kBalanceId) ||
-                  it_b->second.writes.count(solidity_tod::kBalanceId));
-    if (a_bal && b_bal)
-    {
-      any_balance = true;
-      break;
-    }
-  }
-  if (any_balance)
-  {
-    copy1 = inject_tod_bal_getter(copy1);
-    copy2 = inject_tod_bal_getter(copy2);
-  }
 
   std::ostringstream out;
   out << "// Auto-generated TOD (Transaction Order Dependence) harness\n";
   out << "// Contract: " << contract << "\n";
-  out << "// Pairs (" << pairs.size() << "):\n";
-  for (const auto &p : pairs)
-    out << "//   - " << p.first << " vs " << p.second << "\n";
-  out << "//\n";
-  out << "// Verify each TOD_<a>_<b> contract with:\n";
-  out << "//   esbmc <this-file>.sol --contract TOD_<a>_<b> "
-      << "--bound --no-standard-checks --unwind 2 "
-      << "--no-unwinding-assertions\n";
-  out << "// Or let ESBMC drive all pairs via --tod-auto.\n\n";
+  out << "// Pair:     " << func_a << " vs " << func_b << "\n";
+  out << "// Mode:     "
+      << (mode == TodHarnessMode::Balance ? "balance" : "race") << "\n\n";
   out << "// SPDX-License-Identifier: MIT\n";
   out << "pragma solidity >=0.8.0;\n\n";
 
-  // Inject all top-level dependencies (interfaces / libraries / base
-  // contracts / errors / structs / enums) BEFORE the renamed copies so
-  // references like `<target>_C1 is BaseX` or `using SafeMath for uint256`
-  // resolve when the harness is compiled standalone.
+  // Classification helpers: the ESBMC counter-example prints the callee
+  // name, so a failed assert inside __tod_race_check / __tod_balance_check
+  // makes the verdict self-describing without needing a 2-arg intrinsic.
+  out << "// TOD classification helpers.  An assertion failure inside one\n"
+         "// of these functions tells the user which TOD category fired.\n"
+         "function __tod_race_check(bool cond) pure {\n"
+         "    assert(cond); // TOD-Race: non-commutative state update\n"
+         "}\n"
+         "function __tod_balance_check(bool cond) pure {\n"
+         "    assert(cond); // TOD-Balance: order-dependent ETH movement\n"
+         "}\n\n";
+
   std::string deps = collect_dependency_definitions(ast, sol_source, contract);
   if (!deps.empty())
   {
-    out << "// ===== Injected dependencies (base contracts, libraries, "
-           "interfaces, free decls) =====\n";
+    out << "// ===== Dependencies =====\n";
     out << deps;
-    out << "// ===== End of injected dependencies =====\n\n";
+    out << "// ===== End dependencies =====\n\n";
   }
 
-  out << "// ===== Copy 1 =====\n";
-  out << copy1 << "\n\n";
-  out << "// ===== Copy 2 =====\n";
-  out << copy2 << "\n\n";
-
-  out << "// ===== TOD Harness contracts =====\n";
-  for (const auto &p : pairs)
-    emit_harness_contract(
-      out,
-      *cdef,
-      state_vars,
-      rw_by_name,
-      ctor,
-      c1_name,
-      c2_name,
-      p.first,
-      p.second);
+  if (mode == TodHarnessMode::Balance)
+  {
+    // Balance mode keeps the two-copy rename approach: each copy owns its
+    // own _ESBMC_Object_<Cx> singleton so ETH transfers routed through the
+    // address dispatcher land in distinct balance slots.
+    std::string c1_name = contract + "_C1";
+    std::string c2_name = contract + "_C2";
+    std::string copy1 = rename_contract(contract_src, contract, c1_name);
+    std::string copy2 = rename_contract(contract_src, contract, c2_name);
+    copy1 = inject_tod_bal_getter(copy1);
+    copy2 = inject_tod_bal_getter(copy2);
+    const nlohmann::json *ctor = find_constructor(*cdef);
+    out << "// ===== Copy 1 =====\n" << copy1 << "\n\n";
+    out << "// ===== Copy 2 =====\n" << copy2 << "\n\n";
+    out << "// ===== TOD harness =====\n";
+    if (!emit_harness_contract(
+          out,
+          *cdef,
+          state_vars,
+          rw_by_name,
+          ctor,
+          c1_name,
+          c2_name,
+          func_a,
+          func_b))
+      return {};
+  }
+  else
+  {
+    // Race mode: single contract, param-form harness.  --contract-param-fresh
+    // gives c1 and c2 independent storage.
+    out << "// ===== Target contract =====\n" << contract_src << "\n\n";
+    out << "// ===== TOD harness =====\n";
+    if (!emit_harness_contract_race(
+          out, *cdef, state_vars, rw_by_name, contract, func_a, func_b))
+      return {};
+  }
 
   return out.str();
 }
 
-std::string generate_tod_harness(
+std::string generate_tod_harness_multi(
   const std::string &sol_source,
   const nlohmann::json &ast,
   const std::string &contract,
-  const std::string &func_a,
-  const std::string &func_b)
+  const std::vector<std::pair<std::string, std::string>> &pairs,
+  TodHarnessMode mode)
 {
-  return generate_tod_harness_multi(
-    sol_source, ast, contract, {{func_a, func_b}});
+  // Retained for the single-pair case.  Auto mode is handled by the CLI
+  // driver, which invokes generate_tod_harness() per pair and writes a
+  // distinct .sol file per pair.
+  if (pairs.size() != 1)
+  {
+    log_error(
+      "generate_tod_harness_multi: multi-pair single-file harnesses are no "
+      "longer supported; the CLI emits one .sol per pair instead");
+    return {};
+  }
+  return generate_tod_harness(
+    sol_source, ast, contract, pairs[0].first, pairs[0].second, mode);
 }

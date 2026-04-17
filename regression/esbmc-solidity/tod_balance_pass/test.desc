@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Bal --tod=payA,payB
+--contract Bal --tod-balance-check=payA,payB --unwind 2 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$

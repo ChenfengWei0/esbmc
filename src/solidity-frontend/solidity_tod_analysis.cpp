@@ -367,7 +367,9 @@ std::map<std::string, RWSet> compute_rw_sets(
   return out;
 }
 
-std::vector<Pair> find_tod_candidates(const nlohmann::json &contract_def)
+std::vector<Pair> find_tod_candidates(
+  const nlohmann::json &contract_def,
+  Mode mode)
 {
   ContractIndex idx = index_contract(contract_def);
   auto local = compute_local(idx);
@@ -423,6 +425,14 @@ std::vector<Pair> find_tod_candidates(const nlohmann::json &contract_def)
 
       // Skip self-pairs (already excluded by j>i, but defensive).
       if (orderable[i].first == orderable[j].first)
+        continue;
+
+      const bool has_balance = shared.count(kBalanceId) > 0;
+      const bool has_state_var = std::any_of(
+        shared.begin(), shared.end(), [](int id) { return id > 0; });
+      if (mode == Mode::BalanceOnly && !has_balance)
+        continue;
+      if (mode == Mode::RaceOnly && !has_state_var)
         continue;
 
       pairs.push_back(

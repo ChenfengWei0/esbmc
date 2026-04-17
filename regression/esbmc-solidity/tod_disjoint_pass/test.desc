@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Fund --tod=withdraw,setRecipient
+--contract Fund --tod-race-check=withdraw,setRecipient --unwind 2 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$

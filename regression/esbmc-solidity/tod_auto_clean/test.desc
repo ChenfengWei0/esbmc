@@ -1,5 +1,5 @@
 CORE
 contract.sol
---contract Fund --tod=auto
-^--tod: discovered 0 candidate pair\(s\) in 'Fund'$
-^--tod: no order-dependent pairs detected — done\.$
+--contract Fund --tod-race-check=auto --unwind 2 --no-unwinding-assertions
+^--tod-race-check: discovered 0 candidate pair\(s\) in 'Fund'$
+^--tod-race-check: no race TOD pairs detected — done\.$

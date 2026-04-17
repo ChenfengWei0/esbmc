@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Counter --tod=add,mul
+--contract Counter --tod-race-check=add,mul --unwind 2 --no-unwinding-assertions
 ^VERIFICATION FAILED$

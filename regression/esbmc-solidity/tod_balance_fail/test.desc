@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Bal --tod=payFixed,payIfRich
+--contract Bal --tod-balance-check=payFixed,payIfRich --unwind 2 --no-unwinding-assertions
 ^VERIFICATION FAILED$

@@ -31,6 +31,9 @@ extern "C"
 #include <limits>
 #include <util/expr_util.h>
 #include <iostream>
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <goto-programs/add_race_assertions.h>
 #include <goto-programs/goto_atomicity_check.h>
 #include <goto-programs/goto_check.h>
@@ -816,17 +819,25 @@ int esbmc_parseoptionst::doit()
   }
 
 #ifdef ENABLE_SOLIDITY_FRONTEND
-  // TOD harness generation, driven by --tod:
-  //   --tod  or  --tod=auto   -> auto-discover pairs via R/W footprint
-  //   --tod=f1,f2             -> verify one specific pair
-  // Combine with --dump-harness to print and exit.
-  // Without --dump-harness:
-  //   single pair  -> in-process: write the harness next to the source,
-  //                   redirect cmdline.args, fall through to normal verify
-  //   auto/multi   -> subprocess loop, one ESBMC invocation per pair,
-  //                   summarized at the end
-  if (cmdline.isset("tod"))
+  // TOD harness generation is driven by one of two flags:
+  //   --tod-balance-check  -> balance-TOD: pair shares address(this).balance
+  //   --tod-race-check     -> storage-race TOD: pair shares a non-balance var
+  // Each flag takes "auto" (discover pairs) or "f1,f2" (specific pair).
+  if (cmdline.isset("tod-balance-check") || cmdline.isset("tod-race-check"))
   {
+    if (cmdline.isset("tod-balance-check") && cmdline.isset("tod-race-check"))
+    {
+      log_error(
+        "--tod-balance-check and --tod-race-check are mutually exclusive");
+      return 1;
+    }
+    const bool balance_mode = cmdline.isset("tod-balance-check");
+    const char *tod_flag =
+      balance_mode ? "tod-balance-check" : "tod-race-check";
+    const solidity_tod::Mode tod_mode = balance_mode
+      ? solidity_tod::Mode::BalanceOnly
+      : solidity_tod::Mode::RaceOnly;
+    const char *mode_tag = balance_mode ? "balance" : "race";
     // ---- shared: locate .sol / .solast paths ----
     std::string sol_path, solast_path;
     if (cmdline.isset("sol"))
@@ -844,7 +855,7 @@ int esbmc_parseoptionst::doit()
     }
     if (sol_path.empty())
     {
-      log_error("--tod requires a .sol source file");
+      log_error("--{} requires a .sol source file", tod_flag);
       return 1;
     }
 
@@ -910,7 +921,7 @@ int esbmc_parseoptionst::doit()
 
     // ---- decide pair list ----
     std::vector<std::pair<std::string, std::string>> pairs;
-    std::string tod_val = cmdline.getval("tod");
+    std::string tod_val = cmdline.getval(tod_flag);
     bool auto_mode = (tod_val == "auto");
 
     if (auto_mode)
@@ -928,12 +939,13 @@ int esbmc_parseoptionst::doit()
       if (!cdef)
       {
         log_error(
-          "--tod: contract '{}' not found in AST", contract_name);
+          "--{}: contract '{}' not found in AST", tod_flag, contract_name);
         return 1;
       }
-      auto candidates = solidity_tod::find_tod_candidates(*cdef);
+      auto candidates = solidity_tod::find_tod_candidates(*cdef, tod_mode);
       log_status(
-        "--tod: discovered {} candidate pair(s) in '{}'",
+        "--{}: discovered {} candidate pair(s) in '{}'",
+        tod_flag,
         candidates.size(),
         contract_name);
       for (const auto &p : candidates)
@@ -943,7 +955,8 @@ int esbmc_parseoptionst::doit()
       }
       if (pairs.empty())
       {
-        log_status("--tod: no order-dependent pairs detected — done.");
+        log_status(
+          "--{}: no {} TOD pairs detected — done.", tod_flag, mode_tag);
         return 0;
       }
     }
@@ -953,40 +966,59 @@ int esbmc_parseoptionst::doit()
       if (comma == std::string::npos)
       {
         log_error(
-          "--tod expects 'auto' or two comma-separated function names "
-          "(e.g., --tod=auto or --tod=f1,f2)");
+          "--{} expects 'auto' or two comma-separated function names",
+          tod_flag);
         return 1;
       }
       pairs.emplace_back(
         tod_val.substr(0, comma), tod_val.substr(comma + 1));
     }
 
-    // ---- generate harness source (single or multi) ----
-    std::string harness =
-      generate_tod_harness_multi(sol_source, ast, contract_name, pairs);
-    if (harness.empty())
-      return 1;
+    // Each pair -> its own .sol file (one TOD_<a>_<b> contract per file).
+    TodHarnessMode harness_mode = balance_mode
+      ? TodHarnessMode::Balance
+      : TodHarnessMode::Race;
+    std::string sol_dir;
+    {
+      auto slash = sol_path.find_last_of("/\\");
+      sol_dir = (slash == std::string::npos) ? std::string(".")
+                                             : sol_path.substr(0, slash);
+    }
+    auto harness_path_for = [&](const std::string &fa,
+                                const std::string &fb) {
+      return sol_dir + "/tod_" + mode_tag + "_" + fa + "_" + fb +
+             "_harness.sol";
+    };
 
-    // --dump-harness: print and exit, no verification
+    // --dump-harness: print the first pair and exit.
     if (cmdline.isset("dump-harness"))
     {
+      std::string harness = generate_tod_harness(
+        sol_source,
+        ast,
+        contract_name,
+        pairs[0].first,
+        pairs[0].second,
+        harness_mode);
+      if (harness.empty())
+        return 1;
       std::cout << harness;
       return 0;
     }
 
-    // Write the harness next to the source so relative imports keep working.
-    std::string harness_basename = auto_mode
-      ? std::string("tod_auto_") + contract_name + "_harness.sol"
-      : "tod_" + pairs[0].first + "_" + pairs[0].second + "_harness.sol";
-    std::string harness_path;
+    // ---- single pair: generate file, verify in-process ----
+    if (!auto_mode)
     {
-      auto slash = sol_path.find_last_of("/\\");
-      std::string dir =
-        (slash == std::string::npos) ? std::string(".")
-                                     : sol_path.substr(0, slash);
-      harness_path = dir + "/" + harness_basename;
-    }
-    {
+      std::string harness = generate_tod_harness(
+        sol_source,
+        ast,
+        contract_name,
+        pairs[0].first,
+        pairs[0].second,
+        harness_mode);
+      if (harness.empty())
+        return 1;
+      std::string harness_path = harness_path_for(pairs[0].first, pairs[0].second);
       std::ofstream out(harness_path);
       if (!out.is_open())
       {
@@ -994,12 +1026,9 @@ int esbmc_parseoptionst::doit()
         return 1;
       }
       out << harness;
-    }
-    log_status("TOD harness written to {}", harness_path);
+      out.close();
+      log_status("TOD harness written to {}", harness_path);
 
-    // ---- single pair: in-process verify, fall through to normal flow ----
-    if (!auto_mode)
-    {
       std::string harness_contract =
         "TOD_" + pairs[0].first + "_" + pairs[0].second;
       cmdline.args.clear();
@@ -1008,83 +1037,152 @@ int esbmc_parseoptionst::doit()
       options.set_option("contract", harness_contract);
       options.set_option("bound", true);
       options.set_option("no-standard-checks", true);
-      options.set_option("no-unwinding-assertions", true);
-      if (!cmdline.isset("unwind") && options.get_option("unwind").empty())
-        options.set_option("unwind", "2");
+      options.set_option("contract-param-fresh", true);
       config.options = options;
     }
-    // ---- multi-pair: subprocess loop ----
+    // ---- auto: one .sol per pair, one subprocess per .sol ----
     else
     {
       std::string esbmc = executable_path.string();
-      // Re-use the user's solver / unwind selections by passing the same
-      // flag set.  Keep the command line minimal: pairs differ only in
-      // --contract.
-      std::string base = esbmc + " " + harness_path +
-                         " --bound --no-standard-checks "
-                         "--no-unwinding-assertions";
-      if (!cmdline.isset("unwind"))
-        base += " --unwind 2";
-      else
-        base +=
-          std::string(" --unwind ") + cmdline.getval("unwind");
-      // Forward the user's solver choice if any.
+      std::string forwarded = " --bound --no-standard-checks "
+                              "--contract-param-fresh";
+      if (cmdline.isset("unwind"))
+        forwarded += std::string(" --unwind ") + cmdline.getval("unwind");
+      if (cmdline.isset("no-unwinding-assertions"))
+        forwarded += " --no-unwinding-assertions";
+      if (cmdline.isset("incremental-bmc"))
+        forwarded += " --incremental-bmc";
+      if (cmdline.isset("max-k-step"))
+        forwarded +=
+          std::string(" --max-k-step ") + cmdline.getval("max-k-step");
       for (const char *flag :
            {"cvc5", "bitwuzla", "boolector", "z3", "yices", "mathsat"})
         if (cmdline.isset(flag))
-          base += std::string(" --") + flag;
+          forwarded += std::string(" --") + flag;
 
-      size_t fail_count = 0, succ_count = 0, error_count = 0;
-      std::vector<std::string> failed_pairs;
-      for (const auto &p : pairs)
+      // Materialise every harness file first so workers only spawn ESBMC.
+      std::vector<std::string> harness_paths(pairs.size());
+      std::vector<bool> harness_ok(pairs.size(), false);
+      for (size_t i = 0; i < pairs.size(); ++i)
       {
-        std::string c = "TOD_" + p.first + "_" + p.second;
-        std::string cmd = base + " --contract " + c + " 2>&1";
-        log_status("--tod: verifying {} ...", c);
-        FILE *fp = popen(cmd.c_str(), "r");
-        if (!fp)
+        const auto &p = pairs[i];
+        std::string harness = generate_tod_harness(
+          sol_source, ast, contract_name, p.first, p.second, harness_mode);
+        if (harness.empty())
         {
-          log_error("popen failed for: {}", cmd);
-          error_count++;
+          log_error("--{}: harness generation failed for {}/{}",
+                    tod_flag, p.first, p.second);
           continue;
         }
-        std::string output;
-        char buf[4096];
-        while (fgets(buf, sizeof(buf), fp))
-          output += buf;
-        pclose(fp);
-
-        if (output.find("VERIFICATION SUCCESSFUL") != std::string::npos)
+        std::string hp = harness_path_for(p.first, p.second);
+        std::ofstream out(hp);
+        if (!out.is_open())
         {
-          log_status("  -> SUCCESSFUL");
-          succ_count++;
+          log_error("Cannot write harness to {}", hp);
+          continue;
         }
-        else if (output.find("VERIFICATION FAILED") != std::string::npos)
-        {
-          log_fail("  -> FAILED  (TOD vulnerability between {} and {})",
-                   p.first, p.second);
-          fail_count++;
-          failed_pairs.push_back(c);
-        }
-        else
-        {
-          log_error("  -> ERROR (no verdict)");
-          error_count++;
-        }
+        out << harness;
+        harness_paths[i] = hp;
+        harness_ok[i] = true;
       }
+
+      unsigned int jobs = 0;
+      if (cmdline.isset("tod-jobs"))
+        jobs = std::stoul(cmdline.getval("tod-jobs"));
+      if (jobs == 0)
+      {
+        unsigned hw = std::thread::hardware_concurrency();
+        if (hw == 0)
+          hw = 1;
+        jobs = std::min<unsigned>(hw, pairs.size());
+      }
+      if (jobs == 0)
+        jobs = 1;
       log_status(
-        "--tod summary: {} pair(s) — {} clean, {} TOD found, {} error",
+        "--{}: launching {} parallel ESBMC job(s) over {} pair(s)",
+        tod_flag,
+        jobs,
+        pairs.size());
+
+      std::atomic<size_t> next_idx{0};
+      std::atomic<size_t> fail_count{0}, succ_count{0}, error_count{0};
+      std::mutex failed_mutex;
+      std::vector<std::string> failed_pairs;
+
+      auto worker = [&]() {
+        for (;;)
+        {
+          size_t i = next_idx.fetch_add(1);
+          if (i >= pairs.size())
+            return;
+          if (!harness_ok[i])
+          {
+            error_count.fetch_add(1);
+            continue;
+          }
+          const auto &p = pairs[i];
+          std::string c = "TOD_" + p.first + "_" + p.second;
+          std::string cmd = esbmc + " " + harness_paths[i] + forwarded +
+                            " --contract " + c + " 2>&1";
+          log_status("--{}: verifying {} ({})", tod_flag, c, harness_paths[i]);
+          FILE *fp = popen(cmd.c_str(), "r");
+          if (!fp)
+          {
+            log_error("popen failed for: {}", cmd);
+            error_count.fetch_add(1);
+            continue;
+          }
+          std::string output;
+          char buf[4096];
+          while (fgets(buf, sizeof(buf), fp))
+            output += buf;
+          pclose(fp);
+
+          if (output.find("VERIFICATION SUCCESSFUL") != std::string::npos)
+          {
+            log_status("  -> {} SUCCESSFUL", c);
+            succ_count.fetch_add(1);
+          }
+          else if (output.find("VERIFICATION FAILED") != std::string::npos)
+          {
+            log_fail(
+              "  -> {} FAILED  (TOD vulnerability between {} and {})",
+              c,
+              p.first,
+              p.second);
+            fail_count.fetch_add(1);
+            std::lock_guard<std::mutex> lk(failed_mutex);
+            failed_pairs.push_back(c);
+          }
+          else
+          {
+            log_error("  -> {} ERROR (no verdict)", c);
+            error_count.fetch_add(1);
+          }
+        }
+      };
+
+      std::vector<std::thread> threads;
+      threads.reserve(jobs);
+      for (unsigned t = 0; t < jobs; ++t)
+        threads.emplace_back(worker);
+      for (auto &th : threads)
+        th.join();
+
+      log_status(
+        "--{} summary: {} pair(s) — {} clean, {} TOD found, {} error",
+        tod_flag,
         pairs.size(),
-        succ_count,
-        fail_count,
-        error_count);
+        succ_count.load(),
+        fail_count.load(),
+        error_count.load());
       if (!failed_pairs.empty())
       {
         log_fail("TOD-vulnerable pairs:");
         for (const auto &c : failed_pairs)
           log_fail("  - {}", c);
       }
-      return (fail_count > 0 || error_count > 0) ? 1 : 0;
+      return (fail_count.load() > 0 || error_count.load() > 0) ? 1 : 0;
     }
   }
 #endif
