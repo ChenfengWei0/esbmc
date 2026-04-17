@@ -407,12 +407,18 @@ void solidity_convertert::extract_new_contracts()
     }
   }
 
-  // --contract-param-fresh: every contract-typed function parameter is
+  // TOD harness mode: every contract-typed function parameter is
   // allocated via cpp_new at assign_param_nondet time, so every contract
-  // effectively has a `new` call-site.  Force newContractSet to cover all
-  // declared contracts so the mapping dispatch picks the pointer-based
-  // store shape (not the global infinity-array fallback).
-  if (config.options.get_bool_option("contract-param-fresh"))
+  // effectively has a `new` call-site.  Force newContractSet to cover
+  // all declared contracts so the mapping dispatch picks the pointer-
+  // based store shape (not the global infinity-array fallback).  Kept
+  // gated on an active TOD harness — non-TOD verification still relies
+  // on the legacy singleton + infinity-array mapping model for
+  // pre-existing tests.
+  const bool tod_active =
+    !config.options.get_option("tod-race-check").empty() ||
+    !config.options.get_option("tod-balance-check").empty();
+  if (tod_active)
   {
     for (const auto &top_level_node : src_ast_json["nodes"])
     {
@@ -420,8 +426,7 @@ void solidity_convertert::extract_new_contracts()
         top_level_node.contains("nodeType") &&
         top_level_node["nodeType"] == "ContractDefinition" &&
         top_level_node.contains("name"))
-        newContractSet.insert(
-          top_level_node["name"].get<std::string>());
+        newContractSet.insert(top_level_node["name"].get<std::string>());
     }
   }
 }
@@ -559,24 +564,40 @@ bool solidity_convertert::assign_param_nondet(
       {
         std::string base_cname = t.get("#sol_contract").as_string();
         assert(!base_cname.empty());
-        // --contract-param-fresh: allocate a fresh heap instance per
-        // contract-typed param so `function test(C c1, C c2)` does not
-        // alias both args to the `_ESBMC_Object_<C>` singleton.
-        const bool fresh_mode =
-          config.options.get_bool_option("contract-param-fresh");
-        if (fresh_mode)
+        // Every contract-typed parameter gets its own freshly-allocated
+        // heap instance.  Pointing two params at the single global
+        // `_ESBMC_Object_<C>` singleton aliased their storage and
+        // addresses, which was a bug — a caller passing `check(c1, c2)`
+        // must see two genuinely distinct contract instances.
+        //
+        // Under --bound the instance is additionally driven through a
+        // bounded nondet-dispatch loop (Updated-State reach) via
+        // `_ESBMC_nondet_new_<C>()`.  Skipped under an active TOD harness
+        // because TOD semantics requires c1/c2 to start from the SAME
+        // pre-race state for the order-equivalence check to be meaningful
+        // — independent drives would flag commutative pairs as spurious
+        // races.  TOD's own US coverage is handled by the harness emitter.
+        const bool tod_active =
+          !config.options.get_option("tod-race-check").empty() ||
+          !config.options.get_option("tod-balance-check").empty();
+        if (is_bound && !tod_active)
+        {
+          symbolt drive_sym;
+          if (build_bound_drive_helper(base_cname, drive_sym))
+            return true;
+          side_effect_expr_function_callt drive_call;
+          drive_call.function() = symbol_expr(drive_sym);
+          drive_call.type() = to_code_type(drive_sym.type).return_type();
+          drive_call.location() = drive_sym.location;
+          call.arguments().push_back(drive_call);
+        }
+        else
         {
           exprt new_contract;
           if (get_new_object_ctor_call(
                 base_cname, empty_json, false, new_contract))
             return true;
           call.arguments().push_back(new_contract);
-        }
-        else
-        {
-          exprt s;
-          get_static_contract_instance_ref(base_cname, s);
-          call.arguments().push_back(s);
         }
       }
       else if (

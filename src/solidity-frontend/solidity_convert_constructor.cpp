@@ -425,6 +425,205 @@ bool solidity_convertert::get_unbound_function(
   return false;
 }
 
+/* --bound mode helper: synthesise `_ESBMC_nondet_new_<c_name>()`.
+ *
+ * Returns a freshly heap-allocated `C *` whose state has been driven
+ * through a bounded nondet-dispatch loop, i.e. the instance represents
+ * some reachable Updated State (not just the Initial State left by the
+ * constructor alone).
+ *
+ * Body shape:
+ *   C *_ESBMC_nondet_new_C() {
+ *       __ESBMC_HIDE:
+ *       C *x = new C();                // cpp_new + ctor
+ *       while (nondet_bool()) {
+ *           if (nondet_bool()) (*x).f1(nondet args...);
+ *           if (nondet_bool()) (*x).f2(...);
+ *           ...
+ *       }
+ *       return x;
+ *   }
+ *
+ * Used from `assign_param_nondet` CONTRACT branch when `--bound` is
+ * active so a parameter `C c` passed into a harness function sees its
+ * state vars as SMT-symbolic reachable values instead of ctor defaults.
+ */
+bool solidity_convertert::build_bound_drive_helper(
+  const std::string &c_name,
+  symbolt &sym)
+{
+  const std::string h_name = "_ESBMC_nondet_new_" + c_name;
+  const std::string h_id = "sol:@C@" + c_name + "@F@" + h_name + "#";
+  log_debug("solidity", "\tbuild_bound_drive_helper {}", h_name);
+
+  // memoise: if already built, return it
+  if (context.find_symbol(h_id) != nullptr)
+  {
+    sym = *context.find_symbol(h_id);
+    return false;
+  }
+
+  const typet contract_struct_t = symbol_typet(prefix + c_name);
+  const pointer_typet contract_ptr_t(contract_struct_t);
+
+  // 1. Build function body
+  code_blockt func_body;
+  func_body.make_block();
+
+  // __ESBMC_HIDE
+  code_labelt label;
+  label.set_label("__ESBMC_HIDE");
+  label.code() = code_skipt();
+  func_body.operands().push_back(label);
+
+  // 1.1 local pointer `x`
+  const std::string x_name = "_ESBMC_nondet_new_target_" + c_name;
+  const std::string x_id = h_id + "@" + x_name;
+  symbolt x_sym;
+  locationt x_loc;
+  x_loc.file(absolute_path);
+  std::string debug_modulename = get_modulename_from_path(absolute_path);
+  get_default_symbol(
+    x_sym, debug_modulename, contract_ptr_t, x_name, x_id, x_loc);
+  x_sym.lvalue = true;
+  x_sym.file_local = true;
+  x_sym.static_lifetime = false;
+  symbolt &added_x = *context.move_symbol_to_context(x_sym);
+
+  // x := new C();
+  exprt new_call;
+  if (get_new_object_ctor_call(c_name, empty_json, false, new_call))
+    return true;
+
+  code_declt decl_x(symbol_expr(added_x));
+  decl_x.operands().resize(2);
+  decl_x.op0() = symbol_expr(added_x);
+  decl_x.op1() = new_call;
+  func_body.move_to_operands(decl_x);
+
+  // 1.2 while-loop body: nondet-dispatch over every public/external method
+  code_blockt while_body;
+  while_body.make_block();
+
+  bool skip_vis =
+    config.options.get_option("no-visibility").empty() ? false : true;
+
+  // contract_var = *x (dereference of the local pointer) — used as the
+  // method-access receiver and as the implicit `this` argument.
+  exprt contract_var = dereference_exprt(symbol_expr(added_x), contract_struct_t);
+  contract_var.cmt_lvalue(true);
+
+  const auto methods = funcSignatures[c_name];
+  for (const auto &method : methods)
+  {
+    if (
+      !skip_vis && method.visibility != "public" &&
+      method.visibility != "external")
+      continue;
+    if (method.name == c_name)
+      // skip constructor
+      continue;
+
+    // resolve the exact FunctionDefinition AST node from method.id
+    nlohmann::json decl_ref = empty_json;
+    int target_node_id = -1;
+    {
+      auto hash_pos = method.id.rfind('#');
+      if (hash_pos != std::string::npos)
+      {
+        try
+        {
+          target_node_id = std::stoi(method.id.substr(hash_pos + 1));
+        }
+        catch (...)
+        {
+          target_node_id = -1;
+        }
+      }
+    }
+    if (target_node_id >= 0)
+    {
+      for (auto &top_node : src_ast_json["nodes"])
+      {
+        if (
+          top_node.contains("nodeType") &&
+          top_node["nodeType"] == "ContractDefinition" &&
+          top_node.contains("name") && top_node["name"] == c_name)
+        {
+          for (auto &inner : top_node["nodes"])
+          {
+            if (
+              inner.contains("nodeType") &&
+              inner["nodeType"] == "FunctionDefinition" &&
+              inner.contains("id") &&
+              inner["id"].get<int>() == target_node_id)
+            {
+              decl_ref = inner;
+              break;
+            }
+          }
+          if (!decl_ref.empty())
+            break;
+        }
+      }
+    }
+    if (decl_ref.empty())
+      decl_ref = get_func_decl_ref(c_name, method.name);
+    if (decl_ref.empty())
+    {
+      log_error(
+        "Internal error: fail to find the definition of function {}",
+        method.name);
+      abort();
+    }
+
+    side_effect_expr_function_callt then_expr;
+    if (get_non_library_function_call(decl_ref, empty_json, then_expr))
+      return true;
+    // implicit this = *x
+    then_expr.arguments().at(0) = contract_var;
+    convert_expression_to_code(then_expr);
+
+    code_blockt then;
+    then.copy_to_operands(then_expr);
+
+    codet if_expr("ifthenelse");
+    if_expr.copy_to_operands(nondet_bool_expr, then);
+    while_body.copy_to_operands(if_expr);
+  }
+
+  // while-loop statement: while (nondet_bool()) { ... }
+  code_whilet code_while;
+  code_while.cond() = nondet_bool_expr;
+  code_while.body() = while_body;
+  func_body.move_to_operands(code_while);
+
+  // return x;
+  code_returnt ret;
+  ret.return_value() = symbol_expr(added_x);
+  func_body.move_to_operands(ret);
+
+  // 2. Build function symbol with (no args, returns C *)
+  code_typet h_type;
+  h_type.return_type() = contract_ptr_t;
+
+  symbolt new_symbol;
+  locationt h_loc;
+  h_loc.file(absolute_path);
+  get_default_symbol(
+    new_symbol, debug_modulename, h_type, h_name, h_id, h_loc);
+  new_symbol.lvalue = true;
+  new_symbol.is_extern = false;
+  new_symbol.file_local = false;
+
+  symbolt &added_sym = *context.move_symbol_to_context(new_symbol);
+  added_sym.type = h_type;
+  added_sym.value = func_body;
+
+  sym = added_sym;
+  return false;
+}
+
 // Normally, we would expect expr to be a code_declt expression
 void solidity_convertert::move_to_initializer(const exprt &expr)
 {

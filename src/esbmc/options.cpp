@@ -173,12 +173,6 @@ const struct group_opt_templ all_cmd_options[] = {
     {"dump-harness",
      NULL,
      "Output the TOD harness as compilable Solidity source and exit"},
-    {"contract-param-fresh",
-     NULL,
-     "Give each contract-typed function parameter its own freshly allocated "
-     "storage so two params of the same contract type do not alias the "
-     "single _ESBMC_Object_<C> singleton.  Enabled automatically by --tod-* "
-     "flags and forwarded to the verification subprocess."},
     {"tod-jobs",
      boost::program_options::value<std::string>()->value_name("N"),
      "Number of parallel ESBMC subprocesses to run in --tod-*-check=auto "

@@ -636,6 +636,12 @@ protected:
   bool get_sol_builtin_ref(const nlohmann::json expr, exprt &new_expr);
   void get_temporary_object(exprt &call, exprt &new_expr);
   bool get_unbound_function(const std::string &c_name, symbolt &sym);
+  // Bound-mode helper: builds `_ESBMC_nondet_new_<c_name>()` returning a
+  // freshly-allocated instance whose state has been driven through a
+  // bounded nondet-dispatch loop (so it represents a reachable Updated
+  // State, not just Initial State).  Used from `assign_param_nondet` to
+  // populate contract-typed function parameters under `--bound`.
+  bool build_bound_drive_helper(const std::string &c_name, symbolt &sym);
   bool get_unbound_expr(
     const nlohmann::json expr,
     const std::string &cname,

@@ -1037,15 +1037,13 @@ int esbmc_parseoptionst::doit()
       options.set_option("contract", harness_contract);
       options.set_option("bound", true);
       options.set_option("no-standard-checks", true);
-      options.set_option("contract-param-fresh", true);
       config.options = options;
     }
     // ---- auto: one .sol per pair, one subprocess per .sol ----
     else
     {
       std::string esbmc = executable_path.string();
-      std::string forwarded = " --bound --no-standard-checks "
-                              "--contract-param-fresh";
+      std::string forwarded = " --bound --no-standard-checks";
       if (cmdline.isset("unwind"))
         forwarded += std::string(" --unwind ") + cmdline.getval("unwind");
       if (cmdline.isset("no-unwinding-assertions"))
