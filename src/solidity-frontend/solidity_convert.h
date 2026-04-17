@@ -800,6 +800,25 @@ protected:
     const std::string &cname,
     std::string &fname,
     std::string &fid);
+
+  /// Get or create a per-pointer `_ESBMC_bind_cname` shadow symbol for a local
+  /// contract-typed lvalue.  Because `_ESBMC_Object_<C>` is a global singleton
+  /// shared across every `C*` (writes through one pointer are visible through
+  /// any other), per-pointer polymorphism cannot be expressed by the struct
+  /// field — a shadow symbol carries the per-pointer binding instead.  Used by
+  /// the cast path and the mapping-getter polymorphism read path.
+  ///
+  /// `lvar` must be a local symbol_exprt; returns true (no action) otherwise.
+  /// On success, `shadow_out` is a symbol_expr referring to the shadow.
+  bool get_or_create_bind_shadow(
+    const exprt &lvar,
+    const std::string &declared_cname,
+    exprt &shadow_out);
+
+  /// Look up the shadow for `base` (if base is a symbol_exprt with a companion
+  /// shadow symbol).  Returns true (sets nothing) if no shadow — callers
+  /// should then fall back to `member_exprt(base, "_ESBMC_bind_cname", ...)`.
+  bool get_bind_shadow_read(const exprt &base, exprt &shadow_out);
   void get_nondet_expr(const typet &t, exprt &new_expr);
   bool assign_nondet_contract_name(const std::string &_cname, exprt &new_expr);
   bool assign_param_nondet(

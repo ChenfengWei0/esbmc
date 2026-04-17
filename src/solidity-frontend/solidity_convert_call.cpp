@@ -1466,6 +1466,60 @@ bool solidity_convertert::get_bind_cname_expr(
   return false;
 }
 
+bool solidity_convertert::get_or_create_bind_shadow(
+  const exprt &lvar,
+  const std::string &declared_cname,
+  exprt &shadow_out)
+{
+  if (lvar.id() != "symbol")
+    return true;
+  if (declared_cname.empty())
+    return true;
+
+  const std::string lvar_id = lvar.identifier().as_string();
+  const std::string lvar_name = lvar.name().as_string();
+  const std::string shadow_id = lvar_id + "$bind";
+  const std::string shadow_name = lvar_name + "$bind";
+
+  const symbolt *existing = context.find_symbol(shadow_id);
+  if (existing == nullptr)
+  {
+    symbolt s;
+    const std::string debug_mod = get_modulename_from_path(absolute_path);
+    get_default_symbol(
+      s, debug_mod, string_t, shadow_name, shadow_id, lvar.location());
+    s.lvalue = true;
+    s.file_local = true;
+
+    exprt init_val;
+    get_cname_expr(declared_cname, init_val);
+    solidity_gen_typecast(ns, init_val, string_t);
+    s.value = init_val;
+
+    move_symbol_to_context(s);
+    existing = context.find_symbol(shadow_id);
+    if (existing == nullptr)
+      return true;
+  }
+
+  shadow_out = symbol_expr(*existing);
+  return false;
+}
+
+bool solidity_convertert::get_bind_shadow_read(
+  const exprt &base,
+  exprt &shadow_out)
+{
+  if (base.id() != "symbol")
+    return true;
+  const std::string shadow_id = base.identifier().as_string() + "$bind";
+  const symbolt *existing = context.find_symbol(shadow_id);
+  if (existing == nullptr)
+    return true;
+  shadow_out = symbol_expr(*existing);
+  return false;
+}
+
 /**
  * symbol
  *   * identifier: tag-Bank

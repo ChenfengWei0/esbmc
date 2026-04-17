@@ -913,10 +913,180 @@ bool solidity_convertert::get_expr(
     if (get_expr(expr["arguments"][0], arg_literal_type, from_expr))
       return true;
 
+    // Save the pre-cast address expression — for contract casts we need
+    // the ORIGINAL address value to populate the per-pointer bind shadow
+    // by matching against each singleton's `$address`.  After
+    // `convert_type_expr` runs, `from_expr` has been rewritten to the
+    // target singleton pointer and the argument address is no longer
+    // visible.  (The cast itself also clobbers `_ESBMC_Object_<target>.
+    // $address` globally — see convert_type_expr:1622 — so the if-ladder
+    // must skip the declared-type branch, otherwise the clobber would
+    // trivially match.)
+    exprt pre_cast = from_expr;
+
     // 3. generate the type casting expr
     convert_type_expr(ns, from_expr, type, expr);
 
     new_expr = from_expr;
+
+    // Contract-cast bind shadow emission.
+    // `new C()` writes both the singleton field and the per-pointer
+    // shadow to the declared C.  For cast form `C(_addr)` there is no
+    // single "correct" binding — the declared type C covers any of the
+    // structural cluster, and the real binding depends on which
+    // singleton's address matches `_addr`.  Emit an address-match
+    // if-ladder updating the shadow only (leaving the singleton field
+    // untouched so the legacy function-call dispatcher is unaffected).
+    //
+    // Ladder structure (declared_cname skipped inside the loop):
+    //   if (_addr == _ESBMC_Object_X.$address) shadow = X
+    //   else if (_addr == _ESBMC_Object_Y.$address) shadow = Y
+    //   else shadow = declared_cname
+    //
+    // Skipping the declared-cname comparison is essential: the cast
+    // already rewrote `_ESBMC_Object_<declared>.$address = _addr`
+    // before this ladder runs, so that comparison would trivially hit
+    // and short-circuit the legitimate alternatives.
+    if (get_sol_type(type) == SolidityGrammar::SolType::CONTRACT)
+    {
+      const std::string declared_cname =
+        type.get("#sol_contract").as_string();
+      if (!declared_cname.empty())
+      {
+        const nlohmann::json &parent = find_last_parent(src_ast_json, expr);
+        exprt lvar;
+        bool got_lvar = false;
+        if (parent.contains("nodeType"))
+        {
+          if (parent["nodeType"] == "VariableDeclarationStatement")
+          {
+            if (!get_var_decl_ref(parent["declarations"][0], true, lvar))
+              got_lvar = true;
+          }
+          else if (parent["nodeType"] == "VariableDeclaration")
+          {
+            if (!get_var_decl_ref(parent, true, lvar))
+              got_lvar = true;
+          }
+          else if (parent["nodeType"] == "Assignment")
+          {
+            if (!get_expr(parent["leftHandSide"], lvar))
+              got_lvar = true;
+          }
+        }
+
+        if (got_lvar)
+        {
+          exprt shadow;
+          if (!get_or_create_bind_shadow(lvar, declared_cname, shadow))
+          {
+            // Prefer "shadow propagation" when the cast's argument is of
+            // the shape `address(src_var)` where src_var is a contract-
+            // typed local variable that already has a `$bind` shadow.
+            // In that case the correct binding for the new pointer is
+            // whatever src_var's shadow says — this sidesteps the
+            // singleton-`$address` comparison approach, which doesn't
+            // work when `_ESBMC_Object_<X>.$address` is never
+            // meaningfully initialised (e.g. `--contract Test` only
+            // runs Test's ctor; A2's singleton ctor never executes, so
+            // `_ESBMC_Object_A2.$address` holds a default value that
+            // doesn't match any `new`-created pointer's address).
+            bool propagated_from_shadow = false;
+            const nlohmann::json &cast_arg = expr["arguments"][0];
+            if (cast_arg.is_object() &&
+                cast_arg.value("nodeType", "") == "FunctionCall" &&
+                cast_arg.value("kind", "") == "typeConversion" &&
+                cast_arg.contains("arguments") &&
+                cast_arg["arguments"].is_array() &&
+                cast_arg["arguments"].size() == 1)
+            {
+              const nlohmann::json &inner = cast_arg["arguments"][0];
+              if (inner.is_object() &&
+                  inner.value("nodeType", "") == "Identifier")
+              {
+                exprt src_var;
+                if (!get_expr(inner, src_var))
+                {
+                  exprt src_shadow;
+                  if (!get_bind_shadow_read(src_var, src_shadow))
+                  {
+                    exprt a = side_effect_exprt("assign", shadow.type());
+                    solidity_gen_typecast(ns, src_shadow, shadow.type());
+                    a.copy_to_operands(shadow, src_shadow);
+                    convert_expression_to_code(a);
+                    codet c = to_code(a);
+                    c.location() = location;
+                    move_to_back_block(c);
+                    propagated_from_shadow = true;
+                  }
+                }
+              }
+            }
+
+            if (!propagated_from_shadow)
+            {
+              // Fallback: address-match if-ladder against each
+              // singleton.  Only works when singletons' `$address`
+              // values are populated (multi-contract mode where every
+              // contract's ctor runs).  Declared cname is always the
+              // innermost else so that the clobbered-singleton trap on
+              // the declared type can't short-circuit.
+              auto make_shadow_assign = [&](const std::string &cn) -> codet {
+                exprt rhs;
+                get_cname_expr(cn, rhs);
+                solidity_gen_typecast(ns, rhs, shadow.type());
+                exprt a = side_effect_exprt("assign", shadow.type());
+                a.copy_to_operands(shadow, rhs);
+                convert_expression_to_code(a);
+                return to_code(a);
+              };
+
+              exprt addr_val = pre_cast;
+              solidity_gen_typecast(ns, addr_val, addr_t);
+
+              codet ladder = make_shadow_assign(declared_cname);
+
+              std::unordered_set<std::string> cname_set =
+                structureTypingMap[declared_cname];
+              for (auto non_cname : nonContractNamesList)
+              {
+                if (non_cname == declared_cname)
+                  continue;
+                cname_set.erase(non_cname);
+              }
+
+              for (const auto &alt_cname : cname_set)
+              {
+                if (alt_cname == declared_cname)
+                  continue;
+
+                const symbolt *struct_sym =
+                  context.find_symbol(prefix + alt_cname);
+                if (struct_sym == nullptr ||
+                    struct_sym->type.id() != "struct" ||
+                    !to_struct_type(struct_sym->type).has_component("$address"))
+                  continue;
+
+                exprt obj_ref;
+                get_static_contract_instance_ref(alt_cname, obj_ref);
+                exprt obj_addr = member_exprt(obj_ref, "$address", addr_t);
+
+                exprt cmp = exprt("=", bool_type());
+                cmp.copy_to_operands(addr_val, obj_addr);
+
+                codet if_expr("ifthenelse");
+                if_expr.copy_to_operands(
+                  cmp, make_shadow_assign(alt_cname), ladder);
+                ladder = if_expr;
+              }
+
+              ladder.location() = location;
+              move_to_back_block(ladder);
+            }
+          }
+        }
+      }
+    }
     break;
   }
   case SolidityGrammar::ExpressionT::NullExpr:
