@@ -112,7 +112,7 @@ abstract contract ERC20 is ERC20Basic {
   event Approval(address indexed owner, address indexed spender, uint256 value);
 }
 
-contract HUBRISTOKEN is ERC20 {
+abstract contract HUBRISTOKEN is ERC20 {
   string public name;
   string public symbol;
   uint8 public decimals;
@@ -132,12 +132,12 @@ contract BasicToken is ERC20Basic {
   uint256 totalSupply_;
 
   
-  function totalSupply() public view virtual returns (uint256) {
+  function totalSupply() public view virtual override returns (uint256) {
     return totalSupply_;
   }
 
   
-  function transfer(address _to, uint256 _value) public virtual returns (bool) {
+  function transfer(address _to, uint256 _value) public virtual override returns (bool) {
     require(_to != address(0));
     require(_value <= balances[msg.sender]);
 
@@ -149,7 +149,7 @@ contract BasicToken is ERC20Basic {
   }
 
   
-  function balanceOf(address _owner) public view virtual returns (uint256 balance) {
+  function balanceOf(address _owner) public view virtual override returns (uint256 balance) {
     return balances[_owner];
   }
 
@@ -160,7 +160,7 @@ contract Standard is ERC20, BasicToken {
   mapping (address => mapping (address => uint256)) internal allowed;
 
 
-  function transferFrom(address _from, address _to, uint256 _value) public virtual returns (bool) {
+  function transferFrom(address _from, address _to, uint256 _value) public virtual override returns (bool) {
     require(_to != address(0));
     require(_value <= balances[_from]);
     require(_value <= allowed[_from][msg.sender]);
@@ -173,14 +173,14 @@ contract Standard is ERC20, BasicToken {
   }
 
 
-  function approve(address _spender, uint256 _value) public virtual returns (bool) {
+  function approve(address _spender, uint256 _value) public virtual override returns (bool) {
     allowed[msg.sender][_spender] = _value;
     emit Approval(msg.sender, _spender, _value);
     return true;
   }
 
 
-  function allowance(address _owner, address _spender) public view virtual returns (uint256) {
+  function allowance(address _owner, address _spender) public view virtual override returns (uint256) {
     return allowed[_owner][_spender];
   }
 
@@ -231,9 +231,7 @@ contract BurnableToken is BasicToken {
 contract HUBRIS is Ownable, Pausable, Standard, BurnableToken, HUBRISTOKEN {
     
 
-    string name = "HUBRIS";
-    string symbol = "HBRS";
-    uint8 decimals = 18;
+    // duplicates removed (inherited from HUBRISTOKEN); set via constructor
 
     //token allocation addresses
     address TOKEN_SALE = 0xdff99ef7ed50f9EB06183d0DfeD9CD5DB051878B;
@@ -247,9 +245,9 @@ contract HUBRIS is Ownable, Pausable, Standard, BurnableToken, HUBRISTOKEN {
     
     bool tokensAllocated = false;
 
-    constructor() HUBRISTOKEN(name, symbol, decimals) public {
+    constructor() HUBRISTOKEN("HUBRIS", "HBRS", 18) {
         totalSupply_ = 1000000000E18;
-        balances[this] = totalSupply_;
+        balances[address(this)] = totalSupply_;
     }
 
     function envokeTokenAllocation() public onlyOwner {

@@ -223,7 +223,7 @@ contract StandardToken is ERC20 {
         address _spender,
         uint256 _addedValue
     )
-        public
+        public virtual
         returns (bool)
     {
         allowed[msg.sender][_spender] = (
@@ -232,12 +232,12 @@ contract StandardToken is ERC20 {
         return true;
     }
 
-    
+
     function decreaseApproval(
         address _spender,
         uint256 _subtractedValue
     )
-        public
+        public virtual
         returns (bool)
     {
         uint256 oldValue = allowed[msg.sender][_spender];
@@ -260,7 +260,7 @@ contract PausableERC20Token is StandardToken, Pausable {
         address _to,
         uint256 _value
     )
-        public
+        public virtual override
         whenNotPaused
         returns (bool)
     {
@@ -272,7 +272,7 @@ contract PausableERC20Token is StandardToken, Pausable {
         address _to,
         uint256 _value
     )
-        public
+        public virtual override
         whenNotPaused
         returns (bool)
     {
@@ -283,7 +283,7 @@ contract PausableERC20Token is StandardToken, Pausable {
         address _spender,
         uint256 _value
     )
-        public
+        public virtual override
         whenNotPaused
         returns (bool)
     {
@@ -294,7 +294,7 @@ contract PausableERC20Token is StandardToken, Pausable {
         address _spender,
         uint _addedValue
     )
-        public
+        public virtual override
         whenNotPaused
         returns (bool success)
     {
@@ -305,7 +305,7 @@ contract PausableERC20Token is StandardToken, Pausable {
         address _spender,
         uint _subtractedValue
     )
-        public
+        public virtual override
         whenNotPaused
         returns (bool success)
     {
@@ -351,19 +351,19 @@ contract BurnablePausableERC20Token is PausableERC20Token {
     
     function burn(
         uint256 _value
-    ) 
-        public
+    )
+        public virtual
         whenNotPaused
     {
         _burn(msg.sender, _value);
     }
 
-    
+
     function burnFrom(
-        address _from, 
+        address _from,
         uint256 _value
-    ) 
-        public 
+    )
+        public virtual
         whenNotPaused
     {
         require(_value <= allowedBurn[_from][msg.sender]);
@@ -374,10 +374,10 @@ contract BurnablePausableERC20Token is PausableERC20Token {
     }
 
     function _burn(
-        address _who, 
+        address _who,
         uint256 _value
-    ) 
-        internal 
+    )
+        internal virtual
         whenNotPaused
     {
         require(_value <= balances[_who]);
@@ -442,7 +442,7 @@ contract FreezableBurnablePausableERC20Token is BurnablePausableERC20Token {
         address _to,
         uint256 _value
     )
-        public
+        public virtual override
         whenNotPaused
         returns (bool)
     {
@@ -457,7 +457,7 @@ contract FreezableBurnablePausableERC20Token is BurnablePausableERC20Token {
         address _to,
         uint256 _value
     )
-        public
+        public virtual override
         whenNotPaused
         returns (bool)
     {
@@ -470,26 +470,26 @@ contract FreezableBurnablePausableERC20Token is BurnablePausableERC20Token {
 
     function burn(
         uint256 _value
-    ) 
-        public
+    )
+        public virtual override
         whenNotPaused
     {
         require(!frozenAccount[msg.sender], "Sender account freezed");
 
-        return super.burn(_value);
+        super.burn(_value);
     }
 
     function burnFrom(
-        address _from, 
+        address _from,
         uint256 _value
-    ) 
-        public 
+    )
+        public virtual override
         whenNotPaused
     {
         require(!frozenAccount[msg.sender], "Spender account freezed");
         require(!frozenAccount[_from], "Sender account freezed");
 
-        return super.burnFrom(_from, _value);
+        super.burnFrom(_from, _value);
     }
 }
 

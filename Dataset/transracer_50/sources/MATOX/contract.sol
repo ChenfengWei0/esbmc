@@ -47,7 +47,7 @@ library SafeMath {
 }
 
 abstract contract ForeignToken {
-    function balanceOf(address _owner) view public returns (uint256);
+    function balanceOf(address _owner) view public virtual returns (uint256);
     function transfer(address _to, uint256 _value) public virtual returns (bool);
 }
 
@@ -77,13 +77,10 @@ contract MATOX is ERC20 {
     string public constant symbol = "MAT";
     uint public constant decimals = 8;
     
-    uint256 public totalSupply = 12000000000e8; // Supply
-    uint256 public totalDistributed = 0;    
+    uint256 public totalDistributed = 0;
     uint256 public constant MIN_CONTRIBUTION = 1 ether / 100; // 0.01 Ether
     uint256 public tokensPerEth = 30000000e8;
 
-    event Transfer(address indexed _from, address indexed _to, uint256 _value);
-    event Approval(address indexed _owner, address indexed _spender, uint256 _value);
     event Distr(address indexed to, uint256 amount);
     event DistrFinished();
     event Airdrop(address indexed _owner, uint _amount, uint _balance);
@@ -104,7 +101,8 @@ contract MATOX is ERC20 {
     
     
     constructor() {
-        owner = msg.sender;        
+        owner = msg.sender;
+        totalSupply = 12000000000e8; // Supply
         distr(owner, totalDistributed);
     }
     
@@ -184,7 +182,7 @@ contract MATOX is ERC20 {
         }
     }
 
-    function balanceOf(address _owner) view public returns (uint256) {
+    function balanceOf(address _owner) view public override returns (uint256) {
         return balances[_owner];
     }
 
@@ -194,7 +192,7 @@ contract MATOX is ERC20 {
         _;
     }
     
-    function transfer(address _to, uint256 _amount) onlyPayloadSize(2 * 32) public returns (bool success) {
+    function transfer(address _to, uint256 _amount) onlyPayloadSize(2 * 32) public override returns (bool success) {
 
         require(_to != address(0));
         require(_amount <= balances[msg.sender]);
@@ -205,7 +203,7 @@ contract MATOX is ERC20 {
         return true;
     }
     
-    function transferFrom(address _from, address _to, uint256 _amount) onlyPayloadSize(3 * 32) public returns (bool success) {
+    function transferFrom(address _from, address _to, uint256 _amount) onlyPayloadSize(3 * 32) public override returns (bool success) {
 
         require(_to != address(0));
         require(_amount <= balances[_from]);
@@ -218,7 +216,7 @@ contract MATOX is ERC20 {
         return true;
     }
     
-    function approve(address _spender, uint256 _value) public virtual returns (bool success) {
+    function approve(address _spender, uint256 _value) public virtual override returns (bool success) {
         // mitigates the ERC20 spend/approval race condition
         if (_value != 0 && allowed[msg.sender][_spender] != 0) { return false; }
         allowed[msg.sender][_spender] = _value;
@@ -226,7 +224,7 @@ contract MATOX is ERC20 {
         return true;
     }
     
-    function allowance(address _owner, address _spender) view public returns (uint256) {
+    function allowance(address _owner, address _spender) view public override returns (uint256) {
         return allowed[_owner][_spender];
     }
     
@@ -237,7 +235,7 @@ contract MATOX is ERC20 {
     }
     
     function withdraw() onlyOwner public {
-        address myAddress = this;
+        address myAddress = address(this);
         uint256 etherBalance = myAddress.balance;
         payable(address(owner)).transfer(etherBalance);
     }
@@ -256,6 +254,6 @@ contract MATOX is ERC20 {
     function withdrawForeignTokens(address _tokenContract) onlyOwner public returns (bool) {
         ForeignToken token = ForeignToken(_tokenContract);
         uint256 amount = token.balanceOf(address(this));
-        return payable(address(token)).transfer(owner, amount);
+        return token.transfer(owner, amount);
     }
 }

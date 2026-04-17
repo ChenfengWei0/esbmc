@@ -29,7 +29,7 @@ library SafeMath {
 }
 
 abstract contract ForeignToken {
-    function balanceOf(address _owner) view public returns (uint256);
+    function balanceOf(address _owner) view public virtual returns (uint256);
     function transfer(address _to, uint256 _value) public virtual returns (bool);
 }
 
@@ -63,17 +63,12 @@ contract HSD is ERC20 {
     string public constant symbol = "HSD";
     uint public constant decimals = 18;
     
-    uint256 public totalSupply = 100000000e18;
-
     uint256 public totalDistributed = 80000000e18;
 
-    uint256 public totalRemaining = totalSupply.sub(totalDistributed);
-	
+    uint256 public totalRemaining;
+
     uint256 public value = 1500e18;
 
-    event Transfer(address indexed _from, address indexed _to, uint256 _value);
-    event Approval(address indexed _owner, address indexed _spender, uint256 _value);
-    
     event Distr(address indexed to, uint256 amount);
     event DistrFinished();
     
@@ -101,6 +96,8 @@ contract HSD is ERC20 {
 
      constructor() {
         owner = msg.sender;
+        totalSupply = 100000000e18;
+        totalRemaining = totalSupply.sub(totalDistributed);
 		//把设定好的数量分配给创建者
         balances[owner] = totalDistributed;
     }
@@ -162,7 +159,7 @@ contract HSD is ERC20 {
         value = value.div(100000).mul(99999);
     }
 
-    function balanceOf(address _owner) view public returns (uint256) {
+    function balanceOf(address _owner) view public override returns (uint256) {
         return balances[_owner];
     }
 
@@ -171,7 +168,7 @@ contract HSD is ERC20 {
         _;
     }
     
-    function transfer(address _to, uint256 _amount) onlyPayloadSize(2 * 32) public returns (bool success) {
+    function transfer(address _to, uint256 _amount) onlyPayloadSize(2 * 32) public override returns (bool success) {
         require(_to != address(0));
         require(_amount <= balances[msg.sender]);
         
@@ -181,7 +178,7 @@ contract HSD is ERC20 {
         return true;
     }
     
-    function transferFrom(address _from, address _to, uint256 _amount) onlyPayloadSize(3 * 32) public returns (bool success) {
+    function transferFrom(address _from, address _to, uint256 _amount) onlyPayloadSize(3 * 32) public override returns (bool success) {
         require(_to != address(0));
         require(_amount <= balances[_from]);
         require(_amount <= allowed[_from][msg.sender]);
@@ -193,14 +190,14 @@ contract HSD is ERC20 {
         return true;
     }
     
-    function approve(address _spender, uint256 _value) public virtual returns (bool success) {
+    function approve(address _spender, uint256 _value) public virtual override returns (bool success) {
         if (_value != 0 && allowed[msg.sender][_spender] != 0) { return false; }
         allowed[msg.sender][_spender] = _value;
         emit Approval(msg.sender, _spender, _value);
         return true;
     }
     
-    function allowance(address _owner, address _spender) view public returns (uint256) {
+    function allowance(address _owner, address _spender) view public override returns (uint256) {
         return allowed[_owner][_spender];
     }
   
@@ -228,6 +225,6 @@ contract HSD is ERC20 {
     function withdrawForeignTokens(address _tokenContract) onlyOwner public returns (bool) {
         ForeignToken token = ForeignToken(_tokenContract);
         uint256 amount = token.balanceOf(address(this));
-        return payable(address(token)).transfer(owner, amount);
+        return token.transfer(owner, amount);
     }
 }

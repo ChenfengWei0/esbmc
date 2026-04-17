@@ -164,7 +164,7 @@ contract GOG is owned {
      * @param _spender address The address which will spend the funds.
      * @return A uint256 specifing the amount of tokens still avaible for the spender.
      */
-    function allowance(address _owner, address _spender) view public returns (uint256) {
+    function allowanceOf(address _owner, address _spender) view public returns (uint256) {
         return allowance[_owner][_spender];
     }
 

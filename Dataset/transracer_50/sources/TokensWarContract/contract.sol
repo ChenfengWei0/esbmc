@@ -4,16 +4,16 @@ pragma solidity >=0.8.0;
 
 /// @title Interface for contracts conforming to ERC-721: Non-Fungible Tokens
 /// @author Dieter Shirley <dete@axiomzen.co> (https://github.com/dete)
-contract ERC721 {
+abstract contract ERC721 {
   // Required methods
-  function approve(address _to, uint256 _tokenId) public;
-  function balanceOf(address _owner) public view returns (uint256 balance);
-  function implementsERC721() public pure returns (bool);
-  function ownerOf(uint256 _tokenId) public view returns (address addr);
-  function takeOwnership(uint256 _tokenId) public;
-  function totalSupply() public view returns (uint256 total);
-  function transferFrom(address _from, address _to, uint256 _tokenId) public;
-  function transfer(address _to, uint256 _tokenId) public;
+  function approve(address _to, uint256 _tokenId) public virtual;
+  function balanceOf(address _owner) public view virtual returns (uint256 balance);
+  function implementsERC721() public pure virtual returns (bool);
+  function ownerOf(uint256 _tokenId) public view virtual returns (address addr);
+  function takeOwnership(uint256 _tokenId) public virtual;
+  function totalSupply() public view virtual returns (uint256 total);
+  function transferFrom(address _from, address _to, uint256 _tokenId) public virtual;
+  function transfer(address _to, uint256 _tokenId) public virtual;
 
   event Transfer(address indexed from, address indexed to, uint256 tokenId);
   event Approval(address indexed owner, address indexed approved, uint256 tokenId);
@@ -28,11 +28,11 @@ contract ERC721 {
 contract Ownable {
     
 	  // The addresses of the accounts (or contracts) that can execute actions within each roles.
-	address public hostAddress;
+	address payable public hostAddress;
 	address public adminAddress;
     
     constructor() {
-		hostAddress = msg.sender;
+		hostAddress = payable(msg.sender);
 		adminAddress = msg.sender;
     }
 
@@ -55,7 +55,7 @@ contract Ownable {
 		_;
 	}
 
-	function setHost(address _newHost) public onlyHost {
+	function setHost(address payable _newHost) public onlyHost {
 		require(_newHost != address(0));
 
 		hostAddress = _newHost;
@@ -80,9 +80,6 @@ contract TokensWarContract is ERC721, Ownable {
     
     /// @dev The NewGoldenCard event is fired whenever a golden card is change.
     event NewGoldenToken(uint256 goldenPayment);
-        
-    /// @dev Transfer event as defined in current draft of ERC721. ownership is assigned, including births.
-    event Transfer(address from, address to, uint256 tokenId);
         
     /*** CONSTANTS ***/
         
@@ -137,7 +134,7 @@ contract TokensWarContract is ERC721, Ownable {
 	/// @notice Returns all the relevant information about a specific card.
 	/// @param _tokenId The tokenId of the card of interest.
 	function getCard(uint256 _tokenId) public view returns (
-		string name,
+		string memory name,
 		uint256 token
 	) {
 	    
@@ -158,7 +155,7 @@ contract TokensWarContract is ERC721, Ownable {
     /// @dev set golden card token.
 	function setGoldenCardToken(uint256 tokenId) public onlyAdmin {
 		goldenTokenId = tokenId;
-		NewGoldenToken(goldenTokenId);
+		emit NewGoldenToken(goldenTokenId);
 	}
 	
 	function _createToken(string memory _name, uint256 _id, address _owner, uint256 _price) private {
@@ -168,13 +165,14 @@ contract TokensWarContract is ERC721, Ownable {
 		  token: _id
 		});
 			
-		uint256 index = cards.push(_card) - 1;
+		cards.push(_card);
+		uint256 index = cards.length - 1;
 		cardTokenToPosition[_id] = index;
 		// It's probably never going to happen, 4 billion tokens are A LOT, but
 		// let's just be 100% sure we never let this happen.
 		require(_id == uint256(uint32(_id)));
 
-		NewToken(_id, _name, _owner);
+		emit NewToken(_id, _name, _owner);
 		cardTokenToPrice[_id] = _price;
 		// This will assign ownership, and also emit the Transfer event as
 		// per ERC721 draft
@@ -193,23 +191,23 @@ contract TokensWarContract is ERC721, Ownable {
     function approve(
         address _to,
         uint256 _tokenId
-      ) public {
+      ) public override {
         // Caller must own token.
         require(_owns(msg.sender, _tokenId));
-    
+
         cardTokenToApproved[_tokenId] = _to;
-    
-        Approval(msg.sender, _to, _tokenId);
+
+        emit Approval(msg.sender, _to, _tokenId);
     }
     
     /// For querying balance of a particular account
     /// @param _owner The address for balance query
     /// @dev Required for ERC-721 compliance.
-    function balanceOf(address _owner) public view returns (uint256 balance) {
+    function balanceOf(address _owner) public view override returns (uint256 balance) {
         return ownershipTokenCount[_owner];
     }
-    
-    function implementsERC721() public pure returns (bool) {
+
+    function implementsERC721() public pure override returns (bool) {
         return true;
     }
     
@@ -217,7 +215,7 @@ contract TokensWarContract is ERC721, Ownable {
     /// For querying owner of token
     /// @param _tokenId The tokenID for owner inquiry
     /// @dev Required for ERC-721 compliance.
-    function ownerOf(uint256 _tokenId) public view returns (address owner) {
+    function ownerOf(uint256 _tokenId) public view override returns (address owner) {
         owner = cardTokenToOwner[_tokenId];
         require(owner != address(0));
     }
@@ -225,7 +223,7 @@ contract TokensWarContract is ERC721, Ownable {
     /// @notice Allow pre-approved user to take ownership of a token
     /// @param _tokenId The ID of the Token that can be transferred if this call succeeds.
     /// @dev Required for ERC-721 compliance.
-    function takeOwnership(uint256 _tokenId) public {
+    function takeOwnership(uint256 _tokenId) public override {
         address newOwner = msg.sender;
         address oldOwner = cardTokenToOwner[_tokenId];
     
@@ -240,7 +238,7 @@ contract TokensWarContract is ERC721, Ownable {
     
     /// For querying totalSupply of token
     /// @dev Required for ERC-721 compliance.
-    function totalSupply() public view returns (uint256 total) {
+    function totalSupply() public view override returns (uint256 total) {
         return cards.length;
     }
     
@@ -249,7 +247,7 @@ contract TokensWarContract is ERC721, Ownable {
     /// @param _to The address for the token to be transferred to.
     /// @param _tokenId The ID of the Token that can be transferred if this call succeeds.
     /// @dev Required for ERC-721 compliance.
-    function transferFrom(address _from, address _to, uint256 _tokenId) public {
+    function transferFrom(address _from, address _to, uint256 _tokenId) public override {
         require(_owns(_from, _tokenId));
         require(_approved(_to, _tokenId));
         require(_addressNotNull(_to));
@@ -261,7 +259,7 @@ contract TokensWarContract is ERC721, Ownable {
     /// @param _to The address for the token to be transferred to.
     /// @param _tokenId The ID of the Token that can be transferred if this call succeeds.
     /// @dev Required for ERC-721 compliance.
-    function transfer(address _to, uint256 _tokenId) public {
+    function transfer(address _to, uint256 _tokenId) public override {
         require(_owns(msg.sender, _tokenId));
         require(_addressNotNull(_to));
     
@@ -291,9 +289,9 @@ contract TokensWarContract is ERC721, Ownable {
 	
 	function _payout(address _to) private {
 		if (_to == address(0)) {
-			hostAddress.transfer(this.balance);
+			hostAddress.transfer(address(this).balance);
 		} else {
-			_to.transfer(this.balance);
+			payable(_to).transfer(address(this).balance);
 		}
 	}
 	
@@ -350,21 +348,21 @@ contract TokensWarContract is ERC721, Ownable {
 
     // Pay previous tokenOwner if owner is not contract
     if (oldOwner != address(this)) {
-      oldOwner.transfer(payment); //-0.05
+      payable(oldOwner).transfer(payment); //-0.05
     }
-    
+
     //Pay golden commission
     address goldenOwner = cardTokenToOwner[goldenTokenId];
     if (goldenOwner != address(0)) {
-      goldenOwner.transfer(goldenPayment); //-0.02
+      payable(goldenOwner).transfer(goldenPayment); //-0.02
     }
 
-	//CONTRACT EVENT 
+	//CONTRACT EVENT
 	uint256 index = cardTokenToPosition[_tokenId];
-    NewTokenOwner(sellingPrice, cardTokenToPrice[_tokenId], oldOwner, newOwner, cards[index].name, _tokenId);
+    emit NewTokenOwner(sellingPrice, cardTokenToPrice[_tokenId], oldOwner, newOwner, cards[index].name, _tokenId);
 
-    msg.sender.transfer(purchaseExcess);
-    
+    payable(msg.sender).transfer(purchaseExcess);
+
   }
 
   function priceOf(uint256 _tokenId) public view returns (uint256 price) {
@@ -378,7 +376,7 @@ contract TokensWarContract is ERC721, Ownable {
   ///  expensive (it walks the entire cards array looking for cards belonging to owner),
   ///  but it also returns a dynamic array, which is only supported for web3 calls, and
   ///  not contract-to-contract calls.
-  function tokensOfOwner(address _owner) public view returns(uint256[] ownerTokens) {
+  function tokensOfOwner(address _owner) public view returns(uint256[] memory ownerTokens) {
     uint256 tokenCount = balanceOf(_owner);
     if (tokenCount == 0) {
         // Return an empty array
@@ -431,7 +429,7 @@ contract TokensWarContract is ERC721, Ownable {
     }
 
     // Emit the transfer event.
-    Transfer(_from, _to, _tokenId);
+    emit Transfer(_from, _to, _tokenId);
   }
   
 

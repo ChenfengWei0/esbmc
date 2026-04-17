@@ -1,15 +1,10 @@
 // ===== IgfContract.sol =====
 pragma solidity >=0.8.0;
 
-/**
- * @title SafeMath
- * @dev Math operations with safety checks that throw on error
- */
+
 library SafeMath {
 
-    /**
-    * @dev Multiplies two numbers, throws on overflow.
-    */
+    
     function mul(uint256 a, uint256 b) internal pure returns (uint256) {
         if (a == 0) {
             return 0;
@@ -19,9 +14,7 @@ library SafeMath {
         return c;
     }
 
-    /**
-    * @dev Integer division of two numbers, truncating the quotient.
-    */
+    
     function div(uint256 a, uint256 b) internal pure returns (uint256) {
         // assert(b > 0); // Solidity automatically throws when dividing by 0
         uint256 c = a / b;
@@ -29,17 +22,13 @@ library SafeMath {
         return c;
     }
 
-    /**
-    * @dev Substracts two numbers, throws on overflow (i.e. if subtrahend is greater than minuend).
-    */
+    
     function sub(uint256 a, uint256 b) internal pure returns (uint256) {
         assert(b <= a);
         return a - b;
     }
 
-    /**
-    * @dev Adds two numbers, throws on overflow.
-    */
+    
     function add(uint256 a, uint256 b) internal pure returns (uint256) {
         uint256 c = a + b;
         assert(c >= a);
@@ -55,26 +44,18 @@ contract Ownable {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
 
-    /**
-     * @dev The Ownable constructor sets the original `owner` of the contract to the sender
-     * account.
-     */
+    
     constructor() public {
         owner = msg.sender;
     }
 
-    /**
-     * @dev Throws if called by any account other than the owner.
-     */
+    
     modifier onlyOwner() {
         require(msg.sender == owner);
         _;
     }
 
-    /**
-     * @dev Allows the current owner to transfer control of the contract to a newOwner.
-     * @param newOwner The address to transfer ownership to.
-     */
+    
     function transferOwnership(address newOwner) external onlyOwner {
         require(newOwner != address(0));
         emit OwnershipTransferred(owner, newOwner);
@@ -95,9 +76,7 @@ using SafeMath for uint256;
 
     mapping (address => uint256) internal totalAllowed;
 
-    /**
-    * @dev total number of tokens in existence
-    */
+    
     uint256 internal totSupply;
 
     //COMMON
@@ -123,11 +102,7 @@ using SafeMath for uint256;
     }
 
 
-    /**
-    * @dev Gets the balance of the specified address.
-    * @param _owner The address to query the the balance of.
-    * @return An uint256 representing the amount owned by the passed address.
-    */
+    
 
     function balanceOf(address _owner) view public returns(uint256)
     {
@@ -141,12 +116,7 @@ using SafeMath for uint256;
     }
 
 
-    /**
-     * @dev Function to check the amount of tokens that an owner allowed to a spender.
-     * @param _owner address The address which owns the funds.
-     * @param _spender address The address which will spend the funds.
-     * @return A uint256 specifying the amount of tokens still available for the spender.
-     */
+    
 
     function allowance(address _owner, address _spender) view public returns(uint256)
     {
@@ -232,11 +202,7 @@ using SafeMath for uint256;
     }
 
 
-    /**
-    * @dev Burns the tokens of the specified address.
-    * @param _owner The holder of tokens.
-    * @param _value The amount of tokens burned
-    */
+    
 
   function burn(address _owner,uint256 _value) external  {
     require(_value <= balanceOf(_owner));
@@ -255,11 +221,7 @@ using SafeMath for uint256;
         addTokens(_investor,_newValue);
     }
 
-    /**
-     * @dev transfer token for a specified address
-     * @param _to The address to transfer to.
-     * @param _value The amount to be transferred.
-    */
+    
 
     function transfer(address _to, uint256 _value) external{
         require(msg.sender!=_to);
@@ -272,12 +234,7 @@ using SafeMath for uint256;
         emit Transfer(msg.sender, _to, _value);
     }
 
-    /**
-     * @dev Transfer tokens from one address to another
-     * @param _from address The address which you want to send tokens from
-     * @param _to address The address which you want to transfer to
-     * @param _value uint256 the amount of tokens to be transferred
-     */
+    
     function transferFrom(address _from, address _to, uint256 _value) external {
         require(_value <= balanceOf(_from));
         require(_value <= allowance(_from,_to));
@@ -287,17 +244,7 @@ using SafeMath for uint256;
         emit Transfer(_from, _to, _value);
     }
 
-    /**
- * @dev Approve the passed address to spend the specified amount of tokens on behalf of msg.sender.
- *
- * Beware that changing an allowance with this method brings the risk that someone may use both the old
- * and the new allowance by unfortunate transaction ordering. One possible solution to mitigate this
- * race condition is to first reduce the spender's allowance to 0 and set the desired value afterwards:
- * https://github.com/ethereum/EIPs/issues/20#issuecomment-263524729
- * @param _owner The address of the owner which allows tokens to a spender
- * @param _spender The address which will spend the funds.
- * @param _value The amount of tokens to be spent.
- */
+    
     function approve(address _owner,address _spender, uint256 _value) external {
         require(msg.sender ==_owner);
         setAllowance(msg.sender,_spender, _value);
@@ -305,34 +252,14 @@ using SafeMath for uint256;
     }
 
 
-    /**
-     * @dev Increase the amount of tokens that an owner allowed to a spender.
-     *
-     * approve should be called when allowed[_spender] == 0. To increment
-     * allowed value is better to use this function to avoid 2 calls (and wait until
-     * the first transaction is mined)
-     * From MonolithDAO Token.sol
-     * @param _owner The address of the owner which allows tokens to a spender
-     * @param _spender The address which will spend the funds.
-     * @param _addedValue The amount of tokens to increase the allowance by.
-     */
+    
     function increaseApproval(address _owner, address _spender, uint _addedValue) external{
         require(msg.sender==_owner);
         setAllowance(_owner,_spender,allowance(_owner,_spender).add(_addedValue));
         emit Approval(_owner, _spender, allowance(_owner,_spender));
     }
 
-    /**
-     * @dev Decrease the amount of tokens that an owner allowed to a spender.
-     *
-     * approve should be called when allowed[_spender] == 0. To decrement
-     * allowed value is better to use this function to avoid 2 calls (and wait until
-     * the first transaction is mined)
-     * From MonolithDAO Token.sol
-     * @param _owner The address of the owner which allows tokens to a spender
-     * @param _spender The address which will spend the funds.
-     * @param _subtractedValue The amount of tokens to decrease the allowance by.
-     */
+    
     function decreaseApproval(address _owner,address _spender, uint _subtractedValue) external{
         require(msg.sender==_owner);
 
@@ -345,12 +272,7 @@ using SafeMath for uint256;
         emit Approval(_owner, _spender, allowance(_owner,_spender));
     }
 
-    /**
-     * @dev Function to mint tokens
-     * @param _to The address that will receive the minted tokens.
-     * @param _amount The amount of tokens to mint.
-     * @return A boolean that indicates if the operation was successful.
-     */
+    
 
 
     function mint(address _to, uint256 _amount) canMint internal{
@@ -368,10 +290,7 @@ using SafeMath for uint256;
         emit Transfer(address(0), _to, _amount);
     }    
 
-    /**
-     * @dev Function to stop minting new tokens.
-     * @return True if the operation was successful.
-     */
+    
     function finishMinting() canMint onlyOwner external{
         mintingFinished = true;
         emit MintFinished();
@@ -388,12 +307,7 @@ using SafeMath for uint256;
     // amount of raised money in wei
     uint256 internal weiRaised;
     
-    /**
-     * event for token purchase logging
-     * @param beneficiary who got the tokens
-     * @param value weis paid for purchase
-     * @param amount amount of tokens purchased
-     */
+    
     event TokenPurchase(address indexed beneficiary, uint256 value, uint256 amount);
 
     event InvestmentsWithdrawn(uint indexed amount, uint indexed timestamp);
@@ -449,7 +363,7 @@ using SafeMath for uint256;
     // get all rised wei
     function withdrawInvestments() external onlyOwner{
         uint  amount = address(this).balance;
-        getOwner().transfer(amount * 1 wei);
+        payable(getOwner()).transfer(amount * 1 wei);
         emit InvestmentsWithdrawn(amount, block.timestamp);
     }
     
@@ -497,7 +411,7 @@ using SafeMath for uint256;
 
     function depositDividends() payable external onlyOwner
     {
-       address(this).transfer(msg.value);
+       payable(address(this)).transfer(msg.value);
     }
     
     function validBeneficiary(address beneficiary) view internal

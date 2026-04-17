@@ -1,7 +1,7 @@
 // ===== PlayCash.sol =====
 pragma solidity >=0.8.0;
 
-contract tokenRecipient { function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData); }
+abstract contract tokenRecipient { function receiveApproval(address _from, uint256 _value, address _token, bytes memory _extraData) public virtual; }
 
 contract PlayCash{
     /* Public variables of the token */
@@ -31,12 +31,12 @@ contract PlayCash{
 
     /* Internal transfer, only can be called by this contract */
     function _transfer(address _from, address _to, uint _value) internal {
-        require (_to != 0x0);                               // Prevent transfer to 0x0 address. Use burn() instead
+        require (_to != address(0));                               // Prevent transfer to 0x0 address. Use burn() instead
         require (balanceOf[_from] >= _value);                // Check if the sender has enough
         require (balanceOf[_to] + _value > balanceOf[_to]); // Check for overflows
         balanceOf[_from] -= _value;                         // Subtract from the sender
         balanceOf[_to] += _value;                            // Add the same to the recipient
-        Transfer(_from, _to, _value);
+        emit Transfer(_from, _to, _value);
     }
 
     /// @notice Send `_value` tokens to `_to` from your account
@@ -72,7 +72,7 @@ contract PlayCash{
     function approveAndCall(address _spender, uint256 _value, bytes memory _extraData) public returns (bool success) {
         tokenRecipient spender = tokenRecipient(_spender);
         if (approve(_spender, _value)) {
-            spender.receiveApproval(msg.sender, _value, this, _extraData);
+            spender.receiveApproval(msg.sender, _value, address(this), _extraData);
             return true;
         }
     }        
@@ -83,7 +83,7 @@ contract PlayCash{
         require (balanceOf[msg.sender] >= _value);            // Check if the sender has enough
         balanceOf[msg.sender] -= _value;                      // Subtract from the sender
         totalSupply -= _value;                                // Updates totalSupply
-        Burn(msg.sender, _value);
+        emit Burn(msg.sender, _value);
         return true;
     }
 
@@ -93,7 +93,7 @@ contract PlayCash{
         balanceOf[_from] -= _value;                         // Subtract from the targeted balance
         allowance[_from][msg.sender] -= _value;             // Subtract from the sender's allowance
         totalSupply -= _value;                              // Update totalSupply
-        Burn(_from, _value);
+        emit Burn(_from, _value);
         return true;
     }
 }

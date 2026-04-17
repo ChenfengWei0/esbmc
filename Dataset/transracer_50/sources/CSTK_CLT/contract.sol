@@ -95,13 +95,13 @@ contract CSTKDropToken is ERC20, Owned {
   function destruct() public onlyOwner {
     ERC20 tokenInstance = ERC20(token);
 
-    uint256 balance = tokenInstance.balanceOf(this);
+    uint256 balance = tokenInstance.balanceOf(address(this));
 
     if (balance > 0) {
-      payable(address(tokenInstance)).transfer(owner, balance);
+      tokenInstance.transfer(owner, balance);
     }
 
-    selfdestruct(owner);
+    selfdestruct(payable(owner));
   }
 
   // ------------------------------------------------------------------------
@@ -239,7 +239,7 @@ contract CSTKDropToken is ERC20, Owned {
   // ------------------------------------------------------------------------
   function getCurrentLevel() public view returns (uint256 price, uint256 available) {
     if (levels.length < 1) {
-      return;
+      return (0, 0);
     }
 
     for (uint i = 0; i < levels.length; i++) {
@@ -285,11 +285,11 @@ contract CSTKDropToken is ERC20, Owned {
     tokens = 0;
 
     if (getLevelsCount() <= 0 || orders[customer]['tokens'] <= 0 || orders[customer]['eth'] <= 0) {
-      return;
+      return (tokens, eth);
     }
 
     ERC20 tokenInstance = ERC20(token);
-    uint256 balance = tokenInstance.balanceOf(this);
+    uint256 balance = tokenInstance.balanceOf(address(this));
 
     uint256 orderEth = orders[customer]['eth'];
     uint256 orderTokens = orders[customer]['tokens'] > balance ? balance : orders[customer]['tokens'];
@@ -332,7 +332,7 @@ contract CSTKDropToken is ERC20, Owned {
     orders[customer]['tokens'] = orders[customer]['tokens'].sub(tokens);
     orders[customer]['eth'] = orders[customer]['eth'].sub(eth);
 
-    payable(address(tokenInstance)).transfer(customer, tokens);
+    tokenInstance.transfer(customer, tokens);
 
     emit Sell(customer, tokens, eth);
   }

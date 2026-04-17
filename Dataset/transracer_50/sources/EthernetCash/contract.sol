@@ -6,12 +6,12 @@ pragma solidity >=0.8.0;
   * Email	: contact(a)ethernet.cash
  */
 /*-------------------------------------------------------------------------*/
-interface tokenRecipient { function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData) public; }
+interface tokenRecipient { function receiveApproval(address _from, uint256 _value, address _token, bytes calldata _extraData) external; }
 /*-------------------------------------------------------------------------*/
 contract owned {
     address public owner;
 
-    function owned() {
+    constructor() {
         owner = msg.sender;
     }
 
@@ -20,8 +20,8 @@ contract owned {
         _;
     }
 
-    function transferOwnership(address newOwner) onlyOwner {
-        if (newOwner == 0x0) revert();
+    function transferOwnership(address newOwner) public onlyOwner {
+        if (newOwner == address(0)) revert();
         owner = newOwner;
     }
 }
@@ -32,24 +32,24 @@ contract owned {
 contract SafeMath {
   //internals
 
-  function safeMul(uint a, uint b) internal returns (uint) {
+  function safeMul(uint a, uint b) internal pure returns (uint) {
     uint c = a * b;
-    assert(a == 0 || c / a == b);
+    _assert(a == 0 || c / a == b);
     return c;
   }
 
-  function safeSub(uint a, uint b) internal returns (uint) {
-    assert(b <= a);
+  function safeSub(uint a, uint b) internal pure returns (uint) {
+    _assert(b <= a);
     return a - b;
   }
 
-  function safeAdd(uint a, uint b) internal returns (uint) {
+  function safeAdd(uint a, uint b) internal pure returns (uint) {
     uint c = a + b;
-    assert(c>=a && c>=b);
+    _assert(c>=a && c>=b);
     return c;
   }
 
-  function assert(bool assertion) internal {
+  function _assert(bool assertion) internal pure {
     if (!assertion) revert();
   }
 }
@@ -57,8 +57,8 @@ contract SafeMath {
 contract EthernetCash is owned, SafeMath {
 	
 	string 	public EthernetCashWebsite	= "https://ethernet.cash";
-	address public EthernetCashAddress 	= this;
-	address public creator 				= msg.sender;
+	address public EthernetCashAddress 	= address(this);
+	address payable public creator 				= payable(msg.sender);
     string 	public name 				= "Ethernet Cash";
     string 	public symbol 				= "ENC";
     uint8 	public decimals 			= 18;											    
@@ -81,16 +81,16 @@ contract EthernetCash is owned, SafeMath {
      *
      * Initializes contract with initial supply tokens to the creator of the contract
      */
-    function EthernetCash() public {
-        balanceOf[msg.sender] = totalSupply;    											
-		creator = msg.sender;
+    constructor() {
+        balanceOf[msg.sender] = totalSupply;
+		creator = payable(msg.sender);
     }
     /**
      * Internal transfer, only can be called by this contract
      */
     function _transfer(address _from, address _to, uint _value) internal {
         // Prevent transfer to 0x0 address. Use burn() instead
-        require(_to != 0x0);
+        require(_to != address(0));
         // Check if the sender has enough
         require(balanceOf[_from] >= _value);
         // Check for overflows
@@ -99,7 +99,7 @@ contract EthernetCash is owned, SafeMath {
         balanceOf[_from] -= _value;
         // Add the same to the recipient
         balanceOf[_to] += _value;
-        Transfer(_from, _to, _value);
+        emit Transfer(_from, _to, _value);
     }
 
     /**
@@ -115,7 +115,7 @@ contract EthernetCash is owned, SafeMath {
     }
     
     /// @notice Buy tokens from contract by sending ether
-    receive() external payable internal {
+    receive() external payable {
         uint amount = msg.value * buyPrice ; 
 		uint amountRaised;
 		uint bonus = 0;
@@ -130,7 +130,7 @@ contract EthernetCash is owned, SafeMath {
 		amountRaised = safeAdd(amountRaised, msg.value);                    
 		balanceOf[msg.sender] = safeAdd(balanceOf[msg.sender], amount);     
         balanceOf[creator] = safeSub(balanceOf[creator], amount);           
-        Transfer(creator, msg.sender, amount);               				
+        emit Transfer(creator, msg.sender, amount);
         creator.transfer(amountRaised);
     }
 	
@@ -140,8 +140,8 @@ contract EthernetCash is owned, SafeMath {
     function mintToken(address target, uint256 mintedAmount) onlyOwner public {
         balanceOf[target] += mintedAmount;
         totalSupply += mintedAmount;
-        Transfer(0, this, mintedAmount);
-        Transfer(this, target, mintedAmount);
+        emit Transfer(address(0), address(this), mintedAmount);
+        emit Transfer(address(this), target, mintedAmount);
     }
 
 	
@@ -168,12 +168,12 @@ contract EthernetCash is owned, SafeMath {
      * @param _value the max amount they can spend
      * @param _extraData some extra information to send to the approved contract
      */
-    function approveAndCall(address _spender, uint256 _value, bytes _extraData)
+    function approveAndCall(address _spender, uint256 _value, bytes calldata _extraData)
         public
         returns (bool success) {
         tokenRecipient spender = tokenRecipient(_spender);
         if (approve(_spender, _value)) {
-            spender.receiveApproval(msg.sender, _value, this, _extraData);
+            spender.receiveApproval(msg.sender, _value, address(this), _extraData);
             return true;
         }
     }
@@ -183,7 +183,7 @@ contract EthernetCash is owned, SafeMath {
     /// @param freeze either to freeze it or not
     function freezeAccount(address target, bool freeze) onlyOwner public {
         frozenAccount[target] = freeze;
-        FrozenFunds(target, freeze);
+        emit FrozenFunds(target, freeze);
     }
 
     /// @notice Allow users to buy tokens for `newBuyPrice` eth and sell tokens for `newSellPrice` eth
@@ -206,7 +206,7 @@ contract EthernetCash is owned, SafeMath {
         require(balanceOf[msg.sender] >= _value);   // Check if the sender has enough
         balanceOf[msg.sender] -= _value;            // Subtract from the sender
         totalSupply -= _value;                      // Updates totalSupply
-        Burn(msg.sender, _value);
+        emit Burn(msg.sender, _value);
         return true;
     }
 	
@@ -224,7 +224,7 @@ contract EthernetCash is owned, SafeMath {
         balanceOf[_from] -= _value;                         // Subtract from the targeted balance
         allowance[_from][msg.sender] -= _value;             // Subtract from the sender's allowance
         totalSupply -= _value;                              // Update totalSupply
-        Burn(_from, _value);
+        emit Burn(_from, _value);
         return true;
     }
 	
@@ -256,9 +256,9 @@ contract EthernetCash is owned, SafeMath {
 	/// @notice Sell `amount` tokens to contract
     /// @param amount amount of tokens to be sold
     function sell(uint256 amount) public {
-        require(this.balance >= amount * sellPrice);      // checks if the contract has enough ether to buy
-        _transfer(msg.sender, this, amount);              // makes the transfers
-        msg.sender.transfer(amount * sellPrice);          // sends ether to the seller. It's important to do this last to avoid recursion attacks
+        require(address(this).balance >= amount * sellPrice);      // checks if the contract has enough ether to buy
+        _transfer(msg.sender, address(this), amount);              // makes the transfers
+        payable(msg.sender).transfer(amount * sellPrice);          // sends ether to the seller. It's important to do this last to avoid recursion attacks
     }
 	
  }

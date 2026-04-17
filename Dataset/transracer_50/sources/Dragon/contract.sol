@@ -5,24 +5,24 @@ pragma solidity >=0.8.0;
 
 
 
-contract tokenRecipient {
-    function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData);
+abstract contract tokenRecipient {
+    function receiveApproval(address _from, uint256 _value, address _token, bytes memory _extraData) public virtual;
 }
 
 
-contract ERC20 {
+abstract contract ERC20 {
 
-    function totalSupply() view returns(uint _totalSupply);
+    function totalSupply() external view virtual returns(uint _totalSupply);
 
-    function balanceOf(address who) view returns(uint256);
+    function balanceOf(address who) external view virtual returns(uint256);
 
-    function transfer(address to, uint256 value) public returns(bool ok);
+    function transfer(address to, uint256 value) external virtual returns(bool ok);
 
-    function transferFrom(address from, address to, uint256 value) public returns(bool ok);
+    function transferFrom(address from, address to, uint256 value) external virtual returns(bool ok);
 
-    function approve(address spender, uint256 value) public returns(bool ok);
+    function approve(address spender, uint256 value) external virtual returns(bool ok);
 
-    function allowance(address owner, address spender) view returns(uint256);
+    function allowance(address owner, address spender) external view virtual returns(uint256);
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
@@ -37,20 +37,17 @@ contract Dragon is ERC20 {
     string public constant name = "DRAGON";
     string public constant symbol = "DRG";
     uint8 public decimals;
-    uint256 public totalSupply;
+    uint256 public override totalSupply;
   
     
     address public owner;
-    mapping( address => uint256) public balanceOf;
+    mapping( address => uint256) public override balanceOf;
     mapping( uint => address) public accountIndex;
     uint public accountCount;
     
-    mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => mapping(address => uint256)) public override allowance;
     address public burner;
     bool public burnerSet;
-    
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed _owner, address indexed spender, uint value);
     
     event Burn(address indexed from, uint256 value);
 
@@ -84,13 +81,13 @@ contract Dragon is ERC20 {
         _;
     }
     
-    function changeOwnership( address _owner ) onlyOwner {
+    function changeOwnership( address _owner ) public onlyOwner {
         
         owner = _owner;
         
     }
     
-    function setBurner( address _burner ) onlyOwner {
+    function setBurner( address _burner ) public onlyOwner {
         require ( !burnerSet );
         burner = _burner;
         burnerSet = true;
@@ -107,7 +104,7 @@ contract Dragon is ERC20 {
         
     }
     
-    function burnDragons ( uint256 _amount ) onlyBurner{
+    function burnDragons ( uint256 _amount ) public onlyBurner{
         
         
         burn( _amount );
@@ -115,22 +112,12 @@ contract Dragon is ERC20 {
         
     }
     
-    function balanceOf(address tokenHolder) view returns(uint256) {
-
-        return balanceOf[tokenHolder];
-    }
-
-    function totalSupply() view returns(uint256) {
-
-        return totalSupply;
-    }
-
-    function getAccountCount() view returns(uint256) {
+    function getAccountCount() public view returns(uint256) {
 
         return accountCount;
     }
 
-    function getAddress(uint256 slot) view returns(address) {
+    function getAddress(uint256 slot) public view returns(address) {
 
         return accountIndex[slot];
 
@@ -148,23 +135,21 @@ contract Dragon is ERC20 {
     }
 
     
-    function transfer(address _to, uint256 _value) public returns(bool ok) {
-   
+    function transfer(address _to, uint256 _value) public virtual override returns(bool ok) {   
         if (balanceOf[msg.sender] < _value) revert(); 
         if (balanceOf[_to] + _value < balanceOf[_to]) revert();
         
         appendTokenHolders(_to);
         balanceOf[msg.sender] -= _value; 
         balanceOf[_to] += _value; 
-        Transfer(msg.sender, _to, _value); 
+        emit Transfer(msg.sender, _to, _value);
         burnCheck( _to, _value );
         
         return true;
     }
     
-    function approve(address _spender, uint256 _value) public returns(bool success) {
-        allowance[msg.sender][_spender] = _value;
-        Approval( msg.sender ,_spender, _value);
+    function approve(address _spender, uint256 _value) public virtual override returns(bool success) {        allowance[msg.sender][_spender] = _value;
+        emit Approval( msg.sender ,_spender, _value);
         return true;
     }
 
@@ -172,17 +157,12 @@ contract Dragon is ERC20 {
     function approveAndCall(address _spender, uint256 _value, bytes memory _extraData) public returns(bool success) {
         tokenRecipient spender = tokenRecipient(_spender);
         if (approve(_spender, _value)) {
-            spender.receiveApproval(msg.sender, _value, this, _extraData);
+            spender.receiveApproval(msg.sender, _value, address(this), _extraData);
             return true;
         }
     }
 
-    function allowance(address _owner, address _spender) view returns(uint256 remaining) {
-        return allowance[_owner][_spender];
-    }
-
- 
-    function transferFrom(address _from, address _to, uint256 _value) public returns(bool success) {
+    function transferFrom(address _from, address _to, uint256 _value) public virtual override returns(bool success) {
      
         if (balanceOf[_from] < _value) revert();  
         if (balanceOf[_to] + _value < balanceOf[_to]) revert();  
@@ -191,7 +171,7 @@ contract Dragon is ERC20 {
         balanceOf[_from] -= _value; 
         balanceOf[_to] += _value; 
         allowance[_from][msg.sender] -= _value;
-        Transfer(_from, _to, _value);
+        emit Transfer(_from, _to, _value);
        
         return true;
     }
@@ -201,7 +181,7 @@ contract Dragon is ERC20 {
         if( totalSupply -  _value < 2100000000000000) revert();
         balanceOf[msg.sender] -= _value; 
         totalSupply -= _value; 
-        Burn(msg.sender, _value);
+        emit Burn(msg.sender, _value);
         return true;
     }
 
@@ -213,7 +193,7 @@ contract Dragon is ERC20 {
         balanceOf[_from] -= _value; 
         allowance[_from][msg.sender] -= _value; 
         totalSupply -= _value; 
-        Burn(_from, _value);
+        emit Burn(_from, _value);
         return true;
     }
  

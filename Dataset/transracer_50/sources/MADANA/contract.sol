@@ -86,7 +86,7 @@ pragma solidity >=0.8.0;
 /**
  * @dev Optional functions from the ERC20 standard.
  */
-contract ERC20Detailed is IERC20 {
+abstract contract ERC20Detailed is IERC20 {
     string private _name;
     string private _symbol;
     uint8 private _decimals;
@@ -775,7 +775,7 @@ contract MADANA is
      * @param account The address whose tokens are to be burnt
      * @param value The amount of tokens to be burnt
      */
-    function _burn(address account, uint256 value) internal onlyOwner {
+    function _burn(address account, uint256 value) internal override onlyOwner {
         super._burn(account, value);
     }
 }

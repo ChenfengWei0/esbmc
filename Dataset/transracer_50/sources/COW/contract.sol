@@ -76,13 +76,13 @@ contract COW is SafeMath{
 
     /* Send coins */
     function transfer(address _to, uint256 _value) public {
-        if (_to == 0x0) revert();                               // Prevent transfer to 0x0 address. Use burn() instead
+        if (_to == address(0)) revert();                               // Prevent transfer to 0x0 address. Use burn() instead
 		if (_value <= 0) revert(); 
         if (balanceOf[msg.sender] < _value) revert();           // Check if the sender has enough
         if (balanceOf[_to] + _value < balanceOf[_to]) revert(); // Check for overflows
         balanceOf[msg.sender] = SafeMath.safeSub(balanceOf[msg.sender], _value);                     // Subtract from the sender
         balanceOf[_to] = SafeMath.safeAdd(balanceOf[_to], _value);                            // Add the same to the recipient
-        Transfer(msg.sender, _to, _value);                   // Notify anyone listening that this transfer took place
+        emit Transfer(msg.sender, _to, _value);                   // Notify anyone listening that this transfer took place
     }
 
     /* Allow another contract to spend some tokens in your behalf */
@@ -95,7 +95,7 @@ contract COW is SafeMath{
 
     /* A contract attempts to get the coins */
     function transferFrom(address _from, address _to, uint256 _value) public returns (bool success) {
-        if (_to == 0x0) revert();                                // Prevent transfer to 0x0 address. Use burn() instead
+        if (_to == address(0)) revert();                                // Prevent transfer to 0x0 address. Use burn() instead
 		if (_value <= 0) revert(); 
         if (balanceOf[_from] < _value) revert();                 // Check if the sender has enough
         if (balanceOf[_to] + _value < balanceOf[_to]) revert();  // Check for overflows
@@ -103,7 +103,7 @@ contract COW is SafeMath{
         balanceOf[_from] = SafeMath.safeSub(balanceOf[_from], _value);                           // Subtract from the sender
         balanceOf[_to] = SafeMath.safeAdd(balanceOf[_to], _value);                             // Add the same to the recipient
         allowance[_from][msg.sender] = SafeMath.safeSub(allowance[_from][msg.sender], _value);
-        Transfer(_from, _to, _value);
+        emit Transfer(_from, _to, _value);
         return true;
     }
 
@@ -112,7 +112,7 @@ contract COW is SafeMath{
 		if (_value <= 0) revert(); 
         balanceOf[msg.sender] = SafeMath.safeSub(balanceOf[msg.sender], _value);                      // Subtract from the sender
         totalSupply = SafeMath.safeSub(totalSupply,_value);                                // Updates totalSupply
-        Burn(msg.sender, _value);
+        emit Burn(msg.sender, _value);
         return true;
     }
 	
@@ -121,7 +121,7 @@ contract COW is SafeMath{
 		if (_value <= 0) revert(); 
         balanceOf[msg.sender] = SafeMath.safeSub(balanceOf[msg.sender], _value);                      // Subtract from the sender
         freezeOf[msg.sender] = SafeMath.safeAdd(freezeOf[msg.sender], _value);                                // Updates totalSupply
-        Freeze(msg.sender, _value);
+        emit Freeze(msg.sender, _value);
         return true;
     }
 	
@@ -130,7 +130,7 @@ contract COW is SafeMath{
 		if (_value <= 0) revert(); 
         freezeOf[msg.sender] = SafeMath.safeSub(freezeOf[msg.sender], _value);                      // Subtract from the sender
 		balanceOf[msg.sender] = SafeMath.safeAdd(balanceOf[msg.sender], _value);
-        Unfreeze(msg.sender, _value);
+        emit Unfreeze(msg.sender, _value);
         return true;
     }
 	

@@ -123,7 +123,7 @@ contract ERC20 is IERC20 {
     /**
     * @dev Total number of tokens in existence
     */
-    function totalSupply() public view virtual returns (uint256) {
+    function totalSupply() public view virtual override returns (uint256) {
         return _totalSupply;
     }
 
@@ -132,7 +132,7 @@ contract ERC20 is IERC20 {
     * @param owner The address to query the balance of.
     * @return An uint256 representing the amount owned by the passed address.
     */
-    function balanceOf(address owner) public view virtual returns (uint256) {
+    function balanceOf(address owner) public view virtual override returns (uint256) {
         return _balances[owner];
     }
 
@@ -142,7 +142,7 @@ contract ERC20 is IERC20 {
      * @param spender address The address which will spend the funds.
      * @return A uint256 specifying the amount of tokens still available for the spender.
      */
-    function allowance(address owner, address spender) public view virtual returns (uint256) {
+    function allowance(address owner, address spender) public view virtual override returns (uint256) {
         return _allowed[owner][spender];
     }
 
@@ -151,7 +151,7 @@ contract ERC20 is IERC20 {
     * @param to The address to transfer to.
     * @param value The amount to be transferred.
     */
-    function transfer(address to, uint256 value) public virtual returns (bool) {
+    function transfer(address to, uint256 value) public virtual override returns (bool) {
         _transfer(msg.sender, to, value);
         return true;
     }
@@ -165,7 +165,7 @@ contract ERC20 is IERC20 {
      * @param spender The address which will spend the funds.
      * @param value The amount of tokens to be spent.
      */
-    function approve(address spender, uint256 value) public virtual returns (bool) {
+    function approve(address spender, uint256 value) public virtual override returns (bool) {
         require(spender != address(0));
 
         _allowed[msg.sender][spender] = value;
@@ -181,7 +181,7 @@ contract ERC20 is IERC20 {
      * @param to address The address which you want to transfer to
      * @param value uint256 the amount of tokens to be transferred
      */
-    function transferFrom(address from, address to, uint256 value) public virtual returns (bool) {
+    function transferFrom(address from, address to, uint256 value) public virtual override returns (bool) {
         _allowed[from][msg.sender] = _allowed[from][msg.sender] - (value);
         _transfer(from, to, value);
         emit Approval(from, msg.sender, _allowed[from][msg.sender]);
@@ -360,7 +360,7 @@ contract MinterRole {
     }
 
     function _addMinter(address account) internal {
-        _minters + (account);
+        _minters.add(account);
         emit MinterAdded(account);
     }
 
@@ -417,7 +417,7 @@ contract ERC20Capped is ERC20Mintable {
         return _cap;
     }
 
-    function _mint(address account, uint256 value) internal virtual {
+    function _mint(address account, uint256 value) internal virtual override {
         require(totalSupply() + (value) <= _cap);
         super._mint(account, value);
     }
@@ -434,7 +434,7 @@ pragma solidity >=0.8.0;
  * All the operations are done using the smallest and indivisible token unit,
  * just as on Ethereum all the operations are done in wei.
  */
-contract ERC20Detailed is IERC20 {
+abstract contract ERC20Detailed is IERC20 {
     string private _name;
     string private _symbol;
     uint8 private _decimals;
@@ -483,7 +483,7 @@ contract Aavio is IERC20, ERC20, ERC20Detailed, ERC20Capped {
     constructor()
     ERC20Detailed("Aavio", "AAV", 18)
     ERC20Capped(500000000000000000000000000)
-    public  {
+      {
         uint256 initialSupply = 300000000000000000000000000;  // 300 million tokens + 18 decimals
         _mint(msg.sender, initialSupply);
     }
@@ -493,7 +493,7 @@ contract Aavio is IERC20, ERC20, ERC20Detailed, ERC20Capped {
     * @param to The address to transfer to.
     * @param value The amount to be transferred.
     */
-    function transfer(address to, uint256 value) public virtual returns (bool) {
+    function transfer(address to, uint256 value) public virtual override(ERC20, IERC20) returns (bool) {
         require(to != address(this), "CANT SEND TO TOKEN CONTRACT");
         _transfer(msg.sender, to, value);
         return true;
@@ -507,10 +507,14 @@ contract Aavio is IERC20, ERC20, ERC20Detailed, ERC20Capped {
      * @param to address The address which you want to transfer to
      * @param value uint256 the amount of tokens to be transferred
      */
-    function transferFrom(address from, address to, uint256 value) public virtual returns (bool) {
+    function transferFrom(address from, address to, uint256 value) public virtual override(ERC20, IERC20) returns (bool) {
         require(to != address(this), "CANT SEND TO TOKEN CONTRACT");
         super.transferFrom(from, to, value);
         return true;
+    }
+
+    function _mint(address account, uint256 value) internal virtual override(ERC20, ERC20Capped) {
+        super._mint(account, value);
     }
 
 }

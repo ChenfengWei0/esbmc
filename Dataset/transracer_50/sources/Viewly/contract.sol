@@ -116,23 +116,25 @@ contract DSAuth is DSAuthEvents {
 
     constructor() {
         owner = msg.sender;
-        LogSetOwner(msg.sender);
+        emit LogSetOwner(msg.sender);
     }
 
     function setOwner(address owner_)
         public
+        virtual
         auth
     {
         owner = owner_;
-        LogSetOwner(owner);
+        emit LogSetOwner(owner);
     }
 
     function setAuthority(DSAuthority authority_)
         public
+        virtual
         auth
     {
         authority = authority_;
-        LogSetAuthority(authority);
+        emit LogSetAuthority(address(authority));
     }
 
     modifier auth {
@@ -145,10 +147,10 @@ contract DSAuth is DSAuthEvents {
             return true;
         } else if (src == owner) {
             return true;
-        } else if (authority == DSAuthority(0)) {
+        } else if (authority == DSAuthority(address(0))) {
             return false;
         } else {
-            return authority.canCall(src, this, sig);
+            return authority.canCall(src, address(this), sig);
         }
     }
 }
@@ -247,7 +249,7 @@ contract ViewlyMainSale is DSAuth, DSMath {
         totalRefundedAmount += amount;
         totalContributedAmount -= amount;
         payable(address(contributor)).transfer(amount);
-        LogRefund(contributor, amount);
+        emit LogRefund(contributor, amount);
     }
 
     function setMinContributionAmount(uint minAmount) public auth {
@@ -274,7 +276,7 @@ contract ViewlyMainSale is DSAuth, DSMath {
         require(address(this).balance >= amount);
 
         payable(address(beneficiary)).transfer(amount);
-        LogCollectAmount(amount);
+        emit LogCollectAmount(amount);
     }
 
     function addToWhitelist(address[] memory contributors) public auth {
@@ -297,17 +299,17 @@ contract ViewlyMainSale is DSAuth, DSMath {
         whitelistRequired = setting;
     }
 
-    function setOwner(address owner_) public auth {
+    function setOwner(address owner_) public override auth {
         revert();
     }
 
-    function setAuthority(DSAuthority authority_) public auth {
+    function setAuthority(DSAuthority authority_) public override auth {
         revert();
     }
 
     function recoverTokens(address token_) public auth {
         ERC20 token = ERC20(token_);
-        payable(address(token)).transfer(beneficiary, token.balanceOf(this));
+        token.transfer(beneficiary, token.balanceOf(address(this)));
     }
 
 
@@ -319,6 +321,6 @@ contract ViewlyMainSale is DSAuth, DSMath {
 
         contributions[msg.sender] += msg.value;
         totalContributedAmount += msg.value;
-        LogContribute(msg.sender, msg.value);
+        emit LogContribute(msg.sender, msg.value);
     }
 }

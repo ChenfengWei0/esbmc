@@ -3,16 +3,16 @@ pragma solidity >=0.8.0; // solhint-disable-line
 
 /// @title Interface for contracts conforming to ERC-721: Non-Fungible Tokens
 /// @author Dieter Shirley <dete@axiomzen.co> (https://github.com/dete)
-contract ERC721 {
+abstract contract ERC721 {
   // Required methods
-  function approve(address _to, uint256 _tokenId) public;
-  function balanceOf(address _owner) public view returns (uint256 balance);
-  function implementsERC721() public pure returns (bool);
-  function ownerOf(uint256 _tokenId) public view returns (address addr);
-  function takeOwnership(uint256 _tokenId) public;
-  function totalSupply() public view returns (uint256 total);
-  function transferFrom(address _from, address _to, uint256 _tokenId) public;
-  function transfer(address _to, uint256 _tokenId) public;
+  function approve(address _to, uint256 _tokenId) public virtual;
+  function balanceOf(address _owner) public view virtual returns (uint256 balance);
+  function implementsERC721() public pure virtual returns (bool);
+  function ownerOf(uint256 _tokenId) public view virtual returns (address addr);
+  function takeOwnership(uint256 _tokenId) public virtual;
+  function totalSupply() public view virtual returns (uint256 total);
+  function transferFrom(address _from, address _to, uint256 _tokenId) public virtual;
+  function transfer(address _to, uint256 _tokenId) public virtual;
 
   event Transfer(address indexed from, address indexed to, uint256 tokenId);
   event Approval(address indexed owner, address indexed approved, uint256 tokenId);
@@ -34,10 +34,6 @@ contract CityToken is ERC721 {
 
   /// @dev The TokenSold event is fired whenever a token is sold.
   event TokenSold(uint256 tokenId, uint256 oldPrice, uint256 newPrice, address prevOwner, address winner, string name, uint256 parentId);
-
-  /// @dev Transfer event as defined in current draft of ERC721. 
-  ///  ownership is assigned, including create event.
-  event Transfer(address from, address to, uint256 tokenId);
 
   /*** CONSTANTS ***/
 
@@ -119,19 +115,19 @@ contract CityToken is ERC721 {
   function approve(
     address _to,
     uint256 _tokenId
-  ) public {
+  ) public override {
     // Caller must own token.
     require(_owns(msg.sender, _tokenId));
 
     tokenIndexToApproved[_tokenId] = _to;
 
-    Approval(msg.sender, _to, _tokenId);
+    emit Approval(msg.sender, _to, _tokenId);
   }
 
   /// For querying balance of a particular account
   /// @param _owner The address for balance query
   /// @dev Required for ERC-721 compliance.
-  function balanceOf(address _owner) public view returns (uint256 balance) {
+  function balanceOf(address _owner) public view override returns (uint256 balance) {
     return ownershipTokenCount[_owner];
   }
 
@@ -155,7 +151,7 @@ contract CityToken is ERC721 {
   /// @notice Returns all the relevant information about a specific token.
   /// @param _tokenId The tokenId of the token of interest.
   function getToken(uint256 _tokenId) public view returns (
-    string tokenName,
+    string memory tokenName,
     uint256 parentId,
     uint256 sellingPrice,
     address owner
@@ -168,7 +164,7 @@ contract CityToken is ERC721 {
     owner = tokenIndexToOwner[_tokenId];
   }
 
-  function implementsERC721() public pure returns (bool) {
+  function implementsERC721() public pure override returns (bool) {
     return true;
   }
 
@@ -183,6 +179,7 @@ contract CityToken is ERC721 {
   function ownerOf(uint256 _tokenId)
     public
     view
+    override
     returns (address owner)
   {
     owner = tokenIndexToOwner[_tokenId];
@@ -238,7 +235,7 @@ contract CityToken is ERC721 {
   /// @notice Allow pre-approved user to take ownership of a token
   /// @param _tokenId The ID of the Token that can be transferred if this call succeeds.
   /// @dev Required for ERC-721 compliance.
-  function takeOwnership(uint256 _tokenId) public {
+  function takeOwnership(uint256 _tokenId) public override {
     address newOwner = msg.sender;
     address oldOwner = tokenIndexToOwner[_tokenId];
 
@@ -256,7 +253,7 @@ contract CityToken is ERC721 {
   ///  expensive (it walks the entire Cities array looking for cities belonging to owner),
   ///  but it also returns a dynamic array, which is only supported for web3 calls, and
   ///  not contract-to-contract calls.
-  function tokensOfOwner(address _owner) public view returns(uint256[] ownerTokens) {
+  function tokensOfOwner(address _owner) public view returns(uint256[] memory ownerTokens) {
     uint256 tokenCount = balanceOf(_owner);
     if (tokenCount == 0) {
         // Return an empty array
@@ -279,7 +276,7 @@ contract CityToken is ERC721 {
 
   /// For querying totalSupply of token
   /// @dev Required for ERC-721 compliance.
-  function totalSupply() public view returns (uint256 total) {
+  function totalSupply() public view override returns (uint256 total) {
     //return tokens.length;
     // NOTE: Looks like we can't get the length of mapping data structure
     //return tokenIndexToToken.length;
@@ -293,7 +290,7 @@ contract CityToken is ERC721 {
   function transfer(
     address _to,
     uint256 _tokenId
-  ) public {
+  ) public override {
     require(_owns(msg.sender, _tokenId));
     require(_addressNotNull(_to));
 
@@ -309,7 +306,7 @@ contract CityToken is ERC721 {
     address _from,
     address _to,
     uint256 _tokenId
-  ) public {
+  ) public override {
     require(_owns(_from, _tokenId));
     require(_approved(_to, _tokenId));
     require(_addressNotNull(_to));
@@ -361,8 +358,8 @@ contract CityToken is ERC721 {
     if (_addressNotNull(ownerOfParent)) {
 
       // Send 2% dividends to owner of parent
-      ownerOfParent.transfer(paymentToOwnerOfParent);
-      
+      payable(ownerOfParent).transfer(paymentToOwnerOfParent);
+
     } else {
 
       // If no parent owner then update payment to previous owner to include paymentToOwnerOfParent
@@ -381,12 +378,12 @@ contract CityToken is ERC721 {
 
     // Pay previous tokenOwner if owner is not contract
     if (oldOwner != address(this)) {
-      oldOwner.transfer(payment);
+      payable(oldOwner).transfer(payment);
     }
-    
-    TokenSold(_tokenId, sellingPrice, tokenIndexToPrice[_tokenId], oldOwner, msg.sender, tokenIndexToToken[_tokenId].name, parentId);
 
-    msg.sender.transfer(purchaseExcess);
+    emit TokenSold(_tokenId, sellingPrice, tokenIndexToPrice[_tokenId], oldOwner, msg.sender, tokenIndexToToken[_tokenId].name, parentId);
+
+    payable(msg.sender).transfer(purchaseExcess);
   }
 
   function _purchaseCountry(uint256 _tokenId) private {
@@ -421,12 +418,12 @@ contract CityToken is ERC721 {
 
     // Pay previous tokenOwner if owner is not contract
     if (oldOwner != address(this)) {
-      oldOwner.transfer(payment);
+      payable(oldOwner).transfer(payment);
     }
-    
-    TokenSold(_tokenId, sellingPrice, tokenIndexToPrice[_tokenId], oldOwner, msg.sender, tokenIndexToToken[_tokenId].name, 0);
 
-    msg.sender.transfer(purchaseExcess);
+    emit TokenSold(_tokenId, sellingPrice, tokenIndexToPrice[_tokenId], oldOwner, msg.sender, tokenIndexToToken[_tokenId].name, 0);
+
+    payable(msg.sender).transfer(purchaseExcess);
   }
 
 
@@ -463,7 +460,7 @@ contract CityToken is ERC721 {
     // let's just be 100% sure we never let this happen.
     require(newTokenId == uint256(uint32(newTokenId)));
 
-    TokenCreated(newTokenId, _name, _parentId, _owner);
+    emit TokenCreated(newTokenId, _name, _parentId, _owner);
 
     tokenIndexToPrice[newTokenId] = _price;
 
@@ -480,19 +477,19 @@ contract CityToken is ERC721 {
   /// For paying out balance on contract
   function _payout(address _to) private {
     if (_to == address(0)) {
-      ceoAddress.transfer(this.balance);
+      payable(ceoAddress).transfer(address(this).balance);
     } else {
-      _to.transfer(this.balance);
+      payable(_to).transfer(address(this).balance);
     }
   }
 
   // Alternate function to withdraw less than total balance
   function _withdrawFunds(address _to, uint256 amount) private {
-    require(this.balance >= amount);
+    require(address(this).balance >= amount);
     if (_to == address(0)) {
-      ceoAddress.transfer(amount);
+      payable(ceoAddress).transfer(amount);
     } else {
-      _to.transfer(amount);
+      payable(_to).transfer(amount);
     }
   }
 
@@ -511,7 +508,7 @@ contract CityToken is ERC721 {
     }
 
     // Emit the transfer event.
-    Transfer(_from, _to, _tokenId);
+    emit Transfer(_from, _to, _tokenId);
   }
 }
 library SafeMath {

@@ -276,7 +276,7 @@
       "patch_send_transfer_to_payable",
       "patch_payable_contract_cast"
     ],
-    "elapsed": 1.6
+    "elapsed": 1.1
   },
   {
     "name": "Char",
@@ -436,6 +436,6 @@
       "patch_mark_abstract",
       "patch_remove_bogus_override"
     ],
-    "elapsed": 1.3
+    "elapsed": 1.2
   }
 ]

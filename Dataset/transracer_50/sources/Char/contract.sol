@@ -43,7 +43,7 @@ contract Ownable {
         require(msg.sender == newOwner);
         emit OwnershipTransferred(owner, newOwner);
         owner = newOwner;
-        newOwner = 0x0;
+        newOwner = address(0);
     }
 }
 
@@ -222,7 +222,7 @@ contract ManagedToken is ERC20Token, Ownable {
         }
     }
 
-    function transfer(address _to, uint256 _value) public transfersAllowed returns (bool) {
+    function transfer(address _to, uint256 _value) public override transfersAllowed returns (bool) {
         bool success = super.transfer(_to, _value);
         /* if(hasListener() && success) {
             eventListener.onTokenTransfer(msg.sender, _to, _value);
@@ -230,7 +230,7 @@ contract ManagedToken is ERC20Token, Ownable {
         return success;
     }
 
-    function transferFrom(address _from, address _to, uint256 _value) public transfersAllowed returns (bool) {
+    function transferFrom(address _from, address _to, uint256 _value) public override transfersAllowed returns (bool) {
         bool success = super.transferFrom(_from, _to, _value);
 
         //If has Listenser and transfer success
@@ -242,7 +242,7 @@ contract ManagedToken is ERC20Token, Ownable {
     }
 
     function hasListener() internal view returns(bool) {
-        if(eventListener == address(0)) {
+        if(address(eventListener) == address(0)) {
             return false;
         }
         return true;
@@ -253,7 +253,7 @@ contract ManagedToken is ERC20Token, Ownable {
      * @param _to Wallet address
      * @param _value Amount of tokens
      */
-    function issue(address _to, uint256 _value) external onlyOwner canIssue {
+    function issue(address _to, uint256 _value) external virtual onlyOwner canIssue {
         totalIssue = safeAdd(totalIssue, _value);
         require(totalSupply >= totalIssue, "Total issue is not greater total of supply");
         balances[_to] = safeAdd(balances[_to], _value);
@@ -327,7 +327,7 @@ contract Char is ManagedToken {
         totalSupply = 5000000000 ether;                                         //The maximum number of tokens is unchanged and totals will decrease after issue
     }
 
-    function issue(address _to, uint256 _value) external onlyOwner canIssue {
+    function issue(address _to, uint256 _value) external override onlyOwner canIssue {
         totalIssue = safeAdd(totalIssue, _value);
         require(totalSupply >= totalIssue, "Total issue is not greater total of supply");
 

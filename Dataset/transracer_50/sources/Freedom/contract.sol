@@ -55,7 +55,7 @@ contract FreedomStreaming is ERC20
 
     uint8 public constant decimals = 18;
 
-    uint256 public constant totalsupply = 1000000000000000000000000000;
+    uint256 public constant _totalsupply2 = 1000000000000000000000000000;
       
     mapping(address => uint256) balances;
 
@@ -108,7 +108,7 @@ contract FreedomStreaming is ERC20
         
               balances[address(this)] =SafeMath.sub(balances[address(this)],no_of_tokens);
               balances[msg.sender] = SafeMath.add(balances[msg.sender],no_of_tokens);
-              Transfer(address(this), msg.sender, no_of_tokens);
+              emit Transfer(address(this), msg.sender, no_of_tokens);
               payable(owner).transfer(address(this).balance); 
    
             }
@@ -124,23 +124,23 @@ contract FreedomStreaming is ERC20
        }
    }
     
-    function totalSupply() public view virtual returns(uint256) {
-       return totalsupply;
+    function totalSupply() public view virtual override returns(uint256) {
+       return _totalsupply2;
     }
-    
-     function balanceOf(address sender) public view virtual returns(uint256 balance) {
+
+     function balanceOf(address sender) public view virtual override returns(uint256 balance) {
         return balances[sender];
     }
 
     
-    function transfer(address _to, uint256 _amount) public virtual returns(bool success) {
+    function transfer(address _to, uint256 _amount) public virtual override returns(bool success) {
         if (balances[msg.sender] >= _amount &&
             _amount > 0 &&
             balances[_to] + _amount > balances[_to]) {
          
             balances[msg.sender] = SafeMath.sub(balances[msg.sender],_amount);
             balances[_to] = SafeMath.add(balances[_to],_amount);
-            Transfer(msg.sender, _to, _amount);
+            emit Transfer(msg.sender, _to, _amount);
 
             return true;
         } else {
@@ -180,29 +180,29 @@ contract FreedomStreaming is ERC20
         address _from,
         address _to,
         uint256 _amount
-    ) public virtual returns(bool success) {
+    ) public virtual override returns(bool success) {
 
             require(balances[_from] >= _amount && allowed[_from][msg.sender] >= _amount);    
                 
             balances[_from] = SafeMath.sub(balances[_from],_amount);
             allowed[_from][msg.sender] = SafeMath.sub(allowed[_from][msg.sender], _amount);
             balances[_to] = SafeMath.add(balances[_to], _amount);
-            Transfer(_from, _to, _amount);
+            emit Transfer(_from, _to, _amount);
             
             return true;
        
     }
 
-  function approve(address _spender, uint256 _value) public virtual returns (bool) {
+  function approve(address _spender, uint256 _value) public virtual override returns (bool) {
 
     require((_value == 0) || (allowed[msg.sender][_spender] == 0));
 
     allowed[msg.sender][_spender] = _value;
-    Approval(msg.sender, _spender, _value);
+    emit Approval(msg.sender, _spender, _value);
     return true;
   }
 
-    function allowance(address _owner, address _spender) public view virtual returns(uint256 remaining) {
+    function allowance(address _owner, address _spender) public view virtual override returns(uint256 remaining) {
         return allowed[_owner][_spender];
     }
 
@@ -215,7 +215,7 @@ contract FreedomStreaming is ERC20
         require(ico_ended);
         
         balances[owner] = SafeMath.add(balances[owner],balances[address(this)]);
-        Transfer(address(this), owner, balances[address(this)]);
+        emit Transfer(address(this), owner, balances[address(this)]);
         balances[address(this)] = 0;
     }
     

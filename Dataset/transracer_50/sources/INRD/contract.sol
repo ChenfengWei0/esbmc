@@ -260,7 +260,7 @@ contract ERC20 is IERC20 {
    * @param value The amount that will be created.
    */
   function _mint(address account, uint256 value) internal virtual {
-    require(account != 0);
+    require(account != address(0));
     _totalSupply = _totalSupply + (value);
     _balances[account] = _balances[account] + (value);
     emit Transfer(address(0), account, value);
@@ -273,7 +273,7 @@ contract ERC20 is IERC20 {
    * @param value The amount that will be burnt.
    */
   function _burn(address account, uint256 value) internal virtual {
-    require(account != 0);
+    require(account != address(0));
     require(value <= _balances[account]);
 
     _totalSupply = _totalSupply - (value);
@@ -306,7 +306,7 @@ contract ERC20 is IERC20 {
  * All the operations are done using the smallest and indivisible token unit,
  * just as on Ethereum all the operations are done in wei.
  */
-contract ERC20Detailed is IERC20 {
+abstract contract ERC20Detailed is IERC20 {
   string private _name;
   string private _symbol;
   uint8 private _decimals;
@@ -414,7 +414,7 @@ contract MinterRole {
   }
 
   function _addMinter(address account) internal {
-    minters + (account);
+    minters.add(account);
     emit MinterAdded(account);
   }
 
@@ -440,6 +440,7 @@ contract ERC20Mintable is ERC20, MinterRole {
     uint256 value
   )
     public
+    virtual
     onlyMinter
     returns (bool)
   {
@@ -459,7 +460,7 @@ contract ERC20Burnable is ERC20 {
    * @dev Burns a specific amount of tokens.
    * @param value The amount of token to be burned.
    */
-  function burn(uint256 value) public {
+  function burn(uint256 value) public virtual {
     _burn(msg.sender, value);
   }
 
@@ -506,7 +507,7 @@ contract PauserRole {
   }
 
   function _addPauser(address account) internal {
-    pausers + (account);
+    pausers.add(account);
     emit PauserAdded(account);
   }
 
@@ -581,6 +582,8 @@ contract ERC20Pausable is ERC20, Pausable {
     uint256 value
   )
     public
+    virtual
+    override
     whenNotPaused
     returns (bool)
   {
@@ -593,6 +596,8 @@ contract ERC20Pausable is ERC20, Pausable {
     uint256 value
   )
     public
+    virtual
+    override
     whenNotPaused
     returns (bool)
   {
@@ -604,6 +609,8 @@ contract ERC20Pausable is ERC20, Pausable {
     uint256 value
   )
     public
+    virtual
+    override
     whenNotPaused
     returns (bool)
   {
@@ -615,6 +622,8 @@ contract ERC20Pausable is ERC20, Pausable {
     uint addedValue
   )
     public
+    virtual
+    override
     whenNotPaused
     returns (bool success)
   {
@@ -626,6 +635,8 @@ contract ERC20Pausable is ERC20, Pausable {
     uint subtractedValue
   )
     public
+    virtual
+    override
     whenNotPaused
     returns (bool success)
   {
@@ -646,36 +657,44 @@ contract INRD is ERC20, ERC20Detailed, ERC20Mintable, ERC20Burnable, ERC20Pausab
     event ChangeStakingFees (uint256 transferFee, uint256 mintFee, uint256 burnFee, uint256 feeDenominator);
 
     constructor(address _staker)
-        ERC20Burnable()
-        ERC20Mintable()
-        ERC20Pausable()
         ERC20Detailed("INRD", "INRD", 4)
-        ERC20()
-        public {
+    {
         staker = _staker;
     }
 
-    function mint(address to, uint256 value) public onlyMinter returns (bool) {
+    function mint(address to, uint256 value) public override onlyMinter returns (bool) {
         bool result = super.mint(to, value);
         payStakingFee(to, value, mintFee);
         return result;
     }
 
-    function burn(uint256 value) public {
+    function burn(uint256 value) public override {
         super.burn(value);
         payStakingFee(msg.sender, value, burnFee);
     }
 
-    function transfer(address to, uint256 value) public virtual returns (bool) {
+    function transfer(address to, uint256 value) public virtual override(ERC20, ERC20Pausable, IERC20) returns (bool) {
         bool result = super.transfer(to, value);
         payStakingFee(msg.sender, value, transferFee);
-        return result;   
+        return result;
     }
 
-    function transferFrom(address from, address to, uint256 value) public virtual returns (bool) {
+    function transferFrom(address from, address to, uint256 value) public virtual override(ERC20, ERC20Pausable, IERC20) returns (bool) {
         bool result = super.transferFrom(from, to, value);
         payStakingFee(from, value, transferFee);
         return result;
+    }
+
+    function approve(address spender, uint256 value) public virtual override(ERC20, ERC20Pausable, IERC20) returns (bool) {
+        return super.approve(spender, value);
+    }
+
+    function increaseAllowance(address spender, uint256 addedValue) public virtual override(ERC20, ERC20Pausable) returns (bool) {
+        return super.increaseAllowance(spender, addedValue);
+    }
+
+    function decreaseAllowance(address spender, uint256 subtractedValue) public virtual override(ERC20, ERC20Pausable) returns (bool) {
+        return super.decreaseAllowance(spender, subtractedValue);
     }
 
     function payStakingFee(address _payer, uint256 _value, uint256 _fees) internal {

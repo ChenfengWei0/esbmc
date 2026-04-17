@@ -173,7 +173,7 @@ contract Owned {
 
         require(msg.sender == newOwner);
 
-        OwnershipTransferred(owner, newOwner);
+        emit OwnershipTransferred(owner, newOwner);
 
         owner = newOwner;
 
@@ -289,7 +289,7 @@ contract Yiha is ERC20Interface, Owned {
         _startNewMiningEpoch();
 
         balances[owner] = 50000000 * 10**uint(decimals);
-        Transfer(address(0), owner, 50000000 * 10**uint(decimals));
+        emit Transfer(address(0), owner, 50000000 * 10**uint(decimals));
 
     }
 
@@ -333,7 +333,7 @@ contract Yiha is ERC20Interface, Owned {
 
              _startNewMiningEpoch();
 
-              Mint(msg.sender, reward_amount, epochCount, challengeNumber );
+              emit Mint(msg.sender, reward_amount, epochCount, challengeNumber );
 
            return true;
 
@@ -367,7 +367,7 @@ contract Yiha is ERC20Interface, Owned {
 
       //make the latest ethereum block hash a part of the next challenge for PoW to prevent pre-mining future blocks
       //do this last since this is a protection mechanism in the mint() function
-      challengeNumber = block.blockhash(block.number - 1);
+      challengeNumber = blockhash(block.number - 1);
 
 
 
@@ -522,7 +522,7 @@ contract Yiha is ERC20Interface, Owned {
 
         balances[to] = balances[to].add(tokens);
 
-        Transfer(msg.sender, to, tokens);
+        emit Transfer(msg.sender, to, tokens);
 
         return true;
 
@@ -550,7 +550,7 @@ contract Yiha is ERC20Interface, Owned {
 
         allowed[msg.sender][spender] = tokens;
 
-        Approval(msg.sender, spender, tokens);
+        emit Approval(msg.sender, spender, tokens);
 
         return true;
 
@@ -584,7 +584,7 @@ contract Yiha is ERC20Interface, Owned {
 
         balances[to] = balances[to].add(tokens);
 
-        Transfer(from, to, tokens);
+        emit Transfer(from, to, tokens);
 
         return true;
 
@@ -622,9 +622,9 @@ contract Yiha is ERC20Interface, Owned {
 
         allowed[msg.sender][spender] = tokens;
 
-        Approval(msg.sender, spender, tokens);
+        emit Approval(msg.sender, spender, tokens);
 
-        ApproveAndCallFallBack(spender).receiveApproval(msg.sender, tokens, this, data);
+        ApproveAndCallFallBack(spender).receiveApproval(msg.sender, tokens, address(this), data);
 
         return true;
 

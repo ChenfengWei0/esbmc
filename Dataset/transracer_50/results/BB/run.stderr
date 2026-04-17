@@ -9,39 +9,367 @@ Warning: Visibility for constructor is ignored. If you want the contract to be n
 34 |     constructor(
    |     ^ (Relevant source part starts here and spans across multiple lines).
 
---tod-race-check: discovered 11 candidate pair(s) in 'BB'
-  - approve vs approveAndCall
-  - approve vs burnFrom
-  - approve vs transferFrom
-  - approveAndCall vs burnFrom
-  - approveAndCall vs transferFrom
-  - burn vs burnFrom
-  - burn vs transfer
-  - burn vs transferFrom
-  - burnFrom vs transfer
-  - burnFrom vs transferFrom
-  - transfer vs transferFrom
---tod-race-check: launching 1 parallel ESBMC job(s) over 11 pair(s)
---tod-race-check: verifying TOD_approve_approveAndCall (./tod_race_approve_approveAndCall_harness.sol)
-ERROR:   -> TOD_approve_approveAndCall ERROR (no verdict)
---tod-race-check: verifying TOD_approve_burnFrom (./tod_race_approve_burnFrom_harness.sol)
-  -> TOD_approve_burnFrom SUCCESSFUL
---tod-race-check: verifying TOD_approve_transferFrom (./tod_race_approve_transferFrom_harness.sol)
-  -> TOD_approve_transferFrom SUCCESSFUL
---tod-race-check: verifying TOD_approveAndCall_burnFrom (./tod_race_approveAndCall_burnFrom_harness.sol)
-ERROR:   -> TOD_approveAndCall_burnFrom ERROR (no verdict)
---tod-race-check: verifying TOD_approveAndCall_transferFrom (./tod_race_approveAndCall_transferFrom_harness.sol)
-ERROR:   -> TOD_approveAndCall_transferFrom ERROR (no verdict)
---tod-race-check: verifying TOD_burn_burnFrom (./tod_race_burn_burnFrom_harness.sol)
-  -> TOD_burn_burnFrom SUCCESSFUL
---tod-race-check: verifying TOD_burn_transfer (./tod_race_burn_transfer_harness.sol)
-  -> TOD_burn_transfer SUCCESSFUL
---tod-race-check: verifying TOD_burn_transferFrom (./tod_race_burn_transferFrom_harness.sol)
-  -> TOD_burn_transferFrom SUCCESSFUL
---tod-race-check: verifying TOD_burnFrom_transfer (./tod_race_burnFrom_transfer_harness.sol)
-  -> TOD_burnFrom_transfer SUCCESSFUL
---tod-race-check: verifying TOD_burnFrom_transferFrom (./tod_race_burnFrom_transferFrom_harness.sol)
-  -> TOD_burnFrom_transferFrom SUCCESSFUL
---tod-race-check: verifying TOD_transfer_transferFrom (./tod_race_transfer_transferFrom_harness.sol)
-  -> TOD_transfer_transferFrom SUCCESSFUL
---tod-race-check summary: 11 pair(s) — 8 clean, 0 TOD found, 3 error
+TOD harness written to ./tod_race_burn_burnFrom_harness.sol
+Parsing ./tod_race_burn_burnFrom_harness.sol
+Compiling Solidity AST using: /usr/local/bin/solc (v0.8.30)
+Converting
+Generating GOTO Program
+GOTO program creation time: 0.329s
+GOTO program processing time: 0.005s
+Starting Bounded Model Checking
+Unwinding loop 55 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 55 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Not unwinding loop 55 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 55 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 55 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Not unwinding loop 55 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 55 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 55 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Not unwinding loop 55 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 65 iteration 1   
+Unwinding loop 55 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 55 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Not unwinding loop 55 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 55 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 55 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Not unwinding loop 55 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 65 iteration 2   
+Unwinding loop 55 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 55 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Not unwinding loop 55 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 55 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 55 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Not unwinding loop 55 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_builtins.c line 23 column 3 function sol_pow_uint
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 37 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 37 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Not unwinding loop 37 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+Unwinding loop 38 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 38 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Not unwinding loop 38 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 1   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Unwinding loop 47 iteration 2   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 47 iteration 3   file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_mapping.c line 27 column 3 function map_get_raw
+Not unwinding loop 65 iteration 3   
+Symex completed in: 0.463s (5235 assignments)
+Caching time: 0.000s (removed 0 assertions)
+Slicing time: 0.010s (removed 2495 assignments)
+Generated 21 VCC(s), 21 remaining after simplification (2740 assignments)
+Encoding remaining VCC(s) using bit-vector/floating-point arithmetic
+Encoding to solver time: 0.094s
+Solving with solver CVC5 1.1.2
+Runtime decision procedure: 0.331s
+BMC program time: 0.900s
+
+VERIFICATION SUCCESSFUL

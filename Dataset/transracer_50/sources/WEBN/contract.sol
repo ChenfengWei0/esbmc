@@ -81,7 +81,7 @@ contract BasicToken is ERC20Basic {
         _;
     }
     
-  function transfer(address _to, uint256 _value) public notPaused  returns (bool) {
+  function transfer(address _to, uint256 _value) public virtual override notPaused  returns (bool) {
     require(_to != address(0));
     require(_value <= balances[msg.sender]);
 

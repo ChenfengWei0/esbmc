@@ -81,7 +81,7 @@ contract BasicToken is ERC20Basic {
   mapping(address => uint256) balances;
 
   
-  function transfer(address _to, uint256 _value) public virtual returns (bool) {
+  function transfer(address _to, uint256 _value) public virtual override returns (bool) {
     require(_to != address(0));
     require(_value <= balances[msg.sender]);
 
@@ -93,7 +93,7 @@ contract BasicToken is ERC20Basic {
   }
 
   
-  function balanceOf(address _owner) public view virtual returns (uint256 balance) {
+  function balanceOf(address _owner) public view virtual override returns (uint256 balance) {
     return balances[_owner];
   }
 
@@ -113,7 +113,7 @@ contract StandardToken is ERC20, BasicToken {
   mapping (address => mapping (address => uint256)) internal allowed;
 
   
-  function transferFrom(address _from, address _to, uint256 _value) public virtual returns (bool) {
+  function transferFrom(address _from, address _to, uint256 _value) public virtual override returns (bool) {
     require(_to != address(0));
     require(_value <= balances[_from]);
     require(_value <= allowed[_from][msg.sender]);
@@ -126,14 +126,14 @@ contract StandardToken is ERC20, BasicToken {
   }
 
   
-  function approve(address _spender, uint256 _value) public virtual returns (bool) {
+  function approve(address _spender, uint256 _value) public virtual override returns (bool) {
     allowed[msg.sender][_spender] = _value;
     emit Approval(msg.sender, _spender, _value);
     return true;
   }
 
   
-  function allowance(address _owner, address _spender) public view virtual returns (uint256) {
+  function allowance(address _owner, address _spender) public view virtual override returns (uint256) {
     return allowed[_owner][_spender];
   }
 

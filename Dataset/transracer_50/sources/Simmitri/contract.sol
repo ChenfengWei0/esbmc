@@ -249,7 +249,7 @@ contract Simmitri is ERC20Interface, Ownable, MinterRole{
      /**
      * @dev Total number of tokens in existence
      */
-     function totalSupply() public view virtual returns (uint256) {
+     function totalSupply() public view virtual override returns (uint256) {
           return _totalSupply;
      }
 
@@ -258,7 +258,7 @@ contract Simmitri is ERC20Interface, Ownable, MinterRole{
      * @param owner The address to query the balance of.
      * @return A uint256 representing the amount owned by the passed address.
      */
-     function balanceOf(address owner) public view virtual returns (uint256) {
+     function balanceOf(address owner) public view virtual override returns (uint256) {
           return _balances[owner];
      }
 
@@ -267,7 +267,7 @@ contract Simmitri is ERC20Interface, Ownable, MinterRole{
      * @param to The address to transfer to.
      * @param value The amount to be transferred.
      */
-     function transfer(address to, uint256 value) public virtual returns (bool) {
+     function transfer(address to, uint256 value) public virtual override returns (bool) {
           _transfer(msg.sender, to, value);
           return true;
      }
@@ -288,7 +288,7 @@ contract Simmitri is ERC20Interface, Ownable, MinterRole{
      * @param spender The address which will spend the funds.
      * @param value The amount of tokens to be spent.
      */
-     function approve(address spender, uint256 value) public virtual returns (bool) {
+     function approve(address spender, uint256 value) public virtual override returns (bool) {
           _approve(msg.sender, spender, value);
           return true;
      }
@@ -299,7 +299,7 @@ contract Simmitri is ERC20Interface, Ownable, MinterRole{
      * @param to address The address which you want to transfer to
      * @param value uint256 the amount of tokens to be transferred
      */
-     function transferFrom(address from, address to, uint256 value) public virtual returns (bool) {
+     function transferFrom(address from, address to, uint256 value) public virtual override returns (bool) {
           _transfer(from, to, value);
           _approve(from, msg.sender, _allowed[from][msg.sender].sub(value));
           return true;
@@ -311,7 +311,7 @@ contract Simmitri is ERC20Interface, Ownable, MinterRole{
      * @param spender address The address which will spend the funds.
      * @return A uint256 specifying the amount of tokens still available for the spender.
      */
-     function allowance(address owner, address spender) public view virtual returns (uint256) {
+     function allowance(address owner, address spender) public view virtual override returns (uint256) {
           return _allowed[owner][spender];
      }
 

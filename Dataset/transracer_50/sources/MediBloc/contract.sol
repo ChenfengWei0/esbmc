@@ -263,7 +263,7 @@ contract StandardToken is ERC20, BasicToken {
    * @param _spender The address which will spend the funds.
    * @param _addedValue The amount of tokens to increase the allowance by.
    */
-  function increaseApproval(address _spender, uint _addedValue) public returns (bool) {
+  function increaseApproval(address _spender, uint _addedValue) public virtual returns (bool) {
     allowed[msg.sender][_spender] = allowed[msg.sender][_spender] + (_addedValue);
     emit Approval(msg.sender, _spender, allowed[msg.sender][_spender]);
     return true;
@@ -279,7 +279,7 @@ contract StandardToken is ERC20, BasicToken {
    * @param _spender The address which will spend the funds.
    * @param _subtractedValue The amount of tokens to decrease the allowance by.
    */
-  function decreaseApproval(address _spender, uint _subtractedValue) public returns (bool) {
+  function decreaseApproval(address _spender, uint _subtractedValue) public virtual returns (bool) {
     uint oldValue = allowed[msg.sender][_spender];
     if (_subtractedValue > oldValue) {
       allowed[msg.sender][_spender] = 0;
@@ -338,23 +338,23 @@ contract MintableToken is StandardToken, Ownable {
 
 contract PausableToken is StandardToken, Pausable {
 
-  function transfer(address _to, uint256 _value) public whenNotPaused returns (bool) {
+  function transfer(address _to, uint256 _value) public virtual override(BasicToken, ERC20Basic) whenNotPaused returns (bool) {
     return super.transfer(_to, _value);
   }
 
-  function transferFrom(address _from, address _to, uint256 _value) public whenNotPaused returns (bool) {
+  function transferFrom(address _from, address _to, uint256 _value) public virtual override whenNotPaused returns (bool) {
     return super.transferFrom(_from, _to, _value);
   }
 
-  function approve(address _spender, uint256 _value) public whenNotPaused returns (bool) {
+  function approve(address _spender, uint256 _value) public virtual override whenNotPaused returns (bool) {
     return super.approve(_spender, _value);
   }
 
-  function increaseApproval(address _spender, uint _addedValue) public whenNotPaused returns (bool success) {
+  function increaseApproval(address _spender, uint _addedValue) public virtual override whenNotPaused returns (bool success) {
     return super.increaseApproval(_spender, _addedValue);
   }
 
-  function decreaseApproval(address _spender, uint _subtractedValue) public whenNotPaused returns (bool success) {
+  function decreaseApproval(address _spender, uint _subtractedValue) public virtual override whenNotPaused returns (bool success) {
     return super.decreaseApproval(_spender, _subtractedValue);
   }
 }
@@ -363,4 +363,24 @@ contract MedXToken is PausableToken, MintableToken {
   string public name = "MEDX TOKEN";
   string public symbol = "MEDX";
   uint256 public decimals = 8;
+
+  function transfer(address _to, uint256 _value) public override(BasicToken, PausableToken, ERC20Basic) returns (bool) {
+    return super.transfer(_to, _value);
+  }
+
+  function transferFrom(address _from, address _to, uint256 _value) public override(StandardToken, PausableToken) returns (bool) {
+    return super.transferFrom(_from, _to, _value);
+  }
+
+  function approve(address _spender, uint256 _value) public override(StandardToken, PausableToken) returns (bool) {
+    return super.approve(_spender, _value);
+  }
+
+  function increaseApproval(address _spender, uint _addedValue) public override(StandardToken, PausableToken) returns (bool) {
+    return super.increaseApproval(_spender, _addedValue);
+  }
+
+  function decreaseApproval(address _spender, uint _subtractedValue) public override(StandardToken, PausableToken) returns (bool) {
+    return super.decreaseApproval(_spender, _subtractedValue);
+  }
 }
