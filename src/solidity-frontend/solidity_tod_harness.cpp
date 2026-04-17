@@ -44,6 +44,42 @@ static const nlohmann::json *find_contract(
   return nullptr;
 }
 
+/// Collect the source text of every top-level SourceUnit-level declaration
+/// (contract / interface / library / error / struct / enum / ...) EXCEPT
+/// the target contract itself.  The harness then prepends this text so the
+/// `<target>_C1 is BaseX` / `using Lib for T` references in the copied
+/// target body resolve, and the harness file compiles standalone.
+///
+/// Returned strings are already concatenated with \n\n separators, or empty
+/// if there are no dependencies to emit.
+static std::string collect_dependency_definitions(
+  const nlohmann::json &ast,
+  const std::string &sol_source,
+  const std::string &target_name)
+{
+  if (!ast.contains("nodes") || !ast["nodes"].is_array())
+    return {};
+  std::ostringstream out;
+  for (const auto &node : ast["nodes"])
+  {
+    const std::string nt = node.value("nodeType", "");
+    // Skip the target itself (the _C1/_C2 copies replace it).  Pragma /
+    // import directives are handled separately at the harness header.
+    if (nt == "PragmaDirective" || nt == "ImportDirective")
+      continue;
+    if (nt == "ContractDefinition" && node.value("name", "") == target_name)
+      continue;
+    const std::string src_field = node.value("src", "");
+    if (src_field.empty())
+      continue;
+    std::string text = extract_src(sol_source, src_field);
+    if (text.empty())
+      continue;
+    out << text << "\n\n";
+  }
+  return out.str();
+}
+
 /// Find a FunctionDefinition inside a ContractDefinition by name.
 static const nlohmann::json *find_function(
   const nlohmann::json &contract,
@@ -744,6 +780,19 @@ std::string generate_tod_harness_multi(
   out << "// Or let ESBMC drive all pairs via --tod-auto.\n\n";
   out << "// SPDX-License-Identifier: MIT\n";
   out << "pragma solidity >=0.8.0;\n\n";
+
+  // Inject all top-level dependencies (interfaces / libraries / base
+  // contracts / errors / structs / enums) BEFORE the renamed copies so
+  // references like `<target>_C1 is BaseX` or `using SafeMath for uint256`
+  // resolve when the harness is compiled standalone.
+  std::string deps = collect_dependency_definitions(ast, sol_source, contract);
+  if (!deps.empty())
+  {
+    out << "// ===== Injected dependencies (base contracts, libraries, "
+           "interfaces, free decls) =====\n";
+    out << deps;
+    out << "// ===== End of injected dependencies =====\n\n";
+  }
 
   out << "// ===== Copy 1 =====\n";
   out << copy1 << "\n\n";
