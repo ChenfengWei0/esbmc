@@ -1,0 +1,179 @@
+ESBMC version 8.2.0 64-bit x86_64 linux
+Target: 64-bit little-endian x86_64-unknown-linux with esbmclibc
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+--> contract.sol
+
+--tod-race-check: discovered 56 candidate pair(s) in 'LAAR'
+  - approve vs decreaseApproval
+  - approve vs increaseApproval
+  - approve vs pauseCrowdSale
+  - approve vs resumeCrowdSale
+  - approve vs transferFrom
+  - burn vs claim
+  - burn vs initReserveWallet
+  - burn vs pauseCrowdSale
+  - burn vs resumeCrowdSale
+  - burn vs setClaimLimit
+  - burn vs transfer
+  - burn vs transferFrom
+  - burn vs transferOwnership
+  - burn vs transferTo
+  - claim vs initReserveWallet
+  - claim vs resetClaimLimit
+  - claim vs setClaimLimit
+  - claim vs transfer
+  - claim vs transferFrom
+  - claim vs transferOwnership
+  - claim vs transferTo
+  - decreaseApproval vs increaseApproval
+  - decreaseApproval vs pauseCrowdSale
+  - decreaseApproval vs resumeCrowdSale
+  - decreaseApproval vs transferFrom
+  - increaseApproval vs pauseCrowdSale
+  - increaseApproval vs resumeCrowdSale
+  - increaseApproval vs transferFrom
+  - initReserveWallet vs pauseCrowdSale
+  - initReserveWallet vs resumeCrowdSale
+  - initReserveWallet vs setClaimLimit
+  - initReserveWallet vs transfer
+  - initReserveWallet vs transferFrom
+  - initReserveWallet vs transferOwnership
+  - initReserveWallet vs transferTo
+  - pauseCrowdSale vs resumeCrowdSale
+  - pauseCrowdSale vs transfer
+  - pauseCrowdSale vs transferFrom
+  - pauseCrowdSale vs transferOwnership
+  - resetClaimLimit vs setClaimLimit
+  - resetClaimLimit vs transfer
+  - resetClaimLimit vs transferFrom
+  - resetClaimLimit vs transferOwnership
+  - resumeCrowdSale vs transfer
+  - resumeCrowdSale vs transferFrom
+  - resumeCrowdSale vs transferOwnership
+  - setClaimLimit vs transfer
+  - setClaimLimit vs transferFrom
+  - setClaimLimit vs transferOwnership
+  - setClaimLimit vs transferTo
+  - transfer vs transferFrom
+  - transfer vs transferOwnership
+  - transfer vs transferTo
+  - transferFrom vs transferOwnership
+  - transferFrom vs transferTo
+  - transferOwnership vs transferTo
+WARNING: TOD race harness: no public state variable is touched by both 'approve' and 'decreaseApproval'.  Harness contains no equality assertion; verification trivially succeeds.
+WARNING: TOD race harness: no public state variable is touched by both 'approve' and 'increaseApproval'.  Harness contains no equality assertion; verification trivially succeeds.
+WARNING: TOD race harness: no public state variable is touched by both 'decreaseApproval' and 'increaseApproval'.  Harness contains no equality assertion; verification trivially succeeds.
+--tod-race-check: launching 1 parallel ESBMC job(s) over 56 pair(s)
+--tod-race-check: verifying TOD_approve_decreaseApproval (./tod_race_approve_decreaseApproval_harness.sol)
+  -> TOD_approve_decreaseApproval SUCCESSFUL
+--tod-race-check: verifying TOD_approve_increaseApproval (./tod_race_approve_increaseApproval_harness.sol)
+  -> TOD_approve_increaseApproval SUCCESSFUL
+--tod-race-check: verifying TOD_approve_pauseCrowdSale (./tod_race_approve_pauseCrowdSale_harness.sol)
+  -> TOD_approve_pauseCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_approve_resumeCrowdSale (./tod_race_approve_resumeCrowdSale_harness.sol)
+  -> TOD_approve_resumeCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_approve_transferFrom (./tod_race_approve_transferFrom_harness.sol)
+  -> TOD_approve_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_burn_claim (./tod_race_burn_claim_harness.sol)
+  -> TOD_burn_claim SUCCESSFUL
+--tod-race-check: verifying TOD_burn_initReserveWallet (./tod_race_burn_initReserveWallet_harness.sol)
+  -> TOD_burn_initReserveWallet SUCCESSFUL
+--tod-race-check: verifying TOD_burn_pauseCrowdSale (./tod_race_burn_pauseCrowdSale_harness.sol)
+  -> TOD_burn_pauseCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_burn_resumeCrowdSale (./tod_race_burn_resumeCrowdSale_harness.sol)
+  -> TOD_burn_resumeCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_burn_setClaimLimit (./tod_race_burn_setClaimLimit_harness.sol)
+ERROR:   -> TOD_burn_setClaimLimit ERROR (no verdict)
+--tod-race-check: verifying TOD_burn_transfer (./tod_race_burn_transfer_harness.sol)
+  -> TOD_burn_transfer SUCCESSFUL
+--tod-race-check: verifying TOD_burn_transferFrom (./tod_race_burn_transferFrom_harness.sol)
+  -> TOD_burn_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_burn_transferOwnership (./tod_race_burn_transferOwnership_harness.sol)
+  -> TOD_burn_transferOwnership SUCCESSFUL
+--tod-race-check: verifying TOD_burn_transferTo (./tod_race_burn_transferTo_harness.sol)
+  -> TOD_burn_transferTo SUCCESSFUL
+--tod-race-check: verifying TOD_claim_initReserveWallet (./tod_race_claim_initReserveWallet_harness.sol)
+  -> TOD_claim_initReserveWallet SUCCESSFUL
+--tod-race-check: verifying TOD_claim_resetClaimLimit (./tod_race_claim_resetClaimLimit_harness.sol)
+ERROR:   -> TOD_claim_resetClaimLimit ERROR (no verdict)
+--tod-race-check: verifying TOD_claim_setClaimLimit (./tod_race_claim_setClaimLimit_harness.sol)
+ERROR:   -> TOD_claim_setClaimLimit ERROR (no verdict)
+--tod-race-check: verifying TOD_claim_transfer (./tod_race_claim_transfer_harness.sol)
+  -> TOD_claim_transfer SUCCESSFUL
+--tod-race-check: verifying TOD_claim_transferFrom (./tod_race_claim_transferFrom_harness.sol)
+  -> TOD_claim_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_claim_transferOwnership (./tod_race_claim_transferOwnership_harness.sol)
+  -> TOD_claim_transferOwnership SUCCESSFUL
+--tod-race-check: verifying TOD_claim_transferTo (./tod_race_claim_transferTo_harness.sol)
+  -> TOD_claim_transferTo SUCCESSFUL
+--tod-race-check: verifying TOD_decreaseApproval_increaseApproval (./tod_race_decreaseApproval_increaseApproval_harness.sol)
+  -> TOD_decreaseApproval_increaseApproval SUCCESSFUL
+--tod-race-check: verifying TOD_decreaseApproval_pauseCrowdSale (./tod_race_decreaseApproval_pauseCrowdSale_harness.sol)
+  -> TOD_decreaseApproval_pauseCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_decreaseApproval_resumeCrowdSale (./tod_race_decreaseApproval_resumeCrowdSale_harness.sol)
+  -> TOD_decreaseApproval_resumeCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_decreaseApproval_transferFrom (./tod_race_decreaseApproval_transferFrom_harness.sol)
+  -> TOD_decreaseApproval_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_increaseApproval_pauseCrowdSale (./tod_race_increaseApproval_pauseCrowdSale_harness.sol)
+  -> TOD_increaseApproval_pauseCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_increaseApproval_resumeCrowdSale (./tod_race_increaseApproval_resumeCrowdSale_harness.sol)
+  -> TOD_increaseApproval_resumeCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_increaseApproval_transferFrom (./tod_race_increaseApproval_transferFrom_harness.sol)
+  -> TOD_increaseApproval_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_initReserveWallet_pauseCrowdSale (./tod_race_initReserveWallet_pauseCrowdSale_harness.sol)
+  -> TOD_initReserveWallet_pauseCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_initReserveWallet_resumeCrowdSale (./tod_race_initReserveWallet_resumeCrowdSale_harness.sol)
+  -> TOD_initReserveWallet_resumeCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_initReserveWallet_setClaimLimit (./tod_race_initReserveWallet_setClaimLimit_harness.sol)
+ERROR:   -> TOD_initReserveWallet_setClaimLimit ERROR (no verdict)
+--tod-race-check: verifying TOD_initReserveWallet_transfer (./tod_race_initReserveWallet_transfer_harness.sol)
+  -> TOD_initReserveWallet_transfer SUCCESSFUL
+--tod-race-check: verifying TOD_initReserveWallet_transferFrom (./tod_race_initReserveWallet_transferFrom_harness.sol)
+  -> TOD_initReserveWallet_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_initReserveWallet_transferOwnership (./tod_race_initReserveWallet_transferOwnership_harness.sol)
+  -> TOD_initReserveWallet_transferOwnership SUCCESSFUL
+--tod-race-check: verifying TOD_initReserveWallet_transferTo (./tod_race_initReserveWallet_transferTo_harness.sol)
+  -> TOD_initReserveWallet_transferTo SUCCESSFUL
+--tod-race-check: verifying TOD_pauseCrowdSale_resumeCrowdSale (./tod_race_pauseCrowdSale_resumeCrowdSale_harness.sol)
+  -> TOD_pauseCrowdSale_resumeCrowdSale SUCCESSFUL
+--tod-race-check: verifying TOD_pauseCrowdSale_transfer (./tod_race_pauseCrowdSale_transfer_harness.sol)
+  -> TOD_pauseCrowdSale_transfer SUCCESSFUL
+--tod-race-check: verifying TOD_pauseCrowdSale_transferFrom (./tod_race_pauseCrowdSale_transferFrom_harness.sol)
+  -> TOD_pauseCrowdSale_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_pauseCrowdSale_transferOwnership (./tod_race_pauseCrowdSale_transferOwnership_harness.sol)
+  -> TOD_pauseCrowdSale_transferOwnership SUCCESSFUL
+--tod-race-check: verifying TOD_resetClaimLimit_setClaimLimit (./tod_race_resetClaimLimit_setClaimLimit_harness.sol)
+ERROR:   -> TOD_resetClaimLimit_setClaimLimit ERROR (no verdict)
+--tod-race-check: verifying TOD_resetClaimLimit_transfer (./tod_race_resetClaimLimit_transfer_harness.sol)
+ERROR:   -> TOD_resetClaimLimit_transfer ERROR (no verdict)
+--tod-race-check: verifying TOD_resetClaimLimit_transferFrom (./tod_race_resetClaimLimit_transferFrom_harness.sol)
+ERROR:   -> TOD_resetClaimLimit_transferFrom ERROR (no verdict)
+--tod-race-check: verifying TOD_resetClaimLimit_transferOwnership (./tod_race_resetClaimLimit_transferOwnership_harness.sol)
+ERROR:   -> TOD_resetClaimLimit_transferOwnership ERROR (no verdict)
+--tod-race-check: verifying TOD_resumeCrowdSale_transfer (./tod_race_resumeCrowdSale_transfer_harness.sol)
+  -> TOD_resumeCrowdSale_transfer SUCCESSFUL
+--tod-race-check: verifying TOD_resumeCrowdSale_transferFrom (./tod_race_resumeCrowdSale_transferFrom_harness.sol)
+  -> TOD_resumeCrowdSale_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_resumeCrowdSale_transferOwnership (./tod_race_resumeCrowdSale_transferOwnership_harness.sol)
+  -> TOD_resumeCrowdSale_transferOwnership SUCCESSFUL
+--tod-race-check: verifying TOD_setClaimLimit_transfer (./tod_race_setClaimLimit_transfer_harness.sol)
+ERROR:   -> TOD_setClaimLimit_transfer ERROR (no verdict)
+--tod-race-check: verifying TOD_setClaimLimit_transferFrom (./tod_race_setClaimLimit_transferFrom_harness.sol)
+ERROR:   -> TOD_setClaimLimit_transferFrom ERROR (no verdict)
+--tod-race-check: verifying TOD_setClaimLimit_transferOwnership (./tod_race_setClaimLimit_transferOwnership_harness.sol)
+ERROR:   -> TOD_setClaimLimit_transferOwnership ERROR (no verdict)
+--tod-race-check: verifying TOD_setClaimLimit_transferTo (./tod_race_setClaimLimit_transferTo_harness.sol)
+ERROR:   -> TOD_setClaimLimit_transferTo ERROR (no verdict)
+--tod-race-check: verifying TOD_transfer_transferFrom (./tod_race_transfer_transferFrom_harness.sol)
+  -> TOD_transfer_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_transfer_transferOwnership (./tod_race_transfer_transferOwnership_harness.sol)
+  -> TOD_transfer_transferOwnership SUCCESSFUL
+--tod-race-check: verifying TOD_transfer_transferTo (./tod_race_transfer_transferTo_harness.sol)
+  -> TOD_transfer_transferTo SUCCESSFUL
+--tod-race-check: verifying TOD_transferFrom_transferOwnership (./tod_race_transferFrom_transferOwnership_harness.sol)
+  -> TOD_transferFrom_transferOwnership SUCCESSFUL
+--tod-race-check: verifying TOD_transferFrom_transferTo (./tod_race_transferFrom_transferTo_harness.sol)
+  -> TOD_transferFrom_transferTo SUCCESSFUL
+--tod-race-check: verifying TOD_transferOwnership_transferTo (./tod_race_transferOwnership_transferTo_harness.sol)
+  -> TOD_transferOwnership_transferTo SUCCESSFUL
+--tod-race-check summary: 56 pair(s) — 44 clean, 0 TOD found, 12 error

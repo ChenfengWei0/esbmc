@@ -1,0 +1,5 @@
+# Raw Sourcify responses — regenerable via scripts/fetch_sources.py
+etherscan_meta/
+
+# Pre-upgrade originals — kept only for local diff during dev
+sources/*/contract.sol.orig

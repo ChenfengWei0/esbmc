@@ -1,0 +1,47 @@
+ESBMC version 8.2.0 64-bit x86_64 linux
+Target: 64-bit little-endian x86_64-unknown-linux with esbmclibc
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+--> contract.sol
+
+Warning: Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+  --> contract.sol:34:5:
+   |
+34 |     constructor(
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+--tod-race-check: discovered 11 candidate pair(s) in 'BB'
+  - approve vs approveAndCall
+  - approve vs burnFrom
+  - approve vs transferFrom
+  - approveAndCall vs burnFrom
+  - approveAndCall vs transferFrom
+  - burn vs burnFrom
+  - burn vs transfer
+  - burn vs transferFrom
+  - burnFrom vs transfer
+  - burnFrom vs transferFrom
+  - transfer vs transferFrom
+--tod-race-check: launching 1 parallel ESBMC job(s) over 11 pair(s)
+--tod-race-check: verifying TOD_approve_approveAndCall (./tod_race_approve_approveAndCall_harness.sol)
+ERROR:   -> TOD_approve_approveAndCall ERROR (no verdict)
+--tod-race-check: verifying TOD_approve_burnFrom (./tod_race_approve_burnFrom_harness.sol)
+  -> TOD_approve_burnFrom SUCCESSFUL
+--tod-race-check: verifying TOD_approve_transferFrom (./tod_race_approve_transferFrom_harness.sol)
+  -> TOD_approve_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_approveAndCall_burnFrom (./tod_race_approveAndCall_burnFrom_harness.sol)
+ERROR:   -> TOD_approveAndCall_burnFrom ERROR (no verdict)
+--tod-race-check: verifying TOD_approveAndCall_transferFrom (./tod_race_approveAndCall_transferFrom_harness.sol)
+ERROR:   -> TOD_approveAndCall_transferFrom ERROR (no verdict)
+--tod-race-check: verifying TOD_burn_burnFrom (./tod_race_burn_burnFrom_harness.sol)
+  -> TOD_burn_burnFrom SUCCESSFUL
+--tod-race-check: verifying TOD_burn_transfer (./tod_race_burn_transfer_harness.sol)
+  -> TOD_burn_transfer SUCCESSFUL
+--tod-race-check: verifying TOD_burn_transferFrom (./tod_race_burn_transferFrom_harness.sol)
+  -> TOD_burn_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_burnFrom_transfer (./tod_race_burnFrom_transfer_harness.sol)
+  -> TOD_burnFrom_transfer SUCCESSFUL
+--tod-race-check: verifying TOD_burnFrom_transferFrom (./tod_race_burnFrom_transferFrom_harness.sol)
+  -> TOD_burnFrom_transferFrom SUCCESSFUL
+--tod-race-check: verifying TOD_transfer_transferFrom (./tod_race_transfer_transferFrom_harness.sol)
+  -> TOD_transfer_transferFrom SUCCESSFUL
+--tod-race-check summary: 11 pair(s) — 8 clean, 0 TOD found, 3 error
