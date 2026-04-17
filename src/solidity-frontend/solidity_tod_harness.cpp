@@ -302,6 +302,54 @@ static const nlohmann::json *find_constructor(const nlohmann::json &contract)
   return nullptr;
 }
 
+/// Walk `node` recursively and return true if any subtree contains a
+/// revert-inducing construct: an explicit `require(...)` / `revert(...)` /
+/// `assert(...)` call, a `revert SomeError(...)` statement, or an explicit
+/// throw.  Used to decide whether to wrap a call-site in `try/catch` in the
+/// TOD harness — non-reverting callees get a raw call to avoid the nondet
+/// "catch arm" over-approximating real EVM behavior.
+///
+/// Limitation: this is a conservative SYNTACTIC check.  It does NOT detect
+/// reverts arising from overflow, failed external calls, or callees of
+/// callees.  For the callee with overflow-checked arithmetic in 0.8+, a raw
+/// call is still "safe enough" here because the overflow path also emits
+/// `assume(false)` which prunes just that path — the harness test()
+/// continues along the non-overflow path as long as at least one ordering
+/// keeps running.  Reverts inside *callees-of-callees* are the known soft
+/// spot and are still handled by the try/catch path whenever the top-level
+/// function has any syntactic revert construct.
+static bool body_may_revert_explicitly(const nlohmann::json &node)
+{
+  if (node.is_object())
+  {
+    const std::string nt = node.value("nodeType", "");
+    if (nt == "FunctionCall" && node.contains("expression"))
+    {
+      const auto &expr = node["expression"];
+      if (expr.is_object() && expr.value("nodeType", "") == "Identifier")
+      {
+        const std::string name = expr.value("name", "");
+        if (name == "require" || name == "revert" || name == "assert")
+          return true;
+      }
+    }
+    if (nt == "RevertStatement" || nt == "Throw")
+      return true;
+    for (auto it = node.begin(); it != node.end(); ++it)
+    {
+      if (body_may_revert_explicitly(it.value()))
+        return true;
+    }
+  }
+  else if (node.is_array())
+  {
+    for (const auto &el : node)
+      if (body_may_revert_explicitly(el))
+        return true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Per-pair harness contract emission (used by both single and multi)
 // ---------------------------------------------------------------------------
@@ -516,13 +564,38 @@ static bool emit_harness_contract(
     }
   }
 
+  // Call-site wrapping: for a callee with an explicit `require`/`revert`/
+  // `assert`, wrap in `try/catch` so a revert in the first call does NOT
+  // abort `test()` and swallow the equality assertions (which would yield
+  // a vacuous VERIFICATION SUCCESSFUL on require-guarded TODs).  For a
+  // callee with NO syntactic revert, keep the raw call — the catch arm is
+  // modelled nondet by ESBMC's `TryStatement` converter and would
+  // over-approximate into false TOD reports (the `tod_balance_pass` case,
+  // where both calls always succeed but a phantom catch path creates a
+  // state mismatch).  Trade-off: catches reverts in explicit-guard bodies
+  // only; reverts arising from overflow or nested callees still ride on
+  // the raw call's `assume(false)` path pruning, which is unchanged.
+  const bool wrap_a = body_may_revert_explicitly(*fa);
+  const bool wrap_b = body_may_revert_explicitly(*fb);
+  auto emit_call = [&](std::ostringstream &o, const std::string &c,
+                       const std::string &fn, const std::string &args,
+                       bool wrap) {
+    if (wrap)
+      o << "        try " << c << "." << fn << "(" << args
+        << ") {} catch {}\n";
+    else
+      o << "        " << c << "." << fn << "(" << args << ");\n";
+  };
+
   out << "        // Order 1: " << func_a << " then " << func_b << "\n";
-  out << "        c1." << func_a << "(" << fa_args << ");\n";
-  out << "        c1." << func_b << "(" << fb_args << ");\n\n";
+  emit_call(out, "c1", func_a, fa_args, wrap_a);
+  emit_call(out, "c1", func_b, fb_args, wrap_b);
+  out << "\n";
 
   out << "        // Order 2: " << func_b << " then " << func_a << "\n";
-  out << "        c2." << func_b << "(" << fb_args << ");\n";
-  out << "        c2." << func_a << "(" << fa_args << ");\n\n";
+  emit_call(out, "c2", func_b, fb_args, wrap_b);
+  emit_call(out, "c2", func_a, fa_args, wrap_a);
+  out << "\n";
 
   out << "        // State comparison — if any assert fails, TOD exists\n";
   for (const auto &sv : shared_vars)

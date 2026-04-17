@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Counter --tod=set5,set10
+^VERIFICATION FAILED$

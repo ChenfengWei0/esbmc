@@ -862,11 +862,15 @@ bool solidity_convertert::get_statement(
   case SolidityGrammar::StatementT::TryStatement:
   {
     // Model try/catch as:
-    //   if (nondet_bool()) { <success_block> } else { <catch_block(s)> }
+    //   if (nondet_bool()) { <externalCall>; <success_body> }
+    //   else               { <catch_block(s)> }
     //
-    // The external call result is nondeterministic since ESBMC verifies
-    // one contract at a time and cannot resolve cross-contract calls.
-    // Return variables in the success clause are assigned nondet values.
+    // The success branch actually executes the external call so its
+    // side effects are visible; if the call internally reverts, the
+    // usual `__ESBMC_assume(false)` propagation prunes the success path
+    // and only the catch branch remains feasible.  Return values of the
+    // call are still modelled as nondet in the success parameter bindings
+    // (cross-contract resolution is out of scope for the AST-level frontend).
 
     if (
       !stmt.contains("clauses") || !stmt["clauses"].is_array() ||
@@ -920,7 +924,7 @@ bool solidity_convertert::get_statement(
       }
     }
 
-    // Convert the success block body
+    // Step 3: convert the user-written success block body
     exprt success_body;
     if (get_block(success_clause["block"], success_body))
       return true;
