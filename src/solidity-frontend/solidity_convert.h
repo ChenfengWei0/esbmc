@@ -642,6 +642,21 @@ protected:
   // State, not just Initial State).  Used from `assign_param_nondet` to
   // populate contract-typed function parameters under `--bound`.
   bool build_bound_drive_helper(const std::string &c_name, symbolt &sym);
+
+  // TOD-mode clone helper: builds `_ESBMC_clone_<c_name>(C *base)`.
+  // Returns a freshly-allocated instance whose non-mapping state is a
+  // field-by-field copy of *base (so c1 and c2 observe the same pre-
+  // race state), but with:
+  //   - a fresh nondet $address (distinct from base's, enforced by
+  //     __ESBMC_assume) so the two instances do not alias in mapping
+  //     keyspace or in equality checks;
+  //   - for each `mapping` state variable, the per-instance
+  //     `mapping_t.addr` is reset to the clone's new $address, so
+  //     subsequent reads/writes via the clone land in a distinct
+  //     keyspace (empty by default under the clone's addr — KNOWN
+  //     LIMITATION: pre-race mapping state is not mirrored into the
+  //     clone's keyspace; follow-up work).
+  bool build_tod_clone_helper(const std::string &c_name, symbolt &sym);
   bool get_unbound_expr(
     const nlohmann::json expr,
     const std::string &cname,

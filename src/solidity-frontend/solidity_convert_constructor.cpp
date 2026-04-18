@@ -624,6 +624,232 @@ bool solidity_convertert::build_bound_drive_helper(
   return false;
 }
 
+/* TOD clone helper: synthesise `_ESBMC_clone_<c_name>(C *base)`.
+ *
+ * Produces a freshly-allocated `C *` instance whose non-mapping fields
+ * are a bit-level copy of `*base`, while mapping fields are retargeted
+ * to the clone's fresh `$address` so subsequent reads/writes via the
+ * clone do not alias `base`'s mapping keyspace (they start empty under
+ * the clone's addr — a known limitation; pre-race mapping contents are
+ * not mirrored).
+ *
+ * Used from `assign_param_nondet` to give TOD harness parameters
+ * identical pre-race state: the first contract parameter of a given
+ * cname is driven via `_ESBMC_nondet_new_<C>()`, and every subsequent
+ * same-cname parameter is cloned from that base.  This models
+ * "two orderings starting from the same reachable state S" without
+ * the harness emitter having to snapshot/restore state explicitly.
+ *
+ * Body shape:
+ *   C *_ESBMC_clone_C(C *base) {
+ *       __ESBMC_HIDE:
+ *       C *c = new C();                  // fresh allocation + ctor
+ *       *c = *base;                      // struct-level copy
+ *       c->$address = nondet_uint();     // fresh identity
+ *       __ESBMC_assume(c->$address != base->$address);
+ *       c->m1.addr = c->$address;        // per-mapping redirect
+ *       c->m2.addr = c->$address;
+ *       ...
+ *       return c;
+ *   }
+ */
+bool solidity_convertert::build_tod_clone_helper(
+  const std::string &c_name,
+  symbolt &sym)
+{
+  const std::string h_name = "_ESBMC_clone_" + c_name;
+  const std::string h_id = "sol:@C@" + c_name + "@F@" + h_name + "#";
+  log_debug("solidity", "\tbuild_tod_clone_helper {}", h_name);
+
+  if (context.find_symbol(h_id) != nullptr)
+  {
+    sym = *context.find_symbol(h_id);
+    return false;
+  }
+
+  const typet contract_struct_t = symbol_typet(prefix + c_name);
+  const pointer_typet contract_ptr_t(contract_struct_t);
+
+  // 1. Function body
+  code_blockt func_body;
+  func_body.make_block();
+
+  code_labelt label;
+  label.set_label("__ESBMC_HIDE");
+  label.code() = code_skipt();
+  func_body.operands().push_back(label);
+
+  // 2. `base` formal parameter
+  const std::string base_name = "_ESBMC_clone_base_" + c_name;
+  const std::string base_id = h_id + "@" + base_name;
+  symbolt base_sym;
+  locationt base_loc;
+  base_loc.file(absolute_path);
+  std::string debug_modulename = get_modulename_from_path(absolute_path);
+  get_default_symbol(
+    base_sym, debug_modulename, contract_ptr_t, base_name, base_id, base_loc);
+  base_sym.lvalue = true;
+  base_sym.file_local = true;
+  base_sym.is_parameter = true;
+  symbolt &added_base = *context.move_symbol_to_context(base_sym);
+
+  // 3. Local `c` pointer, initialised via cpp_new (runs the contract's
+  //    default constructor).
+  const std::string c_var_name = "_ESBMC_clone_c_" + c_name;
+  const std::string c_var_id = h_id + "@" + c_var_name;
+  symbolt c_sym;
+  locationt c_loc;
+  c_loc.file(absolute_path);
+  get_default_symbol(
+    c_sym, debug_modulename, contract_ptr_t, c_var_name, c_var_id, c_loc);
+  c_sym.lvalue = true;
+  c_sym.file_local = true;
+  symbolt &added_c = *context.move_symbol_to_context(c_sym);
+
+  exprt new_call;
+  if (get_new_object_ctor_call(c_name, empty_json, false, new_call))
+    return true;
+
+  code_declt decl_c(symbol_expr(added_c));
+  decl_c.operands().resize(2);
+  decl_c.op0() = symbol_expr(added_c);
+  decl_c.op1() = new_call;
+  func_body.move_to_operands(decl_c);
+
+  // 4. Field-by-field copy of *base into *c.
+  //    Skip `$address` (overwritten in step 5), skip anonymous padding
+  //    fields, skip internal `_ESBMC_*` shadows (those are per-instance
+  //    pointer-identity bookkeeping that the ctor already set up for the
+  //    fresh allocation, and copying them would re-alias the clone to
+  //    base's pointer-keyed state stores).
+  exprt c_deref = dereference_exprt(symbol_expr(added_c), contract_struct_t);
+  c_deref.cmt_lvalue(true);
+  exprt base_deref =
+    dereference_exprt(symbol_expr(added_base), contract_struct_t);
+  base_deref.cmt_lvalue(true);
+  {
+    const symbolt *struct_sym_for_copy = context.find_symbol(prefix + c_name);
+    if (struct_sym_for_copy && struct_sym_for_copy->type.id() == "struct")
+    {
+      const struct_typet &st = to_struct_type(struct_sym_for_copy->type);
+      log_debug("solidity", "clone {} has {} components", c_name, st.components().size());
+      for (const auto &comp : st.components())
+      {
+        const irep_idt &cn = comp.get_name();
+        const std::string cn_str = cn.as_string();
+        log_debug("solidity", "  clone {} comp: {}", c_name, cn_str);
+        if (cn_str == "$address")
+          continue;
+        if (cn_str.rfind("anon_pad", 0) == 0)
+          continue;
+        if (cn_str.rfind("_ESBMC_", 0) == 0)
+          continue;
+        log_debug("solidity", "  clone {} copying: {}", c_name, cn_str);
+        // c->cn = base->cn
+        exprt lhs = member_exprt(c_deref, cn, comp.type());
+        exprt rhs = member_exprt(base_deref, cn, comp.type());
+        code_assignt field_copy(lhs, rhs);
+        func_body.move_to_operands(field_copy);
+      }
+    }
+  }
+
+  // 5. c->$address = nondet_uint();
+  //    Require c's addr to differ from base's addr so they do not alias.
+  const symbolt *addr_sym =
+    context.find_symbol(prefix + c_name); // just to sanity-check struct exists
+  (void)addr_sym;
+  // Build a nondet_uint(160) expression.
+  side_effect_expr_function_callt nondet_addr;
+  // `nondet_uint` returns a 256-bit unsignedbv; narrow it via typecast to
+  // the address type (160 bits) after the call.
+  get_library_function_call_no_args(
+    "nondet_uint",
+    "c:@F@nondet_uint",
+    uint_type(),
+    c_loc,
+    nondet_addr);
+  exprt nondet_narrow = typecast_exprt(nondet_addr, addr_t);
+
+  // c->$address = nondet_narrow
+  exprt c_addr_member = member_exprt(c_deref, "$address", addr_t);
+  code_assignt addr_assign(c_addr_member, nondet_narrow);
+  func_body.move_to_operands(addr_assign);
+
+  // __ESBMC_assume(c->$address != base->$address)
+  exprt base_addr_member = member_exprt(base_deref, "$address", addr_t);
+  exprt neq_expr = exprt("notequal", bool_type());
+  neq_expr.copy_to_operands(c_addr_member, base_addr_member);
+  side_effect_expr_function_callt assume_call;
+  get_library_function_call_no_args(
+    "__ESBMC_assume",
+    "c:@F@__ESBMC_assume",
+    empty_typet(),
+    c_loc,
+    assume_call);
+  assume_call.arguments().push_back(neq_expr);
+  convert_expression_to_code(assume_call);
+  func_body.move_to_operands(assume_call);
+
+  // 6. For each mapping field m of C: c->m.addr = c->$address
+  //    (retargets per-instance mapping keyspace to the clone's addr).
+  const symbolt *struct_sym = context.find_symbol(prefix + c_name);
+  if (struct_sym && struct_sym->type.id() == "struct")
+  {
+    const struct_typet &st = to_struct_type(struct_sym->type);
+    for (const auto &comp : st.components())
+    {
+      const irep_idt &comp_name = comp.get_name();
+      const typet &comp_type = comp.type();
+      // Detect the mapping shape: a struct named `tag-sol:@mapping_t`
+      // (or pointer/symbol to it).  The component type's identifier
+      // typically contains "mapping_t" for our model.
+      const std::string ct_id =
+        comp_type.is_symbol()
+          ? to_symbol_type(comp_type).get_identifier().as_string()
+          : comp_type.get("identifier").as_string();
+      if (ct_id.find("mapping_t") == std::string::npos)
+        continue;
+      // c->m = resolved as member access
+      exprt m_member = member_exprt(c_deref, comp_name, comp_type);
+      // c->m.addr = c->$address
+      exprt m_addr = member_exprt(m_member, "addr", addr_t);
+      code_assignt map_addr_assign(m_addr, c_addr_member);
+      func_body.move_to_operands(map_addr_assign);
+    }
+  }
+
+  // 7. return c;
+  code_returnt ret;
+  ret.return_value() = symbol_expr(added_c);
+  func_body.move_to_operands(ret);
+
+  // 8. Build the function symbol (takes 1 param: C *base).
+  code_typet h_type;
+  h_type.return_type() = contract_ptr_t;
+  code_typet::argumentt base_arg;
+  base_arg.type() = contract_ptr_t;
+  base_arg.cmt_base_name(base_name);
+  base_arg.cmt_identifier(base_id);
+  h_type.arguments().push_back(base_arg);
+
+  symbolt new_symbol;
+  locationt h_loc;
+  h_loc.file(absolute_path);
+  get_default_symbol(
+    new_symbol, debug_modulename, h_type, h_name, h_id, h_loc);
+  new_symbol.lvalue = true;
+  new_symbol.is_extern = false;
+  new_symbol.file_local = false;
+
+  symbolt &added_sym = *context.move_symbol_to_context(new_symbol);
+  added_sym.type = h_type;
+  added_sym.value = func_body;
+
+  sym = added_sym;
+  return false;
+}
+
 // Normally, we would expect expr to be a code_declt expression
 void solidity_convertert::move_to_initializer(const exprt &expr)
 {

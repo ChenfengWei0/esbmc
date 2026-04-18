@@ -147,25 +147,42 @@ static std::string collect_dependency_definitions(
     if (!deps[i].name.empty())
       idx_of[deps[i].name] = i;
 
-  // 3. Compute the set of contracts the target transitively depends on
-  //    (target's base chain, transitively closed).  This excludes sibling
-  //    or descendant contracts.  Non-contract nodes (libraries, free
-  //    functions, structs, enums, errors) are always included — we can't
-  //    cheaply know which ones are referenced, and keeping them is cheap.
-  std::vector<bool> keep(deps.size(), false);
+  // 3. Exclude contracts that descend FROM the target.  Keep everything
+  //    else — the target may cast to an unrelated contract / interface
+  //    (e.g. `ApproveAndCallFallBack(spender).receiveApproval(...)`),
+  //    which we cannot cheaply detect from node metadata alone, so we
+  //    keep those by default.  Descendants of the target, on the other
+  //    hand, are guaranteed to reference the target via their `is
+  //    Target` clause and would be emitted BEFORE the target declaration
+  //    (which the emitter places separately afterwards), producing
+  //    "Definition of base has to precede definition of derived
+  //    contract" from solc.
+  std::vector<bool> exclude(deps.size(), false);
   {
-    // seed queue with the target's direct bases
+    // Build reverse-inheritance: for each contract, which others list it
+    // as a base?
+    std::vector<std::vector<size_t>> child(deps.size());
+    for (size_t i = 0; i < deps.size(); ++i)
+    {
+      if (!deps[i].inheritable)
+        continue;
+      for (const auto &b : deps[i].bases)
+      {
+        auto it = idx_of.find(b);
+        if (it != idx_of.end())
+          child[it->second].push_back(i);
+      }
+    }
     auto target_it = idx_of.find(target_name);
     std::queue<size_t> bfs;
     if (target_it != idx_of.end())
     {
-      for (const auto &b : deps[target_it->second].bases)
+      for (size_t c : child[target_it->second])
       {
-        auto it = idx_of.find(b);
-        if (it != idx_of.end() && !keep[it->second])
+        if (!exclude[c])
         {
-          keep[it->second] = true;
-          bfs.push(it->second);
+          exclude[c] = true;
+          bfs.push(c);
         }
       }
     }
@@ -173,23 +190,25 @@ static std::string collect_dependency_definitions(
     {
       const size_t i = bfs.front();
       bfs.pop();
-      for (const auto &b : deps[i].bases)
+      for (size_t c : child[i])
       {
-        auto it = idx_of.find(b);
-        if (it != idx_of.end() && !keep[it->second])
+        if (!exclude[c])
         {
-          keep[it->second] = true;
-          bfs.push(it->second);
+          exclude[c] = true;
+          bfs.push(c);
         }
       }
     }
-    // always include non-inheritable nodes (libraries, structs, enums,
-    // free functions, errors) — they might be referenced by the target
-    // via `using A for B` or free-function calls, and are not part of any
-    // inheritance DAG that could reorder them.
-    for (size_t i = 0; i < deps.size(); ++i)
-      if (!deps[i].inheritable)
-        keep[i] = true;
+  }
+  // Kept set: everything not excluded, and not the target itself.
+  std::vector<bool> keep(deps.size(), false);
+  for (size_t i = 0; i < deps.size(); ++i)
+  {
+    if (exclude[i])
+      continue;
+    if (deps[i].name == target_name)
+      continue; // target is emitted separately by the caller
+    keep[i] = true;
   }
 
   // 4. Topological sort of the `keep` set via Kahn's algorithm.  A

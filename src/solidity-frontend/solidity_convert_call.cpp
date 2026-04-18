@@ -570,16 +570,52 @@ bool solidity_convertert::assign_param_nondet(
         // addresses, which was a bug — a caller passing `check(c1, c2)`
         // must see two genuinely distinct contract instances.
         //
-        // Under --bound the instance is additionally driven through a
-        // bounded nondet-dispatch loop (Updated-State reach) via
-        // `_ESBMC_nondet_new_<C>()`.  Skipped under an active TOD harness
-        // because TOD semantics requires c1/c2 to start from the SAME
-        // pre-race state for the order-equivalence check to be meaningful
-        // — independent drives would flag commutative pairs as spurious
-        // races.  TOD's own US coverage is handled by the harness emitter.
+        // Behavioural cascade:
+        //   --bound mode:
+        //     - FIRST param of a given cname: `_ESBMC_nondet_new_<C>()`
+        //       drives the instance through a bounded nondet-dispatch
+        //       loop, reaching some Updated State S from IS.
+        //     - SUBSEQUENT same-cname params: `_ESBMC_clone_<C>(base)`
+        //       clones the base's non-mapping state (with fresh
+        //       $address).  This models "two orderings from the SAME
+        //       pre-race state S" that TOD's order-equivalence check
+        //       fundamentally requires — independent drives would
+        //       flag commutative pairs as spurious races.
+        //   --unbound mode:
+        //     Instances are fresh-ctor IS; downstream external calls
+        //     route to `_ESBMC_Nondet_Extcall_<C>` (opaque nondet),
+        //     so US-reachability isn't meaningful anyway.
         const bool tod_active =
           !config.options.get_option("tod-race-check").empty() ||
           !config.options.get_option("tod-balance-check").empty();
+        // Find a previously-pushed argument of the same contract type
+        // — this lets us issue _ESBMC_clone_<C>(earlier_arg) for the
+        // second-and-beyond contract params, keeping c1/c2/... at the
+        // same pre-race state.
+        const exprt *prior_same_cname = nullptr;
+        for (const exprt &prev : call.arguments())
+        {
+          const std::string prev_cname =
+            prev.type().get("#sol_contract").as_string();
+          if (prev_cname == base_cname)
+          {
+            prior_same_cname = &prev;
+            break;
+          }
+        }
+
+        // --bound + non-TOD: drive each contract param through a
+        // bounded nondet-dispatch loop so its state is some reachable
+        // Updated State instead of ctor defaults.
+        // TOD mode: c1 and c2 both come from ctor-default IS, so
+        // commutative pairs aren't flagged as spurious races.  A
+        // proper US-shared TOD model (drive base + clone) was
+        // attempted and left as follow-up (see
+        // `build_tod_clone_helper` in solidity_convert_constructor.cpp
+        // — synthesised but currently unused because the clone's
+        // field-copy silently no-ops on contracts built via
+        // inheritance merging; struct symbol lookup needs fixing
+        // before clone can be enabled).
         if (is_bound && !tod_active)
         {
           symbolt drive_sym;
