@@ -40,3 +40,33 @@ Will be updated incrementally as each contract completes.
   function bodies, tally approximate state-var writes, pick pair with
   maximum write-overlap.  This seems to surface the injection-style
   pairs where TransRacer also found bugs.
+
+## Final summary (overnight run complete, 2026-04-18)
+
+### TransRacer 33-contract run (commit 77131523ca)
+- 2 TOD found (PlayCash, GOG — both on burn/burnFrom)
+- 19 CLEAN on hand-picked pair
+- 1 no-pairs (XCTCrowdSale — single effective entry)
+- 11 blocked by ESBMC-side pipeline bugs (HARNESS_ORDER_BUG x7,
+  FRONTEND_ADDR_BUG x2, HARNESS_EMIT_BUG x1, CRASH x1)
+
+### SolidiFI 49-case run (`Dataset/benchmark_tod/results/esbmc_balance/`)
+- 0 TOD found
+- 10 CLEAN
+- 5 FAILED_OTHER (non-TOD assertion)
+- 34 blocked by ESBMC-side pipeline bugs (PARSE_ERROR x14,
+  CONVERSION_ERROR x7, CRASH x6, UNKNOWN x4, HARNESS_EMIT_BUG x3)
+
+### Known follow-up work (after user review)
+1. **Topological contract-decl sort in TOD harness emitter** — would
+   fix ~21 HARNESS_ORDER_BUG / PARSE_ERROR cases across both benchmarks.
+2. **Shared pre-race state model** — the single biggest cause of 0
+   TOD-Balance findings on SolidiFI.  Current harness allocates c1 and
+   c2 independently, so they sit in different "uninitialised" IS slots
+   and cannot exhibit a race on a shared variable that only matters
+   under a specific Updated State.  Needs: snapshot/restore pattern
+   OR re-seed c1 and c2 to the SAME nondet pre-race state.  Per earlier
+   user observation: "用实例参数后似乎不需要 try/catch".
+3. **Frontend address-vs-contract type ambiguity** — affects
+   ProofOfReview, Yihaa in TransRacer set + 7 cases in SolidiFI.  One
+   common root cause likely.
