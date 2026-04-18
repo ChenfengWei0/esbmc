@@ -2,9 +2,12 @@
 #include <solidity-frontend/solidity_tod_analysis.h>
 #include <util/message.h>
 #include <map>
+#include <queue>
 #include <set>
 #include <sstream>
 #include <regex>
+#include <unordered_map>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,14 +47,49 @@ static const nlohmann::json *find_contract(
   return nullptr;
 }
 
+/// Extract the names of contracts/interfaces/libraries that `node`
+/// inherits from via its `baseContracts` list.  Only meaningful for
+/// ContractDefinition nodes.
+static std::vector<std::string> get_base_names(const nlohmann::json &node)
+{
+  std::vector<std::string> out;
+  if (!node.contains("baseContracts") || !node["baseContracts"].is_array())
+    return out;
+  for (const auto &bc : node["baseContracts"])
+  {
+    if (!bc.contains("baseName"))
+      continue;
+    const auto &bn = bc["baseName"];
+    // baseName is a UserDefinedTypeName or IdentifierPath; both have "name".
+    if (bn.contains("name") && bn["name"].is_string())
+      out.push_back(bn["name"].get<std::string>());
+  }
+  return out;
+}
+
 /// Collect the source text of every top-level SourceUnit-level declaration
-/// (contract / interface / library / error / struct / enum / ...) EXCEPT
-/// the target contract itself.  The harness then prepends this text so the
-/// `<target>_C1 is BaseX` / `using Lib for T` references in the copied
-/// target body resolve, and the harness file compiles standalone.
+/// (contract / interface / library / error / struct / enum / ...) that the
+/// target contract transitively depends on, **in topological order** so
+/// that base contracts precede any contract that inherits from them.
+/// The target contract itself is EXCLUDED — its source text is emitted
+/// separately by the caller.
 ///
-/// Returned strings are already concatenated with \n\n separators, or empty
-/// if there are no dependencies to emit.
+/// Why "transitive dependencies only": if the target is a base of some
+/// other concrete contract in the source (e.g. target = ERC20, source
+/// also contains `contract Foo is ERC20`), including Foo would place Foo
+/// BEFORE the target in the harness file, and Foo's `is ERC20` reference
+/// would not resolve — solc errors with "Definition of base has to
+/// precede definition of derived contract".  Foo is not needed for the
+/// harness to exercise the target anyway.
+///
+/// Why "topological order": even within the transitive dependency set,
+/// the SourceUnit node order may not match inheritance order after
+/// ESBMC-side AST reshaping (inheritance merging / monomorphization can
+/// reorder top-level nodes).  Kahn's algorithm over the inheritance DAG
+/// guarantees bases-before-derived regardless of input order.
+///
+/// Returned strings are concatenated with \n\n separators, or empty if
+/// there are no dependencies to emit.
 static std::string collect_dependency_definitions(
   const nlohmann::json &ast,
   const std::string &sol_source,
@@ -59,23 +97,155 @@ static std::string collect_dependency_definitions(
 {
   if (!ast.contains("nodes") || !ast["nodes"].is_array())
     return {};
-  std::ostringstream out;
+
+  // 1. Gather every eligible top-level node.
+  struct Dep
+  {
+    const nlohmann::json *node;
+    std::string name;                 // empty for non-named nodes
+    std::vector<std::string> bases;   // only for contract/interface (not library)
+    // `inheritable` = participates in the inheritance DAG (regular contract,
+    //                 abstract contract, or interface).  Libraries and
+    //                 non-contract nodes (structs, enums, free functions,
+    //                 errors) never inherit and never are inherited — they
+    //                 are always kept and emitted before any inherit chain.
+    bool inheritable;
+  };
+  std::vector<Dep> deps;
   for (const auto &node : ast["nodes"])
   {
     const std::string nt = node.value("nodeType", "");
-    // Skip the target itself (the _C1/_C2 copies replace it).  Pragma /
-    // import directives are handled separately at the harness header.
     if (nt == "PragmaDirective" || nt == "ImportDirective")
-      continue;
-    if (nt == "ContractDefinition" && node.value("name", "") == target_name)
       continue;
     const std::string src_field = node.value("src", "");
     if (src_field.empty())
       continue;
-    std::string text = extract_src(sol_source, src_field);
-    if (text.empty())
+
+    Dep d;
+    d.node = &node;
+    d.name = node.value("name", "");
+    // ContractDefinition covers contract, abstract contract, interface,
+    // and library — distinguish via contractKind.  Only the first three
+    // participate in inheritance edges we care about.
+    if (nt == "ContractDefinition")
+    {
+      const std::string kind = node.value("contractKind", "contract");
+      d.inheritable = (kind != "library");
+      if (d.inheritable)
+        d.bases = get_base_names(node);
+    }
+    else
+    {
+      d.inheritable = false;
+    }
+    deps.push_back(std::move(d));
+  }
+
+  // 2. Name → index lookup for contract-to-contract edges.
+  std::unordered_map<std::string, size_t> idx_of;
+  for (size_t i = 0; i < deps.size(); ++i)
+    if (!deps[i].name.empty())
+      idx_of[deps[i].name] = i;
+
+  // 3. Compute the set of contracts the target transitively depends on
+  //    (target's base chain, transitively closed).  This excludes sibling
+  //    or descendant contracts.  Non-contract nodes (libraries, free
+  //    functions, structs, enums, errors) are always included — we can't
+  //    cheaply know which ones are referenced, and keeping them is cheap.
+  std::vector<bool> keep(deps.size(), false);
+  {
+    // seed queue with the target's direct bases
+    auto target_it = idx_of.find(target_name);
+    std::queue<size_t> bfs;
+    if (target_it != idx_of.end())
+    {
+      for (const auto &b : deps[target_it->second].bases)
+      {
+        auto it = idx_of.find(b);
+        if (it != idx_of.end() && !keep[it->second])
+        {
+          keep[it->second] = true;
+          bfs.push(it->second);
+        }
+      }
+    }
+    while (!bfs.empty())
+    {
+      const size_t i = bfs.front();
+      bfs.pop();
+      for (const auto &b : deps[i].bases)
+      {
+        auto it = idx_of.find(b);
+        if (it != idx_of.end() && !keep[it->second])
+        {
+          keep[it->second] = true;
+          bfs.push(it->second);
+        }
+      }
+    }
+    // always include non-inheritable nodes (libraries, structs, enums,
+    // free functions, errors) — they might be referenced by the target
+    // via `using A for B` or free-function calls, and are not part of any
+    // inheritance DAG that could reorder them.
+    for (size_t i = 0; i < deps.size(); ++i)
+      if (!deps[i].inheritable)
+        keep[i] = true;
+  }
+
+  // 4. Topological sort of the `keep` set via Kahn's algorithm.  A
+  //    contract's in-degree counts only bases that are also kept.
+  std::vector<size_t> in_degree(deps.size(), 0);
+  std::vector<std::vector<size_t>> rev(deps.size());
+  for (size_t i = 0; i < deps.size(); ++i)
+  {
+    if (!keep[i])
       continue;
-    out << text << "\n\n";
+    for (const auto &b : deps[i].bases)
+    {
+      auto it = idx_of.find(b);
+      if (it == idx_of.end() || !keep[it->second])
+        continue;
+      rev[it->second].push_back(i);
+      in_degree[i]++;
+    }
+  }
+
+  std::vector<size_t> order;
+  std::queue<size_t> ready;
+  for (size_t i = 0; i < deps.size(); ++i)
+    if (keep[i] && in_degree[i] == 0)
+      ready.push(i);
+  while (!ready.empty())
+  {
+    const size_t i = ready.front();
+    ready.pop();
+    order.push_back(i);
+    for (size_t j : rev[i])
+      if (--in_degree[j] == 0)
+        ready.push(j);
+  }
+
+  // 5. Emit kept nodes in topological order.  Any node not ordered due
+  //    to a cycle (should not happen under Solidity inheritance rules)
+  //    falls through to the tail in original order.
+  std::ostringstream out;
+  std::vector<bool> emitted(deps.size(), false);
+  for (size_t i : order)
+  {
+    emitted[i] = true;
+    std::string text =
+      extract_src(sol_source, (*deps[i].node).value("src", ""));
+    if (!text.empty())
+      out << text << "\n\n";
+  }
+  for (size_t i = 0; i < deps.size(); ++i)
+  {
+    if (!keep[i] || emitted[i])
+      continue;
+    std::string text =
+      extract_src(sol_source, (*deps[i].node).value("src", ""));
+    if (!text.empty())
+      out << text << "\n\n";
   }
   return out.str();
 }

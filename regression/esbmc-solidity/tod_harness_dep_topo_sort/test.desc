@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Base --tod-race-check=add,inc --unwind 3 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
