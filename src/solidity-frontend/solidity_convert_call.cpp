@@ -607,15 +607,10 @@ bool solidity_convertert::assign_param_nondet(
         // --bound + non-TOD: drive each contract param through a
         // bounded nondet-dispatch loop so its state is some reachable
         // Updated State instead of ctor defaults.
-        // TOD mode: c1 and c2 both come from ctor-default IS, so
-        // commutative pairs aren't flagged as spurious races.  A
-        // proper US-shared TOD model (drive base + clone) was
-        // attempted and left as follow-up (see
-        // `build_tod_clone_helper` in solidity_convert_constructor.cpp
-        // — synthesised but currently unused because the clone's
-        // field-copy silently no-ops on contracts built via
-        // inheritance merging; struct symbol lookup needs fixing
-        // before clone can be enabled).
+        // TOD mode: first contract param gets a fresh ctor; subsequent
+        // params of the same cname get _ESBMC_clone_<C>(first) so that
+        // c1/c2/... share the same pre-race state S — required for
+        // TOD's order-equivalence comparison.
         if (is_bound && !tod_active)
         {
           symbolt drive_sym;
@@ -626,6 +621,18 @@ bool solidity_convertert::assign_param_nondet(
           drive_call.type() = to_code_type(drive_sym.type).return_type();
           drive_call.location() = drive_sym.location;
           call.arguments().push_back(drive_call);
+        }
+        else if (tod_active && prior_same_cname != nullptr)
+        {
+          symbolt clone_sym;
+          if (build_tod_clone_helper(base_cname, clone_sym))
+            return true;
+          side_effect_expr_function_callt clone_call;
+          clone_call.function() = symbol_expr(clone_sym);
+          clone_call.type() = to_code_type(clone_sym.type).return_type();
+          clone_call.location() = clone_sym.location;
+          clone_call.arguments().push_back(*prior_same_cname);
+          call.arguments().push_back(clone_call);
         }
         else
         {

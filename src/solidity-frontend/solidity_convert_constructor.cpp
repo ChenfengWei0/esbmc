@@ -716,42 +716,20 @@ bool solidity_convertert::build_tod_clone_helper(
   decl_c.op1() = new_call;
   func_body.move_to_operands(decl_c);
 
-  // 4. Field-by-field copy of *base into *c.
-  //    Skip `$address` (overwritten in step 5), skip anonymous padding
-  //    fields, skip internal `_ESBMC_*` shadows (those are per-instance
-  //    pointer-identity bookkeeping that the ctor already set up for the
-  //    fresh allocation, and copying them would re-alias the clone to
-  //    base's pointer-keyed state stores).
+  // 4. Whole-struct copy *c = *base.
+  //    GOTO/SSA expands this into per-field assignments automatically —
+  //    no need for the frontend to enumerate components (which previously
+  //    silently no-op'd when context.find_symbol(tag-<C>) missed the
+  //    merged struct for inherited contracts).  The $address field is
+  //    overwritten in step 5 to give the clone a fresh identity.
   exprt c_deref = dereference_exprt(symbol_expr(added_c), contract_struct_t);
   c_deref.cmt_lvalue(true);
   exprt base_deref =
     dereference_exprt(symbol_expr(added_base), contract_struct_t);
   base_deref.cmt_lvalue(true);
   {
-    const symbolt *struct_sym_for_copy = context.find_symbol(prefix + c_name);
-    if (struct_sym_for_copy && struct_sym_for_copy->type.id() == "struct")
-    {
-      const struct_typet &st = to_struct_type(struct_sym_for_copy->type);
-      log_debug("solidity", "clone {} has {} components", c_name, st.components().size());
-      for (const auto &comp : st.components())
-      {
-        const irep_idt &cn = comp.get_name();
-        const std::string cn_str = cn.as_string();
-        log_debug("solidity", "  clone {} comp: {}", c_name, cn_str);
-        if (cn_str == "$address")
-          continue;
-        if (cn_str.rfind("anon_pad", 0) == 0)
-          continue;
-        if (cn_str.rfind("_ESBMC_", 0) == 0)
-          continue;
-        log_debug("solidity", "  clone {} copying: {}", c_name, cn_str);
-        // c->cn = base->cn
-        exprt lhs = member_exprt(c_deref, cn, comp.type());
-        exprt rhs = member_exprt(base_deref, cn, comp.type());
-        code_assignt field_copy(lhs, rhs);
-        func_body.move_to_operands(field_copy);
-      }
-    }
+    code_assignt struct_copy(c_deref, base_deref);
+    func_body.move_to_operands(struct_copy);
   }
 
   // 5. c->$address = nondet_uint();

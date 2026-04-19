@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Derived --tod-race-check=takeSnapshot,scaleBase --unwind 2 --no-unwinding-assertions
+^VERIFICATION FAILED$
