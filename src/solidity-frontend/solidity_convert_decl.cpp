@@ -1331,6 +1331,23 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
   }
   else if (node_type == "FunctionDefinition" && current_baseContractName.empty())
   {
+    // __ESOL_* intrinsic stubs: the user declares these free functions
+    // purely so solc accepts the syntax of intrinsic calls; the frontend
+    // intercepts every call site (see get_call_expr) and rewrites it to
+    // the corresponding built-in.  Skip parsing the stub body entirely —
+    // it typically returns a contract value, which is not a meaningful
+    // IR shape and crashes downstream expression conversion.
+    if (
+      ast_node.contains("name") && ast_node["name"].is_string() &&
+      ast_node["name"].get<std::string>().rfind("__ESOL_", 0) == 0)
+    {
+      log_debug(
+        "solidity",
+        "skipping __ESOL_ intrinsic stub {}",
+        ast_node["name"].get<std::string>());
+      return false;
+    }
+
     // Free function (outside any contract) — only handle at top-level scope.
     // Contract-internal functions are handled by convert_ast_nodes after
     // get_struct_class has registered the contract struct symbol.
