@@ -906,7 +906,8 @@ static bool emit_harness_contract_race(
   const std::map<std::string, solidity_tod::RWSet> &rw_by_name,
   const std::string &contract,
   const std::string &func_a,
-  const std::string &func_b)
+  const std::string &func_b,
+  bool is_only)
 {
   const nlohmann::json *fa = find_function(cdef, func_a);
   const nlohmann::json *fb = find_function(cdef, func_b);
@@ -979,17 +980,47 @@ static bool emit_harness_contract_race(
 
   std::string harness_name = "TOD_" + func_a + "_" + func_b;
   out << "contract " << harness_name << " {\n";
-  out << "    function test(\n";
-  out << "        " << contract << " c1,\n";
-  out << "        " << contract << " c2";
+  out << "    function test(";
+  // Only scalar / mapping-key params now — c1/c2 are materialised inside
+  // the body via the __ESOL_* intrinsics, so the harness dump is fully
+  // self-describing and requires no hidden frontend injection.
+  std::vector<std::string> all_params;
   if (!fa_params.empty())
-    out << ",\n        " << fa_params;
+    all_params.push_back(fa_params);
   if (!fb_params.empty())
-    out << ",\n        " << fb_params;
-  out << "\n    ) public {\n";
+    all_params.push_back(fb_params);
+  if (all_params.empty())
+    out << ") public {\n";
+  else
+  {
+    out << "\n";
+    for (size_t i = 0; i < all_params.size(); ++i)
+    {
+      out << "        " << all_params[i];
+      if (i + 1 < all_params.size())
+        out << ",";
+      out << "\n";
+    }
+    out << "    ) public {\n";
+  }
+  // Canonical three-step setup: allocate, nondet-drive to any reachable
+  // pre-race state S, then shallow-copy so c1 and c2 observe the same S.
+  // The intrinsics are the stable ESBMC ABI (see get_call_expr in
+  // solidity_convert_expr.cpp).  --tod-is-only omits the drive line so
+  // both orderings diverge only from constructor defaults (IS-only);
+  // use it when the drive loop's nondet dispatch blows up on contracts
+  // with many public methods.
+  out << "        " << contract << " c1 = new " << contract << "();\n";
+  if (is_only)
+    out << "        // (IS-only mode: __ESOL_nondet_state_forward omitted)\n";
+  else
+    out << "        __ESOL_nondet_state_forward(c1);\n";
+  out << "        " << contract << " c2 = __ESOL_shallow_copy(c1);\n";
   // Require distinct $address so any mapping state var (keyed by
   // (addr, key) in the _ESBMC_Mapping store) does not alias between
-  // the two deployments.
+  // the two deployments.  __ESOL_shallow_copy already mints a fresh
+  // address and asserts disjointness, so this require() is a
+  // self-documenting belt-and-braces check rather than a real guard.
   out << "        require(address(c1) != address(c2), \"isolate c1/c2\");\n";
 
   const bool wrap_a = body_may_revert_explicitly(*fa);
@@ -1087,7 +1118,8 @@ std::string generate_tod_harness(
   const std::string &contract,
   const std::string &func_a,
   const std::string &func_b,
-  TodHarnessMode mode)
+  TodHarnessMode mode,
+  bool is_only)
 {
   const nlohmann::json *cdef = find_contract(ast, contract);
   if (!cdef)
@@ -1126,6 +1158,33 @@ std::string generate_tod_harness(
          "function __tod_balance_check(bool cond) pure {\n"
          "    assert(cond); // TOD-Balance: order-dependent ETH movement\n"
          "}\n\n";
+
+  // ESBMC __ESOL_* intrinsic stubs.  solc requires a concrete body on a
+  // free function; ESBMC's Solidity frontend recognises the __ESOL_
+  // prefix in get_noncontract_defition and drops the body, then replaces
+  // every call site in get_call_expr with the corresponding internal
+  // helper (build_esol_state_forward_helper / build_tod_clone_helper).
+  // Users copying this harness into their own projects can lift the
+  // stubs verbatim.
+  //
+  // Race mode only: balance mode still uses the dual-copy rename
+  // approach (Bal_C1/Bal_C2) for singleton-balance isolation, so the
+  // original `contract` identifier isn't present in the emitted file.
+  if (mode != TodHarnessMode::Balance)
+  {
+    out << "// ESBMC intrinsic stubs (the frontend ignores the bodies).\n"
+           "function __ESOL_nondet_state_forward(" << contract << " c) {\n"
+           "    // replaced by ESBMC with a bounded nondet-dispatch loop\n"
+           "    // over c's public/external methods.\n"
+           "}\n"
+           "function __ESOL_shallow_copy(" << contract << " src) pure returns ("
+        << contract << ") {\n"
+           "    // replaced by ESBMC with _ESBMC_clone_" << contract
+        << ": whole-struct copy\n"
+           "    // of *src into a fresh instance with a distinct $address.\n"
+           "    return src;\n"
+           "}\n\n";
+  }
 
   std::string deps = collect_dependency_definitions(ast, sol_source, contract);
   if (!deps.empty())
@@ -1169,7 +1228,14 @@ std::string generate_tod_harness(
     out << "// ===== Target contract =====\n" << contract_src << "\n\n";
     out << "// ===== TOD harness =====\n";
     if (!emit_harness_contract_race(
-          out, *cdef, state_vars, rw_by_name, contract, func_a, func_b))
+          out,
+          *cdef,
+          state_vars,
+          rw_by_name,
+          contract,
+          func_a,
+          func_b,
+          is_only))
       return {};
   }
 
@@ -1181,7 +1247,8 @@ std::string generate_tod_harness_multi(
   const nlohmann::json &ast,
   const std::string &contract,
   const std::vector<std::pair<std::string, std::string>> &pairs,
-  TodHarnessMode mode)
+  TodHarnessMode mode,
+  bool is_only)
 {
   // Retained for the single-pair case.  Auto mode is handled by the CLI
   // driver, which invokes generate_tod_harness() per pair and writes a
@@ -1194,5 +1261,11 @@ std::string generate_tod_harness_multi(
     return {};
   }
   return generate_tod_harness(
-    sol_source, ast, contract, pairs[0].first, pairs[0].second, mode);
+    sol_source,
+    ast,
+    contract,
+    pairs[0].first,
+    pairs[0].second,
+    mode,
+    is_only);
 }

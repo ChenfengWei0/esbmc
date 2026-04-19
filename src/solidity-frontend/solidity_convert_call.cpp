@@ -570,48 +570,15 @@ bool solidity_convertert::assign_param_nondet(
         // addresses, which was a bug — a caller passing `check(c1, c2)`
         // must see two genuinely distinct contract instances.
         //
-        // Behavioural cascade:
-        //   --bound mode:
-        //     - FIRST param of a given cname: `_ESBMC_nondet_new_<C>()`
-        //       drives the instance through a bounded nondet-dispatch
-        //       loop, reaching some Updated State S from IS.
-        //     - SUBSEQUENT same-cname params: `_ESBMC_clone_<C>(base)`
-        //       clones the base's non-mapping state (with fresh
-        //       $address).  This models "two orderings from the SAME
-        //       pre-race state S" that TOD's order-equivalence check
-        //       fundamentally requires — independent drives would
-        //       flag commutative pairs as spurious races.
-        //   --unbound mode:
-        //     Instances are fresh-ctor IS; downstream external calls
-        //     route to `_ESBMC_Nondet_Extcall_<C>` (opaque nondet),
-        //     so US-reachability isn't meaningful anyway.
-        const bool tod_active =
-          !config.options.get_option("tod-race-check").empty() ||
-          !config.options.get_option("tod-balance-check").empty();
-        // Find a previously-pushed argument of the same contract type
-        // — this lets us issue _ESBMC_clone_<C>(earlier_arg) for the
-        // second-and-beyond contract params, keeping c1/c2/... at the
-        // same pre-race state.
-        const exprt *prior_same_cname = nullptr;
-        for (const exprt &prev : call.arguments())
-        {
-          const std::string prev_cname =
-            prev.type().get("#sol_contract").as_string();
-          if (prev_cname == base_cname)
-          {
-            prior_same_cname = &prev;
-            break;
-          }
-        }
-
-        // --bound + non-TOD: drive each contract param through a
-        // bounded nondet-dispatch loop so its state is some reachable
-        // Updated State instead of ctor defaults.
-        // TOD mode: first contract param gets a fresh ctor; subsequent
-        // params of the same cname get _ESBMC_clone_<C>(first) so that
-        // c1/c2/... share the same pre-race state S — required for
-        // TOD's order-equivalence comparison.
-        if (is_bound && !tod_active)
+        // --bound mode: drive each param through a bounded nondet-
+        // dispatch loop so its state is some reachable Updated State
+        // instead of ctor defaults.
+        // --unbound / TOD modes: fresh-ctor IS.  TOD harnesses that
+        // need pre-race state sharing use the __ESOL_nondet_state_forward
+        // + __ESOL_shallow_copy intrinsics *inside* the harness body
+        // (see solidity_tod_harness.cpp); they don't route through
+        // param injection.
+        if (is_bound)
         {
           symbolt drive_sym;
           if (build_bound_drive_helper(base_cname, drive_sym))
@@ -621,18 +588,6 @@ bool solidity_convertert::assign_param_nondet(
           drive_call.type() = to_code_type(drive_sym.type).return_type();
           drive_call.location() = drive_sym.location;
           call.arguments().push_back(drive_call);
-        }
-        else if (tod_active && prior_same_cname != nullptr)
-        {
-          symbolt clone_sym;
-          if (build_tod_clone_helper(base_cname, clone_sym))
-            return true;
-          side_effect_expr_function_callt clone_call;
-          clone_call.function() = symbol_expr(clone_sym);
-          clone_call.type() = to_code_type(clone_sym.type).return_type();
-          clone_call.location() = clone_sym.location;
-          clone_call.arguments().push_back(*prior_same_cname);
-          call.arguments().push_back(clone_call);
         }
         else
         {

@@ -657,6 +657,17 @@ protected:
   //     LIMITATION: pre-race mapping state is not mirrored into the
   //     clone's keyspace; follow-up work).
   bool build_tod_clone_helper(const std::string &c_name, symbolt &sym);
+
+  // __ESOL_nondet_state_forward intrinsic helper: builds
+  // `_ESBMC_state_forward_<c_name>(C *c)`.  Drives the *supplied*
+  // instance in place through a bounded nondet-dispatch loop (no new
+  // allocation), so `*c` moves from its current state to some
+  // reachable successor state.  Mirrors the while-body shape of
+  // build_bound_drive_helper but without the fresh-alloc prologue so
+  // users can compose it with a pre-existing pointer.
+  bool build_esol_state_forward_helper(
+    const std::string &c_name,
+    symbolt &sym);
   bool get_unbound_expr(
     const nlohmann::json expr,
     const std::string &cname,
