@@ -838,7 +838,6 @@ int esbmc_parseoptionst::doit()
       ? solidity_tod::Mode::BalanceOnly
       : solidity_tod::Mode::RaceOnly;
     const char *mode_tag = balance_mode ? "balance" : "race";
-    const bool tod_is_only = cmdline.isset("tod-is-only");
     // ---- shared: locate .sol / .solast paths ----
     std::string sol_path, solast_path;
     if (cmdline.isset("sol"))
@@ -1000,8 +999,7 @@ int esbmc_parseoptionst::doit()
         contract_name,
         pairs[0].first,
         pairs[0].second,
-        harness_mode,
-        tod_is_only);
+        harness_mode);
       if (harness.empty())
         return 1;
       std::cout << harness;
@@ -1017,8 +1015,7 @@ int esbmc_parseoptionst::doit()
         contract_name,
         pairs[0].first,
         pairs[0].second,
-        harness_mode,
-        tod_is_only);
+        harness_mode);
       if (harness.empty())
         return 1;
       std::string harness_path = harness_path_for(pairs[0].first, pairs[0].second);
@@ -1056,8 +1053,6 @@ int esbmc_parseoptionst::doit()
       if (cmdline.isset("max-k-step"))
         forwarded +=
           std::string(" --max-k-step ") + cmdline.getval("max-k-step");
-      if (tod_is_only)
-        forwarded += " --tod-is-only";
       for (const char *flag :
            {"cvc5", "bitwuzla", "boolector", "z3", "yices", "mathsat"})
         if (cmdline.isset(flag))
@@ -1070,13 +1065,7 @@ int esbmc_parseoptionst::doit()
       {
         const auto &p = pairs[i];
         std::string harness = generate_tod_harness(
-          sol_source,
-          ast,
-          contract_name,
-          p.first,
-          p.second,
-          harness_mode,
-          tod_is_only);
+          sol_source, ast, contract_name, p.first, p.second, harness_mode);
         if (harness.empty())
         {
           log_error("--{}: harness generation failed for {}/{}",

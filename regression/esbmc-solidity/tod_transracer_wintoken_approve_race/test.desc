@@ -1,5 +1,5 @@
-CORE
+THOROUGH
 contract.sol
---contract WinToken --tod-race-check=approve,increaseApproval --tod-is-only --unwind 3 --no-unwinding-assertions
+--contract WinToken --tod-race-check=approve,increaseApproval --unwind 3 --no-unwinding-assertions
 ^VERIFICATION FAILED$
 ^.*function __tod_race_check.*$

@@ -177,14 +177,7 @@ const struct group_opt_templ all_cmd_options[] = {
      boost::program_options::value<std::string>()->value_name("N"),
      "Number of parallel ESBMC subprocesses to run in --tod-*-check=auto "
      "mode.  Defaults to min(hardware_concurrency, pair_count).  Use 1 to "
-     "force sequential execution."},
-    {"tod-is-only",
-     NULL,
-     "Auto-dumped TOD harnesses skip the __ESOL_nondet_state_forward(c1) "
-     "call, so the two orderings diverge only from the constructor's "
-     "Initial State.  Reduces verification cost on contracts with many "
-     "public methods (otherwise the drive loop blows up) at the cost of "
-     "missing races that require a pre-existing Updated State to trigger."}}},
+     "force sequential execution."}}},
 #endif
   {"Frontend",
    {{"include,I",

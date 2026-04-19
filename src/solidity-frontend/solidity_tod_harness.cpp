@@ -906,8 +906,7 @@ static bool emit_harness_contract_race(
   const std::map<std::string, solidity_tod::RWSet> &rw_by_name,
   const std::string &contract,
   const std::string &func_a,
-  const std::string &func_b,
-  bool is_only)
+  const std::string &func_b)
 {
   const nlohmann::json *fa = find_function(cdef, func_a);
   const nlohmann::json *fb = find_function(cdef, func_b);
@@ -1006,15 +1005,9 @@ static bool emit_harness_contract_race(
   // Canonical three-step setup: allocate, nondet-drive to any reachable
   // pre-race state S, then shallow-copy so c1 and c2 observe the same S.
   // The intrinsics are the stable ESBMC ABI (see get_call_expr in
-  // solidity_convert_expr.cpp).  --tod-is-only omits the drive line so
-  // both orderings diverge only from constructor defaults (IS-only);
-  // use it when the drive loop's nondet dispatch blows up on contracts
-  // with many public methods.
+  // solidity_convert_expr.cpp).
   out << "        " << contract << " c1 = new " << contract << "();\n";
-  if (is_only)
-    out << "        // (IS-only mode: __ESOL_nondet_state_forward omitted)\n";
-  else
-    out << "        __ESOL_nondet_state_forward(c1);\n";
+  out << "        __ESOL_nondet_state_forward(c1);\n";
   out << "        " << contract << " c2 = __ESOL_shallow_copy(c1);\n";
   // Require distinct $address so any mapping state var (keyed by
   // (addr, key) in the _ESBMC_Mapping store) does not alias between
@@ -1118,8 +1111,7 @@ std::string generate_tod_harness(
   const std::string &contract,
   const std::string &func_a,
   const std::string &func_b,
-  TodHarnessMode mode,
-  bool is_only)
+  TodHarnessMode mode)
 {
   const nlohmann::json *cdef = find_contract(ast, contract);
   if (!cdef)
@@ -1228,14 +1220,7 @@ std::string generate_tod_harness(
     out << "// ===== Target contract =====\n" << contract_src << "\n\n";
     out << "// ===== TOD harness =====\n";
     if (!emit_harness_contract_race(
-          out,
-          *cdef,
-          state_vars,
-          rw_by_name,
-          contract,
-          func_a,
-          func_b,
-          is_only))
+          out, *cdef, state_vars, rw_by_name, contract, func_a, func_b))
       return {};
   }
 
@@ -1247,8 +1232,7 @@ std::string generate_tod_harness_multi(
   const nlohmann::json &ast,
   const std::string &contract,
   const std::vector<std::pair<std::string, std::string>> &pairs,
-  TodHarnessMode mode,
-  bool is_only)
+  TodHarnessMode mode)
 {
   // Retained for the single-pair case.  Auto mode is handled by the CLI
   // driver, which invokes generate_tod_harness() per pair and writes a
@@ -1261,11 +1245,5 @@ std::string generate_tod_harness_multi(
     return {};
   }
   return generate_tod_harness(
-    sol_source,
-    ast,
-    contract,
-    pairs[0].first,
-    pairs[0].second,
-    mode,
-    is_only);
+    sol_source, ast, contract, pairs[0].first, pairs[0].second, mode);
 }
