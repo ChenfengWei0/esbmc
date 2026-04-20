@@ -190,6 +190,29 @@ A simplified ERC20 model is available at `regression/esbmc-solidity/ERC20.sol` f
 
 Note: always use `--contract` (with optional `--focus-function`) to keep the constructor in scope.
 
+## __ESOL_shallow_copy Semantics
+
+The `__ESOL_shallow_copy(C src)` intrinsic lowers to `_ESBMC_clone_<C>(src)` (see `build_tod_clone_helper` in src/solidity-frontend/solidity_convert_constructor.cpp). Body shape: `C *c = new C(); *c = *base; c->$address = nondet; for each mapping m: c->m.addr = c->$address;`.
+
+What this means for each field type (verified by the `esol_clone_*` regression stress tests):
+
+- **Primitive scalars** (uint/bool/address/bytes32 at top level): fully copied, clone is isolated from base — post-clone mutation of either instance is invisible to the other.
+- **Fixed arrays at top level** (`uint256[N]`): **backing-store aliased**. `*c = *base` copies a pointer into the per-type `dynamic_N_array` pool; writes to `base.arr[i]` after clone ARE visible via `clone.arr[i]`. See `esol_clone_fixed_array_isolation_pass` which asserts the aliasing outcome.
+- **Dynamic arrays** (`uint256[]`): isolated — dynamic-pool allocation is per-instance via `$dynamic_pool`, so the whole-struct copy carries per-instance storage.
+- **Structs of primitives**: copied (like scalars).
+- **Structs containing nested fixed arrays**: **KNOWNBUG**, post-clone equality fails. `esol_clone_struct_array_pass` is marked KNOWNBUG. Fix requires explicit per-nested-array-element copy after the whole-struct assignment.
+- **Mappings**: retargeted to the clone's fresh `$address`, so writes on the clone live in a disjoint keyspace from base. Pre-clone mapping contents on base are NOT mirrored to clone (clone's mapping starts empty).
+- **Inheritance-merged state**: covered by the whole-struct copy (the struct ESBMC emits for a derived contract is a single flat struct with base-class fields inlined).
+- **Strings (stored)**: copied via `$dynamic_pool`; isolated.
+
+The `__ESOL_nondet_state_forward(C c)` intrinsic drives `*c` through a nondet dispatch over the contract's public/external methods (`build_esol_state_forward_helper`). Internal and private functions are NOT invoked. Verified by `esol_state_forward_invariant_pass` (monotonic invariant preservation), `esol_state_forward_reaches_nontrivial_fail` (coverage — can reach non-initial states), and `esol_state_forward_internal_not_exposed_pass` (visibility filter correctness).
+
+## keccak256/sha256 on bytes-struct arguments
+
+When the argument to `keccak256` / `sha256` is a raw source-level bytes value (`t_bytes_*` typeIdentifier: `t_bytes_storage_ptr`, `t_bytes_memory_ptr`, or `t_bytesN`), the Solidity frontend routes through a nondet-uint256 library call and then PACKS the uint256 result into a BytesStatic via `bytes_static_from_uint` (see src/solidity-frontend/solidity_convert_expr.cpp `hash_needs_nondet` branch). Without the pack, symex crashes on the uint256→BytesStatic struct-shape mismatch when the hash feeds a `bytes32` return value or comparison. The pack also keeps the identity-hash equality semantics: same input uint256 → same packed bytes32, so `keccak256(x) == keccak256(x)` still holds across two calls with identical input (important for the abi.encode_call selector-consistency tests).
+
+`ripemd160` returns `address` in Solidity, not `bytes32`, so its result stays as a scalar address_t and doesn't need the pack.
+
 ## EOA Balance Modeling (--bound mode)
 
 Under `--bound`, ETH balances of non-tracked recipients (EOAs and any `address payable` value the user constructs) are tracked in a global map, so that `recipient.balance` reads see credits from prior `transfer`/`send` calls.

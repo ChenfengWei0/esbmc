@@ -1,0 +1,4 @@
+KNOWNBUG
+contract.sol
+--contract H --bound --unwind 3 --no-unwinding-assertions --no-standard-checks
+^VERIFICATION SUCCESSFUL$
