@@ -1169,10 +1169,7 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
     // compile-time-unrolled per-element copy + recurse.  This handles
     // array-of-struct-with-mapping (where arrcpy's memcpy fallback
     // would bit-copy mapping.addr and leave the clone aliasing base's
-    // keyspace) and nested fixed arrays (multi-dim) — the latter is
-    // only as sound as the ctor's nested-storage allocation; multi-
-    // dim inner rows are NOT ctor-allocated today, so multi-dim
-    // isolation remains KNOWNBUG at the ctor layer.
+    // keyspace) and nested fixed arrays (multi-dim).
     side_effect_expr_function_callt calc_call;
     get_calloc_function_call(dst_lvalue.location(), calc_call);
     calc_call.arguments().push_back(size_expr);
@@ -1194,6 +1191,15 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
       return false;
     }
 
+    // Decide whether to emit an element-level bit-copy BEFORE the
+    // recurse.  The bit-copy is useful for carrying scalar sub-fields
+    // of a struct-typed element (the recurse only touches the
+    // mapping/array sub-fields), but it is REDUNDANT when the element
+    // is itself a bare pointer-backed fixed array: the recurse's
+    // single `_ESBMC_arrcpy` overwrites the slot with a fresh deep
+    // copy, so the intermediate pointer alias is pure noise.
+    const bool elem_is_ptr_backed_array =
+      !elem_t.get("#sol_array_size").empty() && elem_t.is_pointer();
     for (unsigned long long i = 0; i < N; i++)
     {
       exprt idx = from_integer(i, uint_type());
@@ -1201,10 +1207,14 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
       exprt src_elem = index_exprt(src_lvalue, idx, elem_t);
       dst_elem.cmt_lvalue(true);
       src_elem.cmt_lvalue(true);
-      // Element-level bit copy first (carries scalars that don't need
-      // fixup; the recurse below overrides any fixup-needing sub-field).
-      code_assignt elem_copy(dst_elem, src_elem);
-      func_body.move_to_operands(elem_copy);
+      if (!elem_is_ptr_backed_array)
+      {
+        // Struct / mapping-containing element: bit-copy first so
+        // scalar sub-fields travel across; the recurse below only
+        // fixes up pointer/mapping sub-fields.
+        code_assignt elem_copy(dst_elem, src_elem);
+        func_body.move_to_operands(elem_copy);
+      }
       if (emit_clone_deep_copy_fixup(
             dst_elem, src_elem, elem_t, clone_addr_expr, func_body))
         return true;
