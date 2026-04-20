@@ -447,13 +447,17 @@ two shapes for fixed arrays of scalar leaves:
 
 Both shapes now pass. 3D's outer per-slot pattern was historically the failing case; the VSA ASSUME fix above closed it.
 
-**Why the 2D `_ESBMC_arrcpy_2d` dispatch stays (2026-04-20 follow-up).** Tried three ways to remove the dispatch and use the walker's general per-slot emission uniformly; each bounced:
+**VSA per-constant-index scheme landed (2026-04-20, Solidity-only).** `value_sett::assign_rec`, `get_value_set_rec`, and the `is_dereference2t` branches now recognise compile-time-constant indices and byte offsets, routing writes to a dedicated `[N]`/`[K]` suffix entry (strong update) instead of merging into the shared `[]` aggregate. Reads at a constant index query `[N] ∪ []` and reads at a concrete dereference offset K query `[K] ∪ []`. Gated on the `sol` option (set by the parseoptions wrapper whenever a `.sol` / `.solast` input is detected or `--sol` is passed); other frontends keep the legacy `[]`-only semantics. Full Solidity regression (723/723, 42 s under CVC5) passes with no regression or timing penalty.
 
-1. **Replace `u256` element loop in `_ESBMC_arrcpy` with `__builtin_memcpy`.** Makes 2D/3D multi_dim tests pass because byte-level copy sidesteps VSA's widening through the imprecise `base->grid[i]` pointer. But 1D isolation tests (`esol_clone_fixed_array_isolation_{pass,fail}`) regress — their `assert(clone.get(i) == a)` VCCs get sliced away entirely (0 user VCCs emitted), likely because the `__ESBMC_memcpy` intrinsic's SMT encoding doesn't carry a per-element value chain that slicer recognises as property-relevant. Both pass/fail duals collapse to trivially-SUCCESSFUL, which is worse than the original failure mode.
-2. **Extend `value_sett::apply_assume` to strip `is_unknown2t`/`is_invalid2t` entries in addition to null.** No effect on 2D — the `*` that poisons reads sits in `dynamic_object_outer[]` (the aggregate `[]` backing of the calloc'd outer buffer), not in the individual `from_array` symbol's value-set. `apply_assume` only walks `values[name]` keyed by the symbol; it doesn't touch the separate `values[name + "[]"]` entry.
-3. **Per-constant-index VSA suffix scheme (`[N]` for constants, `[]` for symbolic, union on read).** Not attempted — this is the *actual* principled fix but requires coordinated changes in `assign_rec` (per-index strong updates), `get_value_set_rec` (constant-index lookup + aggregate fallback, symbolic-index iteration over all `[k]` entries), and interaction with every existing test that relies on the current `[]`-only scheme. Too invasive for a single session.
+**Why `_ESBMC_arrcpy_2d` dispatch still stays.** Even with per-constant-index VSA, removing the dispatch and running 2D/3D multi_dim clone through the walker's general per-slot path still fails:
 
-The root cause is VSA's weak-update on indexed writes conflating writes at distinct constant indices into a single aggregate. `_ESBMC_arrcpy_2d` sidesteps this by wrapping the outer alloc + per-slot fills inside ONE library frame, where the frame-local `dst_outer` VSA entry doesn't merge with the heap struct-field aggregate. It's load-bearing, not tech debt — removing it requires the per-index VSA refactor above.
+- The arrcpy body's `for (i=0..n-1) dst[i] = src[i]` uses a SYMBOLIC loop index, so those writes still land in `dst[]` (not `dst[K]`).
+- The aggregate `dst[]` picks up `*` from upstream imprecision — the base's grid gets poisoned when the Nondet_Extcall dispatcher invokes `setAt(i, j, v)` with symbolic i, j, and that pollution propagates into `from_array`'s reference set at arrcpy time.
+- Reads at concrete offset K correctly query `[K] ∪ []`; `[]` brings the `*` back, and the solver case-splits on "any value" again.
+
+Fully closing this requires a second mechanism: arrcpy's symbolic-index loop would need to emit per-`[N]` writes too (e.g. unrolled with concrete N when the loop bound is constant), OR `get_value_set_rec`'s symbolic-deref path would need to distinguish "this object was never symbolic-written, so `[]` is sound-empty" from "symbolic-written, `[]` must be consulted". Both are follow-ups, not blocking this commit.
+
+Net effect: the library helper stays load-bearing for multi-dim clone; the VSA scheme is a standalone precision improvement that benefits other code paths where writes and reads share a compile-time-constant index and no symbolic-index write poisons the aggregate.
 
 ## Approximation Ledger (soundness & completeness trade-offs)
 

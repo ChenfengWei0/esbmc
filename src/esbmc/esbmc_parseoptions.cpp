@@ -768,6 +768,14 @@ int esbmc_parseoptionst::doit()
     }
     if (is_solidity)
     {
+      // Mark the run as Solidity so downstream analyses (e.g.
+      // pointer-analysis VSA) can gate Solidity-specific precision
+      // tweaks off this flag without reparsing cmdline.args. Mirrored
+      // into the global `config.options` because analyses outside BMC's
+      // local `options` scope (static analysers, value_set_domain's
+      // transform, etc.) read from the config.
+      options.set_option("sol", true);
+      config.options.set_option("sol", true);
       options.set_option(
         "no-align-check", true); // no need to check alignment in solidity
       options.set_option("no-unlimited-scanf-check", true);

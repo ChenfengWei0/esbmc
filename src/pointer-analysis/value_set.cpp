@@ -17,6 +17,29 @@
 #include <util/std_expr.h>
 #include <util/type_byte_size.h>
 
+namespace
+{
+// Solidity frontend enables a more precise indexed-suffix scheme in VSA:
+// constant-index writes go to a dedicated "[N]" suffix entry (strong update)
+// instead of being merged into the "[]" aggregate along with symbolic-index
+// writes. Reads at constant index then query both "[N]" and "[]" and union.
+// Dereference writes/reads with a concrete byte-offset K likewise go to a
+// "[K]" suffix so distinct slots of the same heap array aren't conflated.
+// Gated on `--sol` / `.sol` input so non-Solidity frontends keep the legacy
+// aggregate-only semantics until this scheme is audited against their
+// regressions.
+bool vsa_per_index_enabled()
+{
+  return config.options.get_bool_option("sol");
+}
+
+// Format a BigInt index as decimal for suffix construction ("[N]").
+std::string format_index_suffix(const BigInt &idx)
+{
+  return "[" + integer2string(idx) + "]";
+}
+} // namespace
+
 object_numberingt value_sett::object_numbering;
 object_number_numberingt value_sett::obj_numbering_refset;
 
@@ -229,9 +252,21 @@ void value_sett::get_value_set_rec(
     assert(is_array_type(source_type));
 #endif
 
-    // Attach '[]' to the suffix, identifying the variable tracking all the
-    // pointers in this array.
+    // Aggregate lookup: "[]" covers symbolic-index writes (which always land
+    // there) and the legacy non-per-index scheme. Always consulted for
+    // soundness — a symbolic write might have hit any index.
     get_value_set_rec(idx.source_value, dest, "[]" + suffix, original_type);
+
+    // Per-constant-index lookup (Solidity only): also query "[N]" when the
+    // index is a compile-time constant. Read = "[N]" entry ∪ "[]" aggregate,
+    // so prior constant writes at the same index are picked up precisely
+    // without being diluted by writes at other indices.
+    if (vsa_per_index_enabled() && is_constant_int2t(idx.index))
+    {
+      const std::string n_suffix =
+        format_index_suffix(to_constant_int2t(idx.index).value);
+      get_value_set_rec(idx.source_value, dest, n_suffix + suffix, original_type);
+    }
     return;
   }
 
@@ -323,7 +358,34 @@ void value_sett::get_value_set_rec(
     for (const auto &it1 : reference_set)
     {
       const expr2tc &object = object_numbering[it1.first];
-      get_value_set_rec(object, dest, suffix, original_type);
+      if (vsa_per_index_enabled() && it1.second.offset_is_set)
+      {
+        // Solidity per-offset read. The write side routes `*(ptr + K)`
+        // with concrete byte-offset K to a dedicated "[K]" suffix on
+        // the target object's VSA entry (see assign_rec's
+        // is_dereference2t branch). Read consults:
+        //   1. "[K]" entry  — per-constant-offset writes at the same K.
+        //   2. "[]" entry   — symbolic-offset writes from loops like
+        //                     arrcpy's `dst[i] = src[i]`, which must
+        //                     conservatively be considered to hit any K.
+        // We deliberately DO NOT fall through to the target's primary
+        // entry — the primary carries "whole object view" imprecision
+        // (e.g. the `*` that calloc's zero-init leaves on void-typed
+        // backings) which would pollute otherwise-precise per-offset
+        // reads. Whole-object assigns are not expected in the
+        // indexed-deref path.
+        const std::string k_suffix =
+          format_index_suffix(it1.second.offset) + suffix;
+        get_value_set_rec(object, dest, k_suffix, original_type);
+        get_value_set_rec(object, dest, "[]" + suffix, original_type);
+      }
+      else
+      {
+        // Legacy: nondet-offset dereference (or non-Solidity) — query
+        // the target's primary entry so any content written at any
+        // offset is conservatively considered.
+        get_value_set_rec(object, dest, suffix, original_type);
+      }
     }
 
     return;
@@ -1335,19 +1397,61 @@ void value_sett::assign_rec(
     for (const auto &it : reference_set)
     {
       const expr2tc obj = object_numbering[it.first];
+      if (is_unknown2t(obj) || is_invalid2t(obj))
+        continue;
 
-      if (!is_unknown2t(obj) && !is_invalid2t(obj))
-        assign_rec(obj, values_rhs, suffix, add_to_sets);
+      // Per-offset write precision (Solidity only). When the dereference
+      // resolves to `<target, offset=K>` with K concrete, route the assign
+      // through a dedicated "[K]" suffix on the target's entry. This keeps
+      // distinct slots of a heap array (each written at a different
+      // concrete byte offset from the base pointer) in separate VSA
+      // entries, so later reads at the same offset don't pick up the
+      // weakly-merged union from sibling slot writes.
+      //
+      // Solidity's per-slot clone emission (`c->grid[i] = ...` for
+      // i=0,1,2 with concrete i) lowers to `*(c->grid + K*elem) = ...`
+      // at the irep2 level; without this, all three writes collapse
+      // into `dynamic_object_grid_backing`'s primary entry via weak
+      // update, then reads of any `c->grid[i]` return the union of
+      // all three arrcpy returns (plus calloc's `*`) — which poisons
+      // the assertion `clone.get(i,j) == a`.
+      std::string eff_suffix = suffix;
+      bool eff_add_to_sets = add_to_sets;
+      if (vsa_per_index_enabled() && it.second.offset_is_set)
+      {
+        eff_suffix = format_index_suffix(it.second.offset) + suffix;
+        // Strong update at this specific offset when caller allows it.
+        // If the caller passed add_to_sets=true (e.g. multi-target
+        // dereference) we still do weak to be safe.
+      }
+
+      assign_rec(obj, values_rhs, eff_suffix, eff_add_to_sets);
     }
   }
   else if (is_index2t(lhs))
   {
+    const index2t &idx = to_index2t(lhs);
     assert(
-      is_array_type(to_index2t(lhs).source_value) ||
-      is_vector_type(to_index2t(lhs).source_value) ||
-      is_dynamic_object2t(to_index2t(lhs).source_value));
+      is_array_type(idx.source_value) ||
+      is_vector_type(idx.source_value) ||
+      is_dynamic_object2t(idx.source_value));
 
-    assign_rec(to_index2t(lhs).source_value, values_rhs, "[]" + suffix, true);
+    // Array-type index (rare in Solidity — most arrays are pointer-backed
+    // and go through dereference). Same per-constant-index shortcut as the
+    // deref case; symbolic indices fall back to the legacy "[]" aggregate.
+    expr2tc idx_expr = idx.index;
+    while (is_typecast2t(idx_expr))
+      idx_expr = to_typecast2t(idx_expr).from;
+    if (vsa_per_index_enabled() && is_constant_int2t(idx_expr))
+    {
+      const std::string n_suffix =
+        format_index_suffix(to_constant_int2t(idx_expr).value);
+      assign_rec(idx.source_value, values_rhs, n_suffix + suffix, add_to_sets);
+    }
+    else
+    {
+      assign_rec(idx.source_value, values_rhs, "[]" + suffix, true);
+    }
   }
   else if (is_member2t(lhs))
   {
