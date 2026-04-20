@@ -6,7 +6,7 @@ pragma solidity >=0.8.0;
 // struct mismatch in the keccak256 hash_needs_nondet fallback; the
 // fix (in solidity_convert_expr.cpp) now emits a typed nondet bytes32
 // directly when the argument is a raw bytes struct.
-function __ESOL_shallow_copy(C src) pure returns (C) { return src; }
+function __ESOL_deep_copy(C src) pure returns (C) { return src; }
 
 contract C {
     string public s;
@@ -20,7 +20,7 @@ contract H {
     function check(string calldata _s) public {
         C base = new C();
         base.set(_s);
-        C clone = __ESOL_shallow_copy(base);
+        C clone = __ESOL_deep_copy(base);
         // Both instances run the same nondet abstraction on the hash;
         // since the abstraction is emitted at each call site, each call
         // is its own fresh nondet and we only assert the non-crashing

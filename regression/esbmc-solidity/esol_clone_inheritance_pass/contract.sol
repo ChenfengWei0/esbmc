@@ -6,7 +6,7 @@ pragma solidity >=0.8.0;
 // be copied just like Derived's own slot.  Probes whether the
 // whole-struct copy reaches into the merged-struct layout that ESBMC
 // produces for inherited contracts.
-function __ESOL_shallow_copy(Derived src) pure returns (Derived) { return src; }
+function __ESOL_deep_copy(Derived src) pure returns (Derived) { return src; }
 
 contract Base {
     uint256 public bx;
@@ -23,7 +23,7 @@ contract H {
         Derived base = new Derived();
         base.setB(a);
         base.setD(b);
-        Derived clone = __ESOL_shallow_copy(base);
+        Derived clone = __ESOL_deep_copy(base);
         assert(clone.bx() == a);
         assert(clone.dx() == b);
     }

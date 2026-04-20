@@ -632,7 +632,7 @@ bool solidity_convertert::build_bound_drive_helper(
  * reachable state (not just the Initial State from the ctor).
  * Unlike build_bound_drive_helper this version does NOT allocate —
  * it takes a caller-supplied pointer so the user can compose it
- * (e.g. in a TOD harness, drive `c1`, then shallow-copy into `c2`).
+ * (e.g. in a TOD harness, drive `c1`, then deep-copy into `c2`).
  *
  * Body shape:
  *   void _ESBMC_state_forward_C(C *c) {
@@ -957,8 +957,23 @@ bool solidity_convertert::build_tod_clone_helper(
   convert_expression_to_code(assume_call);
   func_body.move_to_operands(assume_call);
 
-  // 6. For each mapping field m of C: c->m.addr = c->$address
-  //    (retargets per-instance mapping keyspace to the clone's addr).
+  // 6. Per-field deep-copy fixup pass.
+  //
+  //    `*c = *base` above is a bit-level struct copy.  For fields that
+  //    are stored as pointers into heap-allocated backing buffers
+  //    (top-level `uint256[N]`; fixed arrays nested inside user
+  //    structs) it leaves base and clone pointing at the same buffer —
+  //    writes through base post-clone would be visible via clone.
+  //    For mapping-t struct fields it leaves `c->m.addr == base.addr`,
+  //    making clone share base's mapping keyspace.
+  //
+  //    The walker recurses through inline user structs so every
+  //    pointer-backed array gets its own fresh `_ESBMC_arrcpy` and
+  //    every mapping (at any nesting depth) has its `.addr` retargeted
+  //    to the clone's fresh $address.  Scalars, bytes structs,
+  //    dyn-array state vars (globals, not struct members), and
+  //    contract-handle fields are unaffected — the outer `*c = *base`
+  //    already produces the right value for them.
   const symbolt *struct_sym = context.find_symbol(prefix + c_name);
   if (struct_sym && struct_sym->type.id() == "struct")
   {
@@ -967,21 +982,13 @@ bool solidity_convertert::build_tod_clone_helper(
     {
       const irep_idt &comp_name = comp.get_name();
       const typet &comp_type = comp.type();
-      // Detect the mapping shape: a struct named `tag-sol:@mapping_t`
-      // (or pointer/symbol to it).  The component type's identifier
-      // typically contains "mapping_t" for our model.
-      const std::string ct_id =
-        comp_type.is_symbol()
-          ? to_symbol_type(comp_type).get_identifier().as_string()
-          : comp_type.get("identifier").as_string();
-      if (ct_id.find("mapping_t") == std::string::npos)
-        continue;
-      // c->m = resolved as member access
-      exprt m_member = member_exprt(c_deref, comp_name, comp_type);
-      // c->m.addr = c->$address
-      exprt m_addr = member_exprt(m_member, "addr", addr_t);
-      code_assignt map_addr_assign(m_addr, c_addr_member);
-      func_body.move_to_operands(map_addr_assign);
+      exprt dst_field = member_exprt(c_deref, comp_name, comp_type);
+      exprt src_field = member_exprt(base_deref, comp_name, comp_type);
+      dst_field.cmt_lvalue(true);
+      src_field.cmt_lvalue(true);
+      if (emit_clone_deep_copy_fixup(
+            dst_field, src_field, comp_type, c_addr_member, func_body))
+        return true;
     }
   }
 
@@ -1013,6 +1020,133 @@ bool solidity_convertert::build_tod_clone_helper(
   added_sym.value = func_body;
 
   sym = added_sym;
+  return false;
+}
+
+bool solidity_convertert::emit_clone_deep_copy_fixup(
+  const exprt &dst_lvalue,
+  const exprt &src_lvalue,
+  const typet &field_type,
+  const exprt &clone_addr_expr,
+  code_blockt &func_body)
+{
+  // The two shapes that actually need a fixup are:
+  //   - pointer-backed fixed-size arrays (`#sol_array_size` set on a
+  //     pointer type): *c = *base has copied only the pointer, so we
+  //     reallocate + element-copy into a fresh buffer;
+  //   - mapping_t struct instances: retarget `.addr` to the clone's
+  //     fresh $address so writes via the clone use a disjoint keyspace.
+  //
+  // Everything else either rides on the outer `*c = *base` (scalars,
+  // bytes structs, contract-handle pointers, dyn-array state vars —
+  // which are global infinite arrays keyed elsewhere, not struct
+  // components) or triggers recursion (user structs containing the
+  // above).
+
+  // Resolve symbol_type → the pointed-to struct_typet, since the
+  // "is this a mapping / is this a user struct" decision is driven by
+  // the resolved shape.
+  typet resolved = field_type;
+  std::string type_id;
+  if (resolved.is_symbol())
+  {
+    type_id = to_symbol_type(resolved).get_identifier().as_string();
+    const symbolt *rs = ns.lookup(type_id);
+    if (rs)
+      resolved = rs->type;
+  }
+  else
+  {
+    type_id = resolved.get("identifier").as_string();
+  }
+
+  const bool is_mapping_field =
+    type_id.find("mapping_t") != std::string::npos;
+
+  // -- Case 1: mapping field.  Just retarget addr.  The struct-copy
+  //    already carried the mapping's `$inf_storage*` (the global pool
+  //    backing it), so only the addr needs flipping for isolation.
+  if (is_mapping_field)
+  {
+    exprt addr_member = member_exprt(dst_lvalue, "addr", addr_t);
+    addr_member.cmt_lvalue(true);
+    code_assignt assign(addr_member, clone_addr_expr);
+    func_body.move_to_operands(assign);
+    return false;
+  }
+
+  // -- Case 2: fixed-size array pointer.  `#sol_array_size=N` is set
+  //    on the pointer type itself at get_array_pointer_type() time.
+  //    Rebuild a fresh heap slab via _ESBMC_arrcpy for scalar elements
+  //    (handles uint256/int256/address/bool/bytesN bit-level copy).
+  //    For a pointer-element (nested fixed array of fixed arrays, or
+  //    array-of-pointer-to-struct), arrcpy does a bit-level memcpy,
+  //    which only propagates the inner pointer — aliasing reappears
+  //    one level down.  That case is documented as a follow-up; it's
+  //    what drives the `uint[M][N]` isolation tests into KNOWNBUG
+  //    territory until per-element recursion over the inner pointer
+  //    lands.
+  const std::string sz_str = field_type.get("#sol_array_size").as_string();
+  if (!sz_str.empty() && field_type.is_pointer())
+  {
+    // N
+    exprt size_expr = constant_exprt(
+      integer2binary(string2integer(sz_str), bv_width(uint_type())),
+      sz_str,
+      uint_type());
+    // sizeof(E)
+    exprt size_of_expr;
+    get_size_of_expr(field_type.subtype(), size_of_expr);
+
+    // _ESBMC_arrcpy(src, N, sizeof(E))
+    side_effect_expr_function_callt acpy_call;
+    get_arrcpy_function_call(locationt(), acpy_call);
+    acpy_call.arguments().push_back(src_lvalue);
+    acpy_call.arguments().push_back(size_expr);
+    acpy_call.arguments().push_back(size_of_expr);
+    solidity_gen_typecast(ns, acpy_call, field_type);
+    acpy_call.type().set("#sol_array_size", sz_str);
+
+    code_assignt assign(dst_lvalue, acpy_call);
+    func_body.move_to_operands(assign);
+    return false;
+  }
+
+  // -- Case 3: inline user struct.  Recurse into each component.
+  //    Guard against bytes structs (BytesStatic/BytesDynamic) — those
+  //    are value-semantics carriers, the outer struct copy is already
+  //    correct (and their inner offset/length scalars would not benefit
+  //    from per-field traversal).  Guard against contract struct fields
+  //    (pointer-to-contract handles inside a contract are not a real
+  //    Solidity storage shape).
+  if (resolved.is_struct() && !is_byte_type(resolved))
+  {
+    // Skip contract struct (sol:@C@...):  those should appear as
+    // pointer-to-struct on the Solidity side, so reaching here with a
+    // raw contract struct means something unusual.  Be conservative.
+    const std::string struct_tag = to_struct_type(resolved).tag().as_string();
+    if (struct_tag.rfind("sol:@C@", 0) == 0)
+      return false;
+
+    const struct_typet &st = to_struct_type(resolved);
+    for (const auto &comp : st.components())
+    {
+      const irep_idt &comp_name = comp.get_name();
+      const typet &ct = comp.type();
+      exprt dst_sub = member_exprt(dst_lvalue, comp_name, ct);
+      exprt src_sub = member_exprt(src_lvalue, comp_name, ct);
+      dst_sub.cmt_lvalue(true);
+      src_sub.cmt_lvalue(true);
+      if (emit_clone_deep_copy_fixup(
+            dst_sub, src_sub, ct, clone_addr_expr, func_body))
+        return true;
+    }
+    return false;
+  }
+
+  // -- Default: scalar / bytes struct / contract handle / dyn-array
+  //    state-var pointer (not a struct member).  Outer struct copy
+  //    already did the right thing.
   return false;
 }
 

@@ -17,18 +17,18 @@ contract Counter {
     }
 }
 
-// User-written TOD harness demonstrating the __ESOL_shallow_copy
+// User-written TOD harness demonstrating the __ESOL_deep_copy
 // intrinsic.  The stub below lets solc accept the call syntax; the
 // ESBMC Solidity frontend intercepts every call to
-// `__ESOL_shallow_copy` and rewrites it to `_ESBMC_clone_<C>(arg)`.
-function __ESOL_shallow_copy(Counter src) pure returns (Counter) {
+// `__ESOL_deep_copy` and rewrites it to `_ESBMC_clone_<C>(arg)`.
+function __ESOL_deep_copy(Counter src) pure returns (Counter) {
     return src;
 }
 
 contract Harness {
     function check(uint n1, uint n2) public {
         Counter a = new Counter();
-        Counter b = __ESOL_shallow_copy(a);
+        Counter b = __ESOL_deep_copy(a);
 
         a.add(n1); a.mul(n2);
         b.mul(n2); b.add(n1);

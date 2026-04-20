@@ -190,20 +190,21 @@ A simplified ERC20 model is available at `regression/esbmc-solidity/ERC20.sol` f
 
 Note: always use `--contract` (with optional `--focus-function`) to keep the constructor in scope.
 
-## __ESOL_shallow_copy Semantics
+## __ESOL_deep_copy Semantics
 
-The `__ESOL_shallow_copy(C src)` intrinsic lowers to `_ESBMC_clone_<C>(src)` (see `build_tod_clone_helper` in src/solidity-frontend/solidity_convert_constructor.cpp). Body shape: `C *c = new C(); *c = *base; c->$address = nondet; for each mapping m: c->m.addr = c->$address;`.
+The `__ESOL_deep_copy(C src)` intrinsic lowers to `_ESBMC_clone_<C>(src)` (see `build_tod_clone_helper` in src/solidity-frontend/solidity_convert_constructor.cpp). Body shape: `C *c = new C(); *c = *base; c->$address = nondet; emit_clone_deep_copy_fixup(...)` — the fixup walker recurses through struct components and (a) reallocates each pointer-backed fixed-size array via `_ESBMC_arrcpy`, (b) retargets every mapping's `.addr` to the clone's fresh $address (including mappings nested inside user structs, when those exist in the model).
 
 What this means for each field type (verified by the `esol_clone_*` regression stress tests):
 
 - **Primitive scalars** (uint/bool/address/bytes32 at top level): fully copied, clone is isolated from base — post-clone mutation of either instance is invisible to the other.
-- **Fixed arrays at top level** (`uint256[N]`): **backing-store aliased**. `*c = *base` copies a pointer into the per-type `dynamic_N_array` pool; writes to `base.arr[i]` after clone ARE visible via `clone.arr[i]`. See `esol_clone_fixed_array_isolation_pass` which asserts the aliasing outcome.
-- **Dynamic arrays** (`uint256[]`): isolated — dynamic-pool allocation is per-instance via `$dynamic_pool`, so the whole-struct copy carries per-instance storage.
-- **Structs of primitives**: copied (like scalars).
-- **Structs containing nested fixed arrays**: **KNOWNBUG**, post-clone equality fails. `esol_clone_struct_array_pass` is marked KNOWNBUG. Fix requires explicit per-nested-array-element copy after the whole-struct assignment.
+- **Fixed arrays at top level** (`uint256[N]`): isolated. The walker emits `c->arr = _ESBMC_arrcpy(base->arr, N, sizeof(E))`, giving the clone its own heap slab. Writes to `base.arr[i]` after clone are NOT visible via `clone.arr[i]`. See `esol_clone_fixed_array_isolation_pass` (pass) / `esol_clone_fixed_array_isolation_fail` (fail dual).
+- **Multi-dim fixed arrays** (`uint256[M][N]`): outer-level isolated (the pointer-of-pointer array gets reallocated), but arrcpy's memcpy fallback copies only the inner row POINTERS — inner row buffers remain shared. Per-element recursion for non-scalar element types is a documented follow-up.
+- **Dynamic arrays** (`uint256[]`): isolated — dynarray state vars live as global infinite arrays keyed outside the contract struct, so `*c = *base` doesn't alias them.
+- **Structs of primitives**: copied (like scalars). Isolation holds via struct-level value copy.
+- **Structs containing nested fixed arrays**: **KNOWNBUG**, the ctor does not recursively calloc the nested array pointer, so `base.bx.cells` is NULL and `_ESBMC_arrcpy(NULL, ...)` trips the element-null-check. Fix requires extending contract construction to recursively initialise nested pointer-backed fields before the clone walker can arrcpy them.
 - **Mappings**: retargeted to the clone's fresh `$address`, so writes on the clone live in a disjoint keyspace from base. Pre-clone mapping contents on base are NOT mirrored to clone (clone's mapping starts empty).
-- **Inheritance-merged state**: covered by the whole-struct copy (the struct ESBMC emits for a derived contract is a single flat struct with base-class fields inlined).
-- **Strings (stored)**: copied via `$dynamic_pool`; isolated.
+- **Inheritance-merged state**: covered by the walker traversing the flat merged struct (ESBMC emits one struct per derived contract with base-class fields inlined).
+- **Strings (stored)**: copied via `$dynamic_pool`.
 
 The `__ESOL_nondet_state_forward(C c)` intrinsic drives `*c` through a nondet dispatch over the contract's public/external methods (`build_esol_state_forward_helper`). Internal and private functions are NOT invoked. Verified by `esol_state_forward_invariant_pass` (monotonic invariant preservation), `esol_state_forward_reaches_nontrivial_fail` (coverage — can reach non-initial states), and `esol_state_forward_internal_not_exposed_pass` (visibility filter correctness).
 

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0;
 
-// Fixed-size array isolation after __ESOL_deep_copy.
-// Post-Phase-1 of the deep-copy walker, build_tod_clone_helper emits
-// `c->arr = _ESBMC_arrcpy(base->arr, N, sizeof(uint256))`, giving
-// clone its own heap slab.  A write to base.arr AFTER the clone
-// MUST NOT be visible via clone.
+// Negative dual of esol_clone_fixed_array_isolation_pass.  Asserts
+// the OPPOSITE outcome (clone sees base's post-clone write) — which
+// is what would happen if the deep-copy walker in
+// build_tod_clone_helper were reverted to a shallow pointer copy.
+// Keeps the semantic firm: if anyone ever regresses the walker, this
+// fail test flips to pass and the paired pass test flips to fail.
 function __ESOL_deep_copy(C src) pure returns (C) { return src; }
 
 contract C {
@@ -20,9 +21,7 @@ contract H {
         C base = new C();
         base.setAt(1, a);
         C clone = __ESOL_deep_copy(base);
-        base.setAt(1, b); // mutate base AFTER clone
-        // Isolation property: clone still sees the pre-clone value `a`,
-        // NOT base's post-clone write `b`.
-        assert(clone.get(1) == a);
+        base.setAt(1, b);
+        assert(clone.get(1) == b); // isolation => this FAILS
     }
 }

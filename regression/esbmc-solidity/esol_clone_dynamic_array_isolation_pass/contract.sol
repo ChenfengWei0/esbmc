@@ -6,10 +6,10 @@ pragma solidity >=0.8.0;
 // the index and leave clone+base sharing the same backing buffer,
 // causing post-clone writes on base to be visible via clone.
 //
-// If shallow_copy is implemented as a true per-instance snapshot, this
+// If deep_copy is implemented as a true per-instance snapshot, this
 // test passes.  If it shares the buffer, the test fails — exposing a
 // real soundness bug for TOD harnesses that touch dynamic arrays.
-function __ESOL_shallow_copy(C src) pure returns (C) { return src; }
+function __ESOL_deep_copy(C src) pure returns (C) { return src; }
 
 contract C {
     uint256[] public arr;
@@ -22,7 +22,7 @@ contract H {
     function check(uint256 a, uint256 b) public {
         C base = new C();
         base.push(a);
-        C clone = __ESOL_shallow_copy(base);
+        C clone = __ESOL_deep_copy(base);
         // mutate base only; clone[0] should remain `a`.
         base.setAt(0, b);
         assert(clone.get(0) == a);

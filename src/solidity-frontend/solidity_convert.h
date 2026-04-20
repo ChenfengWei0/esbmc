@@ -658,6 +658,32 @@ protected:
   //     clone's keyspace; follow-up work).
   bool build_tod_clone_helper(const std::string &c_name, symbolt &sym);
 
+  // Recursive per-field fixup for build_tod_clone_helper: after the
+  // whole-struct `*c = *base` copy, walks the contract struct components
+  // and emits fixups so that pointer-backed fields (fixed-size arrays)
+  // are deep-copied and every mapping (including those nested inside
+  // user structs) has its `.addr` retargeted to the clone's fresh
+  // $address.  Scalars, bytes structs, contract-struct handles are
+  // left to the outer struct copy (value-correct for the former,
+  // intentional-aliasing-or-out-of-scope for the latter).
+  //
+  // Parameters:
+  //   dst_lvalue:      lvalue expr for the destination field
+  //                    (starts at `*c` for the outermost call, nests
+  //                     via member_exprt for struct recursion).
+  //   src_lvalue:      analogous lvalue on the `base` side.
+  //   field_type:      static type of the field (pre-resolution — may
+  //                    be a symbol_type that resolves to a struct).
+  //   clone_addr_expr: rvalue expr evaluating to the clone's fresh
+  //                    $address (used for mapping retargeting).
+  //   func_body:       output block — generated code is appended here.
+  bool emit_clone_deep_copy_fixup(
+    const exprt &dst_lvalue,
+    const exprt &src_lvalue,
+    const typet &field_type,
+    const exprt &clone_addr_expr,
+    code_blockt &func_body);
+
   // __ESOL_nondet_state_forward intrinsic helper: builds
   // `_ESBMC_state_forward_<c_name>(C *c)`.  Drives the *supplied*
   // instance in place through a bounded nondet-dispatch loop (no new

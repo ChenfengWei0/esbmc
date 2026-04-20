@@ -575,7 +575,7 @@ bool solidity_convertert::assign_param_nondet(
         // instead of ctor defaults.
         // --unbound / TOD modes: fresh-ctor IS.  TOD harnesses that
         // need pre-race state sharing use the __ESOL_nondet_state_forward
-        // + __ESOL_shallow_copy intrinsics *inside* the harness body
+        // + __ESOL_deep_copy intrinsics *inside* the harness body
         // (see solidity_tod_harness.cpp); they don't route through
         // param injection.
         if (is_bound)

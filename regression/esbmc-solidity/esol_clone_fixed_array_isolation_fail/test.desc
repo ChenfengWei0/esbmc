@@ -1,4 +1,4 @@
 CORE
 contract.sol
 --contract H --bound --unwind 4 --no-unwinding-assertions --no-standard-checks --cvc5
-^VERIFICATION SUCCESSFUL$
+^VERIFICATION FAILED$

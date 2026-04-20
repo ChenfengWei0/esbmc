@@ -12,7 +12,7 @@ pragma solidity >=0.8.0;
 // explicit per-nested-array element copy after the whole-struct
 // assignment, OR fixing the ctor to pre-initialise nested-struct
 // arrays.  Tracked here until either fix lands.
-function __ESOL_shallow_copy(C src) pure returns (C) { return src; }
+function __ESOL_deep_copy(C src) pure returns (C) { return src; }
 
 contract C {
     struct Box { uint256[2] cells; }
@@ -27,7 +27,7 @@ contract H {
     function check(uint256 a, uint256 b) public {
         C base = new C();
         base.setCells(a, b);
-        C clone = __ESOL_shallow_copy(base);
+        C clone = __ESOL_deep_copy(base);
         assert(clone.cell(0) == a);
         assert(clone.cell(1) == b);
     }

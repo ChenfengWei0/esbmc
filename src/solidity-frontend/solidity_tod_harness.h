@@ -17,7 +17,7 @@ enum class TodHarnessMode
 /// Race mode emits a self-describing harness body of shape:
 ///   C c1 = new C();
 ///   __ESOL_nondet_state_forward(c1);   // reach any reachable state S
-///   C c2 = __ESOL_shallow_copy(c1);    // c2 starts at same S
+///   C c2 = __ESOL_deep_copy(c1);       // c2 starts at same S
 ///   c1.fa(); c1.fb();                  // order 1
 ///   c2.fb(); c2.fa();                  // order 2
 ///   __tod_race_check(...);             // assert state equivalence

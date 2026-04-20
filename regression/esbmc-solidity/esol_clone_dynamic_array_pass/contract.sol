@@ -3,9 +3,9 @@ pragma solidity >=0.8.0;
 
 // Dynamic array post-clone equality.  After cloning, the clone must
 // observe the same length and the same element values that base set.
-// Whether ESBMC's shallow_copy deep-copies the underlying buffer or
-// shares a pointer, the read-after-write equality must hold.
-function __ESOL_shallow_copy(C src) pure returns (C) { return src; }
+// Whether the clone deep-copies the underlying buffer or shares a
+// pointer, the read-after-write equality must hold.
+function __ESOL_deep_copy(C src) pure returns (C) { return src; }
 
 contract C {
     uint256[] public arr;
@@ -19,7 +19,7 @@ contract H {
         C base = new C();
         base.push(v0);
         base.push(v1);
-        C clone = __ESOL_shallow_copy(base);
+        C clone = __ESOL_deep_copy(base);
         assert(clone.len() == 2);
         assert(clone.get(0) == v0);
         assert(clone.get(1) == v1);

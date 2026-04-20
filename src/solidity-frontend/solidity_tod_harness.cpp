@@ -1003,15 +1003,15 @@ static bool emit_harness_contract_race(
     out << "    ) public {\n";
   }
   // Canonical three-step setup: allocate, nondet-drive to any reachable
-  // pre-race state S, then shallow-copy so c1 and c2 observe the same S.
+  // pre-race state S, then deep-copy so c1 and c2 observe the same S.
   // The intrinsics are the stable ESBMC ABI (see get_call_expr in
   // solidity_convert_expr.cpp).
   out << "        " << contract << " c1 = new " << contract << "();\n";
   out << "        __ESOL_nondet_state_forward(c1);\n";
-  out << "        " << contract << " c2 = __ESOL_shallow_copy(c1);\n";
+  out << "        " << contract << " c2 = __ESOL_deep_copy(c1);\n";
   // Require distinct $address so any mapping state var (keyed by
   // (addr, key) in the _ESBMC_Mapping store) does not alias between
-  // the two deployments.  __ESOL_shallow_copy already mints a fresh
+  // the two deployments.  __ESOL_deep_copy already mints a fresh
   // address and asserts disjointness, so this require() is a
   // self-documenting belt-and-braces check rather than a real guard.
   out << "        require(address(c1) != address(c2), \"isolate c1/c2\");\n";
@@ -1169,11 +1169,12 @@ std::string generate_tod_harness(
            "    // replaced by ESBMC with a bounded nondet-dispatch loop\n"
            "    // over c's public/external methods.\n"
            "}\n"
-           "function __ESOL_shallow_copy(" << contract << " src) pure returns ("
+           "function __ESOL_deep_copy(" << contract << " src) pure returns ("
         << contract << ") {\n"
            "    // replaced by ESBMC with _ESBMC_clone_" << contract
-        << ": whole-struct copy\n"
-           "    // of *src into a fresh instance with a distinct $address.\n"
+        << ": per-field deep copy of *src\n"
+           "    // into a fresh instance with a distinct $address and\n"
+           "    // independent heap-allocated array buffers.\n"
            "    return src;\n"
            "}\n\n";
   }
