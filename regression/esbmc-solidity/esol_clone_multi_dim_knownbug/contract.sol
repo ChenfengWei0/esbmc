@@ -16,27 +16,48 @@ pragma solidity >=0.8.0;
 //   that solver cannot pin to `a` even though the symbolic arrcpy
 //   should have copied base's inner rows byte-for-byte.
 //
-// Raw-C/C++ repro of the EXACT same shape PASSES:
-//   - `raw_u256_c.c`: MALLOC + memcpy struct-copy + alloc_array outer
-//     + arrcpy inner — VERIFICATION SUCCESSFUL on bitwuzla.
-//   - `raw_u256_cpp.cpp`: cpp_new + operator= (C++ auto-lowers struct
-//     copy to a function call) + same arrcpy pattern — SUCCESSFUL.
-//   Therefore this is NOT a pure backend (goto-symex/solver) bug —
-//   the backend handles the pattern correctly in C/C++ mode.  The
-//   bug is somewhere in the interaction between Solidity-frontend
-//   emission and symex.  Specifically suspected: the `*new_ptr = tmp`
-//   struct ASSIGN from `C base = new C()` (via cpp_new + get_new_
-//   object_ctor_call) emits as DIRECT struct ASSIGN in Solidity mode,
-//   whereas C++ mode lowers the same statement to `operator=(...)`
-//   function call.  The function-call boundary appears to preserve
-//   symex value-tracking that direct ASSIGN breaks.  Attempted fix
-//   (route struct copy through memcpy in clone helper alone) did NOT
-//   resolve the issue, suggesting the trigger is also the struct-
-//   ASSIGN in `check()` for the initial `C base = new C()` or in
-//   subsequent dispatch paths.
+// Raw-C/C++ repros of the EXACT same shape PASS under both bitwuzla
+// and CVC5.  Three variants live under repro_raw/:
+//   - `raw_u256_c.c` (C99, MALLOC + ctor(base) + direct struct ASSIGN)
+//   - `raw_u256_cpp.cpp` (C++, cpp_new + ctor(base) + operator=)
+//   - `raw_u256_cpp_sol_pattern.cpp` (C++, cpp_new + ctor(&tmp) +
+//     direct struct ASSIGN `*new_ptr = tmp`, i.e. byte-identical to
+//     the Solidity frontend's emission of `C base = new C()` — still
+//     PASSES).
 //
-// Scope: tracked here until the root cause (and the right place to
-// splice memcpy or equivalent) is pinned down with a smaller repro.
+// Disproven hypotheses (2026-04-20 session, tracked here so the same
+// dead-ends are not retried):
+//   - **NOT** operator= vs direct struct ASSIGN: raw-C uses direct
+//     ASSIGN too and passes.
+//   - **NOT** the cpp_new + temp-object + struct-copy pattern itself:
+//     `raw_u256_cpp_sol_pattern.cpp` reproduces the pattern exactly
+//     (including the stack `tmp` + `ctor(&tmp)` + `*new_ptr = tmp`
+//     sequence, with no explicit `ctor(base)` on the heap pointer)
+//     and still PASSES.
+//   - **NOT** the `_ExtInt(96)`/`_ExtInt(160)`/`_ExtInt(192)` anon-pad
+//     layout of the Solidity contract struct: the raw-C++ sol-pattern
+//     repro mirrors it and passes.
+//
+// Remaining suspects (unverified, would need symex value-set tracing):
+//   - Interaction between __ESBMC_main's global `_ESBMC_Object_C`
+//     (allocated once via the same cpp_new + ctor(&tmp) + struct-copy
+//     pattern) and check()'s later `new C()`, through shared type-tag
+//     or shared ctor symbol identity.
+//   - Something in how the contract ctor's `_sol_init_()` /
+//     `this->_ESBMC_bind_cname = C` writes interact with symex's
+//     struct-copy byte-tracking when the struct later flows through
+//     `*new_ptr = tmp`.
+//
+// Compare side-by-side:
+//   esbmc contract.sol --contract H --bound --unwind 3 --no-unwinding-assertions --no-standard-checks --cvc5
+//     → FAILED (clone.get(0,0) != a)
+//   esbmc repro_raw/raw_u256_cpp_sol_pattern.cpp --unwind 3 --no-unwinding-assertions --no-standard-checks --force-malloc-success --bitwuzla
+//     → SUCCESSFUL
+//
+// Scope: tracked until root cause pinned. Next step would be to run
+// `--show-value-set` on the Solidity test around the `base->grid[0]`
+// read inside clone_c's arrcpy arg, and compare the renamed SSA symbol
+// against the value-set entry that symex resolves it to.
 function __ESOL_deep_copy(C src) pure returns (C) { return src; }
 
 contract C {
