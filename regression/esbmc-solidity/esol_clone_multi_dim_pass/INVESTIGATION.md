@@ -164,6 +164,113 @@ Concrete next actions:
 No more frontend-level delta-debug is budgeted — the remaining unknown is
 strictly inside value-set analysis semantics.
 
+### Phase D partial (2026-04-20, session 2 continued)
+
+Read `src/pointer-analysis/value_set.cpp`. Identified two suspects, both
+ruled out as the primary cause:
+
+**Suspect 1**: value_sett::assign_rec for `is_index2t(lhs)` uses
+`add_to_sets=true` (weak update). Writes to `arr[i][j][k] = v` get recorded
+under suffix `".arr[][][]"` as a UNION, not a replace.
+
+*Ruled out*: the `*` entries exist in the value-set even in the PASSING
+`proof_3d_no_setat.sol` case. The `*` alone is not the failure mechanism.
+
+**Suspect 2**: value_sett::get_value_set_rec at line 617 handles
+`add2t`/`sub2t`. There's an explicit TODO at line 647-650: "The case that
+both, op0_set and op1_set, are non-empty is not handled, yet." When the
+analysis can't resolve an `add` expression, it falls to line 794 which
+inserts `unknown2tc(original_type)` into the dest (the `*` entry in output).
+
+*Tested*: Instrumented line 789 to dump the offending expression. Found
+unresolved exprs include `this->arr + 0`, `this->arr + 1`, `this->arr + 2`
+(from ctor `this->arr[i] = ...` lowered to `*(this->arr + i) = ...`). Also
+unresolved: `p + (signed long int)i` from numerous other contexts.
+
+*Ruled out*: Raw C++ (raw_3d_sol_exact.cpp, raw_3d_layout_mirror.cpp) show
+the IDENTICAL unresolved-add warnings (`c::0->arr + (signed long int)i`,
+`base::0->arr + 1`, etc.) and still PASS. The "unknown add" hit is
+universal, not Solidity-specific.
+
+**Concrete next-step candidates** (not tried — out of session budget):
+
+1. **SSA-trace both cases** with `--ssa-trace --symex-ssa-trace` and
+   diff the resulting SSA constraints at the `_ESBMC_element_null_check`
+   call in each. That tells us whether the SMT-level constraint is
+   different (indicating different symex-lowered form) vs value-set
+   interpretation of the same constraints is different.
+2. **Check `dereferencet::dereference` in src/pointer-analysis/dereference.cpp**
+   — the `from_array != 0` null-check inside `_ESBMC_arrcpy_2d` dereferences
+   `from_array` after cast. If the dereference resolves via a "fallback
+   unknown" path instead of the concrete pointer chain, that would explain
+   why only Solidity fails.
+3. **Compare L1/L2 renaming** of `base->arr` across the two frontends.
+   Solidity may rename it to a "wider" L2 variable at some point that
+   prevents value-set lookup.
+4. **Test with `--no-pointer-check`** — if this makes Solidity pass, the
+   issue is specifically in the pointer-null-check's implementation, not
+   in the actual alloc/read semantics.
+
+**Ruled out in this session**:
+- nil → typed-NONDET replacement in `assign_param_nondet` — doesn't help
+- public setAt dispatch widening — not the mechanism (ctor-only FAILS too)
+- symbolic vs concrete indices — both FAIL
+- struct layout mirroring — PASS in raw C++
+- Struct bit-copy `*c = *base` — tested H9 in original investigation, still fails
+- adding `*` in value-set — Present in BOTH passing and failing cases
+- `__ESBMC_assume(block != 0)` after calloc in `_ESBMC_alloc_array` — the assume
+  is an SMT-level constraint; value-set analysis runs before symex so doesn't see
+  it, and the spurious null branch in the value-set remains
+
+### Phase D finding: null-check is a false positive
+
+Experiment: comment out `_ESBMC_element_null_check(from_array != 0)` at
+solidity_array.c:199 (in `_ESBMC_arrcpy_2d`). Rebuild and rerun the failing
+3D Solidity test → **VERIFICATION SUCCESSFUL, 0 VCCs**.
+
+Implications:
+1. The `clone.get(0,0,0) == a` assertion is simplified to `true` during symex
+   — meaning the actual value-set resolution computes it correctly once the
+   null-check is out of the way.
+2. The null-check itself is over-conservative. It tests `from_array != 0`,
+   and value-set analysis has reported `from_array` (= `base->arr[0]`) may be
+   null on some path. SMT therefore finds the null branch SAT, fires the
+   assertion. But no real execution path produces null — it's an over-
+   approximation from value-set.
+
+The null value-set entry most likely comes from one of:
+- calloc's potential failure return (null) — tracked by value-set even under
+  `--force-malloc-success`, because that flag is symex-level not VSA-level.
+- A struct-copy (`*c = *base`) joining base's and clone's type-compatible
+  value-sets with null defaults.
+- A deref-chain widening where unresolved `ptr + const` falls to `unknown`
+  (line 794 in value_set.cpp) and `unknown` admits null.
+
+Raw C++ doesn't fire this check because `raw_3d_sol_exact.cpp` and
+`raw_3d_layout_mirror.cpp` implement their own `_arrcpy_2d` WITHOUT the
+`_ESBMC_element_null_check` call at the top. If they had it, they would
+likely fail too — given both have the `*` entry in the value-set as Phase B
+showed.
+
+### Session boundary
+
+Session 2 stopping point: the null-check false positive and its proximate
+cause (value-set admits null on the base->arr[i] read chain) are documented.
+A proper fix requires either:
+1. Making value-set analysis aware of symex-level assumes / `--force-malloc-success`
+   (large refactor, crosses analysis-phase boundaries).
+2. Library-level type-safe constructs that explicitly strip the null branch
+   from the return value-set (requires a primitive that value-set analysis
+   respects — `__ESBMC_assume` is not enough).
+3. Removing the `_ESBMC_element_null_check` from `_ESBMC_arrcpy_2d` and
+   relying on symex to catch real null dereferences — reduces precision of
+   the helper, might produce false negatives if callers pass genuinely-null.
+
+Option (3) is the least surgical and would unblock the 3D case, but it
+weakens the library's defensive contract. Not shipped this session without
+further review. User's "no workaround" directive makes (1) the only
+principled path forward, and (1) is a multi-session design change.
+
 ---
 
 ## TL;DR
