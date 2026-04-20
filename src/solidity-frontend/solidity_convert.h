@@ -684,6 +684,12 @@ protected:
     const exprt &clone_addr_expr,
     code_blockt &func_body);
 
+  // Predicate: does `t` contain any pointer-backed fixed array or any
+  // mapping_t field at any nesting depth?  Drives the decision in
+  // emit_clone_deep_copy_fixup between single-arrcpy (trivial element
+  // type) and compile-time-unrolled per-element recursion (non-trivial).
+  bool needs_clone_deep_fixup(const typet &t);
+
   // __ESOL_nondet_state_forward intrinsic helper: builds
   // `_ESBMC_state_forward_<c_name>(C *c)`.  Drives the *supplied*
   // instance in place through a bounded nondet-dispatch loop (no new

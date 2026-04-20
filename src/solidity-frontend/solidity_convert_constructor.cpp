@@ -1023,6 +1023,45 @@ bool solidity_convertert::build_tod_clone_helper(
   return false;
 }
 
+bool solidity_convertert::needs_clone_deep_fixup(const typet &t)
+{
+  // mapping_t struct: always needs retarget.
+  const std::string tid =
+    t.is_symbol() ? to_symbol_type(t).get_identifier().as_string()
+                  : t.get("identifier").as_string();
+  if (tid.find("mapping_t") != std::string::npos)
+    return true;
+
+  // Pointer-backed fixed-size array: always needs arrcpy (outer) +
+  // potential element-level recurse.
+  if (!t.get("#sol_array_size").empty() && t.is_pointer())
+    return true;
+
+  // Resolve symbol_type to its struct.
+  typet resolved = t;
+  if (resolved.is_symbol())
+  {
+    const symbolt *rs =
+      ns.lookup(to_symbol_type(resolved).get_identifier().as_string());
+    if (rs)
+      resolved = rs->type;
+  }
+  // Bytes struct / contract struct: do NOT recurse.  Bytes structs
+  // are value-semantics carriers whose scalars ride on the outer
+  // struct copy; contract structs represent external handles that
+  // are not owned by the cloner.
+  if (
+    resolved.is_struct() && !is_byte_type(resolved) &&
+    get_sol_type(resolved) != SolidityGrammar::SolType::CONTRACT)
+  {
+    const struct_typet &st = to_struct_type(resolved);
+    for (const auto &comp : st.components())
+      if (needs_clone_deep_fixup(comp.type()))
+        return true;
+  }
+  return false;
+}
+
 bool solidity_convertert::emit_clone_deep_copy_fixup(
   const exprt &dst_lvalue,
   const exprt &src_lvalue,
@@ -1033,7 +1072,10 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
   // The two shapes that actually need a fixup are:
   //   - pointer-backed fixed-size arrays (`#sol_array_size` set on a
   //     pointer type): *c = *base has copied only the pointer, so we
-  //     reallocate + element-copy into a fresh buffer;
+  //     reallocate + element-copy into a fresh buffer (via single
+  //     _ESBMC_arrcpy for trivial element types, or compile-time-
+  //     unrolled per-element recurse when the element needs its own
+  //     fixup);
   //   - mapping_t struct instances: retarget `.addr` to the clone's
   //     fresh $address so writes via the clone use a disjoint keyspace.
   //
@@ -1077,57 +1119,88 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
 
   // -- Case 2: fixed-size array pointer.  `#sol_array_size=N` is set
   //    on the pointer type itself at get_array_pointer_type() time.
-  //    Rebuild a fresh heap slab via _ESBMC_arrcpy for scalar elements
-  //    (handles uint256/int256/address/bool/bytesN bit-level copy).
-  //    For a pointer-element (nested fixed array of fixed arrays, or
-  //    array-of-pointer-to-struct), arrcpy does a bit-level memcpy,
-  //    which only propagates the inner pointer — aliasing reappears
-  //    one level down.  That case is documented as a follow-up; it's
-  //    what drives the `uint[M][N]` isolation tests into KNOWNBUG
-  //    territory until per-element recursion over the inner pointer
-  //    lands.
   const std::string sz_str = field_type.get("#sol_array_size").as_string();
   if (!sz_str.empty() && field_type.is_pointer())
   {
-    // N
+    const typet &elem_t = field_type.subtype();
     exprt size_expr = constant_exprt(
       integer2binary(string2integer(sz_str), bv_width(uint_type())),
       sz_str,
       uint_type());
-    // sizeof(E)
     exprt size_of_expr;
-    get_size_of_expr(field_type.subtype(), size_of_expr);
+    get_size_of_expr(elem_t, size_of_expr);
 
-    // _ESBMC_arrcpy(src, N, sizeof(E))
-    side_effect_expr_function_callt acpy_call;
-    get_arrcpy_function_call(locationt(), acpy_call);
-    acpy_call.arguments().push_back(src_lvalue);
-    acpy_call.arguments().push_back(size_expr);
-    acpy_call.arguments().push_back(size_of_expr);
-    solidity_gen_typecast(ns, acpy_call, field_type);
-    acpy_call.type().set("#sol_array_size", sz_str);
+    if (!needs_clone_deep_fixup(elem_t))
+    {
+      // Trivial element type (scalar, bytes struct, contract handle,
+      // or struct of same).  Single _ESBMC_arrcpy call.
+      side_effect_expr_function_callt acpy_call;
+      get_arrcpy_function_call(dst_lvalue.location(), acpy_call);
+      acpy_call.arguments().push_back(src_lvalue);
+      acpy_call.arguments().push_back(size_expr);
+      acpy_call.arguments().push_back(size_of_expr);
+      solidity_gen_typecast(ns, acpy_call, field_type);
+      acpy_call.type().set("#sol_array_size", sz_str);
+      code_assignt assign(dst_lvalue, acpy_call);
+      func_body.move_to_operands(assign);
+      return false;
+    }
 
-    code_assignt assign(dst_lvalue, acpy_call);
-    func_body.move_to_operands(assign);
+    // Non-trivial element type: calloc a fresh outer buffer, then
+    // compile-time-unrolled per-element copy + recurse.  This handles
+    // array-of-struct-with-mapping (where arrcpy's memcpy fallback
+    // would bit-copy mapping.addr and leave the clone aliasing base's
+    // keyspace) and nested fixed arrays (multi-dim) — the latter is
+    // only as sound as the ctor's nested-storage allocation; multi-
+    // dim inner rows are NOT ctor-allocated today, so multi-dim
+    // isolation remains KNOWNBUG at the ctor layer.
+    side_effect_expr_function_callt calc_call;
+    get_calloc_function_call(dst_lvalue.location(), calc_call);
+    calc_call.arguments().push_back(size_expr);
+    calc_call.arguments().push_back(size_of_expr);
+    solidity_gen_typecast(ns, calc_call, field_type);
+    calc_call.type().set("#sol_array_size", sz_str);
+    code_assignt alloc(dst_lvalue, calc_call);
+    func_body.move_to_operands(alloc);
+
+    unsigned long long N = 0;
+    try
+    {
+      N = std::stoull(sz_str);
+    }
+    catch (const std::exception &)
+    {
+      // Length unresolvable at compile time — fall back to no-op
+      // (no worse than pre-walker behaviour).
+      return false;
+    }
+
+    for (unsigned long long i = 0; i < N; i++)
+    {
+      exprt idx = from_integer(i, uint_type());
+      exprt dst_elem = index_exprt(dst_lvalue, idx, elem_t);
+      exprt src_elem = index_exprt(src_lvalue, idx, elem_t);
+      dst_elem.cmt_lvalue(true);
+      src_elem.cmt_lvalue(true);
+      // Element-level bit copy first (carries scalars that don't need
+      // fixup; the recurse below overrides any fixup-needing sub-field).
+      code_assignt elem_copy(dst_elem, src_elem);
+      func_body.move_to_operands(elem_copy);
+      if (emit_clone_deep_copy_fixup(
+            dst_elem, src_elem, elem_t, clone_addr_expr, func_body))
+        return true;
+    }
     return false;
   }
 
   // -- Case 3: inline user struct.  Recurse into each component.
-  //    Guard against bytes structs (BytesStatic/BytesDynamic) — those
-  //    are value-semantics carriers, the outer struct copy is already
-  //    correct (and their inner offset/length scalars would not benefit
-  //    from per-field traversal).  Guard against contract struct fields
-  //    (pointer-to-contract handles inside a contract are not a real
-  //    Solidity storage shape).
-  if (resolved.is_struct() && !is_byte_type(resolved))
+  //    Skip bytes structs (BytesStatic / BytesDynamic — value-
+  //    semantics carriers) and contract structs (external handles
+  //    that are not part of the cloner's state).
+  if (
+    resolved.is_struct() && !is_byte_type(resolved) &&
+    get_sol_type(resolved) != SolidityGrammar::SolType::CONTRACT)
   {
-    // Skip contract struct (sol:@C@...):  those should appear as
-    // pointer-to-struct on the Solidity side, so reaching here with a
-    // raw contract struct means something unusual.  Be conservative.
-    const std::string struct_tag = to_struct_type(resolved).tag().as_string();
-    if (struct_tag.rfind("sol:@C@", 0) == 0)
-      return false;
-
     const struct_typet &st = to_struct_type(resolved);
     for (const auto &comp : st.components())
     {
