@@ -1484,6 +1484,72 @@ void value_sett::do_end_function(const expr2tc &lhs)
   assign(lhs, rhs);
 }
 
+void value_sett::apply_assume(const expr2tc &guard)
+{
+  // Recognize `p != 0` / `0 != p` where `p` is a pointer-typed symbol (possibly
+  // under typecasts). For such guards, strip null-object and constant-zero
+  // entries from `p`'s value-set so subsequent pointer arithmetic (`p + 8`)
+  // doesn't produce `<0, 8, *, void>` entries for the impossible null branch.
+  //
+  // This is narrow on purpose: widening the handler to generic predicates
+  // (compound conditions, equality against concrete addresses, etc.) requires
+  // a theory-aware refinement that goes beyond what this fix needs. The
+  // `p != 0` shape covers the canonical library idiom `__ESBMC_assume(alloc
+  // != 0)` used to pin calloc's non-null branch in the value-set.
+  if (!is_notequal2t(guard))
+    return;
+  const notequal2t &ne = to_notequal2t(guard);
+  expr2tc lhs = ne.side_1;
+  expr2tc rhs = ne.side_2;
+
+  auto is_zero = [](expr2tc e) {
+    // Unwrap typecasts — `(void *)0` / `(T *)0` wraps the literal 0.
+    while (is_typecast2t(e))
+      e = to_typecast2t(e).from;
+    if (is_constant_int2t(e) && to_constant_int2t(e).value.is_zero())
+      return true;
+    // Null pointer representations also count as "zero".
+    if (is_null_object2t(e))
+      return true;
+    if (is_symbol2t(e) && to_symbol2t(e).thename == "NULL")
+      return true;
+    return false;
+  };
+  if (is_zero(lhs))
+    std::swap(lhs, rhs);
+  if (!is_zero(rhs))
+    return;
+
+  // Strip typecasts (e.g. `(void *)block != (void *)0`).
+  while (is_typecast2t(lhs))
+    lhs = to_typecast2t(lhs).from;
+
+  if (!is_pointer_type(lhs) || !is_symbol2t(lhs))
+    return;
+
+  const symbol2t &sym = to_symbol2t(lhs);
+  const std::string name = sym.get_symbol_name();
+  auto it = values.find(name);
+  if (it == values.end())
+    return;
+
+  object_mapt &map = it->second.object_map;
+  object_mapt new_map;
+  for (auto o_it = map.begin(); o_it != map.end(); ++o_it)
+  {
+    const expr2tc &obj = object_numbering[o_it->first];
+    // Null-pointer representations: strip them.
+    if (is_null_object2t(obj))
+      continue;
+    if (is_typecast2t(obj) && is_null_object2t(to_typecast2t(obj).from))
+      continue;
+    if (is_constant_int2t(obj) && to_constant_int2t(obj).value.is_zero())
+      continue;
+    set(new_map, o_it);
+  }
+  map = new_map;
+}
+
 void value_sett::apply_code(const expr2tc &code)
 {
   if (is_code_block2t(code))

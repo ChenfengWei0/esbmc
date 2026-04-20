@@ -271,6 +271,70 @@ weakens the library's defensive contract. Not shipped this session without
 further review. User's "no workaround" directive makes (1) the only
 principled path forward, and (1) is a multi-session design change.
 
+### Phase D RESOLVED: VSA ASSUME handler + library non-null assumes
+
+**Status as of this commit: 3D test flipped from KNOWNBUG to CORE.
+Full solidity regression 723/723 passes.**
+
+The principled fix turned out to be less invasive than session-2's pessimistic
+estimate. Two pieces:
+
+**1. VSA ASSUME handler.** `value_set_domaint::transform`
+(src/pointer-analysis/value_set_domain.cpp) previously had a `default: // do
+nothing` branch that silently discarded every ASSUME instruction. This meant
+any `__ESBMC_assume(p != 0)` you wrote was invisible to value-set analysis —
+it was a symex-level constraint only. Added a case for `ASSUME` that calls a
+new `value_sett::apply_assume(guard)`:
+
+```cpp
+case ASSUME:
+  value_set->apply_assume(from_l->guard);
+  break;
+```
+
+`apply_assume` recognises the `p != 0` / `0 != p` shape (stripping typecasts
+on both sides of the notequal2t, and accepting `null_object2t` / the
+literal NULL symbol in addition to constant-zero), then erases null-object
+and constant-zero entries from `p`'s value-set map. Everything else is left
+alone — narrow by design.
+
+**2. Library non-null assumes at the allocator and arrcpy boundaries.** The
+null entry was propagating into contract-struct arr fields from
+`_ESBMC_alloc_array`'s `calloc` return-null branch. VSA tracked the
+`(void *)(block + 1)` with both the real heap-object and the `<0, 8, void>`
+null-plus-offset result, and the latter stuck around across every subsequent
+assignment. Added `__ESBMC_assume(block != 0)` right after the allocator
+returns, so VSA prunes the null branch at the source. Same assume in
+`_ESBMC_arrcpy_2d` and `_ESBMC_arrcpy` on `from_array` — they prune the
+residual `*` entry that comes in via the cpp_new + NONDET-struct-tmp +
+struct-copy sequence the Solidity frontend emits for `new C()`.
+
+These two pieces compose: the VSA handler makes the assumes semantically
+meaningful, and the library-level assumes document the non-null contract
+at the points where VSA would otherwise over-approximate.
+
+**What we did NOT do:**
+- Did not add `_ESBMC_arrcpy_nd` or any generalised N-D helper (user
+  explicitly rejected as lazy fix).
+- Did not remove the 2D walker workaround (`_ESBMC_arrcpy_2d` call site
+  in `emit_clone_deep_copy_fixup`). Attempted removal but 2D regressed
+  even with the VSA fix in place — the per-slot + 1D-arrcpy path through
+  the general walker branch has additional issues beyond scope of this
+  session. Left as follow-up. The existing 2D workaround is still
+  load-bearing but no longer blocks 3D — 3D now just goes through the
+  same `_ESBMC_arrcpy_2d` helper at one level down with the null-branch
+  pruned by the new VSA handler.
+
+**Follow-up work (future session, optional cleanup):**
+- Investigate why the general `per-slot + _ESBMC_arrcpy` walker branch
+  still fails on 2D even after the VSA fix, with goal of eventually
+  removing the `_ESBMC_arrcpy_2d` dispatch from the walker entirely.
+- Extend `value_sett::apply_assume` to handle more guard shapes
+  (equality against specific addresses, compound predicates) as uses
+  materialise in the codebase.
+- Document the assume-to-VSA integration somewhere visible so future
+  library primitives adopt the pattern.
+
 ---
 
 ## TL;DR
