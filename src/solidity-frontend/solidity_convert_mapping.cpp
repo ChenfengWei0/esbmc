@@ -732,6 +732,17 @@ void solidity_convertert::get_arrcpy_function_call(
     calc_name, calc_id, symbol_expr(calc_sym).type(), loc, calc_call);
 }
 
+void solidity_convertert::get_arrcpy_2d_function_call(
+  const locationt &loc,
+  side_effect_expr_function_callt &calc_call)
+{
+  const std::string calc_name = "_ESBMC_arrcpy_2d";
+  const std::string calc_id = "c:@F@_ESBMC_arrcpy_2d";
+  const symbolt &calc_sym = *context.find_symbol(calc_id);
+  get_library_function_call_no_args(
+    calc_name, calc_id, symbol_expr(calc_sym).type(), loc, calc_call);
+}
+
 void solidity_convertert::get_str_assign_function_call(
   const locationt &loc,
   side_effect_expr_function_callt &_call)

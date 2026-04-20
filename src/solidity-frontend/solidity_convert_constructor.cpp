@@ -1165,6 +1165,56 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
       return false;
     }
 
+    // Multi-dim fixed array of scalar leaves (`uint[M][N]` and friends):
+    // use `_ESBMC_arrcpy_2d` for a single function-call emission.
+    // Emitting `c->grid = _ESBMC_alloc_array(N, 8)` followed by
+    // per-slot `c->grid[i] = _ESBMC_arrcpy(base->grid[i], M, elem_sz)`
+    // at the Solidity-frontend level broke symex value-set tracking:
+    // successive index writes to a freshly-reassigned pointer field
+    // didn't flow through to subsequent reads (see
+    // `esol_clone_multi_dim_knownbug` repro).  Wrapping the whole
+    // allocate+fill dance inside one C helper keeps every write inside
+    // a single function frame where symex handles it cleanly.
+    {
+      const typet &elem_t_outer = field_type.subtype();
+      const bool inner_is_ptr_backed =
+        !elem_t_outer.get("#sol_array_size").empty() &&
+        elem_t_outer.is_pointer();
+      if (inner_is_ptr_backed && !needs_clone_deep_fixup(elem_t_outer.subtype()))
+      {
+        const std::string inner_sz_str =
+          elem_t_outer.get("#sol_array_size").as_string();
+        unsigned long long inner_N = 0;
+        try
+        {
+          inner_N = std::stoull(inner_sz_str);
+        }
+        catch (const std::exception &)
+        {
+          inner_N = 0;
+        }
+        if (inner_N != 0)
+        {
+          exprt inner_size =
+            from_integer(inner_N, size_type());
+          exprt leaf_size_of_expr;
+          get_size_of_expr(elem_t_outer.subtype(), leaf_size_of_expr);
+
+          side_effect_expr_function_callt acpy2d_call;
+          get_arrcpy_2d_function_call(dst_lvalue.location(), acpy2d_call);
+          acpy2d_call.arguments().push_back(src_lvalue);
+          acpy2d_call.arguments().push_back(size_expr);     // outer count
+          acpy2d_call.arguments().push_back(inner_size);    // inner count
+          acpy2d_call.arguments().push_back(leaf_size_of_expr);
+          solidity_gen_typecast(ns, acpy2d_call, field_type);
+          acpy2d_call.type().set("#sol_array_size", sz_str);
+          code_assignt assign(dst_lvalue, acpy2d_call);
+          func_body.move_to_operands(assign);
+          return false;
+        }
+      }
+    }
+
     // Non-trivial element type: calloc a fresh outer buffer, then
     // compile-time-unrolled per-element copy + recurse.  This handles
     // array-of-struct-with-mapping (where arrcpy's memcpy fallback

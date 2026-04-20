@@ -471,6 +471,9 @@ protected:
   void get_arrcpy_function_call(
     const locationt &loc,
     side_effect_expr_function_callt &calc_call);
+  void get_arrcpy_2d_function_call(
+    const locationt &loc,
+    side_effect_expr_function_callt &calc_call);
   void get_str_assign_function_call(
     const locationt &loc,
     side_effect_expr_function_callt &_call);
