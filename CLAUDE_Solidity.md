@@ -386,6 +386,7 @@ fusion-protocol. Bug 10 fixed 2026-04-16 (KNOWNBUG promotion). Summary:
 | **13** | Cross-contract **single-level** mapping public-getter (`c.m(k)` via `c = new C()`) regressed when the combined-key scheme was applied uniformly: in-contract writes used the raw 256-bit key, but reads xor-folded it, so the two targeted different slots | `get_contract_member_call_expr`'s MAPPING branch applied `xor_fold_key_to_64bit` unconditionally while in-contract writes in `get_index_access_expr` kept the raw key for single-arg mappings | `solidity_convert_expr.cpp`: in the MAPPING branch, split single-level (no fold, raw key) vs nested (fold per level + combine) to match what the write side produces. Regressions: `cross_single_mapping_pass/fail` (commit `d4ab3f06c0`). |
 | **14** | Two structurally-identical contracts in the same cluster (`cname_set.size() > 1`) shared the same `_ESBMC_Object_<cname>` singleton storage via the cross-contract function-call dispatcher, but the public-mapping-getter read path indexed a *local* pointer's mapping → reads saw nothing because writes had already landed in the singleton | When `cname_set.size() > 1`, cross-contract function calls route through the dispatcher that executes against `_ESBMC_Object_<cname>`. The mapping-getter read used the local base pointer's storage, which is disjoint from the singleton the writes landed in | `solidity_convert_expr.cpp`: when `cname_set.size() > 1`, route mapping reads through `get_static_contract_instance_ref(base_cname, storage_base)` to the same singleton the dispatcher writes to. Regression: `tod_two_cname_mapping_fail` (commit `d4ab3f06c0`). |
 | **15** | Per-pointer polymorphism through `C(_addr)` cast missing — all `A1`-typed pointers collapsed onto the shared `_ESBMC_Object_A1` singleton because `_ESBMC_bind_cname` was a struct field on that singleton, so `A1 alias = A1(address(c2))` could not carry a binding different from any other A1 pointer. Mapping-getter reads through `alias.m(k)` routed to A1's (empty) storage instead of A2's (where `c2.set` landed), producing spurious `VERIFICATION FAILED` when comparing against `c2.m(k)`. | Singleton-level bind: `_ESBMC_bind_cname` was a component of `struct A1`, and every `A1*` dereferenced to the same singleton. No per-pointer storage existed. The cast `C(_addr)` additionally rewrote `_ESBMC_Object_A1.$address = _addr` globally, destroying any address-based dispatch scheme. | `solidity_convert_call.cpp`: two helpers `get_or_create_bind_shadow` / `get_bind_shadow_read` that create/look up a per-pointer `<var_id>$bind` symbol alongside the local. `solidity_convert_expr.cpp` (`new` path): writes the declared cname to BOTH the singleton field (kept for the legacy function-call dispatcher) AND the per-pointer shadow. `solidity_convert_expr.cpp` (`C(_addr)` path, `TypeConversionExpression` CONTRACT target): writes only the shadow — prefers shadow-propagation when the argument is `address(<local_var>)` (copies the source local's shadow), else falls back to an address-match if-ladder over singletons for multi-contract mode. `solidity_convert_expr.cpp` mapping-getter polymorphism: when `cname_set.size() > 1` and `base` has a shadow, emits an `if_exprt` ladder keyed on the shadow so `alias.m(k)` reads the correct singleton. Regressions: `tod_bind_polymorphism_mapping_pass/fail`. |
+| **16** | 3D `__ESOL_deep_copy` (`uint256[M][N][K]` clone) fired spurious `_ESBMC_element_null_check` at the top of `_ESBMC_arrcpy_2d(base->arr[i], ...)` inside the clone walker's per-slot emission. raw C/C++ equivalents with identical GOTO shape verified successfully, so the break was in the Solidity frontend + VSA interaction rather than backend handling of the pattern. | `value_set_domaint::transform` had a `default: // do nothing` branch that silently dropped every ASSUME instruction, so any `__ESBMC_assume(p != 0)` was invisible to VSA. Meanwhile `_ESBMC_alloc_array`'s calloc-can-return-NULL branch produced a `<0, 8, void>` (null-plus-offset) entry in the points-to set that propagated through every struct-pointer field via the cpp_new + NONDET-struct-tmp + struct-copy sequence the frontend emits for `new C()`. SMT then found the null branch SAT on reads of `base->arr[i]` through the clone's `_ESBMC_arrcpy_2d` call. | **VSA ASSUME handler** — `value_set_domain.cpp` dispatches on ASSUME; new `value_sett::apply_assume` in `value_set.cpp`/`value_set.h` handles `p != 0` shapes by stripping null-object / constant-zero entries. **Library non-null contracts** — `__ESBMC_assume(block != 0)` after calloc/malloc in `_ESBMC_alloc_array` / `_ESBMC_alloc_array_sym`, and `__ESBMC_assume(from_array != 0)` in `_ESBMC_arrcpy` / `_ESBMC_arrcpy_2d`. Regression flipped: `esol_clone_multi_dim_3d_knownbug` → `esol_clone_multi_dim_3d_pass` (CORE). Full trace in `regression/esbmc-solidity/esol_clone_multi_dim_pass/INVESTIGATION.md`. Commit `9af9744e32`. |
 
 ### Remaining Known Issue
 
@@ -401,6 +402,52 @@ fusion-protocol. Bug 10 fixed 2026-04-16 (KNOWNBUG promotion). Summary:
 
 - **No floating-point in Solidity pipeline:** sol64.goto is compiled with `--fixedbv` (CMakeLists.txt:249), but the Solidity frontend no longer generates any float/fixedbv types. The `--fixedbv` runtime flag is unnecessary for Solidity and should NOT be forced on — it has no performance benefit and risks side effects in shared code paths.
 - **`_ExtInt` struct alignment:** `_ExtInt(N)` types in C structs require bitfield notation (`: N`) to avoid `ext_int_pad` name collisions from ESBMC's padding logic (`padding.cpp:116-131`). Use `__attribute__((packed))` to prevent alignment padding on top of bitfields.
+
+### VSA ASSUME integration — `__ESBMC_assume` is a VSA hint
+
+`value_set_domaint::transform` now dispatches on ASSUME and calls
+`value_sett::apply_assume(guard)` (2026-04-20). Previously ASSUME fell
+through a `default: // do nothing` branch, meaning VSA silently ignored
+every path constraint and treated `__ESBMC_assume(p != 0)` as a no-op at
+the static-analysis layer — useful for symex but invisible to VSA.
+
+`apply_assume` currently recognises a narrow-by-design set of guards:
+
+- `p != 0` / `0 != p` where `p` is a pointer-typed symbol. Strips
+  `null_object2t`, typecast-of-null, and constant-zero entries from the
+  points-to set of `p` (unwraps typecasts on both sides; accepts literal
+  NULL symbol as zero).
+
+Everything else is a no-op. Extend the handler when new guard shapes
+materialise (equality against specific allocations, compound
+predicates, etc.).
+
+**When to reach for this in library code.** If a c2goto operational
+model returns a pointer that is contractually non-NULL, or accepts one
+in a parameter, write `__ESBMC_assume(<non-null>)` at the boundary.
+Without this, VSA admits the null branch through every downstream read
+and subtly poisons points-to sets for struct-pointer fields. Canonical
+examples carrying the assume:
+
+- `_ESBMC_alloc_array` / `_ESBMC_alloc_array_sym` — assume
+  `block != 0` right after the calloc/malloc.
+- `_ESBMC_arrcpy` / `_ESBMC_arrcpy_2d` — assume `from_array != 0`
+  at the top of the body.
+
+**What this fixed.** The 3D `__ESOL_deep_copy` case (`esol_clone_multi_dim_3d_pass`) previously failed because VSA
+admitted `<0, 8, void>` (null-plus-offset from calloc-fails-returns-NULL) in every downstream struct-field points-to set, which then let SMT find a null branch in the `_ESBMC_element_null_check` at the top of `_ESBMC_arrcpy_2d`. The assume handler + library-level `__ESBMC_assume` pair collapse that branch at the source. See `regression/esbmc-solidity/esol_clone_multi_dim_pass/INVESTIGATION.md` for the full investigation.
+
+### __ESOL_deep_copy walker emission for multi-dim fixed arrays
+
+`emit_clone_deep_copy_fixup` in `solidity_convert_constructor.cpp` has
+two shapes for fixed arrays of scalar leaves:
+
+- **2D `uint256[M][N]`**: single `c->grid = _ESBMC_arrcpy_2d(base->grid, M, N, 32)` call. One function frame; no per-slot writes at the frontend level.
+- **3D+ `uint256[M][N][K]`**: outer `_ESBMC_alloc_array` + per-slot `_ESBMC_arrcpy_2d(base->arr[i], ...)` at the outermost layer (so the inner two layers collapse into the 2D helper, outermost layer per-slot).
+
+Both shapes now pass. 3D's outer per-slot pattern was historically the failing case; the VSA ASSUME fix above closed it.
+
+**Technical-debt note (2026-04-20).** The 2D `_ESBMC_arrcpy_2d` dispatch was originally shipped as a lazy fix (commit `24c365b04e`) when the per-slot-through-1D-arrcpy alternative was known to break value-set tracking. The VSA ASSUME handler was supposed to also unblock that alternative, letting us remove the 2D dispatch and unify on per-slot. **Attempted, reverted** — 2D regresses through an unrelated value-set issue in the `_ESBMC_alloc_array` + per-slot-`_ESBMC_arrcpy` combo that the current handler doesn't address. Follow-up: debug and remove the 2D dispatch so the walker's emission is uniform across depths.
 
 ## Approximation Ledger (soundness & completeness trade-offs)
 
