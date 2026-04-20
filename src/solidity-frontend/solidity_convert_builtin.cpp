@@ -464,10 +464,36 @@ void solidity_convertert::get_aux_property_function(
     _block.move_to_operands(if_expr);
   }
 
-  // return nondet_uint
-  code_returnt ret_uint;
-  ret_uint.return_value() = nondet_uint_expr;
-  _block.move_to_operands(ret_uint);
+  // For `balance`, fall through to the EOA balance map: addresses that
+  // do not match any tracked _ESBMC_Object_<C> are EOAs and their ETH
+  // balance lives in `sol_eoa_balance_array` (credited by the
+  // EOA-fallback in get_transfer_definition / get_send_definition).
+  // The map auto-allocates a slot with nondet initial balance on first
+  // sight, so unsighted addresses still over-approximate.
+  //
+  // For other properties (`code`, `codehash`, `address`) we keep the
+  // nondet_uint fallback — those have no equivalent persistent map and
+  // a fresh nondet remains the right over-approximation.
+  if (property_name == "balance")
+  {
+    side_effect_expr_function_callt eoa_call;
+    get_library_function_call_no_args(
+      "_ESBMC_eoa_balance_of",
+      "c:@F@_ESBMC_eoa_balance_of",
+      return_t,
+      loc,
+      eoa_call);
+    eoa_call.arguments().push_back(addr_expr);
+    code_returnt ret_eoa;
+    ret_eoa.return_value() = eoa_call;
+    _block.move_to_operands(ret_eoa);
+  }
+  else
+  {
+    code_returnt ret_uint;
+    ret_uint.return_value() = nondet_uint_expr;
+    _block.move_to_operands(ret_uint);
+  }
 
   // populate body
   added_symbol.value = _block;

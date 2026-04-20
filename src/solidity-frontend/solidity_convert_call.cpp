@@ -3367,11 +3367,11 @@ bool solidity_convertert::get_transfer_definition(
 
   // EOA / unknown-recipient fallback.  Real EVM `transfer(addr, val)`
   // moves `val` out of the sender regardless of whether the recipient
-  // is a tracked contract, an EOA, or an unknown address.  The model
-  // used to fall through to `return false` when no known contract
-  // matched, leaving sender's $balance untouched.  Deduct on fallback
-  // to keep sender-side balance accounting sound for value flowing to
-  // EOAs; no credit to any recipient (EOAs aren't modelled).
+  // is a tracked contract, an EOA, or an unknown address.  Deduct from
+  // sender, then credit the recipient's slot in the global EOA balance
+  // map (`_ESBMC_eoa_credit`) so a subsequent `addr.balance` read sees
+  // the new value.  This is what unlocks order-sensitive properties on
+  // recipient balances (e.g. SolidiFI TOD-Balance pattern A).
   //
   // We do NOT `assume(this.balance >= _val)` on this path — doing so
   // intersects SSA guards with the other branches and, empirically,
@@ -3386,6 +3386,19 @@ bool solidity_convertert::get_transfer_definition(
     sub_assign.copy_to_operands(this_balance, val_expr);
     convert_expression_to_code(sub_assign);
     func_body.move_to_operands(sub_assign);
+
+    // _ESBMC_eoa_credit(_addr, _val);
+    side_effect_expr_function_callt eoa_credit;
+    get_library_function_call_no_args(
+      "_ESBMC_eoa_credit",
+      "c:@F@_ESBMC_eoa_credit",
+      empty_typet(),
+      locationt(),
+      eoa_credit);
+    eoa_credit.arguments().push_back(addr_expr);
+    eoa_credit.arguments().push_back(val_expr);
+    convert_expression_to_code(eoa_credit);
+    func_body.move_to_operands(eoa_credit);
 
     // return true;
     code_returnt return_expr;
@@ -3617,18 +3630,31 @@ bool solidity_convertert::get_send_definition(
   }
 
   // EOA / unknown-recipient fallback for `send`.  Same shape as
-  // transfer: deduct from sender, no credit (we can't model the EOA),
-  // and do NOT `assume(this.balance >= _val)` here — see the note in
-  // get_transfer_definition.  send's bool return is always `true` on
-  // this path; users checking for false-on-failure will still see it
-  // when the recipient matches a tracked contract without a payable
-  // receive.
+  // transfer: deduct from sender, credit recipient via the global EOA
+  // balance map.  See note in get_transfer_definition.  send's bool
+  // return is always `true` on this path; users checking for false-on-
+  // failure will still see it when the recipient matches a tracked
+  // contract without a payable receive (handled in the per-contract
+  // dispatch above).
   {
     // this->$balance -= _val;
     exprt sub_assign = side_effect_exprt("assign-", val_t);
     sub_assign.copy_to_operands(this_balance, val_expr);
     convert_expression_to_code(sub_assign);
     func_body.move_to_operands(sub_assign);
+
+    // _ESBMC_eoa_credit(_addr, _val);
+    side_effect_expr_function_callt eoa_credit;
+    get_library_function_call_no_args(
+      "_ESBMC_eoa_credit",
+      "c:@F@_ESBMC_eoa_credit",
+      empty_typet(),
+      locationt(),
+      eoa_credit);
+    eoa_credit.arguments().push_back(addr_expr);
+    eoa_credit.arguments().push_back(val_expr);
+    convert_expression_to_code(eoa_credit);
+    func_body.move_to_operands(eoa_credit);
 
     // return true;
     code_returnt ret_true;

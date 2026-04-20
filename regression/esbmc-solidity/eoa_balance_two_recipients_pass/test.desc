@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Bal --bound --unwind 3 --no-unwinding-assertions --no-standard-checks
+^VERIFICATION SUCCESSFUL$

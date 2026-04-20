@@ -190,6 +190,18 @@ A simplified ERC20 model is available at `regression/esbmc-solidity/ERC20.sol` f
 
 Note: always use `--contract` (with optional `--focus-function`) to keep the constructor in scope.
 
+## EOA Balance Modeling (--bound mode)
+
+Under `--bound`, ETH balances of non-tracked recipients (EOAs and any `address payable` value the user constructs) are tracked in a global map, so that `recipient.balance` reads see credits from prior `transfer`/`send` calls.
+
+- **Write side**: the EOA fallback in `get_transfer_definition` / `get_send_definition` (src/solidity-frontend/solidity_convert_call.cpp) deducts from the sender's `$balance` AND credits the recipient via `_ESBMC_eoa_credit(addr, val)`. Tracked contract instances (`_ESBMC_Object_<C>`) still take precedence via the per-contract dispatch tree; the EOA credit only fires when the recipient address matches no tracked `$address`.
+- **Read side**: `get_aux_property_function` (src/solidity-frontend/solidity_convert_builtin.cpp) for `property_name == "balance"` falls through to `_ESBMC_eoa_balance_of(addr)` when no tracked contract matches. Other properties (`code`, `codehash`, `address`) keep the `nondet_uint` fallback — they have no equivalent persistent map.
+- **Model internals** (src/c2goto/library/solidity/solidity_address.c): parallel `__ESBMC_inf_size` arrays `sol_eoa_addr_array[]`, `sol_eoa_balance_array[]` plus counter `sol_eoa_max_cnt`. Linear-scan lookup via `_ESBMC_eoa_get_idx`; find-or-insert via `_ESBMC_eoa_get_or_init` (new slots get a nondet initial balance — sound over-approximation of a real EOA's pre-existing balance).
+- **Unwind requirement**: `--unwind N` where N ≥ number of distinct EOA addresses touched on any path, because the lookup loop iterates over `sol_eoa_max_cnt`.
+- **Unbound mode**: EOA credit still fires (since `transfer/send` always route through the bound model for value-moving builtins), but unbound-mode balance reads for unknown addresses short-circuit to a fresh `nondet_uint` before reaching `get_aux_property_function`. Enable `--bound` for end-to-end write→read round-tripping.
+- **User-side pin**: to make a test deterministic, `require(addr.balance == 0)` (or any constant) before the first transfer. The first read allocates the slot with a nondet initial balance; the require collapses it.
+- **Regression tests**: `regression/esbmc-solidity/eoa_balance_{credit,two_recipients}_{pass,fail}` — two PASS, two FAIL, all under `--bound`, all independent of TOD harness machinery.
+
 ## Code Style
 
 - **C++**: Clang-format (Clang 11), Allman braces, 80-col limit, 2-space indent, no tabs. Config in `.clang-format`.

@@ -25,6 +25,7 @@ extern uint256_t block_prevrandao;
 extern uint256_t block_timestamp;
 extern unsigned int _gaslimit;
 extern unsigned int sol_max_cnt;
+extern unsigned int sol_eoa_max_cnt;
 extern unsigned int esbmc_array_count;
 
 uint256_t _max(unsigned int bitwidth, bool is_signed)
