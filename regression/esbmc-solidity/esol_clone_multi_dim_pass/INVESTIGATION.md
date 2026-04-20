@@ -118,6 +118,52 @@ Phase D candidates:
 **Do NOT** extend `_ESBMC_arrcpy_2d` to 3D (`_ESBMC_arrcpy_nd`). That is a
 lazy-fix (option C in §11) — user explicitly rejected.
 
+### Phase B delta-debug table (2026-04-20, session 2)
+
+All variants of the base Solidity contract tested under
+`--contract H --bound --unwind 3 --no-unwinding-assertions --no-standard-checks --cvc5 --force-malloc-success`.
+
+| Variant | Description | Verdict |
+|---|---|---|
+| `proof_3d.sol` | Full original — public `setAt(i,j,k,v)` with symbolic indices, public `get(i,j,k)`, `__ESOL_deep_copy` call | FAIL |
+| `proof_3d_internal_setAt.sol` | `_setAt` internal + `setAt` public forwarder | FAIL (wrapper still in dispatcher) |
+| `proof_3d_fixed_idx.sol` | Public `setValue(v)` writes `arr[0][0][0]=v` (concrete indices), same clone | FAIL — disproves "symbolic index is the trigger" |
+| `proof_3d_ctor_only.sol` | No public writer at all — ctor does `arr[0][0][0]=a`, public getter, clone call | FAIL — disproves "dispatcher is the trigger" |
+| `proof_3d_no_arr_write.sol` | Public writer touches an unrelated storage var (not `arr`) | PASS — isolates trigger to "some write targets `arr`" |
+| `proof_3d_no_setat.sol` | No write to `arr` anywhere — ctor doesn't write, no public setter, just `public arr` auto-getter + clone call | PASS |
+| `proof_3d_no_clone.sol` | Ctor writes `arr[0][0][0]=a`, public getter, NO `__ESOL_deep_copy` call | PASS — confirms clone is part of the chain |
+
+Narrowed trigger (confirmed): **(any write to `arr` at any depth) AND (`__ESOL_deep_copy` invocation emitting the (A)+(B)+(C) pattern)**.
+
+The write can be from ctor or public method; the index can be concrete or
+symbolic. Removing either leg of the AND restores correctness. Neither the
+Nondet_Extcall dispatcher nor symbolic indices are necessary — the walker's
+emitted `c->arr = alloc_array(...)` + `c->arr[i] = arrcpy_2d(...)` +
+`base->arr[0]` read chain interacts badly with ANY prior write path into
+`arr` of the same type.
+
+### Updated next-step prioritisation
+
+The delta-debug pushes suspicion firmly toward `src/pointer-analysis/value_set.cpp`
+— specifically its handling of struct-field-pointer assignments under the
+`*c = *base` bit-copy path when both `c` and `base` are contract-typed heap
+objects and one of them previously had a dereference-chain element write.
+
+Concrete next actions:
+1. Trace `value_sett::assign` for the `*_ESBMC_clone_c_C = *_ESBMC_clone_base_C`
+   instruction — does it propagate `base->arr`'s value-set verbatim, or does
+   it widen on the struct-type match?
+2. Trace `value_sett::get_value_set_rec` for the subsequent
+   `c->arr = _ESBMC_alloc_array(3, 8)` — does this STRONG-update the value-set
+   (replace), or WEAK-update (union with prior)?
+3. Likely-defect: the struct-bit-copy at step 1 is weak-updating the field
+   value-set, so the subsequent strong assign in step 2 merges rather than
+   replaces. Once merged, the `{prior alloc, *}` entries from base stick
+   around.
+
+No more frontend-level delta-debug is budgeted — the remaining unknown is
+strictly inside value-set analysis semantics.
+
 ---
 
 ## TL;DR
