@@ -335,6 +335,71 @@ at the points where VSA would otherwise over-approximate.
 - Document the assume-to-VSA integration somewhere visible so future
   library primitives adopt the pattern.
 
+### Phase E session (2026-04-20): dispatch-removal attempts, all reverted
+
+Three concrete approaches to remove the `_ESBMC_arrcpy_2d` dispatch
+and unify the walker on the per-slot path were tried in this session.
+All reverted.
+
+**(E1) Replace `u256` element-copy loop in `_ESBMC_arrcpy` with
+`__builtin_memcpy`.** Hypothesis: byte-level copy avoids VSA widening
+through imprecise `base->grid[i]` reads. Result: 2D/3D multi_dim tests
+pass cleanly (2D 0.8s, 3D 3.2s) but 1D isolation tests
+(`esol_clone_fixed_array_isolation_{pass,fail}`) regress — both tests
+now report VERIFICATION SUCCESSFUL regardless of which of `clone.get(1)
+== a` or `clone.get(1) == b` is asserted, because the user assertion is
+sliced from the VCC set entirely (generated 4 VCCs, all are
+`_ESBMC_element_null_check`; no user-assertion VCC emitted). The
+`__ESBMC_memcpy` intrinsic's SMT encoding doesn't produce a per-element
+value chain that the slicer recognises as a property-relevant
+assignment — so the chain from `clone.get(1)` back to `base.arr[1]`
+(set to `a`) is cut. Pass test accidentally passes (no VCC = no check);
+fail test also passes (no VCC) when it should FAIL. Worse than the
+original failure mode because both pass/fail duals collapse to
+trivially-SUCCESSFUL and the test no longer exercises the property.
+
+**(E2) Extend `value_sett::apply_assume` to strip `is_unknown2t` and
+`is_invalid2t` entries in addition to null/zero.** Hypothesis:
+`from_array`'s VSA set had `{*, *, *, *}` (four unknown entries) at the
+arrcpy entry; stripping `*` post-assume would sharpen dereferences
+inside the loop. Result: VSA output confirmed the `*` entries in
+`from_array`'s individual symbol entry but 2D still fails — the
+assertion-violating reads are through `c->grid[0]` where the `*` lives
+in `dynamic_object_outer[]` (the array-aggregate backing of the outer
+buffer), which is keyed as `values[name + "[]"]` in VSA's map.
+`apply_assume` only walks `values[name]` keyed by the symbol itself, so
+it never touches the `[]`-suffix aggregate entry. The widened entries
+in that aggregate come from a different mechanism (calloc's zero-init
+fill producing `*` entries for void-typed content) and need a
+different intervention.
+
+**(E3) Per-constant-index VSA suffix scheme (`[N]` for constants, `[]`
+for symbolic, union on read).** NOT attempted — this is the actual
+principled fix, but requires coordinated changes in `assign_rec` (use
+`[N]` suffix for constant-indexed writes with strong update),
+`get_value_set_rec` (constant-index reads look up both `[N]` and `[]`
+and union them; symbolic-index reads iterate every `[k]` entry plus
+`[]`), and a compatibility-check pass against every existing test that
+depends on the current aggregate-only scheme. Too invasive for a
+single session; queued as a future VSA refactor.
+
+**Root-cause crystallisation.** The real underlying bug is VSA's
+weak-update of indexed writes conflating writes at DISTINCT constant
+indices into a single `[]` aggregate. When base's ctor does `grid[0] =
+alloc_0; grid[1] = alloc_1; grid[2] = alloc_2` with concrete indices,
+VSA produces `grid[] = {alloc_0, alloc_1, alloc_2}` instead of per-index
+precision. Reads of `grid[0]` return the full union. When calloc's
+initial zero-fill contributes `*` entries, those merge in too. In the
+walker's per-slot emission, the arrcpy call's VSA widening through this
+union-entry is the observed imprecision. `_ESBMC_arrcpy_2d` avoids the
+heap-field aggregate entirely by doing the per-slot work inside a
+helper-local `dst_outer` pointer, whose VSA entry is flat and doesn't
+merge with the struct's `[]` aggregate.
+
+Until (E3) ships, `_ESBMC_arrcpy_2d` is load-bearing, not tech debt.
+Revised framing in `CLAUDE_Solidity.md` §"__ESOL_deep_copy walker
+emission" reflects this.
+
 ---
 
 ## TL;DR
