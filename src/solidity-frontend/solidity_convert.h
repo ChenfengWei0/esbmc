@@ -690,6 +690,34 @@ protected:
   // type) and compile-time-unrolled per-element recursion (non-trivial).
   bool needs_clone_deep_fixup(const typet &t);
 
+  // Phase 2 mirror walker: recursively initialize nested pointer-backed
+  // storage in a state-var after its top-level assignment.  The existing
+  // state-var decl path only calloc's the OUTERMOST pointer (e.g. for
+  // `uint256[M][N] grid`, only the outer N-slot array of pointers is
+  // allocated; the inner M-row buffers stay NULL).  For struct-inline
+  // fields (e.g. `struct B { uint256[K] cells; } B bx;`), the struct is
+  // zero-initialised, leaving `bx.cells == NULL`.  This walker posts
+  // inner-level calloc's so the clone walker's per-element arrcpy sees
+  // valid source buffers.
+  //
+  // Called from `move_initializer_to_ctor` right after each state-var
+  // assignment, so the sequence becomes:
+  //   this->grid  = calloc(N, sizeof(uint256*));        // existing
+  //   this->grid[0] = calloc(M, sizeof(uint256));       // walker
+  //   this->grid[1] = calloc(M, sizeof(uint256));       // walker
+  //   ...
+  //   this->bx.cells = calloc(K, sizeof(uint256));      // walker
+  bool emit_ctor_deep_init_fixup(
+    const exprt &lvalue,
+    const typet &field_type,
+    code_blockt &out_block);
+
+  // Predicate: does `t` contain a pointer-backed fixed-size array at
+  // any nesting depth?  Gates whether emit_ctor_deep_init_fixup has any
+  // work to do.  Scalars, bytes structs, contract handles, and dyn-array
+  // state vars (globals, not struct members) never need it.
+  bool needs_ctor_deep_init(const typet &t);
+
   // __ESOL_nondet_state_forward intrinsic helper: builds
   // `_ESBMC_state_forward_<c_name>(C *c)`.  Drives the *supplied*
   // instance in place through a bounded nondet-dispatch loop (no new

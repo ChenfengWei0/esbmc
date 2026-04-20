@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0;
 
-// KNOWNBUG: struct containing a fixed-size array.  Post-clone equality
-// fails in the current frontend because `*c = *base` at the GOTO level
-// doesn't propagate the nested array's backing-store contents — the
-// inner uint256[2] `cells` field ends up as a dangling or nondet slot
-// in the clone struct.  Works for top-level `uint256[N]` (passes in
-// esol_clone_fixed_array_pass) because that form's per-instance pool
-// setup is done during `new C()`, but nested-struct-array init isn't
-// reached.  Fix requires extending build_tod_clone_helper to emit an
-// explicit per-nested-array element copy after the whole-struct
-// assignment, OR fixing the ctor to pre-initialise nested-struct
-// arrays.  Tracked here until either fix lands.
+// Struct containing a fixed-size array — post-clone equality holds.
+// This exercises two pieces that had to ship together:
+//   1. Phase 2 ctor walker (emit_ctor_deep_init_fixup) recursively
+//      calloc's nested pointer-backed storage.  For this test it emits
+//      `this->bx.cells = _ESBMC_alloc_array(2, 32)` in C's ctor, so
+//      `base->bx.cells` is a valid buffer before setCells() writes to
+//      it — previously bx.cells stayed NULL and the write went to
+//      nondet memory.
+//   2. Phase 1 clone walker (emit_clone_deep_copy_fixup) recurses into
+//      the inline `bx` struct, emits `_ESBMC_arrcpy(base->bx.cells, 2,
+//      32)` for the fixed-array sub-field, and skips the nested
+//      `struct Box {...}` TYPE DECLARATION that Solidity stores as a
+//      component of the outer contract struct — that type-decl has
+//      `type.id()=="struct"` and no storage slot, so treating it as a
+//      field would generate a malformed `base->.cells` access.
 function __ESOL_deep_copy(C src) pure returns (C) { return src; }
 
 contract C {

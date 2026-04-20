@@ -1,26 +1,27 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0;
-// KNOWNBUG: multi-dim fixed array `uint256[M][N]` does not round-trip
-// correctly under the ctor model even in the SINGLE-INSTANCE case
-// across two separate contract instances.  `new C()` calloc's only
-// the outer pointer array (N slots of `uint256*`); the inner M-row
-// buffers are left unallocated.  Writes through `c.grid[i][j]`
-// succeed (under `--no-standard-checks`) to a nondet location but
-// subsequent reads from a DIFFERENT contract instance against an
-// uninitialised inner pointer return nondet values.
+// KNOWNBUG: multi-dim fixed array `uint256[M][N]` post-clone read
+// still fails on the CLONE side even after Phase 2 ctor-side init
+// lands.  Status after Phase 2:
+//   - `new C()` now recursively calloc's both outer AND inner rows
+//     (Phase 2 walker emits `this->grid[i] = calloc(M, 32)` for each
+//     outer slot), so SAME-instance `base.setAt(0,0,a); base.get(0,0)
+//     == a` passes (esol_clone_multi_dim_base_pass, if present).
+//   - Phase 1 clone walker correctly unrolls the per-slot
+//     `_ESBMC_arrcpy(base->grid[i], M, 32)` and assigns to
+//     `clone->grid[i]`.
+//   - But the final read `clone.get(0,0) == a` still reads nondet/0
+//     under symex.  Suspected root cause is in ESBMC's heap/pointer
+//     model for nested pointer-of-pointer state fields after the
+//     `*clone_c = *base` bit-copy followed by per-slot arrcpy
+//     overwrites; the 1D case (esol_clone_fixed_array_isolation_pass)
+//     works fine, so the regression is specific to inner-row arrcpy
+//     visibility across the fresh outer allocation.
 //
-// The deep-copy walker (Phase 1) correctly reallocates the OUTER
-// array via _ESBMC_arrcpy and, when needs_clone_deep_fixup detects
-// the non-scalar element type, unrolls per-element recursion.  The
-// recursion, however, relies on base's inner rows being valid — and
-// they aren't.  The underlying fix is to extend the ctor so it
-// recursively calloc's nested pointer-backed storage for every
-// state-var field.
-//
-// This test documents the current state by asserting a property that
-// WOULD hold if the ctor were fixed (cross-instance isolation of an
-// unwritten cell reads 0), so it flips from KNOWNBUG to PASS once
-// that fix lands.
+// Scope note: this is NOT a ctor-layer bug anymore — Phase 2 closed
+// that side.  It is a symex / heap-model follow-up tracked here until
+// the root cause in goto-symex (or in _ESBMC_arrcpy's element-copy
+// routing) is nailed down.
 function __ESOL_deep_copy(C src) pure returns (C) { return src; }
 
 contract C {

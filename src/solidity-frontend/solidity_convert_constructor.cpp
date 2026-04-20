@@ -980,7 +980,20 @@ bool solidity_convertert::build_tod_clone_helper(
     const struct_typet &st = to_struct_type(struct_sym->type);
     for (const auto &comp : st.components())
     {
+      // Skip nested type declarations (e.g. a nested `struct Box {...}`
+      // def appears as a component of the outer contract struct with a
+      // raw `struct` type — whereas a real FIELD of struct type always
+      // goes through a symbol_type indirection since Solidity structs
+      // are named types).  Those components are type declarations, not
+      // fields — iterating into them would produce malformed
+      // `this->.sub` member accesses because they have no storage slot.
+      if (comp.type().id() == "struct")
+        continue;
+      if (comp.is_type())
+        continue;
       const irep_idt &comp_name = comp.get_name();
+      if (comp_name.empty())
+        continue;
       const typet &comp_type = comp.type();
       exprt dst_field = member_exprt(c_deref, comp_name, comp_type);
       exprt src_field = member_exprt(base_deref, comp_name, comp_type);
@@ -1056,8 +1069,14 @@ bool solidity_convertert::needs_clone_deep_fixup(const typet &t)
   {
     const struct_typet &st = to_struct_type(resolved);
     for (const auto &comp : st.components())
+    {
+      if (
+        comp.type().id() == "struct" || comp.is_type() ||
+        comp.get_name().empty())
+        continue;
       if (needs_clone_deep_fixup(comp.type()))
         return true;
+    }
   }
   return false;
 }
@@ -1204,7 +1223,11 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
     const struct_typet &st = to_struct_type(resolved);
     for (const auto &comp : st.components())
     {
+      if (comp.type().id() == "struct" || comp.is_type())
+        continue; // nested type-decl, not a real field.
       const irep_idt &comp_name = comp.get_name();
+      if (comp_name.empty())
+        continue; // anonymous padding.
       const typet &ct = comp.type();
       exprt dst_sub = member_exprt(dst_lvalue, comp_name, ct);
       exprt src_sub = member_exprt(src_lvalue, comp_name, ct);
@@ -1220,6 +1243,218 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
   // -- Default: scalar / bytes struct / contract handle / dyn-array
   //    state-var pointer (not a struct member).  Outer struct copy
   //    already did the right thing.
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: ctor-side recursive init walker
+// ---------------------------------------------------------------------------
+//
+// Mirror of emit_clone_deep_copy_fixup, but for the *initial* state-var
+// assignment in a contract constructor.  Rationale:
+//
+// The state-var-decl path (solidity_convert_decl.cpp) emits a single
+// `_ESBMC_calloc(N, sizeof(elem))` for a top-level pointer-backed
+// fixed-size-array state var.  That is the OUTER layer.  When `elem` is
+// itself pointer-backed (multi-dim `uint[M][N]`) the inner M-row buffers
+// stay NULL — writes through them only "succeed" under
+// `--no-standard-checks` by aliasing nondet memory, and any second
+// instance (clone) sees uninitialised inner pointers.
+//
+// Analogously, a struct state var `B bx` where `B` has pointer-backed
+// fields gets zero-initialised; `bx.cells == NULL` is the same failure
+// mode one nesting level down.
+//
+// This walker posts inner-level `_ESBMC_calloc`s into the ctor body so
+// every pointer-backed field (no matter how deep, including inside
+// fixed-array elements) starts out with its own fresh backing buffer.
+// Combined with the Phase 1 clone walker, this produces correct deep
+// isolation for:
+//   - struct field `uint256[K] cells`           (was KNOWNBUG #1)
+//   - multi-dim state var `uint256[M][N] grid`  (was KNOWNBUG #2)
+//
+// Not handled (out of scope for Phase 2):
+//   - Nested mappings inside user structs (they need
+//     _ESBMC_Mapping/mapping_t rigging that the current frontend only
+//     builds for top-level mapping state vars).
+//   - User-provided nested array literals initialisers
+//     (`uint[2][3] g = [[1,2],[3,4],[5,6]]`) — but the frontend does
+//     not currently support that init form at all.
+bool solidity_convertert::needs_ctor_deep_init(const typet &t)
+{
+  // Pointer-backed fixed-size array: always "needs init" from the
+  // predicate's perspective.  The caller's responsibility is separated
+  // into two cases — both are live:
+  //   - Top-level state var: the state-var-decl path already emitted
+  //     the OUTER calloc; our walker runs per-slot inner init
+  //     (no-op for scalar element — Case 1 handles the early exit).
+  //   - Struct-inline field: the parent struct's zero-init leaves this
+  //     field NULL; our walker's Case 2 emits an OUTER calloc for it
+  //     (then recurses on the slot to handle deeper nesting).
+  // Either way, returning true here is safe — the walker itself decides
+  // what to emit; this predicate only gates whether the walker is
+  // entered for a given sub-field.
+  if (!t.get("#sol_array_size").empty() && t.is_pointer())
+    return true;
+
+  // Inline user struct: recurse into components.
+  typet resolved = t;
+  if (resolved.is_symbol())
+  {
+    const symbolt *rs =
+      ns.lookup(to_symbol_type(resolved).get_identifier().as_string());
+    if (rs)
+      resolved = rs->type;
+  }
+  if (
+    resolved.is_struct() && !is_byte_type(resolved) &&
+    get_sol_type(resolved) != SolidityGrammar::SolType::CONTRACT)
+  {
+    const struct_typet &st = to_struct_type(resolved);
+    for (const auto &comp : st.components())
+    {
+      if (
+        comp.type().id() == "struct" || comp.is_type() ||
+        comp.get_name().empty())
+        continue;
+      if (needs_ctor_deep_init(comp.type()))
+        return true;
+    }
+  }
+  return false;
+}
+
+bool solidity_convertert::emit_ctor_deep_init_fixup(
+  const exprt &lvalue,
+  const typet &field_type,
+  code_blockt &out_block)
+{
+  // Case 1: the current lvalue is already a pointer-backed fixed-size
+  // array.  The outer N-slot buffer exists (allocated by the state-var
+  // decl or by a parent iteration of this walker).  For each slot i in
+  // [0, N), if the element type is itself pointer-backed, emit an inner
+  // calloc; then recurse on the slot regardless, to handle deeper
+  // nesting or struct elements with pointer sub-fields.
+  const std::string sz_str = field_type.get("#sol_array_size").as_string();
+  if (!sz_str.empty() && field_type.is_pointer())
+  {
+    unsigned long long N = 0;
+    try
+    {
+      N = std::stoull(sz_str);
+    }
+    catch (const std::exception &)
+    {
+      return false; // non-integer length — no-op (pre-walker behaviour).
+    }
+
+    const typet &elem_t = field_type.subtype();
+    const bool elem_is_ptr_array =
+      !elem_t.get("#sol_array_size").empty() && elem_t.is_pointer();
+
+    // If the element type neither itself needs an inner calloc nor
+    // contains any nested pointer-backed field, we are done — the outer
+    // calloc is sufficient and avoiding per-slot emission keeps the
+    // SSA compact.
+    if (!elem_is_ptr_array && !needs_ctor_deep_init(elem_t))
+      return false;
+
+    for (unsigned long long i = 0; i < N; i++)
+    {
+      exprt idx = from_integer(i, uint_type());
+      exprt elem_slot = index_exprt(lvalue, idx, elem_t);
+      elem_slot.cmt_lvalue(true);
+
+      if (elem_is_ptr_array)
+      {
+        // lvalue[i] = _ESBMC_calloc(inner_N, sizeof(inner_elem)).
+        const std::string inner_sz_str =
+          elem_t.get("#sol_array_size").as_string();
+        exprt inner_size = constant_exprt(
+          integer2binary(string2integer(inner_sz_str), bv_width(uint_type())),
+          inner_sz_str,
+          uint_type());
+        exprt inner_sizeof;
+        get_size_of_expr(elem_t.subtype(), inner_sizeof);
+
+        side_effect_expr_function_callt calc_call;
+        get_calloc_function_call(lvalue.location(), calc_call);
+        calc_call.arguments().push_back(inner_size);
+        calc_call.arguments().push_back(inner_sizeof);
+        solidity_gen_typecast(ns, calc_call, elem_t);
+        calc_call.type().set("#sol_array_size", inner_sz_str);
+        code_assignt alloc(elem_slot, calc_call);
+        out_block.move_to_operands(alloc);
+      }
+
+      // Recurse into the slot for deeper nesting (3D+) or struct elements.
+      if (emit_ctor_deep_init_fixup(elem_slot, elem_t, out_block))
+        return true;
+    }
+    return false;
+  }
+
+  // Case 2: inline user struct — recurse into each component.  For a
+  // component that is itself a pointer-backed fixed-size array, emit
+  // the OUTER calloc here (the struct-inline path never gets one from
+  // the state-var-decl layer) and then recurse into it.  For nested
+  // struct components, just recurse.
+  typet resolved = field_type;
+  if (resolved.is_symbol())
+  {
+    const symbolt *rs =
+      ns.lookup(to_symbol_type(resolved).get_identifier().as_string());
+    if (rs)
+      resolved = rs->type;
+  }
+  if (
+    resolved.is_struct() && !is_byte_type(resolved) &&
+    get_sol_type(resolved) != SolidityGrammar::SolType::CONTRACT)
+  {
+    const struct_typet &st = to_struct_type(resolved);
+    for (const auto &comp : st.components())
+    {
+      if (comp.type().id() == "struct" || comp.is_type())
+        continue; // nested type-decl, not a real field.
+      const typet &ct = comp.type();
+      if (comp.get_name().empty())
+        continue; // anonymous padding — nothing to init.
+      if (!needs_ctor_deep_init(ct))
+        continue;
+
+      exprt field_lvalue = member_exprt(lvalue, comp.get_name(), ct);
+      field_lvalue.cmt_lvalue(true);
+
+      if (!ct.get("#sol_array_size").empty() && ct.is_pointer())
+      {
+        // Struct-inline pointer-backed array: allocate the outer buffer.
+        const std::string csz_str = ct.get("#sol_array_size").as_string();
+        exprt csz = constant_exprt(
+          integer2binary(string2integer(csz_str), bv_width(uint_type())),
+          csz_str,
+          uint_type());
+        exprt cso;
+        get_size_of_expr(ct.subtype(), cso);
+
+        side_effect_expr_function_callt calc_call;
+        get_calloc_function_call(lvalue.location(), calc_call);
+        calc_call.arguments().push_back(csz);
+        calc_call.arguments().push_back(cso);
+        solidity_gen_typecast(ns, calc_call, ct);
+        calc_call.type().set("#sol_array_size", csz_str);
+        code_assignt alloc(field_lvalue, calc_call);
+        out_block.move_to_operands(alloc);
+      }
+
+      if (emit_ctor_deep_init_fixup(field_lvalue, ct, out_block))
+        return true;
+    }
+    return false;
+  }
+
+  // Default: scalar / bytes struct / contract handle / dyn-array state
+  // var / mapping / (etc.) — the outer assignment already produced the
+  // right shape.
   return false;
 }
 
@@ -1390,6 +1625,36 @@ bool solidity_convertert::move_initializer_to_ctor(
         _assign.copy_to_operands(lhs, rhs);
       }
       convert_expression_to_code(_assign);
+
+      // Phase 2 recursive init for nested pointer-backed storage.
+      // Emit inner calloc's that cover what the top-level decl + outer
+      // calloc (encoded in `_assign`) leaves NULL: struct-inline fixed
+      // arrays and the inner rows of multi-dim arrays.  Builds a block
+      // first, then splices it in right AFTER `_assign` in the ctor
+      // body — i.e. the final order is [_assign, fix1, fix2, ...].
+      //
+      // Works by iterating the block in reverse and inserting each at
+      // `begin()` (reversing twice nets a no-op on order), then the
+      // final `_assign` insert at `begin()` places `_assign` in front
+      // of all the fix statements, so forward-execution is:
+      //     _assign  (this->field = calloc(outer) or zero_struct)
+      //     fix1     (this->field[0] = calloc(inner)  / this->field.sub = calloc(...))
+      //     fix2
+      //     ...
+      code_blockt fix_block;
+      if (emit_ctor_deep_init_fixup(lhs, comp.type(), fix_block))
+      {
+        log_error("Phase 2 ctor deep-init fixup failed");
+        return true;
+      }
+      for (auto rit = fix_block.operands().rbegin();
+           rit != fix_block.operands().rend();
+           ++rit)
+      {
+        exprt op = *rit;
+        convert_expression_to_code(op);
+        sym.value.operands().insert(sym.value.operands().begin(), op);
+      }
 
       // insert before the sym.value.operands
       sym.value.operands().insert(sym.value.operands().begin(), _assign);
