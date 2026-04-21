@@ -404,6 +404,18 @@ bool solidity_convertert::get_new_mapping_index_access(
     val_flg = "dynarr";
     func_type = pointer_typet(empty_typet());
   }
+  else if (val_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
+  {
+    /* Fixed-size array value (mapping(K => T[N])): Solidity pre-binds
+     * every key to an N-element zero-filled slab. map_fixed_arr_get
+     * lazily allocates that slab on first access and returns the same
+     * pointer on subsequent reads, so element writes via [i] persist.
+     * The 2-arg read is a special-case; writes of whole T[N] slots
+     * aren't supported yet — assignment `m[k] = new T[N](...)` would
+     * need a dedicated set helper. */
+    val_flg = "fixed_arr";
+    func_type = pointer_typet(empty_typet());
+  }
   else
   {
     val_flg = "generic";
@@ -440,6 +452,16 @@ bool solidity_convertert::get_new_mapping_index_access(
 
   // index
   call.arguments().push_back(pos);
+
+  // Fixed-size array get: append sizeof(T[N]) so the helper can lazily
+  // calloc the right amount on first access. Set path is rejected above
+  // (no fixed_arr_set helper emitted); this branch is read-only.
+  if (val_flg == "fixed_arr" && !is_mapping_set)
+  {
+    exprt size_of_expr;
+    get_size_of_expr(value_t, size_of_expr);
+    call.arguments().push_back(size_of_expr);
+  }
 
   if (is_mapping_set)
   {
@@ -560,6 +582,15 @@ bool solidity_convertert::get_new_mapping_index_access(
     move_to_front_block(decl);
 
     new_expr = symbol_expr(added_sym);
+  }
+  else if (val_flg == "fixed_arr")
+  {
+    /* map_fixed_arr_get returns a void* to the N-element slab — the
+     * downstream `[i]` index lowering takes it from here. Do NOT
+     * typecast to value_t (the array type itself); an array type is
+     * not a pointer-convertible destination and the gen_typecast
+     * would inject a bogus conversion. */
+    new_expr = call;
   }
   else
   {

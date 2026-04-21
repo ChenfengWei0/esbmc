@@ -150,6 +150,32 @@ __ESBMC_HIDE:;
   return p ? *p : (void *)0;
 }
 
+/* fixed-size array — for mapping(K => T[N]) value slots.
+ *
+ * Solidity semantics: every key is conceptually pre-bound to a fresh
+ * N-element zero-initialised array, so a first read of a never-written
+ * key must yield a valid pointer (not NULL) and element writes via that
+ * pointer must persist for subsequent reads with the same key.
+ *
+ * Differs from map_dynarr_* in two ways:
+ *  - Allocation is one-shot (fixed size), not reallocating on push.
+ *  - First get lazily allocates+zero-inits so the returned pointer is
+ *    immediately indexable.
+ *
+ * sz is the total byte size of the T[N] slot (N * sizeof(T)). The
+ * frontend computes sz from the array's element size and compile-time
+ * extent; we treat the payload as an opaque byte slab here. */
+void *map_fixed_arr_get(struct mapping_t *m, uint256_t k, size_t sz)
+{
+__ESBMC_HIDE:;
+  void *p = map_get_raw(m->base, m->addr, k);
+  if (p)
+    return p;
+  void *data = calloc(1, sz);
+  map_set_raw(m->base, m->addr, k, data);
+  return data;
+}
+
 struct _ESBMC_Mapping_fast
 {
   uint256_t key : 256;
