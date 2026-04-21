@@ -481,17 +481,35 @@ bool solidity_convertert::get_new_mapping_index_access(
   }
   else if (val_flg == "generic")
   {
-    // Nested mapping (mapping(K1=>mapping(K2=>V))): the inner value type
-    // is itself a MAPPING whose identifier is empty — routing through
-    // the struct-shaped generic_get helper below would hit an empty
-    // `substr(prefix.length())` and crash. The caller
-    // (get_contract_member_call_expr / get_index_access_expr nested
-    // branches) applies an additional index_exprt on top of this result,
-    // so we hand back the raw map_generic_get(void*) call unchanged.
-    if (val_sol_type == SolidityGrammar::SolType::MAPPING)
+    // The "generic" val_flg covers every value type that isn't a
+    // scalar (uint/int/bool/string).  Each of these requires a
+    // different access shape.  Dispatch explicitly by val_sol_type so
+    // we don't fall through to the STRUCT path on e.g. a dynamic
+    // array whose `value_t.identifier()` is empty — that would crash
+    // in `get_mapping_struct_function` at `substr(prefix.length())`.
+    //
+    //  - MAPPING  (nested `mapping(K1=>mapping(K2=>V))`): hand back
+    //    the raw `map_generic_get(void*)` call.  The caller
+    //    (`get_index_access_expr`) adds another `index_exprt`.
+    //  - DYNARRAY (`mapping(K => T[])`): same shape — return the raw
+    //    void* call.  Downstream `.push`/`.pop`/`[i]` lowerings
+    //    treat it as a pointer to the stored array's data.
+    //  - STRUCT   (`mapping(K => S)`): go through
+    //    `map_<Struct>_get` so the caller can access fields.
+    if (
+      val_sol_type == SolidityGrammar::SolType::MAPPING ||
+      val_sol_type == SolidityGrammar::SolType::DYNARRAY)
     {
       new_expr = call;
       return false;
+    }
+
+    if (val_sol_type != SolidityGrammar::SolType::STRUCT)
+    {
+      log_error(
+        "unsupported mapping value type: sol_type={}",
+        SolidityGrammar::sol_type_to_str(val_sol_type));
+      return true;
     }
 
     /* generic_get:
@@ -515,8 +533,13 @@ bool solidity_convertert::get_new_mapping_index_access(
     // e.g. map_Base_User_get();
     exprt map_struct_get;
     std::string struct_contract_name = value_t.identifier().as_string();
-    assert(!struct_contract_name.empty());
-    assert(val_sol_type == SolidityGrammar::SolType::STRUCT); // t_symbol
+    if (struct_contract_name.empty())
+    {
+      log_error(
+        "mapping value type has empty identifier: sol_type={}",
+        SolidityGrammar::sol_type_to_str(val_sol_type));
+      return true;
+    }
     get_mapping_struct_function(
       value_t, struct_contract_name, call, map_struct_get);
 
