@@ -469,6 +469,29 @@ bool solidity_convertert::get_sol_builtin_ref(
       return true;
 
     std::string name = (*callee)["name"].get<std::string>();
+
+    // If the callee already resolves to a user-defined Solidity decl
+    // (positive referencedDeclaration), don't shadow it with a C symbol
+    // whose base name happens to match — a Solidity function colliding
+    // with a stdlib.h export (div/abs/malloc/atoi/sort/…) would otherwise
+    // pick up the C decl and its C return type (e.g. div_t struct),
+    // tripping "got struct, expected unsignedbv" downstream.
+    //
+    // Exception: contracts commonly declare stub internal functions
+    // named `__ESBMC_assume`/`__ESBMC_assert`/`__VERIFIER_*` so that
+    // solc can compile the source standalone. At verification time
+    // those user decls MUST be replaced by the real ESBMC intrinsics;
+    // the C-symbol fallback is how that happens. Keep the existing
+    // hijack for those names only.
+    const bool is_intrinsic_alias =
+      name == "__ESBMC_assume" || name == "__ESBMC_assert" ||
+      name == "__VERIFIER_assume" || name == "__VERIFIER_assert";
+    if (
+      !is_intrinsic_alias && (*callee).contains("referencedDeclaration") &&
+      !(*callee)["referencedDeclaration"].is_null() &&
+      (*callee)["referencedDeclaration"].get<int>() > 0)
+      return true;
+
     std::string id = "c:@F@" + name;
     if (context.find_symbol(id) == nullptr)
       return true;
