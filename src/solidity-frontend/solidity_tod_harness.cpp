@@ -295,13 +295,38 @@ static std::string soltype_to_source(const std::string &ts)
   // "contract Foo" → "Foo"
   if (ts.substr(0, 9) == "contract ")
     return ts.substr(9);
+  // "enum Foo.Bar" → "Foo.Bar"
+  if (ts.substr(0, 5) == "enum ")
+    return ts.substr(5);
   // "struct Foo.Bar" → keep as-is (rare in public interfaces)
-  // "enum Foo.Bar" → keep as-is
   // mapping(...) — not representable as a function param; skip
   if (ts.substr(0, 7) == "mapping")
     return {};
   // "bytes32", "bool", "string", "int256", etc. — pass through
   return ts;
+}
+
+/// Is this Solidity typeString representable as a scalar function return
+/// (no `memory`/`storage` location modifier needed)?  Used to decide
+/// whether we can synthesise a shadow public getter for a non-public
+/// state variable.  Rejects mappings, arrays, structs, strings, dynamic
+/// bytes, function types — the shadow-getter strategy only covers
+/// primitive, contract, address, enum, and fixed-width bytes types.
+static bool is_scalar_returnable_type(const std::string &ts)
+{
+  if (ts.empty())
+    return false;
+  if (ts.substr(0, 8) == "mapping(")
+    return false;
+  if (ts.find('[') != std::string::npos)
+    return false;
+  if (ts.substr(0, 7) == "struct ")
+    return false;
+  if (ts.substr(0, 9) == "function ")
+    return false;
+  if (ts == "string" || ts == "bytes")
+    return false;
+  return true;
 }
 
 /// Prefix parameter names to avoid collisions between funcA and funcB.
@@ -356,14 +381,17 @@ static std::string emit_prefixed_args(
   return out;
 }
 
-/// Collect public state variable names and types for assertion generation.
+/// Collect state variable names and types for assertion generation.
 struct StateVar
 {
   std::string name;
   std::string type_string;
+  std::string visibility;   // "public" / "internal" / "private"
   bool is_mapping;
-  int id; // AST id, used to detect references from function bodies
+  bool is_returnable;       // can be read via a Solidity getter (auto or shadow)
+  int id;                   // AST id, used to detect references from function bodies
   std::vector<std::string> mapping_key_types; // for (nested) mappings
+  std::string value_type_string; // leaf value type for mapping; equals type_string for scalar
 };
 
 /// Recursively walk an AST node and collect every `referencedDeclaration`
@@ -404,7 +432,27 @@ static void collect_mapping_keys(
     collect_mapping_keys(type_name["valueType"], keys);
 }
 
-static std::vector<StateVar> collect_public_state_vars(
+/// Walk a Mapping typeName node to its leaf value type string (strip
+/// nested Mapping wrappers).  For a non-mapping typeName, returns the
+/// node's own typeString.
+static std::string extract_leaf_value_type(const nlohmann::json &type_name)
+{
+  if (type_name.value("nodeType", "") == "Mapping" &&
+      type_name.contains("valueType"))
+    return extract_leaf_value_type(type_name["valueType"]);
+  return type_name.value("typeDescriptions", nlohmann::json{})
+    .value("typeString", "");
+}
+
+/// Collect every state variable declared directly on `contract`, with its
+/// visibility and a flag indicating whether we can surface a getter for
+/// it.  Constants and immutables are skipped — they cannot TOD.
+///
+/// Scope: directly-declared state vars only; inherited state vars are
+/// covered via the shadow getter injected into the leaf contract, which
+/// references them by their inherited name (Solidity resolves `return m;`
+/// to the base's state var transparently as long as it is not `private`).
+static std::vector<StateVar> collect_state_vars(
   const nlohmann::json &contract)
 {
   std::vector<StateVar> vars;
@@ -416,13 +464,18 @@ static std::vector<StateVar> collect_public_state_vars(
       continue;
     if (!node.value("stateVariable", false))
       continue;
-    if (node.value("visibility", "") != "public")
+    // Constants / immutables cannot TOD.
+    if (node.value("constant", false))
+      continue;
+    const std::string mut = node.value("mutability", "");
+    if (mut == "constant" || mut == "immutable")
       continue;
 
     StateVar sv;
     sv.name = node.value("name", "");
     sv.type_string =
       node.value("typeDescriptions", nlohmann::json{}).value("typeString", "");
+    sv.visibility = node.value("visibility", "internal");
     sv.is_mapping = false;
     sv.id = node.value("id", -1);
 
@@ -432,6 +485,21 @@ static std::vector<StateVar> collect_public_state_vars(
     {
       sv.is_mapping = true;
       collect_mapping_keys(node["typeName"], sv.mapping_key_types);
+      sv.value_type_string = extract_leaf_value_type(node["typeName"]);
+      // A mapping is returnable via a shadow getter iff every key type
+      // AND the leaf value type are scalar-returnable.
+      sv.is_returnable = is_scalar_returnable_type(sv.value_type_string);
+      for (const auto &k : sv.mapping_key_types)
+        if (!is_scalar_returnable_type(k))
+        {
+          sv.is_returnable = false;
+          break;
+        }
+    }
+    else
+    {
+      sv.value_type_string = sv.type_string;
+      sv.is_returnable = is_scalar_returnable_type(sv.type_string);
     }
 
     if (!sv.name.empty())
@@ -510,6 +578,93 @@ static std::string inject_tod_bal_getter(const std::string &contract_src)
     "return address(this); }\n";
   return contract_src.substr(0, last_brace) + injected +
          contract_src.substr(last_brace);
+}
+
+/// Inject shadow public getters for every non-public state variable whose
+/// type is scalar-returnable.  A state var `uint256 x` declared `internal`
+/// or `private` cannot be read through `c.x()` from the harness — Solidity
+/// only auto-generates getters for `public` state vars.  We side-step this
+/// by emitting
+///   function __tod_get_x() public view returns (uint256) { return x; }
+/// (scalar case) or
+///   function __tod_get_m(K1 a, K2 b) public view returns (V) { return m[a][b]; }
+/// (mapping case) into the contract source, which compiles cleanly under
+/// a standard Solidity compiler and exposes the underlying storage slot
+/// through a callable interface.  The harness then routes reads through
+/// `c.__tod_get_<name>(...)` instead of the auto-generated `c.<name>(...)`.
+///
+/// Names are prefixed with `__tod_get_` to avoid collisions with any
+/// user-authored identifiers.  Non-returnable state vars (struct, array,
+/// string, dynamic bytes, mapping with non-scalar leaf, function types)
+/// are left as-is — the emitter already has a `// Skipped` branch for
+/// each unsupported shape.
+///
+/// Returnable-but-public state vars are skipped here because the Solidity
+/// compiler already synthesises the equivalent getter automatically.
+static std::string inject_shadow_getters(
+  const std::string &contract_src,
+  const std::vector<StateVar> &state_vars)
+{
+  std::string injected;
+  for (const auto &sv : state_vars)
+  {
+    if (sv.visibility == "public")
+      continue;
+    if (!sv.is_returnable)
+      continue;
+
+    const std::string ret_type = soltype_to_source(sv.value_type_string);
+    if (ret_type.empty())
+      continue;
+
+    if (!sv.is_mapping)
+    {
+      injected += "    function __tod_get_" + sv.name +
+                  "() public view returns (" + ret_type + ") { return " +
+                  sv.name + "; }\n";
+    }
+    else
+    {
+      std::string params;
+      std::string keys;
+      for (size_t i = 0; i < sv.mapping_key_types.size(); ++i)
+      {
+        const std::string kt = soltype_to_source(sv.mapping_key_types[i]);
+        if (kt.empty())
+        {
+          params.clear();
+          break;
+        }
+        if (i)
+        {
+          params += ", ";
+          keys += "][";
+        }
+        params += kt + " __k" + std::to_string(i);
+        keys += "__k" + std::to_string(i);
+      }
+      if (params.empty())
+        continue;
+      injected += "    function __tod_get_" + sv.name + "(" + params +
+                  ") public view returns (" + ret_type + ") { return " +
+                  sv.name + "[" + keys + "]; }\n";
+    }
+  }
+  if (injected.empty())
+    return contract_src;
+  auto last_brace = contract_src.rfind('}');
+  if (last_brace == std::string::npos)
+    return contract_src;
+  return contract_src.substr(0, last_brace) + "\n" + injected +
+         contract_src.substr(last_brace);
+}
+
+/// Return the getter name the harness should use for a state var: the
+/// Solidity-synthesised name for public vars, or the shadow name we
+/// injected for internal/private vars.
+static std::string state_var_getter_name(const StateVar &sv)
+{
+  return sv.visibility == "public" ? sv.name : ("__tod_get_" + sv.name);
 }
 
 /// Extract constructor parameters from a ContractDefinition.
@@ -842,18 +997,19 @@ static bool emit_harness_contract(
         continue;
       }
 
+      const std::string getter = state_var_getter_name(sv);
       if (key_sets.size() == 1)
       {
         for (const auto &k : key_sets[0])
-          out << "        assert(c1." << sv.name << "(" << k << ")"
-              << " == c2." << sv.name << "(" << k << "));\n";
+          out << "        assert(c1." << getter << "(" << k << ")"
+              << " == c2." << getter << "(" << k << "));\n";
       }
       else if (key_sets.size() == 2)
       {
         for (const auto &k1 : key_sets[0])
           for (const auto &k2 : key_sets[1])
-            out << "        assert(c1." << sv.name << "(" << k1 << ", "
-                << k2 << ") == c2." << sv.name << "(" << k1 << ", "
+            out << "        assert(c1." << getter << "(" << k1 << ", "
+                << k2 << ") == c2." << getter << "(" << k1 << ", "
                 << k2 << "));\n";
       }
       else
@@ -865,8 +1021,9 @@ static bool emit_harness_contract(
     }
     else if (!sv.is_mapping)
     {
-      out << "        assert(c1." << sv.name << "()"
-          << " == c2." << sv.name << "());\n";
+      const std::string getter = state_var_getter_name(sv);
+      out << "        assert(c1." << getter << "()"
+          << " == c2." << getter << "());\n";
     }
   }
   if (emit_balance_assert)
@@ -877,7 +1034,7 @@ static bool emit_harness_contract(
 
   if (shared_vars.empty() && !emit_balance_assert)
     log_warning(
-      "TOD harness: no public state variable nor ETH balance is touched "
+      "TOD harness: no state variable nor ETH balance is touched "
       "by both '{}' and '{}'.  The harness contains no equality "
       "assertion; verification will trivially succeed.",
       func_a,
@@ -1060,18 +1217,19 @@ static bool emit_harness_contract_race(
             << " (no matching key params)\n";
         continue;
       }
+      const std::string getter = state_var_getter_name(sv);
       if (key_sets.size() == 1)
       {
         for (const auto &k : key_sets[0])
-          out << "        __tod_race_check(c1." << sv.name << "(" << k
-              << ") == c2." << sv.name << "(" << k << "));\n";
+          out << "        __tod_race_check(c1." << getter << "(" << k
+              << ") == c2." << getter << "(" << k << "));\n";
       }
       else if (key_sets.size() == 2)
       {
         for (const auto &k1 : key_sets[0])
           for (const auto &k2 : key_sets[1])
-            out << "        __tod_race_check(c1." << sv.name << "(" << k1
-                << ", " << k2 << ") == c2." << sv.name << "(" << k1 << ", "
+            out << "        __tod_race_check(c1." << getter << "(" << k1
+                << ", " << k2 << ") == c2." << getter << "(" << k1 << ", "
                 << k2 << "));\n";
       }
       else
@@ -1083,8 +1241,9 @@ static bool emit_harness_contract_race(
     }
     else if (!sv.is_mapping)
     {
-      out << "        __tod_race_check(c1." << sv.name << "() == c2."
-          << sv.name << "());\n";
+      const std::string getter = state_var_getter_name(sv);
+      out << "        __tod_race_check(c1." << getter << "() == c2."
+          << getter << "());\n";
     }
   }
 
@@ -1093,7 +1252,7 @@ static bool emit_harness_contract_race(
 
   if (shared_vars.empty())
     log_warning(
-      "TOD race harness: no public state variable is touched by both '{}' "
+      "TOD race harness: no state variable is touched by both '{}' "
       "and '{}'.  Harness contains no equality assertion; verification "
       "trivially succeeds.",
       func_a,
@@ -1127,7 +1286,7 @@ std::string generate_tod_harness(
     return {};
   }
 
-  auto state_vars = collect_public_state_vars(*cdef);
+  auto state_vars = collect_state_vars(*cdef);
   auto rw_by_name = solidity_tod::compute_rw_sets(*cdef);
 
   std::ostringstream out;
@@ -1198,6 +1357,8 @@ std::string generate_tod_harness(
     std::string copy2 = rename_contract(contract_src, contract, c2_name);
     copy1 = inject_tod_bal_getter(copy1);
     copy2 = inject_tod_bal_getter(copy2);
+    copy1 = inject_shadow_getters(copy1, state_vars);
+    copy2 = inject_shadow_getters(copy2, state_vars);
     const nlohmann::json *ctor = find_constructor(*cdef);
     out << "// ===== Copy 1 =====\n" << copy1 << "\n\n";
     out << "// ===== Copy 2 =====\n" << copy2 << "\n\n";
@@ -1218,7 +1379,8 @@ std::string generate_tod_harness(
   {
     // Race mode: single contract, param-form harness.  --contract-param-fresh
     // gives c1 and c2 independent storage.
-    out << "// ===== Target contract =====\n" << contract_src << "\n\n";
+    std::string target_src = inject_shadow_getters(contract_src, state_vars);
+    out << "// ===== Target contract =====\n" << target_src << "\n\n";
     out << "// ===== TOD harness =====\n";
     if (!emit_harness_contract_race(
           out, *cdef, state_vars, rw_by_name, contract, func_a, func_b))
