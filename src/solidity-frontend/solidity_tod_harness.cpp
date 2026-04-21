@@ -269,19 +269,62 @@ static std::string collect_dependency_definitions(
   return out.str();
 }
 
-/// Find a FunctionDefinition inside a ContractDefinition by name.
+/// Find a FunctionDefinition inside a ContractDefinition by name, or
+/// inside any of its linearised bases when `ast` is supplied and no
+/// match is found on the target itself.  MRO order ensures the
+/// leaf-most override wins when both the target and a base define a
+/// same-named function.
 static const nlohmann::json *find_function(
   const nlohmann::json &contract,
-  const std::string &name)
+  const std::string &name,
+  const nlohmann::json *ast = nullptr)
 {
-  if (!contract.contains("nodes"))
-    return nullptr;
-  for (const auto &node : contract["nodes"])
+  if (contract.contains("nodes"))
   {
-    if (
-      node.value("nodeType", "") == "FunctionDefinition" &&
-      node.value("name", "") == name)
-      return &node;
+    for (const auto &node : contract["nodes"])
+    {
+      if (
+        node.value("nodeType", "") == "FunctionDefinition" &&
+        node.value("name", "") == name)
+        return &node;
+    }
+  }
+  if (!ast || !ast->contains("nodes") || !ast->at("nodes").is_array())
+    return nullptr;
+  if (
+    !contract.contains("linearizedBaseContracts") ||
+    !contract.at("linearizedBaseContracts").is_array())
+    return nullptr;
+
+  std::map<int, const nlohmann::json *> contract_by_id;
+  for (const auto &n : (*ast)["nodes"])
+  {
+    if (n.value("nodeType", "") != "ContractDefinition")
+      continue;
+    if (!n.contains("id") || !n["id"].is_number_integer())
+      continue;
+    contract_by_id[n["id"].get<int>()] = &n;
+  }
+
+  const auto &lin = contract["linearizedBaseContracts"];
+  for (size_t i = 1; i < lin.size(); ++i)
+  {
+    if (!lin[i].is_number_integer())
+      continue;
+    int bid = lin[i].get<int>();
+    auto it = contract_by_id.find(bid);
+    if (it == contract_by_id.end())
+      continue;
+    const nlohmann::json &b = *it->second;
+    if (!b.contains("nodes"))
+      continue;
+    for (const auto &node : b["nodes"])
+    {
+      if (
+        node.value("nodeType", "") == "FunctionDefinition" &&
+        node.value("name", "") == name)
+        return &node;
+    }
   }
   return nullptr;
 }
@@ -466,66 +509,102 @@ static std::string extract_leaf_value_type(const nlohmann::json &type_name)
     .value("typeString", "");
 }
 
-/// Collect every state variable declared directly on `contract`, with its
-/// visibility and a flag indicating whether we can surface a getter for
-/// it.  Constants and immutables are skipped — they cannot TOD.
-///
-/// Scope: directly-declared state vars only; inherited state vars are
-/// covered via the shadow getter injected into the leaf contract, which
-/// references them by their inherited name (Solidity resolves `return m;`
-/// to the base's state var transparently as long as it is not `private`).
+/// Collect state variables declared on `contract_def`.  If `ast` is
+/// non-null and the contract has a `linearizedBaseContracts` chain,
+/// inherited non-private state vars are folded in as well (in MRO
+/// order: target first, then each base).  Private vars on base
+/// contracts are dropped — they are inaccessible from the derived
+/// contract, so any shadow getter referencing them would fail to
+/// compile.  Constants and immutables are skipped everywhere — they
+/// cannot TOD.
 static std::vector<StateVar> collect_state_vars(
-  const nlohmann::json &contract)
+  const nlohmann::json &contract_def,
+  const nlohmann::json *ast = nullptr)
 {
+  auto one_contract = [&](const nlohmann::json &c, bool is_base,
+                          std::vector<StateVar> &out) {
+    if (!c.contains("nodes"))
+      return;
+    for (const auto &node : c["nodes"])
+    {
+      if (node.value("nodeType", "") != "VariableDeclaration")
+        continue;
+      if (!node.value("stateVariable", false))
+        continue;
+      if (node.value("constant", false))
+        continue;
+      const std::string mut = node.value("mutability", "");
+      if (mut == "constant" || mut == "immutable")
+        continue;
+      const std::string vis = node.value("visibility", "internal");
+      if (is_base && vis == "private")
+        continue;
+
+      StateVar sv;
+      sv.name = node.value("name", "");
+      sv.type_string =
+        node.value("typeDescriptions", nlohmann::json{})
+          .value("typeString", "");
+      sv.visibility = vis;
+      sv.is_mapping = false;
+      sv.id = node.value("id", -1);
+
+      if (
+        node.contains("typeName") &&
+        node["typeName"].value("nodeType", "") == "Mapping")
+      {
+        sv.is_mapping = true;
+        collect_mapping_keys(node["typeName"], sv.mapping_key_types);
+        sv.value_type_string = extract_leaf_value_type(node["typeName"]);
+        sv.is_returnable = is_scalar_returnable_type(sv.value_type_string);
+        for (const auto &k : sv.mapping_key_types)
+          if (!is_scalar_returnable_type(k))
+          {
+            sv.is_returnable = false;
+            break;
+          }
+      }
+      else
+      {
+        sv.value_type_string = sv.type_string;
+        sv.is_returnable = is_scalar_returnable_type(sv.type_string);
+      }
+
+      if (!sv.name.empty())
+        out.push_back(sv);
+    }
+  };
+
   std::vector<StateVar> vars;
-  if (!contract.contains("nodes"))
+  one_contract(contract_def, /*is_base=*/false, vars);
+
+  if (!ast || !ast->contains("nodes") || !ast->at("nodes").is_array())
     return vars;
-  for (const auto &node : contract["nodes"])
+  if (
+    !contract_def.contains("linearizedBaseContracts") ||
+    !contract_def.at("linearizedBaseContracts").is_array())
+    return vars;
+
+  std::map<int, const nlohmann::json *> contract_by_id;
+  for (const auto &n : (*ast)["nodes"])
   {
-    if (node.value("nodeType", "") != "VariableDeclaration")
+    if (n.value("nodeType", "") != "ContractDefinition")
       continue;
-    if (!node.value("stateVariable", false))
+    if (!n.contains("id") || !n["id"].is_number_integer())
       continue;
-    // Constants / immutables cannot TOD.
-    if (node.value("constant", false))
-      continue;
-    const std::string mut = node.value("mutability", "");
-    if (mut == "constant" || mut == "immutable")
-      continue;
+    contract_by_id[n["id"].get<int>()] = &n;
+  }
 
-    StateVar sv;
-    sv.name = node.value("name", "");
-    sv.type_string =
-      node.value("typeDescriptions", nlohmann::json{}).value("typeString", "");
-    sv.visibility = node.value("visibility", "internal");
-    sv.is_mapping = false;
-    sv.id = node.value("id", -1);
-
-    if (
-      node.contains("typeName") &&
-      node["typeName"].value("nodeType", "") == "Mapping")
-    {
-      sv.is_mapping = true;
-      collect_mapping_keys(node["typeName"], sv.mapping_key_types);
-      sv.value_type_string = extract_leaf_value_type(node["typeName"]);
-      // A mapping is returnable via a shadow getter iff every key type
-      // AND the leaf value type are scalar-returnable.
-      sv.is_returnable = is_scalar_returnable_type(sv.value_type_string);
-      for (const auto &k : sv.mapping_key_types)
-        if (!is_scalar_returnable_type(k))
-        {
-          sv.is_returnable = false;
-          break;
-        }
-    }
-    else
-    {
-      sv.value_type_string = sv.type_string;
-      sv.is_returnable = is_scalar_returnable_type(sv.type_string);
-    }
-
-    if (!sv.name.empty())
-      vars.push_back(sv);
+  const auto &lin = contract_def["linearizedBaseContracts"];
+  for (size_t i = 1; i < lin.size(); ++i)
+  {
+    if (!lin[i].is_number_integer())
+      continue;
+    int bid = lin[i].get<int>();
+    auto it = contract_by_id.find(bid);
+    if (it == contract_by_id.end())
+      continue;
+    one_contract(*it->second, /*is_base=*/true, vars);
   }
   return vars;
 }
@@ -764,6 +843,7 @@ static bool body_may_revert_explicitly(const nlohmann::json &node)
 static bool emit_harness_contract(
   std::ostringstream &out,
   const nlohmann::json &cdef,
+  const nlohmann::json &ast,
   const std::vector<StateVar> &all_state_vars,
   const std::map<std::string, solidity_tod::RWSet> &rw_by_name,
   const nlohmann::json *ctor,
@@ -772,8 +852,8 @@ static bool emit_harness_contract(
   const std::string &func_a,
   const std::string &func_b)
 {
-  const nlohmann::json *fa = find_function(cdef, func_a);
-  const nlohmann::json *fb = find_function(cdef, func_b);
+  const nlohmann::json *fa = find_function(cdef, func_a, &ast);
+  const nlohmann::json *fb = find_function(cdef, func_b, &ast);
   if (!fa || !fb)
   {
     log_error(
@@ -1087,6 +1167,7 @@ static bool emit_harness_contract(
 static bool emit_harness_contract_race(
   std::ostringstream &out,
   const nlohmann::json &cdef,
+  const nlohmann::json &ast,
   const std::vector<StateVar> &all_state_vars,
   const std::map<std::string, solidity_tod::RWSet> &rw_by_name,
   const nlohmann::json *ctor,
@@ -1094,8 +1175,8 @@ static bool emit_harness_contract_race(
   const std::string &func_a,
   const std::string &func_b)
 {
-  const nlohmann::json *fa = find_function(cdef, func_a);
-  const nlohmann::json *fb = find_function(cdef, func_b);
+  const nlohmann::json *fa = find_function(cdef, func_a, &ast);
+  const nlohmann::json *fb = find_function(cdef, func_b, &ast);
   if (!fa || !fb)
   {
     log_error(
@@ -1335,8 +1416,8 @@ std::string generate_tod_harness(
     return {};
   }
 
-  auto state_vars = collect_state_vars(*cdef);
-  auto rw_by_name = solidity_tod::compute_rw_sets(*cdef);
+  auto state_vars = collect_state_vars(*cdef, &ast);
+  auto rw_by_name = solidity_tod::compute_rw_sets(*cdef, &ast);
 
   std::ostringstream out;
   out << "// Auto-generated TOD (Transaction Order Dependence) harness\n";
@@ -1415,6 +1496,7 @@ std::string generate_tod_harness(
     if (!emit_harness_contract(
           out,
           *cdef,
+          ast,
           state_vars,
           rw_by_name,
           ctor,
@@ -1433,7 +1515,8 @@ std::string generate_tod_harness(
     out << "// ===== TOD harness =====\n";
     const nlohmann::json *ctor = find_constructor(*cdef);
     if (!emit_harness_contract_race(
-          out, *cdef, state_vars, rw_by_name, ctor, contract, func_a, func_b))
+          out, *cdef, ast, state_vars, rw_by_name, ctor, contract, func_a,
+          func_b))
       return {};
   }
 

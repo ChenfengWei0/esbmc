@@ -24,11 +24,21 @@ struct ContractIndex
   std::map<int, std::string> all_callable_names;
 };
 
-static ContractIndex index_contract(const nlohmann::json &contract_def)
+/// Index a single ContractDefinition node.  Used as the inner loop of
+/// `index_contract`; the `is_base` flag tells us to drop `private`
+/// state vars (they are inaccessible from a derived contract per
+/// Solidity's visibility rules) and to skip function/modifier names we
+/// already saw in a more-derived contract (MRO override — the leaf's
+/// version shadows the base's).
+static void index_one(
+  ContractIndex &idx,
+  const nlohmann::json &contract_def,
+  bool is_base,
+  std::set<std::string> &seen_fn_names,
+  std::set<std::string> &seen_mod_names)
 {
-  ContractIndex idx;
   if (!contract_def.contains("nodes"))
-    return idx;
+    return;
   for (const auto &node : contract_def["nodes"])
   {
     const std::string nt = node.value("nodeType", "");
@@ -37,19 +47,88 @@ static ContractIndex index_contract(const nlohmann::json &contract_def)
       continue;
 
     if (nt == "VariableDeclaration" && node.value("stateVariable", false))
+    {
+      if (is_base && node.value("visibility", "") == "private")
+        continue;
       idx.state_var_ids[id] = node.value("name", "");
+    }
     else if (nt == "FunctionDefinition")
     {
-      idx.internal_fn_ids[id] = node.value("name", "");
-      idx.all_callable_names[id] = node.value("name", "");
+      const std::string fname = node.value("name", "");
+      // Name-based MRO override: the first occurrence walking
+      // target → parents is the one that dispatches at runtime.
+      // Overloading (same name, different signatures) is treated
+      // conservatively here — an overloaded pair in a base will be
+      // dropped if the derived contract defines any same-named
+      // function.  Acceptable: the derived-only version still gets
+      // indexed, and overloading-driven races are rare in practice.
+      if (!fname.empty() && !seen_fn_names.insert(fname).second)
+        continue;
+      idx.internal_fn_ids[id] = fname;
+      idx.all_callable_names[id] = fname;
       idx.body_by_id[id] = &node;
     }
     else if (nt == "ModifierDefinition")
     {
-      idx.modifier_ids[id] = node.value("name", "");
-      idx.all_callable_names[id] = node.value("name", "");
+      const std::string mname = node.value("name", "");
+      if (!mname.empty() && !seen_mod_names.insert(mname).second)
+        continue;
+      idx.modifier_ids[id] = mname;
+      idx.all_callable_names[id] = mname;
       idx.body_by_id[id] = &node;
     }
+  }
+}
+
+/// Build an index of the target contract.  When `ast` is non-null and
+/// `contract_def.linearizedBaseContracts` is populated, every reachable
+/// base contract is folded into the index as well (in MRO order: the
+/// target first, then its bases left-to-right).  Functions/modifiers
+/// are de-duplicated by name so a leaf override does not introduce
+/// ghost pairs against the base's shadowed version.
+static ContractIndex index_contract(
+  const nlohmann::json &contract_def,
+  const nlohmann::json *ast = nullptr)
+{
+  ContractIndex idx;
+  std::set<std::string> seen_fn_names;
+  std::set<std::string> seen_mod_names;
+
+  // Always index the target first — it wins every MRO resolution.
+  index_one(
+    idx, contract_def, /*is_base=*/false, seen_fn_names, seen_mod_names);
+
+  if (!ast || !ast->contains("nodes") || !ast->at("nodes").is_array())
+    return idx;
+  if (
+    !contract_def.contains("linearizedBaseContracts") ||
+    !contract_def.at("linearizedBaseContracts").is_array())
+    return idx;
+
+  // Resolve id → base contract body from the AST.
+  std::map<int, const nlohmann::json *> contract_by_id;
+  for (const auto &n : (*ast)["nodes"])
+  {
+    if (n.value("nodeType", "") != "ContractDefinition")
+      continue;
+    if (!n.contains("id") || !n["id"].is_number_integer())
+      continue;
+    contract_by_id[n["id"].get<int>()] = &n;
+  }
+
+  const auto &lin = contract_def["linearizedBaseContracts"];
+  // lin[0] is the target itself (already indexed).  Subsequent entries
+  // are bases in MRO order.
+  for (size_t i = 1; i < lin.size(); ++i)
+  {
+    if (!lin[i].is_number_integer())
+      continue;
+    int bid = lin[i].get<int>();
+    auto it = contract_by_id.find(bid);
+    if (it == contract_by_id.end())
+      continue;
+    index_one(
+      idx, *it->second, /*is_base=*/true, seen_fn_names, seen_mod_names);
   }
   return idx;
 }
@@ -351,9 +430,10 @@ static bool is_orderable(const nlohmann::json &fn)
 } // namespace
 
 std::map<std::string, RWSet> compute_rw_sets(
-  const nlohmann::json &contract_def)
+  const nlohmann::json &contract_def,
+  const nlohmann::json *ast)
 {
-  ContractIndex idx = index_contract(contract_def);
+  ContractIndex idx = index_contract(contract_def, ast);
   auto local = compute_local(idx);
   auto closed = close_callgraph(local);
 
@@ -369,9 +449,10 @@ std::map<std::string, RWSet> compute_rw_sets(
 
 std::vector<Pair> find_tod_candidates(
   const nlohmann::json &contract_def,
-  Mode mode)
+  Mode mode,
+  const nlohmann::json *ast)
 {
-  ContractIndex idx = index_contract(contract_def);
+  ContractIndex idx = index_contract(contract_def, ast);
   auto local = compute_local(idx);
   auto closed = close_callgraph(local);
 

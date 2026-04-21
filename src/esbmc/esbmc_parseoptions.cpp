@@ -950,7 +950,7 @@ int esbmc_parseoptionst::doit()
           "--{}: contract '{}' not found in AST", tod_flag, contract_name);
         return 1;
       }
-      auto candidates = solidity_tod::find_tod_candidates(*cdef, tod_mode);
+      auto candidates = solidity_tod::find_tod_candidates(*cdef, tod_mode, &ast);
       log_status(
         "--{}: discovered {} candidate pair(s) in '{}'",
         tod_flag,
