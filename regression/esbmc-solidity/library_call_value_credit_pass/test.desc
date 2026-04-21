@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Harness --bound --unwind 1 --no-unwinding-assertions --no-standard-checks --cvc5
+^VERIFICATION SUCCESSFUL$

@@ -2912,11 +2912,21 @@ bool solidity_convertert::model_transaction(
   return false;
 }
 
-// `call(address _addr, uint _val)`.  `is_library=true` suppresses the
-// this-owning portions of the body (msg.sender swap, reentry mutex,
-// this.$balance debit).  For libraries, a .call{value:X} still fires
-// the dispatch-dependent receive/fallback so side effects on the
-// target contract's balance and state remain visible.
+// `call(address _addr, uint _val)`.  `is_library=true` adapts the body
+// for library scope: libraries have no `this.$balance` / `this.$mutex`
+// / real `this->$address`, so we skip the sender swap to
+// `this->$address` (emit nondet msg.sender instead — matches D's
+// over-approximation of the enclosing-contract address), skip the
+// debit + underflow-revert side (the caller contract's $balance isn't
+// reachable from inside the library's `$call#1` body), and skip the
+// reentry-mutex toggles.  The CREDIT side stays: target contract's
+// `$balance += _val` still fires, and the receive/fallback dispatch
+// is preserved so external state updates propagate.  The boolean
+// return is NONDET (real EVM can revert for gas / target-revert /
+// cold-access reasons even when a tracked receive would have
+// succeeded — a sound over-approximation).  For addresses that match
+// no tracked contract, the library falls through to `_ESBMC_eoa_credit`
+// so EOA balance reads still see the credit under `--bound`.
 bool solidity_convertert::get_call_value_definition(
   const std::string &cname,
   exprt &new_expr,
@@ -2967,20 +2977,6 @@ bool solidity_convertert::get_call_value_definition(
 
   added_symbol.type = t;
 
-  // Library mode: `this->$balance` is not owned by the library, so we
-  // can't model the ether transfer honestly.  Emit `return nondet_bool();`
-  // and skip the receive/fallback dispatch entirely.
-  if (is_library)
-  {
-    code_blockt lib_body;
-    code_returnt ret_nondet;
-    ret_nondet.return_value() = side_effect_expr_function_callt(nondet_bool_expr);
-    lib_body.move_to_operands(ret_nondet);
-    added_symbol.value = lib_body;
-    new_expr = symbol_expr(added_symbol);
-    return false;
-  }
-
   // body:
   /*
   __ESBMC_Hide;
@@ -3021,8 +3017,16 @@ bool solidity_convertert::get_call_value_definition(
   exprt msg_value = symbol_expr(*context.find_symbol("c:@msg_value"));
   symbolt this_sym = *context.find_symbol(call_id + "#this");
   exprt this_expr = symbol_expr(this_sym);
-  exprt this_address = member_exprt(this_expr, "$address", addrp_t);
-  exprt this_balance = member_exprt(this_expr, "$balance", val_t);
+  // Library scope has no meaningful `this->$address` / `this->$balance`
+  // — Lib is a dummy singleton with no real address or balance slot.
+  // Only construct these member accesses for contracts.
+  exprt this_address;
+  exprt this_balance;
+  if (!is_library)
+  {
+    this_address = member_exprt(this_expr, "$address", addrp_t);
+    this_balance = member_exprt(this_expr, "$balance", val_t);
+  }
 
   // uint256_t old_value = msg_value;
   symbolt old_value;
@@ -3093,26 +3097,42 @@ bool solidity_convertert::get_call_value_definition(
     convert_expression_to_code(assign_val);
     then.move_to_operands(assign_val);
 
-    // msg_sender = this.$address;
+    // msg_sender = <this.$address for contracts, NONDET for libraries>.
+    exprt new_sender;
+    if (is_library)
+    {
+      new_sender = exprt("sideeffect");
+      new_sender.type() = addrp_t;
+      new_sender.statement("nondet");
+    }
+    else
+    {
+      new_sender = this_address;
+    }
     exprt assign_sender = side_effect_exprt("assign", addrp_t);
-    assign_sender.copy_to_operands(msg_sender, this_address);
+    assign_sender.copy_to_operands(msg_sender, new_sender);
     convert_expression_to_code(assign_sender);
     then.move_to_operands(assign_sender);
 
-    // if(this.balance < val) return false;
-    exprt less_than = exprt("<", bool_t);
-    less_than.copy_to_operands(this_balance, val_expr);
-    codet cmp_less_than("ifthenelse");
-    code_returnt ret_false;
-    ret_false.return_value() = false_exprt();
-    cmp_less_than.copy_to_operands(less_than, ret_false);
-    then.move_to_operands(cmp_less_than);
+    // Contracts only: underflow check + caller-side debit.  Libraries
+    // don't own a meaningful `this.$balance`, so omit both.
+    if (!is_library)
+    {
+      // if(this.balance < val) return false;
+      exprt less_than = exprt("<", bool_t);
+      less_than.copy_to_operands(this_balance, val_expr);
+      codet cmp_less_than("ifthenelse");
+      code_returnt ret_false;
+      ret_false.return_value() = false_exprt();
+      cmp_less_than.copy_to_operands(less_than, ret_false);
+      then.move_to_operands(cmp_less_than);
 
-    // this.balance -= _val;
-    exprt sub_assign = side_effect_exprt("assign-", val_t);
-    sub_assign.copy_to_operands(this_balance, val_expr);
-    convert_expression_to_code(sub_assign);
-    then.move_to_operands(sub_assign);
+      // this.balance -= _val;
+      exprt sub_assign = side_effect_exprt("assign-", val_t);
+      sub_assign.copy_to_operands(this_balance, val_expr);
+      convert_expression_to_code(sub_assign);
+      then.move_to_operands(sub_assign);
+    }
 
     // _ESBMC_Object_str.balance += _val;
     exprt target_balance = member_exprt(static_ins, "$balance", val_t);
@@ -3121,7 +3141,7 @@ bool solidity_convertert::get_call_value_definition(
     convert_expression_to_code(add_assign);
     then.move_to_operands(add_assign);
 
-    if (is_reentry_check)
+    if (is_reentry_check && !is_library)
     {
       exprt _mutex;
       get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -3141,7 +3161,7 @@ bool solidity_convertert::get_call_value_definition(
     convert_expression_to_code(call);
     then.move_to_operands(call);
 
-    if (is_reentry_check)
+    if (is_reentry_check && !is_library)
     {
       exprt _mutex;
       get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -3167,19 +3187,69 @@ bool solidity_convertert::get_call_value_definition(
     convert_expression_to_code(assign_sender_restore);
     then.move_to_operands(assign_sender_restore);
 
-    // return true;
-    code_returnt ret_true;
-    ret_true.return_value() = true_exprt();
-    then.move_to_operands(ret_true);
+    // return <true for contracts, nondet_bool for libraries>.  For
+    // library-scope calls the success-path still reverts are possible
+    // for reasons the model doesn't track (gas, callee revert, cold
+    // access), so a nondet bool is the sound over-approximation.
+    code_returnt ret_outcome;
+    if (is_library)
+    {
+      side_effect_expr_function_callt nondet_call;
+      get_library_function_call_no_args(
+        "nondet_bool",
+        "c:@F@nondet_bool",
+        bool_t,
+        locationt(),
+        nondet_call);
+      ret_outcome.return_value() = nondet_call;
+    }
+    else
+    {
+      ret_outcome.return_value() = true_exprt();
+    }
+    then.move_to_operands(ret_outcome);
 
     codet if_expr("ifthenelse");
     if_expr.copy_to_operands(_equal, then);
     func_body.move_to_operands(if_expr);
   }
-  // add "Return false;" in the end
-  code_returnt return_expr;
-  return_expr.return_value() = false_exprt();
-  func_body.move_to_operands(return_expr);
+
+  if (is_library)
+  {
+    // Library fallthrough: address matched no tracked contract.  Credit
+    // the EOA-balance map so a subsequent `recipient.balance` read under
+    // `--bound` still observes the transfer (matches the EOA tracking
+    // from transfer/send documented in CLAUDE.md "EOA Balance Modeling").
+    side_effect_expr_function_callt eoa_credit;
+    get_library_function_call_no_args(
+      "_ESBMC_eoa_credit",
+      "c:@F@_ESBMC_eoa_credit",
+      empty_typet(),
+      locationt(),
+      eoa_credit);
+    eoa_credit.arguments().push_back(addr_expr);
+    eoa_credit.arguments().push_back(val_expr);
+    convert_expression_to_code(eoa_credit);
+    func_body.move_to_operands(eoa_credit);
+
+    code_returnt return_nondet;
+    side_effect_expr_function_callt nondet_call;
+    get_library_function_call_no_args(
+      "nondet_bool",
+      "c:@F@nondet_bool",
+      bool_t,
+      locationt(),
+      nondet_call);
+    return_nondet.return_value() = nondet_call;
+    func_body.move_to_operands(return_nondet);
+  }
+  else
+  {
+    // add "Return false;" in the end
+    code_returnt return_expr;
+    return_expr.return_value() = false_exprt();
+    func_body.move_to_operands(return_expr);
+  }
 
   added_symbol.value = func_body;
   new_expr = symbol_expr(added_symbol);
@@ -3233,19 +3303,14 @@ bool solidity_convertert::get_transfer_definition(
 
   added_symbol.type = t;
 
-  // Library mode: `this->$balance` is not owned; skip the transfer model
-  // and emit a nondet bool body so callers see an over-approximated
-  // success/failure outcome rather than a crash.
-  if (is_library)
-  {
-    code_blockt lib_body;
-    code_returnt ret_nondet;
-    ret_nondet.return_value() = side_effect_expr_function_callt(nondet_bool_expr);
-    lib_body.move_to_operands(ret_nondet);
-    added_symbol.value = lib_body;
-    new_expr = symbol_expr(added_symbol);
-    return false;
-  }
+  // Library mode adapts the body in-place — see the companion comment
+  // in `get_call_value_definition`.  Summary: the per-target dispatch
+  // + target-balance credit + receive/fallback stay; the caller-side
+  // debit (this.$balance -=), the underflow revert check, the reentry
+  // mutex, and the msg_sender swap to this.$address are omitted (no
+  // `this` balance slot in library scope; msg_sender swaps to NONDET
+  // instead).  The fallback EOA path keeps `_ESBMC_eoa_credit` and
+  // omits the sender-side debit.
 
   code_blockt func_body;
   exprt addr_expr = symbol_expr(addr_added_symbol);
@@ -3261,8 +3326,13 @@ bool solidity_convertert::get_transfer_definition(
   exprt msg_value = symbol_expr(*context.find_symbol("c:@msg_value"));
   symbolt this_sym = *context.find_symbol(call_id + "#this");
   exprt this_expr = symbol_expr(this_sym);
-  exprt this_address = member_exprt(this_expr, "$address", addrp_t);
-  exprt this_balance = member_exprt(this_expr, "$balance", val_t);
+  exprt this_address;
+  exprt this_balance;
+  if (!is_library)
+  {
+    this_address = member_exprt(this_expr, "$address", addrp_t);
+    this_balance = member_exprt(this_expr, "$balance", val_t);
+  }
 
   // uint256_t old_value = msg_value;
   symbolt old_value;
@@ -3331,42 +3401,57 @@ bool solidity_convertert::get_transfer_definition(
     convert_expression_to_code(assign_val);
     then.move_to_operands(assign_val);
 
-    // msg_sender = this.$address;
+    // msg_sender swap: <this.$address> for contracts, NONDET for
+    // libraries (the enclosing contract is run-time data).
+    exprt new_sender;
+    if (is_library)
+    {
+      new_sender = exprt("sideeffect");
+      new_sender.type() = addrp_t;
+      new_sender.statement("nondet");
+    }
+    else
+    {
+      new_sender = this_address;
+    }
     exprt assign_sender = side_effect_exprt("assign", addrp_t);
-    assign_sender.copy_to_operands(msg_sender, this_address);
+    assign_sender.copy_to_operands(msg_sender, new_sender);
     convert_expression_to_code(assign_sender);
     then.move_to_operands(assign_sender);
 
-    // Real Solidity transfer() reverts on insufficient balance (it is a
-    // void-returning function in the language; returning `false` here
-    // would let callers keep executing past a revert and observe a
-    // partially updated state). Model the revert as __ESBMC_assume(false)
-    // so the infeasible path is pruned at the SMT level.
-    // if(this.balance < val) __ESBMC_assume(false);
+    if (!is_library)
     {
-      exprt less_than = exprt("<", bool_t);
-      less_than.copy_to_operands(this_balance, val_expr);
-      codet cmp_less_than("ifthenelse");
+      // Real Solidity transfer() reverts on insufficient balance (it is a
+      // void-returning function in the language; returning `false` here
+      // would let callers keep executing past a revert and observe a
+      // partially updated state). Model the revert as __ESBMC_assume(false)
+      // so the infeasible path is pruned at the SMT level.
+      // if(this.balance < val) __ESBMC_assume(false);
+      {
+        exprt less_than = exprt("<", bool_t);
+        less_than.copy_to_operands(this_balance, val_expr);
+        codet cmp_less_than("ifthenelse");
 
-      side_effect_expr_function_callt assume_call;
-      get_library_function_call_no_args(
-        "__ESBMC_assume",
-        "c:@F@__ESBMC_assume",
-        empty_typet(),
-        locationt(),
-        assume_call);
-      assume_call.arguments().push_back(false_exprt());
-      convert_expression_to_code(assume_call);
+        side_effect_expr_function_callt assume_call;
+        get_library_function_call_no_args(
+          "__ESBMC_assume",
+          "c:@F@__ESBMC_assume",
+          empty_typet(),
+          locationt(),
+          assume_call);
+        assume_call.arguments().push_back(false_exprt());
+        convert_expression_to_code(assume_call);
 
-      cmp_less_than.copy_to_operands(less_than, assume_call);
-      then.move_to_operands(cmp_less_than);
+        cmp_less_than.copy_to_operands(less_than, assume_call);
+        then.move_to_operands(cmp_less_than);
+      }
+
+      // this.balance -= _val;
+      exprt sub_assign = side_effect_exprt("assign-", val_t);
+      sub_assign.copy_to_operands(this_balance, val_expr);
+      convert_expression_to_code(sub_assign);
+      then.move_to_operands(sub_assign);
     }
-
-    // this.balance -= _val;
-    exprt sub_assign = side_effect_exprt("assign-", val_t);
-    sub_assign.copy_to_operands(this_balance, val_expr);
-    convert_expression_to_code(sub_assign);
-    then.move_to_operands(sub_assign);
 
     // _ESBMC_Object_str.balance += _val;
     exprt target_balance = member_exprt(static_ins, "$balance", val_t);
@@ -3378,7 +3463,7 @@ bool solidity_convertert::get_transfer_definition(
     // Only call receive/fallback if the contract has one
     if (has_payable_callback)
     {
-      if (is_reentry_check)
+      if (is_reentry_check && !is_library)
       {
         exprt _mutex;
         get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -3400,7 +3485,7 @@ bool solidity_convertert::get_transfer_definition(
       convert_expression_to_code(call);
       then.move_to_operands(call);
 
-      if (is_reentry_check)
+      if (is_reentry_check && !is_library)
       {
         exprt _mutex;
         get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -3440,8 +3525,9 @@ bool solidity_convertert::get_transfer_definition(
   // EOA / unknown-recipient fallback.  Real EVM `transfer(addr, val)`
   // moves `val` out of the sender regardless of whether the recipient
   // is a tracked contract, an EOA, or an unknown address.  Deduct from
-  // sender, then credit the recipient's slot in the global EOA balance
-  // map (`_ESBMC_eoa_credit`) so a subsequent `addr.balance` read sees
+  // sender (contracts only; libraries have no owned balance), then
+  // credit the recipient's slot in the global EOA balance map
+  // (`_ESBMC_eoa_credit`) so a subsequent `addr.balance` read sees
   // the new value.  This is what unlocks order-sensitive properties on
   // recipient balances (e.g. SolidiFI TOD-Balance pattern A).
   //
@@ -3453,11 +3539,14 @@ bool solidity_convertert::get_transfer_definition(
   // stays sound because no downstream property depends on the EOA
   // recipient's state).
   {
-    // this->$balance -= _val;
-    exprt sub_assign = side_effect_exprt("assign-", val_t);
-    sub_assign.copy_to_operands(this_balance, val_expr);
-    convert_expression_to_code(sub_assign);
-    func_body.move_to_operands(sub_assign);
+    if (!is_library)
+    {
+      // this->$balance -= _val;
+      exprt sub_assign = side_effect_exprt("assign-", val_t);
+      sub_assign.copy_to_operands(this_balance, val_expr);
+      convert_expression_to_code(sub_assign);
+      func_body.move_to_operands(sub_assign);
+    }
 
     // _ESBMC_eoa_credit(_addr, _val);
     side_effect_expr_function_callt eoa_credit;
@@ -3531,18 +3620,13 @@ bool solidity_convertert::get_send_definition(
 
   added_symbol.type = t;
 
-  // Library mode: see `get_transfer_definition` — no this->$balance,
-  // emit a nondet bool body.
-  if (is_library)
-  {
-    code_blockt lib_body;
-    code_returnt ret_nondet;
-    ret_nondet.return_value() = side_effect_expr_function_callt(nondet_bool_expr);
-    lib_body.move_to_operands(ret_nondet);
-    added_symbol.value = lib_body;
-    new_expr = symbol_expr(added_symbol);
-    return false;
-  }
+  // Library mode: see `get_transfer_definition` / `get_call_value_definition`
+  // — caller-side debit + mutex + sender swap to this.$address are
+  // skipped; credit side + receive/fallback dispatch kept; returns
+  // nondet bool on tracked-target success (send is specced to return
+  // false on failure, and library-scope reverts are opaque to the
+  // caller).  EOA fallback credits the global EOA map and returns
+  // nondet bool, matching send's failure-observable semantics.
 
   code_blockt func_body;
   exprt addr_expr = symbol_expr(addr_added_symbol);
@@ -3558,8 +3642,13 @@ bool solidity_convertert::get_send_definition(
   exprt msg_value = symbol_expr(*context.find_symbol("c:@msg_value"));
   symbolt this_sym = *context.find_symbol(call_id + "#this");
   exprt this_expr = symbol_expr(this_sym);
-  exprt this_address = member_exprt(this_expr, "$address", addr_t);
-  exprt this_balance = member_exprt(this_expr, "$balance", val_t);
+  exprt this_address;
+  exprt this_balance;
+  if (!is_library)
+  {
+    this_address = member_exprt(this_expr, "$address", addr_t);
+    this_balance = member_exprt(this_expr, "$balance", val_t);
+  }
 
   // uint256_t old_value = msg_value;
   symbolt old_value;
@@ -3626,27 +3715,41 @@ bool solidity_convertert::get_send_definition(
     convert_expression_to_code(assign_val);
     then.move_to_operands(assign_val);
 
-    // msg_sender = this.$address;
+    // msg_sender swap: contracts use this.$address; libraries use NONDET.
+    exprt new_sender;
+    if (is_library)
+    {
+      new_sender = exprt("sideeffect");
+      new_sender.type() = addr_t;
+      new_sender.statement("nondet");
+    }
+    else
+    {
+      new_sender = this_address;
+    }
     exprt assign_sender = side_effect_exprt("assign", addr_t);
-    assign_sender.copy_to_operands(msg_sender, this_address);
+    assign_sender.copy_to_operands(msg_sender, new_sender);
     convert_expression_to_code(assign_sender);
     then.move_to_operands(assign_sender);
 
-    // if(this.balance < val) return false;
-    exprt less_than = exprt("<", val_expr.type());
-    less_than.copy_to_operands(this_balance, val_expr);
-    //! "ifthenelse" has to be declared as codet, not exprt and use convert_expr_to_code
-    codet cmp_less_than("ifthenelse");
-    code_returnt ret_false;
-    ret_false.return_value() = false_exprt();
-    cmp_less_than.copy_to_operands(less_than, ret_false);
-    then.move_to_operands(cmp_less_than);
+    if (!is_library)
+    {
+      // if(this.balance < val) return false;
+      exprt less_than = exprt("<", val_expr.type());
+      less_than.copy_to_operands(this_balance, val_expr);
+      //! "ifthenelse" has to be declared as codet, not exprt and use convert_expr_to_code
+      codet cmp_less_than("ifthenelse");
+      code_returnt ret_false;
+      ret_false.return_value() = false_exprt();
+      cmp_less_than.copy_to_operands(less_than, ret_false);
+      then.move_to_operands(cmp_less_than);
 
-    // this.balance -= _val;
-    exprt sub_assign = side_effect_exprt("assign-", val_t);
-    sub_assign.copy_to_operands(this_balance, val_expr);
-    convert_expression_to_code(sub_assign);
-    then.move_to_operands(sub_assign);
+      // this.balance -= _val;
+      exprt sub_assign = side_effect_exprt("assign-", val_t);
+      sub_assign.copy_to_operands(this_balance, val_expr);
+      convert_expression_to_code(sub_assign);
+      then.move_to_operands(sub_assign);
+    }
 
     // _ESBMC_Object_str.balance += _val;
     exprt target_balance = member_exprt(static_ins, "$balance", val_t);
@@ -3658,7 +3761,7 @@ bool solidity_convertert::get_send_definition(
     // Only call receive/fallback if the contract has one
     if (has_payable_callback)
     {
-      if (is_reentry_check)
+      if (is_reentry_check && !is_library)
       {
         exprt _mutex;
         get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -3678,7 +3781,7 @@ bool solidity_convertert::get_send_definition(
       convert_expression_to_code(call);
       then.move_to_operands(call);
 
-      if (is_reentry_check)
+      if (is_reentry_check && !is_library)
       {
         exprt _mutex;
         get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -3705,10 +3808,26 @@ bool solidity_convertert::get_send_definition(
     convert_expression_to_code(assign_sender_restore);
     then.move_to_operands(assign_sender_restore);
 
-    // return true;
-    code_returnt ret_true;
-    ret_true.return_value() = true_exprt();
-    then.move_to_operands(ret_true);
+    // Return true for contracts, nondet bool for libraries (real send
+    // can fail for any reason — out-of-gas, callee revert — and we
+    // can't inspect the target's revert decision at library scope).
+    code_returnt ret_outcome;
+    if (is_library)
+    {
+      side_effect_expr_function_callt nondet_call;
+      get_library_function_call_no_args(
+        "nondet_bool",
+        "c:@F@nondet_bool",
+        bool_t,
+        locationt(),
+        nondet_call);
+      ret_outcome.return_value() = nondet_call;
+    }
+    else
+    {
+      ret_outcome.return_value() = true_exprt();
+    }
+    then.move_to_operands(ret_outcome);
 
     codet if_expr("ifthenelse");
     if_expr.copy_to_operands(_equal, then);
@@ -3716,18 +3835,20 @@ bool solidity_convertert::get_send_definition(
   }
 
   // EOA / unknown-recipient fallback for `send`.  Same shape as
-  // transfer: deduct from sender, credit recipient via the global EOA
-  // balance map.  See note in get_transfer_definition.  send's bool
-  // return is always `true` on this path; users checking for false-on-
-  // failure will still see it when the recipient matches a tracked
-  // contract without a payable receive (handled in the per-contract
-  // dispatch above).
+  // transfer: deduct from sender (contracts only), credit recipient
+  // via the global EOA balance map.  See note in
+  // get_transfer_definition.  send's bool return is `true` on the
+  // contract-scope success path; for libraries the outcome is nondet
+  // (sound over-approximation of EVM revert reasons).
   {
-    // this->$balance -= _val;
-    exprt sub_assign = side_effect_exprt("assign-", val_t);
-    sub_assign.copy_to_operands(this_balance, val_expr);
-    convert_expression_to_code(sub_assign);
-    func_body.move_to_operands(sub_assign);
+    if (!is_library)
+    {
+      // this->$balance -= _val;
+      exprt sub_assign = side_effect_exprt("assign-", val_t);
+      sub_assign.copy_to_operands(this_balance, val_expr);
+      convert_expression_to_code(sub_assign);
+      func_body.move_to_operands(sub_assign);
+    }
 
     // _ESBMC_eoa_credit(_addr, _val);
     side_effect_expr_function_callt eoa_credit;
@@ -3742,10 +3863,23 @@ bool solidity_convertert::get_send_definition(
     convert_expression_to_code(eoa_credit);
     func_body.move_to_operands(eoa_credit);
 
-    // return true;
-    code_returnt ret_true;
-    ret_true.return_value() = true_exprt();
-    func_body.move_to_operands(ret_true);
+    code_returnt ret_outcome;
+    if (is_library)
+    {
+      side_effect_expr_function_callt nondet_call;
+      get_library_function_call_no_args(
+        "nondet_bool",
+        "c:@F@nondet_bool",
+        bool_t,
+        locationt(),
+        nondet_call);
+      ret_outcome.return_value() = nondet_call;
+    }
+    else
+    {
+      ret_outcome.return_value() = true_exprt();
+    }
+    func_body.move_to_operands(ret_outcome);
   }
 
   added_symbol.value = func_body;
@@ -4030,19 +4164,12 @@ bool solidity_convertert::get_delegatecall_definition(
   label.code() = code_skipt();
   func_body.move_to_operands(label);
 
-  // Library mode: delegatecall's semantics (execute target code against
-  // CALLER storage) do not survive the library abstraction — libraries
-  // don't have storage.  Emit a nondet bool body; the rare library that
-  // wraps a delegatecall will lose the inlined effect, but won't crash.
-  if (is_library)
-  {
-    code_returnt ret_nondet;
-    ret_nondet.return_value() = side_effect_expr_function_callt(nondet_bool_expr);
-    func_body.move_to_operands(ret_nondet);
-    added_symbol.value = func_body;
-    new_expr = symbol_expr(added_symbol);
-    return false;
-  }
+  // Delegatecall preserves msg.sender / msg.value (the target executes
+  // in the caller's context).  In library scope we keep the per-target
+  // dispatch — the target's external functions still fire and can
+  // observe the ambient context — but skip the reentry-mutex toggles
+  // (no `this` mutex to own) and return a nondet bool (library-scope
+  // EVM reverts are opaque to the caller).
 
   exprt addr_expr = symbol_expr(addr_added_symbol);
 
@@ -4059,7 +4186,7 @@ bool solidity_convertert::get_delegatecall_definition(
     symbolt this_sym = *context.find_symbol(call_id + "#this");
     exprt this_expr = symbol_expr(this_sym);
 
-    if (is_reentry_check)
+    if (is_reentry_check && !is_library)
     {
       exprt _mutex;
       get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -4075,7 +4202,7 @@ bool solidity_convertert::get_delegatecall_definition(
       return true;
     then.move_to_operands(call);
 
-    if (is_reentry_check)
+    if (is_reentry_check && !is_library)
     {
       exprt _mutex;
       get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -4086,9 +4213,23 @@ bool solidity_convertert::get_delegatecall_definition(
     }
 
     // return true;
-    code_returnt ret_true;
-    ret_true.return_value() = true_exprt();
-    then.move_to_operands(ret_true);
+    code_returnt ret_outcome;
+    if (is_library)
+    {
+      side_effect_expr_function_callt nondet_call;
+      get_library_function_call_no_args(
+        "nondet_bool",
+        "c:@F@nondet_bool",
+        bool_t,
+        locationt(),
+        nondet_call);
+      ret_outcome.return_value() = nondet_call;
+    }
+    else
+    {
+      ret_outcome.return_value() = true_exprt();
+    }
+    then.move_to_operands(ret_outcome);
 
     // _addr == _ESBMC_Object_str.$address
     exprt static_ins;
