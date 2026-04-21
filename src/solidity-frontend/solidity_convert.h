@@ -142,6 +142,14 @@ protected:
   bool populate_low_level_functions(
     const std::string &cname,
     bool is_library = false);
+  // Lazily emit `void _ESBMC_enclosing_debit(uint256 val)`: a helper
+  // that debits `val` from the currently-executing contract's
+  // $balance.  Dispatch is by pointer identity against each
+  // `_ESBMC_Object_<C>` instance, using the `_ESBMC_enclosing_contract_this`
+  // ambient set at every contract-method entry.  Called from library
+  // $transfer/$call#1/$send bodies on the caller-side debit path
+  // (libraries don't own their own $balance slot).
+  bool build_enclosing_debit_helper();
   bool convert_ast_nodes(
     const nlohmann::json &contract_def,
     const std::string &cname);

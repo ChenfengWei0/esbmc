@@ -30,6 +30,20 @@ address_t msg_sender;
 uint32_t msg_sig;
 uint256_t msg_value;
 
+/* ── enclosing contract ambient ────────────────────────────────────
+ * When execution enters a contract method (either via Harness auto-
+ * dispatch or a cross-contract .call()), the wrapper saves the
+ * previous values and sets these to `this->$address` / `(void*)this`.
+ * Library bodies, which have no real `this` of their own in the
+ * Solidity semantics (internal library calls run in the caller's
+ * context), read these to recover the enclosing contract's identity
+ * for msg.sender swaps and balance debits on library-scope
+ * transfers.  Initialised to zero/NULL; every contract method entry
+ * save/sets before use.
+ */
+address_t _ESBMC_enclosing_contract_address;
+void *_ESBMC_enclosing_contract_this;
+
 /* ── tx variables ──────────────────────────────────────────────── */
 uint256_t tx_gasprice;
 address_t tx_origin;

@@ -3151,13 +3151,17 @@ bool solidity_convertert::get_call_value_definition(
     convert_expression_to_code(assign_val);
     then.move_to_operands(assign_val);
 
-    // msg_sender = <this.$address for contracts, NONDET for libraries>.
+    // msg_sender swap: for contracts use the caller's this.$address;
+    // for libraries use the ambient _ESBMC_enclosing_contract_address
+    // — the currently-executing contract's address, written at every
+    // contract-method entry by `get_function_definition`'s wrapper.
+    // This is the deterministic replacement for the earlier NONDET
+    // over-approximation.
     exprt new_sender;
     if (is_library)
     {
-      new_sender = exprt("sideeffect");
-      new_sender.type() = addrp_t;
-      new_sender.statement("nondet");
+      new_sender = symbol_expr(
+        *context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
     }
     else
     {
@@ -3168,8 +3172,6 @@ bool solidity_convertert::get_call_value_definition(
     convert_expression_to_code(assign_sender);
     then.move_to_operands(assign_sender);
 
-    // Contracts only: underflow check + caller-side debit.  Libraries
-    // don't own a meaningful `this.$balance`, so omit both.
     if (!is_library)
     {
       // if(this.balance < val) return false;
@@ -3186,6 +3188,24 @@ bool solidity_convertert::get_call_value_definition(
       sub_assign.copy_to_operands(this_balance, val_expr);
       convert_expression_to_code(sub_assign);
       then.move_to_operands(sub_assign);
+    }
+    else
+    {
+      // Library caller: debit the ENCLOSING CONTRACT's $balance via
+      // the pointer-dispatch helper.  Skip the underflow revert
+      // check — the helper is best-effort: it may silently
+      // under-approx if the enclosing contract isn't tracked (e.g.
+      // library-from-Harness before any contract method entered).
+      side_effect_expr_function_callt debit_call;
+      get_library_function_call_no_args(
+        "_ESBMC_enclosing_debit",
+        "c:@F@_ESBMC_enclosing_debit",
+        empty_typet(),
+        locationt(),
+        debit_call);
+      debit_call.arguments().push_back(val_expr);
+      convert_expression_to_code(debit_call);
+      then.move_to_operands(debit_call);
     }
 
     // _ESBMC_Object_str.balance += _val;
@@ -3444,14 +3464,14 @@ bool solidity_convertert::get_transfer_definition(
     convert_expression_to_code(assign_val);
     then.move_to_operands(assign_val);
 
-    // msg_sender swap: <this.$address> for contracts, NONDET for
-    // libraries (the enclosing contract is run-time data).
+    // msg_sender swap: contracts use this.$address; libraries use
+    // the ambient _ESBMC_enclosing_contract_address (see
+    // get_call_value_definition for rationale).
     exprt new_sender;
     if (is_library)
     {
-      new_sender = exprt("sideeffect");
-      new_sender.type() = addrp_t;
-      new_sender.statement("nondet");
+      new_sender = symbol_expr(
+        *context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
     }
     else
     {
@@ -3494,6 +3514,20 @@ bool solidity_convertert::get_transfer_definition(
       sub_assign.copy_to_operands(this_balance, val_expr);
       convert_expression_to_code(sub_assign);
       then.move_to_operands(sub_assign);
+    }
+    else
+    {
+      // Library caller: debit the enclosing contract's $balance.
+      side_effect_expr_function_callt debit_call;
+      get_library_function_call_no_args(
+        "_ESBMC_enclosing_debit",
+        "c:@F@_ESBMC_enclosing_debit",
+        empty_typet(),
+        locationt(),
+        debit_call);
+      debit_call.arguments().push_back(val_expr);
+      convert_expression_to_code(debit_call);
+      then.move_to_operands(debit_call);
     }
 
     // _ESBMC_Object_str.balance += _val;
@@ -3589,6 +3623,20 @@ bool solidity_convertert::get_transfer_definition(
       sub_assign.copy_to_operands(this_balance, val_expr);
       convert_expression_to_code(sub_assign);
       func_body.move_to_operands(sub_assign);
+    }
+    else
+    {
+      // Library caller: debit enclosing contract's $balance.
+      side_effect_expr_function_callt debit_call;
+      get_library_function_call_no_args(
+        "_ESBMC_enclosing_debit",
+        "c:@F@_ESBMC_enclosing_debit",
+        empty_typet(),
+        locationt(),
+        debit_call);
+      debit_call.arguments().push_back(val_expr);
+      convert_expression_to_code(debit_call);
+      func_body.move_to_operands(debit_call);
     }
 
     // _ESBMC_eoa_credit(_addr, _val);
@@ -3758,13 +3806,13 @@ bool solidity_convertert::get_send_definition(
     convert_expression_to_code(assign_val);
     then.move_to_operands(assign_val);
 
-    // msg_sender swap: contracts use this.$address; libraries use NONDET.
+    // msg_sender swap: contracts use this.$address; libraries use
+    // the ambient _ESBMC_enclosing_contract_address.
     exprt new_sender;
     if (is_library)
     {
-      new_sender = exprt("sideeffect");
-      new_sender.type() = addr_t;
-      new_sender.statement("nondet");
+      new_sender = symbol_expr(
+        *context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
     }
     else
     {
@@ -3792,6 +3840,20 @@ bool solidity_convertert::get_send_definition(
       sub_assign.copy_to_operands(this_balance, val_expr);
       convert_expression_to_code(sub_assign);
       then.move_to_operands(sub_assign);
+    }
+    else
+    {
+      // Library caller: debit enclosing contract's $balance.
+      side_effect_expr_function_callt debit_call;
+      get_library_function_call_no_args(
+        "_ESBMC_enclosing_debit",
+        "c:@F@_ESBMC_enclosing_debit",
+        empty_typet(),
+        locationt(),
+        debit_call);
+      debit_call.arguments().push_back(val_expr);
+      convert_expression_to_code(debit_call);
+      then.move_to_operands(debit_call);
     }
 
     // _ESBMC_Object_str.balance += _val;
@@ -3881,6 +3943,20 @@ bool solidity_convertert::get_send_definition(
       sub_assign.copy_to_operands(this_balance, val_expr);
       convert_expression_to_code(sub_assign);
       func_body.move_to_operands(sub_assign);
+    }
+    else
+    {
+      // Library caller: debit enclosing contract's $balance.
+      side_effect_expr_function_callt debit_call;
+      get_library_function_call_no_args(
+        "_ESBMC_enclosing_debit",
+        "c:@F@_ESBMC_enclosing_debit",
+        empty_typet(),
+        locationt(),
+        debit_call);
+      debit_call.arguments().push_back(val_expr);
+      convert_expression_to_code(debit_call);
+      func_body.move_to_operands(debit_call);
     }
 
     // _ESBMC_eoa_credit(_addr, _val);

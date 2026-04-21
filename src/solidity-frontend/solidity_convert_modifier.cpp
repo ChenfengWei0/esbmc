@@ -277,6 +277,96 @@ bool solidity_convertert::get_function_definition(
 
       body_exprt = new_body;
     }
+
+    // Wrap contract method bodies with an enclosing-contract save /
+    // set / restore so library bodies called from within can recover
+    // the currently-executing contract's identity (msg.sender for
+    // library external calls, caller-side $balance debit for library
+    // transfer/send/call{value:v}).  Applied to every method with a
+    // real `this`: contracts, ctors, receive/fallback.  Skipped for
+    // library internal functions, free functions, events, errors —
+    // none of which have a meaningful `this` to record.
+    //
+    // Early returns inside `body_exprt` skip the trailing restore,
+    // leaving the ambient value at this method's this after exit.
+    // That stale value is harmless:
+    //   - If the caller is another contract method, its own call-site
+    //     `get_high_level_call_wrapper` saved the pre-call ambient and
+    //     restores on return, overwriting the stale value.
+    //   - If the caller is the auto-dispatch loop (`_ESBMC_Main_X`),
+    //     no code runs after the callee returns, so the stale value
+    //     is never observed.
+    if (!is_event_err_lib && !is_free_function && has_body &&
+        body_exprt.is_code())
+    {
+      std::string this_id = id + "#this";
+      const symbolt *this_sym = context.find_symbol(this_id);
+      if (this_sym != nullptr)
+      {
+        exprt this_expr = symbol_expr(*this_sym);
+        typet addr_t_sym = unsignedbv_typet(160);
+        typet void_ptr_t = pointer_typet(empty_typet());
+
+        exprt encl_addr_g =
+          symbol_expr(*context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
+        exprt encl_this_g =
+          symbol_expr(*context.find_symbol("c:@_ESBMC_enclosing_contract_this"));
+
+        symbolt sa;
+        get_default_symbol(
+          sa, debug_modulename, addr_t_sym, "_saved_encl_addr",
+          "sol:@C@" + c_name + "@F@_saved_encl_addr#" +
+            std::to_string(aux_counter++),
+          location_begin);
+        symbolt &added_sa = *move_symbol_to_context(sa);
+        code_declt sa_decl(symbol_expr(added_sa));
+        added_sa.value = encl_addr_g;
+        sa_decl.operands().push_back(encl_addr_g);
+
+        symbolt st;
+        get_default_symbol(
+          st, debug_modulename, void_ptr_t, "_saved_encl_this",
+          "sol:@C@" + c_name + "@F@_saved_encl_this#" +
+            std::to_string(aux_counter++),
+          location_begin);
+        symbolt &added_st = *move_symbol_to_context(st);
+        code_declt st_decl(symbol_expr(added_st));
+        added_st.value = encl_this_g;
+        st_decl.operands().push_back(encl_this_g);
+
+        exprt this_addr_mem =
+          member_exprt(this_expr, "$address", addr_t_sym);
+        exprt assign_set_addr = side_effect_exprt("assign", addr_t_sym);
+        assign_set_addr.copy_to_operands(encl_addr_g, this_addr_mem);
+        convert_expression_to_code(assign_set_addr);
+
+        exprt this_cast = this_expr;
+        solidity_gen_typecast(ns, this_cast, void_ptr_t);
+        exprt assign_set_this = side_effect_exprt("assign", void_ptr_t);
+        assign_set_this.copy_to_operands(encl_this_g, this_cast);
+        convert_expression_to_code(assign_set_this);
+
+        exprt assign_rst_addr = side_effect_exprt("assign", addr_t_sym);
+        assign_rst_addr.copy_to_operands(encl_addr_g, symbol_expr(added_sa));
+        convert_expression_to_code(assign_rst_addr);
+
+        exprt assign_rst_this = side_effect_exprt("assign", void_ptr_t);
+        assign_rst_this.copy_to_operands(encl_this_g, symbol_expr(added_st));
+        convert_expression_to_code(assign_rst_this);
+
+        code_blockt wrapped;
+        wrapped.copy_to_operands(sa_decl);
+        wrapped.copy_to_operands(st_decl);
+        wrapped.copy_to_operands(assign_set_addr);
+        wrapped.copy_to_operands(assign_set_this);
+        for (auto &op : body_exprt.operands())
+          wrapped.copy_to_operands(op);
+        wrapped.copy_to_operands(assign_rst_addr);
+        wrapped.copy_to_operands(assign_rst_this);
+
+        body_exprt = wrapped;
+      }
+    }
   }
 
   // For library functions with storage parameters, append a copy-out

@@ -372,6 +372,17 @@ bool solidity_convertert::convert()
   for (const auto &c_name : contractNamesList)
     add_static_contract_instance(c_name);
 
+  // Emit the enclosing-debit helper NOW — after every contract's
+  // `_ESBMC_Object_<C>` static instance is registered and ctor
+  // resolved.  Library $transfer/$call#1/$send bodies parsed
+  // earlier already reference the helper by its symbol id (forward
+  // declaration); only the BODY needs all contract instances
+  // visible.  Skip if no contracts are tracked (the helper would
+  // have nothing to dispatch to, but library bodies still reference
+  // it, so emit an empty stub).
+  if (build_enclosing_debit_helper())
+    return true;
+
   // Do Verification
   // single contract verification: where the option "--contract" is set.
   // multiple contracts verification: essentially verify the whole file.
@@ -1239,6 +1250,90 @@ void solidity_convertert::get_cname_expr(
   exprt &new_expr)
 {
   new_expr = symbol_expr(*context.find_symbol("sol:@" + cname));
+}
+
+bool solidity_convertert::build_enclosing_debit_helper()
+{
+  const std::string helper_id = "c:@F@_ESBMC_enclosing_debit";
+  if (context.find_symbol(helper_id) != nullptr)
+    return false;  // already emitted
+
+  typet addr_t_local = unsignedbv_typet(160);
+  typet val_t = unsignedbv_typet(256);
+  typet void_ptr_t = pointer_typet(empty_typet());
+
+  code_typet helper_ft;
+  helper_ft.return_type() = empty_typet();
+  code_typet::argumentt val_arg;
+  val_arg.type() = val_t;
+  val_arg.cmt_base_name("val");
+  val_arg.cmt_identifier(helper_id + "::val");
+  helper_ft.arguments().push_back(val_arg);
+
+  std::string dbgmod = get_modulename_from_path(absolute_path);
+  locationt loc;
+  symbolt helper_sym;
+  get_default_symbol(
+    helper_sym, dbgmod, helper_ft, "_ESBMC_enclosing_debit", helper_id, loc);
+  helper_sym.lvalue = true;
+  helper_sym.file_local = true;
+  symbolt &added_helper = *move_symbol_to_context(helper_sym);
+
+  symbolt val_sym;
+  get_default_symbol(
+    val_sym, dbgmod, val_t, "val", helper_id + "::val", loc);
+  val_sym.lvalue = true;
+  val_sym.is_parameter = true;
+  val_sym.file_local = true;
+  move_symbol_to_context(val_sym);
+
+  code_blockt body;
+  code_labelt label;
+  label.set_label("__ESBMC_HIDE");
+  label.code() = code_skipt();
+  body.move_to_operands(label);
+
+  exprt val_expr = symbol_expr(*context.find_symbol(helper_id + "::val"));
+  exprt encl_this = symbol_expr(
+    *context.find_symbol("c:@_ESBMC_enclosing_contract_this"));
+
+  // Emit one `if (encl_this == (void*)&_ESBMC_Object_<C>) { ...$balance -= val; }`
+  // per known contract.  No `else` chaining — each branch short-
+  // circuits on its own equality check, and at most one branch fires
+  // at runtime (pointer equality is exclusive).
+  for (const auto &cn : contractNamesList)
+  {
+    if (nonContractNamesList.count(cn) != 0)
+      continue;  // skip libraries, interfaces, abstract contracts
+
+    exprt static_ins;
+    get_static_contract_instance_ref(cn, static_ins);
+
+    // (void*)&_ESBMC_Object_<cn>
+    exprt addr_of = exprt("address_of", pointer_typet(static_ins.type()));
+    addr_of.copy_to_operands(static_ins);
+    exprt casted = addr_of;
+    solidity_gen_typecast(ns, casted, void_ptr_t);
+
+    exprt eq = exprt("=", bool_t);
+    eq.copy_to_operands(encl_this, casted);
+
+    exprt target_balance = member_exprt(static_ins, "$balance", val_t);
+    exprt sub_assign = side_effect_exprt("assign-", val_t);
+    sub_assign.copy_to_operands(target_balance, val_expr);
+    convert_expression_to_code(sub_assign);
+
+    code_blockt then_block;
+    then_block.move_to_operands(sub_assign);
+
+    codet if_expr("ifthenelse");
+    if_expr.copy_to_operands(eq, then_block);
+    body.move_to_operands(if_expr);
+  }
+
+  added_helper.value = body;
+  added_helper.type = helper_ft;
+  return false;
 }
 
 bool solidity_convertert::populate_low_level_functions(

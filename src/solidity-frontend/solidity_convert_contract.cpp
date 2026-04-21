@@ -504,23 +504,19 @@ bool solidity_convertert::get_high_level_call_wrapper(
   //
   // Libraries are inlined into the caller's context in real Solidity:
   // when a library body performs an external call, msg.sender for
-  // the callee should be the ENCLOSING CONTRACT's address.  That
-  // address is run-time data (the library can be called from any
-  // contract, resolved at the call site), so the frontend cannot
-  // pin it statically.  Reading `this_expr->$address` inside a
-  // library body would dereference Lib's dummy singleton struct
-  // (no real $address), yielding a garbage value.  Sound
-  // over-approximation: emit a nondet-uint160, so the callee sees an
-  // arbitrary address — the properties that hold under *all* possible
-  // enclosing contracts are preserved, while we refuse to commit to a
-  // specific (wrong) address.  [APPROX: OVER]
+  // the callee should be the ENCLOSING CONTRACT's address.  We can't
+  // reach the enclosing contract's `this` through the library's own
+  // `this` (Lib is a dummy singleton with no real $address), so we
+  // read it from the global `_ESBMC_enclosing_contract_address`
+  // ambient that every contract-method entry sets (see
+  // `get_function_definition` in solidity_convert_modifier.cpp).
+  // Contracts still use `this_expr->$address` directly — their own
+  // `this` IS the caller.
   exprt new_sender_value;
   if (is_library)
   {
-    exprt nondet = exprt("sideeffect");
-    nondet.type() = addr_t;
-    nondet.statement("nondet");
-    new_sender_value = nondet;
+    new_sender_value = symbol_expr(
+      *context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
   }
   else
   {

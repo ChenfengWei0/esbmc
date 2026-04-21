@@ -12,6 +12,8 @@ extern uint256_t msg_data;
 extern address_t msg_sender;
 extern uint32_t msg_sig;
 extern uint256_t msg_value;
+extern address_t _ESBMC_enclosing_contract_address;
+extern void *_ESBMC_enclosing_contract_this;
 extern uint256_t tx_gasprice;
 extern address_t tx_origin;
 extern uint256_t block_basefee;
