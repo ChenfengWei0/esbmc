@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Caller --bound --unwind 1 --no-unwinding-assertions --no-standard-checks --cvc5
+^VERIFICATION FAILED$

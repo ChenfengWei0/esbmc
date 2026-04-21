@@ -1457,6 +1457,18 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
     if (get_struct_class(ast_node))
       return true;
 
+    // Register per-library low-level call helpers (`$call#0`, `$call#1`,
+    // `$transfer#0`, `$send#0`, `$staticcall#0`, `$delegatecall#0`) so
+    // that `.call(data)` / `.transfer(v)` / ... emitted from inside a
+    // library body resolve to a callable symbol at symex time.  Without
+    // this, the caller at `get_low_level_member_accsss` would look up
+    // `sol:@C@<Lib>@F@$call#0` and ESBMC would abort with
+    // "Function type mismatch: expected code".  Library-mode bodies are
+    // over-approximated (msg.sender/mutex/balance state skipped) — see
+    // the is_library branches inside each populate helper.
+    if (populate_low_level_functions(lib_name, /*is_library=*/true))
+      return true;
+
     if (convert_ast_nodes(ast_node, lib_name))
       return true;
 

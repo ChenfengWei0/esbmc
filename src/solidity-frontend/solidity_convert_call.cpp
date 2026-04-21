@@ -1311,40 +1311,6 @@ bool solidity_convertert::get_low_level_member_accsss(
   if (cname.empty())
     return true;
 
-  // Low-level calls (.call/.delegatecall/.staticcall/.transfer/.send)
-  // emitted from INSIDE a library body need no address-dispatch ladder:
-  // libraries don't own singletons, and `populate_low_level_functions`
-  // is only run for regular contracts, so `sol:@C@<library>@F@$call#0`
-  // was never registered.  For the value-returning calls, emit just the
-  // nondet result tuple; for transfer/send, emit no side effect.
-  const bool is_library =
-    std::find(
-      contractNamesList.begin(), contractNamesList.end(), cname) ==
-    contractNamesList.end();
-  if (is_library)
-  {
-    if (mem_name == "call" || mem_name == "delegatecall" ||
-        mem_name == "staticcall")
-    {
-      symbolt dump;
-      get_llc_ret_tuple(dump);
-      new_expr = symbol_expr(dump);
-      return false;
-    }
-    if (mem_name == "transfer" || mem_name == "send")
-    {
-      // transfer has void result; send returns bool.  Emit a nondet bool
-      // for send so the caller's boolean check is symbolic; for transfer
-      // emit a no-op nil.  Side effects on the recipient's $balance are
-      // lost — over-approximation, but preferable to the crash.
-      if (mem_name == "send")
-        new_expr = side_effect_expr_function_callt(nondet_bool_expr);
-      else
-        new_expr = nil_exprt();
-      return false;
-    }
-  }
-
   // get this
   exprt this_object;
   if (current_functionDecl)
@@ -2648,9 +2614,18 @@ bool solidity_convertert::try_get_signature_dispatched_call(
 // If it contains the function signature, it should be directly converted to the function calls rather than invoke this `call`
 // e.g. addr.call(abi.encodeWithSignature("doSomething(uint256)", 123))
 // => _ESBMC_Object_Base.doSomething(123);
+//
+// `is_library` = true when this $call#0 is being populated for a
+// library.  In that case the `this` pointer has no meaningful content
+// (libraries don't own a singleton with a `$address` field), so we
+// skip the msg.sender swap and reentry-mutex updates.  The
+// address-dispatch ladder itself still fires: reads of _ESBMC_Object_X
+// via `get_static_contract_instance_ref(str, ...)` are preserved so
+// external state updates in X remain visible to the caller.
 bool solidity_convertert::get_call_definition(
   const std::string &cname,
-  exprt &new_expr)
+  exprt &new_expr,
+  bool is_library)
 {
   std::string call_name = "call";
   std::string call_id = "sol:@C@" + cname + "@F@$call#0";
@@ -2710,22 +2685,32 @@ bool solidity_convertert::get_call_definition(
   exprt msg_sender = symbol_expr(*context.find_symbol("c:@msg_sender"));
   symbolt this_sym = *context.find_symbol(call_id + "#this");
   exprt this_expr = symbol_expr(this_sym);
-  exprt this_address = member_exprt(this_expr, "$address", addr_t);
+  // Libraries don't own a singleton with a `$address`/`$mutex` field, so
+  // the this-derived expressions below are only meaningful for contracts.
+  exprt this_address;
+  if (!is_library)
+    this_address = member_exprt(this_expr, "$address", addr_t);
 
-  // uint160_t old_sender =  msg_sender;
-  symbolt old_sender;
-  get_default_symbol(
-    old_sender,
-    debug_modulename,
-    addr_t,
-    "old_sender",
-    "sol:@C@" + cname + "@F@old_sender#" + std::to_string(aux_counter++),
-    locationt());
-  symbolt &added_old_sender = *move_symbol_to_context(old_sender);
-  code_declt old_sender_decl(symbol_expr(added_old_sender));
-  added_old_sender.value = msg_sender;
-  old_sender_decl.operands().push_back(msg_sender);
-  func_body.move_to_operands(old_sender_decl);
+  // uint160_t old_sender =  msg_sender;  (contracts only; libraries skip
+  // the msg.sender swap since the inlined library's caller's msg.sender
+  // is already the active value.)
+  symbolt *added_old_sender_ptr = nullptr;
+  if (!is_library)
+  {
+    symbolt old_sender;
+    get_default_symbol(
+      old_sender,
+      debug_modulename,
+      addr_t,
+      "old_sender",
+      "sol:@C@" + cname + "@F@old_sender#" + std::to_string(aux_counter++),
+      locationt());
+    added_old_sender_ptr = move_symbol_to_context(old_sender);
+    code_declt old_sender_decl(symbol_expr(*added_old_sender_ptr));
+    added_old_sender_ptr->value = msg_sender;
+    old_sender_decl.operands().push_back(msg_sender);
+    func_body.move_to_operands(old_sender_decl);
+  }
 
   for (auto str : contractNamesList)
   {
@@ -2738,13 +2723,16 @@ bool solidity_convertert::get_call_definition(
 
     code_blockt then;
 
-    // msg_sender = this.address;
-    exprt assign_sender = side_effect_exprt("assign", addr_t);
-    assign_sender.copy_to_operands(msg_sender, this_address);
-    convert_expression_to_code(assign_sender);
-    then.move_to_operands(assign_sender);
+    if (!is_library)
+    {
+      // msg_sender = this.address;
+      exprt assign_sender = side_effect_exprt("assign", addr_t);
+      assign_sender.copy_to_operands(msg_sender, this_address);
+      convert_expression_to_code(assign_sender);
+      then.move_to_operands(assign_sender);
+    }
 
-    if (is_reentry_check)
+    if (is_reentry_check && !is_library)
     {
       exprt _mutex;
       get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -2762,7 +2750,7 @@ bool solidity_convertert::get_call_definition(
       return true;
     then.move_to_operands(call);
 
-    if (is_reentry_check)
+    if (is_reentry_check && !is_library)
     {
       exprt _mutex;
       get_contract_mutex_expr(cname, this_expr, _mutex);
@@ -2774,12 +2762,15 @@ bool solidity_convertert::get_call_definition(
       then.move_to_operands(assign_unlock);
     }
 
-    // msg_sender = old_sender;
-    exprt assign_sender_restore = side_effect_exprt("assign", addr_t);
-    assign_sender_restore.copy_to_operands(
-      msg_sender, symbol_expr(added_old_sender));
-    convert_expression_to_code(assign_sender_restore);
-    then.move_to_operands(assign_sender_restore);
+    if (!is_library)
+    {
+      // msg_sender = old_sender;
+      exprt assign_sender_restore = side_effect_exprt("assign", addr_t);
+      assign_sender_restore.copy_to_operands(
+        msg_sender, symbol_expr(*added_old_sender_ptr));
+      convert_expression_to_code(assign_sender_restore);
+      then.move_to_operands(assign_sender_restore);
+    }
 
     // return true;
     code_returnt ret_true;
@@ -2908,10 +2899,15 @@ bool solidity_convertert::model_transaction(
   return false;
 }
 
-// `call(address _addr, uint _val)`
+// `call(address _addr, uint _val)`.  `is_library=true` suppresses the
+// this-owning portions of the body (msg.sender swap, reentry mutex,
+// this.$balance debit).  For libraries, a .call{value:X} still fires
+// the dispatch-dependent receive/fallback so side effects on the
+// target contract's balance and state remain visible.
 bool solidity_convertert::get_call_value_definition(
   const std::string &cname,
-  exprt &new_expr)
+  exprt &new_expr,
+  bool is_library)
 {
   std::string call_name = "call";
   std::string call_id = "sol:@C@" + cname + "@F@$call#1";
@@ -2958,13 +2954,27 @@ bool solidity_convertert::get_call_value_definition(
 
   added_symbol.type = t;
 
+  // Library mode: `this->$balance` is not owned by the library, so we
+  // can't model the ether transfer honestly.  Emit `return nondet_bool();`
+  // and skip the receive/fallback dispatch entirely.
+  if (is_library)
+  {
+    code_blockt lib_body;
+    code_returnt ret_nondet;
+    ret_nondet.return_value() = side_effect_expr_function_callt(nondet_bool_expr);
+    lib_body.move_to_operands(ret_nondet);
+    added_symbol.value = lib_body;
+    new_expr = symbol_expr(added_symbol);
+    return false;
+  }
+
   // body:
   /*
   __ESBMC_Hide;
   uint256_t old_value = msg_value;
   uint160_t old_sender =  msg_sender;
-  if(_addr == _ESBMC_Object_x.$address) 
-  {    
+  if(_addr == _ESBMC_Object_x.$address)
+  {
     *! we do not consider gas consumption
 
     msg_value = value 
@@ -3165,7 +3175,8 @@ bool solidity_convertert::get_call_value_definition(
 
 bool solidity_convertert::get_transfer_definition(
   const std::string &cname,
-  exprt &new_expr)
+  exprt &new_expr,
+  bool is_library)
 {
   std::string call_name = "transfer";
   std::string call_id = "sol:@C@" + cname + "@F@$transfer#0";
@@ -3208,6 +3219,20 @@ bool solidity_convertert::get_transfer_definition(
   t.arguments().push_back(param);
 
   added_symbol.type = t;
+
+  // Library mode: `this->$balance` is not owned; skip the transfer model
+  // and emit a nondet bool body so callers see an over-approximated
+  // success/failure outcome rather than a crash.
+  if (is_library)
+  {
+    code_blockt lib_body;
+    code_returnt ret_nondet;
+    ret_nondet.return_value() = side_effect_expr_function_callt(nondet_bool_expr);
+    lib_body.move_to_operands(ret_nondet);
+    added_symbol.value = lib_body;
+    new_expr = symbol_expr(added_symbol);
+    return false;
+  }
 
   code_blockt func_body;
   exprt addr_expr = symbol_expr(addr_added_symbol);
@@ -3447,7 +3472,8 @@ bool solidity_convertert::get_transfer_definition(
 
 bool solidity_convertert::get_send_definition(
   const std::string &cname,
-  exprt &new_expr)
+  exprt &new_expr,
+  bool is_library)
 {
   std::string call_name = "send";
   std::string call_id = "sol:@C@" + cname + "@F@$send#0";
@@ -3491,6 +3517,19 @@ bool solidity_convertert::get_send_definition(
   t.arguments().push_back(param);
 
   added_symbol.type = t;
+
+  // Library mode: see `get_transfer_definition` — no this->$balance,
+  // emit a nondet bool body.
+  if (is_library)
+  {
+    code_blockt lib_body;
+    code_returnt ret_nondet;
+    ret_nondet.return_value() = side_effect_expr_function_callt(nondet_bool_expr);
+    lib_body.move_to_operands(ret_nondet);
+    added_symbol.value = lib_body;
+    new_expr = symbol_expr(added_symbol);
+    return false;
+  }
 
   code_blockt func_body;
   exprt addr_expr = symbol_expr(addr_added_symbol);
@@ -3708,7 +3747,8 @@ bool solidity_convertert::get_send_definition(
 // at runtime but are not checked by ESBMC).
 bool solidity_convertert::get_staticcall_definition(
   const std::string &cname,
-  exprt &new_expr)
+  exprt &new_expr,
+  bool is_library)
 {
   std::string call_name = "staticcall";
   std::string call_id = "sol:@C@" + cname + "@F@$staticcall#0";
@@ -3747,6 +3787,72 @@ bool solidity_convertert::get_staticcall_definition(
   func_body.move_to_operands(label);
 
   exprt addr_expr = symbol_expr(addr_added_symbol);
+
+  // Library mode: keep the static-call semantics (snapshot target +
+  // Nondet_Extcall + restore) but drop the msg.sender swap and the
+  // this-owning snapshot bookkeeping.  The dispatch still fires so
+  // read effects propagate to the caller; writes observed from the
+  // target are rolled back, matching static-call semantics.
+  if (is_library)
+  {
+    for (auto str : contractNamesList)
+    {
+      if (nonContractNamesList.count(str) != 0 && str != cname)
+        continue;
+      if (!has_callable_func(str))
+        continue;
+
+      exprt static_ins;
+      get_static_contract_instance_ref(str, static_ins);
+
+      code_blockt then;
+
+      symbolt snap_sym;
+      get_default_symbol(
+        snap_sym,
+        debug_modulename,
+        static_ins.type(),
+        "sc_snap",
+        "sol:@C@" + cname + "@F@staticcall@sc_snap_lib_" + str + "#" +
+          std::to_string(aux_counter++),
+        locationt());
+      symbolt &added_snap = *move_symbol_to_context(snap_sym);
+      added_snap.value = static_ins;
+      code_declt snap_decl(symbol_expr(added_snap));
+      snap_decl.operands().push_back(static_ins);
+      then.move_to_operands(snap_decl);
+
+      code_function_callt call;
+      if (get_unbound_funccall(str, call))
+        return true;
+      then.move_to_operands(call);
+
+      exprt assign_restore = side_effect_exprt("assign", static_ins.type());
+      assign_restore.copy_to_operands(static_ins, symbol_expr(added_snap));
+      convert_expression_to_code(assign_restore);
+      then.move_to_operands(assign_restore);
+
+      code_returnt ret_true;
+      ret_true.return_value() = true_exprt();
+      then.move_to_operands(ret_true);
+
+      exprt mem_addr = member_exprt(static_ins, "$address", addr_t);
+      exprt _equal = exprt("=", bool_t);
+      _equal.operands().push_back(addr_expr);
+      _equal.operands().push_back(mem_addr);
+      codet if_expr("ifthenelse");
+      if_expr.copy_to_operands(_equal, then);
+      func_body.move_to_operands(if_expr);
+    }
+
+    code_returnt return_expr;
+    return_expr.return_value() = false_exprt();
+    func_body.move_to_operands(return_expr);
+    added_symbol.value = func_body;
+    new_expr = symbol_expr(added_symbol);
+    return false;
+  }
+
   exprt msg_sender = symbol_expr(*context.find_symbol("c:@msg_sender"));
   symbolt this_sym = *context.find_symbol(call_id + "#this");
   exprt this_expr = symbol_expr(this_sym);
@@ -3870,7 +3976,8 @@ bool solidity_convertert::get_staticcall_definition(
 // reentrancy and control flow but not storage layout sharing.
 bool solidity_convertert::get_delegatecall_definition(
   const std::string &cname,
-  exprt &new_expr)
+  exprt &new_expr,
+  bool is_library)
 {
   std::string call_name = "delegatecall";
   std::string call_id = "sol:@C@" + cname + "@F@$delegatecall#0";
@@ -3909,6 +4016,20 @@ bool solidity_convertert::get_delegatecall_definition(
   label.set_label("__ESBMC_HIDE");
   label.code() = code_skipt();
   func_body.move_to_operands(label);
+
+  // Library mode: delegatecall's semantics (execute target code against
+  // CALLER storage) do not survive the library abstraction — libraries
+  // don't have storage.  Emit a nondet bool body; the rare library that
+  // wraps a delegatecall will lose the inlined effect, but won't crash.
+  if (is_library)
+  {
+    code_returnt ret_nondet;
+    ret_nondet.return_value() = side_effect_expr_function_callt(nondet_bool_expr);
+    func_body.move_to_operands(ret_nondet);
+    added_symbol.value = func_body;
+    new_expr = symbol_expr(added_symbol);
+    return false;
+  }
 
   exprt addr_expr = symbol_expr(addr_added_symbol);
 

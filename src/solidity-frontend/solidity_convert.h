@@ -139,7 +139,9 @@ protected:
   bool monomorphize_fn_ptr_params();
   bool
   populate_function_signature(nlohmann::json &json, const std::string &cname);
-  bool populate_low_level_functions(const std::string &cname);
+  bool populate_low_level_functions(
+    const std::string &cname,
+    bool is_library = false);
   bool convert_ast_nodes(
     const nlohmann::json &contract_def,
     const std::string &cname);
@@ -809,8 +811,14 @@ protected:
   has_target_function(const std::string &cname, const std::string func_name);
   func_sig
   get_target_function(const std::string &cname, const std::string &func_name);
-  bool get_call_definition(const std::string &cname, exprt &new_expr);
-  bool get_call_value_definition(const std::string &cname, exprt &new_expr);
+  bool get_call_definition(
+    const std::string &cname,
+    exprt &new_expr,
+    bool is_library = false);
+  bool get_call_value_definition(
+    const std::string &cname,
+    exprt &new_expr,
+    bool is_library = false);
   // Signature-based dispatch for .call(abi.encodeWithSignature(...)).
   // Tries to extract a literal signature + arg list from the payload AST;
   // on success builds an inline typed dispatch helper and fills new_expr.
@@ -877,10 +885,22 @@ protected:
     const std::string &target_sig,
     const std::vector<exprt> &arg_exprs,
     symbolt *&out_sym);
-  bool get_transfer_definition(const std::string &cname, exprt &new_expr);
-  bool get_send_definition(const std::string &cname, exprt &new_expr);
-  bool get_staticcall_definition(const std::string &cname, exprt &new_expr);
-  bool get_delegatecall_definition(const std::string &cname, exprt &new_expr);
+  bool get_transfer_definition(
+    const std::string &cname,
+    exprt &new_expr,
+    bool is_library = false);
+  bool get_send_definition(
+    const std::string &cname,
+    exprt &new_expr,
+    bool is_library = false);
+  bool get_staticcall_definition(
+    const std::string &cname,
+    exprt &new_expr,
+    bool is_library = false);
+  bool get_delegatecall_definition(
+    const std::string &cname,
+    exprt &new_expr,
+    bool is_library = false);
   bool model_transaction(
     const nlohmann::json &expr,
     const exprt &this_expr,

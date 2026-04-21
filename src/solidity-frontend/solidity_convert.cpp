@@ -1241,41 +1241,44 @@ void solidity_convertert::get_cname_expr(
   new_expr = symbol_expr(*context.find_symbol("sol:@" + cname));
 }
 
-bool solidity_convertert::populate_low_level_functions(const std::string &cname)
+bool solidity_convertert::populate_low_level_functions(
+  const std::string &cname,
+  bool is_library)
 {
   log_debug(
     "solidity",
-    "Populating low-level function definition for contract {}",
+    "Populating low-level function definition for {} {}",
+    is_library ? "library" : "contract",
     cname);
 
   exprt new_expr;
   // call("")
-  if (get_call_definition(cname, new_expr))
+  if (get_call_definition(cname, new_expr, is_library))
     return true;
   move_builtin_to_contract(cname, new_expr, true);
 
   // call{}("")
-  if (get_call_value_definition(cname, new_expr))
+  if (get_call_value_definition(cname, new_expr, is_library))
     return true;
   move_builtin_to_contract(cname, new_expr, true);
 
   // transfer()
-  if (get_transfer_definition(cname, new_expr))
+  if (get_transfer_definition(cname, new_expr, is_library))
     return true;
   move_builtin_to_contract(cname, new_expr, true);
 
   // send()
-  if (get_send_definition(cname, new_expr))
+  if (get_send_definition(cname, new_expr, is_library))
     return true;
   move_builtin_to_contract(cname, new_expr, true);
 
   // staticcall()
-  if (get_staticcall_definition(cname, new_expr))
+  if (get_staticcall_definition(cname, new_expr, is_library))
     return true;
   move_builtin_to_contract(cname, new_expr, true);
 
   // delegatecall()
-  if (get_delegatecall_definition(cname, new_expr))
+  if (get_delegatecall_definition(cname, new_expr, is_library))
     return true;
   move_builtin_to_contract(cname, new_expr, true);
 
