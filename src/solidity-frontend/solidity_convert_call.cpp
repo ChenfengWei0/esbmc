@@ -1311,6 +1311,40 @@ bool solidity_convertert::get_low_level_member_accsss(
   if (cname.empty())
     return true;
 
+  // Low-level calls (.call/.delegatecall/.staticcall/.transfer/.send)
+  // emitted from INSIDE a library body need no address-dispatch ladder:
+  // libraries don't own singletons, and `populate_low_level_functions`
+  // is only run for regular contracts, so `sol:@C@<library>@F@$call#0`
+  // was never registered.  For the value-returning calls, emit just the
+  // nondet result tuple; for transfer/send, emit no side effect.
+  const bool is_library =
+    std::find(
+      contractNamesList.begin(), contractNamesList.end(), cname) ==
+    contractNamesList.end();
+  if (is_library)
+  {
+    if (mem_name == "call" || mem_name == "delegatecall" ||
+        mem_name == "staticcall")
+    {
+      symbolt dump;
+      get_llc_ret_tuple(dump);
+      new_expr = symbol_expr(dump);
+      return false;
+    }
+    if (mem_name == "transfer" || mem_name == "send")
+    {
+      // transfer has void result; send returns bool.  Emit a nondet bool
+      // for send so the caller's boolean check is symbolic; for transfer
+      // emit a no-op nil.  Side effects on the recipient's $balance are
+      // lost — over-approximation, but preferable to the crash.
+      if (mem_name == "send")
+        new_expr = side_effect_expr_function_callt(nondet_bool_expr);
+      else
+        new_expr = nil_exprt();
+      return false;
+    }
+  }
+
   // get this
   exprt this_object;
   if (current_functionDecl)
