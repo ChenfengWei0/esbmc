@@ -1,4 +1,0 @@
-KNOWNBUG
-contract.sol
---contract Harness --bound --unwind 2 --no-unwinding-assertions --no-standard-checks --cvc5
-^VERIFICATION SUCCESSFUL$

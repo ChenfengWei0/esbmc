@@ -493,8 +493,18 @@ bool solidity_convertert::get_expr(
       // the constructor's balance initialization.
       //
       // For opaque addresses (msg.sender, address values that came from
-      // outside the closed-world view), we keep the unbound nondet to stay
-      // sound under the over-approximate model.
+      // outside the closed-world view), we used to keep the unbound
+      // nondet short-circuit, but that silently ignored the EOA
+      // balance map credited by library transfer/send/call — a
+      // "write, read, see nothing" inconsistency.  Now route the
+      // `balance` property through `get_builtin_property_expr`
+      // unconditionally (the `_ESBMC_eoa_balance_of` helper's
+      // `_ESBMC_eoa_get_or_init` auto-allocates a slot with nondet
+      // initial value, which is identical soundness to the old
+      // short-circuit for first-sight addresses, and honours the
+      // credit updates afterwards).  Other properties
+      // (`code`/`codehash`/`address`) keep the unbound short-circuit
+      // — they have no equivalent persistent map.
       bool know_instance = false;
       if (
         _type == SolidityGrammar::TypeConversionExpression &&
@@ -511,7 +521,8 @@ bool solidity_convertert::get_expr(
           know_instance = true;
       }
 
-      if (!is_bound && !know_instance)
+      bool reads_balance = (mem_name == "balance");
+      if (!is_bound && !know_instance && !reads_balance)
         new_expr = nondet_uint_expr;
       else
         get_builtin_property_expr(

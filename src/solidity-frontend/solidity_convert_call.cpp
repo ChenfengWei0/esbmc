@@ -1371,18 +1371,40 @@ bool solidity_convertert::get_low_level_member_accsss(
       call.arguments().push_back(addr);
     }
 
-    // Emit the dispatch for its side effects, but leave the tuple's
-    // `success` field as the nondet_bool initial value produced by
-    // get_llc_ret_tuple(). Real EVM low-level calls can fail for many
-    // reasons (out-of-gas, target revert, cold access, etc.); modeling
-    // the boolean return as nondet is the soundest over-approximation
-    // and matches delegatecall/staticcall below.
-    convert_expression_to_code(call);
-    move_to_front_block(call);
-
+    // Wire the dispatch's own boolean return value into the tuple's
+    // `success` slot.  $call#0/#1 bodies return `true` on the
+    // tracked-target success path (the target's receive/fallback was
+    // invoked and our model completed it) and `false` / `nondet_bool`
+    // on the EOA fallthrough depending on variant.  Previously we
+    // discarded the return and the tuple's `success` was a fresh
+    // `nondet_bool` initialised by `get_llc_ret_tuple`, so user code
+    // doing `(bool ok, ) = addr.call(...)` observed an arbitrary
+    // value — making it impossible to prove `ok` true on a tracked-
+    // target success path.  Now the dispatch value is propagated
+    // deterministically and the over-approx lives only on the paths
+    // where the $call body itself emits `nondet_bool` (EOA, library
+    // unknown).
     symbolt dump;
     get_llc_ret_tuple(dump);
-    new_expr = symbol_expr(dump);
+    exprt dump_expr = symbol_expr(dump);
+
+    // The tuple's `success` field is laid out as `unsigned int` (C
+    // struct padding of _Bool), not raw bool — cast the bool-typed
+    // dispatch return to match the member's type before assigning.
+    const struct_typet &tup_stype =
+      to_struct_type(ns.follow(dump_expr.type()));
+    assert(!tup_stype.components().empty());
+    const typet &x_type = tup_stype.components().front().type();
+    exprt dump_x = member_exprt(dump_expr, "x", x_type);
+    exprt call_casted = call;
+    if (call_casted.type() != x_type)
+      solidity_gen_typecast(ns, call_casted, x_type);
+    exprt assign_succ = side_effect_exprt("assign", x_type);
+    assign_succ.copy_to_operands(dump_x, call_casted);
+    convert_expression_to_code(assign_succ);
+    move_to_front_block(assign_succ);
+
+    new_expr = dump_expr;
   }
   else if (mem_name == "transfer")
   {
@@ -1426,13 +1448,29 @@ bool solidity_convertert::get_low_level_member_accsss(
     call.arguments().push_back(this_object);
     call.arguments().push_back(addr);
 
-    // Dispatch for side effects; keep success as nondet (see call case).
-    convert_expression_to_code(call);
-    move_to_front_block(call);
-
+    // Wire the dispatch return into the tuple's success slot (see
+    // call case above for rationale).
     symbolt dump;
     get_llc_ret_tuple(dump);
-    new_expr = symbol_expr(dump);
+    exprt dump_expr = symbol_expr(dump);
+
+    // The tuple's `success` field is laid out as `unsigned int` (C
+    // struct padding of _Bool), not raw bool — cast the bool-typed
+    // dispatch return to match the member's type before assigning.
+    const struct_typet &tup_stype =
+      to_struct_type(ns.follow(dump_expr.type()));
+    assert(!tup_stype.components().empty());
+    const typet &x_type = tup_stype.components().front().type();
+    exprt dump_x = member_exprt(dump_expr, "x", x_type);
+    exprt call_casted = call;
+    if (call_casted.type() != x_type)
+      solidity_gen_typecast(ns, call_casted, x_type);
+    exprt assign_succ = side_effect_exprt("assign", x_type);
+    assign_succ.copy_to_operands(dump_x, call_casted);
+    convert_expression_to_code(assign_succ);
+    move_to_front_block(assign_succ);
+
+    new_expr = dump_expr;
   }
   else if (mem_name == "delegatecall")
   {
@@ -1447,13 +1485,29 @@ bool solidity_convertert::get_low_level_member_accsss(
     call.arguments().push_back(this_object);
     call.arguments().push_back(addr);
 
-    // Dispatch for side effects; keep success as nondet (see call case).
-    convert_expression_to_code(call);
-    move_to_front_block(call);
-
+    // Wire the dispatch return into the tuple's success slot (see
+    // call case above for rationale).
     symbolt dump;
     get_llc_ret_tuple(dump);
-    new_expr = symbol_expr(dump);
+    exprt dump_expr = symbol_expr(dump);
+
+    // The tuple's `success` field is laid out as `unsigned int` (C
+    // struct padding of _Bool), not raw bool — cast the bool-typed
+    // dispatch return to match the member's type before assigning.
+    const struct_typet &tup_stype =
+      to_struct_type(ns.follow(dump_expr.type()));
+    assert(!tup_stype.components().empty());
+    const typet &x_type = tup_stype.components().front().type();
+    exprt dump_x = member_exprt(dump_expr, "x", x_type);
+    exprt call_casted = call;
+    if (call_casted.type() != x_type)
+      solidity_gen_typecast(ns, call_casted, x_type);
+    exprt assign_succ = side_effect_exprt("assign", x_type);
+    assign_succ.copy_to_operands(dump_x, call_casted);
+    convert_expression_to_code(assign_succ);
+    move_to_front_block(assign_succ);
+
+    new_expr = dump_expr;
   }
   else
   {
@@ -3187,26 +3241,15 @@ bool solidity_convertert::get_call_value_definition(
     convert_expression_to_code(assign_sender_restore);
     then.move_to_operands(assign_sender_restore);
 
-    // return <true for contracts, nondet_bool for libraries>.  For
-    // library-scope calls the success-path still reverts are possible
-    // for reasons the model doesn't track (gas, callee revert, cold
-    // access), so a nondet bool is the sound over-approximation.
+    // Tracked-target match: the target's receive/fallback was invoked
+    // and completed (our abstract model doesn't track gas / callee
+    // revert).  Return true on the success path for BOTH contracts and
+    // libraries — library mode is a thin scope wrapper around the same
+    // dispatch, so its outcome matches.  The old "library returns
+    // nondet everywhere" rule is retained only on the EOA fallthrough
+    // below, where the target is opaque and genuinely may fail.
     code_returnt ret_outcome;
-    if (is_library)
-    {
-      side_effect_expr_function_callt nondet_call;
-      get_library_function_call_no_args(
-        "nondet_bool",
-        "c:@F@nondet_bool",
-        bool_t,
-        locationt(),
-        nondet_call);
-      ret_outcome.return_value() = nondet_call;
-    }
-    else
-    {
-      ret_outcome.return_value() = true_exprt();
-    }
+    ret_outcome.return_value() = true_exprt();
     then.move_to_operands(ret_outcome);
 
     codet if_expr("ifthenelse");
@@ -3808,25 +3851,14 @@ bool solidity_convertert::get_send_definition(
     convert_expression_to_code(assign_sender_restore);
     then.move_to_operands(assign_sender_restore);
 
-    // Return true for contracts, nondet bool for libraries (real send
-    // can fail for any reason — out-of-gas, callee revert — and we
-    // can't inspect the target's revert decision at library scope).
+    // Tracked-target match: receive/fallback was invoked on a known
+    // contract, so the model's success path fires deterministically
+    // (no gas / callee-revert modeling, same as non-library mode).
+    // Return true for both contracts and libraries on this path.  The
+    // "library + opaque address" revert over-approx is retained only
+    // on the EOA fallthrough below.
     code_returnt ret_outcome;
-    if (is_library)
-    {
-      side_effect_expr_function_callt nondet_call;
-      get_library_function_call_no_args(
-        "nondet_bool",
-        "c:@F@nondet_bool",
-        bool_t,
-        locationt(),
-        nondet_call);
-      ret_outcome.return_value() = nondet_call;
-    }
-    else
-    {
-      ret_outcome.return_value() = true_exprt();
-    }
+    ret_outcome.return_value() = true_exprt();
     then.move_to_operands(ret_outcome);
 
     codet if_expr("ifthenelse");
@@ -3837,9 +3869,10 @@ bool solidity_convertert::get_send_definition(
   // EOA / unknown-recipient fallback for `send`.  Same shape as
   // transfer: deduct from sender (contracts only), credit recipient
   // via the global EOA balance map.  See note in
-  // get_transfer_definition.  send's bool return is `true` on the
-  // contract-scope success path; for libraries the outcome is nondet
-  // (sound over-approximation of EVM revert reasons).
+  // get_transfer_definition.  send's bool return is `true` on EOA
+  // success path for contracts; library mirrors — the non-library
+  // model already ignores EVM-level revert reasons (out-of-gas,
+  // cold-access), so library should too.
   {
     if (!is_library)
     {
@@ -3864,21 +3897,7 @@ bool solidity_convertert::get_send_definition(
     func_body.move_to_operands(eoa_credit);
 
     code_returnt ret_outcome;
-    if (is_library)
-    {
-      side_effect_expr_function_callt nondet_call;
-      get_library_function_call_no_args(
-        "nondet_bool",
-        "c:@F@nondet_bool",
-        bool_t,
-        locationt(),
-        nondet_call);
-      ret_outcome.return_value() = nondet_call;
-    }
-    else
-    {
-      ret_outcome.return_value() = true_exprt();
-    }
+    ret_outcome.return_value() = true_exprt();
     func_body.move_to_operands(ret_outcome);
   }
 
@@ -4212,23 +4231,13 @@ bool solidity_convertert::get_delegatecall_definition(
       then.move_to_operands(assign_unlock);
     }
 
-    // return true;
+    // Tracked-target match: the target's nondet-extcall fired and our
+    // model completed the dispatch (no gas/revert modeling).  Return
+    // true for both contracts and libraries on this success path.
+    // Library-scope delegatecall to an unknown address still falls
+    // through to `return false` below, matching the contract path.
     code_returnt ret_outcome;
-    if (is_library)
-    {
-      side_effect_expr_function_callt nondet_call;
-      get_library_function_call_no_args(
-        "nondet_bool",
-        "c:@F@nondet_bool",
-        bool_t,
-        locationt(),
-        nondet_call);
-      ret_outcome.return_value() = nondet_call;
-    }
-    else
-    {
-      ret_outcome.return_value() = true_exprt();
-    }
+    ret_outcome.return_value() = true_exprt();
     then.move_to_operands(ret_outcome);
 
     // _addr == _ESBMC_Object_str.$address
