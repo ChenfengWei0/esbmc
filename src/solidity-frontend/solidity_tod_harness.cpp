@@ -298,7 +298,11 @@ static std::string soltype_to_source(const std::string &ts)
   // "enum Foo.Bar" → "Foo.Bar"
   if (ts.substr(0, 5) == "enum ")
     return ts.substr(5);
-  // "struct Foo.Bar" → keep as-is (rare in public interfaces)
+  // "struct Foo.Bar" → "Foo.Bar" (may need " memory"/" calldata" at emit
+  // site; the caller is responsible for appending the data-location
+  // qualifier for reference types).
+  if (ts.substr(0, 7) == "struct ")
+    return ts.substr(7);
   // mapping(...) — not representable as a function param; skip
   if (ts.substr(0, 7) == "mapping")
     return {};
@@ -329,6 +333,20 @@ static bool is_scalar_returnable_type(const std::string &ts)
   return true;
 }
 
+/// Solidity 0.5+ requires a data-location qualifier (`memory`/`calldata`)
+/// on reference-type parameters: string, bytes, arrays, structs.  Detect
+/// those typeStrings so we can add ` memory` on emission.
+static bool param_needs_memory_location(const std::string &ts)
+{
+  if (ts == "string" || ts == "bytes")
+    return true;
+  if (ts.find('[') != std::string::npos)
+    return true;
+  if (ts.substr(0, 7) == "struct ")
+    return true;
+  return false;
+}
+
 /// Prefix parameter names to avoid collisions between funcA and funcB.
 /// Returns e.g. "uint256 a_a, address a_b".
 static std::string emit_prefixed_params(
@@ -352,7 +370,11 @@ static std::string emit_prefixed_params(
     if (!first)
       out += ", ";
     first = false;
-    out += st + " " + prefix + "_" + name;
+    out += st;
+    if (param_needs_memory_location(ts))
+      out += " memory";
+    out += " ";
+    out += prefix + "_" + name;
   }
   return out;
 }
@@ -977,6 +999,12 @@ static bool emit_harness_contract(
   out << "        // State comparison — if any assert fails, TOD exists\n";
   for (const auto &sv : shared_vars)
   {
+    if (!sv.is_returnable)
+    {
+      out << "        // Skipped: " << sv.name
+          << " (type not reachable via a Solidity getter)\n";
+      continue;
+    }
     if (sv.is_mapping && !sv.mapping_key_types.empty())
     {
       std::vector<std::vector<std::string>> key_sets;
@@ -1061,6 +1089,7 @@ static bool emit_harness_contract_race(
   const nlohmann::json &cdef,
   const std::vector<StateVar> &all_state_vars,
   const std::map<std::string, solidity_tod::RWSet> &rw_by_name,
+  const nlohmann::json *ctor,
   const std::string &contract,
   const std::string &func_a,
   const std::string &func_b)
@@ -1134,6 +1163,17 @@ static bool emit_harness_contract_race(
   for (const auto &sv : shared_vars)
     out << "//   - " << sv.name << "\n";
 
+  // Constructor params (threaded as harness test-function params) so
+  // `new C(ctor_a, ctor_b, ...)` compiles for contracts with a
+  // non-nullary ctor.  For contracts without a ctor, this is empty.
+  std::string ctor_params_decl;
+  std::string ctor_args;
+  if (ctor)
+  {
+    ctor_params_decl = emit_prefixed_params(*ctor, "ctor");
+    ctor_args = emit_prefixed_args(*ctor, "ctor");
+  }
+
   std::string harness_name = "TOD_" + func_a + "_" + func_b;
   out << "contract " << harness_name << " {\n";
   out << "    function test(";
@@ -1141,6 +1181,8 @@ static bool emit_harness_contract_race(
   // the body via the __ESOL_* intrinsics, so the harness dump is fully
   // self-describing and requires no hidden frontend injection.
   std::vector<std::string> all_params;
+  if (!ctor_params_decl.empty())
+    all_params.push_back(ctor_params_decl);
   if (!fa_params.empty())
     all_params.push_back(fa_params);
   if (!fb_params.empty())
@@ -1163,7 +1205,8 @@ static bool emit_harness_contract_race(
   // pre-race state S, then deep-copy so c1 and c2 observe the same S.
   // The intrinsics are the stable ESBMC ABI (see get_call_expr in
   // solidity_convert_expr.cpp).
-  out << "        " << contract << " c1 = new " << contract << "();\n";
+  out << "        " << contract << " c1 = new " << contract << "("
+      << ctor_args << ");\n";
   out << "        __ESOL_nondet_state_forward(c1);\n";
   out << "        " << contract << " c2 = __ESOL_deep_copy(c1);\n";
   // Require distinct $address so any mapping state var (keyed by
@@ -1198,6 +1241,12 @@ static bool emit_harness_contract_race(
 
   for (const auto &sv : shared_vars)
   {
+    if (!sv.is_returnable)
+    {
+      out << "        // Skipped: " << sv.name
+          << " (type not reachable via a Solidity getter)\n";
+      continue;
+    }
     if (sv.is_mapping && !sv.mapping_key_types.empty())
     {
       std::vector<std::vector<std::string>> key_sets;
@@ -1382,8 +1431,9 @@ std::string generate_tod_harness(
     std::string target_src = inject_shadow_getters(contract_src, state_vars);
     out << "// ===== Target contract =====\n" << target_src << "\n\n";
     out << "// ===== TOD harness =====\n";
+    const nlohmann::json *ctor = find_constructor(*cdef);
     if (!emit_harness_contract_race(
-          out, *cdef, state_vars, rw_by_name, contract, func_a, func_b))
+          out, *cdef, state_vars, rw_by_name, ctor, contract, func_a, func_b))
       return {};
   }
 
