@@ -480,7 +480,8 @@ bool solidity_convertert::get_high_level_call_wrapper(
   const std::string cname,
   const exprt &this_expr,
   exprt &front_block,
-  exprt &back_block)
+  exprt &back_block,
+  bool is_library)
 {
   std::string debug_modulename = get_modulename_from_path(absolute_path);
   exprt msg_sender = symbol_expr(*context.find_symbol("c:@msg_sender"));
@@ -500,9 +501,33 @@ bool solidity_convertert::get_high_level_call_wrapper(
   front_block.move_to_operands(old_sender_decl);
 
   // msg_sender = this.address;
-  exprt this_address = member_exprt(this_expr, "$address", addr_t);
+  //
+  // Libraries are inlined into the caller's context in real Solidity:
+  // when a library body performs an external call, msg.sender for
+  // the callee should be the ENCLOSING CONTRACT's address.  That
+  // address is run-time data (the library can be called from any
+  // contract, resolved at the call site), so the frontend cannot
+  // pin it statically.  Reading `this_expr->$address` inside a
+  // library body would dereference Lib's dummy singleton struct
+  // (no real $address), yielding a garbage value.  Sound
+  // over-approximation: emit a nondet-uint160, so the callee sees an
+  // arbitrary address — the properties that hold under *all* possible
+  // enclosing contracts are preserved, while we refuse to commit to a
+  // specific (wrong) address.  [APPROX: OVER]
+  exprt new_sender_value;
+  if (is_library)
+  {
+    exprt nondet = exprt("sideeffect");
+    nondet.type() = addr_t;
+    nondet.statement("nondet");
+    new_sender_value = nondet;
+  }
+  else
+  {
+    new_sender_value = member_exprt(this_expr, "$address", addr_t);
+  }
   exprt assign_sender = side_effect_exprt("assign", addr_t);
-  assign_sender.copy_to_operands(msg_sender, this_address);
+  assign_sender.copy_to_operands(msg_sender, new_sender_value);
   convert_expression_to_code(assign_sender);
   front_block.move_to_operands(assign_sender);
 

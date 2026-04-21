@@ -232,7 +232,8 @@ protected:
     const std::string c_name,
     const exprt &this_expr,
     exprt &front_block,
-    exprt &back_block);
+    exprt &back_block,
+    bool is_library = false);
   bool is_sol_builin_symbol(const std::string &cname, const std::string &name);
   nlohmann::json reorder_arguments(
     const nlohmann::json &expr,

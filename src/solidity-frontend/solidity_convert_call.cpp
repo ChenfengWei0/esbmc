@@ -927,7 +927,11 @@ bool solidity_convertert::get_high_level_member_access(
         }
       }
       else if (get_high_level_call_wrapper(
-                 cname, cur_this_expr, front_block, back_block))
+                 cname,
+                 cur_this_expr,
+                 front_block,
+                 back_block,
+                 nonContractNamesList.count(cname) != 0))
         return true;
 
       for (auto op : front_block.operands())
@@ -1166,7 +1170,11 @@ bool solidity_convertert::get_high_level_member_access(
         }
       }
       else if (get_high_level_call_wrapper(
-                 cname, this_expr, front_block, back_block))
+                 cname,
+                 this_expr,
+                 front_block,
+                 back_block,
+                 nonContractNamesList.count(cname) != 0))
         return true;
 
       // if-body
@@ -2841,7 +2849,12 @@ bool solidity_convertert::model_transaction(
   typet val_t = unsignedbv_typet(256);
   exprt msg_value = symbol_expr(*context.find_symbol("c:@msg_value"));
 
-  if (get_high_level_call_wrapper(cname, this_expr, front_block, back_block))
+  if (get_high_level_call_wrapper(
+        cname,
+        this_expr,
+        front_block,
+        back_block,
+        nonContractNamesList.count(cname) != 0))
     return true;
 
   exprt this_balance = member_exprt(this_expr, "$balance", val_t);
