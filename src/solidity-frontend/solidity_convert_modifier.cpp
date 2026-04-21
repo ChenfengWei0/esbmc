@@ -693,6 +693,38 @@ bool solidity_convertert::get_func_modifier(
       }
     }
 
+    // If the wrapped function declares NAMED return parameters (e.g.
+    // `returns (string memory _doc, address[] memory _signers)`), the
+    // original body references those names as ordinary local variables.
+    // The caller of `get_func_modifier` has already created DECLs for
+    // them under the OUTER function's scope (`sol:@C@<c>@F@<orig>@<p>#id`),
+    // but when we now convert the body under the AUX function's scope
+    // the lookup rebuilds the identifier as
+    // `sol:@C@<c>@F@<aux>@<p>#id` — which does not exist in the symbol
+    // table, so symex later crashes with
+    //   value_set: unknown symbol `sol:@C@<c>@F@<aux>@<p>#id`
+    // (Dataset buggy_10: getDetail with a validDoc modifier + named
+    // tuple returns reproduced this.)  Re-register each named return
+    // parameter under the aux scope and prepend a DECL at the start of
+    // the body so the inlined references resolve locally.
+    std::vector<exprt> aux_named_ret_decls;
+    if (
+      ast_node.contains("returnParameters") &&
+      ast_node["returnParameters"].contains("parameters"))
+    {
+      for (const auto &rparam :
+           ast_node["returnParameters"]["parameters"])
+      {
+        const std::string rname = rparam.value("name", "");
+        if (rname.empty())
+          continue;
+        exprt aux_rdecl;
+        if (get_var_decl(rparam, aux_rdecl))
+          return true;
+        aux_named_ret_decls.push_back(aux_rdecl);
+      }
+    }
+
     // same as origin function body
     if (body_exprt.operands().empty())
     {
@@ -729,6 +761,16 @@ bool solidity_convertert::get_func_modifier(
       }
       else
         ++stmt;
+    }
+
+    // Prepend DECLs for named return parameters re-registered under
+    // the aux scope (see rationale above).  Must come before the first
+    // body statement that references them.
+    if (!aux_named_ret_decls.empty())
+    {
+      auto insert_at = mod_body.operands().begin();
+      for (auto &decl : aux_named_ret_decls)
+        insert_at = std::next(mod_body.operands().insert(insert_at, decl));
     }
 
     if (has_return)
