@@ -511,7 +511,6 @@ bool solidity_convertert::build_bound_drive_helper(
   // contract_var = *x (dereference of the local pointer) — used as the
   // method-access receiver and as the implicit `this` argument.
   exprt contract_var = dereference_exprt(symbol_expr(added_x), contract_struct_t);
-  contract_var.cmt_lvalue(true);
 
   const auto methods = funcSignatures[c_name];
   for (const auto &method : methods)
@@ -700,7 +699,6 @@ bool solidity_convertert::build_esol_state_forward_helper(
   // contract_var = *c — method-access receiver / implicit `this`.
   exprt contract_var =
     dereference_exprt(symbol_expr(added_param), contract_struct_t);
-  contract_var.cmt_lvalue(true);
 
   const auto methods = funcSignatures[c_name];
   for (const auto &method : methods)
@@ -911,10 +909,8 @@ bool solidity_convertert::build_tod_clone_helper(
   //    merged struct for inherited contracts).  The $address field is
   //    overwritten in step 5 to give the clone a fresh identity.
   exprt c_deref = dereference_exprt(symbol_expr(added_c), contract_struct_t);
-  c_deref.cmt_lvalue(true);
   exprt base_deref =
     dereference_exprt(symbol_expr(added_base), contract_struct_t);
-  base_deref.cmt_lvalue(true);
   {
     code_assignt struct_copy(c_deref, base_deref);
     func_body.move_to_operands(struct_copy);
@@ -997,8 +993,6 @@ bool solidity_convertert::build_tod_clone_helper(
       const typet &comp_type = comp.type();
       exprt dst_field = member_exprt(c_deref, comp_name, comp_type);
       exprt src_field = member_exprt(base_deref, comp_name, comp_type);
-      dst_field.cmt_lvalue(true);
-      src_field.cmt_lvalue(true);
       if (emit_clone_deep_copy_fixup(
             dst_field, src_field, comp_type, c_addr_member, func_body))
         return true;
@@ -1130,7 +1124,6 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
   if (is_mapping_field)
   {
     exprt addr_member = member_exprt(dst_lvalue, "addr", addr_t);
-    addr_member.cmt_lvalue(true);
     code_assignt assign(addr_member, clone_addr_expr);
     func_body.move_to_operands(assign);
     return false;
@@ -1255,8 +1248,6 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
       exprt idx = from_integer(i, uint_type());
       exprt dst_elem = index_exprt(dst_lvalue, idx, elem_t);
       exprt src_elem = index_exprt(src_lvalue, idx, elem_t);
-      dst_elem.cmt_lvalue(true);
-      src_elem.cmt_lvalue(true);
       if (!elem_is_ptr_backed_array)
       {
         // Struct / mapping-containing element: bit-copy first so
@@ -1291,8 +1282,6 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
       const typet &ct = comp.type();
       exprt dst_sub = member_exprt(dst_lvalue, comp_name, ct);
       exprt src_sub = member_exprt(src_lvalue, comp_name, ct);
-      dst_sub.cmt_lvalue(true);
-      src_sub.cmt_lvalue(true);
       if (emit_clone_deep_copy_fixup(
             dst_sub, src_sub, ct, clone_addr_expr, func_body))
         return true;
@@ -1423,7 +1412,6 @@ bool solidity_convertert::emit_ctor_deep_init_fixup(
     {
       exprt idx = from_integer(i, uint_type());
       exprt elem_slot = index_exprt(lvalue, idx, elem_t);
-      elem_slot.cmt_lvalue(true);
 
       if (elem_is_ptr_array)
       {
@@ -1483,7 +1471,6 @@ bool solidity_convertert::emit_ctor_deep_init_fixup(
         continue;
 
       exprt field_lvalue = member_exprt(lvalue, comp.get_name(), ct);
-      field_lvalue.cmt_lvalue(true);
 
       if (!ct.get("#sol_array_size").empty() && ct.is_pointer())
       {
