@@ -208,6 +208,7 @@ bool solidity_convertert::get_var_decl(
     is_state_var_check && !is_new_expr && !t.get_bool("#sol_mapping_array");
 
   // for mapping: populate the element type (recursively for nested mappings)
+  bool is_mapping_of_dynarr = false;
   if (is_mapping && !is_new_expr)
   {
     assert(t.is_array());
@@ -232,6 +233,45 @@ bool solidity_convertert::get_var_decl(
       }
       else
         break;
+    }
+
+    /* mapping(K => V[]) state-var: promote the leaf DYNARRAY value from
+     * the default pointer model to a nested infinite SMT array, keyed
+     * by the folded 64-bit key. With the pointer model, push(x) called
+     * `_ESBMC_array_push_uint256` which fresh-mallocs a new slab and
+     * can't carry prior pushes — see CLAUDE_Solidity.md §F.2.
+     *
+     * Shape: `array_typet(array_typet(elem, inf), inf)`. Per-key length
+     * is tracked by a sibling aux `<name>_mapdynarr_len` of type
+     * `array_typet(uint256, inf)` (created below alongside the symbol).
+     *
+     * Only promote when the leaf element is a scalar (uint/int/address/
+     * bool/bytesN). Non-scalar elements (struct, string, nested array)
+     * stay on the pointer model — they need a different element copy
+     * protocol that's out of scope for this pass. */
+    if (cur_type->is_array() &&
+        cur_type->subtype().is_pointer() &&
+        get_sol_type(cur_type->subtype()) ==
+          SolidityGrammar::SolType::DYNARRAY)
+    {
+      const typet &elem_t = cur_type->subtype().subtype();
+      SolidityGrammar::SolType elem_sol = get_sol_type(elem_t);
+      bool elem_is_scalar =
+        SolidityGrammar::is_uint_type(elem_sol) ||
+        SolidityGrammar::is_int_type(elem_sol) ||
+        SolidityGrammar::is_address_type(elem_sol) ||
+        elem_sol == SolidityGrammar::SolType::BOOL ||
+        elem_sol == SolidityGrammar::SolType::ENUM ||
+        SolidityGrammar::is_bytes_type(elem_sol);
+      if (elem_is_scalar)
+      {
+        typet inner_inf = array_typet(elem_t, exprt("infinity"));
+        set_sol_type(inner_inf, SolidityGrammar::SolType::DYNARRAY);
+        inner_inf.set("#sol_dynarr_inner", true);
+        cur_type->subtype() = inner_inf;
+        t.set("#sol_mapping_of_dynarr", true);
+        is_mapping_of_dynarr = true;
+      }
     }
   }
 
@@ -442,6 +482,26 @@ bool solidity_convertert::get_var_decl(
     len_sym.file_local = true;
     len_sym.is_extern = false;
     len_sym.value = gen_zero(unsignedbv_typet(256));
+    len_sym.value.zero_initializer(true);
+    move_symbol_to_context(len_sym);
+  }
+
+  // 6d. for mapping(K => V[]) state-var: create auxiliary _mapdynarr_len
+  // infinite array keyed by the folded 64-bit mapping key. Mirrors
+  // 6c, but the length is per-key rather than a single counter.
+  if (is_mapping_of_dynarr)
+  {
+    std::string len_name = name + "_mapdynarr_len";
+    std::string len_id = id + "_mapdynarr_len";
+    typet len_arr_t = array_typet(unsignedbv_typet(256), exprt("infinity"));
+    symbolt len_sym;
+    get_default_symbol(
+      len_sym, debug_modulename, len_arr_t, len_name, len_id, location_begin);
+    len_sym.lvalue = true;
+    len_sym.static_lifetime = true;
+    len_sym.file_local = true;
+    len_sym.is_extern = false;
+    len_sym.value = gen_zero(get_complete_type(len_arr_t, ns), true);
     len_sym.value.zero_initializer(true);
     move_symbol_to_context(len_sym);
   }

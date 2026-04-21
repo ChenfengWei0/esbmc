@@ -635,6 +635,23 @@ bool solidity_convertert::get_sol_builtin_ref(
             assert(len_sym);
             new_expr = symbol_expr(*len_sym);
           }
+          // mapping(K => V[]) state-var: per-key length aux indexed by k.
+          // `base` is `m[k]` = index_exprt(m, folded_k), and m carries the
+          // `#sol_mapping_of_dynarr` flag on its type.
+          else if (solt == SolidityGrammar::SolType::DYNARRAY &&
+                   base.id() == "index" && !base.operands().empty() &&
+                   base.op0().id() == "symbol" &&
+                   base.op0().type().get_bool("#sol_mapping_of_dynarr"))
+          {
+            exprt m_sym = base.op0();
+            exprt folded_k = base.op1();
+            std::string len_id =
+              m_sym.identifier().as_string() + "_mapdynarr_len";
+            const symbolt *len_sym = ns.lookup(len_id);
+            assert(len_sym);
+            new_expr = index_exprt(
+              symbol_expr(*len_sym), folded_k, unsignedbv_typet(256));
+          }
           // dynarray state var: return the auxiliary _dynarray_len variable
           else if (
             solt == SolidityGrammar::SolType::DYNARRAY && base.is_symbol() &&
