@@ -1,0 +1,4 @@
+KNOWNBUG
+contract.sol
+--contract C --unwind 2 --no-unwinding-assertions --no-standard-checks --cvc5
+^VERIFICATION SUCCESSFUL$
