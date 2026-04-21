@@ -123,6 +123,33 @@ __ESBMC_HIDE:;
   return map_get_raw(m->base, m->addr, k);
 }
 
+/* dynarray — for mapping(K => T[]) value slots.
+ *
+ * Stores a pointer-to-pointer so the frontend can write back a relocated
+ * data pointer after `_ESBMC_array_push_uint256` allocates a new slab.
+ * Unlike `map_generic_*` (which copies the VALUE inline, wrong for
+ * dynarray because the value IS a heap pointer that may change), this
+ * pair preserves the pointer-identity across push/pop cycles.
+ *
+ * `map_dynarr_get` returns the currently-stored data pointer (or NULL
+ * if the key has never been written). `map_dynarr_set` installs a new
+ * data pointer. Both operate on a single `void *` payload, regardless
+ * of the array's element type — the frontend is responsible for
+ * element-typed load/store through the returned pointer. */
+void map_dynarr_set(struct mapping_t *m, uint256_t k, void *arr)
+{
+__ESBMC_HIDE:;
+  void **p = (void **)malloc(sizeof(void *));
+  *p = arr;
+  map_set_raw(m->base, m->addr, k, p);
+}
+void *map_dynarr_get(struct mapping_t *m, uint256_t k)
+{
+__ESBMC_HIDE:;
+  void **p = (void **)map_get_raw(m->base, m->addr, k);
+  return p ? *p : (void *)0;
+}
+
 struct _ESBMC_Mapping_fast
 {
   uint256_t key : 256;

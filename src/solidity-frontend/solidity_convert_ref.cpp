@@ -19,6 +19,46 @@
 #include <util/message.h>
 #include <fstream>
 
+namespace
+{
+/* Peel typecast wrappers emitted by `solidity_gen_typecast` around the
+ * library call that evaluates `m[k]` for `mapping(K => T[])` (see
+ * `solidity_convert_mapping.cpp::get_new_mapping_index_access`'s
+ * DYNARRAY dispatch). Returns a pointer into the original expression
+ * tree; do not free. */
+static const exprt *peel_typecasts(const exprt &e)
+{
+  const exprt *p = &e;
+  while (p->id() == "typecast" && !p->operands().empty())
+    p = &p->op0();
+  return p;
+}
+
+/* Return true iff `base` is (a typecast around) a `map_dynarr_get` call. */
+static bool is_map_dynarr_get_base(const exprt &base)
+{
+  const exprt *inner = peel_typecasts(base);
+  if (inner->id() != "sideeffect")
+    return false;
+  if (to_side_effect_expr(*inner).get_statement() != "function_call")
+    return false;
+  if (inner->operands().empty())
+    return false;
+  const exprt &fn = inner->op0();
+  return fn.identifier().as_string() == "c:@F@map_dynarr_get";
+}
+
+/* Pull out the underlying `map_dynarr_get` call from `base`.
+ * Caller must have verified via `is_map_dynarr_get_base`. */
+static const side_effect_expr_function_callt &
+find_map_dynarr_get_call(const exprt &base)
+{
+  const exprt *inner = peel_typecasts(base);
+  assert(inner->id() == "sideeffect");
+  return static_cast<const side_effect_expr_function_callt &>(*inner);
+}
+} // anonymous namespace
+
 void solidity_convertert::get_symbol_decl_ref(
   const std::string &sym_name,
   const std::string &sym_id,
@@ -849,24 +889,85 @@ bool solidity_convertert::get_sol_builtin_ref(
             args = address_of_exprt(symbol_expr(added_aux));
           }
 
-          side_effect_expr_function_callt mem;
-          get_library_function_call_no_args(
-            "_ESBMC_array_" + name,
-            "c:@F@_ESBMC_array_" + name,
-            empty_typet(),
-            l,
-            mem);
+          /* Route uint256-element pushes on a mapping-backing slot
+           * through the typed helper `_ESBMC_array_push_uint256`. The
+           * generic `_ESBMC_array_push` uses `__builtin_memcpy` whose
+           * byte-loop (`__memcpy_impl`) is silently truncated under
+           * `--unwind N --no-unwinding-assertions`, killing the
+           * post-push path before writebacks reach the mapping slot.
+           * The typed helper assigns the last element without a loop.
+           *
+           * Detection heuristic: `base` is an `index_exprt` into an
+           * infinite array that is NOT flagged as a state-var dynarray.
+           * State-var dynarrays (`#sol_dynarray_state`) use the earlier
+           * branch that hand-writes the element into the next slot, so
+           * they don't reach this point; nested dynarrays like
+           * `a2[0].push(x)` DO reach this point but have
+           * `#sol_dynarray_state` on their outer array, so they stay on
+           * the legacy helper. Mapping backings (generated as
+           * `array_typet(V, infinity)` with no `#sol_dynarray_state`
+           * flag) switch over. */
+          /* Restrict to top-level mapping slot access — `m[k]` whose base
+           * expression is the mapping symbol directly. `a2[0].push(x)`
+           * on a state-var 2D dynarray (`uint256[][]`) also has an
+           * `index_exprt` base but its op0 is the flagged state-var
+           * symbol, so the `#sol_dynarray_state` check excludes it.
+           * Nested accesses like `deep[0][0].push(x)` (from
+           * `nested_array_deep_1`) have op0 = another index_exprt — not
+           * a symbol — and must NOT take this path: they ride on the
+           * legacy `_ESBMC_array_push` which the nested state-var
+           * dynarray model depends on. */
+          bool is_mapping_backing_slot =
+            name == "push" && base.id() == "index" &&
+            !base.operands().empty() &&
+            base.op0().id() == "symbol" &&
+            base.op0().type().is_array() &&
+            !base.op0().type().get_bool("#sol_dynarray_state") &&
+            base_t.id() == "pointer" &&
+            base_t.subtype().id() == "unsignedbv" &&
+            base_t.subtype().get("width").as_string() == "256";
 
-          if (name == "push")
+          side_effect_expr_function_callt mem;
+          if (is_mapping_backing_slot)
           {
+            /* typed helper: (array, element-by-value) returning void*. */
+            get_library_function_call_no_args(
+              "_ESBMC_array_push_uint256",
+              "c:@F@_ESBMC_array_push_uint256",
+              pointer_typet(empty_typet()),
+              l,
+              mem);
+            /* args above was set to `address_of(aux)`; the typed helper
+             * takes the element by value, so pass the aux directly. */
+            exprt elem_by_value = args;
+            if (elem_by_value.id() == "address_of" &&
+                !elem_by_value.operands().empty())
+              elem_by_value = elem_by_value.op0();
+            solidity_gen_typecast(
+              ns, elem_by_value, unsignedbv_typet(256));
             mem.arguments().push_back(base);
-            mem.arguments().push_back(args);
-            mem.arguments().push_back(size_of);
+            mem.arguments().push_back(elem_by_value);
           }
           else
           {
-            mem.arguments().push_back(base);
-            mem.arguments().push_back(size_of);
+            get_library_function_call_no_args(
+              "_ESBMC_array_" + name,
+              "c:@F@_ESBMC_array_" + name,
+              empty_typet(),
+              l,
+              mem);
+
+            if (name == "push")
+            {
+              mem.arguments().push_back(base);
+              mem.arguments().push_back(args);
+              mem.arguments().push_back(size_of);
+            }
+            else
+            {
+              mem.arguments().push_back(base);
+              mem.arguments().push_back(size_of);
+            }
           }
 
           new_expr = mem;

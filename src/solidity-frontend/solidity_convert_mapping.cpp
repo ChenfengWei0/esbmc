@@ -393,6 +393,17 @@ bool solidity_convertert::get_new_mapping_index_access(
     val_flg = "string";
     func_type = value_t;
   }
+  else if (val_sol_type == SolidityGrammar::SolType::DYNARRAY)
+  {
+    /* Dedicated dynarray dispatch (2026-04-21): the mapping stores a
+     * pointer-to-pointer so push writeback can rewrite the slot after
+     * `_ESBMC_array_push_uint256` allocates a new slab. Cannot reuse
+     * `map_generic_set/get` — those copy the value by sizeof, but for a
+     * dynarray the "value" IS the heap pointer, and successive pushes
+     * need to update that pointer in place. */
+    val_flg = "dynarr";
+    func_type = pointer_typet(empty_typet());
+  }
   else
   {
     val_flg = "generic";

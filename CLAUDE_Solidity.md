@@ -392,6 +392,8 @@ fusion-protocol. Bug 10 fixed 2026-04-16 (KNOWNBUG promotion). Summary:
 
 - **mapping_13** (THOROUGH): NULL pointer dereference check in `map_get_raw` library function (`solidity_mapping.c:29`). ESBMC's pointer analysis cannot always infer that a pointer is non-NULL from a `while(ptr)` loop guard. Unrelated to struct layout.
 
+- **`mapping(K => V[])` push write-through** (2026-04-21, see §F.2): partial — FAIL-side duals now verify correctly (typed `_ESBMC_array_push_uint256` + writeback), but PASS-side duals for push+read and length-after-N-pushes are KNOWNBUG because the typed helper uses fresh `malloc` and doesn't carry old elements. Full fix requires an infinite-SMT-array model for the mapping value slot. First tripped on SolidiFI `buggy_46`.
+
 - **`revert` / `require` do not roll back state.** The frontend models Solidity `revert`/`require`/failed `transfer()` as `__ESBMC_assume(false)`, which only marks the current path infeasible. Real EVM semantics roll back all state changes made in the current call (and sub-calls) before the revert. SSA assignments emitted before the `assume` are still in the constraint set.
   - In pure single-path BMC the infeasibility propagates correctly, so unreachable code after the revert is not exercised.
   - **Completeness gap**: `try/catch` bodies that depend on state having been rolled back cannot be reasoned about — the catch arm is also pruned along with the try arm.
@@ -542,7 +544,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 |----------|----------|
 | **Value types** | `bool`, `uint8`-`uint256`, `int8`-`int256`, `address`/`address payable`, `string`, `bytes1`-`bytes32`, `bytes` (dynamic) |
 | **Composite types** | `struct` (nested, with arrays), `enum`, fixed arrays `T[N]`, dynamic arrays `T[]` (push/pop/length), multi-dimensional arrays |
-| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, mapping-in-struct, and `mapping(K => V)[]` (array of mappings) — modeled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays; mapping arrays use auxiliary `_mapping_arr_len` variable for push/pop |
+| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, mapping-in-struct, and `mapping(K => V)[]` (array of mappings) — modeled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays; mapping arrays use auxiliary `_mapping_arr_len` variable for push/pop. **Partial:** `mapping(K => V[])` (mapping of dynamic arrays) — does not crash after 2026-04-21 but lacks push write-through, see F.2 |
 | **Operators** | All arithmetic (`+`,`-`,`*`,`/`,`%`,`**`), bitwise, comparison, logical, compound assignment (`+=` etc.), prefix/postfix `++`/`--`, ternary `?:`, `delete` |
 | **Control flow** | `if`/`else`, `for`, `while`, `do-while`, `break`, `continue`, `return` (including multi-value via tuples) |
 | **Contract core** | Contract/library/interface definitions, functions (regular/constructor/receive/fallback), free functions, state variables, visibility (`public`/`private`/`internal`/`external`), state mutability (`pure`/`view`/`payable`) |
@@ -816,6 +818,23 @@ Implementation:
 Tests: `clearing_mapping_1` (write/read), `clearing_mapping_2` (push + index + assert pass), `clearing_mapping_3` (assert fail).
 
 **Extension (2026-04-14):** Fixed-size variant `mapping(K=>V)[N]` now uses the same inf-array model. Previously fell through to the standard pointer-with-fixed-size path and crashed `array_type2t::get_width` during state-var zero-initialisation (the inner mapping is itself an infinite-sized array). The `get_array_pointer_type` special-case now drops the `!decl["typeName"].contains("length")` guard. Test: `stress_libsol_array_mapping_struct`.
+
+#### F.2. Mapping of Dynamic Arrays (`mapping(K => V[])`) — ⚠️ Partial (2026-04-21)
+
+The **inverse** shape of F.1 — outer mapping, inner dynamic array (e.g. `mapping(address => uint256[])` with `m[a].push(x)`). Common in real-world contracts (first hit while running SolidiFI `buggy_46`). Distinct from `mapping(K=>V)[]`: the value side is a pointer-backed `_ESBMC_alloc_array` slab, not an infinite SMT array, so it needs ptr-to-ptr storage in the mapping plus writeback after `push()` reallocates.
+
+**What's landed (2026-04-21 session):**
+- ✅ **Crash fixed (commit `d474c73227`).** Previously the nested-mapping intercept + struct-shaped `get_new_mapping_index_access` helper collapsed on `substr(prefix.length())` over an empty contract name (leaf was `DYNARRAY`, not `STRUCT`). Now `val_sol_type == DYNARRAY` short-circuits to the raw `map_generic_get/set` call, and a pre-check counts mapping chain depth vs `idx_jsons.size()` before entering the nested intercept.
+- ✅ **Typed push helper `_ESBMC_array_push_uint256`** added to `solidity_array.c`. Generic `_ESBMC_array_push` uses `__builtin_memcpy`, which lowers to `__memcpy_impl`'s byte-loop (`string.c:278`); under `--unwind N --no-unwinding-assertions` that loop is silently truncated, killing every post-push path. The typed helper assigns the new element via a single SSA store with no loop.
+- ✅ **Frontend routing** (`solidity_convert_ref.cpp`): for push-on-mapping-slot (detected as `index_exprt` on an infinite array whose op0 is a symbol and not `#sol_dynarray_state`, element type `uint256`), the typed helper is emitted instead of the generic one; the existing wrap at `solidity_convert_expr.cpp::get_call_expr` is extended to assign the return pointer back to the mapping slot (same wrap shape as for the generic helper).
+- ✅ **`map_dynarr_get/set` library helpers** added to `solidity_mapping.c` for the `is_new_expr` code path (where the mapping is accessed via `mapping_t` struct + `map_*` calls rather than direct `index_exprt`). Phase 3 routes DYNARRAY-valued slots through these helpers.
+- ✅ **FAIL-dual regressions pass CORE**: `map_dynarr_push_fail_{bound,unbound}`, `map_dynarr_isolation_fail`, `map_dynarr_length_fail` — the assertion refutations are now delivered by the solver (not vacuously "SUCCESSFUL" via path death). `map_dynarr_isolation_pass` also passes CORE.
+
+**What remains (still KNOWNBUG):**
+- `map_dynarr_push_pass_{bound,unbound}`, `map_dynarr_length_pass` are KNOWNBUG: the typed helper uses a fresh `malloc` (not `realloc` or element copy) and does NOT carry old elements forward. `realloc` triggers `copy_memory_content`'s 128-element SSA copy loop — for a single-assert test the resulting formula times out in CVC5/Bitwuzla (>120 s). A typed element copy has the same unwinding-truncation hazard that motivated the typed helper in the first place. So slots `[0..old_len-1]` after any `push` are nondet, and asserts that read through previously-pushed slots can't be proven.
+- Fully fixing this requires modelling `mapping(K => V[])` as a nested infinite SMT array + per-key `uint256` length tracker (mirroring `#sol_dynarray_state` for state-var dynarrays): `data[key_hash][idx]` for storage, `len[key_hash]` for length. Push: `data[k][len[k]] = v; len[k]++`. No heap pointers, no copy loop. This is a non-trivial architectural change deferred to a follow-up.
+
+**Why not found earlier:** the regression suite had `dynarray_push_1/2` (state-var `uint[]`) and `clearing_mapping_*` (array-of-mapping), but no test exercised mapping-of-dynarray. SolidiFI `buggy_46` (`mapping(address => uint256[])` + loop push) is the first input that hit this shape.
 
 #### G. Address / Contract Type Conversion
 
