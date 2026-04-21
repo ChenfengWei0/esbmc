@@ -1,4 +1,4 @@
 CORE
 contract.solast
---sol contract.sol --unwind 35 --no-unwinding-assertions --no-div-by-zero
+--sol contract.sol --k-induction --no-div-by-zero
 ^VERIFICATION FAILED$

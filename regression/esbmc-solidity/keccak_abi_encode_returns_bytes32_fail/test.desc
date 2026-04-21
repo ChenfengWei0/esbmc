@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract C --unwind 35 --no-unwinding-assertions --no-standard-checks
+--contract C --unwind 2 --no-unwinding-assertions --no-standard-checks
 ^VERIFICATION FAILED$

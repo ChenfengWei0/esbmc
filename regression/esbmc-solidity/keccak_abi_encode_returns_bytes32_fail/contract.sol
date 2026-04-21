@@ -15,10 +15,12 @@ contract C {
 
     function test(uint256 x, uint256 y) public pure {
         require(x != y);
-        bytes32 a = getHash(x);
-        bytes32 b = getHash(y);
+        // Collapse pack/unpack via `uint256(bytes32)` so the test
+        // doesn't depend on unrolling the 32-iteration pack loop.
         // Identity-hash abstraction: distinct inputs -> distinct
-        // outputs, so `a == b` must FAIL.
+        // outputs, so equality of the uint256 projections must FAIL.
+        uint256 a = uint256(getHash(x));
+        uint256 b = uint256(getHash(y));
         assert(a == b);
     }
 }
