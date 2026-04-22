@@ -772,16 +772,48 @@ bool dump_violation_info_json(
   if (abs_line > 0 && fn_start_line > 0 && abs_line >= fn_start_line)
     relative_offset = abs_line - fn_start_line;
 
-  // 3. trace_methods: every Solidity (contract, function) pair mentioned
-  //    in any step's stack_trace up to and including the violated step.
+  // 3. trace_methods: Solidity (contract, function) pairs stepped
+  //    through before the violation. We filter synthetic frames that
+  //    the harness machinery emits — e.g. the dispatch entry
+  //    `_ESBMC_Main_<C>` and the nondet extcall stub
+  //    `_ESBMC_Nondet_Extcall_<C>` — and frames whose bare function
+  //    is a contract name itself (the constructor; already in
+  //    locked_symbols). Only frames that resolve to a symbol carrying
+  //    a real source location on a .sol file are emitted; this is
+  //    the precise "user-defined FunctionDefinition or
+  //    ModifierDefinition" predicate we need without having to
+  //    consult the AST.
+  auto is_user_solidity_symbol = [&](const std::string &sym_id) -> bool {
+    const symbolt *sym = ns.lookup(irep_idt(sym_id));
+    if (sym == nullptr)
+      return false;
+    const std::string sym_file = id2string(sym->location.get_file());
+    if (sym_file.empty())
+      return false;
+    // Reject stdlib-backed symbols (sol64 model files, C library
+    // helpers) and any symbol whose underlying file is not a .sol.
+    if (sym_file.size() < 4 ||
+        sym_file.compare(sym_file.size() - 4, 4, ".sol") != 0)
+      return false;
+    return true;
+  };
   std::set<std::pair<std::string, std::string>> seen_trace;
   nlohmann::json trace_methods = nlohmann::json::array();
   for (const auto &step : goto_trace.steps)
   {
     for (const auto &frame : step.stack_trace)
     {
-      const auto parsed = parse_sol_symbol_id(frame.function.as_string());
+      const std::string frame_id = frame.function.as_string();
+      const auto parsed = parse_sol_symbol_id(frame_id);
       if (parsed.first.empty() || parsed.second.empty())
+        continue;
+      // Drop obviously synthetic names emitted by the Solidity harness
+      // builder (prefixes reserved for auxiliary dispatch scaffolding).
+      if (
+        parsed.second.rfind("_ESBMC_", 0) == 0 ||
+        parsed.second == parsed.first /* constructor */)
+        continue;
+      if (!is_user_solidity_symbol(frame_id))
         continue;
       if (seen_trace.insert(parsed).second)
       {
@@ -797,7 +829,19 @@ bool dump_violation_info_json(
   //    - the violated function (bare) in its contract
   //    - the original function when the bare name is an auxiliary of
   //      the form "<orig>_<modifier>"
-  //    - the contract's own constructor (same name as the contract)
+  //    - the containing contract's own constructor (same name as the
+  //      contract)
+  //    - EVERY other Solidity contract's constructor in the symbol
+  //      table. A derived contract's instantiation invokes the
+  //      constructors of every base in the linearised chain, so
+  //      removing any of them would break the call path leading to
+  //      the violated function. We cannot distinguish "base of the
+  //      violated contract" from "unrelated contract in the same
+  //      compilation unit" at this layer (the linearizedBaseContracts
+  //      lives in the AST, not in the symbol table), so we
+  //      over-approximate with all constructors: safe, and Phase 2
+  //      will reclaim precision by pruning any constructor its
+  //      verifier oracle no longer needs.
   std::string original_function;
   {
     const auto us_pos = fn_bare.rfind('_');
@@ -806,14 +850,25 @@ bool dump_violation_info_json(
       original_function = fn_bare.substr(0, us_pos);
     }
   }
-  nlohmann::json locked_symbols = nlohmann::json::array();
+  std::set<std::string> locked_set;
   if (!contract_name.empty())
   {
-    locked_symbols.push_back(contract_name + "." + contract_name);
-    locked_symbols.push_back(contract_name + "." + fn_bare);
+    locked_set.insert(contract_name + "." + contract_name);
+    locked_set.insert(contract_name + "." + fn_bare);
     if (!original_function.empty())
-      locked_symbols.push_back(contract_name + "." + original_function);
+      locked_set.insert(contract_name + "." + original_function);
   }
+  // Harvest every (contract, constructor) pair: constructors are
+  // FunctionDefinitions whose bare name equals the contract name in
+  // `sol:@C@<c>@F@<c>#<id>`.
+  ns.get_context().foreach_operand([&](const symbolt &sym) {
+    const auto parsed = parse_sol_symbol_id(sym.id.as_string());
+    if (!parsed.first.empty() && parsed.first == parsed.second)
+      locked_set.insert(parsed.first + "." + parsed.second);
+  });
+  nlohmann::json locked_symbols = nlohmann::json::array();
+  for (const auto &s : locked_set)
+    locked_symbols.push_back(s);
 
   // 5. Assemble and write the JSON.
   nlohmann::json root;
