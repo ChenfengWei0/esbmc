@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Harness --bound --no-standard-checks --unwind 2 --no-unwinding-assertions --bitwuzla
+^VERIFICATION FAILED$

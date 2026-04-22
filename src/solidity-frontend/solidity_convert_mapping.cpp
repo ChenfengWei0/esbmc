@@ -504,7 +504,7 @@ bool solidity_convertert::get_new_mapping_index_access(
       // sizeof
       exprt size_of_expr;
       get_size_of_expr(value_t, size_of_expr);
-      call.arguments().push_back(symbol_expr(added_sym));
+      call.arguments().push_back(size_of_expr);
     }
 
     convert_expression_to_code(call);
