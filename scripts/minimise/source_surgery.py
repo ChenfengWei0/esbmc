@@ -54,7 +54,9 @@ def parse_src(node: dict) -> Optional[SrcRange]:
 
 
 def apply_edits(source: str, edits: Iterable[SourceEdit]) -> str:
-    """Apply edits to the original source in descending-offset order."""
+    """Apply edits to the original source in descending-offset order,
+    then collapse any resulting 3+-blank-line runs down to a single
+    blank line so successive deletions don't accumulate whitespace."""
 
     ordered = sorted(edits, key=lambda e: e.start, reverse=True)
     chars = list(source)
@@ -66,7 +68,7 @@ def apply_edits(source: str, edits: Iterable[SourceEdit]) -> str:
                 f"len {len(source)}"
             )
         out_chars[e.start : e.end] = list(e.replacement)
-    return "".join(out_chars)
+    return _collapse_blank_lines("".join(out_chars))
 
 
 # ---------------------------------------------------------------------------
@@ -75,20 +77,34 @@ def apply_edits(source: str, edits: Iterable[SourceEdit]) -> str:
 # resulting source stays syntactically clean.
 # ---------------------------------------------------------------------------
 
-_TRAILING_WS = re.compile(r"[ \t]*\n?")
+_TRAILING_WS_NL = re.compile(r"[ \t]*\n?")
 
 
 def delete_range(source: str, rng: SrcRange) -> SourceEdit:
-    """Delete a byte range plus its immediate trailing whitespace + newline."""
+    """Delete a byte range plus the whitespace/newline immediately
+    following the declaration, so removing a function doesn't leave
+    the trailing `;` / `}` orphaned on its own line.
 
+    Blank-line collapse after many deletions is handled separately by
+    `apply_edits`'s post-pass (see `_collapse_blank_lines`).
+    """
     end = rng.end
-    # Extend to swallow trailing newline if the next byte is whitespace +
-    # newline (common for declaration ranges that don't include their own
-    # newline terminator).
-    match = _TRAILING_WS.match(source, end)
+    match = _TRAILING_WS_NL.match(source, end)
     if match:
         end = match.end()
     return SourceEdit(start=rng.offset, end=end, replacement="")
+
+
+_MANY_BLANKS = re.compile(r"(?:[ \t]*\n){3,}")
+
+
+def _collapse_blank_lines(s: str) -> str:
+    """Collapse runs of 3+ consecutive blank/whitespace-only lines
+    down to a single blank line. Applied after all edits are spliced
+    so successive Phase-2 deletions don't accumulate visible
+    whitespace residue."""
+
+    return _MANY_BLANKS.sub("\n\n", s)
 
 
 # ---------------------------------------------------------------------------

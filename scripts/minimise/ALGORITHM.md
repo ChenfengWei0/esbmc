@@ -163,24 +163,18 @@ the original; it must always be re-compilable by the pinned `solc`.
 ### 3.2 `solc_driver.py`
 
 - `compile(sources) -> CompileResult` — wraps `solc --ast-compact-json
-  <sources>`; returns either an AST (on success) or a structured error
-  list (on failure). Errors are parsed for missing-symbol references:
+  <sources>`; returns either an AST (on success) or the raw stderr for
+  logging (on failure). The driver no longer parses stderr to identify
+  missing symbols: the Phase 1 closure loop is driven by an AST walker
+  that traverses every retained function's body (see `phase1_closure
+  ._add_dependencies`), which is strictly better than stderr scraping
+  — it is deterministic, independent of solc's error-message format
+  across versions, and handles overloads by fully-qualified id rather
+  than by bare name.
 
-  ```
-  Error: Identifier not found or not unique.
-    --> foo.sol:14:9
-    |
-  14 |         helper(x);
-    |         ^^^^^^
-  ```
-
-  parsed into `MissingSymbol(name="helper", source_file="foo.sol",
-  source_line=14)`. The Phase 1 loop uses this to add the missing
-  declaration.
-
-- `extract_source_ranges(ast) -> dict[Symbol, (file, offset, length)]`
-  — for every top-level and nested declaration, build a byte-range map
-  from the `src` field in solc's AST JSON. Used by `source_surgery`.
+- `source_surgery.parse_src(node)` — for every AST node with a `src`
+  field, build a byte-range. Used by `source_surgery` for deletions
+  and visibility rewrites.
 
 ### 3.3 `source_surgery.py`
 

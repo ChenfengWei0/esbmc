@@ -1,10 +1,16 @@
-"""solc subprocess driver: compile check + AST parse + error extraction.
+"""solc subprocess driver: compile check + AST parse.
 
-The Phase 1 closure loop calls `compile` to check whether the current
-candidate source compiles; on failure it uses `parse_missing_symbols`
-to decide which identifiers to pull in next. The driver assumes a
-single `solc` binary on PATH, pinned to 0.8.x (project policy — see
-`feedback_upgrade_to_08.md`).
+Assumes a single `solc` binary on PATH pinned to 0.8.x (project policy
+— see `feedback_upgrade_to_08.md`).
+
+Note on Phase 1 dependency resolution. The implementation spec's first
+draft called for parsing solc's textual error messages to identify
+missing identifiers and pull them into the closure. In practice the
+AST-walker path (phases/phase1_closure._add_dependencies) is strictly
+better: it is deterministic, independent of solc's stderr format, and
+handles overloads by fully-qualified id. The closure loop therefore
+doesn't inspect stderr at all — it only cares whether `compile` returned
+`ok`. We keep stderr on the result for logging and debugging.
 """
 
 from __future__ import annotations
@@ -13,21 +19,9 @@ import json
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
-
-
-@dataclass
-class MissingSymbol:
-    """An identifier referenced by retained code but not yet defined."""
-
-    name: str
-    source_file: str
-    source_line: int
-
-    def __hash__(self) -> int:
-        return hash((self.name, self.source_file, self.source_line))
 
 
 @dataclass
@@ -35,58 +29,6 @@ class CompileResult:
     ok: bool
     stderr: str
     ast: Optional[dict] = None
-    missing: List[MissingSymbol] = field(default_factory=list)
-
-
-_IDENT_NOT_FOUND = re.compile(
-    r"Error:\s*(?:Identifier not found or not unique|Undeclared identifier)[.:]"
-    r"[^\n]*\n\s*-->\s*([^:]+):(\d+):\d+[^\n]*\n(?:[^\n]*\n)+?"
-    r"\s*\d+\s*\|\s*[^\n]*\n\s*\|\s*\^+\s*([A-Za-z_][A-Za-z0-9_]*)?",
-    re.MULTILINE,
-)
-
-# Solidity error format is: "Error: ...\n  --> file:line:col\n   |\n L | code\n   | ^^^"
-# We scan for these blocks and extract the identifier at the caret.
-_ERROR_BLOCK = re.compile(
-    r"Error:\s*(?P<msg>.*?)\n\s*-->\s*(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+)\n"
-    r"\s*\|\n"
-    r"\s*\d+\s*\|\s*(?P<code>[^\n]*)\n"
-    r"\s*\|\s*(?P<caret>\^+)",
-    re.MULTILINE | re.DOTALL,
-)
-
-
-def _extract_missing(stderr: str) -> List[MissingSymbol]:
-    """Return identifiers that solc reported as undefined."""
-
-    missing: List[MissingSymbol] = []
-    for m in _ERROR_BLOCK.finditer(stderr):
-        msg = m.group("msg").strip()
-        if "Identifier not found" not in msg and "Undeclared identifier" not in msg:
-            continue
-        code = m.group("code")
-        col = int(m.group("col"))
-        caret = m.group("caret")
-        # Caret length tells us how many chars of `code` make up the symbol.
-        start = col - 1
-        end = start + len(caret)
-        if end > len(code):
-            end = len(code)
-        ident = code[start:end].strip()
-        if not ident:
-            # Fall back: nearest identifier in the code slice
-            ident_match = re.search(r"[A-Za-z_][A-Za-z0-9_]*", code[start:])
-            if not ident_match:
-                continue
-            ident = ident_match.group(0)
-        missing.append(
-            MissingSymbol(
-                name=ident,
-                source_file=m.group("file"),
-                source_line=int(m.group("line")),
-            )
-        )
-    return missing
 
 
 class SolcDriver:
@@ -113,13 +55,8 @@ class SolcDriver:
         res = subprocess.run(cmd, capture_output=True, text=True)
         ok = res.returncode == 0
         stderr = res.stderr or ""
-        ast = None
-        missing: List[MissingSymbol] = []
-        if ok and check_ast:
-            ast = _parse_ast_stdout(res.stdout)
-        else:
-            missing = _extract_missing(stderr)
-        return CompileResult(ok=ok, stderr=stderr, ast=ast, missing=missing)
+        ast = _parse_ast_stdout(res.stdout) if ok and check_ast else None
+        return CompileResult(ok=ok, stderr=stderr, ast=ast)
 
 
 _AST_HEADER = re.compile(r"^=======\s*(?P<path>.+?)\s*=======\s*$", re.MULTILINE)

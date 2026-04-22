@@ -313,7 +313,10 @@ def run(
             return list(sources), report
 
     # ------------------------------------------------------------------
-    # Level 2 — full P₀
+    # Level 2 — full P₀. The closure is "every function in the
+    # Phase-0-swept program", because we've given up on narrowing by
+    # mandatory closure at this level and want Phase 2 to iterate over
+    # the entire remaining function set.
     # ------------------------------------------------------------------
 
     restore(phase0_snapshot)
@@ -326,11 +329,21 @@ def run(
         "wall_sec": round(vres.wall_sec, 2),
     })
     if vres.oracle and oracles_match(vres.oracle, target_oracle):
+        # Refresh the closure from the current (restored) AST.
+        cres2 = solc.compile(list(sources))
+        report.compilation_calls += 1
+        if cres2.ok and cres2.ast is not None:
+            report.syntactic_closure = sorted(
+                e.qualified for e in collect_function_entries(cres2.ast)
+            )
+        else:
+            report.syntactic_closure = []
         report.fallback_level_used = 2
         return list(sources), report
 
     # ------------------------------------------------------------------
-    # Level 3 — full P (before Phase 0)
+    # Level 3 — full P (before Phase 0). Same closure semantics: every
+    # function in the pre-sweep program.
     # ------------------------------------------------------------------
 
     if pre_phase0_snapshot is not None:
@@ -344,6 +357,14 @@ def run(
             "wall_sec": round(vres.wall_sec, 2),
         })
         if vres.oracle and oracles_match(vres.oracle, target_oracle):
+            cres3 = solc.compile(list(sources))
+            report.compilation_calls += 1
+            if cres3.ok and cres3.ast is not None:
+                report.syntactic_closure = sorted(
+                    e.qualified for e in collect_function_entries(cres3.ast)
+                )
+            else:
+                report.syntactic_closure = []
             report.fallback_level_used = 3
             return list(sources), report
 

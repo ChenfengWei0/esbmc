@@ -104,11 +104,17 @@ def run(
             continue
         if e.kind == "constructor":
             continue
+        # Modifiers are neither deletable (retained functions reference
+        # them — compile would fail) nor visibility-reducible (they have
+        # no public/external concept). Trying either wastes one compile
+        # and, if the modifier is the last one, one verifier call. Skip
+        # up front.
+        if e.kind == "modifier":
+            continue
         if e.qualified not in retained_before_phase2:
             continue
         candidates.append(e)
 
-    # Compute weight for each
     def has_any_retained_caller(qual: str, retained: Set[str]) -> bool:
         for caller, callees in call_graph.items():
             if qual in callees and caller in retained and caller != qual:
@@ -125,13 +131,9 @@ def run(
 
     weighted.sort(key=lambda t: (-t[0], t[1]))
 
-    retained_state: Set[str] = set(retained_before_phase2)
     snapshot_of_committed = _take_snapshot(sources)
 
     for w, qual, f in weighted:
-        if qual in mandatory_qualified:
-            report.attempts.append({"fn": qual, "op": "skip_mandatory"})
-            continue
 
         # R2 — try delete
         _write_files(sources, snapshot_of_committed)
@@ -178,7 +180,6 @@ def run(
             if vres.oracle and oracles_match(vres.oracle, target_oracle):
                 # Commit deletion
                 snapshot_of_committed = _take_snapshot(sources)
-                retained_state.discard(qual)
                 verdict = "deleted"
                 report.attempts.append({
                     "fn": qual, "op": "delete",
