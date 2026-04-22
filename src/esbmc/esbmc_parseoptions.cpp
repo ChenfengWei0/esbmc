@@ -778,8 +778,16 @@ int esbmc_parseoptionst::doit()
       // into the global `config.options` because analyses outside BMC's
       // local `options` scope (static analysers, value_set_domain's
       // transform, etc.) read from the config.
-      options.set_option("sol", true);
-      config.options.set_option("sol", true);
+      //
+      // Critical: this is a *distinct* option from the user-facing `sol`,
+      // which is a string-valued path (--sol <contract.sol>). Reusing the
+      // same name would overwrite the user's path with the string "1"
+      // (boolean-true serialised into a string option), corrupting
+      // contract_path downstream and — among other things — wiping out
+      // the contents buffer used for line-number computation, collapsing
+      // every Solidity source location to line 1.
+      options.set_option("solidity-mode", true);
+      config.options.set_option("solidity-mode", true);
       options.set_option(
         "no-align-check", true); // no need to check alignment in solidity
       options.set_option("no-unlimited-scanf-check", true);

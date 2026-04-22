@@ -30,7 +30,10 @@ namespace
 // regressions.
 bool vsa_per_index_enabled()
 {
-  return config.options.get_bool_option("sol");
+  // `solidity-mode` is the internal boolean set by esbmc_parseoptions when a
+  // Solidity input is detected. Distinct from `--sol <path>`, which is a
+  // string-valued path option; see the comment there.
+  return config.options.get_bool_option("solidity-mode");
 }
 
 // Format a BigInt index as decimal for suffix construction ("[N]").
