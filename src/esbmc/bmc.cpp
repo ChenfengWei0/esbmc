@@ -178,6 +178,17 @@ void bmct::error_trace(smt_convt &smt_conv, const symex_target_equationt &eq)
   if (options.get_bool_option("generate-json-report"))
     generate_json_report("1", ns, goto_trace);
 
+  // esbmc-minimise consumes this structured violation summary to seed
+  // its mandatory set and oracle tuple.
+  const std::string violation_info_path =
+    options.get_option("dump-violation-info");
+  if (!violation_info_path.empty())
+  {
+    if (!dump_violation_info_json(violation_info_path, ns, goto_trace))
+      log_warning(
+        "Failed to write violation info to {}", violation_info_path);
+  }
+
   std::ostringstream oss;
   log_fail("\n[Counterexample]\n");
   show_goto_trace(oss, ns, goto_trace);

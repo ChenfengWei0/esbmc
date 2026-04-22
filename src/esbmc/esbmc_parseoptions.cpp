@@ -656,6 +656,10 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
     options.set_option("witness-output-graphml", filename + ".graphml");
   }
 
+  if (cmdline.isset("dump-violation-info"))
+    options.set_option(
+      "dump-violation-info", cmdline.getval("dump-violation-info"));
+
   config.options = options;
 }
 
