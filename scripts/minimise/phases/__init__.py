@@ -1,0 +1,1 @@
+"""Three-phase minimiser pipeline."""
