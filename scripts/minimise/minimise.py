@@ -273,6 +273,8 @@ def main() -> int:
             "attempts": phase2_report.attempts,
             "verifier_calls": phase2_report.verifier_calls,
             "compilation_calls": phase2_report.compilation_calls,
+            "passes": phase2_report.passes,
+            "fixpoint_reached": phase2_report.fixpoint_reached,
         },
     )
 

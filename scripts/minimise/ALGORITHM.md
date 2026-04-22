@@ -212,8 +212,15 @@ text:
   (reduced_dir, phase1_entry)` — runs the four-level loop, returning
   the lowest level that passed.
 - `phase2_reduce.run(source_dir, mandatory, esbmc, solc) ->
-  (reduced_dir, phase2_entry)` — greedy loop with weight-sorted
-  candidates.
+  (reduced_dir, phase2_entry)` — fixpoint loop with weight-sorted
+  candidates. Each outer pass rebuilds the AST, recomputes weights
+  against the current retained set, and walks candidates once; the
+  loop terminates when a pass produces no commit. Iteration is needed
+  for output size (not just speed): within a pass the weighted list
+  is frozen, so a callee tried before its caller is preserved and
+  only becomes deletable on a later pass when the caller is gone.
+  Bounded by `MAX_PASSES = 8` as a defensive cap; `phase_2.passes`
+  and `phase_2.fixpoint_reached` are recorded in the manifest.
 
 ### 3.6 `minimise.py` (CLI)
 
