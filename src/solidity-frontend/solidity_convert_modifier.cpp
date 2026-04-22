@@ -17,6 +17,7 @@
 #include <util/std_expr.h>
 #include <util/message.h>
 #include <fstream>
+#include <functional>
 
 bool solidity_convertert::get_function_definition(
   const nlohmann::json &ast_node)
@@ -840,18 +841,36 @@ bool solidity_convertert::get_func_modifier(
       return true;
 
     // merge the body
-    auto stmt = mod_body.operands().begin();
-    while (stmt != mod_body.operands().end())
-    {
-      if (stmt->get_bool("#is_modifier_placeholder"))
-      {
-        stmt = mod_body.operands().erase(stmt);
-        stmt = mod_body.operands().insert(
-          stmt, body_exprt.operands().begin(), body_exprt.operands().end());
-      }
-      else
-        ++stmt;
-    }
+    // The `_;` placeholder may appear at any nesting depth inside the
+    // modifier body (e.g. inside an if/else, for/while, or nested block:
+    //   modifier onlyOwner { if (msg.sender == owner) { _; } else revert(); }
+    // A flat scan over mod_body.operands() misses such placeholders and the
+    // wrapped function's body is silently dropped, so assertions inside
+    // e.g. `mintToken(...) onlyOwner` are never reached by symex — they are
+    // absent from the goto, which makes ESBMC wrongly conclude
+    // `VERIFICATION SUCCESSFUL` on overflows it should catch.
+    // Recurse into every container operand so placeholders at any depth are
+    // replaced by a copy of body_exprt's statements.
+    std::function<void(exprt &)> splice_placeholders =
+      [&](exprt &node) {
+        auto &ops = node.operands();
+        for (auto it = ops.begin(); it != ops.end();)
+        {
+          if (it->get_bool("#is_modifier_placeholder"))
+          {
+            it = ops.erase(it);
+            it = ops.insert(
+              it, body_exprt.operands().begin(), body_exprt.operands().end());
+            std::advance(it, body_exprt.operands().size());
+          }
+          else
+          {
+            splice_placeholders(*it);
+            ++it;
+          }
+        }
+      };
+    splice_placeholders(mod_body);
 
     // Prepend DECLs for named return parameters re-registered under
     // the aux scope (see rationale above).  Must come before the first
