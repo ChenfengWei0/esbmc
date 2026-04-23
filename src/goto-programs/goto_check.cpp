@@ -28,6 +28,7 @@ public:
         options.get_bool_option("no-pointer-relation-check")),
       disable_unlimited_scanf_check(
         options.get_bool_option("no-unlimited-scanf-check")),
+      disable_narrowing_check(options.get_bool_option("no-narrowing-check")),
       enable_overflow_check(options.get_bool_option("overflow-check")),
       enable_unsigned_overflow_check(
         options.get_bool_option("unsigned-overflow-check")),
@@ -136,6 +137,7 @@ protected:
   bool disable_div_by_zero_check;
   bool disable_pointer_relation_check;
   bool disable_unlimited_scanf_check;
+  bool disable_narrowing_check;
   bool enable_overflow_check;
   bool enable_unsigned_overflow_check;
   bool enable_ub_shift_check;
@@ -260,7 +262,16 @@ void goto_checkt::cast_overflow_check(
   bool is_solidity = (config.language.lid == language_idt::SOLIDITY);
   if (is_solidity)
   {
-    if (!enable_overflow_check && !enable_unsigned_overflow_check)
+    // Narrowing check has its own dedicated toggle; it is NO LONGER gated
+    // on --overflow-check / --unsigned-overflow-check. Those two flags
+    // implicitly enabling narrowing was the source of a long-standing
+    // footgun — users asking for arithmetic overflow on uint256 got four
+    // spurious claims per mapping access for free. Under the new regime,
+    // the check is on by default as part of the standard-check set and is
+    // silenced by either --no-narrowing-check (individual toggle) or
+    // --no-standard-checks (bulk, expanded in esbmc_parseoptions to set
+    // no-narrowing-check).
+    if (disable_narrowing_check)
       return;
     // Only check casts in .sol files, not C library models
     const std::string &file = loc.get_file().as_string();

@@ -569,6 +569,11 @@ const struct group_opt_templ all_cmd_options[] = {
      NULL,
      "Do not do overflow check for scanf/fscanf with unlimited character "
      "width"},
+    {"no-narrowing-check",
+     NULL,
+     "Do not check narrowing typecasts (e.g. uint256 -> uint8) for "
+     "truncation overflow. Solidity only; default is enabled as part of "
+     "standard checks, implied by --no-standard-checks"},
     {"no-vla-size-check",
      NULL,
      "Do not check whether the size of VLAs overflows the available address "

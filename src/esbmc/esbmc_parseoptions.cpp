@@ -2441,6 +2441,12 @@ bool esbmc_parseoptionst::parse_goto_program(
 
     // Expand --no-standard-checks into individual options before goto_convert,
     // because VLA size checks are generated during goto conversion.
+    // NOTE: `no-narrowing-check` is deliberately NOT expanded here — it
+    // is only read by `goto_check` (a separate pass after goto_convert),
+    // and setting it at this point has been observed to destabilise
+    // error-trace construction in bounded-mode runs that hit a
+    // counter-example (mapping_12 regression). The second expansion
+    // block (before `goto_check`) does the right thing.
     if (
       cmdline.isset("no-standard-checks") ||
       options.get_bool_option("no-standard-checks"))
@@ -2568,6 +2574,7 @@ bool esbmc_parseoptionst::process_goto_program(
       options.set_option("no-vla-size-check", true);
       options.set_option("no-align-check", true);
       options.set_option("no-bounds-check", true);
+      options.set_option("no-narrowing-check", true);
     }
 
     // Start by removing all no-op instructions and unreachable code
