@@ -32,6 +32,7 @@ src/CMakeFiles/
 src/CPackConfig.cmake
 src/CPackSourceConfig.cmake
 /.mypy_cache/
-docs/
+docs/*
+!docs/claude/
 final-year-project-master/
 libsolidity/
