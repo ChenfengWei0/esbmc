@@ -794,6 +794,24 @@ int esbmc_parseoptionst::doit()
       options.set_option(
         "force-malloc-success", true); // for calloc in the 'newexpression'
 
+      // `--sol <path>` is documented (in options.cpp) as equivalent to
+      // a positional argument. boost::program_options parses `<path>`
+      // as the VALUE of `--sol`, which does not reach `cmdline.args`;
+      // the downstream `create_goto_program` sees an empty positional
+      // list and bails with "Please provide a program to verify". Lift
+      // the value into `cmdline.args` only when the positional list is
+      // empty: the regression suite uses `--sol <display-name>
+      // contract.solast` to supply a source-mapping name alongside a
+      // pre-compiled AST, so we must not disturb that form (in which
+      // case `cmdline.args` already has the .solast and `--sol` is a
+      // label, not a source file).
+      if (
+        cmdline.args.empty() && cmdline.isset("sol") &&
+        !std::string(cmdline.getval("sol")).empty())
+      {
+        cmdline.args.push_back(cmdline.getval("sol"));
+      }
+
       // Auto-select the best SMT backend for Solidity when the user did not
       // explicitly ask for one. Z3 is significantly slower than modern QF_BV
       // engines on the 256-bit bit-vector arithmetic pervasive in Solidity
