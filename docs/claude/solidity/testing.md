@@ -65,6 +65,11 @@ Key CORE tests exercising the calldata / free-function / fn-ptr / UDVT / super /
 
 KNOWNBUG stress tests: `stress_libsol_uninit_fnptr_{legacy,yul}`, `stress_libsol_fntype_inline_array_value_call`, `stress_libsol_udvt_abicodec`, `stress_libsol_try_return_function`, `stress_libsol_calldata_string_array`, `stress_calldata_slice_abi_1`.
 
+KNOWNBUG nested-array tests (three independent root causes, tracked separately — see language-support.md §B / §F.3):
+- `multi_dim_fixed_array_{pass,fail}` — `uint[N][M]` fixed × fixed: cross-row writes alias. Root cause is language-agnostic value-set limitation on `T**` struct fields (pure-C repro confirms).
+- `outer_dyn_inner_fixed_array_{pass,fail}` — `uint[N][]` outer dyn × inner fixed: SMT encoder coredumps during VCC encoding; symex completes fine.
+- `mapping_fixed_array_unbound_{pass,fail}` — `mapping(K => uint[N])` in default unbound mode: Bitwuzla sort mismatch. Working path requires `--bound` + `new Store()` to route through `map_fixed_arr_get` (see `map_fixed_array_value_pass`).
+
 ## Mapping-in-struct tests
 
 | Test | Type | What it verifies |

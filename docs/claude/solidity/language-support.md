@@ -84,11 +84,32 @@ assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓
 |---------|--------|
 | `uint[N]` | ✓ Works |
 | `uint[]` | ✓ Works (push/pop/length supported) |
-| `uint[N][]` | ✓ Works ("Experimental support") |
 | `uint[][]` | ✓ Works (declaration, push, indexing, length, storage ref passing) |
-| `uint[][N]` | ✗ Not detected (grammar only checks `t_array$_t_array$` prefix) |
-| `uint[N][M]` | ✗ Broken (`get_array_size()` regex captures only one dimension) |
-| `uint[][][]` (3D+) | ✗ Broken (type conversion recurses only one level via `baseType`) |
+| `uint[][N]` | ✓ Works (observed round-trip SUCCESSFUL; outer fixed, inner dyn) |
+| `uint[N][]` | ✗ **KNOWNBUG** — SMT encoder coredumps during VCC encoding; symex completes OK. See `regression/esbmc-solidity/outer_dyn_inner_fixed_array_{pass,fail}` |
+| `uint[N][M]` | ✗ **KNOWNBUG** — cross-row writes alias. Affects state vars, struct fields, 3D+ (`uint[N][M][L]`). See `regression/esbmc-solidity/multi_dim_fixed_array_{pass,fail}` |
+| `uint[][][]` (all-dyn 3D+) | Not tested, expected OK via same path as `uint[][]` |
+
+**Root cause of `uint[N][M]` / `uint[N][M][L]` failure** (was previously
+misattributed to `get_array_size()` regex): the frontend correctly
+lowers these to a `T**` struct field + outer calloc + per-row inner
+calloc via `emit_ctor_deep_init_fixup`. The bug is in ESBMC's
+value-set analysis: when pointer values are written into the outer
+calloc's byte storage, the flat-byte memory model loses offset-granular
+points-to info, so a read of `this->grid[0]` may-aliases **every**
+row ever written into any offset of the outer buffer. SMT then picks
+wrong rows for reads after cross-row writes.
+
+The bug is language-agnostic — a pure-C `struct { T **grid; }` with the
+same calloc pattern reproduces it. Fixing at root requires per-offset
+points-to tracking in `src/pointer-analysis/value_set*`; out of scope
+for the Solidity frontend. The cleanest in-scope fix is to represent
+fixed multi-dim arrays as native `array_typet(array_typet(T, N), M)`
+embedded in the contract struct (no pointers, no calloc walker), which
+avoids the broken code path entirely. F.2's
+`array_typet(array_typet(.))` for `mapping(K => V[])` is proven-safe
+downstream. Tracked as a separate item; KNOWNBUG regression tests are
+in place so the fix can be gated on them flipping to SUCCESSFUL.
 
 ### C. Data Location Semantics — Partially Implemented
 
@@ -204,6 +225,19 @@ Third distinct mapping-of-array shape: outer mapping, inner **fixed-size** array
 - First read for a given key lazily `calloc(1, sz)` a zero-filled slab and stores the pointer via `map_set_raw`.
 - Subsequent reads return the same pointer — element writes via `[i]` mutate the heap slab in place and persist across reads.
 - Unlike `map_dynarr_get` (returns NULL for unwritten keys), the fixed-size variant returns a valid pointer from the first access, matching Solidity's semantics that every key maps to a pre-bound zero-filled N-slot array.
+
+**KNOWNBUG — unbound-mode state-var access**: the `map_fixed_arr_get`
+path only fires under `should_treat_as_new()` — i.e. `--bound` +
+`new Store()` (the working regression test `map_fixed_array_value_pass`
+takes exactly this path). Direct state-var access on an unbound
+contract's `mapping(K => T[N])` (no `--bound`, no `new`) misses the
+helper routing and crashes during SMT encoding with Bitwuzla
+`terms with mismatching sort at indices 0 and 1`. The same crash
+appears on `mapping(K => T[N][M])`. Tracked by
+`regression/esbmc-solidity/mapping_fixed_array_unbound_{pass,fail}`.
+Root cause: the fallback dispatch path when `is_new_expr==false`
+uses a storage shape that doesn't match the mapping-value's SMT
+encoding. Independent of the `uint[N][M]` value-set bug above.
 
 ### G. Address / Contract Type Conversion
 
@@ -321,7 +355,7 @@ Works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) recognise
 
 | # | Task | Status |
 |---|------|--------|
-| 10 | Multi-dimensional arrays | Partial: `T[][]` works; `T[N][M]` and 3D+ still broken |
+| 10 | Multi-dimensional arrays | Partial: `T[][]` works. Open KNOWNBUGs: `T[N][M]` / 3D+ fixed (value-set, §B); `T[N][]` (SMT encoder coredump); `mapping(K=>T[N])` unbound (Bitwuzla sort mismatch, §F.3). Three independent bugs. |
 | 10b | `mapping(K=>V)[]` | ✅ Done |
 | 11 | Nested tuple destructuring | ✅ Done |
 | 12 | User-defined value types | Partial: wrap/unwrap work; custom operators not supported |
