@@ -61,11 +61,11 @@ std::string constant_vector2t::field_names[esbmct::num_type_fields] =
 std::string symbol2t::field_names[esbmct::num_type_fields] =
   {"name", "renamelev", "level1_num", "level2_num", "thread_num", "node_num"};
 std::string typecast2t::field_names[esbmct::num_type_fields] =
-  {"from", "rounding_mode", "", "", "", ""};
+  {"from", "rounding_mode", "is_internal", "", "", ""};
 std::string bitcast2t::field_names[esbmct::num_type_fields] =
   {"from", "", "", "", ""};
 std::string nearbyint2t::field_names[esbmct::num_type_fields] =
-  {"from", "rounding_mode", "", "", "", ""};
+  {"from", "rounding_mode", "is_internal", "", "", ""};
 std::string if2t::field_names[esbmct::num_type_fields] =
   {"cond", "true_value", "false_value", "", ""};
 std::string equality2t::field_names[esbmct::num_type_fields] =

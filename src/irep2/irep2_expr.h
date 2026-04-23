@@ -294,14 +294,21 @@ public:
     const type2tc &t,
     expr2t::expr_ids id,
     const expr2tc &v,
-    const expr2tc &r)
-    : expr2t(t, id), from(v), rounding_mode(r)
+    const expr2tc &r,
+    bool internal_cast = false)
+    : expr2t(t, id), from(v), rounding_mode(r), is_internal(internal_cast)
   {
   }
   typecast_data(const typecast_data &ref) = default;
 
   expr2tc from;
   expr2tc rounding_mode;
+  // Set by frontends on narrowing casts the user never wrote (e.g. the
+  // 256→64 XOR fold used to hash Solidity mapping keys into C array
+  // indices). Read by `goto_checkt::cast_overflow_check` so the narrowing
+  // overflow check skips frontend-synthetic casts while still firing on
+  // legitimate user-written narrowings such as `uint8(x)`.
+  bool is_internal;
 
   // Type mangling:
   typedef esbmct::field_traits<expr2tc, typecast_data, &typecast_data::from>
@@ -309,7 +316,11 @@ public:
   typedef esbmct::
     field_traits<expr2tc, typecast_data, &typecast_data::rounding_mode>
       rounding_mode_field;
-  typedef esbmct::expr2t_traits<from_field, rounding_mode_field> traits;
+  typedef esbmct::field_traits<bool, typecast_data, &typecast_data::is_internal>
+    is_internal_field;
+  typedef esbmct::
+    expr2t_traits<from_field, rounding_mode_field, is_internal_field>
+      traits;
 };
 
 class bitcast_data : public expr2t
@@ -1957,8 +1968,14 @@ public:
   typecast2t(
     const type2tc &type,
     const expr2tc &from,
-    const expr2tc &rounding_mode)
-    : typecast_expr_methods(type, typecast_id, from, rounding_mode)
+    const expr2tc &rounding_mode,
+    bool is_internal = false)
+    : typecast_expr_methods(
+        type,
+        typecast_id,
+        from,
+        rounding_mode,
+        is_internal)
   {
   }
 
@@ -1967,12 +1984,13 @@ public:
    *  @param type Type to typecast to
    *  @param from Expression to cast from.
    */
-  typecast2t(const type2tc &type, const expr2tc &from)
+  typecast2t(const type2tc &type, const expr2tc &from, bool is_internal = false)
     : typecast_expr_methods(
         type,
         typecast_id,
         from,
-        symbol2tc(get_int32_type(), "c:@__ESBMC_rounding_mode"))
+        symbol2tc(get_int32_type(), "c:@__ESBMC_rounding_mode"),
+        is_internal)
   {
   }
 

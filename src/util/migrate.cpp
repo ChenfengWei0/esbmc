@@ -742,7 +742,13 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     if (old_rm.is_not_nil())
       migrate_expr(old_rm, rounding_mode);
 
-    new_expr_ref = typecast2tc(type, old_expr, rounding_mode);
+    // Frontend-synthetic narrowing casts (currently the Solidity mapping
+    // key XOR-fold) mark themselves via `#internal_cast`. Propagate the
+    // flag into `typecast2t::is_internal` so `goto_check::cast_overflow_check`
+    // can skip them without losing the check on user-written narrowings.
+    bool is_internal = expr.get_bool("#internal_cast");
+
+    new_expr_ref = typecast2tc(type, old_expr, rounding_mode, is_internal);
     return;
   }
 
@@ -2635,6 +2641,8 @@ exprt migrate_expr_back(const expr2tc &ref)
 
     typecast_exprt new_expr(migrate_expr_back(ref2.from), thetype);
     new_expr.set("rounding_mode", migrate_expr_back(ref2.rounding_mode));
+    if (ref2.is_internal)
+      new_expr.set("#internal_cast", true);
     return new_expr;
   }
   case expr2t::nearbyint_id:
