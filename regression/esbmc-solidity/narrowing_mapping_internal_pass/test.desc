@@ -1,0 +1,4 @@
+CORE
+contract.solast
+--sol contract.sol --cvc5 --unwind 1 --no-unwinding-assertions --unsigned-overflow-check
+^VERIFICATION SUCCESSFUL$

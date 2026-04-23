@@ -1,0 +1,5 @@
+CORE
+contract.solast
+--sol contract.sol --cvc5 --unwind 1 --no-unwinding-assertions
+Narrowing cast overflow on typecast
+^VERIFICATION FAILED$
