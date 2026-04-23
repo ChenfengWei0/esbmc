@@ -1,0 +1,4 @@
+KNOWNBUG
+contract.solast
+--sol contract.sol --contract OuterDynInnerFixedFail --no-standard-checks --unwind 3 --no-unwinding-assertions
+^VERIFICATION FAILED$
