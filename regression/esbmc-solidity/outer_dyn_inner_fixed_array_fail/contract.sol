@@ -4,8 +4,8 @@ pragma solidity >=0.8.0 <0.9.0;
 // Violation test for `uint256[N][]` (outer dynamic, inner fixed).
 // Under correct semantics the `grid[0][0] != 10` assertion is violated.
 //
-// Currently KNOWNBUG: SMT encoding coredumps before reaching the solver.
-// Independent of the `uint[N][M]` value-set issue.
+// KNOWNBUG: same `array_convt` array-of-array limitation as the _pass
+// sibling; see that file for the full root-cause write-up.
 // See docs/claude/solidity/language-support.md §B.
 contract OuterDynInnerFixedFail {
     uint256[3][] public grid;

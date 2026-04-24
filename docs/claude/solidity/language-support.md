@@ -86,7 +86,7 @@ assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓
 | `uint[]` | ✓ Works (push/pop/length supported) |
 | `uint[][]` | ✓ Works (declaration, push, indexing, length, storage ref passing) |
 | `uint[][N]` | ✓ Works (observed round-trip SUCCESSFUL; outer fixed, inner dyn) |
-| `uint[N][]` | ✗ **KNOWNBUG** — SMT encoder coredumps during VCC encoding; symex completes OK. See `regression/esbmc-solidity/outer_dyn_inner_fixed_array_{pass,fail}` |
+| `uint[N][]` | ✗ **KNOWNBUG** — outer-dyn + inner-fixed lowers to `array<array<T, N>, inf>`, hitting the `array_convt` array-of-array limitation at `src/solvers/smt/array_conv.cpp:92-95`; crashes at SMT encode. See `regression/esbmc-solidity/outer_dyn_inner_fixed_array_{pass,fail}` |
 | `uint[N][M]` | ✗ **KNOWNBUG** — cross-row writes alias. Affects state vars, struct fields, 3D+ (`uint[N][M][L]`). See `regression/esbmc-solidity/multi_dim_fixed_array_{pass,fail}` |
 | `uint[][][]` (all-dyn 3D+) | Not tested, expected OK via same path as `uint[][]` |
 
@@ -232,12 +232,25 @@ path only fires under `should_treat_as_new()` — i.e. `--bound` +
 takes exactly this path). Direct state-var access on an unbound
 contract's `mapping(K => T[N])` (no `--bound`, no `new`) misses the
 helper routing and crashes during SMT encoding with Bitwuzla
-`terms with mismatching sort at indices 0 and 1`. The same crash
-appears on `mapping(K => T[N][M])`. Tracked by
+`terms with mismatching sort at indices 0 and 1` (or segfault in
+`bitwuzla_mk_term3` under ITE). The same crash appears on
+`mapping(K => T[N][M])`. Tracked by
 `regression/esbmc-solidity/mapping_fixed_array_unbound_{pass,fail}`.
-Root cause: the fallback dispatch path when `is_new_expr==false`
-uses a storage shape that doesn't match the mapping-value's SMT
-encoding. Independent of the `uint[N][M]` value-set bug above.
+
+**Root cause**: same architectural limitation as §B's `uint[N][]`.
+The unbound fallback dispatch lowers `mapping(K => T[N])` to
+`array<array<T, N>, inf>` (outer inf over folded 64-bit key, inner
+native fixed). `array_convt` (`src/solvers/smt/array_conv.cpp:92-95`)
+cannot represent an unbounded array whose element sort is itself an
+array sort — the dev-time assertion is elided in release builds and
+the encoder crashes when asked to construct the ITE/eq over the
+nested WITH chain. Three candidate fixes — none in scope here:
+  (a) smt_conv: flatten nested inf arrays into one domain (general
+      fix; ~1-2 wk with cross-frontend regression sweep).
+  (b) frontend: lower to a flat representation (shares the fix with
+      `uint[N][]`).
+  (c) route through the solver's native array theory (bitwuzla/cvc5
+      support) instead of `array_convt` for this pattern.
 
 ### G. Address / Contract Type Conversion
 
