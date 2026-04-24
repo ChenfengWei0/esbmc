@@ -280,4 +280,54 @@ Documented but not blocking the priority-order execution:
   - `symex/` — 12 files
   - `solidity/` — existing Solidity docs
   - `FIX_PLAN.md` — this file
-- Ready to begin Phase 1 of the execution plan.
+
+## Phase 1 progress (2026-04-24)
+
+**Code fix applied:**
+- `src/goto-programs/goto_loops.h` — added `collect_addressof_targets` method
+  declaration.
+- `src/goto-programs/goto_loops.cpp` — added implementation + call site in
+  `get_modified_variables` FUNCTION_CALL branch.
+- Implementation walks FUNCTION_CALL `operands` for `address_of` expressions;
+  for each found, peels `member`/`index`/`typecast`/`bitcast` layers and adds
+  the base symbol to the loop's modified set.
+
+**C regression tests added:**
+- `regression/esbmc/k_induction_ptr_through_function_fail/` — minimal
+  pointer-through-function pattern that reaches `assert(0)` in k ≥ 13
+  iterations. Pre-fix: wrongly `VERIFICATION SUCCESSFUL`. Post-fix:
+  correctly `VERIFICATION FAILED (Bug found k=13)`.
+- `regression/esbmc/k_induction_ptr_through_function_pass/` — straight-line
+  assertion (no loop) to confirm the fix doesn't regress trivial cases.
+  Both pre and post fix: `VERIFICATION SUCCESSFUL`.
+
+**Observations:**
+
+1. **Fix eliminates the unsoundness** in the minimal repro. Pre-fix, the
+   inductive step spuriously claimed success at k=3. Post-fix, the base
+   case correctly finds the bug at k=13.
+2. **Fix does over-approximate** as documented. Many Solidity KNOWNBUG
+   tests (state-invariant patterns) remain UNKNOWN under the fix — the
+   havoc now correctly includes contract state, but the inductive step
+   can't prove state-dependent invariants without explicit loop
+   invariants. This is the expected tradeoff and matches the FIX_PLAN's
+   "Fix A, option (a)" analysis.
+3. **No regression in CORE tests** is the key verification. Running the
+   full `esbmc-solidity` suite post-fix with `-j 2
+   ESBMC_REGRESS_MEMORY_LIMIT=4096` to measure CORE→UNKNOWN
+   regressions.
+
+**Pending verification (in progress):**
+- Full `esbmc-solidity` regression run post-fix. Any CORE test that now
+  reports UNKNOWN is a real regression to investigate.
+
+**Next once the run completes:**
+- If zero CORE regressions: commit `[GOTO] fix: ...` with test results,
+  update `goto/loops-and-k-induction.md` with the fix documentation,
+  move to Phase 2.
+- If CORE regressions: analyse each, decide whether (a) the test used
+  a pattern my over-approximation legitimately breaks (reclassify to
+  KNOWNBUG with explanation), (b) my over-approximation is too coarse
+  and needs refinement (extend fix to skip address_of whose target is
+  later only READ by the callee, not written), or (c) my walker has a
+  bug (fix it).
