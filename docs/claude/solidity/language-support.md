@@ -86,7 +86,7 @@ assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓
 | `uint[]` | ✓ Works (push/pop/length supported) |
 | `uint[][]` | ✓ Works (declaration, push, indexing, length, storage ref passing) |
 | `uint[][N]` | ✓ Works (observed round-trip SUCCESSFUL; outer fixed, inner dyn) |
-| `uint[N][]` | ⚠ Partial (fixed 2026-04-24 for reads hitting the written slot) — the `convert_array_index` select-decompose path used to asymmetrically flatten `i*N+j` against the infinite outer domain (src/solvers/smt/smt_conv.cpp:3636-3673 now tests the outermost source's finitude, matching `convert_array_store`). `_fail` (1 write + 1 violated assert on the written slot) passes CORE in 0.2s. `_pass` still KNOWNBUG — any read of an unwritten slot crashes in `array_convt::execute_array_ite`. Root cause: the frontend lowers inner `T[N]` as `pointer<T> + #sol_array_size` then promotes `T[N][]` state vars to `array<pointer<T>, inf>`, but the push emission writes an array-literal `{0,...,0}` of SMT sort ARRAY through a STRUCT-sorted (fat-pointer) slot. ITE merging distinct-sort valuations crashes cvc5/bitwuzla. Proper fix needs unifying the fixed-array model across the Solidity frontend (out of scope). |
+| `uint[N][]` | ✓ Works (fixed 2026-04-24) — two complementary frontend fixes: (1) the `convert_array_index` select-decompose path now tests the outermost source's finitude (src/solvers/smt/smt_conv.cpp:3636-3673), closing a latent soundness gap where `i*N+j` was flattened against an infinite outer domain; (2) the `is_dynarray_state` promotion in `solidity_convert_decl.cpp` now detects pointer-backed inner fixed arrays and rewrites them to `array_typet(T, N)` before wrapping in the outer infinite array, so the promoted state-var type is `array<array<T, N>, inf>` instead of the previous `array<pointer<T>, inf>`. Both slot-init (push) and slot-read values now agree on ARRAY sort, eliminating the `array_convt::execute_array_ite` crash. `_pass` verifies SUCCESSFUL at k=4 via k-induction in 0.2s with 12 VCCs. Standalone `T[N]` state-vars (not nested under a dynamic outer) still use the pointer model — broader fixed-array unification tracked as separate refactor. |
 | `uint[N][M]` (all fixed, any depth) | ✓ Works — native `array_typet(array_typet(T, N), M)` embedded directly in the contract struct (option B, commit `c5eec55601` + zero-init unroll follow-up). Covers 2D, 3D and deeper as long as every dim is a compile-time constant. Verified across element types (uint256, int256, address, bool) and across placements (top-level state var, inside-struct field, function parameter, local variable) — see `multi_dim_fixed_{3d,addr_2d,bool_2d,int_2d,struct_field,fn_param,local}_{pass,fail}` and `esol_clone_multi_dim_{pass,3d_pass}`. |
 | `bytes32[N][M]` (all fixed) | ✗ **KNOWNBUG** (silent unsoundness) — symex drops bytes32-equality assertions inside native 2D array_typet body ("Generated 0 VCC(s)"). Suspected interaction with the BytesStatic struct lowering. Trip-wire at `multi_dim_fixed_bytes32_2d_fail`. |
 | `uint[4][][2]`-style mixed 3D | ⚠ Partial — existing `nested_array_mixed_1` marked CORE but observed to vacuously pass (40+ user asserts → 0 VCCs, silent-drop class). Same silent-unsoundness symptom as bytes32 2D; distinct from the §B `array_convt` crash class. |
@@ -263,25 +263,21 @@ stride.
   regression timeout. Performance issue, not soundness.
 - `mapping_fixed_2d_array_unbound_pass` (2D PASS): same, KNOWNBUG.
 
-**Remaining related KNOWNBUGs (different root):**
-- `outer_dyn_inner_fixed_array_fail`: **PROMOTED TO CORE** 2026-04-24
-  by the `smt_conv::convert_array_index` select-decompose symmetry
-  fix (tests outermost array's finitude, matching the store side).
-- `outer_dyn_inner_fixed_array_pass`: still KNOWNBUG. Writes-that-
-  read-back-the-written-slot encode cleanly, but any read of an
-  UNWRITTEN slot crashes cvc5/bitwuzla `mk_ite` from inside
-  `array_convt::execute_array_ite`. Root cause is a Solidity type-model
-  inconsistency: `T[N]` lowers to `pointer<T> + #sol_array_size`, the
-  dynarray state-var promotion makes grid `array<pointer<T>, inf>`,
-  but the push emission writes an array-literal `{0,...,0}` of sort
-  ARRAY through a STRUCT-sorted pointer slot. Fresh initial slot
-  values have SMT sort STRUCT (fat pointer), written slots have
-  sort ARRAY — ITE between the two crashes. Workaround (skip the
-  promotion when elem is the ARRAY SolType) avoids the crash but
-  silently drops the assert (Generated 0 VCC(s)) because the
-  pointer-of-pointer + heap model can't propagate write→read through
-  nested pointers — rejected per `feedback_no_silent_substitution`.
-  Proper fix needs the fixed-array model unified across the frontend.
+**Fixed 2026-04-24 (both `_fail` and `_pass` now CORE):**
+- `outer_dyn_inner_fixed_array_fail`: fixed by the
+  `smt_conv::convert_array_index` select-decompose symmetry patch
+  (tests outermost array's finitude, matching the store side).
+- `outer_dyn_inner_fixed_array_pass`: fixed by promoting the inner
+  pointer-backed fixed array to `array_typet(T, N)` inside the
+  `is_dynarray_state` block in `solidity_convert_decl.cpp`. The
+  `T[N][]` state-var now lowers to `array<array<T, N>, inf>` instead
+  of the previous `array<pointer<T>, inf>`. Both push's zero-init
+  and read-of-unwritten-slot produce ARRAY-sorted values, so
+  `array_convt::execute_array_ite` no longer merges two distinct
+  SMT sorts. k-induction finds the inductive step at k=4 in 0.2s.
+  Note: this is a targeted promotion for the nested case. Standalone
+  `T[N]` state-vars (without a dynamic outer) still use the pointer
+  model — unifying those is a broader refactor tracked separately.
 
 ### G. Address / Contract Type Conversion
 
@@ -399,7 +395,7 @@ Works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) recognise
 
 | # | Task | Status |
 |---|------|--------|
-| 10 | Multi-dimensional arrays | `T[][]` and all-fixed `T[N][M]`/3D+ work (native `array_typet` via option B, c5eec55601; zero-init unroll follow-up). `mapping(K=>T[N])` / `mapping(K=>T[M][N])` unbound: fixed by Phase 3 Fix B (2026-04-24, §F.3) — frontend now rewrites state-var type to `mapping_t` and routes through `map_fixed_arr_get`, so the array-of-array sort no longer appears. `T[N][]` outer-dyn + inner-fixed: `_fail` promoted to CORE 2026-04-24 via the `convert_array_index` select-decompose symmetry fix (§B); `_pass` still KNOWNBUG due to a separate `array_convt::unbounded_array_ite` bookkeeping bug. |
+| 10 | Multi-dimensional arrays | `T[][]` and all-fixed `T[N][M]`/3D+ work (native `array_typet` via option B, c5eec55601; zero-init unroll follow-up). `mapping(K=>T[N])` / `mapping(K=>T[M][N])` unbound: fixed by Phase 3 Fix B (2026-04-24, §F.3) — frontend now rewrites state-var type to `mapping_t` and routes through `map_fixed_arr_get`, so the array-of-array sort no longer appears. `T[N][]` outer-dyn + inner-fixed: both `_fail` and `_pass` promoted to CORE 2026-04-24 — `_fail` by the `convert_array_index` select-decompose symmetry fix (§B), `_pass` by promoting the inner pointer-backed fixed array to `array_typet(T, N)` at the `is_dynarray_state` promotion site. |
 | 10b | `mapping(K=>V)[]` | ✅ Done |
 | 11 | Nested tuple destructuring | ✅ Done |
 | 12 | User-defined value types | Partial: wrap/unwrap work; custom operators not supported |

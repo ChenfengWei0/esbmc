@@ -333,6 +333,31 @@ bool solidity_convertert::get_var_decl(
   {
     assert(t.is_pointer());
     typet elem_type = t.subtype();
+    // If the element is itself a pointer-backed fixed-size array (T[N]),
+    // promote it to a native SMT array_typet(T, N). Without this, the
+    // outer `array<pointer<T>, inf>` slot is pointer-sorted while the
+    // push emitter's zero-initializer and the read path use ARRAY sort
+    // for the literal `{0,...,0}` — the sort divergence blows up
+    // cvc5_convt::mk_ite inside array_convt::execute_array_ite. Promoting
+    // the inner slot to native array aligns both sides with a single
+    // ARRAY sort. Standalone T[N] state-vars (not nested under a dynamic
+    // outer) still use the pointer model; unifying those is a broader
+    // refactor tracked separately.
+    if (elem_type.is_pointer() && !elem_type.get("#sol_array_size").empty())
+    {
+      const std::string sz_str = elem_type.get("#sol_array_size").as_string();
+      BigInt sz = string2integer(sz_str);
+      typet leaf = elem_type.subtype();
+      typet inner_arr = array_typet(
+        leaf,
+        constant_exprt(
+          integer2binary(sz, bv_width(int_type())),
+          integer2string(sz),
+          int_type()));
+      inner_arr.set("#sol_array_size", sz_str);
+      set_sol_type(inner_arr, SolidityGrammar::SolType::ARRAY);
+      elem_type = inner_arr;
+    }
     t = array_typet(elem_type, exprt("infinity"));
     set_sol_type(t, SolidityGrammar::SolType::DYNARRAY);
     t.set("#sol_dynarray_state", true);
