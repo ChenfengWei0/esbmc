@@ -196,6 +196,22 @@ bool solidity_convertert::get_type_description(
             * width: 32
             * #cpp_type: signed_int
     */
+    // B2: If every dimension is a compile-time fixed size, use a
+    // native nested `array_typet(array_typet(T, inner_N), outer_M)`
+    // embedded directly in the surrounding struct. This sidesteps the
+    // `T**` + nested-calloc value-set aliasing bug entirely. Mixed
+    // (at least one dynamic) shapes still fall through to the
+    // pointer-backed path below.
+    if (!decl.empty() && decl.contains("typeName"))
+    {
+      typet native_t;
+      if (try_native_nested_fixed_array(decl["typeName"], native_t))
+      {
+        new_type = native_t;
+        break;
+      }
+    }
+
     typet base_type;
     if (
       !decl.empty() && decl.contains("typeName") &&
@@ -1120,6 +1136,73 @@ bool solidity_convertert::get_parameter_list(
 }
 
 // parse the state variable
+
+bool solidity_convertert::try_native_nested_fixed_array(
+  const nlohmann::json &type_name_node,
+  typet &result)
+{
+  // Walk the AST typeName chain from outermost to innermost, collecting
+  // each ArrayTypeName level's `length` literal. Bail out to the
+  // pointer-backed path if any level is dynamic or the length literal
+  // cannot be decoded.
+  std::vector<unsigned long long> dims;
+  const nlohmann::json *cur = &type_name_node;
+
+  while (cur->contains("baseType"))
+  {
+    if (!cur->contains("length") || (*cur)["length"].is_null())
+      return false;
+    const auto &len_node = (*cur)["length"];
+    std::string len_str;
+    if (
+      len_node.is_object() && len_node.contains("value") &&
+      len_node["value"].is_string())
+      len_str = len_node["value"].get<std::string>();
+    if (len_str.empty())
+      return false;
+    unsigned long long n = 0;
+    try
+    {
+      n = std::stoull(len_str);
+    }
+    catch (const std::exception &)
+    {
+      return false;
+    }
+    dims.push_back(n);
+    cur = &(*cur)["baseType"];
+  }
+
+  // Need at least two dimensions to enter the native-nested path.
+  // 1D fixed arrays stay on the pointer model for now.
+  if (dims.size() < 2)
+    return false;
+
+  if (!cur->contains("typeDescriptions"))
+    return false;
+
+  typet leaf_t;
+  if (get_type_description((*cur)["typeDescriptions"], leaf_t))
+    return false;
+
+  // Build nested array_typet from innermost out.
+  typet acc = leaf_t;
+  for (auto it = dims.rbegin(); it != dims.rend(); ++it)
+  {
+    constant_exprt sz(
+      integer2binary(BigInt(*it), bv_width(int_type())),
+      integer2string(BigInt(*it)),
+      int_type());
+    acc = array_typet(acc, sz);
+  }
+
+  // Tag the outermost dim so downstream sites that expect
+  // #sol_array_size on the outer fixed-array wrapper still see it.
+  acc.set("#sol_array_size", std::to_string(dims.front()));
+  set_sol_type(acc, SolidityGrammar::SolType::ARRAY);
+  result = acc;
+  return true;
+}
 
 bool solidity_convertert::get_array_pointer_type(
   const nlohmann::json &decl,

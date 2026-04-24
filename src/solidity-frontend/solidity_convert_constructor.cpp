@@ -1651,6 +1651,23 @@ bool solidity_convertert::move_initializer_to_ctor(
       }
       symbolt *symbol = context.find_symbol(comp.identifier());
       exprt rhs = symbol->value;
+
+      // B3: native nested multi-dim fixed arrays embedded directly in
+      // the contract struct are zero-initialised by the struct's
+      // default construction. Emitting `this->grid = { { 0 } }` here
+      // is redundant AND triggers a dereference-of-array-type crash
+      // in the symex pipeline ("Can't construct rvalue reference to
+      // array type during dereference"), because writing an
+      // array-valued rvalue through `*this` is not on a supported
+      // dereference dst path. Skip the redundant assignment entirely.
+      if (
+        comp.type().is_array() && comp.type().has_subtype() &&
+        comp.type().subtype().is_array() &&
+        rhs.get("#zero_initializer") == "1")
+      {
+        continue;
+      }
+
       exprt _assign;
       if (
         get_sol_type(lhs.type()) == SolidityGrammar::SolType::STRING &&

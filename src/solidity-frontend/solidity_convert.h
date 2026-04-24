@@ -644,6 +644,17 @@ protected:
     const typet &base_type,
     typet &new_type);
 
+  // Attempts to build a native nested `array_typet(array_typet(T, inner_N),
+  // outer_M)` chain for a multi-dim array whose every dimension is
+  // a compile-time fixed size. Returns true and populates `result` on
+  // success; returns false when any dimension is dynamic (caller then
+  // falls back to the pointer-backed model). Replacement for the
+  // `T**` + per-level calloc representation, which triggers a
+  // language-agnostic value-set aliasing bug.
+  bool try_native_nested_fixed_array(
+    const nlohmann::json &type_name_node,
+    typet &result);
+
   bool get_ctor_call_id(const std::string &contract_name, std::string &ctor_id);
   std::string get_explicit_ctor_call_id(const std::string &contract_name);
   std::string get_implict_ctor_call_id(const std::string &contract_name);

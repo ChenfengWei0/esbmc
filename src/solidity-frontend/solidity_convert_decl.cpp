@@ -531,9 +531,14 @@ bool solidity_convertert::get_var_decl(
     t_sol_type == SolidityGrammar::SolType::ARRAY ||
     t_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
   {
-    /** 
+    // Nothing to emit at decl time. Fall through to the post-decl
+    // block below (which handles other state-var housekeeping).
+  }
+  else if (t_sol_type == SolidityGrammar::SolType::ARRAY || t_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
+  {
+    /**
       uint[2] z;            // uint *z = (uint *)calloc(2, sizeof(uint));
-      
+
                             // uint tmp1[2] = {1,2}; // populated into sym tab, not a real statement
       uint[2] zz = [1,2];   // uint *zz = (uint *)_ESBMC_arrcpy(tmp1, 2, 2, sizeof(uint));
 
