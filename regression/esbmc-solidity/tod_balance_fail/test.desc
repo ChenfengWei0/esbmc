@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Bal --tod-balance-check=payFixed,payIfRich --unwind 2 --no-unwinding-assertions
+--contract Bal --tod-balance-check=payFixed,payIfRich --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION FAILED$

@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Base --tod-race-check=add,inc --unwind 3 --no-unwinding-assertions
+--contract Base --tod-race-check=add,inc --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION SUCCESSFUL$

@@ -1,4 +1,4 @@
 CORE
 contract.solast
---unsigned-overflow-check --sol contract.sol --unwind 1 --no-unwinding-assertions
+--unsigned-overflow-check --sol contract.sol --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION SUCCESSFUL$

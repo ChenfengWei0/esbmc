@@ -1,5 +1,5 @@
 CORE
 contract.sol
---contract WinToken --tod-race-check=addPot,claimWin --unwind 2 --no-unwinding-assertions
+--contract WinToken --tod-race-check=addPot,claimWin --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION FAILED$
 ^.*function __tod_race_check.*$

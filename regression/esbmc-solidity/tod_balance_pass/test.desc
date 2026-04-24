@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Bal --tod-balance-check=payA,payB --unwind 2 --no-unwinding-assertions
+--contract Bal --tod-balance-check=payA,payB --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION SUCCESSFUL$

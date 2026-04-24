@@ -1,4 +1,4 @@
 CORE
 contract.sol
---contract Bal --unwind 2 --no-unwinding-assertions
+--contract Bal --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION FAILED$

@@ -1,6 +1,6 @@
 KNOWNBUG
 contract.solast
---sol contract.sol --contract C --unwind 35 --no-unwinding-assertions --no-standard-checks
+--sol contract.sol --contract C --no-standard-checks --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION SUCCESSFUL$
 Asserts `keccak256(abi.encodeWithSignature(...)) == keccak256(abi.encodeCall(...))`
 for equivalent selectors, but our identity-abi model returns nondet
