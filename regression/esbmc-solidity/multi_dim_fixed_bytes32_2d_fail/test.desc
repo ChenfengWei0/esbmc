@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.solast
---sol contract.sol --contract MultiDimBytes32_2DFail --no-standard-checks --k-induction --max-k-step 20 --k-step 3
+--sol contract.sol --contract MultiDimBytes32_2DFail --no-standard-checks --incremental-bmc --cvc5 --bound
 ^VERIFICATION FAILED$
