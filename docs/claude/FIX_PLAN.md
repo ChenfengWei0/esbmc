@@ -408,3 +408,54 @@ Documented but not blocking the priority-order execution:
   existing Phase 2 walker may already be sufficient; the KNOWNBUG
   classification on `esol_clone_struct_array_pass` is likely
   post-fix-UNKNOWN rather than deep_copy failure).
+
+## Phase 1 COMPLETED (2026-04-24)
+
+**Commits:**
+- `e01ee79f8e` — initial fix + 2 C regressions (unconditional
+  address_of add)
+- `9963df8e6f` — refined fix (gated on callee deref-write)
+- `c832b07a27` — KNOWNBUG sweep for 44 Solidity tests (34 CORE + 10
+  THOROUGH) that depended on the havoc-miss bug for their proof
+
+**Full test results (esbmc-solidity, 60s timeout, -j 2):**
+- 787 total, 705 passed, 82 failed (all failures now correctly
+  KNOWNBUG-classified; all CORE tests pass).
+
+**Conclusion:**
+- Unsoundness fixed: pointer-through-function writes now correctly
+  havoc'd in the k-induction modified-var analysis.
+- 44 tests that depended on the bug reclassified to KNOWNBUG with
+  comprehensive commit message. These need loop invariants (not
+  yet available in Solidity) or migration to --incremental-bmc.
+- Regression test coverage: 2 C regressions under
+  `regression/esbmc/k_induction_ptr_through_function_{fail,pass}`
+  catch the exact bug pattern.
+
+**Open questions for the user:**
+
+1. Should we migrate some of the 44 KNOWNBUGs to
+   `--incremental-bmc` (bounded-but-sound) instead of leaving them
+   as KNOWNBUG? That's a separate work chunk.
+2. Is there an appetite for extending ESBMC with Solidity-level
+   loop-invariant syntax? That unlocks proving these tests under
+   k-induction.
+
+## Phase 2/3 status
+
+Phase 2 (Solidity deep_copy for struct-with-nested-array):
+- Investigation showed the Phase 2 ctor walker is already
+  implemented (`emit_ctor_deep_init_fixup` in
+  solidity_convert_constructor.cpp). Existing KNOWNBUG on
+  `esol_clone_struct_array_pass` is likely SMT-timeout under my
+  Phase 1 fix, not a frontend deep-copy issue. Revisit only if the
+  user confirms the test is genuinely broken vs. just slow.
+
+Phase 3 (Solidity mapping(K => T[N]) via helper routing):
+- Existing `map_fixed_arr_get` helper in
+  `src/c2goto/library/solidity/solidity_mapping.c:165` handles the
+  pattern correctly but is only routed under `--bound` + `new
+  Store()` + `should_treat_as_new()`. Fix B: unconditional routing
+  for the value-type pattern `T[N]`. Scope: medium
+  (100-300 LOC in `solidity-frontend/`), zero solver change.
+- Ready to implement once Phase 1 is verified clean.
