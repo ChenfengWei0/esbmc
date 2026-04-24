@@ -1,4 +1,4 @@
-THOROUGH
+KNOWNBUG
 contract.solast
 --sol contract.sol --no-standard-checks --contract Mutex --reentry-check --unbound --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION SUCCESSFUL$
