@@ -87,7 +87,9 @@ assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓
 | `uint[][]` | ✓ Works (declaration, push, indexing, length, storage ref passing) |
 | `uint[][N]` | ✓ Works (observed round-trip SUCCESSFUL; outer fixed, inner dyn) |
 | `uint[N][]` | ✗ **KNOWNBUG** — outer-dyn + inner-fixed lowers to `array<array<T, N>, inf>`, hitting the `array_convt` array-of-array limitation at `src/solvers/smt/array_conv.cpp:92-95`; crashes at SMT encode. See `regression/esbmc-solidity/outer_dyn_inner_fixed_array_{pass,fail}` |
-| `uint[N][M]` (all fixed, any depth) | ✓ Works — native `array_typet(array_typet(T, N), M)` embedded directly in the contract struct (option B, commit `c5eec55601`). Covers 2D, 3D and deeper as long as every dim is a compile-time constant. See `multi_dim_fixed_array_{pass,fail}` and `esol_clone_multi_dim_{pass,3d_pass}`. |
+| `uint[N][M]` (all fixed, any depth) | ✓ Works — native `array_typet(array_typet(T, N), M)` embedded directly in the contract struct (option B, commit `c5eec55601` + zero-init unroll follow-up). Covers 2D, 3D and deeper as long as every dim is a compile-time constant. Verified across element types (uint256, int256, address, bool) and across placements (top-level state var, inside-struct field, function parameter, local variable) — see `multi_dim_fixed_{3d,addr_2d,bool_2d,int_2d,struct_field,fn_param,local}_{pass,fail}` and `esol_clone_multi_dim_{pass,3d_pass}`. |
+| `bytes32[N][M]` (all fixed) | ✗ **KNOWNBUG** (silent unsoundness) — symex drops bytes32-equality assertions inside native 2D array_typet body ("Generated 0 VCC(s)"). Suspected interaction with the BytesStatic struct lowering. Trip-wire at `multi_dim_fixed_bytes32_2d_fail`. |
+| `uint[4][][2]`-style mixed 3D | ⚠ Partial — existing `nested_array_mixed_1` marked CORE but observed to vacuously pass (40+ user asserts → 0 VCCs, silent-drop class). Same silent-unsoundness symptom as bytes32 2D; distinct from the §B `array_convt` crash class. |
 | `uint[][][]` (all-dyn 3D+) | Not tested, expected OK via same path as `uint[][]` |
 
 **Why all-fixed multi-dim works** (option B): the frontend's
