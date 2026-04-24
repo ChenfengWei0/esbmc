@@ -458,4 +458,64 @@ Phase 3 (Solidity mapping(K => T[N]) via helper routing):
   Store()` + `should_treat_as_new()`. Fix B: unconditional routing
   for the value-type pattern `T[N]`. Scope: medium
   (100-300 LOC in `solidity-frontend/`), zero solver change.
-- Ready to implement once Phase 1 is verified clean.
+
+**Phase 3 implementation sketch (2026-04-24):**
+
+Root location: `src/solidity-frontend/solidity_convert_expr.cpp:3611`:
+
+```cpp
+if (!is_new_expr)
+{
+  assert(array.type().is_array());
+  xor_fold_key_to_64bit(pos);
+  // Use the array's declared subtype rather than `t` from
+  // get_type_description, which may lack subtypes for nested mappings.
+  new_expr = index_exprt(array, pos, array.type().subtype());
+}
+else
+{
+  // ... goes through get_new_mapping_index_access helpers
+}
+```
+
+The `!is_new_expr` branch produces `index_exprt(infinite_array,
+key, subtype)` where subtype is an `array_typet(T, N)` for
+`mapping(K => T[N])`. That produces the `array<array<T, N>, inf>`
+SMT sort that trips `array_convt.cpp:92-95`.
+
+Fix B: detect `val_sol_type == ARRAY_LITERAL` in the `!is_new_expr`
+branch and fall through to `get_new_mapping_index_access` for that
+case — routing through the `map_fixed_arr_get` helper. Other
+mapping accesses keep the fast path.
+
+**Pseudocode:**
+```cpp
+if (!is_new_expr)
+{
+  // New: escape to helper when value type is a fixed-size array.
+  // The default chained indexing produces array-of-array SMT sort
+  // that trips array_convt's assertion.
+  if (val_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
+  {
+    bool is_mapping_set = is_mapping_set_lvalue(expr);
+    if (get_new_mapping_index_access(
+          value_t, val_sol_type, is_mapping_set,
+          array, pos, location, new_expr))
+      return true;
+    return false;
+  }
+  // Existing default path:
+  assert(array.type().is_array());
+  xor_fold_key_to_64bit(pos);
+  new_expr = index_exprt(array, pos, array.type().subtype());
+}
+```
+
+**Scope:** ~20 LOC in `solidity_convert_expr.cpp`. Needs the existing
+helpers to be visible in unbound-mode (verify).
+
+**Testing:** un-KNOWNBUG 4 tests (`mapping_fixed_array_unbound_*`,
+`outer_dyn_inner_fixed_array_*`).
+
+Ready to implement once Phase 1 verification ctest confirms no
+regressions.
