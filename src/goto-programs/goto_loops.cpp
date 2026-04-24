@@ -137,6 +137,56 @@ void goto_loopst::collect_addressof_targets(loopst &loop, const expr2tc &expr)
   });
 }
 
+static bool expr_contains_dereference(const expr2tc &e)
+{
+  if (is_nil_expr(e))
+    return false;
+  if (is_dereference2t(e))
+    return true;
+  bool found = false;
+  e->foreach_operand([&found](const expr2tc &sub) {
+    if (!found && expr_contains_dereference(sub))
+      found = true;
+  });
+  return found;
+}
+
+bool goto_loopst::callee_writes_through_pointer(
+  const irep_idt &callee,
+  std::unordered_set<irep_idt, irep_id_hash> &visited)
+{
+  // Recursion guard.
+  if (!visited.insert(callee).second)
+    return false;
+
+  auto it = goto_functions.function_map.find(callee);
+  if (it == goto_functions.function_map.end() || !it->second.body_available)
+    return false;
+
+  for (const auto &insn : it->second.body.instructions)
+  {
+    if (insn.is_assign())
+    {
+      const code_assign2t &a = to_code_assign2t(insn.code);
+      if (expr_contains_dereference(a.target))
+        return true;
+    }
+    else if (insn.is_function_call())
+    {
+      const code_function_call2t &nested =
+        to_code_function_call2t(insn.code);
+      if (is_dereference2t(nested.function))
+        continue; // function pointer, be conservative? assume no.
+      if (!is_symbol2t(nested.function))
+        continue;
+      if (callee_writes_through_pointer(
+            to_symbol2t(nested.function).thename, visited))
+        return true;
+    }
+  }
+  return false;
+}
+
 void goto_loopst::get_modified_variables(
   goto_programt::instructionst::iterator instruction,
   function_loopst::iterator loop,
@@ -164,15 +214,23 @@ void goto_loopst::get_modified_variables(
     // may be written through pointer-typed arguments. Without this, the
     // k-induction havoc preamble omits variables like `obj` in the common
     // pattern `dispatch(&obj)` / `obj.method(...)` where the callee writes
-    // through the formal pointer parameter. The syntactic recursion below
-    // only registers the callee-local pointer (e.g. `p`), never the
-    // caller's object. Since we are building a conservative over-
-    // approximation anyway (the modified-var analysis drives havoc which
-    // can only weaken, never strengthen the inductive hypothesis), this
-    // walker inspects each actual for `address_of` nodes and adds the
-    // base symbol of the pointee to the modified set.
-    for (const expr2tc &arg : function_call.operands)
-      collect_addressof_targets(*loop, arg);
+    // through the formal pointer parameter. The plain syntactic recursion
+    // below only registers the callee-local pointer (e.g. `p`), never the
+    // caller's object. Gate the extension on the callee actually
+    // containing an indirect write (an ASSIGN whose lhs mentions a
+    // dereference); otherwise a purely read-only helper would over-
+    // approximate unnecessarily and kill provability of k-induction
+    // invariants that don't involve the pointed-to object.
+    if (is_symbol2t(function_call.function))
+    {
+      std::unordered_set<irep_idt, irep_id_hash> visited;
+      if (callee_writes_through_pointer(
+            to_symbol2t(function_call.function).thename, visited))
+      {
+        for (const expr2tc &arg : function_call.operands)
+          collect_addressof_targets(*loop, arg);
+      }
+    }
 
     // The run over the function body and get the modified variables there
     irep_idt &identifier = to_symbol2t(function_call.function).thename;
