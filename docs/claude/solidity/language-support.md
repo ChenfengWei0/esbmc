@@ -86,7 +86,7 @@ assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓
 | `uint[]` | ✓ Works (push/pop/length supported) |
 | `uint[][]` | ✓ Works (declaration, push, indexing, length, storage ref passing) |
 | `uint[][N]` | ✓ Works (observed round-trip SUCCESSFUL; outer fixed, inner dyn) |
-| `uint[N][]` | ⚠ Partial (fixed 2026-04-24 for single-write) — the frontend lowering `array<array<T, N>, inf>` used to trip the `convert_array_index` select-decompose path, which asymmetrically checked the *inner* slice's finitude and synthesised a flat `i*N+j` key that was then applied against the outer infinite domain (wrong sort, dangling pointer into cvc5/bitwuzla at VCC encoding). `src/solvers/smt/smt_conv.cpp:3636-3673` now tests the *outermost* source's finitude (matching `convert_array_store`). `_fail` (1 write + 1 violated assert) passes CORE in 0.2s. `_pass` (6 writes + 6 asserts) still KNOWNBUG — trips a separate bookkeeping bug in `array_convt::unbounded_array_ite` where `false_vals[i]` is NULL when multiple updates to the same infinite array id accumulate new index keys. |
+| `uint[N][]` | ⚠ Partial (fixed 2026-04-24 for reads hitting the written slot) — the `convert_array_index` select-decompose path used to asymmetrically flatten `i*N+j` against the infinite outer domain (src/solvers/smt/smt_conv.cpp:3636-3673 now tests the outermost source's finitude, matching `convert_array_store`). `_fail` (1 write + 1 violated assert on the written slot) passes CORE in 0.2s. `_pass` still KNOWNBUG — any read of an unwritten slot crashes in `array_convt::execute_array_ite`. Root cause: the frontend lowers inner `T[N]` as `pointer<T> + #sol_array_size` then promotes `T[N][]` state vars to `array<pointer<T>, inf>`, but the push emission writes an array-literal `{0,...,0}` of SMT sort ARRAY through a STRUCT-sorted (fat-pointer) slot. ITE merging distinct-sort valuations crashes cvc5/bitwuzla. Proper fix needs unifying the fixed-array model across the Solidity frontend (out of scope). |
 | `uint[N][M]` (all fixed, any depth) | ✓ Works — native `array_typet(array_typet(T, N), M)` embedded directly in the contract struct (option B, commit `c5eec55601` + zero-init unroll follow-up). Covers 2D, 3D and deeper as long as every dim is a compile-time constant. Verified across element types (uint256, int256, address, bool) and across placements (top-level state var, inside-struct field, function parameter, local variable) — see `multi_dim_fixed_{3d,addr_2d,bool_2d,int_2d,struct_field,fn_param,local}_{pass,fail}` and `esol_clone_multi_dim_{pass,3d_pass}`. |
 | `bytes32[N][M]` (all fixed) | ✗ **KNOWNBUG** (silent unsoundness) — symex drops bytes32-equality assertions inside native 2D array_typet body ("Generated 0 VCC(s)"). Suspected interaction with the BytesStatic struct lowering. Trip-wire at `multi_dim_fixed_bytes32_2d_fail`. |
 | `uint[4][][2]`-style mixed 3D | ⚠ Partial — existing `nested_array_mixed_1` marked CORE but observed to vacuously pass (40+ user asserts → 0 VCCs, silent-drop class). Same silent-unsoundness symptom as bytes32 2D; distinct from the §B `array_convt` crash class. |
@@ -267,14 +267,21 @@ stride.
 - `outer_dyn_inner_fixed_array_fail`: **PROMOTED TO CORE** 2026-04-24
   by the `smt_conv::convert_array_index` select-decompose symmetry
   fix (tests outermost array's finitude, matching the store side).
-- `outer_dyn_inner_fixed_array_pass`: still KNOWNBUG. Single-write
-  cases now encode cleanly, but 6-write round-trips trip an
-  independent bug in `array_convt::unbounded_array_ite` — when
-  multiple updates to the same infinite array id accumulate new
-  index keys, older valuation vectors aren't extended, leaving
-  NULL slots that crash `cvc5_convt::mk_ite`. Fix requires
-  `array_convt` to back-fill historical per-update vectors when
-  new indexes appear later.
+- `outer_dyn_inner_fixed_array_pass`: still KNOWNBUG. Writes-that-
+  read-back-the-written-slot encode cleanly, but any read of an
+  UNWRITTEN slot crashes cvc5/bitwuzla `mk_ite` from inside
+  `array_convt::execute_array_ite`. Root cause is a Solidity type-model
+  inconsistency: `T[N]` lowers to `pointer<T> + #sol_array_size`, the
+  dynarray state-var promotion makes grid `array<pointer<T>, inf>`,
+  but the push emission writes an array-literal `{0,...,0}` of sort
+  ARRAY through a STRUCT-sorted pointer slot. Fresh initial slot
+  values have SMT sort STRUCT (fat pointer), written slots have
+  sort ARRAY — ITE between the two crashes. Workaround (skip the
+  promotion when elem is the ARRAY SolType) avoids the crash but
+  silently drops the assert (Generated 0 VCC(s)) because the
+  pointer-of-pointer + heap model can't propagate write→read through
+  nested pointers — rejected per `feedback_no_silent_substitution`.
+  Proper fix needs the fixed-array model unified across the frontend.
 
 ### G. Address / Contract Type Conversion
 
