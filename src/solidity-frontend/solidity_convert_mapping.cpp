@@ -404,15 +404,20 @@ bool solidity_convertert::get_new_mapping_index_access(
     val_flg = "dynarr";
     func_type = pointer_typet(empty_typet());
   }
-  else if (val_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
+  else if (
+    val_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL ||
+    val_sol_type == SolidityGrammar::SolType::ARRAY)
   {
-    /* Fixed-size array value (mapping(K => T[N])): Solidity pre-binds
-     * every key to an N-element zero-filled slab. map_fixed_arr_get
-     * lazily allocates that slab on first access and returns the same
-     * pointer on subsequent reads, so element writes via [i] persist.
-     * The 2-arg read is a special-case; writes of whole T[N] slots
-     * aren't supported yet — assignment `m[k] = new T[N](...)` would
-     * need a dedicated set helper. */
+    /* Fixed-size array value (mapping(K => T[N]) / mapping(K =>
+     * T[M][N])): Solidity pre-binds every key to an N-element (or
+     * M*N-element) zero-filled slab. map_fixed_arr_get lazily
+     * allocates that slab on first access and returns the same
+     * pointer on subsequent reads, so element writes via [i]
+     * (or [i][j]) persist. The 2-arg read is a special-case; writes
+     * of whole T[N] slots aren't supported yet — assignment
+     * `m[k] = new T[N](...)` would need a dedicated set helper.
+     * 1D fixed-array value lands under ARRAY_LITERAL; 2D+ under
+     * ARRAY (see solidity_convert_type.cpp:360 vs 419). */
     val_flg = "fixed_arr";
     func_type = pointer_typet(empty_typet());
   }
@@ -585,11 +590,16 @@ bool solidity_convertert::get_new_mapping_index_access(
   }
   else if (val_flg == "fixed_arr")
   {
-    /* map_fixed_arr_get returns a void* to the N-element slab — the
-     * downstream `[i]` index lowering takes it from here. Do NOT
-     * typecast to value_t (the array type itself); an array type is
-     * not a pointer-convertible destination and the gen_typecast
-     * would inject a bogus conversion. */
+    /* map_fixed_arr_get returns a void* to the N-element slab. Cast
+     * to `pointer<element>` so the downstream `[i]` index lowering
+     * uses the correct element size in pointer arithmetic — without
+     * the cast, `index_exprt(void*, i, T)` strides by sizeof(void)
+     * (== 1) on the GOTO side, producing a byte-level read instead
+     * of an element read. Do NOT cast to value_t (the array type
+     * itself) — solidity_gen_typecast rejects array destinations.
+     * value_t is `T[N]`; its subtype is the element type `T`. */
+    typet elem_ptr_t = pointer_typet(value_t.subtype());
+    solidity_gen_typecast(ns, call, elem_ptr_t);
     new_expr = call;
   }
   else

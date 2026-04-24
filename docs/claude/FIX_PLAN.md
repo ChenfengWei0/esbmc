@@ -459,7 +459,67 @@ Phase 3 (Solidity mapping(K => T[N]) via helper routing):
   for the value-type pattern `T[N]`. Scope: medium
   (100-300 LOC in `solidity-frontend/`), zero solver change.
 
-**Phase 3 implementation sketch (2026-04-24):**
+## Phase 3 Fix B IMPLEMENTED (2026-04-24)
+
+The initial sketch (below) is superseded — the actual fix is
+slightly larger than the 20-LOC estimate because the type model
+*and* the init block both need to swing together, and because
+`get_sol_type` returns SolType::ARRAY (not ARRAY_LITERAL) for 2D+
+fixed-array leaves via `solidity_convert_type.cpp:360`.
+
+**Code changes (3 files, ~40 LOC):**
+
+1. `src/solidity-frontend/solidity_convert_decl.cpp` (chain walk):
+   after walking `mapping(K => ... => leaf)`, if the leaf has
+   `SolType::ARRAY_LITERAL` (1D fixed) OR `SolType::ARRAY` (2D+
+   nested fixed) AND the mapping is single-level, rewrite the state
+   var's `t` from `array<T, inf>` to `symbol_typet("tag-struct mapping_t")`
+   and tag `t.set("#sol_mapping_fixed_arr_value", true)`. Sidesteps
+   the `array<T[N], inf>` SMT sort that `array_convt.cpp:92-95`
+   cannot encode.
+
+2. Same file, the `is_mapping && is_new_expr` init block: extend to
+   `is_new_expr || t.get_bool("#sol_mapping_fixed_arr_value")` so the
+   `{base=_ESBMC_inf_*, addr=this->$address}` fields also initialise
+   for the rewritten non-new mapping. Without this, `map_get_raw`
+   reads zero-init fields and returns nondet slabs, breaking the
+   invariant that writes persist.
+
+3. `src/solidity-frontend/solidity_convert_expr.cpp` (access branch at
+   3611): change `if (!is_new_expr)` to
+   `if (!is_new_expr && array.type().is_array())`. The type-based
+   check keeps the scalar-value fast path intact and routes only the
+   rewritten mapping_t vars through `get_new_mapping_index_access`.
+
+4. `src/solidity-frontend/solidity_convert_mapping.cpp`
+   (`get_new_mapping_index_access`, `fixed_arr` branch):
+   a. Accept `SolType::ARRAY` in addition to `ARRAY_LITERAL` as
+      entry into the `val_flg = "fixed_arr"` dispatch.
+   b. Cast the `void*` return of `map_fixed_arr_get` to
+      `pointer<element>` (i.e. `value_t.subtype()`) before handing
+      it back. Without this cast, downstream `m[k][i]` goto-level
+      `index_exprt(void*, i, T)` strides by sizeof(void)=1 not
+      sizeof(T).
+
+**Test results (regression/esbmc-solidity, timeout=60s):**
+
+- `mapping_fixed_array_unbound_fail`: KNOWNBUG → **CORE** (now
+  FAILED correctly at k=1, was sort error).
+- `mapping_fixed_array_unbound_pass`: stays KNOWNBUG but the root
+  cause is now solver-performance (linked-list walk in
+  `map_get_raw` × k-induction steps) rather than architectural
+  array-of-array sort. Semantically correct encoding.
+- `mapping_fixed_2d_array_unbound_fail` (new): **CORE** — 2D
+  `uint256[M][N]` value also FAILED at k=1, confirming the cast
+  chain `void* → pointer<T[M]>` + `[i][j]` lowering works.
+- `mapping_fixed_2d_array_unbound_pass` (new): **KNOWNBUG** —
+  identical performance profile to 1D pass; encoding correct but
+  solver doesn't finish.
+
+The `outer_dyn_inner_fixed_array_*` pair stays KNOWNBUG — that is
+pure `T[N][]` array type, not a mapping, and unrelated to this fix.
+
+**Phase 3 implementation sketch (2026-04-24, original — superseded by above):**
 
 Root location: `src/solidity-frontend/solidity_convert_expr.cpp:3611`:
 

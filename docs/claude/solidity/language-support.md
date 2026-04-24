@@ -8,7 +8,7 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 |----------|----------|
 | **Value types** | `bool`, `uint8`-`uint256`, `int8`-`int256`, `address`/`address payable`, `string`, `bytes1`-`bytes32`, `bytes` (dynamic) |
 | **Composite types** | `struct` (nested, with arrays), `enum`, fixed arrays `T[N]`, dynamic arrays `T[]` (push/pop/length), multi-dimensional arrays |
-| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, mapping-in-struct, `mapping(K => V)[]` (array of mappings), `mapping(K => V)[N]` (fixed array of mappings), `mapping(K => V[])` (mapping of scalar dynamic arrays), `mapping(K => T[N])` (mapping of fixed arrays, `is_new_expr` path) — modelled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays; mapping arrays use auxiliary `_mapping_arr_len`; mapping-of-dynarray uses auxiliary `_mapdynarr_len`. |
+| **Mapping** | `mapping(K => V)`, nested `mapping(K1 => mapping(K2 => V))`, mapping-in-struct, `mapping(K => V)[]` (array of mappings), `mapping(K => V)[N]` (fixed array of mappings), `mapping(K => V[])` (mapping of scalar dynamic arrays), `mapping(K => T[N])` and `mapping(K => T[M][N])` (mapping of fixed / 2D fixed arrays — both `is_new_expr` and unbound-state-var paths routed through `map_fixed_arr_get`) — modelled via (nested) infinite SMT arrays; struct mapping fields are lifted to global arrays; mapping arrays use auxiliary `_mapping_arr_len`; mapping-of-dynarray uses auxiliary `_mapdynarr_len`. |
 | **Operators** | All arithmetic (`+`,`-`,`*`,`/`,`%`,`**`), bitwise, comparison, logical, compound assignment (`+=` etc.), prefix/postfix `++`/`--`, ternary `?:`, `delete` |
 | **Control flow** | `if`/`else`, `for`, `while`, `do-while`, `break`, `continue`, `return` (including multi-value via tuples) |
 | **Contract core** | Contract/library/interface definitions, functions (regular/constructor/receive/fallback), free functions, state variables, visibility (`public`/`private`/`internal`/`external`), state mutability (`pure`/`view`/`payable`) |
@@ -230,31 +230,45 @@ Third distinct mapping-of-array shape: outer mapping, inner **fixed-size** array
 - Subsequent reads return the same pointer — element writes via `[i]` mutate the heap slab in place and persist across reads.
 - Unlike `map_dynarr_get` (returns NULL for unwritten keys), the fixed-size variant returns a valid pointer from the first access, matching Solidity's semantics that every key maps to a pre-bound zero-filled N-slot array.
 
-**KNOWNBUG — unbound-mode state-var access**: the `map_fixed_arr_get`
-path only fires under `should_treat_as_new()` — i.e. `--bound` +
-`new Store()` (the working regression test `map_fixed_array_value_pass`
-takes exactly this path). Direct state-var access on an unbound
-contract's `mapping(K => T[N])` (no `--bound`, no `new`) misses the
-helper routing and crashes during SMT encoding with Bitwuzla
-`terms with mismatching sort at indices 0 and 1` (or segfault in
-`bitwuzla_mk_term3` under ITE). The same crash appears on
-`mapping(K => T[N][M])`. Tracked by
-`regression/esbmc-solidity/mapping_fixed_array_unbound_{pass,fail}`.
+**Unbound-mode state-var access — fixed by Phase 3 Fix B (2026-04-24):**
+Previously the `map_fixed_arr_get` path only fired under
+`should_treat_as_new()` — i.e. `--bound` + `new Store()`. Direct
+state-var access on an unbound contract's `mapping(K => T[N])`
+(no `--bound`, no `new`) missed the helper routing and crashed
+during SMT encoding with Bitwuzla `terms with mismatching sort at
+indices 0 and 1`, because the chained-subtype lowering produced
+`array<T[N], inf>` — an unbounded array whose element sort is
+itself an array sort, which `array_convt`
+(`src/solvers/smt/array_conv.cpp:92-95`) cannot encode.
 
-**Root cause**: same architectural limitation as §B's `uint[N][]`.
-The unbound fallback dispatch lowers `mapping(K => T[N])` to
-`array<array<T, N>, inf>` (outer inf over folded 64-bit key, inner
-native fixed). `array_convt` (`src/solvers/smt/array_conv.cpp:92-95`)
-cannot represent an unbounded array whose element sort is itself an
-array sort — the dev-time assertion is elided in release builds and
-the encoder crashes when asked to construct the ITE/eq over the
-nested WITH chain. Three candidate fixes — none in scope here:
-  (a) smt_conv: flatten nested inf arrays into one domain (general
-      fix; ~1-2 wk with cross-frontend regression sweep).
-  (b) frontend: lower to a flat representation (shares the fix with
-      `uint[N][]`).
-  (c) route through the solver's native array theory (bitwuzla/cvc5
-      support) instead of `array_convt` for this pattern.
+Fix B rewrites the state-var's lowered type in the decl layer: when
+the mapping leaf value carries `SolType::ARRAY_LITERAL` (1D) or
+`SolType::ARRAY` (2D+ nested fixed), the state var becomes a
+`mapping_t` struct — same as the `is_new_expr` path — and tagged
+with `#sol_mapping_fixed_arr_value`. The existing `is_mapping &&
+is_new_expr` init block is extended to cover this tag so the
+`{base=_ESBMC_inf_*, addr=this->$address}` fields are populated.
+Access routes through `get_new_mapping_index_access`'s `fixed_arr`
+branch, which now casts the `void*` return of `map_fixed_arr_get`
+to `pointer<element>` (i.e. `value_t.subtype()`) so downstream
+`m[k][i]` / `m[k][i][j]` index expressions use the correct element
+stride.
+
+**Current regression state:**
+- `mapping_fixed_array_unbound_fail` (1D FAIL): **CORE**, passes.
+- `mapping_fixed_2d_array_unbound_fail` (2D FAIL): **CORE**, passes.
+- `mapping_fixed_array_unbound_pass` (1D PASS): **KNOWNBUG** —
+  semantically correct encoding, but `map_get_raw`'s linked-list
+  walk × k-induction iterations doesn't solve within the 60s
+  regression timeout. Performance issue, not soundness.
+- `mapping_fixed_2d_array_unbound_pass` (2D PASS): same, KNOWNBUG.
+
+**Remaining related KNOWNBUGs (different root):**
+- `outer_dyn_inner_fixed_array_*`: pure `T[N][]` (not a mapping),
+  same `array_convt` array-of-array sort limitation still applies.
+  Needs one of: (a) smt_conv flatten nested inf arrays, (b)
+  frontend flat lowering with stride N, (c) route through solver's
+  native array theory.
 
 ### G. Address / Contract Type Conversion
 
@@ -372,7 +386,7 @@ Works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) recognise
 
 | # | Task | Status |
 |---|------|--------|
-| 10 | Multi-dimensional arrays | `T[][]` and all-fixed `T[N][M]`/3D+ work (native `array_typet` via option B, c5eec55601; zero-init unroll follow-up). Open KNOWNBUGs (same architectural root: `array_convt` array-of-array, `src/solvers/smt/array_conv.cpp:92-95`): `T[N][]` outer-dyn + inner-fixed (§B); `mapping(K=>T[N])` unbound (§F.3). |
+| 10 | Multi-dimensional arrays | `T[][]` and all-fixed `T[N][M]`/3D+ work (native `array_typet` via option B, c5eec55601; zero-init unroll follow-up). `mapping(K=>T[N])` / `mapping(K=>T[M][N])` unbound: fixed by Phase 3 Fix B (2026-04-24, §F.3) — frontend now rewrites state-var type to `mapping_t` and routes through `map_fixed_arr_get`, so the array-of-array sort no longer appears. Remaining architectural KNOWNBUG (same `array_convt` root, `src/solvers/smt/array_conv.cpp:92-95`): `T[N][]` outer-dyn + inner-fixed (§B). |
 | 10b | `mapping(K=>V)[]` | ✅ Done |
 | 11 | Nested tuple destructuring | ✅ Done |
 | 12 | User-defined value types | Partial: wrap/unwrap work; custom operators not supported |

@@ -235,6 +235,30 @@ bool solidity_convertert::get_var_decl(
         break;
     }
 
+    // mapping(K => T[N]) and mapping(K => T[M][N]) with fixed-array
+    // leaf value: force `mapping_t` even under the !is_new_expr
+    // "static singleton" optimisation. The chained-subtype lowering
+    // `array<T[N], inf>` / `array<T[M][N], inf>` produces an
+    // unbounded array whose element sort is itself an array sort —
+    // array_convt cannot represent that (see src/solvers/smt/array_conv.cpp:92-95,
+    // bitwuzla reports "terms with mismatching sort at indices 0 and 1").
+    // Routing this mapping through the mapping_t + map_fixed_arr_get
+    // helper sidesteps the nested-array sort entirely. Restrict to
+    // single-level mappings: nested `mapping(K1=>mapping(K2=>T[N]))`
+    // would also need access-layer combine_mapping_keys_256 gating on
+    // the rewritten type, which is not in scope here.
+    // 1D fixed array leaves carry SolType::ARRAY_LITERAL; 2D+ nested
+    // fixed arrays (e.g. T[M][N]) carry SolType::ARRAY — accept both.
+    SolidityGrammar::SolType leaf_sol = get_sol_type(cur_type->subtype());
+    if (cur_type == &t && cur_type->is_array() &&
+        (leaf_sol == SolidityGrammar::SolType::ARRAY_LITERAL ||
+         leaf_sol == SolidityGrammar::SolType::ARRAY))
+    {
+      t = symbol_typet(lib_prefix + "mapping_t");
+      set_sol_type(t, SolidityGrammar::SolType::MAPPING);
+      t.set("#sol_mapping_fixed_arr_value", true);
+    }
+
     /* mapping(K => V[]) state-var: promote the leaf DYNARRAY value from
      * the default pointer model to a nested infinite SMT array, keyed
      * by the folded 64-bit key. With the pointer model, push(x) called
@@ -839,7 +863,13 @@ bool solidity_convertert::get_var_decl(
     }
   }
   // special handling for mapping
-  else if (is_mapping && is_new_expr)
+  // Extended to cover mapping(K => T[N]) under !is_new_expr: the chain
+  // walk above rewrote `t` to mapping_t so this decl must also run the
+  // `{base=_ESBMC_inf_*, addr=this->$address}` init block; otherwise
+  // `map_fixed_arr_get(&m, k, sz)` sees zero-init fields and every
+  // lookup returns a fresh nondet slab.
+  else if (is_mapping &&
+           (is_new_expr || t.get_bool("#sol_mapping_fixed_arr_value")))
   {
     // mapping(string => uint) test;
     // 1. the contract that contains this mapping is also used in a new expression
