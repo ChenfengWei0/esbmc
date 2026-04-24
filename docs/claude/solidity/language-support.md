@@ -86,7 +86,7 @@ assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓
 | `uint[]` | ✓ Works (push/pop/length supported) |
 | `uint[][]` | ✓ Works (declaration, push, indexing, length, storage ref passing) |
 | `uint[][N]` | ✓ Works (observed round-trip SUCCESSFUL; outer fixed, inner dyn) |
-| `uint[N][]` | ✗ **KNOWNBUG** — outer-dyn + inner-fixed lowers to `array<array<T, N>, inf>`, hitting the `array_convt` array-of-array limitation at `src/solvers/smt/array_conv.cpp:92-95`; crashes at SMT encode. See `regression/esbmc-solidity/outer_dyn_inner_fixed_array_{pass,fail}` |
+| `uint[N][]` | ⚠ Partial (fixed 2026-04-24 for single-write) — the frontend lowering `array<array<T, N>, inf>` used to trip the `convert_array_index` select-decompose path, which asymmetrically checked the *inner* slice's finitude and synthesised a flat `i*N+j` key that was then applied against the outer infinite domain (wrong sort, dangling pointer into cvc5/bitwuzla at VCC encoding). `src/solvers/smt/smt_conv.cpp:3636-3673` now tests the *outermost* source's finitude (matching `convert_array_store`). `_fail` (1 write + 1 violated assert) passes CORE in 0.2s. `_pass` (6 writes + 6 asserts) still KNOWNBUG — trips a separate bookkeeping bug in `array_convt::unbounded_array_ite` where `false_vals[i]` is NULL when multiple updates to the same infinite array id accumulate new index keys. |
 | `uint[N][M]` (all fixed, any depth) | ✓ Works — native `array_typet(array_typet(T, N), M)` embedded directly in the contract struct (option B, commit `c5eec55601` + zero-init unroll follow-up). Covers 2D, 3D and deeper as long as every dim is a compile-time constant. Verified across element types (uint256, int256, address, bool) and across placements (top-level state var, inside-struct field, function parameter, local variable) — see `multi_dim_fixed_{3d,addr_2d,bool_2d,int_2d,struct_field,fn_param,local}_{pass,fail}` and `esol_clone_multi_dim_{pass,3d_pass}`. |
 | `bytes32[N][M]` (all fixed) | ✗ **KNOWNBUG** (silent unsoundness) — symex drops bytes32-equality assertions inside native 2D array_typet body ("Generated 0 VCC(s)"). Suspected interaction with the BytesStatic struct lowering. Trip-wire at `multi_dim_fixed_bytes32_2d_fail`. |
 | `uint[4][][2]`-style mixed 3D | ⚠ Partial — existing `nested_array_mixed_1` marked CORE but observed to vacuously pass (40+ user asserts → 0 VCCs, silent-drop class). Same silent-unsoundness symptom as bytes32 2D; distinct from the §B `array_convt` crash class. |
@@ -264,11 +264,17 @@ stride.
 - `mapping_fixed_2d_array_unbound_pass` (2D PASS): same, KNOWNBUG.
 
 **Remaining related KNOWNBUGs (different root):**
-- `outer_dyn_inner_fixed_array_*`: pure `T[N][]` (not a mapping),
-  same `array_convt` array-of-array sort limitation still applies.
-  Needs one of: (a) smt_conv flatten nested inf arrays, (b)
-  frontend flat lowering with stride N, (c) route through solver's
-  native array theory.
+- `outer_dyn_inner_fixed_array_fail`: **PROMOTED TO CORE** 2026-04-24
+  by the `smt_conv::convert_array_index` select-decompose symmetry
+  fix (tests outermost array's finitude, matching the store side).
+- `outer_dyn_inner_fixed_array_pass`: still KNOWNBUG. Single-write
+  cases now encode cleanly, but 6-write round-trips trip an
+  independent bug in `array_convt::unbounded_array_ite` — when
+  multiple updates to the same infinite array id accumulate new
+  index keys, older valuation vectors aren't extended, leaving
+  NULL slots that crash `cvc5_convt::mk_ite`. Fix requires
+  `array_convt` to back-fill historical per-update vectors when
+  new indexes appear later.
 
 ### G. Address / Contract Type Conversion
 
@@ -386,7 +392,7 @@ Works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) recognise
 
 | # | Task | Status |
 |---|------|--------|
-| 10 | Multi-dimensional arrays | `T[][]` and all-fixed `T[N][M]`/3D+ work (native `array_typet` via option B, c5eec55601; zero-init unroll follow-up). `mapping(K=>T[N])` / `mapping(K=>T[M][N])` unbound: fixed by Phase 3 Fix B (2026-04-24, §F.3) — frontend now rewrites state-var type to `mapping_t` and routes through `map_fixed_arr_get`, so the array-of-array sort no longer appears. Remaining architectural KNOWNBUG (same `array_convt` root, `src/solvers/smt/array_conv.cpp:92-95`): `T[N][]` outer-dyn + inner-fixed (§B). |
+| 10 | Multi-dimensional arrays | `T[][]` and all-fixed `T[N][M]`/3D+ work (native `array_typet` via option B, c5eec55601; zero-init unroll follow-up). `mapping(K=>T[N])` / `mapping(K=>T[M][N])` unbound: fixed by Phase 3 Fix B (2026-04-24, §F.3) — frontend now rewrites state-var type to `mapping_t` and routes through `map_fixed_arr_get`, so the array-of-array sort no longer appears. `T[N][]` outer-dyn + inner-fixed: `_fail` promoted to CORE 2026-04-24 via the `convert_array_index` select-decompose symmetry fix (§B); `_pass` still KNOWNBUG due to a separate `array_convt::unbounded_array_ite` bookkeeping bug. |
 | 10b | `mapping(K=>V)[]` | ✅ Done |
 | 11 | Nested tuple destructuring | ✅ Done |
 | 12 | User-defined value types | Partial: wrap/unwrap work; custom operators not supported |

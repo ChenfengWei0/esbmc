@@ -3797,8 +3797,9 @@ smt_astt smt_convt::convert_array_index(const expr2tc &expr)
   }
   else
   {
-    // Single-level index, or infinite arrays (nested Solidity mappings) —
-    // use direct select without flattening.
+    // Single-level index, or any chain whose outermost array is
+    // infinite (nested Solidity mappings, `T[N][]`) — use direct
+    // select and let the solver's array theory carry the nested sort.
     newidx = fix_array_idx(index.index, index.source_value->type);
   }
 
