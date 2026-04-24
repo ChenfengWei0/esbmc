@@ -191,9 +191,33 @@ static void add_padding(struct_typet &type, const namespacet &ns)
         bit_field_bits = 0;
       }
 
-      // Pad out extints that aren't in bitfields
-      if (is_extint && !is_bitfield)
+      // Pad out extints that aren't in bitfields. Skip already-padded
+      // extints: when add_padding runs a second time over a struct
+      // (either for the debug idempotency check at clang_c_adjust_expr
+      // or simply because the same struct type was adjusted twice via
+      // separate expressions), the original extint's trailing
+      // ext_int_pad$N is already present as its successor. Re-inserting
+      // another padding at the same position produces two components
+      // with colliding names — `Name "ext_int_pad$N" matches more than
+      // one member` at irep2_type.cpp:282 during later member lookups.
+      // Reproducible with `struct { size_t length; uint256_t data; }`
+      // or any struct containing _BitInt(N) whose type flows through
+      // the adjuster more than once. Guard makes add_padding idempotent
+      // for the extint case without requiring a separate "padded" flag.
+      if (is_extint && !is_bitfield && !it->get_is_padding())
       {
+        auto next_it = std::next(it);
+        const bool already_padded = next_it != components.end() &&
+                                    next_it->get_is_padding() &&
+                                    next_it->type().get_bool("#extint");
+        if (already_padded)
+        {
+          // Skip: the trailing ext_int_pad inserted by a prior pass
+          // already aligns this extint, and the loop iterator will
+          // advance past it on the next `it++`.
+          continue;
+        }
+
         assert(bit_field_bits == 0);
 
         // Pad to nearest multiple of representation width
