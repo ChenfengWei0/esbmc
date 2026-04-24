@@ -101,6 +101,42 @@ void goto_loopst::create_function_loop(
   it1->set_size(size + 1);
 }
 
+void goto_loopst::collect_addressof_targets(loopst &loop, const expr2tc &expr)
+{
+  if (is_nil_expr(expr))
+    return;
+
+  if (is_address_of2t(expr))
+  {
+    // Walk to the base symbol, peeling member/index/typecast/bitcast
+    // layers. Anything underneath address_of that resolves to a named
+    // storage location is what the callee may write through.
+    expr2tc target = to_address_of2t(expr).ptr_obj;
+    while (true)
+    {
+      if (is_member2t(target))
+        target = to_member2t(target).source_value;
+      else if (is_index2t(target))
+        target = to_index2t(target).source_value;
+      else if (is_typecast2t(target))
+        target = to_typecast2t(target).from;
+      else if (is_bitcast2t(target))
+        target = to_bitcast2t(target).from;
+      else
+        break;
+    }
+    if (is_symbol2t(target) && check_var_name(target))
+      loop.add_modified_var_to_loop(target);
+    return;
+  }
+
+  // Recurse into sub-expressions — an actual may be a composite like
+  // `(cond ? &obj1 : &obj2)` or `&s.field`.
+  expr->foreach_operand([this, &loop](const expr2tc &sub) {
+    collect_addressof_targets(loop, sub);
+  });
+}
+
 void goto_loopst::get_modified_variables(
   goto_programt::instructionst::iterator instruction,
   function_loopst::iterator loop,
@@ -123,6 +159,20 @@ void goto_loopst::get_modified_variables(
 
     // First, add its return
     add_loop_var(*loop, function_call.ret, true);
+
+    // Extend the modified-variable set to cover caller-side storage that
+    // may be written through pointer-typed arguments. Without this, the
+    // k-induction havoc preamble omits variables like `obj` in the common
+    // pattern `dispatch(&obj)` / `obj.method(...)` where the callee writes
+    // through the formal pointer parameter. The syntactic recursion below
+    // only registers the callee-local pointer (e.g. `p`), never the
+    // caller's object. Since we are building a conservative over-
+    // approximation anyway (the modified-var analysis drives havoc which
+    // can only weaken, never strengthen the inductive hypothesis), this
+    // walker inspects each actual for `address_of` nodes and adds the
+    // base symbol of the pointee to the modified set.
+    for (const expr2tc &arg : function_call.operands)
+      collect_addressof_targets(*loop, arg);
 
     // The run over the function body and get the modified variables there
     irep_idt &identifier = to_symbol2t(function_call.function).thename;

@@ -29,6 +29,13 @@ protected:
 
   void add_loop_var(loopst &loop, const expr2tc &expr, bool is_modified);
 
+  /// Walk an expression (typically a FUNCTION_CALL argument) for
+  /// `address_of` sub-expressions; for each, resolve to the base
+  /// storage symbol and add it to the loop's modified-vars set.
+  /// Used to propagate caller-side writes through pointer-passed
+  /// arguments into the k-induction havoc preamble.
+  void collect_addressof_targets(loopst &loop, const expr2tc &expr);
+
 public:
   goto_loopst(
     const irep_idt &_function_name,

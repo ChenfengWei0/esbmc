@@ -386,6 +386,33 @@ patterns like `dispatch(some_expr_that_evaluates_to_ptr)`.
 Both options keep the havoc set at the GOTO level (where it is
 now) and only expand the walker — minimal architectural change.
 
+## Fix applied (2026-04-24)
+
+Fix A option (a) implemented:
+
+- `goto_loops.h`: added `collect_addressof_targets(loopst &, const
+  expr2tc &)` declaration.
+- `goto_loops.cpp`: helper walks the expression recursively; when it
+  finds an `address_of2t`, peels `member`/`index`/`typecast`/
+  `bitcast` layers to reach the base symbol, then adds it to the
+  loop's modified-var set via `loop.add_modified_var_to_loop`. In
+  the FUNCTION_CALL branch of `get_modified_variables`, the helper
+  is called on each actual parameter.
+
+Regression tests under `regression/esbmc/`:
+- `k_induction_ptr_through_function_fail/` — exhibits the bug:
+  pre-fix wrongly `VERIFICATION SUCCESSFUL` at k=3, post-fix
+  correctly `VERIFICATION FAILED (Bug found k=13)`.
+- `k_induction_ptr_through_function_pass/` — confirms non-affected
+  patterns still pass.
+
+Trade-off verification: the fix is a conservative over-approximation,
+so the inductive step will correctly havoc more state. State-invariant
+patterns that previously relied on missing-havoc for spurious
+provability now correctly return UNKNOWN. This eliminates unsoundness
+but does not, on its own, make state-invariant patterns provable —
+that requires loop invariants.
+
 ## Related: `contains_only_pointers`
 
 `goto_k_induction.cpp:66`:
