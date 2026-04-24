@@ -17,6 +17,7 @@
 #include <util/std_expr.h>
 #include <util/message.h>
 #include <fstream>
+#include <functional>
 
 // parse the explicit ctor, or add the implicit ctor
 bool solidity_convertert::get_constructor(
@@ -1652,19 +1653,68 @@ bool solidity_convertert::move_initializer_to_ctor(
       symbolt *symbol = context.find_symbol(comp.identifier());
       exprt rhs = symbol->value;
 
-      // B3: native nested multi-dim fixed arrays embedded directly in
-      // the contract struct are zero-initialised by the struct's
-      // default construction. Emitting `this->grid = { { 0 } }` here
-      // is redundant AND triggers a dereference-of-array-type crash
-      // in the symex pipeline ("Can't construct rvalue reference to
-      // array type during dereference"), because writing an
-      // array-valued rvalue through `*this` is not on a supported
-      // dereference dst path. Skip the redundant assignment entirely.
+      // B3: native nested multi-dim fixed arrays (`array_typet(array_typet
+      // (T, N), M)` from option B). A single `this->grid = { { 0 } }`
+      // assignment triggers a dereference-of-array-rvalue crash in
+      // `src/pointer-analysis/dereference.cpp` when symex tries to
+      // materialise the array-valued RHS through `*this`. Unroll the
+      // zero-init into per-leaf scalar assignments instead — each
+      // `this->grid[i0][i1]...[iN-1] = 0` has a scalar LHS, which the
+      // dereference pipeline handles correctly. Without this unroll the
+      // struct-level default leaves nested cells nondet (observed on
+      // `uint256[2][2]`: `assert(g[0][0] == 0)` fails post-ctor).
       if (
         comp.type().is_array() && comp.type().has_subtype() &&
         comp.type().subtype().is_array() &&
         rhs.get("#zero_initializer") == "1")
       {
+        std::function<void(const exprt &, const typet &)> unroll_zero =
+          [&](const exprt &cur_lhs, const typet &cur_type) {
+            if (cur_type.is_array())
+            {
+              const exprt &sz = to_array_type(cur_type).size();
+              BigInt n = string2integer(sz.value().as_string(), 2);
+              for (uint64_t i = 0; i < n.to_uint64(); ++i)
+              {
+                exprt idx = constant_exprt(
+                  integer2binary(BigInt(i), bv_width(int_type())),
+                  integer2string(BigInt(i)),
+                  int_type());
+                exprt elem = index_exprt(cur_lhs, idx, cur_type.subtype());
+                unroll_zero(elem, cur_type.subtype());
+              }
+              return;
+            }
+            // Follow symbol types (e.g. the `BytesStatic` tag used for
+            // `bytes32`) to their concrete definition before deciding
+            // whether to recurse into struct fields or emit a scalar
+            // assign. `gen_zero` on an unresolved symbol_typet returns
+            // nil, which later crashes `replace_nondet` when symex
+            // walks the ctor body.
+            const typet &resolved = ns.follow(cur_type);
+            if (resolved.is_struct())
+            {
+              for (const auto &field :
+                   to_struct_type(resolved).components())
+              {
+                exprt member =
+                  member_exprt(cur_lhs, field.name(), field.type());
+                unroll_zero(member, field.type());
+              }
+              return;
+            }
+            exprt zero = gen_zero(resolved);
+            // If gen_zero still couldn't build a value (union, opaque
+            // type), bail on this leaf rather than emit a nil RHS.
+            if (zero.is_nil())
+              return;
+            exprt assign = side_effect_exprt("assign", cur_type);
+            assign.copy_to_operands(cur_lhs, zero);
+            convert_expression_to_code(assign);
+            sym.value.operands().insert(
+              sym.value.operands().begin(), assign);
+          };
+        unroll_zero(lhs, comp.type());
         continue;
       }
 

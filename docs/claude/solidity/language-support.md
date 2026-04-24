@@ -87,29 +87,31 @@ assert(items[0] == 100); // VERIFICATION SUCCESSFUL ✓
 | `uint[][]` | ✓ Works (declaration, push, indexing, length, storage ref passing) |
 | `uint[][N]` | ✓ Works (observed round-trip SUCCESSFUL; outer fixed, inner dyn) |
 | `uint[N][]` | ✗ **KNOWNBUG** — outer-dyn + inner-fixed lowers to `array<array<T, N>, inf>`, hitting the `array_convt` array-of-array limitation at `src/solvers/smt/array_conv.cpp:92-95`; crashes at SMT encode. See `regression/esbmc-solidity/outer_dyn_inner_fixed_array_{pass,fail}` |
-| `uint[N][M]` | ✗ **KNOWNBUG** — cross-row writes alias. Affects state vars, struct fields, 3D+ (`uint[N][M][L]`). See `regression/esbmc-solidity/multi_dim_fixed_array_{pass,fail}` |
+| `uint[N][M]` (all fixed, any depth) | ✓ Works — native `array_typet(array_typet(T, N), M)` embedded directly in the contract struct (option B, commit `c5eec55601`). Covers 2D, 3D and deeper as long as every dim is a compile-time constant. See `multi_dim_fixed_array_{pass,fail}` and `esol_clone_multi_dim_{pass,3d_pass}`. |
 | `uint[][][]` (all-dyn 3D+) | Not tested, expected OK via same path as `uint[][]` |
 
-**Root cause of `uint[N][M]` / `uint[N][M][L]` failure** (was previously
-misattributed to `get_array_size()` regex): the frontend correctly
-lowers these to a `T**` struct field + outer calloc + per-row inner
-calloc via `emit_ctor_deep_init_fixup`. The bug is in ESBMC's
-value-set analysis: when pointer values are written into the outer
-calloc's byte storage, the flat-byte memory model loses offset-granular
-points-to info, so a read of `this->grid[0]` may-aliases **every**
-row ever written into any offset of the outer buffer. SMT then picks
-wrong rows for reads after cross-row writes.
+**Why all-fixed multi-dim works** (option B): the frontend's
+`try_native_nested_fixed_array` helper walks the `NestedArrayTypeName`
+down its `baseType` chain; if every level has a compile-time `length`,
+it builds a native `array_typet(array_typet(..., inner_N), outer_M)` and
+embeds it directly in the surrounding struct. This avoids the
+value-set offset-granular points-to bug that used to break the old
+`T**` + per-row-calloc lowering — the field is now a single flat slab
+with no pointer indirection for symex to lose. The clone walker
+(`__ESOL_deep_copy`) routes multi-dim through the existing
+`_ESBMC_arrcpy_2d` helper, keeping clone isolation intact.
 
-The bug is language-agnostic — a pure-C `struct { T **grid; }` with the
-same calloc pattern reproduces it. Fixing at root requires per-offset
-points-to tracking in `src/pointer-analysis/value_set*`; out of scope
-for the Solidity frontend. The cleanest in-scope fix is to represent
-fixed multi-dim arrays as native `array_typet(array_typet(T, N), M)`
-embedded in the contract struct (no pointers, no calloc walker), which
-avoids the broken code path entirely. F.2's
-`array_typet(array_typet(.))` for `mapping(K => V[])` is proven-safe
-downstream. Tracked as a separate item; KNOWNBUG regression tests are
-in place so the fix can be gated on them flipping to SUCCESSFUL.
+**Zero-init in the ctor**: emitting `this->grid = {{0}}` for a native
+nested field trips a "Can't construct rvalue reference to array type
+during dereference" crash in the pointer-analysis pipeline — writing
+an array-valued rvalue through `*this` is unsupported. The constructor
+instead unrolls the zero-init into per-leaf scalar assignments (see
+`solidity_convert_constructor.cpp`, B3 block). Recursion handles both
+array-dim walks and intermediate struct fields (via `ns.follow` on
+`symbol_typet`), so a nested `uint256[N][M]` field inside a user struct
+still zero-inits correctly. The unroll skips leaf types `gen_zero`
+cannot materialise (union, opaque), which is sound — just loses the
+zero-init for those leaves, matching the surrounding nondet default.
 
 ### C. Data Location Semantics — Partially Implemented
 
@@ -368,7 +370,7 @@ Works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) recognise
 
 | # | Task | Status |
 |---|------|--------|
-| 10 | Multi-dimensional arrays | Partial: `T[][]` works. Open KNOWNBUGs: `T[N][M]` / 3D+ fixed (value-set, §B); `T[N][]` (SMT encoder coredump); `mapping(K=>T[N])` unbound (Bitwuzla sort mismatch, §F.3). Three independent bugs. |
+| 10 | Multi-dimensional arrays | `T[][]` and all-fixed `T[N][M]`/3D+ work (native `array_typet` via option B, c5eec55601; zero-init unroll follow-up). Open KNOWNBUGs (same architectural root: `array_convt` array-of-array, `src/solvers/smt/array_conv.cpp:92-95`): `T[N][]` outer-dyn + inner-fixed (§B); `mapping(K=>T[N])` unbound (§F.3). |
 | 10b | `mapping(K=>V)[]` | ✅ Done |
 | 11 | Nested tuple destructuring | ✅ Done |
 | 12 | User-defined value types | Partial: wrap/unwrap work; custom operators not supported |
