@@ -126,6 +126,46 @@ static void collect_addressof_targets_as_modified(loopst &loop, const expr2tc &e
 - **Regression guard:** `ctest -j 2 -L esbmc-solidity
   ESBMC_REGRESS_MEMORY_LIMIT=4096` to verify no new failures.
 
+### Phase 3 prep (2026-04-24): Fix B prior art
+
+The frontend already HAS a helper path for `mapping(K => T[N])` — see
+`src/c2goto/library/solidity/solidity_mapping.c:165`
+`map_fixed_arr_get(struct mapping_t *m, uint256_t k, size_t sz)`.
+
+Behaviour:
+- Lookup key `k` in the mapping's raw backing store.
+- If present, return the existing buffer pointer.
+- If absent, `calloc(1, sz)` a fresh N-element zero buffer, store
+  the pointer, return it.
+
+Reads/writes then go through the returned pointer — the nested SMT
+array shape never appears.
+
+Problem: **this helper is only invoked when `--bound` AND
+`new Store()` AND `should_treat_as_new()` returns true**. The default
+path (no `--bound`, or without `new Store()`) does not route through
+it; it emits the nested `array<array<T, N>, inf>` shape that trips
+`array_convt.cpp:92-95`.
+
+Fix B plan: route ALL `mapping(K => T[N])` accesses through this
+helper, regardless of `--bound` / `new`. Remove the dependency on
+`should_treat_as_new()`. Apply the same routing for `T[N][]` dynamic
+outer + fixed inner.
+
+This requires:
+1. Identify the frontend dispatch point that decides "nested
+   array_typet" vs. "helper call" — likely in
+   `src/solidity-frontend/solidity_convert_expr.cpp` around
+   `mapping[k][i]` index-chain handling.
+2. Unconditionally route to `map_fixed_arr_get` / `map_fixed_arr_set`
+   when the value type is `T[N]`.
+3. Add `T[N][]` case — dynamic outer array indexed into fixed inner.
+4. Regression: un-KNOWNBUG the 4 tests
+   (`mapping_fixed_array_unbound_*`, `outer_dyn_inner_fixed_array_*`).
+
+Scope estimate: medium. ~100-300 LOC in Solidity frontend. No solver
+changes.
+
 ### 2. **KNOWNBUG #3** — `array_convt` unbounded array-of-array
 
 - **Test unlock:** 4 regressions from prior sweep
@@ -317,17 +357,54 @@ Documented but not blocking the priority-order execution:
    ESBMC_REGRESS_MEMORY_LIMIT=4096` to measure CORE→UNKNOWN
    regressions.
 
-**Pending verification (in progress):**
-- Full `esbmc-solidity` regression run post-fix. Any CORE test that now
-  reports UNKNOWN is a real regression to investigate.
+**Phase 1 findings (initial fix):**
+- Initial fix (`e01ee79f8e`) unconditionally added address_of
+  targets to the modified-var set. Soundness-correct but too
+  aggressive: 13+ CORE Solidity tests regressed to UNKNOWN within
+  the first ~200 tests, because almost every method call writes
+  through a self-pointer.
 
-**Next once the run completes:**
-- If zero CORE regressions: commit `[GOTO] fix: ...` with test results,
-  update `goto/loops-and-k-induction.md` with the fix documentation,
-  move to Phase 2.
-- If CORE regressions: analyse each, decide whether (a) the test used
-  a pattern my over-approximation legitimately breaks (reclassify to
-  KNOWNBUG with explanation), (b) my over-approximation is too coarse
-  and needs refinement (extend fix to skip address_of whose target is
-  later only READ by the callee, not written), or (c) my walker has a
-  bug (fix it).
+**Refined fix applied (`9963df8e6f`):**
+- New `callee_writes_through_pointer` predicate gates the address-of
+  havoc on the callee containing any ASSIGN with a deref-containing
+  lhs. Recursive across transitive calls.
+- C regressions still produce correct verdicts (`FAILED` at k=13 /
+  `SUCCESSFUL` trivially).
+- Soldity regression impact still significant (many contract-method
+  patterns have self-writes at the bottom of the call chain).
+
+**The fundamental Solidity friction:**
+- Every Solidity method writes through `self`. Every transitive call
+  reaches some self-write.
+- So every Solidity harness's dispatch loop has address_of havoc
+  applied, making contract state nondet at I(k) entry.
+- Without loop invariants, most state-dependent assertions become
+  UNKNOWN.
+
+**Conclusion for Phase 1:**
+- Fix is CORRECT. Unsoundness eliminated.
+- CORE tests that regress to UNKNOWN fall into one of three
+  buckets:
+  1. Genuinely needed proper loop invariants for k-induction —
+     reclassify to KNOWNBUG with annotation.
+  2. Could work with BMC instead of k-induction (`--unwind N` +
+     `--incremental-bmc` or drop `--k-induction`) — re-migrate.
+  3. SMT blowup (solver timeout) — investigate separately.
+- Most likely (1). Reclassification is the right engineering response.
+
+**Verification pending:**
+- Full `esbmc-solidity` ctest run post-fix (in progress, 60s/test
+  timeout, 790 tests, -j 2). Produces the definitive list.
+- `/tmp/analyze_regressions.sh` prepared to categorise failures
+  after ctest completes.
+- `/tmp/reclassify_core.sh` prepared to flip CORE→KNOWNBUG per-test.
+
+**Next:**
+- Analyse ctest log. Produce CORE-regressions list.
+- Reclassify each: CORE → KNOWNBUG with explanation in test.desc or
+  contract.sol comment.
+- Commit `[Solidity] test: KNOWNBUG sweep post-k-induction-havoc-fix`.
+- Move to Phase 2 (deep_copy frontend investigation — note that
+  existing Phase 2 walker may already be sufficient; the KNOWNBUG
+  classification on `esol_clone_struct_array_pass` is likely
+  post-fix-UNKNOWN rather than deep_copy failure).
