@@ -4,6 +4,7 @@
 #include <util/expr_util.h>
 #include <util/i2string.h>
 #include <util/std_expr.h>
+#include <set>
 
 void goto_k_induction(goto_functionst &goto_functions)
 {
@@ -195,6 +196,24 @@ bool goto_k_inductiont::get_entry_cond_rec(
   return false;
 }
 
+static void
+collect_symbol_names(const expr2tc &expr, std::set<irep_idt> &names)
+{
+  if (!expr)
+    return;
+  if (is_symbol2t(expr))
+  {
+    names.insert(to_symbol2t(expr).get_symbol_name());
+    return;
+  }
+  for (size_t i = 0; i < expr->get_num_sub_exprs(); ++i)
+  {
+    const expr2tc *sub = expr->get_sub_expr(i);
+    if (sub && *sub)
+      collect_symbol_names(*sub, names);
+  }
+}
+
 void goto_k_inductiont::make_nondet_assign(
   goto_programt::targett &loop_head,
   const loopst &loop)
@@ -214,8 +233,51 @@ void goto_k_inductiont::make_nondet_assign(
     assert(loop_head->is_goto());
   }
 
+  // Auto-infer entry-dominator invariants from loop-body assertions.
+  // Must be done BEFORE building dest / insert_swap so the body iterators
+  // we walk reflect the unmodified program.  scan_begin = first instruction
+  // after the loop-condition GOTO; scan_end = the original loop exit.
+  std::vector<expr2tc> inferred_assumptions;
+  {
+    auto scan_begin = loop_head;
+    ++scan_begin;
+    auto scan_end = loop.get_original_loop_exit();
+    infer_entry_invariants(scan_begin, scan_end, inferred_assumptions);
+  }
+
   // Get the list of variables modified inside the loop
   auto const &loop_vars = loop.get_modified_loop_vars();
+
+  // Filter inferred assumptions: keep only those whose guard references at
+  // least one variable that is also in the modified_loop_vars set.  Without
+  // this gate, an assertion deep in the call graph may reference variables
+  // (like `this->x`) that resolve at a different memory location at the
+  // caller scope — injecting them as ASSUME at the outer loop constrains
+  // unrelated memory and breaks inductive proofs that previously closed.
+  // The intuition: an ASSUME is useful only if it constrains a havoc'd
+  // value (otherwise it is either a tautology or an unsound contradiction
+  // about non-havoc'd state).
+  {
+    std::set<irep_idt> loop_var_names;
+    for (const auto &v : loop_vars)
+      collect_symbol_names(v, loop_var_names);
+
+    std::vector<expr2tc> filtered;
+    for (const auto &inv : inferred_assumptions)
+    {
+      std::set<irep_idt> guard_syms;
+      collect_symbol_names(inv, guard_syms);
+      for (const auto &s : guard_syms)
+      {
+        if (loop_var_names.count(s))
+        {
+          filtered.push_back(inv);
+          break;
+        }
+      }
+    }
+    inferred_assumptions.swap(filtered);
+  }
 
   goto_programt dest;
   for (auto const &lhs : loop_vars)
@@ -238,6 +300,18 @@ void goto_k_inductiont::make_nondet_assign(
     t->location = loop_head->location;
   }
 
+  // Inject the auto-inferred inductive hypotheses (ASSUME P) after havoc.
+  // Tagged inductive_step_instruction=true so the base/forward phases skip
+  // them (see execution_state.cpp:210-224); only the inductive step sees
+  // them, which is exactly what classical k-induction requires.
+  for (const auto &inv : inferred_assumptions)
+  {
+    goto_programt::targett t = dest.add_instruction(ASSUME);
+    t->inductive_step_instruction = true;
+    t->guard = inv;
+    t->location = loop_head->location;
+  }
+
   // Insert the generated assignments before the loop head in the program
   goto_function.body.insert_swap(loop_head, dest);
 
@@ -256,6 +330,121 @@ void goto_k_inductiont::make_nondet_assign(
     while ((++loop_head)->inductive_step_instruction)
       ;
   }
+}
+
+// Recursion bound for following FUNCTION_CALL chains.  Solidity's harness
+// is _ESBMC_Main_<C> -> _ESBMC_Nondet_Extcall_<C> -> user method = depth 2.
+// Allow some headroom for inheritance/internal trampolines.
+static constexpr int kInvariantInferenceMaxDepth = 6;
+
+void goto_k_inductiont::infer_entry_invariants_rec(
+  goto_programt::const_targett scan_begin,
+  goto_programt::const_targett scan_end,
+  std::set<irep_idt> &modified_so_far,
+  std::vector<expr2tc> &assumptions,
+  std::set<irep_idt> &visited_funcs,
+  int depth) const
+{
+  if (depth > kInvariantInferenceMaxDepth)
+    return;
+
+  for (auto it = scan_begin; it != scan_end; ++it)
+  {
+    if (it->is_assert())
+    {
+      // Skip any assertion already tagged inductive_step_instruction (it was
+      // emitted by an earlier transformer pass; not a user-source ASSERT).
+      if (it->inductive_step_instruction)
+        continue;
+      if (is_nil_expr(it->guard))
+        continue;
+
+      std::set<irep_idt> guard_syms;
+      collect_symbol_names(it->guard, guard_syms);
+      if (guard_syms.empty())
+        continue;
+
+      bool clean = true;
+      for (const auto &sym : guard_syms)
+      {
+        if (modified_so_far.count(sym))
+        {
+          clean = false;
+          break;
+        }
+      }
+
+      if (clean)
+        assumptions.push_back(it->guard);
+      // else: a write to one of P's variables precedes this ASSERT in source
+      // order, so P is a postcondition rather than an entry-dominator.
+    }
+    else if (it->is_assign() && is_code_assign2t(it->code))
+    {
+      const auto &assign = to_code_assign2t(it->code);
+      collect_symbol_names(assign.target, modified_so_far);
+    }
+    else if (it->is_function_call() && is_code_function_call2t(it->code))
+    {
+      const auto &call = to_code_function_call2t(it->code);
+
+      // Treat the return-value lhs (if any) as modified.
+      if (!is_nil_expr(call.ret))
+        collect_symbol_names(call.ret, modified_so_far);
+
+      // Recurse into the callee body when resolvable.
+      if (is_symbol2t(call.function))
+      {
+        const irep_idt callee_name = to_symbol2t(call.function).thename;
+        if (visited_funcs.count(callee_name))
+        {
+          // Recursive call; conservatively bail.
+          break;
+        }
+        auto fit = goto_functions.function_map.find(callee_name);
+        if (
+          fit != goto_functions.function_map.end() &&
+          fit->second.body_available)
+        {
+          visited_funcs.insert(callee_name);
+          const auto &body = fit->second.body.instructions;
+          infer_entry_invariants_rec(
+            body.begin(),
+            body.end(),
+            modified_so_far,
+            assumptions,
+            visited_funcs,
+            depth + 1);
+          visited_funcs.erase(callee_name);
+          continue;
+        }
+      }
+      // Unknown / opaque callee: conservative bail to avoid missing writes.
+      break;
+    }
+    else if (it->is_backwards_goto())
+    {
+      // Nested loop back-edge; stop here so we don't mistake a property
+      // written after the inner loop for an entry-dominant invariant.
+      break;
+    }
+    // Other instruction kinds (ASSUME, DECL, forward GOTO, RETURN, OTHER):
+    // skipped without affecting the modified set.  Linear order may visit
+    // both arms of an IF; this gives a sound over-approximation of writes
+    // (potentially blocking some asserts from becoming candidates) but
+    // never injects an unsound ASSUME.
+  }
+}
+
+void goto_k_inductiont::infer_entry_invariants(
+  goto_programt::const_targett scan_begin,
+  goto_programt::const_targett scan_end,
+  std::vector<expr2tc> &assumptions) const
+{
+  std::set<irep_idt> modified_so_far;
+  std::set<irep_idt> visited;
+  infer_entry_invariants_rec(
+    scan_begin, scan_end, modified_so_far, assumptions, visited, 0);
 }
 
 static bool contains_rec(const expr2tc &expr, const loopst::loop_varst &vars)

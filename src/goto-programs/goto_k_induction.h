@@ -5,6 +5,8 @@
 #include <goto-programs/goto_loops.h>
 #include <util/guard.h>
 #include <irep2/irep2_expr.h>
+#include <set>
+#include <vector>
 
 void goto_k_induction(goto_functionst &goto_functions);
 
@@ -41,6 +43,36 @@ protected:
 
   void
   make_nondet_assign(goto_programt::targett &loop_head, const loopst &loop);
+
+  /// Auto-infer entry-dominator invariants from loop-body assertions.
+  ///
+  /// Walks instructions in source order from \p scan_begin (exclusive of the
+  /// loop-condition GOTO) up to \p scan_end and collects each ASSERT P whose
+  /// guard variables have not been the target of any prior ASSIGN in that
+  /// prefix.  These are candidate inductive hypotheses: "P held when the loop
+  /// body was entered."
+  ///
+  /// Sound because the inductive-step ASSUME we emit is tagged
+  /// inductive_step_instruction=true (skipped in base/forward phases).  If P
+  /// is not a real invariant the base case still witnesses the violation.
+  ///
+  /// FUNCTION_CALL is followed (recursing into the callee body) up to
+  /// kInvariantInferenceMaxDepth so that the harness pattern
+  /// `_ESBMC_Main_<C>` → `_ESBMC_Nondet_Extcall_<C>` → user method can be
+  /// reached.  Recursion breaks on a recursive callee or a backwards GOTO
+  /// (nested loop).
+  void infer_entry_invariants(
+    goto_programt::const_targett scan_begin,
+    goto_programt::const_targett scan_end,
+    std::vector<expr2tc> &assumptions) const;
+
+  void infer_entry_invariants_rec(
+    goto_programt::const_targett scan_begin,
+    goto_programt::const_targett scan_end,
+    std::set<irep_idt> &modified_so_far,
+    std::vector<expr2tc> &assumptions,
+    std::set<irep_idt> &visited_funcs,
+    int depth) const;
 
   void remove_unrelated_loop_cond(guardst &guards, loopst &loop);
 
