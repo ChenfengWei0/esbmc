@@ -2966,6 +2966,26 @@ bool solidity_convertert::get_binary_operator_expr(
       {
         fname = "bytes_static_equal";
         fid = "c:@F@bytes_static_equal";
+
+        // Solidity 0.5.x permits direct `bytesN == bytesM` (N != M) via
+        // implicit conversion of the narrower operand to the wider type
+        // (right-padding zeros). bytes_static_equal returns false on
+        // length mismatch, so we must widen the narrower side here. The
+        // common_type computed by solc on the BinaryOperation is the
+        // wider bytesN — convert each side that differs from it.
+        const std::string lt_sz =
+          lhs.type().get("#sol_bytesn_size").as_string();
+        const std::string rt_sz =
+          rhs.type().get("#sol_bytesn_size").as_string();
+        if (!lt_sz.empty() && !rt_sz.empty() && lt_sz != rt_sz)
+        {
+          if (lhs.type().get("#sol_bytesn_size") !=
+              common_type.get("#sol_bytesn_size"))
+            convert_type_expr(ns, lhs, common_type, expr);
+          if (rhs.type().get("#sol_bytesn_size") !=
+              common_type.get("#sol_bytesn_size"))
+            convert_type_expr(ns, rhs, common_type, expr);
+        }
       }
       else if (is_dynamic)
       {
