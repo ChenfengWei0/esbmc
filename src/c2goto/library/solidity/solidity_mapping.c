@@ -6,31 +6,80 @@
 #include <string.h>
 #include "solidity_types.h"
 
+/* SMT-array-backed mapping storage.
+ *
+ * The previous linked-list `_ESBMC_Mapping` walked O(N) per get/set, which
+ * made k-induction's per-iteration symex cost grow quadratically with the
+ * number of distinct keys.  All slots now live in this single global; the
+ * `(struct mapping_t).base` reinterpreted as uint64 + `addr` + `key` are
+ * folded to a 64-bit slot index by `_ESBMC_map_idx` (full variant) or
+ * `_ESBMC_map_idx_fast` (variant without `addr`).
+ *
+ * Default-zero semantics: ESBMC injects an `ASSIGN _ESBMC_map_storage={ 0 };`
+ * at __ESBMC_main start (verified pattern for every __ESBMC_inf_size global
+ * — see solidity_address.c's sol_addr_array etc. with `--goto-functions-only`),
+ * which lowers to SMT `array_of(NULL)`.  `select` of a never-written slot
+ * returns NULL and the existing `p ? *p : 0` guard in each per-type getter
+ * delivers Solidity's default-zero semantics for free. */
+__attribute__((annotate("__ESBMC_inf_size"))) void *_ESBMC_map_storage[1];
+
+/* Stage-2-only placeholder: the frontend at solidity_convert_decl.cpp:935-944
+ * still emits a per-state-var `__ESBMC_inf_size struct _ESBMC_Mapping _ESBMC_inf_<name>[]`
+ * symbol per mapping.  We don't use those slots at runtime — they exist
+ * solely so that the symbol table has a unique linker-assigned address per
+ * state var, which we reinterpret as the `mid` ID in `map_get_raw`.  Stage 3
+ * drops both the placeholder and the frontend allocation. */
 struct _ESBMC_Mapping
 {
-  address_t addr : 160;
-  uint256_t key : 256;
-  void *value;
-  struct _ESBMC_Mapping *next;
-} __attribute__((packed));
+  uint8_t _stage2_placeholder;
+};
 
+/* === SMT-array-backed mapping representation (Stage 2: full variant) ====
+ *
+ * The previous linked-list `_ESBMC_Mapping` walked O(N) per get/set, which
+ * made k-induction's per-iteration symex cost grow quadratically with the
+ * number of distinct keys.  All slots now live in the single global
+ * `_ESBMC_map_storage` declared in the _fast section above; the index
+ * compounds (mid, addr, key) into a 64-bit slot via `_ESBMC_map_idx`.
+ *
+ * `mapping_t` keeps its on-disk layout (`base, addr`) so the frontend's
+ * existing `mapping_t = { _ESBMC_inf_<name>, this->$address }` initialiser
+ * still type-checks unchanged.  At runtime we reinterpret `(uintptr_t)base`
+ * as a per-state-var ID — the frontend already emits a UNIQUE
+ * `_ESBMC_inf_<name>` symbol per mapping state var, so its address gives a
+ * distinct uint64 ID for free, with zero frontend churn.  Stage 3 will
+ * replace this `base`-as-mid trick with an explicit `mid` field.
+ *
+ * Per-instance keyspace isolation (clone semantics) is preserved: the
+ * deep-copy walker in solidity_convert_constructor.cpp:1125 retargets
+ * `m->addr` on the clone to a fresh nondet address.  Distinct `addr`
+ * values hash to disjoint slot indices in `_ESBMC_map_storage`, so
+ * post-clone writes on one instance don't interfere with the other.
+ */
 struct mapping_t
 {
-  struct _ESBMC_Mapping *base;
-  address_t addr : 160;
+  void *base;              /* legacy: per-state-var __ESBMC_inf_<name> ptr,
+                              reinterpreted as the per-state-var ID below */
+  address_t addr : 160;    /* clone keyspace partition */
 } __attribute__((packed));
 
-void *map_get_raw(struct _ESBMC_Mapping a[], address_t addr, uint256_t key)
+/* Fold (mid, addr, key) into a 64-bit slot index.  Pure XOR fold of
+ * 64-bit lanes — keeps the SMT encoding lightweight (no multiplication,
+ * no shifts of variables; only constant shifts which the solver evaluates
+ * statically in bit-vector arithmetic).  Collision rate 2^-64 per pair is
+ * acceptable per existing precedent (same trade-off as the frontend's
+ * `xor_fold_key_to_64bit` documented at solidity_convert_mapping.cpp:325). */
+static inline uint64_t _ESBMC_map_idx(uint64_t mid,
+                                      address_t addr,
+                                      uint256_t key)
 {
 __ESBMC_HIDE:;
-  struct _ESBMC_Mapping *cur = a[0].next;
-  while (cur)
-  {
-    if (cur->addr == addr && cur->key == key)
-      return cur->value;
-    cur = cur->next;
-  }
-  return NULL;
+  return mid
+       ^ ((uint64_t)addr ^ ((uint64_t)addr >> 32))
+       ^ ((uint64_t)key
+          ^ (uint64_t)(key >> 64)
+          ^ (uint64_t)(key >> 128)
+          ^ (uint64_t)(key >> 192));
 }
 
 void map_set_raw(
@@ -40,12 +89,15 @@ void map_set_raw(
   void *val)
 {
 __ESBMC_HIDE:;
-  struct _ESBMC_Mapping *n = (struct _ESBMC_Mapping *)malloc(sizeof *n);
-  n->addr = addr;
-  n->key = key;
-  n->value = val;
-  n->next = a[0].next;
-  a[0].next = n;
+  uint64_t mid = (uint64_t)(uintptr_t)m->base;
+  return _ESBMC_map_storage[_ESBMC_map_idx(mid, m->addr, key)];
+}
+
+void map_set_raw(struct mapping_t *m, uint256_t key, void *val)
+{
+__ESBMC_HIDE:;
+  uint64_t mid = (uint64_t)(uintptr_t)m->base;
+  _ESBMC_map_storage[_ESBMC_map_idx(mid, m->addr, key)] = val;
 }
 
 /* uint256_t */
@@ -54,12 +106,12 @@ void map_uint_set(struct mapping_t *m, uint256_t k, uint256_t v)
 __ESBMC_HIDE:;
   uint256_t *p = (uint256_t *)malloc(sizeof *p);
   *p = v;
-  map_set_raw(m->base, m->addr, k, p);
+  map_set_raw(m, k, p);
 }
 uint256_t map_uint_get(struct mapping_t *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  uint256_t *p = (uint256_t *)map_get_raw(m->base, m->addr, k);
+  uint256_t *p = (uint256_t *)map_get_raw(m, k);
   return p ? *p : (uint256_t)0;
 }
 
@@ -69,12 +121,12 @@ void map_int_set(struct mapping_t *m, uint256_t k, int256_t v)
 __ESBMC_HIDE:;
   int256_t *p = (int256_t *)malloc(sizeof *p);
   *p = v;
-  map_set_raw(m->base, m->addr, k, p);
+  map_set_raw(m, k, p);
 }
 int256_t map_int_get(struct mapping_t *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  int256_t *p = (int256_t *)map_get_raw(m->base, m->addr, k);
+  int256_t *p = (int256_t *)map_get_raw(m, k);
   return p ? *p : (int256_t)0;
 }
 
@@ -84,12 +136,12 @@ void map_string_set(struct mapping_t *m, uint256_t k, char *v)
 __ESBMC_HIDE:;
   char **p = (char **)malloc(sizeof *p);
   *p = v;
-  map_set_raw(m->base, m->addr, k, p);
+  map_set_raw(m, k, p);
 }
 char *map_string_get(struct mapping_t *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  char **p = (char **)map_get_raw(m->base, m->addr, k);
+  char **p = (char **)map_get_raw(m, k);
   return p ? *p : (char *)0;
 }
 
@@ -99,13 +151,13 @@ void map_bool_set(struct mapping_t *m, uint256_t k, bool v)
 __ESBMC_HIDE:;
   bool *p = (bool *)malloc(sizeof *p);
   *p = v;
-  map_set_raw(m->base, m->addr, k, p);
+  map_set_raw(m, k, p);
 }
 
 bool map_bool_get(struct mapping_t *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  bool *p = (bool *)map_get_raw(m->base, m->addr, k);
+  bool *p = (bool *)map_get_raw(m, k);
   return p ? *p : false;
 }
 
@@ -115,12 +167,12 @@ void map_generic_set(struct mapping_t *m, uint256_t k, const void *v, size_t sz)
 __ESBMC_HIDE:;
   void *p = malloc(sz);
   memcpy(p, v, sz);
-  map_set_raw(m->base, m->addr, k, p);
+  map_set_raw(m, k, p);
 }
 void *map_generic_get(struct mapping_t *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  return map_get_raw(m->base, m->addr, k);
+  return map_get_raw(m, k);
 }
 
 /* dynarray — for mapping(K => T[]) value slots.
@@ -141,12 +193,12 @@ void map_dynarr_set(struct mapping_t *m, uint256_t k, void *arr)
 __ESBMC_HIDE:;
   void **p = (void **)malloc(sizeof(void *));
   *p = arr;
-  map_set_raw(m->base, m->addr, k, p);
+  map_set_raw(m, k, p);
 }
 void *map_dynarr_get(struct mapping_t *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  void **p = (void **)map_get_raw(m->base, m->addr, k);
+  void **p = (void **)map_get_raw(m, k);
   return p ? *p : (void *)0;
 }
 
@@ -168,37 +220,37 @@ __ESBMC_HIDE:;
 void *map_fixed_arr_get(struct mapping_t *m, uint256_t k, size_t sz)
 {
 __ESBMC_HIDE:;
-  void *p = map_get_raw(m->base, m->addr, k);
+  void *p = map_get_raw(m, k);
   if (p)
     return p;
   void *data = calloc(1, sz);
-  map_set_raw(m->base, m->addr, k, data);
+  map_set_raw(m, k, data);
   return data;
 }
 
-struct _ESBMC_Mapping_fast
-{
-  uint256_t key : 256;
-  void *value;
-  struct _ESBMC_Mapping_fast *next;
-} __attribute__((packed));
-
+/* === SMT-array-backed mapping representation (Stage 1: _fast variant) ====
+ *
+ * Per-state-var isolation: `mid` distinguishes different mapping state vars
+ * that share the same `_ESBMC_map_storage` global (declared at the top of
+ * this file).  The `_fast` variant has no `addr` field (single-instance
+ * only); the full `_ESBMC_Mapping` variant adds `addr` for clone-keyspace
+ * partitioning.
+ */
 struct mapping_t_fast
 {
-  struct _ESBMC_Mapping_fast *base;
+  uint64_t mid;            /* per-state-var unique ID */
 };
 
-void *map_get_raw_fast(struct _ESBMC_Mapping_fast a[], uint256_t key)
+/* Fold (mid, key) into a 64-bit slot index.  See `_ESBMC_map_idx` above
+ * for the rationale of the pure-XOR fold over multiplicative mixing. */
+static inline uint64_t _ESBMC_map_idx_fast(uint64_t mid, uint256_t key)
 {
 __ESBMC_HIDE:;
-  struct _ESBMC_Mapping_fast *cur = a[0].next;
-  while (cur)
-  {
-    if (cur->key == key)
-      return cur->value;
-    cur = cur->next;
-  }
-  return NULL;
+  return mid
+       ^ ((uint64_t)key
+          ^ (uint64_t)(key >> 64)
+          ^ (uint64_t)(key >> 128)
+          ^ (uint64_t)(key >> 192));
 }
 
 void map_set_raw_fast(struct _ESBMC_Mapping_fast a[], uint256_t key, void *val)
@@ -218,12 +270,12 @@ void map_uint_set_fast(struct mapping_t_fast *m, uint256_t k, uint256_t v)
 __ESBMC_HIDE:;
   uint256_t *p = (uint256_t *)malloc(sizeof *p);
   *p = v;
-  map_set_raw_fast(m->base, k, p);
+  map_set_raw_fast(m, k, p);
 }
 uint256_t map_uint_get_fast(struct mapping_t_fast *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  uint256_t *p = (uint256_t *)map_get_raw_fast(m->base, k);
+  uint256_t *p = (uint256_t *)map_get_raw_fast(m, k);
   return p ? *p : (uint256_t)0;
 }
 
@@ -233,12 +285,12 @@ void map_int_set_fast(struct mapping_t_fast *m, uint256_t k, int256_t v)
 __ESBMC_HIDE:;
   int256_t *p = (int256_t *)malloc(sizeof *p);
   *p = v;
-  map_set_raw_fast(m->base, k, p);
+  map_set_raw_fast(m, k, p);
 }
 int256_t map_int_get_fast(struct mapping_t_fast *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  int256_t *p = (int256_t *)map_get_raw_fast(m->base, k);
+  int256_t *p = (int256_t *)map_get_raw_fast(m, k);
   return p ? *p : (int256_t)0;
 }
 
@@ -248,12 +300,12 @@ void map_string_set_fast(struct mapping_t_fast *m, uint256_t k, char *v)
 __ESBMC_HIDE:;
   char **p = (char **)malloc(sizeof *p);
   *p = v;
-  map_set_raw_fast(m->base, k, p);
+  map_set_raw_fast(m, k, p);
 }
 char *map_string_get_fast(struct mapping_t_fast *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  char **p = (char **)map_get_raw_fast(m->base, k);
+  char **p = (char **)map_get_raw_fast(m, k);
   return p ? *p : (char *)0;
 }
 
@@ -263,12 +315,12 @@ void map_bool_set_fast(struct mapping_t_fast *m, uint256_t k, bool v)
 __ESBMC_HIDE:;
   bool *p = (bool *)malloc(sizeof *p);
   *p = v;
-  map_set_raw_fast(m->base, k, p);
+  map_set_raw_fast(m, k, p);
 }
 bool map_bool_get_fast(struct mapping_t_fast *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  bool *p = (bool *)map_get_raw_fast(m->base, k);
+  bool *p = (bool *)map_get_raw_fast(m, k);
   return p ? *p : false;
 }
 
@@ -282,10 +334,10 @@ void map_generic_set_fast(
 __ESBMC_HIDE:;
   void *p = malloc(sz);
   memcpy(p, v, sz);
-  map_set_raw_fast(m->base, k, p);
+  map_set_raw_fast(m, k, p);
 }
 void *map_generic_get_fast(struct mapping_t_fast *m, uint256_t k)
 {
 __ESBMC_HIDE:;
-  return map_get_raw_fast(m->base, k);
+  return map_get_raw_fast(m, k);
 }
