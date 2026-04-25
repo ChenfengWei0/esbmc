@@ -36,6 +36,39 @@ protected:
 
   void convert_finite_loop(loopst &loop);
 
+  /// Return true iff `loop` is a canonical counted-for-loop whose trip
+  /// count BMC unrolling can capture precisely, so the k-induction
+  /// havoc-step-once transform would only weaken precision.  Pattern:
+  ///
+  ///   ASSIGN var = k0                  (k0 a non-negative int constant)
+  /// loop_head: IF !(var < N) GOTO past  (or var <=, with N a constant
+  ///                                      or a loop-invariant symbol
+  ///                                      expression — i.e., not in
+  ///                                      modified_loop_vars)
+  ///   ... body that does not reassign var ...
+  ///   ASSIGN var = var + step          (immediately before the
+  ///                                      backwards GOTO; step is a
+  ///                                      positive int constant)
+  /// loop_exit: GOTO loop_head
+  ///
+  /// For literal bounds the iteration count must be in (0, threshold];
+  /// for symbolic loop-invariant bounds we always say yes (BMC will
+  /// unroll up to --unwind, which dominates havoc-step-once for
+  /// deterministic per-element bodies).  Returning false leaves the
+  /// existing k-induction transform intact.
+  bool is_counted_for_loop(const loopst &loop, int threshold) const;
+
+  /// Variant of `is_counted_for_loop` that requires a symbolic
+  /// loop-invariant bound (rejects literal-constant bounds even when
+  /// they are under the threshold).  Used by the pure-local-writer
+  /// counted-loop skip in `goto_k_induction()`: literal-bounded loops
+  /// in pure-local-writer library helpers are kept k-inductized because
+  /// some of them (e.g. `bytes_static_from_hex`'s
+  /// `i < _ESBMC_BYTES_STATIC_MAX`) rely on the havoc-step-once over-
+  /// approximation to close inductive proofs at unwind values smaller
+  /// than the literal bound.
+  bool is_counted_for_loop_with_symbolic_bound(const loopst &loop) const;
+
   bool get_entry_cond_rec(
     const goto_programt::targett &loop_head,
     const goto_programt::targett &after_exit,

@@ -6,6 +6,24 @@
 #include <util/std_expr.h>
 #include <set>
 
+static void
+collect_symbol_names(const expr2tc &expr, std::set<irep_idt> &names)
+{
+  if (!expr)
+    return;
+  if (is_symbol2t(expr))
+  {
+    names.insert(to_symbol2t(expr).get_symbol_name());
+    return;
+  }
+  for (size_t i = 0; i < expr->get_num_sub_exprs(); ++i)
+  {
+    const expr2tc *sub = expr->get_sub_expr(i);
+    if (sub && *sub)
+      collect_symbol_names(*sub, names);
+  }
+}
+
 void goto_k_induction(goto_functionst &goto_functions)
 {
   Forall_goto_functions (it, goto_functions)
@@ -54,8 +72,35 @@ void goto_termination(goto_functionst &goto_functions)
   function->second.body.insert_swap(it, dest);
 }
 
+// Iteration-count cap above which we still apply the k-induction
+// transform.  For very long counted loops (say, 1000+ iterations), BMC
+// fully unrolling produces an SMT formula proportional in size to the
+// trip count, which dominates solver time; the havoc-step-once
+// over-approximation is preferable there.  64 is a conservative
+// breakpoint: most array literals and library helper sizes in practice
+// (Solidity array literals, fixed-N copies) are <= 32, and even doubling
+// that headroom keeps the SMT footprint manageable.
+static constexpr int kCountedLoopThreshold = 64;
+
 void goto_k_inductiont::goto_k_induction()
 {
+  // Determine whether this function's loops can be safely fully unrolled
+  // by BMC instead of being havoc-step-once'd by k-induction.  The transform
+  // is sound but a coarse over-approximation; for "pure local writers" —
+  // functions whose deref-writes only go through pointers locally allocated
+  // in the function (not through caller-passed pointers) — BMC unrolling
+  // is strictly more precise.  Library helpers like `_ESBMC_arrcpy` (whose
+  // loop writes to a `dst` returned from `_ESBMC_alloc_array`) fall in this
+  // bucket; functions like `__memset_impl` (writing through the parameter
+  // `sp`) do not, and must keep the k-induction transform — otherwise BMC's
+  // bounded unwind silently truncates writes the caller relies on.
+  bool function_is_pure_local_writer = false;
+  {
+    std::unordered_set<irep_idt, irep_id_hash> visited;
+    function_is_pure_local_writer =
+      !callee_writes_through_pointer(function_name, visited);
+  }
+
   // Full unwind the program
   for (auto &function_loop : function_loops)
   {
@@ -66,9 +111,331 @@ void goto_k_inductiont::goto_k_induction()
       config.options.get_bool_option("add-symex-value-sets") &&
       function_loop.contains_only_pointers())
       continue;
+
+    // Skip counted-for-loops in pure-local-writer functions when the
+    // loop's bound is a function parameter (or other loop-invariant
+    // symbol).  BMC unrolling captures these trip counts exactly with the
+    // `--unwind k` cap supplied by k-induction, so the havoc-step-once
+    // transform would only weaken precision.  This is what unblocks
+    // postcondition-after-helper-loop patterns (e.g. `t = [1,2,3]`
+    // lowering to a `_ESBMC_arrcpy` call whose internal copy loop was
+    // being k-inductized and havocing the freshly-allocated `dst`).
+    //
+    // We deliberately keep loops with literal-constant bounds k-inductized
+    // even in pure-local-writer functions: empirically, library helpers
+    // like `bytes_static_from_hex` (loop bounded by the compile-time
+    // constant `_ESBMC_BYTES_STATIC_MAX = 32`) close inductive proofs
+    // through havoc-step-once that BMC unrolling at unwind=k for k<32
+    // cannot reproduce.
+    if (
+      function_is_pure_local_writer &&
+      is_counted_for_loop_with_symbolic_bound(function_loop))
+      continue;
+
     // Start the loop conversion
     convert_finite_loop(function_loop);
   }
+}
+
+bool goto_k_inductiont::is_counted_for_loop(
+  const loopst &loop,
+  int threshold) const
+{
+  goto_programt::targett loop_head = loop.get_original_loop_head();
+  goto_programt::targett loop_exit = loop.get_original_loop_exit();
+
+  // Bail on the unusual loop_head==assert shape; ordinary for-loops
+  // always have a forward GOTO (the exit-on-condition) at the head.
+  if (!loop_head->is_goto())
+    return false;
+  if (loop_head->is_backwards_goto())
+    return false;
+  if (is_nil_expr(loop_head->guard))
+    return false;
+
+  // The exit condition appears as `IF !(stay) GOTO past_loop` after lowering.
+  if (!is_not2t(loop_head->guard))
+    return false;
+
+  const expr2tc &stay_cond = to_not2t(loop_head->guard).value;
+
+  bool inclusive = false;
+  expr2tc var_expr;
+  expr2tc bound_expr;
+  if (is_lessthan2t(stay_cond))
+  {
+    var_expr = to_lessthan2t(stay_cond).side_1;
+    bound_expr = to_lessthan2t(stay_cond).side_2;
+  }
+  else if (is_lessthanequal2t(stay_cond))
+  {
+    inclusive = true;
+    var_expr = to_lessthanequal2t(stay_cond).side_1;
+    bound_expr = to_lessthanequal2t(stay_cond).side_2;
+  }
+  else
+  {
+    return false;
+  }
+
+  if (!is_symbol2t(var_expr))
+    return false;
+  const irep_idt &var_name = to_symbol2t(var_expr).thename;
+
+  // The bound side must be either a literal non-negative constant int, or
+  // a non-empty expression in symbols that are all loop-invariant
+  // (i.e., none appear in modified_loop_vars and none equal var_name).
+  bool bound_is_const = is_constant_int2t(bound_expr);
+  long bound_val_literal = 0;
+  if (bound_is_const)
+  {
+    const BigInt &bv = to_constant_int2t(bound_expr).value;
+    if (bv.is_negative())
+      return false;
+    bound_val_literal = bv.to_int64();
+  }
+  else
+  {
+    std::set<irep_idt> bound_syms;
+    collect_symbol_names(bound_expr, bound_syms);
+    if (bound_syms.empty())
+      return false;
+    if (bound_syms.count(var_name))
+      return false;
+    for (const auto &mv : loop.get_modified_loop_vars())
+    {
+      if (!is_symbol2t(mv))
+        continue;
+      if (bound_syms.count(to_symbol2t(mv).thename))
+        return false;
+    }
+  }
+
+  // The instruction immediately before the backwards GOTO must be the
+  // canonical increment `var = var + step`, with step a positive int
+  // constant.  We check this first so we can also exclude this iterator
+  // from the "no other writes to var" scan below.
+  if (loop_exit == goto_function.body.instructions.begin())
+    return false;
+  goto_programt::targett incr_it = loop_exit;
+  --incr_it;
+  if (!incr_it->is_assign() || !is_code_assign2t(incr_it->code))
+    return false;
+  const auto &incr_assign = to_code_assign2t(incr_it->code);
+  if (
+    !is_symbol2t(incr_assign.target) ||
+    to_symbol2t(incr_assign.target).thename != var_name)
+    return false;
+  if (!is_add2t(incr_assign.source))
+    return false;
+  const add2t &add = to_add2t(incr_assign.source);
+  long step_val = 0;
+  if (
+    is_symbol2t(add.side_1) &&
+    to_symbol2t(add.side_1).thename == var_name &&
+    is_constant_int2t(add.side_2))
+  {
+    step_val = to_constant_int2t(add.side_2).value.to_int64();
+  }
+  else if (
+    is_symbol2t(add.side_2) &&
+    to_symbol2t(add.side_2).thename == var_name &&
+    is_constant_int2t(add.side_1))
+  {
+    step_val = to_constant_int2t(add.side_1).value.to_int64();
+  }
+  else
+  {
+    return false;
+  }
+  if (step_val <= 0)
+    return false;
+
+  // The instruction immediately before the loop head must be the init
+  // `var = k0` with k0 a non-negative int constant.
+  if (loop_head == goto_function.body.instructions.begin())
+    return false;
+  goto_programt::targett init_it = loop_head;
+  --init_it;
+  if (!init_it->is_assign() || !is_code_assign2t(init_it->code))
+    return false;
+  const auto &init_assign = to_code_assign2t(init_it->code);
+  if (
+    !is_symbol2t(init_assign.target) ||
+    to_symbol2t(init_assign.target).thename != var_name)
+    return false;
+  expr2tc init_rhs = init_assign.source;
+  simplify(init_rhs);
+  if (!is_constant_int2t(init_rhs))
+    return false;
+  const BigInt &init_bv = to_constant_int2t(init_rhs).value;
+  if (init_bv.is_negative())
+    return false;
+  long init_val = init_bv.to_int64();
+
+  // No other ASSIGN to var is allowed inside the loop body (loop_head
+  // exclusive, loop_exit exclusive — except the increment we matched).
+  goto_programt::targett body_it = loop_head;
+  ++body_it;
+  for (; body_it != loop_exit; ++body_it)
+  {
+    if (body_it == incr_it)
+      continue;
+    if (!body_it->is_assign() || !is_code_assign2t(body_it->code))
+      continue;
+    const auto &a = to_code_assign2t(body_it->code);
+    if (
+      is_symbol2t(a.target) &&
+      to_symbol2t(a.target).thename == var_name)
+      return false;
+  }
+
+  if (bound_is_const)
+  {
+    long span = bound_val_literal - init_val;
+    if (inclusive)
+      span += 1;
+    if (span <= 0)
+      return false;
+    long iter_count = (span + step_val - 1) / step_val;
+    return iter_count > 0 && iter_count <= threshold;
+  }
+
+  // Symbolic loop-invariant bound: defer trip count to BMC unrolling.
+  return true;
+}
+
+bool goto_k_inductiont::is_counted_for_loop_with_symbolic_bound(
+  const loopst &loop) const
+{
+  // Same canonical-counted-for-loop pattern as `is_counted_for_loop`,
+  // but additionally requires the bound expression to be symbolic
+  // (i.e., not a literal `constant_int`).  Used to keep literal-bounded
+  // library helpers (e.g. `bytes_static_from_hex`'s loop bounded by
+  // _ESBMC_BYTES_STATIC_MAX = 32) k-inductized while skipping symbolic-
+  // bounded ones (e.g. `_ESBMC_arrcpy`'s loop bounded by `from_size`).
+  goto_programt::targett loop_head = loop.get_original_loop_head();
+  goto_programt::targett loop_exit = loop.get_original_loop_exit();
+
+  if (!loop_head->is_goto())
+    return false;
+  if (loop_head->is_backwards_goto())
+    return false;
+  if (is_nil_expr(loop_head->guard))
+    return false;
+  if (!is_not2t(loop_head->guard))
+    return false;
+
+  const expr2tc &stay_cond = to_not2t(loop_head->guard).value;
+
+  expr2tc var_expr;
+  expr2tc bound_expr;
+  if (is_lessthan2t(stay_cond))
+  {
+    var_expr = to_lessthan2t(stay_cond).side_1;
+    bound_expr = to_lessthan2t(stay_cond).side_2;
+  }
+  else if (is_lessthanequal2t(stay_cond))
+  {
+    var_expr = to_lessthanequal2t(stay_cond).side_1;
+    bound_expr = to_lessthanequal2t(stay_cond).side_2;
+  }
+  else
+  {
+    return false;
+  }
+
+  if (!is_symbol2t(var_expr))
+    return false;
+  const irep_idt &var_name = to_symbol2t(var_expr).thename;
+
+  // Reject literal-constant bounds.
+  if (is_constant_int2t(bound_expr))
+    return false;
+
+  // Bound must be a non-empty expression of loop-invariant symbols.
+  std::set<irep_idt> bound_syms;
+  collect_symbol_names(bound_expr, bound_syms);
+  if (bound_syms.empty())
+    return false;
+  if (bound_syms.count(var_name))
+    return false;
+  for (const auto &mv : loop.get_modified_loop_vars())
+  {
+    if (!is_symbol2t(mv))
+      continue;
+    if (bound_syms.count(to_symbol2t(mv).thename))
+      return false;
+  }
+
+  // Increment immediately before backwards GOTO, of the form var = var + step.
+  if (loop_exit == goto_function.body.instructions.begin())
+    return false;
+  goto_programt::targett incr_it = loop_exit;
+  --incr_it;
+  if (!incr_it->is_assign() || !is_code_assign2t(incr_it->code))
+    return false;
+  const auto &incr_assign = to_code_assign2t(incr_it->code);
+  if (
+    !is_symbol2t(incr_assign.target) ||
+    to_symbol2t(incr_assign.target).thename != var_name)
+    return false;
+  if (!is_add2t(incr_assign.source))
+    return false;
+  const add2t &add = to_add2t(incr_assign.source);
+  bool incr_ok = false;
+  if (
+    is_symbol2t(add.side_1) &&
+    to_symbol2t(add.side_1).thename == var_name &&
+    is_constant_int2t(add.side_2) &&
+    to_constant_int2t(add.side_2).value.to_int64() > 0)
+    incr_ok = true;
+  else if (
+    is_symbol2t(add.side_2) &&
+    to_symbol2t(add.side_2).thename == var_name &&
+    is_constant_int2t(add.side_1) &&
+    to_constant_int2t(add.side_1).value.to_int64() > 0)
+    incr_ok = true;
+  if (!incr_ok)
+    return false;
+
+  // Init `var = k0` with k0 a non-negative constant int, immediately
+  // before the loop head.
+  if (loop_head == goto_function.body.instructions.begin())
+    return false;
+  goto_programt::targett init_it = loop_head;
+  --init_it;
+  if (!init_it->is_assign() || !is_code_assign2t(init_it->code))
+    return false;
+  const auto &init_assign = to_code_assign2t(init_it->code);
+  if (
+    !is_symbol2t(init_assign.target) ||
+    to_symbol2t(init_assign.target).thename != var_name)
+    return false;
+  expr2tc init_rhs = init_assign.source;
+  simplify(init_rhs);
+  if (!is_constant_int2t(init_rhs))
+    return false;
+  if (to_constant_int2t(init_rhs).value.is_negative())
+    return false;
+
+  // No other ASSIGN to var inside the body.
+  goto_programt::targett body_it = loop_head;
+  ++body_it;
+  for (; body_it != loop_exit; ++body_it)
+  {
+    if (body_it == incr_it)
+      continue;
+    if (!body_it->is_assign() || !is_code_assign2t(body_it->code))
+      continue;
+    const auto &a = to_code_assign2t(body_it->code);
+    if (
+      is_symbol2t(a.target) &&
+      to_symbol2t(a.target).thename == var_name)
+      return false;
+  }
+
+  return true;
 }
 
 void goto_k_inductiont::convert_finite_loop(loopst &loop)
@@ -194,24 +561,6 @@ bool goto_k_inductiont::get_entry_cond_rec(
   }
 
   return false;
-}
-
-static void
-collect_symbol_names(const expr2tc &expr, std::set<irep_idt> &names)
-{
-  if (!expr)
-    return;
-  if (is_symbol2t(expr))
-  {
-    names.insert(to_symbol2t(expr).get_symbol_name());
-    return;
-  }
-  for (size_t i = 0; i < expr->get_num_sub_exprs(); ++i)
-  {
-    const expr2tc *sub = expr->get_sub_expr(i);
-    if (sub && *sub)
-      collect_symbol_names(*sub, names);
-  }
 }
 
 void goto_k_inductiont::make_nondet_assign(

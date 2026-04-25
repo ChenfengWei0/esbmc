@@ -151,6 +151,58 @@ static bool expr_contains_dereference(const expr2tc &e)
   return found;
 }
 
+// Walk a (possibly composite) lvalue/rvalue expression down to the symbol
+// that is being indirected through.  Peels typecast/bitcast/index/member/
+// dereference/pointer-arithmetic layers.  Used by the param-derivation
+// pass to identify the storage root of a deref-target or the source root
+// of an assignment.  Returns nil if no plain symbol root exists (e.g. for
+// constants, address_of of a struct literal, or unsupported shapes).
+static expr2tc resolve_storage_base(const expr2tc &e)
+{
+  expr2tc cur = e;
+  while (cur)
+  {
+    if (is_dereference2t(cur))
+      cur = to_dereference2t(cur).value;
+    else if (is_index2t(cur))
+      cur = to_index2t(cur).source_value;
+    else if (is_member2t(cur))
+      cur = to_member2t(cur).source_value;
+    else if (is_typecast2t(cur))
+      cur = to_typecast2t(cur).from;
+    else if (is_bitcast2t(cur))
+      cur = to_bitcast2t(cur).from;
+    else if (is_add2t(cur))
+    {
+      // Pointer arithmetic — keep the side that is symbol-rooted.
+      const add2t &a = to_add2t(cur);
+      bool s1 = is_symbol2t(a.side_1) || is_typecast2t(a.side_1) ||
+                is_bitcast2t(a.side_1) || is_index2t(a.side_1) ||
+                is_member2t(a.side_1) || is_dereference2t(a.side_1) ||
+                is_add2t(a.side_1) || is_sub2t(a.side_1);
+      bool s2 = is_symbol2t(a.side_2) || is_typecast2t(a.side_2) ||
+                is_bitcast2t(a.side_2) || is_index2t(a.side_2) ||
+                is_member2t(a.side_2) || is_dereference2t(a.side_2) ||
+                is_add2t(a.side_2) || is_sub2t(a.side_2);
+      if (s1 && !s2)
+        cur = a.side_1;
+      else if (s2 && !s1)
+        cur = a.side_2;
+      else if (s1)
+        cur = a.side_1;
+      else
+        break;
+    }
+    else if (is_sub2t(cur))
+      cur = to_sub2t(cur).side_1;
+    else if (is_address_of2t(cur))
+      cur = to_address_of2t(cur).ptr_obj;
+    else
+      break;
+  }
+  return cur;
+}
+
 bool goto_loopst::callee_writes_through_pointer(
   const irep_idt &callee,
   std::unordered_set<irep_idt, irep_id_hash> &visited)
@@ -163,24 +215,106 @@ bool goto_loopst::callee_writes_through_pointer(
   if (it == goto_functions.function_map.end() || !it->second.body_available)
     return false;
 
+  // Build the running set of pointer symbols whose storage is reachable
+  // from a parameter of this function.  Only writes through such pointers
+  // can affect caller-visible memory (and therefore propagate up to the
+  // k-induction modified-vars set).  Writes through locally-allocated
+  // pointers — e.g. `block` in `_ESBMC_alloc_array`'s `block = calloc(...)`
+  // followed by `block[0] = count` — must be excluded; otherwise the
+  // address-of-arg propagation incorrectly havocs caller-side aux arrays
+  // that are only READ through the call.
+  std::unordered_set<irep_idt, irep_id_hash> param_derived;
+  for (const auto &arg : it->second.type.arguments())
+  {
+    irep_idt id = arg.get_identifier();
+    if (id != irep_idt())
+      param_derived.insert(id);
+  }
+
   for (const auto &insn : it->second.body.instructions)
   {
-    if (insn.is_assign())
+    if (insn.is_assign() && is_code_assign2t(insn.code))
     {
       const code_assign2t &a = to_code_assign2t(insn.code);
+
+      // Strip outer typecast/bitcast on the lhs to find the lhs root.
+      expr2tc lhs_root = a.target;
+      while (lhs_root)
+      {
+        if (is_typecast2t(lhs_root))
+          lhs_root = to_typecast2t(lhs_root).from;
+        else if (is_bitcast2t(lhs_root))
+          lhs_root = to_bitcast2t(lhs_root).from;
+        else
+          break;
+      }
+
+      // Case 1: deref-target (array/pointer write).  Caller-affecting
+      // iff the indirected pointer is param-derived.
       if (expr_contains_dereference(a.target))
-        return true;
+      {
+        expr2tc base = resolve_storage_base(a.target);
+        if (
+          base && is_symbol2t(base) &&
+          param_derived.count(to_symbol2t(base).thename))
+          return true;
+        // Otherwise: writes through a local allocation; doesn't propagate.
+        continue;
+      }
+
+      // Case 2: plain symbol assignment.  Update param_derived membership
+      // of the lhs based on whether the rhs's storage root is param-
+      // derived.
+      if (is_symbol2t(lhs_root))
+      {
+        irep_idt lhs_name = to_symbol2t(lhs_root).thename;
+        expr2tc rhs_root = resolve_storage_base(a.source);
+        bool rhs_pd = false;
+        if (rhs_root && is_symbol2t(rhs_root))
+        {
+          if (param_derived.count(to_symbol2t(rhs_root).thename))
+            rhs_pd = true;
+        }
+        if (rhs_pd)
+          param_derived.insert(lhs_name);
+        else
+          param_derived.erase(lhs_name);
+      }
     }
-    else if (insn.is_function_call())
+    else if (insn.is_function_call() && is_code_function_call2t(insn.code))
     {
       const code_function_call2t &nested =
         to_code_function_call2t(insn.code);
-      if (is_dereference2t(nested.function))
-        continue; // function pointer, be conservative? assume no.
-      if (!is_symbol2t(nested.function))
+
+      // The result of a function call is a fresh value (heap allocation,
+      // computed result, etc.) — clear any prior param-derived status.
+      if (!is_nil_expr(nested.ret) && is_symbol2t(nested.ret))
+        param_derived.erase(to_symbol2t(nested.ret).thename);
+
+      // For callees we recurse into, ask whether THEIR body writes through
+      // their own parameters — if it does, that means they may write
+      // through the actuals we passed.  But it only matters if at least one
+      // of those actuals is a param-derived pointer of this function;
+      // otherwise the inner call's deref-writes touch only OUR locally-
+      // allocated storage, which doesn't escape.
+      if (is_dereference2t(nested.function) || !is_symbol2t(nested.function))
         continue;
-      if (callee_writes_through_pointer(
+      if (!callee_writes_through_pointer(
             to_symbol2t(nested.function).thename, visited))
+        continue;
+      bool any_actual_param_derived = false;
+      for (const expr2tc &actual : nested.operands)
+      {
+        expr2tc base = resolve_storage_base(actual);
+        if (
+          base && is_symbol2t(base) &&
+          param_derived.count(to_symbol2t(base).thename))
+        {
+          any_actual_param_derived = true;
+          break;
+        }
+      }
+      if (any_actual_param_derived)
         return true;
     }
   }
