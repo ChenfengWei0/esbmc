@@ -936,16 +936,30 @@ bool solidity_convertert::get_var_decl(
     // Use name-based component lookup to be robust against padding fields
     const struct_typet &map_struct = to_struct_type(map_t);
     const auto &comps = map_struct.components();
-    unsigned base_idx = 0, addr_idx = 1;
+    unsigned base_idx = 0, mid_idx = (unsigned)-1, addr_idx = 1;
     for (unsigned i = 0; i < comps.size(); i++)
     {
       if (comps[i].get_name() == "base")
         base_idx = i;
+      else if (comps[i].get_name() == "mid")
+        mid_idx = i;
       else if (comps[i].get_name() == "addr")
         addr_idx = i;
     }
     solidity_gen_typecast(ns, op0, comps[base_idx].type());
     inits.operands()[base_idx] = op0;
+
+    // mid => next_mapping_mid++ (Stage 3: explicit per-state-var ID
+    // replacing the Stage 2 `(uintptr_t)base` cast — see
+    // src/c2goto/library/solidity/solidity_mapping.c).  Reading m->mid at
+    // runtime is a direct uint64 load; reading (uintptr_t)m->base required
+    // a pointer-to-uint64 SMT extraction at every access.
+    if (mid_idx != (unsigned)-1)
+    {
+      exprt mid_expr =
+        from_integer(next_mapping_mid++, comps[mid_idx].type());
+      inits.operands()[mid_idx] = mid_expr;
+    }
 
     // address => this->
     exprt addr_expr = member_exprt(this_expr, "$address", addr_t);

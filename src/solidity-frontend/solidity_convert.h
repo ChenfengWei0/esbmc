@@ -1094,6 +1094,13 @@ protected:
   // for auxiliary var name
   int aux_counter;
 
+  // Per-state-var unique ID for the mapping `mid` field.  Each mapping
+  // declaration gets the next value here.  Bumps from 1 so that mid==0
+  // can sentinel "uninitialised mapping" if needed.  See Stage 3 of
+  // /home/samson/.claude/plans/foamy-sniffing-toucan.md and
+  // src/c2goto/library/solidity/solidity_mapping.c for the runtime side.
+  uint64_t next_mapping_mid = 1;
+
   // bound setting
   bool is_bound;
 

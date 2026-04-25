@@ -34,7 +34,7 @@ struct _ESBMC_Mapping
   uint8_t _stage2_placeholder;
 };
 
-/* === SMT-array-backed mapping representation (Stage 2: full variant) ====
+/* === SMT-array-backed mapping representation (Stage 3: explicit mid) ====
  *
  * The previous linked-list `_ESBMC_Mapping` walked O(N) per get/set, which
  * made k-induction's per-iteration symex cost grow quadratically with the
@@ -42,13 +42,14 @@ struct _ESBMC_Mapping
  * `_ESBMC_map_storage` declared in the _fast section above; the index
  * compounds (mid, addr, key) into a 64-bit slot via `_ESBMC_map_idx`.
  *
- * `mapping_t` keeps its on-disk layout (`base, addr`) so the frontend's
- * existing `mapping_t = { _ESBMC_inf_<name>, this->$address }` initialiser
- * still type-checks unchanged.  At runtime we reinterpret `(uintptr_t)base`
- * as a per-state-var ID — the frontend already emits a UNIQUE
- * `_ESBMC_inf_<name>` symbol per mapping state var, so its address gives a
- * distinct uint64 ID for free, with zero frontend churn.  Stage 3 will
- * replace this `base`-as-mid trick with an explicit `mid` field.
+ * `mapping_t` carries an explicit `uint64_t mid` (per-state-var unique
+ * ID, frontend-assigned via `solidity_convertert::next_mapping_mid`) so
+ * the runtime can read it directly with no SMT-side conversion overhead.
+ * Stage 2 had cast `(uintptr_t)m->base` to derive the same ID; that cast
+ * generated a pointer-to-uint64 SMT op at every access, non-trivial for
+ * the solver to discharge.  The `base` field stays as a legacy unused
+ * field so the frontend's existing `_ESBMC_inf_<name>` allocation path
+ * (preserved as dead allocations during Stage 3) still type-checks.
  *
  * Per-instance keyspace isolation (clone semantics) is preserved: the
  * deep-copy walker in solidity_convert_constructor.cpp:1125 retargets
@@ -58,8 +59,11 @@ struct _ESBMC_Mapping
  */
 struct mapping_t
 {
-  void *base;              /* legacy: per-state-var __ESBMC_inf_<name> ptr,
-                              reinterpreted as the per-state-var ID below */
+  void *base;              /* legacy unused (kept so existing frontend
+                              `mapping_t = { &_ESBMC_inf_*, this->$address }`
+                              init keeps type-checking; runtime ignores) */
+  uint64_t mid;            /* per-state-var unique ID — frontend assigns
+                              from solidity_convertert::next_mapping_mid */
   address_t addr : 160;    /* clone keyspace partition */
 } __attribute__((packed));
 
@@ -89,15 +93,13 @@ void map_set_raw(
   void *val)
 {
 __ESBMC_HIDE:;
-  uint64_t mid = (uint64_t)(uintptr_t)m->base;
-  return _ESBMC_map_storage[_ESBMC_map_idx(mid, m->addr, key)];
+  return _ESBMC_map_storage[_ESBMC_map_idx(m->mid, m->addr, key)];
 }
 
 void map_set_raw(struct mapping_t *m, uint256_t key, void *val)
 {
 __ESBMC_HIDE:;
-  uint64_t mid = (uint64_t)(uintptr_t)m->base;
-  _ESBMC_map_storage[_ESBMC_map_idx(mid, m->addr, key)] = val;
+  _ESBMC_map_storage[_ESBMC_map_idx(m->mid, m->addr, key)] = val;
 }
 
 /* uint256_t */
