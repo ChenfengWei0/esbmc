@@ -24,6 +24,117 @@ collect_symbol_names(const expr2tc &expr, std::set<irep_idt> &names)
   }
 }
 
+std::optional<std::set<irep_idt>>
+goto_k_inductiont::collect_modified_struct_fields(
+  const loopst &loop,
+  const expr2tc &lhs_sym)
+{
+  if (!is_symbol2t(lhs_sym))
+    return std::nullopt;
+  const irep_idt base_name = to_symbol2t(lhs_sym).thename;
+  std::set<irep_idt> fields;
+
+  // Loop body is [head+1, exit). The head holds the loop-condition GOTO;
+  // its operand is not part of "writes inside an iteration".
+  goto_programt::targett body_begin = loop.get_original_loop_head();
+  ++body_begin;
+  goto_programt::targett body_end = loop.get_original_loop_exit();
+
+  for (auto it = body_begin; it != body_end; ++it)
+  {
+    if (it->is_assign() && is_code_assign2t(it->code))
+    {
+      const code_assign2t &a = to_code_assign2t(it->code);
+      const expr2tc &target = a.target;
+
+      // Peel index/typecast/bitcast/member layers, recording each member
+      // name as we descend. The DEEPEST member (immediately above the
+      // root) is the immediate field of the base if the root is base.
+      expr2tc cur = target;
+      irep_idt last_member;
+      bool saw_deref = false;
+      while (cur)
+      {
+        if (is_dereference2t(cur))
+        {
+          saw_deref = true;
+          break;
+        }
+        if (is_member2t(cur))
+        {
+          last_member = to_member2t(cur).member;
+          cur = to_member2t(cur).source_value;
+          continue;
+        }
+        if (is_index2t(cur))
+        {
+          cur = to_index2t(cur).source_value;
+          continue;
+        }
+        if (is_typecast2t(cur))
+        {
+          cur = to_typecast2t(cur).from;
+          continue;
+        }
+        if (is_bitcast2t(cur))
+        {
+          cur = to_bitcast2t(cur).from;
+          continue;
+        }
+        break;
+      }
+
+      if (saw_deref)
+        return std::nullopt;
+
+      if (
+        cur && is_symbol2t(cur) &&
+        to_symbol2t(cur).thename == base_name)
+      {
+        if (last_member == irep_idt())
+          // Whole-struct write `base = ...`. All fields modified;
+          // signal fallback to existing all-non-pointer-fields path.
+          return std::nullopt;
+        fields.insert(last_member);
+      }
+      // else: writes a different symbol — does not affect base
+    }
+    else if (
+      it->is_function_call() && is_code_function_call2t(it->code))
+    {
+      const code_function_call2t &fc = to_code_function_call2t(it->code);
+
+      // Function pointer: can't reason about the callee identity.
+      if (!is_symbol2t(fc.function))
+        return std::nullopt;
+
+      std::unordered_set<irep_idt, irep_id_hash> visited;
+      if (callee_writes_through_pointer(
+            to_symbol2t(fc.function).thename, visited))
+      {
+        // Callee writes through some pointer param. If any actual
+        // mentions base_name (e.g. `&base` or `(T*)&base`), we must
+        // assume the callee may write any field of base via that
+        // pointer. Conservatively bail. The "actual mentions
+        // base_name" check trips both `&base` and `&base.f` (they
+        // both reduce to base in the symbol-tree), which is what we
+        // want — both can flow to a deref-write of any field.
+        for (const expr2tc &actual : fc.operands)
+        {
+          if (!actual)
+            continue;
+          std::set<irep_idt> sym_names;
+          collect_symbol_names(actual, sym_names);
+          if (sym_names.count(base_name))
+            return std::nullopt;
+        }
+      }
+    }
+  }
+
+  return fields;
+}
+
 void goto_k_induction(goto_functionst &goto_functions)
 {
   Forall_goto_functions (it, goto_functions)
@@ -651,10 +762,20 @@ void goto_k_inductiont::make_nondet_assign(
     // entry in modified_loop_vars and havoc'd anyway via that entry).
     if (use_value_sets && is_struct_type(lhs->type))
     {
+      // Field-level filter: only havoc fields the loop body actually
+      // modifies. Empty-set or std::nullopt → fallback to all-non-
+      // pointer-fields (existing behavior). Non-empty set → restrict.
+      // See collect_modified_struct_fields for the precise contract.
+      auto modified_fields = collect_modified_struct_fields(loop, lhs);
+      const bool restrict_fields =
+        modified_fields.has_value() && !modified_fields->empty();
+
       const struct_type2t &st = to_struct_type(lhs->type);
       for (size_t i = 0; i < st.members.size(); ++i)
       {
         if (is_pointer_type(st.members[i]))
+          continue;
+        if (restrict_fields && !modified_fields->count(st.member_names[i]))
           continue;
         expr2tc field = member2tc(st.members[i], lhs, st.member_names[i]);
         expr2tc rhs = gen_nondet(st.members[i]);

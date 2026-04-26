@@ -5,6 +5,7 @@
 #include <goto-programs/goto_loops.h>
 #include <util/guard.h>
 #include <irep2/irep2_expr.h>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -76,6 +77,27 @@ protected:
 
   void
   make_nondet_assign(goto_programt::targett &loop_head, const loopst &loop);
+
+  /// For a struct-typed lhs that the per-field havoc emit is about to
+  /// nondet, return the precise set of immediate field names that the
+  /// loop body actually writes to lhs — or std::nullopt to signal
+  /// "fall back to all-non-pointer-fields havoc" (current behavior).
+  ///
+  /// Returns nullopt under any of:
+  ///  - whole-struct write `lhs = ...` somewhere in the body;
+  ///  - any deref-write `*p = ...` in the body (could alias lhs.field);
+  ///  - any FUNCTION_CALL whose callee writes through a pointer
+  ///    parameter AND whose actuals reference `lhs` (could write any
+  ///    field via the param);
+  ///  - function-pointer call (no callee identity).
+  ///
+  /// If the scan finds zero direct member-writes to lhs and no
+  /// indirect-write triggers fired, returns an empty set; the caller
+  /// must treat empty as "fallback to all-fields" (preserves current
+  /// behavior whenever our local scan is too narrow to confirm a
+  /// specific field subset).
+  std::optional<std::set<irep_idt>>
+  collect_modified_struct_fields(const loopst &loop, const expr2tc &lhs_sym);
 
   /// Auto-infer entry-dominator invariants from loop-body assertions.
   ///
