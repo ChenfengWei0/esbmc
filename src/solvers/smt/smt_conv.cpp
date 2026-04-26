@@ -3640,6 +3640,13 @@ type2tc make_array_domain_type(const array_type2t &arr)
   if (arr.size_is_infinite)
     return get_uint_type(array_domain_width_or_word_size(arr));
 
+  // Finite outer with any infinite middle (e.g. `T[N][]` or `uint256[4][][2]`)
+  // is also not flattened — the size product is non-constant.  Mirror
+  // flatten_array_type's early-return: emit a single-level domain so each
+  // level keeps its own native sort.
+  if (array_chain_has_infinite_level(arr.subtype))
+    return get_uint_type(array_domain_width_or_word_size(arr));
+
   // This is a finite array of arrays -- we're going to convert this into a
   // single array that has an extended domain. Work out that width.
 
@@ -3797,9 +3804,9 @@ smt_astt smt_convt::convert_array_index(const expr2tc &expr)
   }
   else
   {
-    // Single-level index, or any chain whose outermost array is
-    // infinite (nested Solidity mappings, `T[N][]`) — use direct
-    // select and let the solver's array theory carry the nested sort.
+    // Single-level index, or any chain with an infinite level (nested
+    // Solidity mappings, `T[N][]`, `T[N][][M]`) — use direct select and
+    // let the solver's array theory carry the nested sort.
     newidx = fix_array_idx(index.index, index.source_value->type);
   }
 
@@ -3831,16 +3838,19 @@ smt_astt smt_convt::convert_array_store(const expr2tc &expr)
   if (
     is_array_type(with.type) &&
     is_array_type(to_array_type(with.type).subtype) &&
-    !to_array_type(with.type).size_is_infinite)
+    !to_array_type(with.type).size_is_infinite &&
+    !array_chain_has_infinite_level(to_array_type(with.type).subtype))
   {
-    // Finite multi-dimensional arrays: flatten into single array with extended
-    // domain via decompose_store_chain.
+    // Finite multi-dimensional arrays (every level finite): flatten into a
+    // single array with extended domain via decompose_store_chain.
     newidx = decompose_store_chain(expr, update_val);
   }
   else
   {
-    // Single-level arrays, or infinite arrays (including nested infinite arrays
-    // used by Solidity nested mappings) — use direct index.
+    // Single-level arrays, infinite-outer arrays (Solidity nested mappings),
+    // or any finite-outer chain with an infinite middle (`T[N][]`,
+    // `T[N][][M]`) — use direct index and let the per-level native array
+    // sorts carry the structure.
     newidx = fix_array_idx(with.update_field, with.type);
   }
 
@@ -3863,6 +3873,19 @@ smt_astt smt_convt::convert_array_store(const expr2tc &expr)
   return src->update(this, update, 0, newidx);
 }
 
+bool array_chain_has_infinite_level(const type2tc &type)
+{
+  type2tc t = type;
+  while (is_array_type(t))
+  {
+    const array_type2t &a = to_array_type(t);
+    if (a.size_is_infinite)
+      return true;
+    t = a.subtype;
+  }
+  return false;
+}
+
 type2tc smt_convt::flatten_array_type(const type2tc &type)
 {
   // If vector, convert to array
@@ -3876,6 +3899,13 @@ type2tc smt_convt::flatten_array_type(const type2tc &type)
 
   // Don't touch these
   if (to_array_type(type).size_is_infinite)
+    return type;
+
+  // If any inner level is infinite (e.g. Solidity `T[N][]` finite-of-infinite,
+  // or `uint256[4][][2]` finite-of-infinite-of-finite), do NOT linearize —
+  // the size product is non-constant and the resulting domain bit-width is
+  // meaningless.  Each level keeps its own native solver array sort.
+  if (array_chain_has_infinite_level(to_array_type(type).subtype))
     return type;
 
   // No need to handle one dimensional arrays
@@ -4651,12 +4681,17 @@ smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
   expr2tc base_init;
   unsigned long array_size = 0;
 
-  // Nested infinite arrays (e.g. Solidity nested mappings): do NOT flatten.
-  // Create Array(BV64, Array(BV64, V)) where the inner initializer is itself
-  // an array_of that will be recursively converted.
-  if (arrtype.size_is_infinite && is_array_type(arrtype.subtype))
+  // Nested arrays with ANY infinite level (Solidity nested mappings,
+  // `T[N][]`, `uint256[4][][2]`): do NOT flatten or peel through.  Convert
+  // the inner array_of initializer recursively — that produces a per-level
+  // nested-array AST — then broadcast it across the outer slots so the
+  // resulting sort matches the structural type we keep in flatten_array_type
+  // and make_array_domain_type.
+  if (
+    is_array_type(arrtype.subtype) &&
+    (arrtype.size_is_infinite ||
+     array_chain_has_infinite_level(arrtype.subtype)))
   {
-    // Convert the inner array_of initializer directly (recursive)
     smt_astt inner = convert_ast(arrof.initializer);
     array_size = array_domain_width_or_word_size(arrtype);
     return array_api->convert_array_of(inner, array_size);
