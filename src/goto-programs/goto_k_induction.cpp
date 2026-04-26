@@ -628,15 +628,43 @@ void goto_k_inductiont::make_nondet_assign(
     inferred_assumptions.swap(filtered);
   }
 
+  const bool use_value_sets =
+    config.options.get_bool_option("add-symex-value-sets");
   goto_programt dest;
   for (auto const &lhs : loop_vars)
   {
     // do not assign nondeterministic value to pointers if we assume
     // objects extracted from the value set analysis
-    if (
-      config.options.get_bool_option("add-symex-value-sets") &&
-      is_pointer_type(lhs))
+    if (use_value_sets && is_pointer_type(lhs))
       continue;
+
+    // For struct-typed lhs (e.g. Solidity's `_ESBMC_Object_<C>` contract
+    // instance), nondet'ing the whole struct also clobbers any pointer-
+    // typed fields (object-identity pointers like the backing buffer of
+    // `uint[3] x`). After such havoc, body writes through those fields
+    // dereference nondet pointers and every deref-validity claim fails
+    // — yielding a spurious UNKNOWN at the inductive step. Under value-
+    // set analysis, peel off one struct level and emit per-field nondets,
+    // skipping pointer-typed fields so their pre-loop identity is
+    // preserved (sound: they are never reassigned by the body of a
+    // dispatcher loop; otherwise the field is reachable as a separate
+    // entry in modified_loop_vars and havoc'd anyway via that entry).
+    if (use_value_sets && is_struct_type(lhs->type))
+    {
+      const struct_type2t &st = to_struct_type(lhs->type);
+      for (size_t i = 0; i < st.members.size(); ++i)
+      {
+        if (is_pointer_type(st.members[i]))
+          continue;
+        expr2tc field = member2tc(st.members[i], lhs, st.member_names[i]);
+        expr2tc rhs = gen_nondet(st.members[i]);
+        goto_programt::targett t = dest.add_instruction(ASSIGN);
+        t->inductive_step_instruction = true;
+        t->code = code_assign2tc(field, rhs);
+        t->location = loop_head->location;
+      }
+      continue;
+    }
 
     // Generate a nondeterministic value for the loop variable
     expr2tc rhs = gen_nondet(lhs->type);

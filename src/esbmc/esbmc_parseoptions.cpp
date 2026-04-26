@@ -475,6 +475,32 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
     cmdline.isset("forward-condition") || cmdline.isset("inductive-step"))
     options.set_option("no-interval-symex-guard", true);
 
+  // Havoc-using modes (k-induction's 3 phases, loop-invariant transform,
+  // function contracts) all rely on `make_nondet_assign`-style preambles
+  // that nondet loop-modified variables.  For struct-typed lhs (e.g.
+  // Solidity's `_ESBMC_Object_<C>`), nondet'ing the whole struct also
+  // clobbers pointer-typed fields that hold object identity (e.g. the
+  // backing buffer of `uint[3] x`).  Subsequent body writes through
+  // those fields then deref nondet pointers, producing spurious deref-
+  // failure VCCs and UNKNOWN.  Enabling value-set analysis is what
+  // teaches the havoc preambles to (a) skip pointer-typed lhs and
+  // (b) emit per-field havocs for struct-typed lhs that preserve
+  // pointer fields.  Auto-enable for every mode that runs a havoc
+  // transform so the fix is reachable without requiring users to layer
+  // flags.  Plain BMC is unaffected: it neither runs a havoc transform
+  // nor exercises the runtime hook in `symex_dereference.cpp` (which is
+  // additionally gated on `inductive-step`).
+  if (
+    options.get_bool_option("k-induction") ||
+    cmdline.isset("k-induction-parallel") || cmdline.isset("base-case") ||
+    cmdline.isset("forward-condition") || cmdline.isset("inductive-step") ||
+    cmdline.isset("loop-invariant") || cmdline.isset("loop-invariant-check") ||
+    cmdline.isset("enforce-contract") ||
+    cmdline.isset("enforce-all-contracts") ||
+    cmdline.isset("replace-call-with-contract") ||
+    cmdline.isset("replace-all-contracts"))
+    options.set_option("add-symex-value-sets", true);
+
   if (
     cmdline.isset("overflow-check") || cmdline.isset("unsigned-overflow-check"))
     options.set_option("disable-inductive-step", true);

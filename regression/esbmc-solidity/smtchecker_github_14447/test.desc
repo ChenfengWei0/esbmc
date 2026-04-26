@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.solast
 --contract C --sol contract.sol --no-standard-checks --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION SUCCESSFUL$
