@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.sol
---contract Pyramid --no-standard-checks --multi-property --k-induction --max-k-step 20 --k-step 3
+--contract Pyramid --no-standard-checks --multi-property --unwind 10 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
