@@ -177,7 +177,26 @@ const struct group_opt_templ all_cmd_options[] = {
      boost::program_options::value<std::string>()->value_name("N"),
      "Number of parallel ESBMC subprocesses to run in --tod-*-check=auto "
      "mode.  Defaults to min(hardware_concurrency, pair_count).  Use 1 to "
-     "force sequential execution."}}},
+     "force sequential execution."},
+    {"no-cvc5-native-tuples",
+     NULL,
+     "Opt out of the auto-injection of --cvc5-native-tuples that "
+     "fires when nested-dynamic-array storage is detected in the input "
+     "contract. Use plain CVC5 (flattener) instead. Has no effect when CVC5 "
+     "is not auto-selected."},
+    {"enable-forward-condition",
+     NULL,
+     "Opt out of the auto-disable of the k-induction forward "
+     "condition phase that fires in dispatcher mode (non-`--function`). "
+     "By default, Solidity's `while(nondet) dispatch()` harness is "
+     "unboundable, so forward condition cannot prove and is skipped to "
+     "save solver budget. Pass this flag if you want to run forward "
+     "condition anyway (e.g. for diagnostic comparison)."},
+    {"no-narrowing-check",
+     NULL,
+     "Do not check narrowing typecasts (e.g. uint256 -> uint8) for "
+     "truncation overflow. Default is enabled as part of "
+     "standard checks, implied by --no-standard-checks"}}},
 #endif
   {"Frontend",
    {{"include,I",
@@ -543,20 +562,6 @@ const struct group_opt_templ all_cmd_options[] = {
      "nested-dynamic shapes (e.g. T[N][infinite]) under CVC5; can be slower "
      "than the flattener for queries that only use plain pointer/struct "
      "tuples."},
-    {"no-cvc5-native-tuples",
-     NULL,
-     "[Solidity] Opt out of the auto-injection of --cvc5-native-tuples that "
-     "fires when nested-dynamic-array storage is detected in the input "
-     "contract. Use plain CVC5 (flattener) instead. Has no effect when CVC5 "
-     "is not auto-selected."},
-    {"enable-forward-condition",
-     NULL,
-     "[Solidity] Opt out of the auto-disable of the k-induction forward "
-     "condition phase that fires in dispatcher mode (non-`--function`). "
-     "By default, Solidity's `while(nondet) dispatch()` harness is "
-     "unboundable, so forward condition cannot prove and is skipped to "
-     "save solver budget. Pass this flag if you want to run forward "
-     "condition anyway (e.g. for diagnostic comparison)."},
     {"array-flattener", NULL, "Encode arrays using our array API"},
     {"no-return-value-opt",
      NULL,
@@ -590,11 +595,6 @@ const struct group_opt_templ all_cmd_options[] = {
      NULL,
      "Do not do overflow check for scanf/fscanf with unlimited character "
      "width"},
-    {"no-narrowing-check",
-     NULL,
-     "Do not check narrowing typecasts (e.g. uint256 -> uint8) for "
-     "truncation overflow. Solidity only; default is enabled as part of "
-     "standard checks, implied by --no-standard-checks"},
     {"no-vla-size-check",
      NULL,
      "Do not check whether the size of VLAs overflows the available address "
