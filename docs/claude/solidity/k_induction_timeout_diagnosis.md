@@ -103,19 +103,35 @@ to the wider 23-non-array KNOWNBUG cohort.
 ### tod_balance_pass — TOD harness
 
 - **Test args**: `--tod-balance-check=payA,payB --k-induction --max-k-step 20 --k-step 3`
-- **Last phase reached**: forward condition k=7
-- **Per-query cost**: base case k=7 takes **32.9 s** alone for 7
-  VCCs. THIS IS THE BOTTLENECK — single-query solver-bound.
+- **Last phase reached**: base case k=7 (Bitwuzla); base case k=1
+  (CVC5, Z3 — neither completes the first query in 60s)
+- **Per-query cost**: base case k=7 under Bitwuzla takes **32.9 s**
+  alone for 7 VCCs. Under CVC5 and Z3 the very first query at k=1
+  (4 VCCs) does not complete within 60 s either.
 - **Pattern**: the EOA balance model uses linear-scan loops over
   `sol_eoa_max_cnt`, which under k-induction the solver sees as a
   bounded-but-large array search. Combined with the 256-bit BV
   arithmetic, single SMT queries scale poorly.
-- **Outcome**: timeout (one slow query per k-induction step).
-- **Category**: **(d) solver perf** — the formula is well-formed,
-  just hard for Bitwuzla's QF_BV256.
-- **Fix proposal**: try `--cvc5` (often faster on QF_BV256). Or
-  reduce the EOA scan loop unwind. **Cost: ~2-4h** to test
-  `--cvc5` substitution; if it works, reclassify or update test.desc.
+- **Outcome**: timeout on every solver tried (Bitwuzla, CVC5, Z3;
+  Boolector not built in this checkout).
+- **Category**: **(d) solver perf, all-solver** — the PASS variant
+  requires *proving* `balance(c1) == balance(c2)` universally over
+  all `(a_to, b_to)` inputs, which is fundamentally harder than the
+  FAIL variant (`tod_balance_fail`, currently CORE-passing in 0.65 s
+  by exhibiting a single counter-example). 256-bit BV proof of order
+  invariance over the EOA-scan-bound loop is not within reach of any
+  bundled solver at this setting.
+- **Fix proposal (revised 2026-04-27)**: `--cvc5` substitution does
+  NOT help — the original 2-4h plan rested on the assumption that
+  CVC5 would clear the same formula faster, but empirical retest
+  shows CVC5 hangs on the *first* query at k=1 (CVC5 1.1.2). KNOWNBUG
+  classification is correct; further progress requires either
+  (a) restructuring the EOA balance model to remove the symbolic-
+  bound scan loop, or (b) a TOD-balance-specific proof harness that
+  does not require universal quantification over `(a_to, b_to)`.
+  Both are research-scale (>20 h). **Recommendation: leave KNOWNBUG;
+  do not retry solver substitution without first changing the
+  encoding.**
 
 ### bytes_8 — bytes manipulation
 
@@ -145,7 +161,7 @@ to the wider 23-non-array KNOWNBUG cohort.
 | `nest_loop_3` | (a) genuine | inductive k=19 | budget burn | document as KNOWNBUG-correct | 0h |
 | `reentrance_12` | (a) genuine | inductive k=19 (done!) | 47s, VERIFICATION UNKNOWN | document as KNOWNBUG-correct | 0h |
 | `aliasing_1` | (c) symex modeling | inductive k=13 | 1.3s × 13 (alias-cone growth) | investigate pointer-analysis | 16-30h |
-| `tod_balance_pass` | (d) solver perf | forward k=7 | single 32.9s query | try `--cvc5` substitution | 2-4h |
+| `tod_balance_pass` | (d) solver perf, all-solver | base k=1-7 | every solver hangs on single base-case query | KNOWNBUG correct; needs encoding rework | research-scale (>20h) |
 | `bytes_8` | (c) symex modeling | forward k=21 | 4.6s/step (memcpy unwinding) | cap c2goto helper unwinds | 8-12h |
 
 ## Cross-cutting observations
@@ -177,27 +193,37 @@ to the wider 23-non-array KNOWNBUG cohort.
    actually written"; the correct path is to MAKE the analysis
    thorough enough that empty set means something.
 
-5. **`tod_balance_pass` is solver-bound, not modeling-bound.** It's
-   the only test where a SINGLE query (32.9s) dominates total time.
-   This is a different kind of fix from the others — possibly just
-   solver substitution.
+5. **`tod_balance_pass` is solver-bound on EVERY solver, not
+   modeling-bound.** It's the only test where a SINGLE query
+   dominates total time. The original Phase-4 conjecture was that
+   `--cvc5` substitution would clear it; retest (2026-04-27) shows
+   CVC5 also hangs on the first base-case query at k=1. Z3 too.
+   This is now reclassified as "encoding-bound" — the EOA-scan-loop
+   + 256-bit BV combination is fundamentally hard for proving
+   universally quantified order-invariance, regardless of solver.
+   Further progress requires changing the encoding.
 
 ## Recommended priority ranking
 
-By cost-vs-tests-unblocked (estimated):
+By cost-vs-tests-unblocked (estimated, revised 2026-04-27):
 
-1. **`tod_balance_pass` `--cvc5` substitution** (2-4h, possibly
-   unblocks 1-2 tests). Highest ROI per hour.
-2. **Document (a) tests as KNOWNBUG-correct** (0h, removes 3+ tests
+1. **Document (a) tests as KNOWNBUG-correct** (0h, removes 3+ tests
    from "fixable" list). Right framing for the project's stance on
    user-supplied invariants.
-3. **Per-callee field-write summaries for mappings** (12-20h,
+2. **Per-callee field-write summaries for mappings** (12-20h,
    unblocks `mapping_3` + likely 5 more `map_*` tests). Surgical
-   refactor of `callee_writes_through_pointer`.
-4. **`bytes_8` c2goto helper-unwind cap** (8-12h, unblocks 1-2
+   refactor of `callee_writes_through_pointer`. **Now top priority
+   for code change** — `tod_balance_pass --cvc5` was the original
+   #1 but post-retest is no longer viable.
+3. **`bytes_8` c2goto helper-unwind cap** (8-12h, unblocks 1-2
    bytes-related tests).
-5. **Aliasing investigation** (16-30h, possibly unblocks 1 test).
-   Lowest priority — open-ended, single-test ROI.
+4. **Aliasing investigation** (16-30h, possibly unblocks 1 test).
+   Open-ended, single-test ROI.
+5. **`tod_balance_pass` encoding rework** (research-scale, >20h).
+   Either restructure EOA balance model to drop the symbolic-bound
+   scan loop, or design a TOD-balance proof harness that avoids
+   universal quantification over recipient addresses. Deferred —
+   revisit only if multiple users hit this pattern.
 
 Phase 2 (`linearize_finite_tail`, ~20-30h) is NOT directly addressed
 by any of the above. Phase 4's findings show the remaining
