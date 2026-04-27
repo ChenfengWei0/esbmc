@@ -176,6 +176,43 @@ handle the symbolic-size case without falling back to the C-level
 loop (e.g., emit array-comprehension constraints directly). This
 is research-scale (>30h) and orthogonal to the bytes_8 KNOWNBUG.
 
+### 2026-04-27 update (B0 empirical pass on Path B)
+
+After more careful exploration of `intrinsic_memcpy`, Path B as
+scoped in the prior plan (~9-15 days for symbolic-`n` bounded
+unroll) does NOT close the gap. Empirical findings:
+
+- **bytes_8 alone hits the symbolic-`n` bail 1030 times per run.**
+  Confirmed: every `intrinsic_memcpy` invocation bumps to
+  `__memcpy_impl`. The constant-size inline path NEVER fires for
+  this test under k-induction's inductive step (where parameters
+  are havoc'd to nondet).
+
+- **Bypassing only the symbolic-`n` bail is insufficient.** The
+  downstream constant-size logic at lines 2073-2077 and 2157-2161
+  also bails on symbolic offsets. For bytes_8's
+  `memcpy(&pool->pool[new_offset], &pool->pool[b->offset],
+  b->length)`, all three of `new_offset`, `b->offset`, `b->length`
+  are symbolic at the inductive step. Bounded-unroll for `n`
+  alone leaves the offset-bail still firing.
+
+- **Even with concrete offsets, `do_memcpy_expression` rejects
+  array types** (`builtin_functions.cpp:1960-1967`: returns nil for
+  array/struct/union, triggering `bump_call` at line 2213-2217).
+  Solidity bytes use array dst/src (`pool[POOL_MAX]`); the
+  constant-size path can't handle them directly today.
+
+The full Path B scope needed to flip `bytes_8` is:
+1. Symbolic `n` → bounded unroll
+2. Symbolic offsets → emit per-byte conditional `with2tc` array
+   stores indexed by `off+i`
+3. Array-typed dst/src → use array theory directly instead of the
+   bit-mask approach
+
+This is a fundamentally different encoding (array theory at SMT
+level, possibly via quantifiers) and is **research-scale (>30d)**,
+not the 9-15d the prior plan estimated.
+
 ### Decision
 
 Neither path ships in this session. **The bytes_8 / mapping_3
@@ -184,8 +221,11 @@ work**:
 
 - **Approve Path A as a CLI-gated optimization** (`--skip-helper-loops`,
   default off): explicit signoff on the soundness trade-off. ~4-6h.
-- **Pursue Path B properly** (symex memcpy refactor): research-scale
-  investment. >30h.
+- **Pursue Path B properly** (symex memcpy refactor): empirical
+  retest 2026-04-27 raised the estimate from 9-15d to **>30d**.
+  The bottleneck triple (symbolic n + symbolic offsets + array dst/src)
+  needs a fundamentally different encoding (array theory at SMT
+  level), not just bounded-unroll for `n`.
 - **Reclassify bytes_8 → THOROUGH** per memory rule: clean,
   preserves correctness, but doesn't actually verify the test
   faster. ~30min.
