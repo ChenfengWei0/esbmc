@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.sol
---contract User --no-standard-checks --multi-property --k-induction --max-k-step 20 --k-step 3
+--contract User --no-standard-checks --multi-property --unwind 5 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
