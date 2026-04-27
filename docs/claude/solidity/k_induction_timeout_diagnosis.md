@@ -87,18 +87,32 @@ to the wider 23-non-array KNOWNBUG cohort.
 ### aliasing_1 — pointer-aliasing inductive step
 
 - **Test args**: `--k-induction --max-k-step 20 --k-step 3`
-- **Last phase reached**: inductive step k=13
-- **Per-k cost**: 1457 sliced VCCs per step, symex 1.3s per step.
+- **Last phase reached**: inductive step k=10 (timeout in solver)
+- **Per-phase inductive growth (re-measured 2026-04-27)**:
+  | k | inductive VCC | inductive SSA | slicer keep % |
+  |---|---|---|---|
+  | 1  | 467  | 3351  | 84% |
+  | 4  | 797  | 5727  | 85% |
+  | 7  | 1127 | 8103  | 85% |
+  | 10 | 1457 | 10479 | 85% |
+  **Linear growth: ~+330 VCC / +2376 SSA per +3 k step. Slicer ratio
+  stable.**
 - **Outcome**: timeout.
-- **Category**: **(c) symex modeling** — pointer-write modeling
-  generates many redundant aliasing VCCs that the slicer can't fold.
-  The 65 → 1457 VCC growth at k=4 → k=13 is roughly 22×, suggesting
-  per-iteration aliasing-cone growth.
-- **Fix proposal**: investigate ESBMC's pointer-analysis to see
-  whether tighter alias-set tracking in the inductive step would
-  reduce VCC count. **Cost: open-ended ~16-30h** — depends on
-  whether existing pointer-analysis infra (`src/pointer-analysis`)
-  exposes the right knobs.
+- **Category** *(corrected 2026-04-27)*: **(a) genuine inductive
+  insufficiency**. The original (c)-symex-modeling classification
+  rested on a "65 → 1457 VCC = 22× growth" claim that compared
+  k=1 base-case VCCs (65) to k=10 inductive-step VCCs (1457) —
+  apples-to-oranges across phases. Within a single phase, growth
+  is linear in k and the slicer keep-ratio is constant (85%). No
+  alias-cone explosion.
+- **Why it times out**: same shape as `mapping_10` / `nest_loop_3` /
+  `reentrance_12`. The dispatcher harness's forward condition never
+  converges; inductive step is the only path to SUCCESSFUL; closing
+  inductively needs k beyond what 60s allows when each k iteration
+  costs solver time on ~1457 VCCs at k=10.
+- **Fix proposal**: none — KNOWNBUG-correct under the project's
+  no-user-invariants stance (memory rule
+  `feedback_no_user_invariants.md`). **Cost: 0h.**
 
 ### tod_balance_pass — TOD harness
 
@@ -160,7 +174,7 @@ to the wider 23-non-array KNOWNBUG cohort.
 | `mapping_10` | (a) genuine | base case k=16 | budget burn over many k | document as KNOWNBUG-correct | 0h |
 | `nest_loop_3` | (a) genuine | inductive k=19 | budget burn | document as KNOWNBUG-correct | 0h |
 | `reentrance_12` | (a) genuine | inductive k=19 (done!) | 47s, VERIFICATION UNKNOWN | document as KNOWNBUG-correct | 0h |
-| `aliasing_1` | (c) symex modeling | inductive k=13 | 1.3s × 13 (alias-cone growth) | investigate pointer-analysis | 16-30h |
+| `aliasing_1` | (a) genuine *(corrected 2026-04-27)* | inductive k=10 | linear VCC growth, stable slicer ratio | document as KNOWNBUG-correct | 0h |
 | `tod_balance_pass` | (d) solver perf, all-solver | base k=1-7 | every solver hangs on single base-case query | KNOWNBUG correct; needs encoding rework | research-scale (>20h) |
 | `bytes_8` | (c) symex modeling | forward k=21 | 4.6s/step (memcpy unwinding) | cap c2goto helper unwinds | 8-12h |
 
@@ -179,9 +193,10 @@ to the wider 23-non-array KNOWNBUG cohort.
    entirely determined by whether the inductive step closes
    inductively — no amount of forward-condition tuning helps.
 
-3. **Three of seven tests are genuinely correctly KNOWNBUG.** The
+3. **Four of seven tests are genuinely correctly KNOWNBUG.** The
    `(a) genuine inductive insufficiency` category covers
-   `mapping_10`, `nest_loop_3`, `reentrance_12`. These tests would
+   `mapping_10`, `nest_loop_3`, `reentrance_12`, and (after
+   2026-04-27 re-measurement) `aliasing_1`. These tests would
    need user-supplied invariants which the project has explicitly
    disallowed. KNOWNBUG is the correct classification.
 
@@ -205,25 +220,39 @@ to the wider 23-non-array KNOWNBUG cohort.
 
 ## Recommended priority ranking
 
-By cost-vs-tests-unblocked (estimated, revised 2026-04-27):
+*Final, post-Phase-4-execution (2026-04-27).*
 
-1. **Document (a) tests as KNOWNBUG-correct** (0h, removes 3+ tests
-   from "fixable" list). Right framing for the project's stance on
-   user-supplied invariants.
-2. **Per-callee field-write summaries for mappings** (12-20h,
-   unblocks `mapping_3` + likely 5 more `map_*` tests). Surgical
-   refactor of `callee_writes_through_pointer`. **Now top priority
-   for code change** — `tod_balance_pass --cvc5` was the original
-   #1 but post-retest is no longer viable.
-3. **`bytes_8` c2goto helper-unwind cap** (8-12h, unblocks 1-2
-   bytes-related tests).
-4. **Aliasing investigation** (16-30h, possibly unblocks 1 test).
-   Open-ended, single-test ROI.
+1. **Document (a) tests as KNOWNBUG-correct** (0h). Now covers
+   `mapping_10`, `nest_loop_3`, `reentrance_12`, `aliasing_1`.
+   Right framing for the project's no-user-invariants stance.
+2. **Per-callee field-write summaries for mappings** ✗ *attempted,
+   reverted 2026-04-27*. Refactor was sound (760/34 preserved) but
+   produced 0 KNOWNBUG flips: mapping_3's modified_loop_vars don't
+   carry the contract-object struct, so the consumer path never
+   fires. See `project_stream22_param_subst_no_op.md`.
+3. **`bytes_8` c2goto helper-unwind cap (Path B-Light)** ✗
+   *attempted, reverted 2026-04-27*. Both broad and conservative
+   variants regressed CORE-passing tests: k-induction's
+   havoc-step-once on `__memcpy_impl` is load-bearing for
+   `reentrance_12` / `require_3` / `stress_libsol_calldata_string_array`.
+   Path B-Full (~15-19d) has uncertain ROI for the same reason —
+   byte-level precision is just as constraining as BMC unrolling
+   and likely triggers identical regressions. **Deferred.**
+4. **Aliasing investigation** ✗ *closed 2026-04-27 without code
+   change*. Re-measurement showed linear (not exponential) VCC
+   growth across k; reclassified as (a) genuine. No fix needed.
 5. **`tod_balance_pass` encoding rework** (research-scale, >20h).
    Either restructure EOA balance model to drop the symbolic-bound
    scan loop, or design a TOD-balance proof harness that avoids
    universal quantification over recipient addresses. Deferred —
    revisit only if multiple users hit this pattern.
+
+**Net Phase-4 outcome**: 760/34 baseline preserved; corrected
+priority ranking; 4 of 7 timeout-bound tests now correctly
+classified as (a)-genuine-KNOWNBUG. Remaining cohort
+(`mapping_3`, `mapping_4`, `mapping_10`, `bytes_8`,
+`tod_balance_pass`) is architectural: each needs either
+encoding-layer redesign or relaxed user-invariant policy.
 
 Phase 2 (`linearize_finite_tail`, ~20-30h) is NOT directly addressed
 by any of the above. Phase 4's findings show the remaining
