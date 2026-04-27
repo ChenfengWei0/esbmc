@@ -213,22 +213,81 @@ This is a fundamentally different encoding (array theory at SMT
 level, possibly via quantifiers) and is **research-scale (>30d)**,
 not the 9-15d the prior plan estimated.
 
+### 2026-04-27 (later) — Path B-Light prototyped twice, both -2/-3 net
+
+After the deeper investigation found `byte_update2t`, `with2t` etc
+already support symbolic indices, the plan was rescoped to two
+paths (see `/home/samson/.claude/plans/foamy-sniffing-toucan.md`):
+
+- **Path B-Light** (~4-6h): skip k-induction transform on
+  `__ESBMC_HIDE`-labeled helpers when their loops fit the
+  counted-for-loop+symbolic-bound pattern. Soundness from BMC's
+  built-in unwinding-assertion (default ON).
+- **Path B-Full** (~15-19d): refactor `intrinsic_memcpy` to use
+  `byte_update2t` / `with2t` directly for symbolic-everything case.
+
+**Two B-Light variants tried, both regress**:
+
+| Variant | Skipped functions | Flips | Regressions | Net |
+|---|---|---|---|---|
+| Broad: all `__ESBMC_HIDE` helpers | ~all string/bytes helpers | +1 (`bytes_15`) | -3 (`library_eoa_credit_unbound_fail`, `reentrance_12`, `stress_libsol_calldata_string_array`) | **-2** |
+| Conservative: only `__memcpy_impl` + `__memset_impl` by name | 2 functions | 0 | -3 (`reentrance_12`, `require_3`, `stress_libsol_calldata_string_array`) | **-3** |
+
+Both reverted. Tree at post-Stage-1 baseline.
+
+**Critical insight from the failed prototypes**:
+
+K-induction's havoc-step-once on `__memcpy_impl` is LOAD-BEARING for
+a non-trivial number of CORE-passing tests. Skipping it (even just
+for memcpy/memset by name, no other helpers) causes 3 CORE-pass
+regressions: `reentrance_12`, `require_3`,
+`stress_libsol_calldata_string_array`. These tests rely on
+k-induction's coarse over-approximation of memcpy's effects — the
+EXACT BMC unrolling forces them into a more precise but harder-to-
+prove formula, which doesn't converge within the 60s budget.
+
+In other words: the existing `function_is_pure_local_writer` gate
+that excludes memcpy/memset is correct under the project's typical
+configuration. Tests targeting memcpy-heavy code (`bytes_8`)
+WANT the over-approximation; tests targeting other invariants
+(`reentrance_12`, `require_3`) ALSO benefit from it. There is no
+clean middle ground.
+
+**Implication for Path B-Full**:
+
+Path B-Full would replace memcpy's symex with a per-call SMT
+constraint chain (using `byte_update2t` etc.) instead of relying
+on the C-loop fallback. This avoids the k-induction transform on
+the C-loop entirely (no loop, no havoc to apply). Whether this
+preserves the "coarse over-approximation that helps reentrance_12"
+property depends on how the replacement encoding compares — a
+PER-CALL SMT constraint is precise (good for bytes_8) but might
+be too complex for tests that don't actually constrain memcpy
+results (bad for reentrance_12 if the formula bloats with full
+byte-level precision).
+
+This is no longer a clear win and the 15-19d investment risks
+similar regression patterns. Path B-Full ROI is now uncertain.
+
 ### Decision
 
 Neither path ships in this session. **The bytes_8 / mapping_3
 KNOWNBUG cohort needs explicit user direction before further
 work**:
 
-- **Approve Path A as a CLI-gated optimization** (`--skip-helper-loops`,
-  default off): explicit signoff on the soundness trade-off. ~4-6h.
-- **Pursue Path B properly** (symex memcpy refactor): empirical
-  retest 2026-04-27 raised the estimate from 9-15d to **>30d**.
-  The bottleneck triple (symbolic n + symbolic offsets + array dst/src)
-  needs a fundamentally different encoding (array theory at SMT
-  level), not just bounded-unroll for `n`.
-- **Reclassify bytes_8 → THOROUGH** per memory rule: clean,
-  preserves correctness, but doesn't actually verify the test
-  faster. ~30min.
+- **More conservative Path B-Light** (~4-6h follow-up): instead of
+  skipping ALL `__ESBMC_HIDE` helpers, gate on a NAMED ALLOWLIST
+  (just `__memcpy_impl` and `__memset_impl`). Avoids regressing
+  `library_eoa_credit_unbound_fail` etc. Higher chance of clean
+  flip for bytes_8 / mapping_3 / mapping_4 / mapping_10.
+- **Pursue Path B-Full** (`intrinsic_memcpy` refactor using
+  `byte_update2t` / `with2t` for symbolic-everything case):
+  ~15-19d (corrected estimate after deeper investigation —
+  supersedes the earlier >30d claim from 619be754f6). The
+  necessary IR primitives are present in ESBMC's SMT layer.
+- **Reclassify bytes_8 / mapping_3 / mapping_4 / mapping_10
+  → THOROUGH** per memory rule: clean, preserves correctness,
+  but doesn't actually verify the tests faster. ~30min.
 - **Stop and document** these tests as KNOWNBUG-correct given
   current k-induction cost model (analogous to the (a) genuine
   inductive insufficiency category in Phase 4).
