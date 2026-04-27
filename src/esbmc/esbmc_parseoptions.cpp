@@ -23,6 +23,7 @@ extern "C"
 #  include <solidity-frontend/solidity_tod_harness.h>
 #endif
 #include <cctype>
+#include <fstream>
 #include <clang-c-frontend/clang_c_language.h>
 #include <util/config.h>
 #include <util/filesystem.h>
@@ -857,26 +858,50 @@ int esbmc_parseoptionst::doit()
         cmdline.isset("default-solver");
       if (!user_picked_solver && !incremental_mode)
       {
-        const std::string padded =
-          std::string(" ") + ESBMC_AVAILABLE_SOLVERS + " ";
-        const char *preferred[] = {"bitwuzla", "cvc5", "boolector", "z3"};
         const char *chosen = nullptr;
-        for (const char *name : preferred)
+        if (nested_dyn_detected)
         {
-          if (padded.find(std::string(" ") + name + " ") != std::string::npos)
+          // Force CVC5 for nested-dyn-array shapes (Bitwuzla aborts).
+          chosen = "cvc5";
+          if (!cmdline.isset("no-cvc5-native-tuples"))
+            options.set_option("cvc5-native-tuples", true);
+        }
+        else
+        {
+          const char *preferred[] = {"bitwuzla", "cvc5", "boolector", "z3"};
+          for (const char *name : preferred)
           {
-            chosen = name;
-            break;
+            if (padded_solvers.find(std::string(" ") + name + " ") !=
+                std::string::npos)
+            {
+              chosen = name;
+              break;
+            }
           }
         }
         if (chosen)
         {
           options.set_option("default-solver", chosen);
-          log_status(
-            "Solidity: auto-selecting '{}' as SMT backend (Z3 is much "
-            "slower on 256-bit bit-vector arithmetic). Override with "
-            "--z3 / --cvc5 / --bitwuzla / --boolector or --default-solver.",
-            chosen);
+          if (nested_dyn_detected)
+          {
+            const bool native_on =
+              !cmdline.isset("no-cvc5-native-tuples");
+            log_status(
+              "Solidity: detected nested-dynamic-array shape; auto-selecting "
+              "'cvc5'{} (Bitwuzla's tuple flattener cannot encode "
+              "`T[][]`-style storage). Override with --bitwuzla / --z3 "
+              "or pass --no-cvc5-native-tuples to disable native-tuple "
+              "encoding.",
+              native_on ? " with --cvc5-native-tuples" : "");
+          }
+          else
+          {
+            log_status(
+              "Solidity: auto-selecting '{}' as SMT backend (Z3 is much "
+              "slower on 256-bit bit-vector arithmetic). Override with "
+              "--z3 / --cvc5 / --bitwuzla / --boolector or --default-solver.",
+              chosen);
+          }
         }
       }
     }

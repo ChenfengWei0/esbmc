@@ -543,6 +543,12 @@ const struct group_opt_templ all_cmd_options[] = {
      "nested-dynamic shapes (e.g. T[N][infinite]) under CVC5; can be slower "
      "than the flattener for queries that only use plain pointer/struct "
      "tuples."},
+    {"no-cvc5-native-tuples",
+     NULL,
+     "[Solidity] Opt out of the auto-injection of --cvc5-native-tuples that "
+     "fires when nested-dynamic-array storage is detected in the input "
+     "contract. Use plain CVC5 (flattener) instead. Has no effect when CVC5 "
+     "is not auto-selected."},
     {"array-flattener", NULL, "Encode arrays using our array API"},
     {"no-return-value-opt",
      NULL,
