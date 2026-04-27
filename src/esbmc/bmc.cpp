@@ -1770,7 +1770,11 @@ smt_convt::resultt bmct::multi_property_check(
   smt_convt::resultt final_result = smt_convt::P_UNSATISFIABLE;
   std::mutex result_mutex;
   std::atomic<size_t> ce_counter{0};
-  std::unordered_set<size_t> jobs;
+  // Sequential default consumes `jobs` in iteration order; using a sorted
+  // vector lets us solve user-source claims before c2goto/library claims so
+  // multi-property doesn't burn the budget on spurious library-side dereference
+  // / overflow checks ahead of the user's real bugs.
+  std::vector<size_t> jobs;
 
   // Add summary tracking
   SimpleSummary summary;
@@ -1833,8 +1837,38 @@ smt_convt::resultt bmct::multi_property_check(
   const std::string YELLOW = is_color ? "\033[33m" : "";
 
   // TODO: This is the place to check a cache
+  jobs.reserve(remaining_claims);
   for (size_t i = 1; i <= remaining_claims; i++)
-    jobs.emplace(i);
+    jobs.push_back(i);
+
+  // Reorder so user-source claims solve before c2goto/library claims. Walk
+  // SSA_steps once, mapping each assertion's 1-based index to a bool flag
+  // "is in user source". Library paths contain "c2goto/library" or "/library/";
+  // anything else (the user's input source file) is user-side. Stable sort
+  // preserves intra-bucket order, keeping CE numbering deterministic.
+  if (remaining_claims > 0)
+  {
+    std::vector<bool> is_user(remaining_claims + 1, false);
+    size_t counter = 0;
+    for (auto const &step : eq.SSA_steps)
+    {
+      if (!step.is_assert())
+        continue;
+      ++counter;
+      if (counter > remaining_claims)
+        break;
+      const std::string file =
+        step.source.pc->location.get_file().as_string();
+      const bool is_library =
+        file.find("c2goto/library") != std::string::npos ||
+        file.find("/library/") != std::string::npos;
+      is_user[counter] = !is_library;
+    }
+    std::stable_sort(
+      jobs.begin(), jobs.end(), [&is_user](size_t a, size_t b) {
+        return is_user[a] && !is_user[b];
+      });
+  }
 
   /* This is a JOB that will:
    * 1. Generate a solver instance for a specific claim (@parameter i)
