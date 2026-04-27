@@ -821,6 +821,22 @@ int esbmc_parseoptionst::doit()
       options.set_option(
         "force-malloc-success", true); // for calloc in the 'newexpression'
 
+      // Solidity contracts are wrapped in a `while(nondet) dispatch()`
+      // harness whose unwinding assertion can never be proven (the
+      // condition is non-deterministic, so the loop has no static
+      // bound).  As a result the k-induction forward-condition phase
+      // always returns "unable to prove" for every k, burning solver
+      // budget across all k iterations without contributing to a
+      // proof — only the inductive step can close the verification.
+      // Auto-disable forward condition in dispatcher mode (non-
+      // `--function`) to recover that budget.
+      // `--function` verifies a single function whose internal loops
+      // CAN be bounded (`for (i=0; i<N; ++i)`), so leave forward
+      // enabled there.
+      if (!cmdline.isset("function") &&
+          !cmdline.isset("enable-forward-condition"))
+        options.set_option("disable-forward-condition", true);
+
       // `--sol <path>` is documented (in options.cpp) as equivalent to
       // a positional argument. boost::program_options parses `<path>`
       // as the VALUE of `--sol`, which does not reach `cmdline.args`;

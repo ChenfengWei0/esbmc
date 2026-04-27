@@ -549,6 +549,14 @@ const struct group_opt_templ all_cmd_options[] = {
      "fires when nested-dynamic-array storage is detected in the input "
      "contract. Use plain CVC5 (flattener) instead. Has no effect when CVC5 "
      "is not auto-selected."},
+    {"enable-forward-condition",
+     NULL,
+     "[Solidity] Opt out of the auto-disable of the k-induction forward "
+     "condition phase that fires in dispatcher mode (non-`--function`). "
+     "By default, Solidity's `while(nondet) dispatch()` harness is "
+     "unboundable, so forward condition cannot prove and is skipped to "
+     "save solver budget. Pass this flag if you want to run forward "
+     "condition anyway (e.g. for diagnostic comparison)."},
     {"array-flattener", NULL, "Encode arrays using our array API"},
     {"no-return-value-opt",
      NULL,
