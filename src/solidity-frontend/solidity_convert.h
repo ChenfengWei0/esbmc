@@ -955,6 +955,16 @@ protected:
   /// should then fall back to `member_exprt(base, "_ESBMC_bind_cname", ...)`.
   bool get_bind_shadow_read(const exprt &base, exprt &shadow_out);
   void get_nondet_expr(const typet &t, exprt &new_expr);
+  /// Build the EVM-revert-with-state-rollback replacement for a `revert` /
+  /// `require` lowering.  When `cond` is null, emits the unconditional form
+  ///   `{ *this = _sol_save_this; return [nondet]; }`
+  /// (used for `revert(...)`).  When `cond` is non-null, emits
+  ///   `if (!cond) { *this = _sol_save_this; return [nondet]; }`
+  /// (used for `require(cond, ...)`).  Returns true on failure (no current
+  /// function context, no snapshot symbol, or unsupported return shape such
+  /// as a tuple-returning function), in which case the caller must fall back
+  /// to the legacy `__ESBMC_assume(false)` / `__ESBMC_assume(cond)` lowering.
+  bool build_revert_rollback_block(const exprt *cond, exprt &out);
   bool assign_nondet_contract_name(const std::string &_cname, exprt &new_expr);
   bool assign_param_nondet(
     const nlohmann::json &decl_ref,
@@ -1027,6 +1037,18 @@ protected:
   // TODO: find a better way to deal with implicit type casting if it's not able to cope with complex rules
   std::stack<const nlohmann::json *> current_BinOp_type;
   std::string current_functionName;
+  // Mirror of the symbol-table id of the function currently being lowered
+  // (i.e., the same `id` that get_function_definition assigns to the symbol).
+  // Used by build_revert_rollback_block() to locate the per-function
+  // `_sol_save_this` snapshot symbol from inside an expression-level lowering.
+  std::string current_functionId;
+  // Set to true by build_revert_rollback_block() the first time it
+  // emits a successful rollback for the current function.  After body
+  // conversion, get_function_definition uses this flag to gate the
+  // emission of the `_sol_save_this` decl + init at function entry —
+  // so that functions which never use require/revert pay no extra
+  // SSA cost for the snapshot copy.  Reset on entry to each function.
+  bool current_function_used_snapshot = false;
   // Track whether we are inside a Solidity "unchecked { ... }" block.
   // When true, arithmetic overflow checks should be suppressed.
   bool in_unchecked_block = false;
@@ -1147,7 +1169,8 @@ protected:
 
   // NONDET
   side_effect_expr_function_callt nondet_bool_expr;
-  side_effect_expr_function_callt nondet_uint_expr;
+  side_effect_expr_function_callt nondet_uint_expr;       // 32-bit
+  side_effect_expr_function_callt nondet_uint256_expr;    // 256-bit, for $balance/$codehash/$code/etc.
   side_effect_expr_function_callt nondet_bytes_dynamic_expr;
 
   // type

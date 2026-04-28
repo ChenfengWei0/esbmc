@@ -33,6 +33,9 @@ bool solidity_convertert::get_function_definition(
 
   const nlohmann::json *old_functionDecl = current_functionDecl;
   const std::string old_functionName = current_functionName;
+  const std::string old_functionId = current_functionId;
+  const bool old_function_used_snapshot = current_function_used_snapshot;
+  current_function_used_snapshot = false;
 
   current_functionDecl = &ast_node;
 
@@ -105,6 +108,7 @@ bool solidity_convertert::get_function_definition(
   std::string name, id;
   get_function_definition_name(ast_node, name, id);
   assert(!name.empty());
+  current_functionId = id;
   log_debug(
     "solidity",
     "@@@ Parsing function {} in contract {}",
@@ -115,6 +119,8 @@ bool solidity_convertert::get_function_definition(
   {
     current_functionDecl = old_functionDecl;
     current_functionName = old_functionName;
+    current_functionId = old_functionId;
+    current_function_used_snapshot = old_function_used_snapshot;
     log_debug(
       "solidity",
       "@@@ Already parsed function {} in contract {}",
@@ -152,6 +158,60 @@ bool solidity_convertert::get_function_definition(
   if (!is_event_err_lib && !is_free_function)
     get_function_this_pointer_param(
       c_name, id, debug_modulename, location_begin, type);
+
+  // 11.1b Pre-create the per-function `_sol_save_this` snapshot symbol so
+  // that revert/require lowering during body conversion can reference it
+  // (see build_revert_rollback_block).  At function entry we copy `*this`
+  // into this local; on revert we restore from it.  Without this rollback,
+  // a `revert`/`require(false)` would simply prune the path and rule out
+  // the real-EVM execution where the call returns to its caller with
+  // state unchanged.
+  //
+  // Scope (B1 v1): only public/external entry points (those reachable
+  // from the dispatcher loop or from another contract) get a snapshot.
+  // Internal/private helpers keep the legacy `__ESBMC_assume(...)`
+  // lowering — they correspond to subroutines that on the EVM revert
+  // by *propagating* up to their caller's frame, which our v1 snapshot
+  // (per-function, no propagation) would not faithfully model.  Most
+  // importantly this preserves the constructor's call-chain semantics:
+  // a revert anywhere inside `constructor → _mint → require(...)` still
+  // prunes the construction path (matches real EVM, which would abort
+  // contract creation), instead of restoring `_mint`'s snapshot and
+  // letting construction continue with a half-initialised contract.
+  // Skipped also for ctor/event/error/library/free-function (no
+  // dispatcher-reachable `*this` to snapshot).
+  bool is_external_entry = false;
+  if (!is_event_err_lib && !is_free_function && !is_ctor)
+  {
+    if (is_receive_fallback)
+    {
+      is_external_entry = true;
+    }
+    else if (ast_node.contains("visibility"))
+    {
+      const std::string vis = ast_node["visibility"].get<std::string>();
+      is_external_entry = (vis == "public" || vis == "external");
+    }
+  }
+  if (is_external_entry)
+  {
+    std::string save_id = id + "#_sol_save_this";
+    if (context.find_symbol(save_id) == nullptr)
+    {
+      typet save_type = symbol_typet(prefix + c_name);
+      symbolt save_sym;
+      get_default_symbol(
+        save_sym,
+        debug_modulename,
+        save_type,
+        "_sol_save_this",
+        save_id,
+        location_begin);
+      save_sym.lvalue = true;
+      save_sym.file_local = true;
+      move_symbol_to_context(save_sym);
+    }
+  }
 
   // 11.2 parse other params
   SolidityGrammar::ParameterListT params =
@@ -356,6 +416,45 @@ bool solidity_convertert::get_function_definition(
         convert_expression_to_code(assign_rst_this);
 
         code_blockt wrapped;
+
+        // EVM revert state-rollback snapshot.  Emits at function entry:
+        //   <Contract> _sol_save_this;
+        //   _sol_save_this = *this;
+        // build_revert_rollback_block() restores `*this` from this local
+        // when it lowers a revert/require failure, so state writes that
+        // happen before the revert do not leak past the failure point.
+        //
+        // Lazy emission: only if the body actually referenced the
+        // snapshot (i.e. lowered at least one require/revert that hit
+        // build_revert_rollback_block).  Functions without
+        // require/revert keep their pre-B1 SSA shape — important for
+        // k-induction's inductive step, which struggles with the extra
+        // whole-struct copy in functions where it carries no semantic
+        // value (e.g. pure read-only `assert(...)` invariants like
+        // erc20_1's `test_supply`).  Also skipped for any function
+        // that didn't receive an `_sol_save_this` symbol in step 11.1b
+        // (constructor / event / error / library / free / internal +
+        // private).  Decl and init are emitted as two separate
+        // statements rather than a decl-with-initialiser because the
+        // right-hand side is a whole-struct dereference, and goto-symex's
+        // deref+struct simplification handles the assignment-form more
+        // reliably than a decl-init for struct types.
+        if (current_function_used_snapshot)
+        {
+          std::string save_id = id + "#_sol_save_this";
+          const symbolt *save_sym_ptr = context.find_symbol(save_id);
+          if (save_sym_ptr != nullptr)
+          {
+            exprt this_deref =
+              dereference_exprt(this_expr, save_sym_ptr->type);
+            code_declt save_decl(symbol_expr(*save_sym_ptr));
+            code_assignt save_init(
+              symbol_expr(*save_sym_ptr), this_deref);
+            wrapped.copy_to_operands(save_decl);
+            wrapped.copy_to_operands(save_init);
+          }
+        }
+
         wrapped.copy_to_operands(sa_decl);
         wrapped.copy_to_operands(st_decl);
         wrapped.copy_to_operands(assign_set_addr);
@@ -423,6 +522,106 @@ bool solidity_convertert::get_function_definition(
   current_functionDecl =
     old_functionDecl; // for __ESBMC_assume, old_functionDecl == null
   current_functionName = old_functionName;
+  current_functionId = old_functionId;
+  current_function_used_snapshot = old_function_used_snapshot;
+  return false;
+}
+
+bool solidity_convertert::build_revert_rollback_block(
+  const exprt *cond,
+  exprt &out)
+{
+  // Replaces the legacy `__ESBMC_assume(false)` / `__ESBMC_assume(cond)`
+  // lowering for `revert` / `require`.  The legacy lowering pruned the
+  // path *with* the pre-revert state writes still in the SSA — so a
+  // dispatcher iteration that wrote to `*this` then reverted would
+  // contribute its writes to the surviving (non-revert) paths' state
+  // even though, on the EVM, the revert would have rolled them back.
+  //
+  // The replacement makes the revert path feasible (no assume(false))
+  // and restores `*this` to its function-entry snapshot, then returns
+  // a nondet of the function's return type.  The caller (in real EVM
+  // semantics) would also revert when their callee reverts without a
+  // try/catch wrapper; we do not propagate the revert up the stack
+  // here — that is an over-approximation that lets the caller continue
+  // with its own pre-call writes still intact.  Sound for safety
+  // verification (admits more paths, never rules real EVM paths out).
+  //
+  // Returns true (does not set `out`) when the rollback shape is not
+  // applicable: outside any function context, no `_sol_save_this`
+  // symbol (constructors / events / errors / libraries / free
+  // functions), or a tuple-returning function (the multi-component
+  // return shape needs the existing tuple_instance plumbing — out of
+  // scope for the headline rollback fix).  In those cases the caller
+  // falls back to the legacy `__ESBMC_assume(...)` lowering.
+  if (current_functionId.empty() || current_functionDecl == nullptr)
+    return true;
+
+  std::string save_id = current_functionId + "#_sol_save_this";
+  const symbolt *save_sym = context.find_symbol(save_id);
+  if (save_sym == nullptr)
+    return true;
+
+  std::string this_id = current_functionId + "#this";
+  const symbolt *this_sym = context.find_symbol(this_id);
+  if (this_sym == nullptr)
+    return true;
+
+  // *this = _sol_save_this;
+  exprt this_expr = symbol_expr(*this_sym);
+  exprt this_deref = dereference_exprt(this_expr, save_sym->type);
+  exprt save_ref = symbol_expr(*save_sym);
+  code_assignt restore(this_deref, save_ref);
+
+  // return [nondet of return type]; — or bare `return;` when void.
+  code_returnt return_stmt;
+  if (current_functionDecl->contains("returnParameters"))
+  {
+    typet ret_type;
+    if (get_type_description(
+          (*current_functionDecl)["returnParameters"], ret_type))
+      return true;
+    if (
+      get_sol_type(ret_type) == SolidityGrammar::SolType::TUPLE_RETURNS)
+      return true;
+    if (ret_type.is_not_nil() && ret_type.id() != "empty")
+    {
+      exprt nondet_val;
+      get_nondet_expr(ret_type, nondet_val);
+      return_stmt.return_value() = nondet_val;
+    }
+  }
+
+  code_blockt block;
+  block.copy_to_operands(restore);
+  block.copy_to_operands(return_stmt);
+
+  if (cond == nullptr)
+  {
+    // Unconditional rollback (revert).
+    out = block;
+  }
+  else
+  {
+    // Conditional rollback (require): if (!cond) { restore; return; }
+    not_exprt neg_cond(*cond);
+    codet ifstmt("ifthenelse");
+    ifstmt.copy_to_operands(neg_cond, block);
+    out = ifstmt;
+  }
+  // Tag the emitted statement so `add_reentry_check` can recognise
+  // it as a leading guard and place the reentrancy assertion *after*
+  // it, mirroring the legacy `__ESBMC_assume(cond)` skip behaviour.
+  // Without this tag the reentry check fires before the require has
+  // a chance to bail out, making any `require(!lock)` mutex pattern
+  // appear to admit a reentrancy on its first call.
+  out.set("#sol_revert_rollback", true);
+  // Mark the current function as having referenced the snapshot, so
+  // get_function_definition emits the `_sol_save_this` decl + init at
+  // function entry.  Functions that never use require/revert leave
+  // this flag false and skip the snapshot — keeping their SSA shape
+  // identical to the pre-B1 baseline (important for k-induction).
+  current_function_used_snapshot = true;
   return false;
 }
 
@@ -576,12 +775,20 @@ bool solidity_convertert::add_reentry_check(
   convert_expression_to_code(call);
   // Insert after the last front requirement (__ESBMC_assume) statement,
   // as the function may only be re-entered once the requirements are fulfilled.
+  // Two leading-guard shapes are recognised:
+  //   (1) Legacy `__ESBMC_assume(cond)` — a function-call expression statement
+  //       whose op0 is the sideeffect call to __ESBMC_assume.
+  //   (2) B1 require/revert rollback — an `ifthenelse` codet that
+  //       build_revert_rollback_block tagged with `#sol_revert_rollback`.
+  // Skip past either form before placing the reentrancy assertion.
   auto &ops = body_exprt.operands();
   for (auto it = ops.begin(); it != ops.end(); ++it)
   {
     if (
       it->op0().id() == "sideeffect" &&
       it->op0().op0().name() == "__ESBMC_assume")
+      continue;
+    if (it->get_bool("#sol_revert_rollback"))
       continue;
 
     ops.insert(it, call);
