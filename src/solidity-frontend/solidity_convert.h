@@ -956,15 +956,41 @@ protected:
   bool get_bind_shadow_read(const exprt &base, exprt &shadow_out);
   void get_nondet_expr(const typet &t, exprt &new_expr);
   /// Build the EVM-revert-with-state-rollback replacement for a `revert` /
-  /// `require` lowering.  When `cond` is null, emits the unconditional form
-  ///   `{ *this = _sol_save_this; return [nondet]; }`
-  /// (used for `revert(...)`).  When `cond` is non-null, emits
-  ///   `if (!cond) { *this = _sol_save_this; return [nondet]; }`
-  /// (used for `require(cond, ...)`).  Returns true on failure (no current
-  /// function context, no snapshot symbol, or unsupported return shape such
-  /// as a tuple-returning function), in which case the caller must fall back
-  /// to the legacy `__ESBMC_assume(false)` / `__ESBMC_assume(cond)` lowering.
+  /// `require` lowering.  Two output forms based on whether the current
+  /// function actually mutates state before some require/revert
+  /// (`current_function_needs_snapshot`):
+  ///   needs_snapshot = true  →  full restore form
+  ///     `{ *this = _sol_save_this; return [nondet]; }` (revert)
+  ///     `if (!cond) { *this = _sol_save_this; return [nondet]; }` (require)
+  ///   needs_snapshot = false →  early-return form
+  ///     `{ return [nondet]; }`                              (revert)
+  ///     `if (!cond) { return [nondet]; }`                   (require)
+  /// Returns true on failure (no current function context, no snapshot
+  /// symbol, or unsupported return shape such as a tuple-returning
+  /// function), in which case the caller must fall back to the legacy
+  /// `__ESBMC_assume(false)` / `__ESBMC_assume(cond)` lowering.
   bool build_revert_rollback_block(const exprt *cond, exprt &out);
+  /// AST-level analysis: does the function body contain at least one
+  /// `require`/`revert` call that sits *after* a state-mutating
+  /// statement?  If not, all require/revert sites can lower to plain
+  /// early-return (no `*this = save` restore), saving the whole-struct
+  /// snapshot copy at function entry.  Conservatively treats anything
+  /// other than local variable declarations and require/revert
+  /// statements as a state mutation (any Assignment, any non-pure
+  /// FunctionCall, control-flow such as if/for/while).  Returns true
+  /// when the body lacks the cheap pattern and the snapshot is
+  /// needed.
+  bool detect_function_needs_snapshot(const nlohmann::json &body);
+  /// Subroutine of detect_function_needs_snapshot.  Recursively scans
+  /// a JSON expression subtree for a FunctionCall whose `kind` is not
+  /// `typeConversion` — i.e. an actual function invocation (which we
+  /// conservatively treat as a state mutation).  Used to classify the
+  /// `initialValue` of a `VariableDeclarationStatement`: a tuple
+  /// destructure such as `(bool s,) = addr.call{value:v}("");` has a
+  /// FunctionCall RHS even though the LHS is purely local, and the
+  /// call may credit/debit balances or otherwise modify state that
+  /// must be rolled back if a later require fails.
+  bool initializer_has_side_effect(const nlohmann::json &node);
   bool assign_nondet_contract_name(const std::string &_cname, exprt &new_expr);
   bool assign_param_nondet(
     const nlohmann::json &decl_ref,
@@ -1042,13 +1068,26 @@ protected:
   // Used by build_revert_rollback_block() to locate the per-function
   // `_sol_save_this` snapshot symbol from inside an expression-level lowering.
   std::string current_functionId;
-  // Set to true by build_revert_rollback_block() the first time it
-  // emits a successful rollback for the current function.  After body
+  // Set to true by build_revert_rollback_block() when it emits the
+  // full restore form (`*this = save; return`).  After body
   // conversion, get_function_definition uses this flag to gate the
   // emission of the `_sol_save_this` decl + init at function entry —
-  // so that functions which never use require/revert pay no extra
-  // SSA cost for the snapshot copy.  Reset on entry to each function.
+  // so that functions whose require/revert sites all lower to the
+  // early-return form (because no state mutation precedes them) pay
+  // no SSA cost for the snapshot copy.  Reset on entry to each
+  // function.
   bool current_function_used_snapshot = false;
+  // Result of detect_function_needs_snapshot() on entry to a function.
+  // True iff at least one require/revert site appears after a state
+  // mutation in the function body — only those sites need to roll
+  // back the pre-revert writes.  When false, build_revert_rollback_block
+  // lowers every require/revert to plain `return [nondet]` (no
+  // `*this = save`) — sound and equivalent because no state was ever
+  // mutated to roll back.  Crucially, this avoids the whole-struct
+  // snapshot copy in the common Solidity pattern where the function
+  // body is "local-decls then guard then mutations".  Reset on entry
+  // to each function.
+  bool current_function_needs_snapshot = false;
   // Track whether we are inside a Solidity "unchecked { ... }" block.
   // When true, arithmetic overflow checks should be suppressed.
   bool in_unchecked_block = false;

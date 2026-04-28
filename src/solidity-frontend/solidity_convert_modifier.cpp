@@ -35,7 +35,9 @@ bool solidity_convertert::get_function_definition(
   const std::string old_functionName = current_functionName;
   const std::string old_functionId = current_functionId;
   const bool old_function_used_snapshot = current_function_used_snapshot;
+  const bool old_function_needs_snapshot = current_function_needs_snapshot;
   current_function_used_snapshot = false;
+  current_function_needs_snapshot = false;
 
   current_functionDecl = &ast_node;
 
@@ -121,6 +123,7 @@ bool solidity_convertert::get_function_definition(
     current_functionName = old_functionName;
     current_functionId = old_functionId;
     current_function_used_snapshot = old_function_used_snapshot;
+    current_function_needs_snapshot = old_function_needs_snapshot;
     log_debug(
       "solidity",
       "@@@ Already parsed function {} in contract {}",
@@ -211,6 +214,20 @@ bool solidity_convertert::get_function_definition(
       save_sym.file_local = true;
       move_symbol_to_context(save_sym);
     }
+    // Decide up front whether this function needs the per-frame
+    // `*this` snapshot or whether all of its require/revert sites
+    // can lower to plain early-return.  Functions that wrap their
+    // body in modifiers go through get_func_modifier (where the
+    // body shape is rebuilt), so we conservatively force the
+    // snapshot for them.
+    if (has_modifier_invocation(ast_node))
+      current_function_needs_snapshot = true;
+    else if (
+      ast_node.contains("body") && !ast_node["body"].is_null())
+      current_function_needs_snapshot =
+        detect_function_needs_snapshot(ast_node["body"]);
+    else
+      current_function_needs_snapshot = false;
   }
 
   // 11.2 parse other params
@@ -524,6 +541,160 @@ bool solidity_convertert::get_function_definition(
   current_functionName = old_functionName;
   current_functionId = old_functionId;
   current_function_used_snapshot = old_function_used_snapshot;
+  current_function_needs_snapshot = old_function_needs_snapshot;
+  return false;
+}
+
+bool solidity_convertert::detect_function_needs_snapshot(
+  const nlohmann::json &body)
+{
+  // Conservative AST walk: scan top-level statements of the body
+  // (and a few well-behaved nested forms) and decide whether any
+  // require/revert site is preceded by a state-mutating statement.
+  // The cheap pattern we want to detect is:
+  //
+  //     <local declarations>
+  //     require(...);  // any number of these
+  //     revert(...);   // or these
+  //     <state mutations + everything else>
+  //
+  // For this pattern, every require/revert site precedes the
+  // mutations — restore-to-snapshot at the require failure is a
+  // semantic no-op (no mutation to undo), so we lower the failure
+  // to plain early-return and skip the snapshot copy entirely.
+  //
+  // Once a mutation is seen, every subsequent require/revert needs
+  // the full snapshot+restore form (the mutation must be rolled
+  // back).  Returning `true` here triggers the legacy snapshot
+  // emission.  Modifier-wrapped bodies, control-flow constructs
+  // (if/for/while), and unrecognised AST shapes all fall through to
+  // `true` (conservative).
+  if (!body.is_object() || !body.contains("statements") ||
+      !body["statements"].is_array())
+    return true;
+
+  bool seen_mutation = false;
+  for (const auto &stmt : body["statements"])
+  {
+    if (!stmt.is_object() || !stmt.contains("nodeType"))
+      return true;
+    const std::string ntype = stmt["nodeType"].get<std::string>();
+
+    // Local variable declaration.  The decl itself is not a
+    // mutation; but any side-effecting initialiser (a non-
+    // typeConversion FunctionCall, or a tuple-destructure with
+    // an external call rhs) IS treated as a mutation — that's
+    // how patterns like `(bool s,) = addr.call{value:v}("");`
+    // get classified.
+    if (
+      ntype == "VariableDeclarationStatement" &&
+      stmt.contains("initialValue"))
+    {
+      if (initializer_has_side_effect(stmt["initialValue"]))
+        seen_mutation = true;
+      continue;
+    }
+    if (ntype == "VariableDeclarationStatement")
+      continue;
+
+    // Bare expression statement.  Distinguish guards from
+    // mutations.
+    if (ntype == "ExpressionStatement" && stmt.contains("expression"))
+    {
+      const auto &e = stmt["expression"];
+      const std::string ent = e.value("nodeType", "");
+      if (ent == "FunctionCall")
+      {
+        // Type conversion is pure; skip.
+        if (e.value("kind", "") == "typeConversion")
+          continue;
+        // Identify require/revert by the callee's identifier.
+        std::string callee_name;
+        if (e.contains("expression"))
+        {
+          const auto &callee = e["expression"];
+          callee_name = callee.value("name", "");
+          if (callee_name.empty() && callee.contains("memberName"))
+            callee_name = callee["memberName"].get<std::string>();
+        }
+        if (callee_name == "require" || callee_name == "revert")
+        {
+          if (seen_mutation)
+            return true;
+          continue;
+        }
+        // Any other call — assume state-mutating.
+        seen_mutation = true;
+        continue;
+      }
+      if (ent == "Assignment" || ent == "UnaryOperation")
+      {
+        // Assignment of any flavour, or `delete x` / `x++` / etc.
+        // — all conservatively mutating (locals included; we
+        // don't disambiguate state vs local LHS at this scan
+        // depth).
+        seen_mutation = true;
+        continue;
+      }
+      // Bare expression with no observable effect (e.g. `x;`)
+      // — treat as no-op.
+      continue;
+    }
+
+    if (ntype == "Return" || ntype == "Break" || ntype == "Continue" ||
+        ntype == "EmitStatement" || ntype == "PlaceholderStatement")
+      continue;
+
+    if (ntype == "RevertStatement")
+    {
+      // `revert CustomError(args);` — same handling as
+      // `revert(...)` call.
+      if (seen_mutation)
+        return true;
+      continue;
+    }
+
+    // Anything else — Block, IfStatement, ForStatement,
+    // WhileStatement, DoWhileStatement, TryStatement,
+    // InlineAssembly, UncheckedBlock — is too complex to scan
+    // cheaply.  Conservative answer: snapshot is needed.
+    return true;
+  }
+
+  // Body had only locals + leading guards (and maybe later
+  // mutations with no follow-up require) — every require/revert
+  // is pre-mutation, so the snapshot is not needed.
+  return false;
+}
+
+bool solidity_convertert::initializer_has_side_effect(
+  const nlohmann::json &node)
+{
+  // Recursively scan a JSON subtree for a non-typeConversion
+  // FunctionCall.  Used by detect_function_needs_snapshot to flag
+  // VariableDeclarationStatements whose RHS performs an external
+  // call (e.g. `(bool s,) = addr.call{value:v}("");` — the call
+  // mutates global balances even though the LHS is a local).
+  if (!node.is_object() && !node.is_array())
+    return false;
+  if (node.is_object() && node.contains("nodeType"))
+  {
+    const std::string nt = node["nodeType"].get<std::string>();
+    if (nt == "FunctionCall" && node.value("kind", "") != "typeConversion")
+      return true;
+  }
+  if (node.is_object())
+  {
+    for (auto it = node.begin(); it != node.end(); ++it)
+      if (initializer_has_side_effect(it.value()))
+        return true;
+  }
+  else
+  {
+    for (const auto &child : node)
+      if (initializer_has_side_effect(child))
+        return true;
+  }
   return false;
 }
 
@@ -567,12 +738,6 @@ bool solidity_convertert::build_revert_rollback_block(
   if (this_sym == nullptr)
     return true;
 
-  // *this = _sol_save_this;
-  exprt this_expr = symbol_expr(*this_sym);
-  exprt this_deref = dereference_exprt(this_expr, save_sym->type);
-  exprt save_ref = symbol_expr(*save_sym);
-  code_assignt restore(this_deref, save_ref);
-
   // return [nondet of return type]; — or bare `return;` when void.
   code_returnt return_stmt;
   if (current_functionDecl->contains("returnParameters"))
@@ -592,8 +757,26 @@ bool solidity_convertert::build_revert_rollback_block(
     }
   }
 
+  // Choose between the full restore form and the early-return-only
+  // form based on detect_function_needs_snapshot().  The early-return
+  // form avoids the whole-struct `*this = save` copy when no state
+  // mutation could possibly precede this require/revert site
+  // (semantic no-op when seen_mutation == false).  When the cheap
+  // form is selected we deliberately do NOT set
+  // current_function_used_snapshot, so the body wrap will skip the
+  // matching snapshot decl + init at function entry and the SSA
+  // shape stays identical to the pre-B1 baseline for guard-only
+  // patterns (the common Solidity case).
   code_blockt block;
-  block.copy_to_operands(restore);
+  if (current_function_needs_snapshot)
+  {
+    // *this = _sol_save_this;
+    exprt this_expr = symbol_expr(*this_sym);
+    exprt this_deref = dereference_exprt(this_expr, save_sym->type);
+    exprt save_ref = symbol_expr(*save_sym);
+    code_assignt restore(this_deref, save_ref);
+    block.copy_to_operands(restore);
+  }
   block.copy_to_operands(return_stmt);
 
   if (cond == nullptr)
@@ -603,7 +786,7 @@ bool solidity_convertert::build_revert_rollback_block(
   }
   else
   {
-    // Conditional rollback (require): if (!cond) { restore; return; }
+    // Conditional rollback (require): if (!cond) { [restore;] return; }
     not_exprt neg_cond(*cond);
     codet ifstmt("ifthenelse");
     ifstmt.copy_to_operands(neg_cond, block);
@@ -616,12 +799,14 @@ bool solidity_convertert::build_revert_rollback_block(
   // a chance to bail out, making any `require(!lock)` mutex pattern
   // appear to admit a reentrancy on its first call.
   out.set("#sol_revert_rollback", true);
-  // Mark the current function as having referenced the snapshot, so
-  // get_function_definition emits the `_sol_save_this` decl + init at
-  // function entry.  Functions that never use require/revert leave
-  // this flag false and skip the snapshot — keeping their SSA shape
-  // identical to the pre-B1 baseline (important for k-induction).
-  current_function_used_snapshot = true;
+  // Mark the current function as actually needing the per-frame
+  // `_sol_save_this` decl + init only when the full restore form
+  // was emitted.  Lowering to early-return-only does not reference
+  // the snapshot, so the decl can be skipped — keeping the SSA
+  // shape identical to the pre-B1 baseline for guard-only
+  // functions (important for k-induction's inductive step).
+  if (current_function_needs_snapshot)
+    current_function_used_snapshot = true;
   return false;
 }
 
