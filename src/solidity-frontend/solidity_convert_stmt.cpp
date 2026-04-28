@@ -166,6 +166,20 @@ bool solidity_convertert::get_block(
         expr_backBlockDecl.clear();
       }
 
+      // Per-rollback granularity for B1's revert state-rollback:
+      // OR `statement_is_mutation_top_level` of the AST statement we
+      // just lowered into `current_function_seen_mutation` so the next
+      // `build_revert_rollback_block` invocation knows whether to
+      // emit the full `*this = save; return [nondet]` form (mutation
+      // observed earlier) or the cheap `return [nondet]` early-return
+      // form.  Done after the lowering so any require/revert *inside*
+      // this statement reads the prior value of the flag (the
+      // mutation in this statement only counts toward subsequent
+      // statements).  The flag is itself reset on entry to each
+      // function in get_function_definition.
+      if (statement_is_mutation_top_level(stmt_kv.value()))
+        current_function_seen_mutation = true;
+
       ++ctr;
     }
     log_debug("solidity", " \t@@@ CompoundStmt has {} statements", ctr);

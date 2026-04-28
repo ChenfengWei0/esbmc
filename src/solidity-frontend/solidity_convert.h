@@ -957,12 +957,12 @@ protected:
   void get_nondet_expr(const typet &t, exprt &new_expr);
   /// Build the EVM-revert-with-state-rollback replacement for a `revert` /
   /// `require` lowering.  Two output forms based on whether the current
-  /// function actually mutates state before some require/revert
-  /// (`current_function_needs_snapshot`):
-  ///   needs_snapshot = true  →  full restore form
+  /// rollback site sits after a state mutation in the same function
+  /// body (`current_function_seen_mutation`):
+  ///   seen_mutation = true   →  full restore form
   ///     `{ *this = _sol_save_this; return [nondet]; }` (revert)
   ///     `if (!cond) { *this = _sol_save_this; return [nondet]; }` (require)
-  ///   needs_snapshot = false →  early-return form
+  ///   seen_mutation = false  →  early-return form
   ///     `{ return [nondet]; }`                              (revert)
   ///     `if (!cond) { return [nondet]; }`                   (require)
   /// Returns true on failure (no current function context, no snapshot
@@ -970,18 +970,14 @@ protected:
   /// function), in which case the caller must fall back to the legacy
   /// `__ESBMC_assume(false)` / `__ESBMC_assume(cond)` lowering.
   bool build_revert_rollback_block(const exprt *cond, exprt &out);
-  /// AST-level analysis: does the function body contain at least one
-  /// `require`/`revert` call that sits *after* a state-mutating
-  /// statement?  If not, all require/revert sites can lower to plain
-  /// early-return (no `*this = save` restore), saving the whole-struct
-  /// snapshot copy at function entry.  Conservatively treats anything
-  /// other than local variable declarations and require/revert
-  /// statements as a state mutation (any Assignment, any non-pure
-  /// FunctionCall, control-flow such as if/for/while).  Returns true
-  /// when the body lacks the cheap pattern and the snapshot is
-  /// needed.
-  bool detect_function_needs_snapshot(const nlohmann::json &body);
-  /// Subroutine of detect_function_needs_snapshot.  Recursively scans
+  /// Per-statement AST classifier feeding the per-rollback granularity:
+  /// returns true when the given top-level body statement is
+  /// conservatively state-mutating, false for pure-decls / guards /
+  /// return-flow / bare value expressions.  See definition for the
+  /// full taxonomy.  Called from get_block after each statement is
+  /// converted; OR'd into `current_function_seen_mutation`.
+  bool statement_is_mutation_top_level(const nlohmann::json &stmt);
+  /// Subroutine of statement_is_mutation_top_level.  Recursively scans
   /// a JSON expression subtree for a FunctionCall whose `kind` is not
   /// `typeConversion` — i.e. an actual function invocation (which we
   /// conservatively treat as a state mutation).  Used to classify the
@@ -991,6 +987,7 @@ protected:
   /// call may credit/debit balances or otherwise modify state that
   /// must be rolled back if a later require fails.
   bool initializer_has_side_effect(const nlohmann::json &node);
+
   bool assign_nondet_contract_name(const std::string &_cname, exprt &new_expr);
   bool assign_param_nondet(
     const nlohmann::json &decl_ref,
@@ -1077,17 +1074,18 @@ protected:
   // no SSA cost for the snapshot copy.  Reset on entry to each
   // function.
   bool current_function_used_snapshot = false;
-  // Result of detect_function_needs_snapshot() on entry to a function.
-  // True iff at least one require/revert site appears after a state
-  // mutation in the function body — only those sites need to roll
-  // back the pre-revert writes.  When false, build_revert_rollback_block
-  // lowers every require/revert to plain `return [nondet]` (no
-  // `*this = save`) — sound and equivalent because no state was ever
-  // mutated to roll back.  Crucially, this avoids the whole-struct
-  // snapshot copy in the common Solidity pattern where the function
-  // body is "local-decls then guard then mutations".  Reset on entry
-  // to each function.
-  bool current_function_needs_snapshot = false;
+  // Forward-incremental flag updated by get_block as it walks the
+  // body's top-level statements: ORed with `statement_is_mutation_top_level(stmt)`
+  // after each statement is converted.  build_revert_rollback_block
+  // reads this flag to decide whether the rollback at the current
+  // site needs to restore `*this` (mutation has been observed
+  // earlier in the body — emit `*this = save; return [nondet]`) or
+  // can lower to plain early-return (no mutation yet — emit just
+  // `return [nondet]`).  Per-rollback granularity replaces the v2
+  // function-level decision so that a function with mixed
+  // pre/post-mutation guards only pays the snapshot SSA cost on
+  // the post-mutation guards.  Reset on entry to each function.
+  bool current_function_seen_mutation = false;
   // Track whether we are inside a Solidity "unchecked { ... }" block.
   // When true, arithmetic overflow checks should be suppressed.
   bool in_unchecked_block = false;
