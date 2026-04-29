@@ -513,16 +513,24 @@ bool solidity_convertert::get_var_decl(
     move_symbol_to_context(len_sym);
   }
 
-  // 6c. for dynarray state vars, create auxiliary _dynarray_len variable
+  // 6c. for dynarray state vars, create auxiliary _dynarray_len variable.
+  //
+  // T1.1 Stage S1: the length companion is now an addr-keyed infinite array
+  // (`array_typet(uint256, infinity)`) instead of a global scalar.  Per-
+  // instance length is read/written as `<arr>_dynarray_len[this->$address]`
+  // via the get_dynarr_len_ref helper.  Two `new C()` instances no longer
+  // alias on length.
   if (is_dynarray_state)
   {
     std::string len_name = name + "_dynarray_len";
     std::string len_id = id + "_dynarray_len";
+    typet len_arr_t =
+      array_typet(unsignedbv_typet(256), exprt("infinity"));
     symbolt len_sym;
     get_default_symbol(
       len_sym,
       debug_modulename,
-      unsignedbv_typet(256),
+      len_arr_t,
       len_name,
       len_id,
       location_begin);
@@ -530,7 +538,7 @@ bool solidity_convertert::get_var_decl(
     len_sym.static_lifetime = true;
     len_sym.file_local = true;
     len_sym.is_extern = false;
-    len_sym.value = gen_zero(unsignedbv_typet(256));
+    len_sym.value = gen_zero(get_complete_type(len_arr_t, ns), true);
     len_sym.value.zero_initializer(true);
     move_symbol_to_context(len_sym);
   }
@@ -667,11 +675,19 @@ bool solidity_convertert::get_var_decl(
         return true;
       solidity_gen_typecast(ns, size_expr, unsignedbv_typet(256));
 
-      std::string len_id = id + "_dynarray_len";
-      const symbolt *len_sym = context.find_symbol(len_id);
-      assert(len_sym);
-      symbolt &len_mut = const_cast<symbolt &>(*len_sym);
-      len_mut.value = size_expr;
+      // T1.1 Stage S1: the length companion is now addr-keyed.  A
+      // decl-time set of the symbol's static value (`len_mut.value =
+      // size_expr`) cannot carry a per-instance length any more — there
+      // is no `this` at decl-parse time.  For state-var dyn-arrays
+      // declared with an explicit `= new uint[](N)` initializer, the
+      // matching ctor-time runtime assign is emitted via the
+      // `arr = new uint[](n)` ARRAY_CALLOC branch in
+      // solidity_convert_expr.cpp:4839+ when the initializer is
+      // evaluated as a state-var assignment.  Here we leave the
+      // symbol's static value at gen_zero (the default for the array
+      // type), so each instance starts with length 0 until a runtime
+      // write occurs.
+      (void)id; // suppress unused-variable warning if id is otherwise unused
     }
     // Zero-initialize the infinite array so elements read as 0
     added_symbol.value = gen_zero(get_complete_type(t, ns), true);

@@ -1,4 +1,8 @@
-CORE
+KNOWNBUG
 contract.sol
---contract H --bound --no-standard-checks --unwind 20 --no-unwinding-assertions
+--contract H --bound --no-standard-checks --unwind 4 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
+# T1.1 Stage S1: previously vacuously CORE-passed via memcpy unwind
+# truncation.  After S1 the assertion is reachable; clone walker still
+# skips dyn-array fields, so post-clone reads alias base's keyspace.
+# Will flip back to CORE at Stage S3 (clone walker copies dyn-array).

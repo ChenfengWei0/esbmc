@@ -685,7 +685,8 @@ bool solidity_convertert::get_sol_builtin_ref(
               base.identifier().as_string() + "_dynarray_len";
             const symbolt *len_sym = ns.lookup(len_id);
             assert(len_sym);
-            new_expr = symbol_expr(*len_sym);
+            if (get_dynarr_len_ref(*len_sym, new_expr))
+              return true;
           }
           // dynamic array (pointer model)
           else if (solt == SolidityGrammar::SolType::DYNARRAY)
@@ -792,12 +793,16 @@ bool solidity_convertert::get_sol_builtin_ref(
           solt == SolidityGrammar::SolType::DYNARRAY && base.is_symbol() &&
           base.type().get_bool("#sol_dynarray_state"))
         {
-          // Dynarray state var: write element at len, then increment len
+          // Dynarray state var: write element at len, then increment len.
+          // T1.1 Stage S1: `len_ref` is now `<arr>_dynarray_len[this->$address]`
+          // (addr-keyed) so two `new C()` instances no longer share length.
           assert(base.is_symbol());
           std::string len_id = base.identifier().as_string() + "_dynarray_len";
           const symbolt *len_sym = ns.lookup(len_id);
           assert(len_sym);
-          exprt len_ref = symbol_expr(*len_sym);
+          exprt len_ref;
+          if (get_dynarr_len_ref(*len_sym, len_ref))
+            return true;
           exprt one = constant_exprt(
             integer2binary(1, bv_width(unsignedbv_typet(256))),
             "1",

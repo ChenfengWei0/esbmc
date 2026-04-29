@@ -835,6 +835,37 @@ void solidity_convertert::get_size_expr(const exprt &rhs, exprt &size_expr)
     uint_type());
 }
 
+// T1.1 Stage S1: addr-keyed dyn-array length helper.  See
+// solidity_convert.h:get_dynarr_len_ref docstring.
+bool solidity_convertert::get_dynarr_len_ref(
+  const symbolt &len_sym,
+  exprt &out)
+{
+  exprt this_expr;
+  if (current_functionDecl)
+  {
+    if (get_func_decl_this_ref(*current_functionDecl, this_expr))
+      return true;
+  }
+  else if (!current_baseContractName.empty())
+  {
+    if (get_ctor_decl_this_ref(current_baseContractName, this_expr))
+      return true;
+  }
+  else
+  {
+    log_error(
+      "get_dynarr_len_ref: no current function or contract context for {}",
+      len_sym.name.as_string());
+    return true;
+  }
+
+  exprt addr_expr = member_exprt(this_expr, "$address", addr_t);
+  out = index_exprt(
+    symbol_expr(len_sym), addr_expr, unsignedbv_typet(256));
+  return false;
+}
+
 void solidity_convertert::store_update_dyn_array(
   const exprt &dyn_arr,
   const exprt &size_expr,

@@ -3220,11 +3220,13 @@ bool solidity_convertert::get_binary_operator_expr(
           count++;
         }
       }
-      // Set length
+      // Set length — T1.1 Stage S1: addr-keyed via get_dynarr_len_ref.
       std::string len_id = lhs.identifier().as_string() + "_dynarray_len";
       const symbolt *len_sym = ns.lookup(len_id);
       assert(len_sym);
-      exprt len_ref = symbol_expr(*len_sym);
+      exprt len_ref;
+      if (get_dynarr_len_ref(*len_sym, len_ref))
+        return true;
       exprt count_expr = constant_exprt(
         integer2binary(count, bv_width(unsignedbv_typet(256))),
         std::to_string(count),
@@ -3340,11 +3342,13 @@ bool solidity_convertert::get_binary_operator_expr(
       copy_loop.body() = body_assign;
       move_to_front_block(copy_loop);
 
-      // 3. _dynarray_len = _copy_len
+      // 3. _dynarray_len = _copy_len — T1.1 Stage S1: addr-keyed.
       std::string dlen_id = lhs.identifier().as_string() + "_dynarray_len";
       const symbolt *dlen_sym = ns.lookup(dlen_id);
       assert(dlen_sym);
-      exprt dlen_ref = symbol_expr(*dlen_sym);
+      exprt dlen_ref;
+      if (get_dynarr_len_ref(*dlen_sym, dlen_ref))
+        return true;
       exprt dlen_assign = side_effect_exprt("assign", unsignedbv_typet(256));
       solidity_gen_typecast(ns, len_var, unsignedbv_typet(256));
       dlen_assign.copy_to_operands(dlen_ref, len_var);
@@ -3406,10 +3410,13 @@ bool solidity_convertert::get_binary_operator_expr(
         return true;
       solidity_gen_typecast(ns, size_expr, unsignedbv_typet(256));
 
+      // T1.1 Stage S1: addr-keyed via get_dynarr_len_ref.
       std::string len_id = lhs.identifier().as_string() + "_dynarray_len";
       const symbolt *len_sym = ns.lookup(len_id);
       assert(len_sym);
-      exprt len_ref = symbol_expr(*len_sym);
+      exprt len_ref;
+      if (get_dynarr_len_ref(*len_sym, len_ref))
+        return true;
       exprt len_assign = side_effect_exprt("assign", unsignedbv_typet(256));
       len_assign.copy_to_operands(len_ref, size_expr);
       convert_expression_to_code(len_assign);

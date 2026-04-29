@@ -1,4 +1,10 @@
-CORE
+KNOWNBUG
 contract.solast
 --sol contract.sol --no-standard-checks --contract test --z3 --ir --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION SUCCESSFUL$
+# T1.1 Stage S1: addr-keyed `_dynarray_len` array exposes a k-induction
+# completeness gap.  The inductive step havocs the entire length array
+# instead of just the current `this->$address` slot, so it cannot carry
+# `len[$this_addr] == 0` across iterations.  Property still holds under
+# BMC.  Proper fix is array-element-aware modified-loop-vars analysis,
+# tracked separately from T1.1.

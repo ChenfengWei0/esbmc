@@ -549,6 +549,14 @@ protected:
     std::string &arr_name,
     std::string &arr_id);
 
+  // T1.1 Stage S1: dyn-array per-instance length.  The state-var dynarray
+  // length symbol `<arr>_dynarray_len` was a global scalar `uint256`; it is
+  // now an addr-keyed infinite array `array_typet(uint256, infinity)`, so
+  // every read/write site needs to index by `this->$address`.  This helper
+  // computes `len_sym[this->$address]` for the current function or ctor
+  // context.  Returns true on failure (no `this` resolvable).
+  bool get_dynarr_len_ref(const symbolt &len_sym, exprt &out);
+
   // Build a `mapping_t` struct initializer expression of the form
   //   { base = &_ESBMC_inf_<cname>_<path_name>[0],
   //     mid  = next_mapping_mid++,
