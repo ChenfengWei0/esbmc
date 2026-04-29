@@ -681,8 +681,8 @@ bool solidity_convertert::get_statement(
       // via `using { f } for T;`). In that case the precise string→bytes
       // conversion is not representable, so we over-approximate the
       // return value with llc_nondet_bytes() — a BytesDynamic with
-      // length ∈ [32, 1024] and initialized == 1. [APPROX: OVER]
-      // Recorded in CLAUDE_Solidity.md approximation ledger #21.
+      // fully-nondet length (post-T1.2) and initialized == 1.
+      // [APPROX: OVER] Recorded in approximation ledger #21.
       exprt dummy_pool;
       if (get_dynamic_pool(stmt["expression"], dummy_pool))
       {

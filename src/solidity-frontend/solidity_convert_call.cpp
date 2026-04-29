@@ -614,17 +614,13 @@ bool solidity_convertert::assign_param_nondet(
       }
       else if (get_sol_type(t) == SolidityGrammar::SolType::BYTES_DYN)
       {
-        // [APPROX: OVER] For `bytes calldata` / `bytes memory` entry-harness
-        // parameters, build a bounded nondet BytesDynamic via
-        // llc_nondet_bytes() so that init/bounds checks inside the callee do
-        // not fire spuriously on fully-unconstrained length values.
-        // llc_nondet_bytes assumes length ∈ [32, 1024] and initialized==1
-        // (see solidity_builtins.c). Direct user declarations (e.g.
-        // `bytes memory x;`) still flow through the normal struct-init path
-        // and keep precise bounds/init checks, so real OOB bugs in user code
-        // are preserved. False positives: none for small-index reads.
-        // False negatives: OOB at index >1024, or properties that depend on
-        //   a length outside [32, 1024], cannot be detected via the harness.
+        // For `bytes calldata` / `bytes memory` entry-harness parameters,
+        // build a nondet BytesDynamic via llc_nondet_bytes() so that
+        // init-checks inside the callee do not fire spuriously. The helper
+        // sets initialized==1 and capacity==length; length is fully nondet
+        // size_t (post-T1.2). Direct user declarations (e.g. `bytes memory
+        // x;`) still flow through the normal struct-init path. Contracts
+        // that need a tighter length range must require() it explicitly.
         side_effect_expr_function_callt nondet_b;
         get_library_function_call_no_args(
           "llc_nondet_bytes",
