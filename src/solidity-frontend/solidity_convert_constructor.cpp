@@ -973,6 +973,116 @@ bool solidity_convertert::build_tod_clone_helper(
   convert_expression_to_code(assume_call);
   func_body.move_to_operands(assume_call);
 
+  // 5b. T1.1 Stage S3: per-state-var dyn-array length+element copy.
+  //
+  //     State-var dyn-arrays live OUTSIDE the contract struct (they
+  //     are global SMT arrays, see is_dynarray_state branch in
+  //     get_var_decl), so the `*c = *base` struct copy above doesn't
+  //     touch them — the walker at step 6 also explicitly skips them.
+  //     Instead, iterate `dynarray_state_vars[c_name]` collected at
+  //     decl-time and emit, per dyn-array:
+  //       1. `<arr>_dynarray_len[clone.addr] = <arr>_dynarray_len[base.addr]`
+  //       2. `for (i = 0; i < clone.len; i++)`
+  //          `  <arr>[fold(clone.addr, i)] = <arr>[fold(base.addr, i)]`
+  //     The for-loop is bounded by `--unwind`; long arrays need a
+  //     larger unwind to fully copy (analogous to `_ESBMC_arrcpy`'s
+  //     memcpy-fallback bound).
+  {
+    auto it = dynarray_state_vars.find(c_name);
+    if (it != dynarray_state_vars.end())
+    {
+      const std::string debug_modulename =
+        get_modulename_from_path(absolute_path);
+      const typet uint256_t_typet = unsignedbv_typet(256);
+      const typet uint64_t_typet = unsignedbv_typet(64);
+      const typet bool_t = bool_typet();
+
+      for (const auto &[var_id, elem_type] : it->second)
+      {
+        const std::string len_id_str = var_id + "_dynarray_len";
+        const symbolt *arr_sym = context.find_symbol(var_id);
+        const symbolt *len_sym = context.find_symbol(len_id_str);
+        if (!arr_sym || !len_sym)
+          continue;
+
+        // base.$address and clone.$address as exprs
+        exprt base_addr_e = member_exprt(base_deref, "$address", addr_t);
+        exprt clone_addr_e = member_exprt(c_deref, "$address", addr_t);
+
+        // 1. Copy length:
+        //      <arr>_dynarray_len[clone.addr] = <arr>_dynarray_len[base.addr]
+        exprt clone_len_ref = index_exprt(
+          symbol_expr(*len_sym), clone_addr_e, uint256_t_typet);
+        exprt base_len_ref = index_exprt(
+          symbol_expr(*len_sym), base_addr_e, uint256_t_typet);
+        code_assignt len_copy(clone_len_ref, base_len_ref);
+        func_body.move_to_operands(len_copy);
+
+        // 2. Per-element copy loop.
+        //    Counter symbol _i.
+        std::string ctr_name, ctr_id;
+        get_aux_var(ctr_name, ctr_id);
+        symbolt ctr_sym;
+        get_default_symbol(
+          ctr_sym, debug_modulename, uint256_t_typet, ctr_name, ctr_id, c_loc);
+        ctr_sym.lvalue = true;
+        ctr_sym.file_local = true;
+        ctr_sym.value = gen_zero(uint256_t_typet);
+        auto &added_ctr = *move_symbol_to_context(ctr_sym);
+        exprt ctr_ref = symbol_expr(added_ctr);
+
+        code_declt ctr_decl(ctr_ref);
+        ctr_decl.operands().push_back(gen_zero(uint256_t_typet));
+        func_body.move_to_operands(ctr_decl);
+
+        code_assignt init_assign(ctr_ref, gen_zero(uint256_t_typet));
+        // Re-read clone length each iteration for the cond — cheap and
+        // matches the pattern used by other state-var copy loops.
+        exprt cond = gen_binary("<", bool_t, ctr_ref, clone_len_ref);
+        exprt one = constant_exprt(
+          integer2binary(1, bv_width(uint256_t_typet)),
+          "1",
+          uint256_t_typet);
+        code_assignt iter_assign(
+          ctr_ref, gen_binary("+", uint256_t_typet, ctr_ref, one));
+
+        // Body: arr[fold(clone.addr, i)] = arr[fold(base.addr, i)].
+        side_effect_expr_function_callt clone_fold;
+        get_library_function_call_no_args(
+          "_ESBMC_dynarr_idx",
+          "c:@F@_ESBMC_dynarr_idx",
+          uint64_t_typet,
+          c_loc,
+          clone_fold);
+        clone_fold.arguments().push_back(clone_addr_e);
+        clone_fold.arguments().push_back(ctr_ref);
+
+        side_effect_expr_function_callt base_fold;
+        get_library_function_call_no_args(
+          "_ESBMC_dynarr_idx",
+          "c:@F@_ESBMC_dynarr_idx",
+          uint64_t_typet,
+          c_loc,
+          base_fold);
+        base_fold.arguments().push_back(base_addr_e);
+        base_fold.arguments().push_back(ctr_ref);
+
+        exprt clone_elem =
+          index_exprt(symbol_expr(*arr_sym), clone_fold, elem_type);
+        exprt base_elem =
+          index_exprt(symbol_expr(*arr_sym), base_fold, elem_type);
+        code_assignt body_assign(clone_elem, base_elem);
+
+        code_fort copy_loop;
+        copy_loop.init() = init_assign;
+        copy_loop.cond() = cond;
+        copy_loop.iter() = iter_assign;
+        copy_loop.body() = body_assign;
+        func_body.move_to_operands(copy_loop);
+      }
+    }
+  }
+
   // 6. Per-field deep-copy fixup pass.
   //
   //    `*c = *base` above is a bit-level struct copy.  For fields that

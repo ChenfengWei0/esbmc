@@ -541,6 +541,15 @@ bool solidity_convertert::get_var_decl(
     len_sym.value = gen_zero(get_complete_type(len_arr_t, ns), true);
     len_sym.value.zero_initializer(true);
     move_symbol_to_context(len_sym);
+
+    // T1.1 Stage S3: register this state-var dyn-array so the clone
+    // helper can emit per-instance length+element copy.  Keyed by the
+    // current contract; inherited dyn-arrays land under the derived
+    // contract on its decl pass (merge_inheritance_ast already
+    // duplicates the AST node).
+    if (!current_contractName.empty())
+      dynarray_state_vars[current_contractName].emplace_back(
+        id, t.subtype());
   }
 
   // 6d. for mapping(K => V[]) state-var: create auxiliary _mapdynarr_len

@@ -1206,6 +1206,16 @@ protected:
   // src/c2goto/library/solidity/solidity_mapping.c for the runtime side.
   uint64_t next_mapping_mid = 1;
 
+  // T1.1 Stage S3: per-contract list of state-var dyn-arrays so the clone
+  // helper can iterate them and emit per-instance length+element copy at
+  // clone time.  Key: contract name. Value: list of (var symbol-id,
+  // element type).  Populated during get_var_decl when is_dynarray_state
+  // fires.  Inherited dyn-arrays appear under each derived contract that
+  // re-processes them via merge_inheritance_ast.
+  std::map<std::string,
+           std::vector<std::pair<std::string, typet>>>
+    dynarray_state_vars;
+
   // bound setting
   bool is_bound;
 

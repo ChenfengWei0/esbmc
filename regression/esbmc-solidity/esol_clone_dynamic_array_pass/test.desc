@@ -2,7 +2,15 @@ KNOWNBUG
 contract.sol
 --contract H --bound --no-standard-checks --unwind 4 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
-# T1.1 Stage S1: previously vacuously CORE-passed via memcpy unwind
-# truncation.  After S1 the assertion is reachable; clone walker still
-# skips dyn-array fields, so post-clone reads alias base's keyspace.
-# Will flip back to CORE at Stage S3 (clone walker copies dyn-array).
+# T1.1 Stage S3: clone walker now copies dyn-array length+elements per
+# instance — sister test esol_clone_dynamic_array_isolation_pass
+# CORE-passes — but this test pushes 2 elements then asserts both
+# round-trip through clone.  The XOR-based hash-fold
+# _ESBMC_dynarr_idx is not collision-resistant against adversarial
+# nondet addresses: the SMT solver picks clone.addr such that the
+# fold of clone.addr with index 1 collides with another slot, forging
+# a CEX where clone.get with index 1 returns an adversarial value.
+# Robust fix: switch the SMT-array shape from 1D fold-keyed to 2D
+# addr-then-index — tracked as a T1.1 follow-up.
+# Property holds at low --unwind 1-2 where fewer instances exist and
+# the solver has less freedom to find collisions.

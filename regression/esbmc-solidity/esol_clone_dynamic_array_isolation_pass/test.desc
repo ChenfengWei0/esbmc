@@ -1,9 +1,4 @@
-KNOWNBUG
+CORE
 contract.sol
 --contract H --bound --no-standard-checks --unwind 4 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
-# T1.1 Stage S1: previously vacuously CORE-passed via memcpy unwind
-# truncation (heap-malloc model produced 0 VCC, assertion unreachable).
-# After S1 unifies on the SMT-array model the assertion is reachable but
-# clone elements still alias base's keyspace.  Will flip back to CORE at
-# Stage S3 (clone walker copies dyn-array elements + length).
