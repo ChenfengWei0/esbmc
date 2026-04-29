@@ -59,6 +59,7 @@ solidity_convertert::solidity_convertert(
     is_pointer_check(true),
     nondet_bool_expr(),
     nondet_uint_expr(),
+    nondet_uint256_expr(),
     nondet_bytes_dynamic_expr()
 {
   std::ifstream in(_contract_path);
@@ -101,9 +102,19 @@ solidity_convertert::solidity_convertert(
     "nondet_bool", "c:@F@nondet_bool", bool_t, l, nondet_bool_expr);
   get_library_function_call_no_args(
     "nondet_uint", "c:@F@nondet_uint", uint_type(), l, nondet_uint_expr);
+  // 256-bit nondet for fields that legitimately span uint256 (balance,
+  // codehash, code). Distinct from nondet_uint_expr so 32-bit uses
+  // (e.g. switch case selectors) don't accidentally widen.
+  get_library_function_call_no_args(
+    "nondet_uint256",
+    "c:@F@nondet_uint256",
+    unsignedbv_typet(256),
+    l,
+    nondet_uint256_expr);
 
   set_sol_type(nondet_bool_expr.type(), SolidityGrammar::SolType::BOOL);
   set_sol_type(nondet_uint_expr.type(), SolidityGrammar::SolType::UINT256);
+  set_sol_type(nondet_uint256_expr.type(), SolidityGrammar::SolType::UINT256);
 
   addr_t = unsignedbv_typet(160);
   set_sol_type(addr_t, SolidityGrammar::SolType::ADDRESS);

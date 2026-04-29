@@ -2933,14 +2933,34 @@ bool solidity_convertert::model_transaction(
   convert_expression_to_code(assign_val);
   front_block.move_to_operands(assign_val);
 
-  // if(this.balance < val) return false;
-  exprt less_than = exprt("<", bool_t);
-  less_than.copy_to_operands(this_balance, value);
-  codet cmp_less_than("ifthenelse");
-  code_returnt ret_false;
-  ret_false.return_value() = false_exprt();
-  cmp_less_than.copy_to_operands(less_than, ret_false);
-  front_block.move_to_operands(cmp_less_than);
+  // Solidity 0.8 `new C{value:V}()` and `target.method{value:V}(...)`
+  // both REVERT on insufficient sender balance — they are not
+  // early-returns. A `return false` here would let callers keep
+  // executing past the revert and observe a partially-initialised
+  // state (e.g. constructor exits before assigning state-variable
+  // pointers, leaving them at their initial NONDET value, which
+  // breaks subsequent `address(stateVar).balance` reads). Model the
+  // revert as __ESBMC_assume(false) so the infeasible path is pruned
+  // at the SMT level — matches the pattern in get_transfer_definition.
+  // if(this.balance < val) __ESBMC_assume(false);
+  {
+    exprt less_than = exprt("<", bool_t);
+    less_than.copy_to_operands(this_balance, value);
+    codet cmp_less_than("ifthenelse");
+
+    side_effect_expr_function_callt assume_call;
+    get_library_function_call_no_args(
+      "__ESBMC_assume",
+      "c:@F@__ESBMC_assume",
+      empty_typet(),
+      loc,
+      assume_call);
+    assume_call.arguments().push_back(false_exprt());
+    convert_expression_to_code(assume_call);
+
+    cmp_less_than.copy_to_operands(less_than, assume_call);
+    front_block.move_to_operands(cmp_less_than);
+  }
 
   // this.balance -= _val;
   exprt sub_assign = side_effect_exprt("assign-", val_t);

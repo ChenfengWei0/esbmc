@@ -116,3 +116,40 @@ __ESBMC_HIDE:;
   sol_max_cnt = 0;
   esbmc_array_count = 0;
 }
+
+/* Per-tx ambient reseed. Called from the per-contract dispatcher
+ * while-loop prologue (_ESBMC_Main_<C>) so each iteration models a
+ * distinct transaction with its own sender / value / block context.
+ * block.number and block.timestamp are constrained non-decreasing
+ * (real EVM is monotone). msg_sig, block_chainid, _gaslimit are NOT
+ * touched: msg_sig is set by per-method dispatch, chainid is
+ * chain-constant, _gaslimit is a per-call intrinsic via gasleft().
+ * The constructor's binding `owner = msg.sender` runs BEFORE the
+ * first call to this helper, so the deployer identity stays stored
+ * and per-iter senders are properly distinct. */
+void _sol_per_tx_reseed()
+{
+__ESBMC_HIDE:;
+  /* tx-envelope state */
+  msg_data    = nondet_uint256();
+  msg_sender  = (address_t)nondet_uint();
+  msg_value   = nondet_uint256();
+  tx_origin   = (address_t)nondet_uint();
+  tx_gasprice = nondet_uint256();
+
+  /* block state — monotonic on number / timestamp */
+  uint256_t _new_bn = nondet_uint256();
+  __ESBMC_assume(_new_bn >= block_number);
+  block_number = _new_bn;
+
+  uint256_t _new_ts = nondet_uint256();
+  __ESBMC_assume(_new_ts >= block_timestamp);
+  block_timestamp = _new_ts;
+
+  block_basefee     = nondet_uint256();
+  block_blobbasefee = nondet_uint256();
+  block_coinbase    = (address_t)nondet_uint();
+  block_difficulty  = nondet_uint256();
+  block_gaslimit    = nondet_uint256();
+  block_prevrandao  = nondet_uint256();
+}

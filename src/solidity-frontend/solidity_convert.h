@@ -603,6 +603,16 @@ protected:
   bool multi_transaction_verification(const std::string &contractName);
   bool multi_contract_verification_bound(std::set<std::string> &tgt_set);
   bool multi_contract_verification_unbound(std::set<std::string> &tgt_set);
+  // Emit a call to _sol_per_tx_reseed() at the top of a dispatcher
+  // while-loop iteration so each iter models a distinct EVM tx with
+  // its own sender / value / block context. Always fires — frozen-
+  // sender behaviour was itself unsound, so there is no opt-out.
+  // Accepts `codet&` (not `code_blockt&`) so it can be reused at
+  // call sites that declare `codet while_body` (e.g. site A in
+  // multi_transaction_verification) and `code_blockt while_body`
+  // (e.g. sites B/C in build_bound_drive_helper /
+  // build_esol_state_forward_helper).
+  void emit_per_tx_reseed_call(codet &out);
   bool prepare_harness_entry_functions(
     const std::set<std::string> &cname_set,
     std::vector<const symbolt *> &entry_syms);

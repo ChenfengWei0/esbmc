@@ -506,6 +506,9 @@ bool solidity_convertert::build_bound_drive_helper(
   code_blockt while_body;
   while_body.make_block();
 
+  // Per-tx ambient reseed at the top of each dispatcher iter.
+  emit_per_tx_reseed_call(while_body);
+
   bool skip_vis =
     config.options.get_option("no-visibility").empty() ? false : true;
 
@@ -693,6 +696,9 @@ bool solidity_convertert::build_esol_state_forward_helper(
   // 3. while-loop body: nondet-dispatch over every public/external method
   code_blockt while_body;
   while_body.make_block();
+
+  // Per-tx ambient reseed at the top of each dispatcher iter.
+  emit_per_tx_reseed_call(while_body);
 
   bool skip_vis =
     config.options.get_option("no-visibility").empty() ? false : true;
@@ -922,10 +928,13 @@ bool solidity_convertert::build_tod_clone_helper(
   const symbolt *addr_sym =
     context.find_symbol(prefix + c_name); // just to sanity-check struct exists
   (void)addr_sym;
-  // Build a nondet_uint(160) expression.
+  // c->$address = (address_t)nondet_uint().
+  // Addresses stay narrow (32-bit zero-extended to 160) to keep the
+  // mapping hash-fold collision-free; broadening the address space
+  // here breaks `esol_clone_mapping_isolation_pass` because the
+  // 64-bit XOR fold in `_ESBMC_map_idx` becomes ambiguous over
+  // 160-bit inputs.
   side_effect_expr_function_callt nondet_addr;
-  // `nondet_uint` returns a 256-bit unsignedbv; narrow it via typecast to
-  // the address type (160 bits) after the call.
   get_library_function_call_no_args(
     "nondet_uint",
     "c:@F@nondet_uint",
@@ -2250,12 +2259,20 @@ bool solidity_convertert::get_new_object_ctor_call(
   else
   {
     // Base *x = new Base();
-    exprt tmp_obj;
-    get_temporary_object(call, tmp_obj);
-    convert_expression_to_code(tmp_obj);
+    // Wrap the constructor call directly in a code_expression and feed it as
+    // the cpp_new initializer. This lets cpp_new_initializer's
+    // replace_new_object rewrite the call's `&new_object` first arg into
+    // `new_ptr` so the constructor runs on the heap allocation. A prior
+    // get_temporary_object()+convert_expression_to_code() wrapping caused
+    // remove_temporary_object to materialise a stack-local tmp$N and
+    // replace `new_object` with `&tmp$N` first, leaving the registry in
+    // _ESBMC_get_unique_address pointing at a dead local — which broke
+    // address(new_C).balance reads.
+    codet code_expr("expression");
+    code_expr.copy_to_operands(call);
     new_expr = side_effect_exprt(
       "cpp_new", pointer_typet(symbol_typet(prefix + contract_name)));
-    new_expr.initializer(tmp_obj);
+    new_expr.initializer(code_expr);
   }
   return false;
 }
@@ -2298,13 +2315,13 @@ bool solidity_convertert::get_implicit_ctor_ref(
   }
   else
   {
-    // Base *x = new Base();
-    exprt tmp_obj;
-    get_temporary_object(call, tmp_obj);
-    convert_expression_to_code(tmp_obj);
+    // Base *x = new Base(); — see comment in get_new_object_ctor_call
+    // above for why we skip the temporary_object wrapping.
+    codet code_expr("expression");
+    code_expr.copy_to_operands(call);
     new_expr = side_effect_exprt(
       "cpp_new", pointer_typet(symbol_typet(prefix + contract_name)));
-    new_expr.initializer(tmp_obj);
+    new_expr.initializer(code_expr);
   }
   return false;
 }

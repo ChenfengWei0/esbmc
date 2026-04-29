@@ -598,9 +598,31 @@ nlohmann::json solidity_convertert::reorder_arguments(
   return clean_expr;
 }
 
+// Emit `_sol_per_tx_reseed()` at the top of a dispatcher while-loop
+// iteration. Each iter == one EVM transaction with its own
+// msg.sender / msg.value / tx.* / block.*. Always fires — frozen-
+// sender behaviour was itself unsound (made inverted access-control
+// bugs unreachable by construction), so there is no opt-out.
+// The C symbol comes from src/c2goto/library/solidity/solidity_misc.c.
+void solidity_convertert::emit_per_tx_reseed_call(codet &out)
+{
+  const symbolt *reseed_sym = context.find_symbol("c:@F@_sol_per_tx_reseed");
+  if (reseed_sym == nullptr)
+  {
+    log_warning(
+      "_sol_per_tx_reseed not found in symbol table; per-tx ambient "
+      "reseed disabled. The Solidity C library may not be linked.");
+    return;
+  }
+  code_function_callt reseed_call;
+  reseed_call.location() = reseed_sym->location;
+  reseed_call.function() = symbol_expr(*reseed_sym);
+  out.move_to_operands(reseed_call);
+}
+
 /*
   perform multi-transaction verification
-  the idea is to verify the assertions that must be held 
+  the idea is to verify the assertions that must be held
   in any function calling order.
   convert the verifying contract to a "sol_main" function, e.g.
 
@@ -658,18 +680,20 @@ bool solidity_convertert::multi_transaction_verification(
     return true;
   }
 
+  // Per-tx ambient reseed: each dispatcher iter is a fresh EVM tx
+  // with its own msg.sender / msg.value / tx.* / block.* context.
+  // The constructor's `owner = msg.sender` already ran outside the
+  // while-loop (deployer-binding), so reseeding here properly
+  // distinguishes deployer identity from per-iter sender identities.
+  // Without this, contracts that compare msg.sender to a stored
+  // owner-like address see a frozen invariant `msg.sender == owner`
+  // and access-control bugs become unreachable (false negatives).
+  emit_per_tx_reseed_call(while_body);
+
   // get sol harness function and move into the while body
   code_function_callt func_call;
   if (get_unbound_funccall(c_name, func_call))
     return true;
-
-  // TODO (Phase 2): EVM per-transaction balance model.
-  // Between transactions, the contract's balance may increase without any
-  // call (selfdestruct target, coinbase reward). At the start of each new
-  // transaction, msg.value is added. The proper model would re-seed
-  // msg_value and assume(new_balance >= old_balance + msg_value) per
-  // iteration. Deferred: requires careful symbol timing (msg_value from
-  // the C model is not in the symbol table during frontend conversion).
 
   while_body.move_to_operands(func_call);
 
