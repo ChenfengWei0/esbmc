@@ -2,3 +2,10 @@ KNOWNBUG
 contract.sol
 --contract H --bound --no-standard-checks --unwind 4 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
+# T1.1 Stage S5: outer-level alias bug FIXED via shift-add injective
+# fold.  base outer slot is disjoint from clone outer slot.
+# Remaining bug, out of T1.1 scope: clone walker copies the heap
+# pointer shallowly, so base and clone share the SAME inner row.
+# Real Solidity deep-copy needs a fresh inner-row allocation plus
+# per-element copy.  Fix is to extend build_tod_clone_helper to
+# detect heap-pointer leaves and call _ESBMC_arrcpy.  T1.1 follow-up.
