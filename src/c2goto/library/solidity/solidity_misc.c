@@ -137,6 +137,16 @@ __ESBMC_HIDE:;
   tx_origin   = (address_t)nondet_uint();
   tx_gasprice = nondet_uint256();
 
+  /* Top-level call: tx.origin == msg.sender (real EVM invariant for
+   * any direct EOA→contract call).  The bound-mode dispatcher only
+   * drives top-level calls — nested contract-to-contract calls don't
+   * reseed and keep the same msg.sender as their caller — so this
+   * assume is sound at the dispatcher boundary.  Sound for safety:
+   * narrows the state space; bugs reachable only via the disallowed
+   * `tx.origin != msg.sender` path (contract-to-contract reentry from
+   * outside the harness) aren't explored anyway. */
+  __ESBMC_assume(tx_origin == msg_sender);
+
   /* block state — monotonic on number / timestamp */
   uint256_t _new_bn = nondet_uint256();
   __ESBMC_assume(_new_bn >= block_number);
