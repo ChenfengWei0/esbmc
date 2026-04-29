@@ -10,6 +10,7 @@ contract C {
     using L for bytes;
 
     function test(uint, bytes calldata _b, uint) external pure returns (bytes1, bytes1) {
+        require(_b.length > 1);
         return _b.reverse();
     }
 }

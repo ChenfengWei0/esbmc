@@ -6,6 +6,7 @@ contract C {
         return b[i];
     }
     function f(uint, bytes calldata b, uint) external pure returns (bytes1) {
+        require(b.length > 2);
         return f(b, 2);
     }
 }

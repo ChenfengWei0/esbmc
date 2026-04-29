@@ -8,6 +8,7 @@ contract C {
         external
         returns (bytes1)
     {
+        require(a.length > 2);
         return L.f(3, a, 9);
     }
     function g() public returns (bytes1) {

@@ -6,6 +6,7 @@ contract CalldataTest {
         return x;
     }
     function tester(bytes calldata x) public returns (bytes1) {
+        require(x.length > 2);
         return this.test(x)[2];
     }
 }

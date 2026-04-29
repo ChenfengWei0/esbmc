@@ -6,21 +6,26 @@ contract C {
         external
         returns (uint256, uint256, uint256, uint256)
     {
-        return (a[0].length, uint8(a[0][0]), uint8(a[0][1]), uint8(a[0][2]));
+        bytes memory a0 = a[0];
+        require(a0.length > 2);
+        return (a0.length, uint8(a0[0]), uint8(a0[1]), uint8(a0[2]));
     }
 
     function f2(bytes[1] calldata a, bytes[1] calldata b)
         external
         returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256)
     {
+        bytes memory a0 = a[0];
+        bytes memory b0 = b[0];
+        require(a0.length > 2 && b0.length > 1);
         return (
-            a[0].length,
-            uint8(a[0][0]),
-            uint8(a[0][1]),
-            uint8(a[0][2]),
-            b[0].length,
-            uint8(b[0][0]),
-            uint8(b[0][1])
+            a0.length,
+            uint8(a0[0]),
+            uint8(a0[1]),
+            uint8(a0[2]),
+            b0.length,
+            uint8(b0[0]),
+            uint8(b0[1])
         );
     }
 
@@ -37,28 +42,35 @@ contract C {
             uint256
         )
     {
+        bytes memory a0 = a[0];
+        bytes memory a1 = a[1];
+        require(a0.length > 2 && a1.length > 2);
         return (
-            a[0].length,
-            uint8(a[0][0]),
-            uint8(a[0][1]),
-            uint8(a[0][2]),
-            a[1].length,
-            uint8(a[1][0]),
-            uint8(a[1][1]),
-            uint8(a[1][2])
+            a0.length,
+            uint8(a0[0]),
+            uint8(a0[1]),
+            uint8(a0[2]),
+            a1.length,
+            uint8(a1[0]),
+            uint8(a1[1]),
+            uint8(a1[2])
         );
     }
 
     function g2(bytes[] calldata a) external returns (uint256[8] memory) {
+        require(a.length > 1);
+        bytes memory a0 = a[0];
+        bytes memory a1 = a[1];
+        require(a0.length > 1 && a1.length > 2);
         return [
             a.length,
-            a[0].length,
-            uint8(a[0][0]),
-            uint8(a[0][1]),
-            a[1].length,
-            uint8(a[1][0]),
-            uint8(a[1][1]),
-            uint8(a[1][2])
+            a0.length,
+            uint8(a0[0]),
+            uint8(a0[1]),
+            a1.length,
+            uint8(a1[0]),
+            uint8(a1[1]),
+            uint8(a1[2])
         ];
     }
 }

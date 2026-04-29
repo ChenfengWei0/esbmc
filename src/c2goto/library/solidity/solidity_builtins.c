@@ -62,25 +62,17 @@ __ESBMC_HIDE:;
  *
  * The returned BytesDynamic is constrained so:
  *  - `initialized == 1` — init-checks pass unconditionally
- *  - `length` is an unconstrained nondet bounded to [0, 1024] — small
- *    enough to keep SMT cheap, large enough that ordinary small-index
- *    accesses produced by the ABI decoder succeed.
+ *  - `length` is fully nondet (size_t range, scalar-driven by the SMT
+ *    solver per assertion / counterexample). Real Solidity admits any
+ *    gas-bounded length, including 0; contracts that need a tighter
+ *    range must require() it explicitly.
  *  - `capacity == length` — matches a freshly-decoded calldata view
  *  - `offset` is fresh nondet — pool contents remain symbolic.
- *
- * Over-approximation semantics (same as crypto hash abstraction):
- *  - Sound for safety: no real return-data outcome is excluded.
- *  - Possible false positives for properties that rely on the concrete
- *    content or on specific length values.
  */
 BytesDynamic llc_nondet_bytes(void)
 {
 __ESBMC_HIDE:;
   BytesDynamic result;
-  /* Keep length in [32, 1024] so all small-index reads succeed bounds
-   * checks, while capping SMT cost. 32 is the ABI word size and the
-   * largest typical small-index used in tests (e.g. a[0]..a[31]). */
-  __ESBMC_assume(result.length >= 32 && result.length <= 1024);
   result.initialized = 1;
   result.capacity = result.length;
   return result;

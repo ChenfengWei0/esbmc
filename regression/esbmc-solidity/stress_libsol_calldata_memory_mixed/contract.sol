@@ -3,6 +3,7 @@ contract C {
         public
         returns (uint, bytes1, bytes1, bytes1)
     {
+        require(_a.length > 1 && _b.length > 1 && _c.length > 1);
         return (_a.length + _b.length + _c.length, _a[1], _b[1], _c[1]);
     }
     function g() public returns (uint, bytes1, bytes1, bytes1) {
