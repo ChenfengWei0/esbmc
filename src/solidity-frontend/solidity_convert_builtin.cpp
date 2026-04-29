@@ -61,10 +61,25 @@ bool solidity_convertert::add_auxiliary_members(
   // name prefix:
   std::string sol_prefix = "sol:@C@" + contract_name + "@";
 
-  // value
-  side_effect_expr_function_callt _ndt_uint = nondet_uint_expr;
+  // value — use 256-bit nondet for $balance/$codehash/$code so the
+  // implicit zero-extend from a 32-bit nondet doesn't silently constrain
+  // these uint256 fields to [0, 2^32).
+  side_effect_expr_function_callt _ndt_uint = nondet_uint256_expr;
 
   // _ESBMC_get_unique_address(this, cname)
+  // Default: 16-slot unrolled if-chain (loose; documented in README.md
+  // section "Address uniqueness modelling").  --solidity-precise opts
+  // into the quantifier-based encoding (sound at any slot count) — see
+  // _ESBMC_get_unique_address_precise in solidity_address.c for solver
+  // caveats.  Future under-approximations in the Solidity frontend
+  // bind to the same flag so users get one knob, not many.
+  const bool precise =
+    !config.options.get_option("solidity-precise").empty();
+  const std::string addr_helper_name =
+    precise ? "_ESBMC_get_unique_address_precise"
+            : "_ESBMC_get_unique_address";
+  const std::string addr_helper_id = "c:@F@" + addr_helper_name;
+
   side_effect_expr_function_callt _addr;
   locationt l;
   l.function(contract_name);
@@ -72,7 +87,7 @@ bool solidity_convertert::add_auxiliary_members(
   typet t = addr_t;
 
   get_library_function_call_no_args(
-    "_ESBMC_get_unique_address", "c:@F@_ESBMC_get_unique_address", t, l, _addr);
+    addr_helper_name, addr_helper_id, t, l, _addr);
 
   exprt this_ptr;
   std::string ctor_id;
@@ -471,27 +486,37 @@ void solidity_convertert::get_aux_property_function(
   // The map auto-allocates a slot with nondet initial balance on first
   // sight, so unsighted addresses still over-approximate.
   //
-  // For other properties (`code`, `codehash`, `address`) we keep the
-  // nondet_uint fallback — those have no equivalent persistent map and
-  // a fresh nondet remains the right over-approximation.
+  // For `code` / `codehash`, route through parallel per-address summary
+  // maps (`sol_eoa_code_array` / `sol_eoa_codehash_array`) so that two
+  // reads of the same address return the same value within a path —
+  // without this branch, the fall-through emitted a fresh
+  // `nondet_uint256_expr` on every read and `addr.codehash ==
+  // addr.codehash` could fail.  The summary map shares the EOA address
+  // pool, so each address gets exactly one slot regardless of which
+  // property is read first.  --bound only; unbound mode short-circuits
+  // earlier in solidity_convert_expr.cpp before reaching this aux fn.
+  auto emit_helper_call =
+    [&](const std::string &fname, const std::string &fid) {
+      side_effect_expr_function_callt _hcall;
+      get_library_function_call_no_args(fname, fid, return_t, loc, _hcall);
+      _hcall.arguments().push_back(addr_expr);
+      code_returnt _ret;
+      _ret.return_value() = _hcall;
+      _block.move_to_operands(_ret);
+    };
+
   if (property_name == "balance")
-  {
-    side_effect_expr_function_callt eoa_call;
-    get_library_function_call_no_args(
-      "_ESBMC_eoa_balance_of",
-      "c:@F@_ESBMC_eoa_balance_of",
-      return_t,
-      loc,
-      eoa_call);
-    eoa_call.arguments().push_back(addr_expr);
-    code_returnt ret_eoa;
-    ret_eoa.return_value() = eoa_call;
-    _block.move_to_operands(ret_eoa);
-  }
+    emit_helper_call("_ESBMC_eoa_balance_of", "c:@F@_ESBMC_eoa_balance_of");
+  else if (property_name == "codehash")
+    emit_helper_call("_ESBMC_codehash_of", "c:@F@_ESBMC_codehash_of");
+  else if (property_name == "code")
+    emit_helper_call("_ESBMC_code_of", "c:@F@_ESBMC_code_of");
   else
   {
+    // catch-all: any future builtin property keeps the over-approximate
+    // nondet_uint256 fallback until it gets its own per-address map.
     code_returnt ret_uint;
-    ret_uint.return_value() = nondet_uint_expr;
+    ret_uint.return_value() = nondet_uint256_expr;
     _block.move_to_operands(ret_uint);
   }
 

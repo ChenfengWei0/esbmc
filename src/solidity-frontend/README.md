@@ -528,6 +528,52 @@ for all 21 entries):
 | Inline assembly / Yul | OVER | All externally-referenced variables havoc'd to nondet. Assembly-enforced invariants unprovable. |
 | `IndexRangeAccess` slices (`b[s:e]`) | OVER | Fresh nondet value; no parent-array constraint, no `s <= e <= length`. |
 | `type(I).interfaceId` / `creationCode` / `runtimeCode` | OVER | Nondet bytes4 / bytes. |
+| `address(new C())` uniqueness | UNDER | 16-slot if-chain caps pairwise distinctness at the 16th allocation; the 17th `new C()` on a path is unconstrained vs prior addresses. Loose default; opt into precise modelling via `--solidity-precise` (see below). |
+
+### Address uniqueness modelling — loose default vs `--solidity-precise`
+
+`_ESBMC_get_unique_address` (the helper called from every contract
+constructor to hand out a fresh address) ships in two variants:
+
+- **Default — 16-slot unrolled if-chain.** Loop-free, so `--unwind`
+  does not truncate the uniqueness constraints. Sound for the first
+  16 contract instantiations on any path; the 17th is unconstrained
+  (silent under-approximation).
+- **`--solidity-precise` — `for`-loop linear scan over `sol_max_cnt`.**
+  No slot cap. The loop is bounded by the runtime contract-allocation
+  count, so the user must pass `--unwind N` with N ≥ the number of
+  contract instantiations on any path. Without `--no-unwinding-assertions`,
+  a too-low `--unwind` produces a visible "unwinding assertion loop
+  &lt;id&gt;" failure that surfaces the bound explicitly. With
+  `--no-unwinding-assertions`, the loop tail is silently truncated
+  — same blind spot as `_ESBMC_get_addr_array_idx` and other linear
+  scans in the address library.
+
+**Why the loose form is the default.** The `--unwind` coupling of
+the precise variant is awkward in practice: many tests legitimately
+use `--unwind 1` or `--unwind 2` to control dispatcher exploration
+depth, and bumping `--unwind` to satisfy address uniqueness changes
+the entire test's path-exploration semantics. The 16-slot if-chain
+decouples uniqueness from `--unwind` at the cost of a hard cap that
+no regression test in the suite has ever exceeded.
+
+A quantifier-based form (`__ESBMC_forall`) was investigated and
+rejected — cvc5 returns `unknown (INCOMPLETE)` on every standard
+quantifier strategy and only `--sygus-inst` succeeds (which conflicts
+with incremental mode and is intractably slow on k-induction);
+bitwuzla's BV-quantifier engine is also slow on related patterns.
+
+**When to opt in.** Pass `--solidity-precise` if your contract
+allocates more than 16 instances on any path AND your property
+depends on address-distinctness. Pair it with `--unwind N` where N
+covers your maximum on-path allocation count. Drop
+`--no-unwinding-assertions` while debugging so insufficient unwind
+shows up as a real warning instead of silent truncation.
+
+**Future under-approximations bind to the same flag.** As we replace
+more loose modellings with precise (sound) ones, they will be
+controlled by `--solidity-precise` so users get one knob rather than
+many.
 
 **Consequences for review:**
 - `VERIFICATION SUCCESSFUL` is a real safety proof *within* the

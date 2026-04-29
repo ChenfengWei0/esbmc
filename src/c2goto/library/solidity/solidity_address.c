@@ -24,6 +24,17 @@ unsigned int sol_max_cnt;
  * therefore needs --unwind ≥ number of distinct EOAs touched. */
 __attribute__((annotate("__ESBMC_inf_size"))) address_t sol_eoa_addr_array[1];
 __attribute__((annotate("__ESBMC_inf_size"))) uint256_t sol_eoa_balance_array[1];
+/* Per-address code / codehash summary arrays, sharing the EOA address
+ * pool: same slot index for the same address regardless of which
+ * property was read first.  First-touch initialises both fields to a
+ * fresh nondet uint256; subsequent reads return that same value, so
+ * `addr.codehash == addr.codehash` and `addr.code == addr.code` hold
+ * within a path.  Only the fall-through (untracked-address) case
+ * routes through these helpers; tracked _ESBMC_Object_<C> instances
+ * keep reading their own $code / $codehash fields, which are already
+ * stable per-instance from constructor time. */
+__attribute__((annotate("__ESBMC_inf_size"))) uint256_t sol_eoa_code_array[1];
+__attribute__((annotate("__ESBMC_inf_size"))) uint256_t sol_eoa_codehash_array[1];
 unsigned int sol_eoa_max_cnt;
 
 int _ESBMC_get_addr_array_idx(address_t tgt)
@@ -64,6 +75,12 @@ __ESBMC_HIDE:;
   sol_cname_array[sol_max_cnt] = cname;
   ++sol_max_cnt;
 }
+/* DEFAULT (loose) variant.  Generate a nondet address and constrain
+ * it to be distinct from prior allocations, via an unrolled if-chain
+ * capped at 16 slots.  Loop-free, so --unwind does not truncate.
+ * Trade-off: 17th allocation is unconstrained → silent under-
+ * approximation beyond cap.  See README.md, section "Address
+ * uniqueness modelling".  Counterpart: _ESBMC_get_unique_address_precise. */
 address_t _ESBMC_get_unique_address(void *obj, const char *cname)
 {
 __ESBMC_HIDE:;
@@ -80,6 +97,39 @@ __ESBMC_HIDE:;
 
   update_addr_obj(tmp, obj, cname);
   return tmp;
+}
+
+/* PRECISE (sound) variant.  Same contract as the loose variant but
+ * encoded as a `for`-loop linear scan over `sol_max_cnt` — no slot
+ * cap.  Selected by `--solidity-precise` at the frontend; default
+ * routing keeps the loose variant for regression-suite parity and
+ * --unwind-coupling reasons.
+ *
+ * `--unwind` coupling: the loop is bounded by `sol_max_cnt`, so the
+ * user must pass `--unwind N` with N >= the number of contract
+ * instantiations on any path.  Without `--no-unwinding-assertions`,
+ * a too-low `--unwind` produces a visible "unwinding assertion loop
+ * <id>" failure, surfacing the limit explicitly.  With
+ * `--no-unwinding-assertions`, the loop tail is silently truncated
+ * — same blind spot as the rest of the address library
+ * (_ESBMC_get_addr_array_idx is also a linear scan).
+ *
+ * Why not `__ESBMC_forall`?  The quantifier encoding is solver-
+ * unfriendly in practice: cvc5 returns UNKNOWN on every standard
+ * quantifier strategy (only `--sygus-inst` succeeds, and that
+ * conflicts with cvc5 incremental mode AND is intractably slow on
+ * k-induction); bitwuzla's BV-quantifier engine is also slow on
+ * related patterns.  The for-loop form works uniformly across
+ * bitwuzla, z3, and cvc5 — at the cost of `--unwind` coupling. */
+address_t _ESBMC_get_unique_address_precise(void *obj, const char *cname)
+{
+__ESBMC_HIDE:;
+    address_t tmp = (address_t)nondet_uint();
+    __ESBMC_assume(tmp != (address_t)0);
+    for (unsigned int i = 0; i < sol_max_cnt; i++)
+        __ESBMC_assume(tmp != sol_addr_array[i]);
+    update_addr_obj(tmp, obj, cname);
+    return tmp;
 }
 const char *_ESBMC_get_nondet_cont_name(const char *c_array[], unsigned int len)
 {
@@ -120,7 +170,9 @@ __ESBMC_HIDE:;
         return (unsigned int)idx;
     unsigned int new_idx = sol_eoa_max_cnt;
     sol_eoa_addr_array[new_idx] = addr;
-    sol_eoa_balance_array[new_idx] = (uint256_t)nondet_uint();
+    sol_eoa_balance_array[new_idx] = nondet_uint256();
+    sol_eoa_code_array[new_idx] = nondet_uint256();
+    sol_eoa_codehash_array[new_idx] = nondet_uint256();
     ++sol_eoa_max_cnt;
     return new_idx;
 }
@@ -137,4 +189,24 @@ uint256_t _ESBMC_eoa_balance_of(address_t addr)
 __ESBMC_HIDE:;
     unsigned int idx = _ESBMC_eoa_get_or_init(addr);
     return sol_eoa_balance_array[idx];
+}
+
+/* Per-address `.code` summary. Returns the same 256-bit value across
+ * repeated reads of the same address within a path. Only kicks in for
+ * untracked addresses (tracked _ESBMC_Object_<C> instances dispatch to
+ * their own $code field via get_aux_property_function). --bound only;
+ * unbound mode short-circuits to fresh nondet earlier. */
+uint256_t _ESBMC_code_of(address_t addr)
+{
+__ESBMC_HIDE:;
+    unsigned int idx = _ESBMC_eoa_get_or_init(addr);
+    return sol_eoa_code_array[idx];
+}
+
+/* Per-address `.codehash` summary; same shape as _ESBMC_code_of. */
+uint256_t _ESBMC_codehash_of(address_t addr)
+{
+__ESBMC_HIDE:;
+    unsigned int idx = _ESBMC_eoa_get_or_init(addr);
+    return sol_eoa_codehash_array[idx];
 }

@@ -196,7 +196,20 @@ const struct group_opt_templ all_cmd_options[] = {
      NULL,
      "Do not check narrowing typecasts (e.g. uint256 -> uint8) for "
      "truncation overflow. Default is enabled as part of "
-     "standard checks, implied by --no-standard-checks"}}},
+     "standard checks, implied by --no-standard-checks"},
+    {"solidity-precise",
+     NULL,
+     "Opt into precise (sound) modelling for Solidity primitives that "
+     "currently default to a loose under-approximation. As of this "
+     "release, this controls _ESBMC_get_unique_address: default = "
+     "16-slot if-chain (loose; 17th allocation is unconstrained), with "
+     "--solidity-precise = for-loop linear scan over sol_max_cnt (sound "
+     "at any slot count). The precise form is bounded by --unwind, so "
+     "pair it with --unwind N where N covers your maximum on-path "
+     "contract-allocation count. Future under-approximations added to "
+     "the Solidity frontend will be bound to this same flag. See "
+     "src/solidity-frontend/README.md, section \"Address uniqueness "
+     "modelling\"."}}},
 #endif
   {"Frontend",
    {{"include,I",
