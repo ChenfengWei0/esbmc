@@ -557,6 +557,13 @@ protected:
   // context.  Returns true on failure (no `this` resolvable).
   bool get_dynarr_len_ref(const symbolt &len_sym, exprt &out);
 
+  // T1.1 Stage S2: dyn-array per-instance element index fold.  Builds a
+  // call expression `_ESBMC_dynarr_idx(this->$address, pos)` returning a
+  // 64-bit slot key.  Used to substitute `pos` in `index_exprt(arr, pos)`
+  // for state-var dyn-arrays so two `new C()` instances no longer alias
+  // on element reads/writes.  Returns true on failure (no `this`).
+  bool get_dynarr_elem_idx(const exprt &pos, exprt &out);
+
   // Build a `mapping_t` struct initializer expression of the form
   //   { base = &_ESBMC_inf_<cname>_<path_name>[0],
   //     mid  = next_mapping_mid++,

@@ -928,24 +928,34 @@ bool solidity_convertert::build_tod_clone_helper(
   const symbolt *addr_sym =
     context.find_symbol(prefix + c_name); // just to sanity-check struct exists
   (void)addr_sym;
-  // c->$address = (address_t)nondet_uint().
-  // Addresses stay narrow (32-bit zero-extended to 160) to keep the
-  // mapping hash-fold collision-free; broadening the address space
-  // here breaks `esol_clone_mapping_isolation_pass` because the
-  // 64-bit XOR fold in `_ESBMC_map_idx` becomes ambiguous over
-  // 160-bit inputs.
-  side_effect_expr_function_callt nondet_addr;
+  // c->$address = _ESBMC_get_unique_address(c, cname).
+  //
+  // T1.1 Stage S2: route through the unique-address helper so the clone's
+  // $address is REGISTERED in `sol_addr_array`.  Previously this used a
+  // bare `nondet_uint()` cast to `addr_t`, which gave the clone a fresh
+  // address but left it unregistered — subsequent `new C()` calls in a
+  // dispatcher loop could produce a NEW instance with the same nondet
+  // value as a prior unregistered clone, silently aliasing length and
+  // element keyspaces under the new addr-keyed dyn-array model.  Using
+  // the unique-address helper keeps the address narrow (the loose
+  // variant still casts a uint32 nondet to address_t, preserving the
+  // mapping-fold collision invariant) AND enforces distinct-from-prior
+  // via the registered slot list.
+  side_effect_expr_function_callt unique_addr;
   get_library_function_call_no_args(
-    "nondet_uint",
-    "c:@F@nondet_uint",
-    uint_type(),
+    "_ESBMC_get_unique_address",
+    "c:@F@_ESBMC_get_unique_address",
+    addr_t,
     c_loc,
-    nondet_addr);
-  exprt nondet_narrow = typecast_exprt(nondet_addr, addr_t);
+    unique_addr);
+  unique_addr.arguments().push_back(symbol_expr(added_c));
+  exprt cname_str;
+  get_cname_expr(c_name, cname_str);
+  unique_addr.arguments().push_back(cname_str);
 
-  // c->$address = nondet_narrow
+  // c->$address = unique_addr
   exprt c_addr_member = member_exprt(c_deref, "$address", addr_t);
-  code_assignt addr_assign(c_addr_member, nondet_narrow);
+  code_assignt addr_assign(c_addr_member, unique_addr);
   func_body.move_to_operands(addr_assign);
 
   // __ESBMC_assume(c->$address != base->$address)

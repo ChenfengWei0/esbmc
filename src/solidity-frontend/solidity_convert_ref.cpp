@@ -816,8 +816,12 @@ bool solidity_convertert::get_sol_builtin_ref(
 
             typet elem_type = base_t.subtype();
 
-            // items[len] = value
-            exprt idx_expr = index_exprt(base, len_ref, elem_type);
+            // items[len] = value — T1.1 Stage S2: addr-keyed via
+            // get_dynarr_elem_idx so two instances no longer alias.
+            exprt fold_idx;
+            if (get_dynarr_elem_idx(len_ref, fold_idx))
+              return true;
+            exprt idx_expr = index_exprt(base, fold_idx, elem_type);
             exprt assign_elem = side_effect_exprt("assign", elem_type);
 
             if (func["arguments"].size() == 0)

@@ -835,6 +835,48 @@ void solidity_convertert::get_size_expr(const exprt &rhs, exprt &size_expr)
     uint_type());
 }
 
+// T1.1 Stage S2: emit `_ESBMC_dynarr_idx(this->$address, pos)` so element
+// reads/writes on state-var dyn-arrays are addr-keyed.  See declaration
+// in solidity_convert.h.
+bool solidity_convertert::get_dynarr_elem_idx(const exprt &pos, exprt &out)
+{
+  exprt this_expr;
+  if (current_functionDecl)
+  {
+    if (get_func_decl_this_ref(*current_functionDecl, this_expr))
+      return true;
+  }
+  else if (!current_baseContractName.empty())
+  {
+    if (get_ctor_decl_this_ref(current_baseContractName, this_expr))
+      return true;
+  }
+  else
+  {
+    log_error(
+      "get_dynarr_elem_idx: no current function or contract context");
+    return true;
+  }
+
+  exprt addr_expr = member_exprt(this_expr, "$address", addr_t);
+
+  side_effect_expr_function_callt fold_call;
+  get_library_function_call_no_args(
+    "_ESBMC_dynarr_idx",
+    "c:@F@_ESBMC_dynarr_idx",
+    unsignedbv_typet(64),
+    pos.location(),
+    fold_call);
+  fold_call.arguments().push_back(addr_expr);
+
+  exprt pos_u256 = pos;
+  solidity_gen_typecast(ns, pos_u256, unsignedbv_typet(256));
+  fold_call.arguments().push_back(pos_u256);
+
+  out = fold_call;
+  return false;
+}
+
 // T1.1 Stage S1: addr-keyed dyn-array length helper.  See
 // solidity_convert.h:get_dynarr_len_ref docstring.
 bool solidity_convertert::get_dynarr_len_ref(

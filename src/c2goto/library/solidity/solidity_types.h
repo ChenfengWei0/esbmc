@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #if defined(__clang__)
 #  if __clang_major__ >= 16
@@ -48,5 +49,9 @@ struct sol_llc_ret
  * needed (msg_value / balances / block.* / address fields). */
 uint256_t nondet_uint256();
 address_t nondet_address_t();
+
+/* T1.1 Stage S2: hash-fold of (address, index) into a 64-bit dyn-array
+ * slot key for per-instance element addressing.  See solidity_array.c. */
+uint64_t _ESBMC_dynarr_idx(address_t addr, uint256_t idx);
 
 #endif /* SOLIDITY_TYPES_H */

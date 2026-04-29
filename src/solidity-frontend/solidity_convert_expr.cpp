@@ -2440,6 +2440,18 @@ bool solidity_convertert::get_index_access_expr(
         new_expr = index_exprt(array, pos, t);
       }
     }
+    // T1.1 Stage S2: state-var dyn-array element access — replace the index
+    // with a hash-fold of (this->$address, pos) so two `new C()` instances
+    // resolve to disjoint SMT-array slots.
+    else if (
+      array.is_symbol() &&
+      array.type().get_bool("#sol_dynarray_state"))
+    {
+      exprt fold_idx;
+      if (get_dynarr_elem_idx(pos, fold_idx))
+        return true;
+      new_expr = index_exprt(array, fold_idx, t);
+    }
     else
     {
       // Nested mapping access: m[k1][k2] — base is itself an IndexAccess
@@ -3213,8 +3225,14 @@ bool solidity_convertert::get_binary_operator_expr(
             integer2binary(i, bv_width(unsignedbv_typet(256))),
             std::to_string(i),
             unsignedbv_typet(256));
+          // T1.1 Stage S2: fold the literal index by (this->$address, i)
+          // so the write lands in the same slot the future read will hit.
+          exprt fold_idx;
+          if (get_dynarr_elem_idx(idx, fold_idx))
+            return true;
           exprt elem_assign = side_effect_exprt("assign", elem_type);
-          elem_assign.copy_to_operands(index_exprt(lhs, idx, elem_type), val);
+          elem_assign.copy_to_operands(
+            index_exprt(lhs, fold_idx, elem_type), val);
           convert_expression_to_code(elem_assign);
           move_to_front_block(elem_assign);
           count++;
@@ -3329,7 +3347,14 @@ bool solidity_convertert::get_binary_operator_expr(
         gen_binary("+", unsignedbv_typet(256), ctr_ref, one));
 
       // body: data1[_i] = rhs[_i]
-      exprt lhs_elem = index_exprt(lhs, ctr_ref, elem_type);
+      // T1.1 Stage S2: lhs (state-var dyn-array) write must use the
+      // addr-keyed fold so subsequent reads from the same instance hit
+      // the same slot.  rhs is a memory dyn-array (heap-malloc, no
+      // addr-keying), so its index stays as plain `ctr_ref`.
+      exprt lhs_fold_idx;
+      if (get_dynarr_elem_idx(ctr_ref, lhs_fold_idx))
+        return true;
+      exprt lhs_elem = index_exprt(lhs, lhs_fold_idx, elem_type);
       exprt rhs_elem = index_exprt(rhs, ctr_ref, elem_type);
       solidity_gen_typecast(ns, rhs_elem, elem_type);
       code_assignt body_assign(lhs_elem, rhs_elem);
