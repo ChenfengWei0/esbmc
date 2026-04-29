@@ -961,10 +961,26 @@ bool solidity_convertert::get_var_decl(
       inits.operands()[mid_idx] = mid_expr;
     }
 
-    // address => this->
-    exprt addr_expr = member_exprt(this_expr, "$address", addr_t);
-    solidity_gen_typecast(ns, addr_expr, comps[addr_idx].type());
-    inits.operands()[addr_idx] = addr_expr;
+    // address => this-> (always the ctor's `this`).  When this state-var
+    // decl is being parsed lazily from inside a function body (e.g. an
+    // inherited mapping first referenced from within `set`), `this_expr`
+    // above resolves to that function's `this`, not the ctor's — baking
+    // a wrong addr into the symbol's static initializer.
+    exprt ctor_this_expr;
+    if (
+      is_state_var && !current_contractName.empty() &&
+      !get_ctor_decl_this_ref(current_contractName, ctor_this_expr))
+    {
+      exprt addr_expr = member_exprt(ctor_this_expr, "$address", addr_t);
+      solidity_gen_typecast(ns, addr_expr, comps[addr_idx].type());
+      inits.operands()[addr_idx] = addr_expr;
+    }
+    else
+    {
+      exprt addr_expr = member_exprt(this_expr, "$address", addr_t);
+      solidity_gen_typecast(ns, addr_expr, comps[addr_idx].type());
+      inits.operands()[addr_idx] = addr_expr;
+    }
 
     added_symbol.value = inits;
     decl.operands().push_back(inits);
@@ -1007,6 +1023,16 @@ bool solidity_convertert::get_var_decl(
   // note that for the state variables that do not have initializer
   // we have already set it as zero value
   // For unintialized contract type, no need to move to the initializer
+  //
+  // B8 fix: inherited mappings still need to be initialized in the derived
+  // contract's ctor when the derived contract is `new`'d.  The aux-base ctor
+  // copy in move_inheritance_to_ctor cannot carry mapping fields (Base's
+  // own struct never gets the mapping_t component because Base.m is filtered
+  // out by the "mapping && is_array" guard at get_struct_class_fields when
+  // Base itself is not in newContractSet).  Without a per-instance init,
+  // every derived instance shares m.addr=0 and writes alias across instances.
+  const bool inherited_mapping_needs_per_instance_init =
+    is_inherited && is_mapping && is_new_expr;
   if (
     is_state_var && !is_inherited && !(is_contract && !has_init) &&
     !(is_mapping && !is_new_expr) && !(is_mapping_array && !is_new_expr) &&
