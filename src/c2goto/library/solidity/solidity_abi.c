@@ -77,3 +77,29 @@ __ESBMC_HIDE:;
   uint256_t result;
   return result;
 }
+
+/* ── multi-arg fold helper (T2.1)  ──────────────────────────────────── *
+ *
+ * Combine an accumulator with the next ABI-encoded argument so the
+ * frontend's abi.encode/encodePacked/encodeWithSelector/
+ * encodeWithSignature/encodeCall lowering can chain N args into a
+ * single uint256 result without losing distinguishability.  FNV-like:
+ *
+ *   acc' = acc * FNV_PRIME + next
+ *
+ * Multiply-then-add is injective in `next` for any fixed `acc`, so
+ * abi.encode(a, b) and abi.encode(a, c) differ when b != c.  The fold
+ * is symmetric-by-position but NOT commutative, so abi.encode(b, a)
+ * and abi.encode(a, b) also differ.  Solver-friendly: a single MUL +
+ * ADD per step, no shifts or array writes.
+ *
+ * 0x100000001b3 is the FNV-1a 64-bit prime, lifted to uint256 multiply.
+ * Overflow at 256 bits is fine — the result is identity-style nondet
+ * already, and the SMT solver only cares about (in)equality on the
+ * folded value.
+ */
+uint256_t _ESBMC_abi_fold(uint256_t acc, uint256_t next)
+{
+__ESBMC_HIDE:;
+  return acc * (uint256_t)0x100000001b3ULL + next;
+}

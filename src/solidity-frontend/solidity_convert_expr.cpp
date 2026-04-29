@@ -6,6 +6,7 @@
 /// function calls, and identifier references) from the solc JSON AST into
 /// ESBMC's irep2 expression tree.
 
+#include <functional>
 #include <solidity-frontend/solidity_convert.h>
 #include <solidity-frontend/typecast.h>
 #include <util/arith_tools.h>
