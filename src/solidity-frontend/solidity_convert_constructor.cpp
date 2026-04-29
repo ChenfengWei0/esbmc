@@ -1071,7 +1071,43 @@ bool solidity_convertert::build_tod_clone_helper(
           index_exprt(symbol_expr(*arr_sym), clone_fold, elem_type);
         exprt base_elem =
           index_exprt(symbol_expr(*arr_sym), base_fold, elem_type);
+
+        // T1.1 Stage S5.5: when the SMT element type is a heap pointer
+        // (the inner-row pointer for a 2D state-var dyn-array such as
+        // `uint256[][]`), a bit-level copy `clone_elem = base_elem`
+        // leaves clone aliasing base's inner heap row.  Real Solidity
+        // deep-copies the inner row.  Emit
+        //   clone_elem = _ESBMC_arrcpy(base_elem,
+        //                              _ESBMC_array_length(base_elem),
+        //                              sizeof(leaf_t))
+        // which allocates a fresh inner buffer and element-copies via
+        // _ESBMC_arrcpy's typed-loop branch (uint256_t/int256_t).
+        // Scalar elem_type (1D state-var dyn-array) keeps the existing
+        // bit-copy path.
         code_assignt body_assign(clone_elem, base_elem);
+        if (elem_type.is_pointer())
+        {
+          const typet leaf_t = elem_type.subtype();
+          exprt leaf_size_of;
+          get_size_of_expr(leaf_t, leaf_size_of);
+
+          side_effect_expr_function_callt len_call;
+          get_library_function_call_no_args(
+            "_ESBMC_array_length",
+            "c:@F@_ESBMC_array_length",
+            uint_type(),
+            c_loc,
+            len_call);
+          len_call.arguments().push_back(base_elem);
+
+          side_effect_expr_function_callt acpy_call;
+          get_arrcpy_function_call(c_loc, acpy_call);
+          acpy_call.arguments().push_back(base_elem);
+          acpy_call.arguments().push_back(len_call);
+          acpy_call.arguments().push_back(leaf_size_of);
+          solidity_gen_typecast(ns, acpy_call, elem_type);
+          body_assign = code_assignt(clone_elem, acpy_call);
+        }
 
         code_fort copy_loop;
         copy_loop.init() = init_assign;
