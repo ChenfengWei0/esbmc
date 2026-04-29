@@ -29,6 +29,93 @@ void solidity_convertert::get_mapping_inf_arr_name(
   arr_id = "sol:@C@" + cname + "@" + arr_name + "#";
 }
 
+// Builds the canonical `{ base, mid, addr }` mapping_t initializer used by
+// every per-instance mapping init.  The path_name is what disambiguates
+// the global pool — top-level state vars pass the field name (`m`),
+// struct-internal mappings pass a "_"-joined path (`bx_m`,
+// `outer_inner_m`), so each mapping field gets its own
+// `_ESBMC_inf_<cname>_<path_name>[]` backing array.  The global is created
+// lazily and cached via `context.find_symbol` so nested-mapping inits
+// emitted from the Phase-2 ctor walker don't duplicate state-var-decl
+// allocations.  next_mapping_mid is bumped on every call — even if the
+// same mapping field would be re-initialized in two different ctors,
+// each gets a distinct `mid`, but they share the global pool by name.
+bool solidity_convertert::build_mapping_t_init_value(
+  const std::string &cname,
+  const std::string &path_name,
+  const exprt &addr_owner_this,
+  const locationt &loc,
+  exprt &out_init)
+{
+  std::string arr_name, arr_id;
+  get_mapping_inf_arr_name(cname, path_name, arr_name, arr_id);
+
+  std::string mapping_struct_name = "_ESBMC_Mapping";
+  if (context.find_symbol(lib_prefix + mapping_struct_name) == nullptr)
+  {
+    log_error("failed to find _ESBMC_Mapping reference");
+    return true;
+  }
+
+  typet arr_t = array_typet(
+    symbol_typet(lib_prefix + mapping_struct_name), exprt("infinity"));
+
+  if (context.find_symbol(arr_id) == nullptr)
+  {
+    symbolt arr_s;
+    std::string debug_modulename = get_modulename_from_path(absolute_path);
+    get_default_symbol(arr_s, debug_modulename, arr_t, arr_name, arr_id, loc);
+    arr_s.static_lifetime = true;
+    arr_s.file_local = true;
+    arr_s.lvalue = true;
+    auto &add_added_s = *move_symbol_to_context(arr_s);
+    add_added_s.value = gen_zero(get_complete_type(arr_t, ns), true);
+  }
+
+  const symbolt *arr_sym = context.find_symbol(arr_id);
+  if (arr_sym == nullptr)
+  {
+    log_error("failed to find/create mapping inf-array global {}", arr_id);
+    return true;
+  }
+
+  typet map_t = context.find_symbol(lib_prefix + "mapping_t")->type;
+  assert(map_t.is_struct());
+
+  exprt inits = gen_zero(map_t);
+  exprt op0 = symbol_expr(*arr_sym);
+
+  const struct_typet &map_struct = to_struct_type(map_t);
+  const auto &comps = map_struct.components();
+  unsigned base_idx = 0, mid_idx = (unsigned)-1, addr_idx = 1;
+  for (unsigned i = 0; i < comps.size(); i++)
+  {
+    if (comps[i].get_name() == "base")
+      base_idx = i;
+    else if (comps[i].get_name() == "mid")
+      mid_idx = i;
+    else if (comps[i].get_name() == "addr")
+      addr_idx = i;
+  }
+
+  solidity_gen_typecast(ns, op0, comps[base_idx].type());
+  inits.operands()[base_idx] = op0;
+
+  if (mid_idx != (unsigned)-1)
+  {
+    exprt mid_expr =
+      from_integer(next_mapping_mid++, comps[mid_idx].type());
+    inits.operands()[mid_idx] = mid_expr;
+  }
+
+  exprt addr_expr = member_exprt(addr_owner_this, "$address", addr_t);
+  solidity_gen_typecast(ns, addr_expr, comps[addr_idx].type());
+  inits.operands()[addr_idx] = addr_expr;
+
+  out_init = inits;
+  return false;
+}
+
 /**
 	@target: target index access child json
 	return true if it's a mapping_set, including assign, assign+, tuple assign...

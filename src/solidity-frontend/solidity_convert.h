@@ -548,6 +548,21 @@ protected:
     const std::string &name,
     std::string &arr_name,
     std::string &arr_id);
+
+  // Build a `mapping_t` struct initializer expression of the form
+  //   { base = &_ESBMC_inf_<cname>_<path_name>[0],
+  //     mid  = next_mapping_mid++,
+  //     addr = (address_t)addr_owner_this->$address }
+  // Lazily creates the `_ESBMC_inf_*[]` global if it doesn't yet exist.
+  // Used by both top-level mapping-state-var decls (Block B in
+  // get_var_decl) and the Phase-2 ctor walker for struct-internal
+  // mapping fields (emit_ctor_deep_init_fixup).
+  bool build_mapping_t_init_value(
+    const std::string &cname,
+    const std::string &path_name,
+    const exprt &addr_owner_this,
+    const locationt &loc,
+    exprt &out_init);
   bool is_mapping_set_lvalue(const nlohmann::json &json);
   bool get_mapping_key_value_type(
     const nlohmann::json &map_node,
@@ -742,10 +757,16 @@ protected:
   //   this->grid[1] = calloc(M, sizeof(uint256));       // walker
   //   ...
   //   this->bx.cells = calloc(K, sizeof(uint256));      // walker
+  // path_name accumulates struct-field names from the top-level state
+  // var down to the current sub-field, joined by underscores
+  // (e.g. "bx" → "bx_m" → "bx_inner_m").  Used only to disambiguate the
+  // `_ESBMC_inf_<C>_<path_name>[]` global emitted for struct-internal
+  // mappings; non-mapping branches ignore it.
   bool emit_ctor_deep_init_fixup(
     const exprt &lvalue,
     const typet &field_type,
-    code_blockt &out_block);
+    code_blockt &out_block,
+    const std::string &path_name = "");
 
   // Predicate: does `t` contain a pointer-backed fixed-size array at
   // any nesting depth?  Gates whether emit_ctor_deep_init_fixup has any

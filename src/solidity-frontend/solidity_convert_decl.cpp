@@ -900,87 +900,31 @@ bool solidity_convertert::get_var_decl(
     // 1. the contract that contains this mapping is also used in a new expression
     // => __attribute__((annotate("__ESBMC_inf_size"))) struct _ESBMC_Mapping _ESBMC_inf_test[];
     // => struct mapping_t test = {_ESBMC_inf_test, this.address};
-    // 2.
-    // => struct mapping_t_fast test = {_ESBMC_inf_test};
-    // 1. construct static infinite array
-    std::string arr_name, arr_id;
-    get_mapping_inf_arr_name(current_contractName, name, arr_name, arr_id);
-    symbolt arr_s;
-    std::string mapping_struct_name = "_ESBMC_Mapping";
-
-    if (context.find_symbol(lib_prefix + mapping_struct_name) == nullptr)
-    {
-      log_error("failed to find _ESBMC_Mapping reference");
-      return true;
-    }
-
-    typet arr_t = array_typet(
-      symbol_typet(lib_prefix + mapping_struct_name), exprt("infinity"));
-    get_default_symbol(
-      arr_s, debug_modulename, arr_t, arr_name, arr_id, location_begin);
-    arr_s.static_lifetime = true;
-    arr_s.file_local = true;
-    arr_s.lvalue = true;
-    auto &add_added_s = *move_symbol_to_context(arr_s);
-    add_added_s.value = gen_zero(get_complete_type(arr_t, ns), true);
-
-    // 2. construct mapping_t struct instance's value
-    typet map_t;
-    map_t = context.find_symbol(lib_prefix + "mapping_t")->type;
-
-    assert(map_t.is_struct());
-    exprt inits = gen_zero(map_t);
-
-    exprt op0 = symbol_expr(add_added_s);
-    // array => &array[0]
-    // Use name-based component lookup to be robust against padding fields
-    const struct_typet &map_struct = to_struct_type(map_t);
-    const auto &comps = map_struct.components();
-    unsigned base_idx = 0, mid_idx = (unsigned)-1, addr_idx = 1;
-    for (unsigned i = 0; i < comps.size(); i++)
-    {
-      if (comps[i].get_name() == "base")
-        base_idx = i;
-      else if (comps[i].get_name() == "mid")
-        mid_idx = i;
-      else if (comps[i].get_name() == "addr")
-        addr_idx = i;
-    }
-    solidity_gen_typecast(ns, op0, comps[base_idx].type());
-    inits.operands()[base_idx] = op0;
-
-    // mid => next_mapping_mid++ (Stage 3: explicit per-state-var ID
-    // replacing the Stage 2 `(uintptr_t)base` cast — see
-    // src/c2goto/library/solidity/solidity_mapping.c).  Reading m->mid at
-    // runtime is a direct uint64 load; reading (uintptr_t)m->base required
-    // a pointer-to-uint64 SMT extraction at every access.
-    if (mid_idx != (unsigned)-1)
-    {
-      exprt mid_expr =
-        from_integer(next_mapping_mid++, comps[mid_idx].type());
-      inits.operands()[mid_idx] = mid_expr;
-    }
-
-    // address => this-> (always the ctor's `this`).  When this state-var
+    //
+    // The construction (inf-array global + {base, mid, addr=this->$address}
+    // struct value) is shared with the Phase-2 ctor walker for nested
+    // mappings inside user-struct fields, so it lives in
+    // build_mapping_t_init_value (solidity_convert_mapping.cpp).  The
+    // owner-of-`addr` is always the ctor's `this`: when this state-var
     // decl is being parsed lazily from inside a function body (e.g. an
     // inherited mapping first referenced from within `set`), `this_expr`
-    // above resolves to that function's `this`, not the ctor's — baking
-    // a wrong addr into the symbol's static initializer.
+    // resolved earlier in this function would point at that function's
+    // `this`, not the ctor's — baking a wrong addr into the symbol's
+    // static initializer.
     exprt ctor_this_expr;
-    if (
+    bool have_ctor_this =
       is_state_var && !current_contractName.empty() &&
-      !get_ctor_decl_this_ref(current_contractName, ctor_this_expr))
-    {
-      exprt addr_expr = member_exprt(ctor_this_expr, "$address", addr_t);
-      solidity_gen_typecast(ns, addr_expr, comps[addr_idx].type());
-      inits.operands()[addr_idx] = addr_expr;
-    }
-    else
-    {
-      exprt addr_expr = member_exprt(this_expr, "$address", addr_t);
-      solidity_gen_typecast(ns, addr_expr, comps[addr_idx].type());
-      inits.operands()[addr_idx] = addr_expr;
-    }
+      !get_ctor_decl_this_ref(current_contractName, ctor_this_expr);
+    const exprt &addr_owner_this = have_ctor_this ? ctor_this_expr : this_expr;
+
+    exprt inits;
+    if (build_mapping_t_init_value(
+          current_contractName,
+          name,
+          addr_owner_this,
+          location_begin,
+          inits))
+      return true;
 
     added_symbol.value = inits;
     decl.operands().push_back(inits);

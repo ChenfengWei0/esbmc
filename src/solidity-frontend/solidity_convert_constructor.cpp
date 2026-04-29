@@ -1341,6 +1341,18 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
 //     not currently support that init form at all.
 bool solidity_convertert::needs_ctor_deep_init(const typet &t)
 {
+  // mapping_t struct field: per-instance {base, mid, addr} init must
+  // run in the ctor.  Top-level state-var mappings are handled by Block
+  // B in solidity_convert_decl.cpp (which queues the init through
+  // move_to_initializer); struct-internal mappings have no decl path,
+  // so the walker's Case 2 must emit the same shape.  Mirrors the
+  // identifier-substring test in needs_clone_deep_fixup.
+  const std::string tid =
+    t.is_symbol() ? to_symbol_type(t).get_identifier().as_string()
+                  : t.get("identifier").as_string();
+  if (tid.find("mapping_t") != std::string::npos)
+    return true;
+
   // Pointer-backed fixed-size array: always "needs init" from the
   // predicate's perspective.  The caller's responsibility is separated
   // into two cases — both are live:
@@ -1386,8 +1398,55 @@ bool solidity_convertert::needs_ctor_deep_init(const typet &t)
 bool solidity_convertert::emit_ctor_deep_init_fixup(
   const exprt &lvalue,
   const typet &field_type,
-  code_blockt &out_block)
+  code_blockt &out_block,
+  const std::string &path_name)
 {
+  // Case 0: mapping_t field at the leaf.  Emit the canonical
+  // `{ base, mid, addr=this->$address }` init via the shared helper.
+  // Top-level state-var mappings reach here only when the user nests a
+  // `Box bx; struct Box { mapping m; }` — a top-level mapping decl is
+  // initialized through Block B in get_var_decl, not the walker.
+  {
+    const std::string tid =
+      field_type.is_symbol()
+        ? to_symbol_type(field_type).get_identifier().as_string()
+        : field_type.get("identifier").as_string();
+    if (tid.find("mapping_t") != std::string::npos)
+    {
+      // Use the ctor's `this` for addr — current_functionDecl is null
+      // here because the walker is invoked from move_initializer_to_ctor.
+      // Even if it were non-null, we always want the ctor's $address.
+      exprt ctor_this_expr;
+      if (current_baseContractName.empty() ||
+          get_ctor_decl_this_ref(current_baseContractName, ctor_this_expr))
+      {
+        log_error(
+          "ctor walker: cannot resolve ctor `this` for nested mapping init");
+        return true;
+      }
+
+      // The path must be non-empty so the global gets a unique name; if
+      // the caller forgot to thread one, fall back to a counter-suffixed
+      // anonymous path (still distinct, just less readable).
+      std::string disambig = path_name;
+      if (disambig.empty())
+        disambig = "anon_" + std::to_string(next_mapping_mid);
+
+      exprt inits;
+      if (build_mapping_t_init_value(
+            current_baseContractName,
+            disambig,
+            ctor_this_expr,
+            lvalue.location(),
+            inits))
+        return true;
+
+      code_assignt assign(lvalue, inits);
+      out_block.move_to_operands(assign);
+      return false;
+    }
+  }
+
   // Case 1: the current lvalue is already a pointer-backed fixed-size
   // array.  The outer N-slot buffer exists (allocated by the state-var
   // decl or by a parent iteration of this walker).  For each slot i in
@@ -1446,7 +1505,11 @@ bool solidity_convertert::emit_ctor_deep_init_fixup(
       }
 
       // Recurse into the slot for deeper nesting (3D+) or struct elements.
-      if (emit_ctor_deep_init_fixup(elem_slot, elem_t, out_block))
+      // Append "_<i>" so the global naming for any nested mapping inside
+      // an element disambiguates per-slot.
+      const std::string elem_path =
+        path_name + "_" + std::to_string(i);
+      if (emit_ctor_deep_init_fixup(elem_slot, elem_t, out_block, elem_path))
         return true;
     }
     return false;
@@ -1503,7 +1566,10 @@ bool solidity_convertert::emit_ctor_deep_init_fixup(
         out_block.move_to_operands(alloc);
       }
 
-      if (emit_ctor_deep_init_fixup(field_lvalue, ct, out_block))
+      const std::string sub_path =
+        path_name.empty() ? comp.get_name().as_string()
+                          : path_name + "_" + comp.get_name().as_string();
+      if (emit_ctor_deep_init_fixup(field_lvalue, ct, out_block, sub_path))
         return true;
     }
     return false;
@@ -1765,7 +1831,11 @@ bool solidity_convertert::move_initializer_to_ctor(
       //     fix2
       //     ...
       code_blockt fix_block;
-      if (emit_ctor_deep_init_fixup(lhs, comp.type(), fix_block))
+      // Seed the path with the outer state-var's name so any nested
+      // mapping field gets a globally-unique `_ESBMC_inf_<C>_<path>[]`
+      // backing array name.
+      if (emit_ctor_deep_init_fixup(
+            lhs, comp.type(), fix_block, comp.name().as_string()))
       {
         log_error("Phase 2 ctor deep-init fixup failed");
         return true;
