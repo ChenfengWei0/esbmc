@@ -21,7 +21,10 @@
  * which lowers to SMT `array_of(NULL)`.  `select` of a never-written slot
  * returns NULL and the existing `p ? *p : 0` guard in each per-type getter
  * delivers Solidity's default-zero semantics for free. */
-__attribute__((annotate("__ESBMC_inf_size"))) void *_ESBMC_map_storage[1];
+__attribute__((annotate("__ESBMC_inf_size:480"))) void *_ESBMC_map_storage[1];
+
+/* 480-bit composite key type: concat(mid_64, addr_160, key_256). */
+typedef unsigned BIGINT(480) _ESBMC_map_key_t;
 
 /* Stage-2-only placeholder: the frontend at solidity_convert_decl.cpp:935-944
  * still emits a per-state-var `__ESBMC_inf_size struct _ESBMC_Mapping _ESBMC_inf_<name>[]`
@@ -79,17 +82,17 @@ struct mapping_t
  * (2026-04-30) regression-locked under
  * `mapping_idx_fold_collision_pass_knownbug` and ledger entry #22.
  * Closure requires 256-bit array-domain support across solvers. */
-static inline uint64_t _ESBMC_map_idx(uint64_t mid,
-                                      address_t addr,
-                                      uint256_t key)
+static inline _ESBMC_map_key_t _ESBMC_map_idx(uint64_t mid,
+                                              address_t addr,
+                                              uint256_t key)
 {
 __ESBMC_HIDE:;
-  return mid
-       ^ ((uint64_t)addr ^ ((uint64_t)addr >> 32))
-       ^ ((uint64_t)key
-          ^ (uint64_t)(key >> 64)
-          ^ (uint64_t)(key >> 128)
-          ^ (uint64_t)(key >> 192));
+  _ESBMC_map_key_t result = (_ESBMC_map_key_t)mid;
+  _ESBMC_map_key_t mask160 =
+    (((_ESBMC_map_key_t)1) << 160) - (_ESBMC_map_key_t)1;
+  result = (result << 160) | ((_ESBMC_map_key_t)addr & mask160);
+  result = (result << 256) | (_ESBMC_map_key_t)key;
+  return result;
 }
 
 void map_set_raw(
@@ -251,14 +254,14 @@ struct mapping_t_fast
 
 /* Fold (mid, key) into a 64-bit slot index.  See `_ESBMC_map_idx` above
  * for the rationale of the pure-XOR fold over multiplicative mixing. */
-static inline uint64_t _ESBMC_map_idx_fast(uint64_t mid, uint256_t key)
+static inline _ESBMC_map_key_t _ESBMC_map_idx_fast(uint64_t mid,
+                                                   uint256_t key)
 {
 __ESBMC_HIDE:;
-  return mid
-       ^ ((uint64_t)key
-          ^ (uint64_t)(key >> 64)
-          ^ (uint64_t)(key >> 128)
-          ^ (uint64_t)(key >> 192));
+  _ESBMC_map_key_t result = (_ESBMC_map_key_t)mid;
+  result = (result << 160) | (_ESBMC_map_key_t)0;
+  result = (result << 256) | (_ESBMC_map_key_t)key;
+  return result;
 }
 
 void map_set_raw_fast(struct _ESBMC_Mapping_fast a[], uint256_t key, void *val)

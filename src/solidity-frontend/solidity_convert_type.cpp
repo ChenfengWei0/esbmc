@@ -608,6 +608,12 @@ bool solidity_convertert::get_type_description(
       // we will populate the size type later
       new_type = array_typet();
       new_type.size(exprt("infinity"));
+      // Wide-BV index: mapping keys are up to 256 bits in Solidity; we
+      // index the per-mapping infinite array directly with the raw key
+      // (no XOR fold). The index_width annotation flows through migrate
+      // to array_type2t::index_width and is consumed by smt_conv +
+      // adjust_index. Closes ledger #22's path-1 256→64 fold gap.
+      new_type.set("#esbmc_index_width", "256");
     }
     set_sol_type(new_type, SolidityGrammar::SolType::MAPPING);
     break;
