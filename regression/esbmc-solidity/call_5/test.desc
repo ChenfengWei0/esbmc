@@ -1,4 +1,4 @@
 THOROUGH
 contract.solast
---sol contract.sol --no-standard-checks --contract Reproduction --bound --k-induction --max-k-step 20 --k-step 3
+--sol contract.sol --no-standard-checks --contract Reproduction --bound --k-induction --max-k-step 20 --k-step 3 --cvc5
 ^VERIFICATION SUCCESSFUL$
