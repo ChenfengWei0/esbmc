@@ -578,6 +578,25 @@ protected:
                          const typet &type,
                          std::vector<exprt> &assigns);
 
+  // push/pop spec-conformance plan (P1 fix): symbol-resolving default-
+  // value emitter.  `gen_zero(t)` from util/expr_util.cpp returns nil
+  // for `symbol_typet` (no `symbol` case), which crashes symex when
+  // the result is assigned into an array slot — most visibly during
+  // no-arg `push()` for `S[]` / `bytes[]` element types where solc
+  // emits `gen_zero(elem_type)` to materialise the appended default.
+  //
+  // Mirrors the dispatch table of `emit_delete_block` but inverted:
+  // produces a single value expression (the type's "default zero")
+  // rather than a code-block of assigns.  Resolves symbol wrappers
+  // via `ns.lookup` and recurses on composite types so `BytesDynamic`
+  // / user struct elements yield a properly-typed `struct_exprt` with
+  // each field defaulted (and `initialized=1` for BytesDynamic, matching
+  // the delete-fix's invariant).
+  //
+  // Returns nil only for types `gen_zero` itself can't handle after
+  // resolution; callers must check `out.is_nil()` and fail loudly.
+  exprt gen_default_value_resolved(const typet &t);
+
   // T1.1 Stage S2: dyn-array per-instance element index fold.  Builds a
   // call expression `_ESBMC_dynarr_idx(this->$address, pos)` returning a
   // 64-bit slot key.  Used to substitute `pos` in `index_exprt(arr, pos)`

@@ -809,7 +809,22 @@ bool solidity_convertert::get_sol_builtin_ref(
           }
           else
           {
-            // length--
+            // length--. P3 fix: assume length > 0 to match lib-call
+            // paths' check; underflow on length=0 wraps to 2^256-1.
+            exprt zero_m = gen_zero(unsignedbv_typet(256));
+            exprt len_gt_zero_m = exprt("notequal", bool_t);
+            len_gt_zero_m.copy_to_operands(len_ref, zero_m);
+            side_effect_expr_function_callt assume_m_call;
+            get_library_function_call_no_args(
+              "__ESBMC_assume",
+              "c:@F@__ESBMC_assume",
+              empty_typet(),
+              locationt(),
+              assume_m_call);
+            assume_m_call.arguments().push_back(len_gt_zero_m);
+            convert_expression_to_code(assume_m_call);
+            move_to_front_block(assume_m_call);
+
             new_expr = side_effect_exprt("assign", len_ref.type());
             new_expr.operands().push_back(len_ref);
             new_expr.operands().push_back(
@@ -853,8 +868,22 @@ bool solidity_convertert::get_sol_builtin_ref(
 
             if (func["arguments"].size() == 0)
             {
-              // push() with no args: zero value
-              exprt zero_val = gen_zero(elem_type);
+              // push() with no args: append the type-default per
+              // Solidity spec.  P1 fix (2026-04-30): bare
+              // gen_zero(elem_type) returns nil for symbol-typed
+              // composite element types (S, BytesDynamic, ...),
+              // crashing symex on `ASSIGN arr[idx]=nil`.
+              // gen_default_value_resolved resolves symbol wrappers
+              // and recurses into structs.  Locked by
+              // push_no_arg_struct_array_pass / _bytes_array_pass.
+              exprt zero_val = gen_default_value_resolved(elem_type);
+              if (zero_val.is_nil())
+              {
+                log_error(
+                  "push: cannot generate default value for elem type {}",
+                  elem_type.id_string());
+                return true;
+              }
               assign_elem.copy_to_operands(idx_expr, zero_val);
             }
             else
@@ -876,7 +905,27 @@ bool solidity_convertert::get_sol_builtin_ref(
           }
           else
           {
-            // pop: len = len - 1
+            // pop: len = len - 1.  P3 fix (2026-04-30): assume
+            // len > 0 before the underflowing decrement.  Per Solidity
+            // spec, pop on length=0 reverts (the library helper
+            // _ESBMC_array_pop already enforces this; the direct-
+            // decrement state-var path needs an explicit assume to
+            // path-prune the underflow).  Locked by
+            // pop_empty_state_var_revert_pass.
+            exprt zero = gen_zero(unsignedbv_typet(256));
+            exprt len_gt_zero = exprt("notequal", bool_t);
+            len_gt_zero.copy_to_operands(len_ref, zero);
+            side_effect_expr_function_callt assume_call;
+            get_library_function_call_no_args(
+              "__ESBMC_assume",
+              "c:@F@__ESBMC_assume",
+              empty_typet(),
+              locationt(),
+              assume_call);
+            assume_call.arguments().push_back(len_gt_zero);
+            convert_expression_to_code(assume_call);
+            move_to_front_block(assume_call);
+
             new_expr = side_effect_exprt("assign", len_ref.type());
             new_expr.operands().push_back(len_ref);
             new_expr.operands().push_back(
@@ -899,8 +948,16 @@ bool solidity_convertert::get_sol_builtin_ref(
           exprt args;
           if (func["arguments"].size() == 0)
           {
-            // Generate a default value for the element type
-            exprt default_value = gen_zero(base_t.subtype());
+            // Generate a default value for the element type.  P1 fix
+            // (legacy pointer-array path): see state-var branch above.
+            exprt default_value = gen_default_value_resolved(base_t.subtype());
+            if (default_value.is_nil())
+            {
+              log_error(
+                "push: cannot generate default value for elem type {}",
+                base_t.subtype().id_string());
+              return true;
+            }
             std::string aux_name = "_tmpzero#" + std::to_string(aux_counter++);
             std::string aux_id;
             std::string cname;

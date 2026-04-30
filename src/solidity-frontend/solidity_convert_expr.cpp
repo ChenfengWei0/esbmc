@@ -4196,6 +4196,95 @@ bool solidity_convertert::emit_delete_block(
   return false;
 }
 
+// push/pop spec-conformance plan (P1 fix).  See solidity_convert.h
+// `gen_default_value_resolved` declaration for the contract.
+//
+// Mirrors the dispatch of `emit_delete_block` (above) but produces a
+// single value expression rather than a code-block of assigns.  The
+// caller of no-arg `push()` lowering uses the result as the rhs of
+// `arr[len] = <result>`.
+//
+// Soundness mirrors the delete-fix:
+//   - BytesDynamic gets `initialized = 1` (post-init invariant — see
+//     delete-correctness commit 277f815478)
+//   - mapping placeholder fields default to a 0-byte struct (matches
+//     the storage layout; mapping data lives outside the placeholder
+//     anyway, so no observable change)
+//   - generic struct components recurse — closes the `bytes[]` and
+//     `S[]` no-arg push crashes
+exprt solidity_convertert::gen_default_value_resolved(const typet &t_in)
+{
+  // Resolve symbol-typed wrappers via ns.
+  typet t = t_in;
+  if (t.id() == "symbol")
+  {
+    const symbolt *s = ns.lookup(t.identifier());
+    if (s)
+      t = s->type;
+  }
+
+  // Mapping placeholder: 1-byte struct with no observable state.  The
+  // placeholder's address (a compile-time linker constant) is the `mid`
+  // for the global `_ESBMC_map_storage`; gen_zero on this struct is
+  // safe (yields struct{0}) but we route through the explicit case to
+  // make the intent clear and to keep parity with emit_delete_block.
+  if (t.id() == "struct" && t.tag().as_string() == "_ESBMC_Mapping")
+  {
+    exprt result = struct_exprt(t);
+    for (const auto &comp : to_struct_type(t).components())
+      result.copy_to_operands(gen_zero(comp.type()));
+    return result;
+  }
+
+  // BytesDynamic: explicit field-defaults preserving `initialized=1`
+  // so downstream push/copy/length-read paths don't trip init checks.
+  // Mirrors the delete-fix invariant.
+  if (t.id() == "struct" && t.tag().as_string() == "BytesDynamic")
+  {
+    typet sz_t = size_type();
+    typet int_t = int_type();
+    exprt result = struct_exprt(t);
+    for (const auto &comp : to_struct_type(t).components())
+    {
+      const std::string &nm = comp.name().as_string();
+      if (nm == "initialized")
+        result.copy_to_operands(gen_one(int_t));
+      else if (nm == "offset" || nm == "length" || nm == "capacity")
+        result.copy_to_operands(gen_zero(sz_t));
+      else
+        // Unknown future field: fall back to recursive default.
+        result.copy_to_operands(gen_default_value_resolved(comp.type()));
+    }
+    return result;
+  }
+
+  // Generic struct: recurse on each component, restoring the original
+  // (possibly symbol) type on the result so downstream type-equality
+  // checks against the array's declared element type still hold.
+  if (t.id() == "struct")
+  {
+    exprt result = struct_exprt(t);
+    for (const auto &comp : to_struct_type(t).components())
+    {
+      exprt field_default = gen_default_value_resolved(comp.type());
+      if (field_default.is_nil())
+        return field_default; // propagate failure
+      result.copy_to_operands(field_default);
+    }
+    if (t_in.id() == "symbol")
+      result.type() = t_in;
+    return result;
+  }
+
+  // Default: gen_zero (handles primitives, plain pointers, fixed-size
+  // arrays — recursive into subtype itself).  May still return nil for
+  // genuinely unhandled types; caller responsibility to detect.
+  exprt z = gen_zero(t);
+  if (!z.is_nil() && t_in.id() == "symbol")
+    z.type() = t_in;
+  return z;
+}
+
 bool solidity_convertert::get_conditional_operator_expr(
   const nlohmann::json &expr,
   exprt &new_expr)
