@@ -54,3 +54,52 @@ address_t ecrecover(uint256_t hash, unsigned int v, uint256_t r, uint256_t s)
 __ESBMC_HIDE:;
   return (address_t)(~hash);
 }
+
+/* F1 closure (ledger #3): wide-BV-indexed hash tables.
+ *
+ * The Solidity frontend concatenates abi.encode/keccak256/sha256 args into
+ * a wide BV `concat(arg_1, ..., arg_N)`, picks the smallest enclosing bucket
+ * W ∈ {256, 512, 1024, 2048}, zero-extends to W, and looks up
+ * `_ESBMC_<hash>_table_<W>[concat_W]`.  The SMT array axiom gives the
+ * `same key → same hash` direction for free; per-callsite distinctness
+ * assumes emitted at the frontend cover the `distinct keys → distinct
+ * hashes` direction (injectivity).
+ *
+ * The 4-bucket schedule covers the common signature widths:
+ *   - 1 × uint256        →  256
+ *   - 2 × uint256        →  512
+ *   - 3-4 × uint256      → 1024
+ *   - 5-8 × uint256      → 2048
+ * Heterogeneous mixes (e.g. (address, uint256, uint256) = 576 bits) round
+ * UP to the smallest enclosing bucket and zero-extend in the unused high
+ * bits.  Distinct concat values still map to distinct slots because the
+ * zero-extension is a bijection on the lower `total_W` bits.
+ *
+ * Replaces the unsound multiplicative `_ESBMC_abi_fold` (deleted in S5).
+ */
+__attribute__((annotate("__ESBMC_inf_size:256")))
+uint256_t _ESBMC_keccak_table_256[1];
+__attribute__((annotate("__ESBMC_inf_size:512")))
+uint256_t _ESBMC_keccak_table_512[1];
+__attribute__((annotate("__ESBMC_inf_size:1024")))
+uint256_t _ESBMC_keccak_table_1024[1];
+__attribute__((annotate("__ESBMC_inf_size:2048")))
+uint256_t _ESBMC_keccak_table_2048[1];
+
+__attribute__((annotate("__ESBMC_inf_size:256")))
+uint256_t _ESBMC_sha256_table_256[1];
+__attribute__((annotate("__ESBMC_inf_size:512")))
+uint256_t _ESBMC_sha256_table_512[1];
+__attribute__((annotate("__ESBMC_inf_size:1024")))
+uint256_t _ESBMC_sha256_table_1024[1];
+__attribute__((annotate("__ESBMC_inf_size:2048")))
+uint256_t _ESBMC_sha256_table_2048[1];
+
+__attribute__((annotate("__ESBMC_inf_size:256")))
+address_t _ESBMC_ripemd160_table_256[1];
+__attribute__((annotate("__ESBMC_inf_size:512")))
+address_t _ESBMC_ripemd160_table_512[1];
+__attribute__((annotate("__ESBMC_inf_size:1024")))
+address_t _ESBMC_ripemd160_table_1024[1];
+__attribute__((annotate("__ESBMC_inf_size:2048")))
+address_t _ESBMC_ripemd160_table_2048[1];

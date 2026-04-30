@@ -78,35 +78,25 @@ __ESBMC_HIDE:;
   return result;
 }
 
-/* ── multi-arg fold helper (T2.1)  ──────────────────────────────────── *
+/* F1 closure (ledger #3): wide-BV-indexed abi.encode tables.
  *
- * Combine an accumulator with the next ABI-encoded argument so the
- * frontend's abi.encode/encodePacked/encodeWithSelector/
- * encodeWithSignature/encodeCall lowering can chain N args into a
- * single uint256 result.  Form:
+ * Bucketed by total arg-bit-width, mirrors the keccak/sha tables in
+ * solidity_crypto.c. Replaces the unsound multiplicative `_ESBMC_abi_fold`
+ * for the `is_abi_func` path: abi.encode/encodePacked/encodeWithSelector/
+ * encodeWithSignature/encodeCall calls now route through
+ * `_ESBMC_abi_table_<W>[concat(args_W)]`. The SMT array axiom gives same-
+ * key-same-encoding for free; per-callsite distinctness assumes emitted at
+ * the frontend cover the distinct-key-distinct-encoding direction.
  *
- *   acc' = acc * 0x100000001b3 + next
- *
- * **Soundness:** this fold is **NOT injective under SMT**.  Multiplication
- * mod 2^256 is not a permutation under wraparound; for any (acc1, n1)
- * the solver can find (acc2, n2) ≠ (acc1, n1) with equal output.  The
- * earlier "FNV-injective" comment was formally void in a BMC/SMT context
- * where the solver actively searches adversarial assignments.  The
- * resulting under-approximation is regression-locked under
- * `abi_fold_collision_distinct_pass_knownbug` and ledger entry #3 (open).
- *
- * Closure requires a sound bit-vector tuple encoding (e.g. position-
- * tagged concatenation followed by a true bijection).  Until then, this
- * helper remains the practical-but-unsound fold; consumers should
- * understand that `keccak256(abi.encode(a, b)) == keccak256(abi.encode(c, d))`
- * may report TRUE for distinct argument tuples.
- *
- * Solver-friendly: a single MUL + ADD per step, no shifts or array
- * writes — keeps the encoding lightweight while we wait for the
- * architectural fix.
+ * Two call sites with the same total arg-width (e.g. abi.encode(a,b) and
+ * abi.encode(c,d), both 512-bit) share the same table; the wide-BV concat
+ * keys disambiguate. Sites with different widths use different tables.
  */
-uint256_t _ESBMC_abi_fold(uint256_t acc, uint256_t next)
-{
-__ESBMC_HIDE:;
-  return acc * (uint256_t)0x100000001b3ULL + next;
-}
+__attribute__((annotate("__ESBMC_inf_size:256")))
+uint256_t _ESBMC_abi_table_256[1];
+__attribute__((annotate("__ESBMC_inf_size:512")))
+uint256_t _ESBMC_abi_table_512[1];
+__attribute__((annotate("__ESBMC_inf_size:1024")))
+uint256_t _ESBMC_abi_table_1024[1];
+__attribute__((annotate("__ESBMC_inf_size:2048")))
+uint256_t _ESBMC_abi_table_2048[1];

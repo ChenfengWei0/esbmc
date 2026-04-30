@@ -1352,6 +1352,29 @@ protected:
   typet byte_dynamic_t;
   typet byte_static_t;
 
+  // F1 closure (ledger #3): registry of hash/abi call sites for
+  // per-pair distinctness assumes.  Each entry records the global symbol
+  // names of the wide-BV concat key and the uint256 lookup result, along
+  // with the hash family ("abi", "keccak", "sha256", "ripemd160") and
+  // the width bucket (256/512/1024/2048).  At each new call site the
+  // frontend iterates prior entries and emits
+  //   __ESBMC_assume(prior_key == this_key || prior_result != this_result)
+  // for every match on (hash_name, width_bucket).  This is the
+  // injectivity axiom that closes F1 — the SMT array axiom alone gives
+  // only same-key-same-hash, not distinct-key-distinct-hash.
+  struct hash_callsite_t
+  {
+    std::string hash_name;
+    unsigned width_bucket;
+    std::string key_sym_name;
+    std::string key_sym_id;
+    std::string result_sym_name;
+    std::string result_sym_id;
+    typet result_type;
+  };
+  std::vector<hash_callsite_t> hash_callsites_;
+  unsigned hash_callsite_counter_ = 0;
+
 private:
   bool get_elementary_type_name_uint(
     SolidityGrammar::ElementaryTypeNameT &type,
