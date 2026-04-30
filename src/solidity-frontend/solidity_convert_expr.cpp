@@ -2608,12 +2608,17 @@ bool solidity_convertert::get_index_range_access_expr(
   exprt &new_expr)
 {
   // [APPROX: OVER] IndexRangeAccess: data[start:end] on calldata
-  // arrays/bytes. Model as a fresh nondet value of the result type —
-  // the slice is detached from the source array, so indexing b[s:e]
-  // and the parent `b` share no content. Also no bound relationship
-  // between `start`, `end` and the original length is enforced.
-  // False positives: slice-range bounds assertions on user code that
-  //   does its own check cannot be verified.
+  // arrays/bytes. The slice value itself is still a fresh nondet
+  // (no link to parent array content), but the path-condition is
+  // tightened with real-EVM bounds:
+  //   __ESBMC_assume(s <= e);
+  //   __ESBMC_assume(e <= base.length);
+  // Real EVM reverts when these are violated, so a feasible slice
+  // implies the bounds. This closes ledger #14's slice-bounds gap;
+  // the same-content-as-parent gap remains separately deferred.
+  //
+  // False positives: same-content slice assertions cannot be verified
+  //   (slice value is still detached nondet).
   // False negatives: none for safety.
   locationt location;
   get_start_location_from_stmt(expr, location);
@@ -2622,9 +2627,108 @@ bool solidity_convertert::get_index_range_access_expr(
   if (get_type_description(expr["typeDescriptions"], t))
     return true;
 
-  // For bytes calldata slices: result is bytes (dynamic)
-  // For T[] calldata slices: result is T[] (dynamic)
-  // Both are modeled as nondet values of the result type.
+  // Resolve start/end. Solidity allows omission: `b[:e]` (s == 0) and
+  // `b[s:]` (e == base.length).
+  exprt s_expr;
+  bool have_s = expr.contains("startExpression") &&
+                !expr["startExpression"].is_null();
+  if (have_s)
+  {
+    if (get_expr(
+          expr["startExpression"],
+          expr["startExpression"]["typeDescriptions"],
+          s_expr))
+      return true;
+  }
+  else
+    s_expr = from_integer(BigInt(0), unsignedbv_typet(256));
+
+  exprt e_expr;
+  bool have_e = expr.contains("endExpression") &&
+                !expr["endExpression"].is_null();
+  if (have_e)
+  {
+    if (get_expr(
+          expr["endExpression"],
+          expr["endExpression"]["typeDescriptions"],
+          e_expr))
+      return true;
+  }
+
+  // Try to read base.length when needed for the e <= length bound. For
+  // t_bytes_calldata_ptr the BytesDynamic struct exposes `.length`; for
+  // T[] calldata the array's length is reachable via the same name on
+  // the C-level layout. If we can't resolve the base expression we
+  // skip the length-side assume (still emit s <= e — a strict
+  // improvement over no constraint).
+  exprt base_length;
+  bool have_base_length = false;
+  if (expr.contains("baseExpression"))
+  {
+    exprt base_expr;
+    if (!get_expr(
+          expr["baseExpression"],
+          expr["baseExpression"]["typeDescriptions"],
+          base_expr))
+    {
+      const std::string base_tid =
+        expr["baseExpression"]["typeDescriptions"].value(
+          "typeIdentifier", "");
+      // bytes calldata / memory: BytesDynamic has a `length` field.
+      if (base_tid.compare(0, 8, "t_bytes_") == 0)
+      {
+        base_length = member_exprt(base_expr, "length", size_type());
+        solidity_gen_typecast(ns, base_length, unsignedbv_typet(256));
+        have_base_length = true;
+      }
+      // T[] calldata / memory: similar path; member name 'length' on
+      // the C-level struct that backs the dynamic array. Skip if the
+      // member access fails at IR build time.
+    }
+  }
+  if (!have_e && have_base_length)
+  {
+    e_expr = base_length;
+    have_e = true;
+  }
+
+  auto emit_assume = [&](const exprt &cond) {
+    side_effect_expr_function_callt assume_call;
+    get_library_function_call_no_args(
+      "__ESBMC_assume",
+      "c:@F@__ESBMC_assume",
+      empty_typet(),
+      location,
+      assume_call);
+    assume_call.arguments().push_back(cond);
+    convert_expression_to_code(assume_call);
+    move_to_front_block(assume_call);
+  };
+
+  // Emit `s <= e` whenever both operands are known.
+  if (have_e)
+  {
+    // Coerce both to a common 256-bit width for the comparison.
+    exprt s_for_cmp = s_expr;
+    exprt e_for_cmp = e_expr;
+    solidity_gen_typecast(ns, s_for_cmp, unsignedbv_typet(256));
+    solidity_gen_typecast(ns, e_for_cmp, unsignedbv_typet(256));
+    binary_relation_exprt s_le_e(s_for_cmp, "<=", e_for_cmp);
+    emit_assume(s_le_e);
+  }
+
+  // Emit `e <= base.length` when length is resolvable.
+  if (have_e && have_base_length)
+  {
+    exprt e_for_cmp = e_expr;
+    exprt len_for_cmp = base_length;
+    solidity_gen_typecast(ns, e_for_cmp, unsignedbv_typet(256));
+    solidity_gen_typecast(ns, len_for_cmp, unsignedbv_typet(256));
+    binary_relation_exprt e_le_len(e_for_cmp, "<=", len_for_cmp);
+    emit_assume(e_le_len);
+  }
+
+  // The slice value itself is still a fresh nondet of the result type.
   new_expr = exprt("sideeffect", t);
   new_expr.statement("nondet");
   new_expr.location() = location;
