@@ -1055,131 +1055,38 @@ bool solidity_convertert::get_statement(
   }
   case SolidityGrammar::StatementT::InlineAssemblyStatement:
   {
-    // [APPROX: OVER] Inline assembly is not executed. We over-approximate by
-    // havocing every externally referenced variable (each becomes nondet of
-    // its declared type). Pure-EVM blocks with no external refs become skips.
+    // T2.4 — gradual Yul lowering for inline assembly.
     //
-    // Soundness: sound for *reads* — the havoc admits every value the block
-    //   could possibly produce.
-    // Completeness: false positives possible when the block enforces a
-    //   constraint on the havoc'd variable (e.g. assembly-driven invariants
-    //   checked later).
-    // Fast path: simple `z := x` YulAssignment patterns where both sides
-    //   are recognized external variables are lowered to a deterministic
-    //   assignment (with a fn-ptr-to-integer read producing zero, matching
-    //   Yul semantics for uninitialized internal fn-ptr slots). Anything
-    //   more elaborate falls back to the generic havoc.
-    // Notes: .slot/.offset references to state variables havoc the backing
-    //   state variable itself; opcodes that touch only EVM intrinsics (gas,
-    //   selfbalance, etc.) produce no havoc and become a skip.
-
-    // Attempt the deterministic YulAssignment fast path first. If every
-    // top-level Yul statement is a recognized pattern we avoid havoc
-    // entirely; otherwise we fall through to the conservative block.
-    if (stmt.contains("AST") && stmt["AST"].is_object() &&
-        stmt["AST"].value("nodeType", "") == "YulBlock" &&
-        stmt["AST"].contains("statements") &&
-        stmt["AST"]["statements"].is_array())
+    // Strategy: try precise lowering of the YulBlock against a fixed
+    // supported subset (let / := / pure-256-bit builtins / if / switch /
+    // for / nested blocks / number+bool literals).  All-or-nothing per
+    // block: if any unsupported Yul construct (mload/mstore/sload/sstore/
+    // calldata*/keccak256/call/return/revert/EVM-intrinsics/Yul-fn-defs/
+    // break/continue/leave/.slot/.offset/multi-LHS/hex-or-string-literals)
+    // appears anywhere in the block, fall through to the legacy havoc
+    // fallback below.  This guarantees the precise portion can never
+    // observe a write the havoc'd portion would have made.
     {
-      const nlohmann::json &yul_stmts = stmt["AST"]["statements"];
-
-      // Build src-range -> declaration id map from externalReferences so we
-      // can resolve YulIdentifier nodes (which only carry source ranges) to
-      // their Solidity VariableDeclaration.
-      std::map<std::string, int> src_to_decl;
-      if (stmt.contains("externalReferences") &&
-          stmt["externalReferences"].is_array())
+      std::string unsupported_kind, unsupported_src;
+      exprt precise;
+      if (try_lower_yul_block_precise(
+            stmt, loc, precise, unsupported_kind, unsupported_src))
       {
-        for (const auto &ref : stmt["externalReferences"])
-        {
-          if (
-            ref.contains("declaration") && ref["declaration"].is_number() &&
-            ref.contains("src") && ref["src"].is_string())
-          {
-            bool skip_slot_off =
-              (ref.contains("isSlot") && ref["isSlot"].get<bool>()) ||
-              (ref.contains("isOffset") && ref["isOffset"].get<bool>());
-            if (!skip_slot_off)
-              src_to_decl[ref["src"].get<std::string>()] =
-                ref["declaration"].get<int>();
-          }
-        }
-      }
-
-      code_blockt fast_block;
-      bool fast_all_handled = !yul_stmts.empty();
-      for (const auto &ys : yul_stmts)
-      {
-        if (
-          ys.value("nodeType", "") != "YulAssignment" ||
-          !ys.contains("variableNames") ||
-          !ys["variableNames"].is_array() ||
-          ys["variableNames"].size() != 1 ||
-          !ys.contains("value") || !ys["value"].is_object())
-        {
-          fast_all_handled = false;
-          break;
-        }
-        const nlohmann::json &dst_ref = ys["variableNames"][0];
-        const nlohmann::json &src_ref = ys["value"];
-        if (
-          dst_ref.value("nodeType", "") != "YulIdentifier" ||
-          src_ref.value("nodeType", "") != "YulIdentifier")
-        {
-          fast_all_handled = false;
-          break;
-        }
-        auto dst_it = src_to_decl.find(dst_ref.value("src", ""));
-        auto src_it = src_to_decl.find(src_ref.value("src", ""));
-        if (dst_it == src_to_decl.end() || src_it == src_to_decl.end())
-        {
-          fast_all_handled = false;
-          break;
-        }
-        const nlohmann::json &dst_decl = find_decl_ref(dst_it->second);
-        const nlohmann::json &src_decl = find_decl_ref(src_it->second);
-        if (
-          dst_decl.empty() ||
-          dst_decl.value("nodeType", "") != "VariableDeclaration" ||
-          src_decl.empty() ||
-          src_decl.value("nodeType", "") != "VariableDeclaration")
-        {
-          fast_all_handled = false;
-          break;
-        }
-        bool dst_state = dst_decl.contains("stateVariable") &&
-                         dst_decl["stateVariable"].get<bool>();
-        bool src_state = src_decl.contains("stateVariable") &&
-                         src_decl["stateVariable"].get<bool>();
-        exprt dst_expr, src_expr;
-        if (
-          get_var_decl_ref(dst_decl, dst_state, dst_expr) ||
-          get_var_decl_ref(src_decl, src_state, src_expr))
-        {
-          fast_all_handled = false;
-          break;
-        }
-        // Reading an internal fn-ptr's raw slot value yields zero under
-        // Yul semantics (uninitialized void*). For any other source type
-        // we emit a plain typecast assignment.
-        exprt rhs;
-        if (src_expr.type().get_bool("#sol_func_ptr"))
-          rhs = from_integer(BigInt(0), dst_expr.type());
-        else
-        {
-          rhs = src_expr;
-          solidity_gen_typecast(ns, rhs, dst_expr.type());
-        }
-        code_assignt assign(dst_expr, rhs);
-        assign.location() = loc;
-        fast_block.copy_to_operands(assign);
-      }
-
-      if (fast_all_handled && !fast_block.operands().empty())
-      {
-        new_expr = fast_block;
+        new_expr = precise;
         break;
       }
+      // [APPROX: OVER] Block contains an unsupported Yul construct; emit
+      // a single warning naming the offending node + location so users can
+      // see why an assertion that depends on this block became a havoc.
+      log_warning(
+        "[approx] inline assembly at {}:{}: over-approximating - "
+        "unsupported Yul construct '{}' ({}); supported subset: "
+        "let / := / arithmetic+bitwise+shift / lt/gt/eq/slt/sgt/iszero / "
+        "and/or/xor/not / shl/shr / if / switch / for",
+        loc.get_file().c_str(),
+        loc.get_line().c_str(),
+        unsupported_kind,
+        unsupported_src);
     }
 
     code_blockt havoc_block;
@@ -1280,4 +1187,857 @@ bool solidity_convertert::get_statement(
     "solidity", "finish statement {}", SolidityGrammar::statement_to_str(type));
   new_expr.location() = loc;
   return false;
+}
+
+// ============================================================================
+// T2.4 — Yul precise lowering for inline assembly blocks.
+//
+// Translates a supported subset of Yul into ESBMC IR with full precision.
+// Supported subset:
+//   - Statements:  YulBlock, YulVariableDeclaration, YulAssignment, YulIf,
+//                  YulSwitch, YulForLoop
+//   - Expressions: YulIdentifier, YulLiteral (number/bool), YulFunctionCall
+//                  with a whitelisted builtin name
+//   - Builtins:    add sub mul div mod addmod mulmod
+//                  lt gt slt sgt eq iszero
+//                  and or xor not
+//                  shl shr
+//
+// Unsupported (block falls back to havoc with a single warning):
+//   - Memory/storage/calldata/hashing/calls/returns/reverts/EVM intrinsics
+//   - Yul function definitions, leave/break/continue
+//   - Multi-LHS YulAssignment / YulVariableDeclaration
+//   - YulLiteral kinds other than number / bool
+//   - YulCase with a non-literal selector
+//   - .slot / .offset external references
+//
+// All-or-nothing rule: pre-flight scans the entire YulBlock; the precise
+// lowerer either translates everything or refuses (returns false), and the
+// caller emits one warning + falls through to the existing havoc fallback.
+// This is the soundness lever — a partial precise translation could miss
+// writes the unsupported portion would make.
+// ============================================================================
+
+namespace
+{
+bool is_supported_yul_builtin(const std::string &name)
+{
+  static const std::set<std::string> ok = {
+    "add",     "sub", "mul", "div",  "mod", "addmod", "mulmod",
+    "lt",      "gt",  "slt", "sgt",  "eq",  "iszero",
+    "and",     "or",  "xor", "not",
+    "shl",     "shr"};
+  return ok.count(name) != 0;
+}
+} // namespace
+
+bool solidity_convertert::yul_node_is_supported(
+  const nlohmann::json &node,
+  std::string &unsupported_kind,
+  std::string &unsupported_src)
+{
+  if (!node.is_object())
+    return true;
+  const std::string nt = node.value("nodeType", "");
+
+  if (nt == "YulBlock")
+  {
+    if (!node.contains("statements") || !node["statements"].is_array())
+      return true;
+    for (const auto &s : node["statements"])
+      if (!yul_node_is_supported(s, unsupported_kind, unsupported_src))
+        return false;
+    return true;
+  }
+  if (nt == "YulVariableDeclaration")
+  {
+    if (
+      !node.contains("variables") || !node["variables"].is_array() ||
+      node["variables"].size() != 1)
+    {
+      unsupported_kind = "YulVariableDeclaration:multi-LHS";
+      unsupported_src = node.value("src", "");
+      return false;
+    }
+    if (node.contains("value") && node["value"].is_object())
+      return yul_node_is_supported(
+        node["value"], unsupported_kind, unsupported_src);
+    return true;
+  }
+  if (nt == "YulAssignment")
+  {
+    if (
+      !node.contains("variableNames") || !node["variableNames"].is_array() ||
+      node["variableNames"].size() != 1)
+    {
+      unsupported_kind = "YulAssignment:multi-LHS";
+      unsupported_src = node.value("src", "");
+      return false;
+    }
+    if (!node.contains("value") || !node["value"].is_object())
+    {
+      unsupported_kind = "YulAssignment:no-value";
+      unsupported_src = node.value("src", "");
+      return false;
+    }
+    return yul_node_is_supported(
+      node["value"], unsupported_kind, unsupported_src);
+  }
+  if (nt == "YulIf")
+  {
+    if (
+      node.contains("condition") &&
+      !yul_node_is_supported(
+        node["condition"], unsupported_kind, unsupported_src))
+      return false;
+    if (
+      node.contains("body") &&
+      !yul_node_is_supported(node["body"], unsupported_kind, unsupported_src))
+      return false;
+    return true;
+  }
+  if (nt == "YulSwitch")
+  {
+    if (
+      node.contains("expression") &&
+      !yul_node_is_supported(
+        node["expression"], unsupported_kind, unsupported_src))
+      return false;
+    if (!node.contains("cases") || !node["cases"].is_array())
+    {
+      unsupported_kind = "YulSwitch:no-cases";
+      unsupported_src = node.value("src", "");
+      return false;
+    }
+    for (const auto &c : node["cases"])
+    {
+      // Default-case selector is either null (older solc) or the string
+      // "default" (newer solc); non-default must be a YulLiteral.
+      bool is_default = false;
+      if (c.contains("value"))
+      {
+        const auto &v = c["value"];
+        if (v.is_null())
+          is_default = true;
+        else if (v.is_string() && v.get<std::string>() == "default")
+          is_default = true;
+        else if (v.is_object())
+        {
+          if (v.value("nodeType", "") != "YulLiteral")
+          {
+            unsupported_kind = "YulCase:non-literal-selector";
+            unsupported_src = c.value("src", "");
+            return false;
+          }
+          if (!yul_node_is_supported(v, unsupported_kind, unsupported_src))
+            return false;
+        }
+        else
+        {
+          unsupported_kind = "YulCase:unknown-selector";
+          unsupported_src = c.value("src", "");
+          return false;
+        }
+      }
+      (void)is_default;
+      if (
+        c.contains("body") &&
+        !yul_node_is_supported(c["body"], unsupported_kind, unsupported_src))
+        return false;
+    }
+    return true;
+  }
+  if (nt == "YulForLoop" || nt == "YulFor")
+  {
+    for (const char *k : {"pre", "condition", "post", "body"})
+    {
+      if (
+        node.contains(k) &&
+        !yul_node_is_supported(node[k], unsupported_kind, unsupported_src))
+        return false;
+    }
+    return true;
+  }
+  if (nt == "YulFunctionCall")
+  {
+    const std::string fname =
+      node.value("functionName", nlohmann::json::object()).value("name", "");
+    if (!is_supported_yul_builtin(fname))
+    {
+      unsupported_kind = "YulFunctionCall:" + fname;
+      unsupported_src = node.value("src", "");
+      return false;
+    }
+    if (node.contains("arguments") && node["arguments"].is_array())
+      for (const auto &a : node["arguments"])
+        if (!yul_node_is_supported(a, unsupported_kind, unsupported_src))
+          return false;
+    return true;
+  }
+  if (nt == "YulIdentifier")
+    return true;
+  if (nt == "YulLiteral")
+  {
+    const std::string kind = node.value("kind", "");
+    if (kind == "number" || kind == "bool")
+      return true;
+    unsupported_kind = "YulLiteral:" + kind;
+    unsupported_src = node.value("src", "");
+    return false;
+  }
+
+  // Unknown / unsupported nodeType — typically YulFunctionDefinition,
+  // YulLeave, YulBreak, YulContinue, YulExpressionStatement, YulTypedName
+  // appearing where a statement is expected, etc.
+  unsupported_kind = nt.empty() ? "YulNode:unknown" : nt;
+  unsupported_src = node.value("src", "");
+  return false;
+}
+
+bool solidity_convertert::make_yul_local(
+  const std::string &asm_id,
+  int seq,
+  const std::string &yul_name,
+  const locationt &loc,
+  exprt &out_sym)
+{
+  std::string name =
+    "_yul_" + asm_id + "_" + std::to_string(seq) + "_" + yul_name;
+  std::string id;
+  if (current_baseContractName.empty() || current_functionName.empty())
+  {
+    // Free-function context: scope to the function only.
+    id = "sol:@F@" +
+         (current_functionName.empty() ? std::string("_anon_")
+                                       : current_functionName) +
+         "@" + name;
+  }
+  else
+  {
+    id = "sol:@C@" + current_baseContractName + "@F@" + current_functionName +
+         "@" + name;
+  }
+  symbolt s;
+  std::string mod = get_modulename_from_path(absolute_path);
+  unsignedbv_typet u256(256);
+  get_default_symbol(s, mod, u256, name, id, loc);
+  s.lvalue = true;
+  s.file_local = true;
+  s.static_lifetime = false;
+  if (move_symbol_to_context(s) == nullptr)
+    return true;
+  out_sym = symbol_exprt(id, u256);
+  out_sym.location() = loc;
+  return false;
+}
+
+bool solidity_convertert::convert_yul_expression(
+  const nlohmann::json &yul_expr,
+  const std::map<std::string, int> &src_to_decl,
+  const std::map<std::string, exprt> &locals,
+  const locationt &loc,
+  exprt &out)
+{
+  unsignedbv_typet u256(256);
+  const std::string nt = yul_expr.value("nodeType", "");
+
+  if (nt == "YulLiteral")
+  {
+    const std::string kind = yul_expr.value("kind", "");
+    const std::string val = yul_expr.value("value", "0");
+    if (kind == "bool")
+      out = from_integer(BigInt(val == "true" ? 1 : 0), u256);
+    else if (kind == "number")
+    {
+      BigInt v;
+      if (val.size() > 2 && val[0] == '0' && (val[1] == 'x' || val[1] == 'X'))
+        v = string2integer(val.substr(2), 16);
+      else
+        v = string2integer(val, 10);
+      out = from_integer(v, u256);
+    }
+    else
+      return true;
+    out.location() = loc;
+    return false;
+  }
+
+  if (nt == "YulIdentifier")
+  {
+    const std::string name = yul_expr.value("name", "");
+    auto lit = locals.find(name);
+    if (lit != locals.end())
+    {
+      out = lit->second;
+      return false;
+    }
+    auto sit = src_to_decl.find(yul_expr.value("src", ""));
+    if (sit == src_to_decl.end())
+      return true;
+    const nlohmann::json &decl = find_decl_ref(sit->second);
+    if (decl.empty() || decl.value("nodeType", "") != "VariableDeclaration")
+      return true;
+    bool is_state =
+      decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
+    if (get_var_decl_ref(decl, is_state, out))
+      return true;
+    // Yul reads of internal-fn-ptr-typed locals see 0 (uninit fn-ptr semantics).
+    if (out.type().get_bool("#sol_func_ptr"))
+      out = from_integer(BigInt(0), u256);
+    else
+      solidity_gen_typecast(ns, out, u256);
+    return false;
+  }
+
+  if (nt == "YulFunctionCall")
+  {
+    const std::string fname =
+      yul_expr.value("functionName", nlohmann::json::object())
+        .value("name", "");
+    const auto &args = yul_expr["arguments"];
+
+    auto eval_arg = [&](size_t i, exprt &dst) -> bool {
+      return convert_yul_expression(args[i], src_to_decl, locals, loc, dst);
+    };
+    auto u256_const = [&](const BigInt &v) {
+      return from_integer(v, u256);
+    };
+    auto bool_to_u256 = [&](const exprt &cond) {
+      return if_exprt(cond, u256_const(1), u256_const(0));
+    };
+
+    // Pure 2-operand uint256 ops: + - *
+    if (fname == "add" || fname == "sub" || fname == "mul")
+    {
+      if (args.size() != 2)
+        return true;
+      exprt a, b;
+      if (eval_arg(0, a) || eval_arg(1, b))
+        return true;
+      if (fname == "add")
+        out = plus_exprt(a, b);
+      else if (fname == "sub")
+        out = minus_exprt(a, b);
+      else
+        out = mult_exprt(a, b);
+      out.type() = u256;
+      out.location() = loc;
+      return false;
+    }
+
+    // div / mod with Yul's `_(_, 0) == 0` rule
+    if (fname == "div" || fname == "mod")
+    {
+      if (args.size() != 2)
+        return true;
+      exprt a, b;
+      if (eval_arg(0, a) || eval_arg(1, b))
+        return true;
+      exprt op;
+      if (fname == "div")
+        op = div_exprt(a, b);
+      else
+        op = mod_exprt(a, b);
+      op.type() = u256;
+      equality_exprt is_zero(b, u256_const(0));
+      out = if_exprt(is_zero, u256_const(0), op);
+      out.type() = u256;
+      out.location() = loc;
+      return false;
+    }
+
+    if (fname == "addmod" || fname == "mulmod")
+    {
+      if (args.size() != 3)
+        return true;
+      exprt a, b, m;
+      if (eval_arg(0, a) || eval_arg(1, b) || eval_arg(2, m))
+        return true;
+      exprt inner;
+      if (fname == "addmod")
+        inner = plus_exprt(a, b);
+      else
+        inner = mult_exprt(a, b);
+      inner.type() = u256;
+      mod_exprt mod_op(inner, m);
+      mod_op.type() = u256;
+      equality_exprt is_zero(m, u256_const(0));
+      out = if_exprt(is_zero, u256_const(0), mod_op);
+      out.type() = u256;
+      out.location() = loc;
+      return false;
+    }
+
+    // Unsigned comparisons → uint256 (1 / 0)
+    if (fname == "lt" || fname == "gt" || fname == "eq")
+    {
+      if (args.size() != 2)
+        return true;
+      exprt a, b;
+      if (eval_arg(0, a) || eval_arg(1, b))
+        return true;
+      exprt cond;
+      if (fname == "lt")
+        cond = binary_relation_exprt(a, "<", b);
+      else if (fname == "gt")
+        cond = binary_relation_exprt(a, ">", b);
+      else
+        cond = equality_exprt(a, b);
+      out = bool_to_u256(cond);
+      out.type() = u256;
+      out.location() = loc;
+      return false;
+    }
+
+    // Signed comparisons: cast operands to int256 first.
+    if (fname == "slt" || fname == "sgt")
+    {
+      if (args.size() != 2)
+        return true;
+      exprt a, b;
+      if (eval_arg(0, a) || eval_arg(1, b))
+        return true;
+      signedbv_typet s256(256);
+      solidity_gen_typecast(ns, a, s256);
+      solidity_gen_typecast(ns, b, s256);
+      exprt cond;
+      if (fname == "slt")
+        cond = binary_relation_exprt(a, "<", b);
+      else
+        cond = binary_relation_exprt(a, ">", b);
+      out = bool_to_u256(cond);
+      out.type() = u256;
+      out.location() = loc;
+      return false;
+    }
+
+    if (fname == "iszero")
+    {
+      if (args.size() != 1)
+        return true;
+      exprt a;
+      if (eval_arg(0, a))
+        return true;
+      equality_exprt cond(a, u256_const(0));
+      out = bool_to_u256(cond);
+      out.type() = u256;
+      out.location() = loc;
+      return false;
+    }
+
+    // Bitwise binary
+    if (fname == "and" || fname == "or" || fname == "xor")
+    {
+      if (args.size() != 2)
+        return true;
+      exprt a, b;
+      if (eval_arg(0, a) || eval_arg(1, b))
+        return true;
+      const char *id =
+        (fname == "and") ? "bitand" : (fname == "or") ? "bitor" : "bitxor";
+      out = exprt(id, u256);
+      out.copy_to_operands(a, b);
+      out.location() = loc;
+      return false;
+    }
+
+    if (fname == "not")
+    {
+      if (args.size() != 1)
+        return true;
+      exprt a;
+      if (eval_arg(0, a))
+        return true;
+      out = exprt("bitnot", u256);
+      out.copy_to_operands(a);
+      out.location() = loc;
+      return false;
+    }
+
+    // Shifts. Yul argument order: shift amount FIRST, value SECOND.
+    // EVM clamps `shift >= 256` to 0 for shl/shr.
+    if (fname == "shl" || fname == "shr")
+    {
+      if (args.size() != 2)
+        return true;
+      exprt s, v;
+      if (eval_arg(0, s) || eval_arg(1, v))
+        return true;
+      const char *id = (fname == "shl") ? "shl" : "lshr";
+      exprt shifted(id, u256);
+      shifted.copy_to_operands(v, s);
+      binary_relation_exprt in_range(s, "<", u256_const(256));
+      out = if_exprt(in_range, shifted, u256_const(0));
+      out.type() = u256;
+      out.location() = loc;
+      return false;
+    }
+
+    return true; // unknown builtin (pre-flight should have rejected)
+  }
+
+  return true; // unknown nodeType
+}
+
+bool solidity_convertert::convert_yul_statement(
+  const nlohmann::json &yul_stmt,
+  const std::string &asm_id,
+  const std::map<std::string, int> &src_to_decl,
+  std::map<std::string, exprt> &locals,
+  int &local_seq,
+  const locationt &loc,
+  exprt &out)
+{
+  unsignedbv_typet u256(256);
+  const std::string nt = yul_stmt.value("nodeType", "");
+
+  if (nt == "YulBlock")
+    return convert_yul_block(
+      yul_stmt, asm_id, src_to_decl, locals, local_seq, loc, out);
+
+  if (nt == "YulVariableDeclaration")
+  {
+    const std::string yname = yul_stmt["variables"][0].value("name", "");
+    if (yname.empty())
+      return true;
+
+    exprt sym;
+    if (make_yul_local(asm_id, local_seq++, yname, loc, sym))
+      return true;
+    locals[yname] = sym;
+
+    code_blockt blk;
+    code_declt decl(sym);
+    decl.location() = loc;
+    blk.copy_to_operands(decl);
+
+    exprt rhs;
+    if (yul_stmt.contains("value") && yul_stmt["value"].is_object())
+    {
+      if (convert_yul_expression(
+            yul_stmt["value"], src_to_decl, locals, loc, rhs))
+        return true;
+    }
+    else
+      rhs = from_integer(BigInt(0), u256);
+    solidity_gen_typecast(ns, rhs, u256);
+    code_assignt assign(sym, rhs);
+    assign.location() = loc;
+    blk.copy_to_operands(assign);
+    out = blk;
+    return false;
+  }
+
+  if (nt == "YulAssignment")
+  {
+    const nlohmann::json &lhs_id = yul_stmt["variableNames"][0];
+    const nlohmann::json &rhs_node = yul_stmt["value"];
+    const std::string lname = lhs_id.value("name", "");
+
+    // Resolve LHS
+    exprt lhs;
+    auto lit = locals.find(lname);
+    if (lit != locals.end())
+      lhs = lit->second;
+    else
+    {
+      auto sit = src_to_decl.find(lhs_id.value("src", ""));
+      if (sit == src_to_decl.end())
+        return true;
+      const nlohmann::json &decl = find_decl_ref(sit->second);
+      if (decl.empty() || decl.value("nodeType", "") != "VariableDeclaration")
+        return true;
+      bool is_state =
+        decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
+      if (get_var_decl_ref(decl, is_state, lhs))
+        return true;
+    }
+
+    // Special case: `dst := src` where rhs is a YulIdentifier — preserve the
+    // legacy fast-path semantics so bytes-struct / fn-ptr destinations work
+    // (they don't roundtrip through uint256).
+    if (rhs_node.value("nodeType", "") == "YulIdentifier")
+    {
+      const std::string rname = rhs_node.value("name", "");
+      exprt src_expr;
+      auto rit = locals.find(rname);
+      if (rit != locals.end())
+        src_expr = rit->second;
+      else
+      {
+        auto sit = src_to_decl.find(rhs_node.value("src", ""));
+        if (sit == src_to_decl.end())
+          return true;
+        const nlohmann::json &decl = find_decl_ref(sit->second);
+        if (decl.empty() || decl.value("nodeType", "") != "VariableDeclaration")
+          return true;
+        bool is_state =
+          decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
+        if (get_var_decl_ref(decl, is_state, src_expr))
+          return true;
+      }
+      exprt rhs;
+      if (src_expr.type().get_bool("#sol_func_ptr"))
+        rhs = from_integer(BigInt(0), lhs.type());
+      else
+      {
+        rhs = src_expr;
+        solidity_gen_typecast(ns, rhs, lhs.type());
+      }
+      code_assignt assign(lhs, rhs);
+      assign.location() = loc;
+      out = assign;
+      return false;
+    }
+
+    exprt rhs;
+    if (convert_yul_expression(rhs_node, src_to_decl, locals, loc, rhs))
+      return true;
+    solidity_gen_typecast(ns, rhs, lhs.type());
+    code_assignt assign(lhs, rhs);
+    assign.location() = loc;
+    out = assign;
+    return false;
+  }
+
+  if (nt == "YulIf")
+  {
+    exprt cond_val;
+    if (convert_yul_expression(
+          yul_stmt["condition"], src_to_decl, locals, loc, cond_val))
+      return true;
+    binary_relation_exprt cond_ne(cond_val, "notequal", from_integer(BigInt(0), u256));
+
+    exprt body;
+    if (convert_yul_block(
+          yul_stmt["body"], asm_id, src_to_decl, locals, local_seq, loc, body))
+      return true;
+
+    codet if_expr("ifthenelse");
+    if_expr.copy_to_operands(cond_ne, body);
+    if_expr.location() = loc;
+    out = if_expr;
+    return false;
+  }
+
+  if (nt == "YulSwitch")
+  {
+    exprt e;
+    if (convert_yul_expression(
+          yul_stmt["expression"], src_to_decl, locals, loc, e))
+      return true;
+
+    const auto &cases = yul_stmt["cases"];
+
+    // Build the default branch first; non-default cases chain right-to-left
+    // around it.  solc represents default-case selector as either JSON null
+    // (older) or the literal string "default" (newer).
+    auto is_default = [](const nlohmann::json &c) -> bool {
+      if (!c.contains("value"))
+        return true;
+      const auto &v = c["value"];
+      return v.is_null() || (v.is_string() && v.get<std::string>() == "default");
+    };
+
+    exprt tail = code_skipt();
+    for (const auto &c : cases)
+    {
+      if (is_default(c))
+      {
+        if (convert_yul_block(
+              c["body"], asm_id, src_to_decl, locals, local_seq, loc, tail))
+          return true;
+        break;
+      }
+    }
+
+    std::vector<nlohmann::json> non_default;
+    for (const auto &c : cases)
+      if (!is_default(c))
+        non_default.push_back(c);
+
+    for (auto it = non_default.rbegin(); it != non_default.rend(); ++it)
+    {
+      exprt key;
+      if (convert_yul_expression(
+            (*it)["value"], src_to_decl, locals, loc, key))
+        return true;
+      equality_exprt cond(e, key);
+      exprt body;
+      if (convert_yul_block(
+            (*it)["body"], asm_id, src_to_decl, locals, local_seq, loc, body))
+        return true;
+      codet if_expr("ifthenelse");
+      if_expr.copy_to_operands(cond, body, tail);
+      if_expr.location() = loc;
+      tail = if_expr;
+    }
+
+    out = tail;
+    return false;
+  }
+
+  if (nt == "YulForLoop" || nt == "YulFor")
+  {
+    // Snapshot locals so `let` declarations in `pre` fall out of scope after
+    // the for-loop completes.
+    auto snapshot = locals;
+
+    code_blockt outer;
+
+    // Walk pre's statements directly (NOT via convert_yul_block) — Yul's `pre`
+    // is not a scoped block; its `let`-bindings must remain in scope for
+    // cond/post/body.  The outer for-loop snapshot drops them after the loop.
+    if (
+      yul_stmt.contains("pre") && yul_stmt["pre"].is_object() &&
+      yul_stmt["pre"].value("nodeType", "") == "YulBlock" &&
+      yul_stmt["pre"].contains("statements") &&
+      yul_stmt["pre"]["statements"].is_array())
+    {
+      for (const auto &s : yul_stmt["pre"]["statements"])
+      {
+        exprt s_expr;
+        if (convert_yul_statement(
+              s, asm_id, src_to_decl, locals, local_seq, loc, s_expr))
+          return true;
+        outer.copy_to_operands(s_expr);
+      }
+    }
+
+    exprt cond_val;
+    if (convert_yul_expression(
+          yul_stmt["condition"], src_to_decl, locals, loc, cond_val))
+      return true;
+    binary_relation_exprt cond_ne(cond_val, "notequal", from_integer(BigInt(0), u256));
+
+    exprt post_expr;
+    if (convert_yul_block(
+          yul_stmt["post"],
+          asm_id,
+          src_to_decl,
+          locals,
+          local_seq,
+          loc,
+          post_expr))
+      return true;
+
+    exprt body_expr;
+    if (convert_yul_block(
+          yul_stmt["body"],
+          asm_id,
+          src_to_decl,
+          locals,
+          local_seq,
+          loc,
+          body_expr))
+      return true;
+
+    code_fort code_for;
+    code_for.init() = code_skipt();
+    code_for.cond() = cond_ne;
+    code_for.iter() = static_cast<const codet &>(post_expr);
+    code_for.body() = static_cast<const codet &>(body_expr);
+    code_for.location() = loc;
+    outer.copy_to_operands(code_for);
+    out = outer;
+
+    locals = snapshot;
+    return false;
+  }
+
+  return true; // unknown nodeType (pre-flight should have caught it)
+}
+
+bool solidity_convertert::convert_yul_block(
+  const nlohmann::json &yul_block,
+  const std::string &asm_id,
+  const std::map<std::string, int> &src_to_decl,
+  std::map<std::string, exprt> &locals,
+  int &local_seq,
+  const locationt &loc,
+  exprt &out)
+{
+  if (!yul_block.is_object() || yul_block.value("nodeType", "") != "YulBlock")
+    return true;
+
+  // Snapshot for nested-scope shadowing.
+  auto snapshot = locals;
+
+  code_blockt blk;
+  if (yul_block.contains("statements") && yul_block["statements"].is_array())
+  {
+    for (const auto &s : yul_block["statements"])
+    {
+      exprt s_expr;
+      if (convert_yul_statement(
+            s, asm_id, src_to_decl, locals, local_seq, loc, s_expr))
+        return true;
+      blk.copy_to_operands(s_expr);
+    }
+  }
+
+  out = blk;
+  out.location() = loc;
+  locals = snapshot;
+  return false;
+}
+
+bool solidity_convertert::try_lower_yul_block_precise(
+  const nlohmann::json &asm_stmt,
+  const locationt &loc,
+  exprt &out,
+  std::string &unsupported_kind,
+  std::string &unsupported_src)
+{
+  if (!asm_stmt.contains("AST") || !asm_stmt["AST"].is_object())
+  {
+    unsupported_kind = "InlineAssembly:no-AST";
+    unsupported_src = asm_stmt.value("src", "");
+    return false;
+  }
+  const nlohmann::json &yul_root = asm_stmt["AST"];
+
+  // Pre-flight scan — all-or-nothing rule.
+  if (!yul_node_is_supported(yul_root, unsupported_kind, unsupported_src))
+    return false;
+
+  // Build src-range -> declaration id map for outer-scope identifier lookup.
+  // .slot / .offset references imply storage semantics this lowerer doesn't
+  // model, so reject the block if any such reference exists.
+  std::map<std::string, int> src_to_decl;
+  if (
+    asm_stmt.contains("externalReferences") &&
+    asm_stmt["externalReferences"].is_array())
+  {
+    for (const auto &ref : asm_stmt["externalReferences"])
+    {
+      if (
+        (ref.contains("isSlot") && ref["isSlot"].get<bool>()) ||
+        (ref.contains("isOffset") && ref["isOffset"].get<bool>()))
+      {
+        unsupported_kind = "ExternalReference:slot-or-offset";
+        unsupported_src = ref.value("src", "");
+        return false;
+      }
+      if (
+        ref.contains("declaration") && ref["declaration"].is_number() &&
+        ref.contains("src") && ref["src"].is_string())
+        src_to_decl[ref["src"].get<std::string>()] =
+          ref["declaration"].get<int>();
+    }
+  }
+
+  std::string asm_id = "asm" + std::to_string(asm_stmt.value("id", 0));
+  std::map<std::string, exprt> locals;
+  int local_seq = 0;
+
+  if (convert_yul_block(
+        yul_root, asm_id, src_to_decl, locals, local_seq, loc, out))
+  {
+    unsupported_kind = "convert_failure";
+    unsupported_src = asm_stmt.value("src", "");
+    return false;
+  }
+
+  return true;
 }

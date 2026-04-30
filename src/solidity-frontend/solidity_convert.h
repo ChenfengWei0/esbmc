@@ -1001,6 +1001,75 @@ protected:
   /// should then fall back to `member_exprt(base, "_ESBMC_bind_cname", ...)`.
   bool get_bind_shadow_read(const exprt &base, exprt &shadow_out);
   void get_nondet_expr(const typet &t, exprt &new_expr);
+
+  /// T2.4 — Yul precise lowering for inline assembly blocks.
+  /// `try_lower_yul_block_precise` walks an `InlineAssembly` AST node and
+  /// attempts to lower its `YulBlock` into ESBMC IR with full precision for
+  /// the supported subset (let / := / pure-256-bit builtins / if / switch /
+  /// for / nested blocks / number+bool literals).  Returns false when the
+  /// block contains any unsupported Yul construct; on false, populates
+  /// `unsupported_kind` (e.g. "YulFunctionCall:mload" or "YulFunctionDefinition")
+  /// and `unsupported_src` (solc source range) so the caller can include them
+  /// in the over-approximation warning.  The all-or-nothing rule guarantees
+  /// the precise portion can never observe a write the havoc'd portion would
+  /// have made.
+  bool try_lower_yul_block_precise(
+    const nlohmann::json &asm_stmt,
+    const locationt &loc,
+    exprt &out,
+    std::string &unsupported_kind,
+    std::string &unsupported_src);
+
+  /// Recursive pre-flight scanner: returns true iff every node in the YulBlock
+  /// is in the supported subset.  On false, sets unsupported_kind/_src to the
+  /// first offending node.
+  bool yul_node_is_supported(
+    const nlohmann::json &node,
+    std::string &unsupported_kind,
+    std::string &unsupported_src);
+
+  /// Lower a YulBlock into a code_blockt.  `locals` is the Yul-name→symbol
+  /// environment for `let`-bound vars (mutable; shadowing is handled by
+  /// snapshot+restore at block boundaries).  `src_to_decl` maps YulIdentifier
+  /// source ranges to outer-scope Solidity VariableDeclaration ids (built
+  /// once from externalReferences).  `asm_id` is the InlineAssembly node's id
+  /// — used to make Yul-local symbol names unique across multiple assembly
+  /// blocks in the same function.
+  bool convert_yul_block(
+    const nlohmann::json &yul_block,
+    const std::string &asm_id,
+    const std::map<std::string, int> &src_to_decl,
+    std::map<std::string, exprt> &locals,
+    int &local_seq,
+    const locationt &loc,
+    exprt &out);
+
+  bool convert_yul_statement(
+    const nlohmann::json &yul_stmt,
+    const std::string &asm_id,
+    const std::map<std::string, int> &src_to_decl,
+    std::map<std::string, exprt> &locals,
+    int &local_seq,
+    const locationt &loc,
+    exprt &out);
+
+  bool convert_yul_expression(
+    const nlohmann::json &yul_expr,
+    const std::map<std::string, int> &src_to_decl,
+    const std::map<std::string, exprt> &locals,
+    const locationt &loc,
+    exprt &out);
+
+  /// Allocate a fresh Yul-local symbol of type uint256_t scoped to the current
+  /// function.  Names are formed from asm_id + a per-block sequence counter so
+  /// nested blocks and multiple assembly{} per function never collide.
+  bool make_yul_local(
+    const std::string &asm_id,
+    int seq,
+    const std::string &yul_name,
+    const locationt &loc,
+    exprt &out_sym);
+
   /// Build the EVM-revert-with-state-rollback replacement for a `revert` /
   /// `require` lowering.  Two output forms based on whether the current
   /// rollback site sits after a state mutation in the same function
