@@ -180,8 +180,20 @@ public:
 class array_data : public type2t
 {
 public:
-  array_data(type2t::type_ids id, const type2tc &st, const expr2tc &sz, bool i)
-    : type2t(id), subtype(st), array_size(sz), size_is_infinite(i)
+  // index_width: optional explicit bit-width for the array's index sort.
+  // Default 0 → smt_conv falls back to config.ansi_c.word_size (legacy
+  // 64-bit behaviour for all infinite arrays). Non-zero overrides for
+  // wide-BV-indexed infinite arrays — used by the Solidity mapping
+  // storage to declare a 480-bit-indexed array, closing ledger #22's
+  // 256→64 fold unsoundness.
+  array_data(
+    type2t::type_ids id,
+    const type2tc &st,
+    const expr2tc &sz,
+    bool i,
+    unsigned w = 0)
+    : type2t(id), subtype(st), array_size(sz), size_is_infinite(i),
+      index_width(w)
   {
   }
   array_data(const array_data &ref) = default;
@@ -189,6 +201,7 @@ public:
   type2tc subtype;
   expr2tc array_size;
   bool size_is_infinite;
+  unsigned index_width;
 
   // Type mangling:
   typedef esbmct::field_traits<type2tc, array_data, &array_data::subtype>
@@ -197,9 +210,14 @@ public:
     array_size_field;
   typedef esbmct::field_traits<bool, array_data, &array_data::size_is_infinite>
     size_is_infinite_field;
-  typedef esbmct::
-    type2t_traits<subtype_field, array_size_field, size_is_infinite_field>
-      traits;
+  typedef esbmct::field_traits<unsigned, array_data, &array_data::index_width>
+    index_width_field;
+  typedef esbmct::type2t_traits<
+    subtype_field,
+    array_size_field,
+    size_is_infinite_field,
+    index_width_field>
+    traits;
 };
 
 class pointer_data : public type2t
@@ -515,8 +533,12 @@ public:
    *  @param size Size of this array.
    *  @param inf Whether or not this array is infinitely sized
    */
-  array_type2t(const type2tc &_subtype, const expr2tc &size, bool inf)
-    : array_type_methods(array_id, _subtype, size, inf)
+  array_type2t(
+    const type2tc &_subtype,
+    const expr2tc &size,
+    bool inf,
+    unsigned w = 0)
+    : array_type_methods(array_id, _subtype, size, inf, w)
   {
     // If we can simplify the array size, do so
     // XXX, this is probably massively inefficient. Some kind of boundary in

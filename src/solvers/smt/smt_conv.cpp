@@ -3613,6 +3613,12 @@ static unsigned long size_to_bit_width(unsigned long sz)
 
 unsigned long array_domain_width_or_word_size(const array_type2t &arr)
 {
+  // Explicit index width (set via the `__ESBMC_inf_size:N` annotation
+  // and round-tripped through migrate) takes precedence — used by the
+  // Solidity mapping storage to declare a 480-bit-indexed infinite
+  // array, closing ledger #22's 256→64 fold unsoundness.
+  if (arr.index_width > 0)
+    return arr.index_width;
   // For constant-size arrays compute the minimal index width; for dynamic/VLA
   // or infinite arrays the size is not known statically, so fall back to the
   // machine word size which is always a valid index width.
