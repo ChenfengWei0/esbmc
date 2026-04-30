@@ -73,6 +73,16 @@ bool solidity_convertert::add_auxiliary_members(
   // _ESBMC_get_unique_address_precise in solidity_address.c for solver
   // caveats.  Future under-approximations in the Solidity frontend
   // bind to the same flag so users get one knob, not many.
+  //
+  // Audit 2026-04-30: switching the default to precise was attempted
+  // (S1.2) but reverted. The precise variant's for-loop is bounded by
+  // --unwind, and many existing tests use --unwind 2-4 which is below
+  // their actual allocation count. Under those tests, precise becomes
+  // WORSE than the 16-slot loose default (the loop truncates silently
+  // with --no-unwinding-assertions). Until tests are audited for
+  // adequate --unwind values, keeping loose default + opt-in precise
+  // is the lesser evil. KNOWNBUG-locked by
+  // `address_allocator_17_distinct_pass_knownbug`.
   const bool precise =
     !config.options.get_option("solidity-precise").empty();
   const std::string addr_helper_name =
