@@ -70,9 +70,15 @@ struct mapping_t
 /* Fold (mid, addr, key) into a 64-bit slot index.  Pure XOR fold of
  * 64-bit lanes — keeps the SMT encoding lightweight (no multiplication,
  * no shifts of variables; only constant shifts which the solver evaluates
- * statically in bit-vector arithmetic).  Collision rate 2^-64 per pair is
- * acceptable per existing precedent (same trade-off as the frontend's
- * `xor_fold_key_to_64bit` documented at solidity_convert_mapping.cpp:325). */
+ * statically in bit-vector arithmetic).
+ *
+ * **Soundness:** this fold is NOT injective.  The earlier comment said
+ * "Collision rate 2^-64 per pair is acceptable per existing precedent"
+ * — formally void in BMC/SMT (the solver finds distinct triples with
+ * equal fold).  Causes false aliasing in mapping storage.  Audit S0
+ * (2026-04-30) regression-locked under
+ * `mapping_idx_fold_collision_pass_knownbug` and ledger entry #22.
+ * Closure requires 256-bit array-domain support across solvers. */
 static inline uint64_t _ESBMC_map_idx(uint64_t mid,
                                       address_t addr,
                                       uint256_t key)

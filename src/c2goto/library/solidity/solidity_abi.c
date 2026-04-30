@@ -83,20 +83,27 @@ __ESBMC_HIDE:;
  * Combine an accumulator with the next ABI-encoded argument so the
  * frontend's abi.encode/encodePacked/encodeWithSelector/
  * encodeWithSignature/encodeCall lowering can chain N args into a
- * single uint256 result without losing distinguishability.  FNV-like:
+ * single uint256 result.  Form:
  *
- *   acc' = acc * FNV_PRIME + next
+ *   acc' = acc * 0x100000001b3 + next
  *
- * Multiply-then-add is injective in `next` for any fixed `acc`, so
- * abi.encode(a, b) and abi.encode(a, c) differ when b != c.  The fold
- * is symmetric-by-position but NOT commutative, so abi.encode(b, a)
- * and abi.encode(a, b) also differ.  Solver-friendly: a single MUL +
- * ADD per step, no shifts or array writes.
+ * **Soundness:** this fold is **NOT injective under SMT**.  Multiplication
+ * mod 2^256 is not a permutation under wraparound; for any (acc1, n1)
+ * the solver can find (acc2, n2) ≠ (acc1, n1) with equal output.  The
+ * earlier "FNV-injective" comment was formally void in a BMC/SMT context
+ * where the solver actively searches adversarial assignments.  The
+ * resulting under-approximation is regression-locked under
+ * `abi_fold_collision_distinct_pass_knownbug` and ledger entry #3 (open).
  *
- * 0x100000001b3 is the FNV-1a 64-bit prime, lifted to uint256 multiply.
- * Overflow at 256 bits is fine — the result is identity-style nondet
- * already, and the SMT solver only cares about (in)equality on the
- * folded value.
+ * Closure requires a sound bit-vector tuple encoding (e.g. position-
+ * tagged concatenation followed by a true bijection).  Until then, this
+ * helper remains the practical-but-unsound fold; consumers should
+ * understand that `keccak256(abi.encode(a, b)) == keccak256(abi.encode(c, d))`
+ * may report TRUE for distinct argument tuples.
+ *
+ * Solver-friendly: a single MUL + ADD per step, no shifts or array
+ * writes — keeps the encoding lightweight while we wait for the
+ * architectural fix.
  */
 uint256_t _ESBMC_abi_fold(uint256_t acc, uint256_t next)
 {

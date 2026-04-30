@@ -302,7 +302,7 @@ Hash/crypto functions use **deterministic bijective transformations** (see Secti
 
 | Issue | Detail |
 |-------|--------|
-| **Mapping key truncation** | ✅ Resolved: XOR-fold 256→64 bit via `xor_fold_key_to_64bit()`; collision rate 2^-64 |
+| **Mapping key truncation** | ⚠ Partial: XOR-fold 256→64 bit via `xor_fold_key_to_64bit()`. Collisions are SMT-discoverable (the "2^-64 collision rate" framing is formally void — the solver finds adversarial colliding pairs). Causes false aliasing in mapping storage; regression-locked under `mapping_xor_fold_collision_pass_knownbug` and ledger entry #22. |
 | **Nested mapping key packing** | ✅ Resolved: `combine_mapping_keys_256` packs xor-folded 64-bit keys into 64-bit lanes of a uint256 so `m[k1][k2]` reads/writes hit a single `map_<leaf>_get/set` slot. Up to 4 levels fit losslessly. |
 | **SMT solver performance** | 256-bit bitvector operations significantly slower than smaller widths; OOM possible for complex arithmetic |
 | **`--16` workaround** | Reducing to 16-bit improves speed but introduces precision loss |
@@ -376,7 +376,7 @@ Works because ESBMC's `is_prefix_of` mechanism (`dereference.cpp:603`) recognise
 
 | # | Task | Status |
 |---|------|--------|
-| 1 | Fix mapping key truncation | ✅ Done — XOR-fold 256→64 bit; 2^-64 collision rate |
+| 1 | Fix mapping key truncation | ⚠ Workaround — XOR-fold 256→64 bit, but collisions are SMT-discoverable (ledger entry #22). |
 | 2 | Fix crypto function abstraction | ✅ Done — deterministic bijective transforms; functional consistency, injectivity, O(1) SMT cost |
 | 3 | Fix external call tuple returns | ✅ Done |
 | 4 | Low-level call bytes return | ✅ Done — `BytesDynamic` replaces nondet_uint |
