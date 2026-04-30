@@ -3624,16 +3624,36 @@ bool solidity_convertert::get_transfer_definition(
   // the new value.  This is what unlocks order-sensitive properties on
   // recipient balances (e.g. SolidiFI TOD-Balance pattern A).
   //
-  // We do NOT `assume(this.balance >= _val)` on this path — doing so
-  // intersects SSA guards with the other branches and, empirically,
-  // masks counterexamples in existing cross-contract balance tests
-  // (see send_ether_via_creation_2).  Instead we let the deduct
-  // over-approximate (possibly underflowing the nondet $balance, which
-  // stays sound because no downstream property depends on the EOA
-  // recipient's state).
+  // Guard against uint256 underflow on `this.$balance -= _val`: real
+  // EVM transfers REVERT when the sender's balance is insufficient.
+  // Without this guard the deduct wraps to a near-2^256 value, letting
+  // downstream `address(this).balance` reads observe an enormous balance
+  // that real EVM never produces — breaks plain debit invariants like
+  // `balance_after <= balance_before` and two-Vault conservation
+  // (regression-locked by `transfer_standalone_partial_state_unobservable_pass`
+  // and `transfer_standalone_balance_invariant_pass`, 2026-04-30).
+  // Note that the multi-instance dispatch above matches only the static
+  // `_ESBMC_Object_<C>` per contract type; new-allocated instances of the
+  // same type fall through to this EOA branch even when the recipient is
+  // technically a tracked contract, making this guard load-bearing for
+  // ANY transfer involving non-static instances.
   {
     if (!is_library)
     {
+      // __ESBMC_assume(this->$balance >= _val);
+      side_effect_expr_function_callt assume_call;
+      get_library_function_call_no_args(
+        "__ESBMC_assume",
+        "c:@F@__ESBMC_assume",
+        empty_typet(),
+        locationt(),
+        assume_call);
+      exprt geq = exprt(">=", bool_t);
+      geq.copy_to_operands(this_balance, val_expr);
+      assume_call.arguments().push_back(geq);
+      convert_expression_to_code(assume_call);
+      func_body.move_to_operands(assume_call);
+
       // this->$balance -= _val;
       exprt sub_assign = side_effect_exprt("assign-", val_t);
       sub_assign.copy_to_operands(this_balance, val_expr);
