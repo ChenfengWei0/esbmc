@@ -127,6 +127,21 @@ bool solidity_convertert::add_auxiliary_members(
   // 2. Changing $balance to nondet breaks inter-contract balance tracking
   //    (e.g., new D{value: amount}() expects D.$balance == amount).
   // Prerequisite: fix address(this).balance to read this->$balance.
+  //
+  // Audit 2026-04-30: tightening this to gen_zero (matching real EVM
+  // non-payable-ctor semantics) was attempted but reverted — it broke
+  // existing tests that rely on the nondet over-approximation to set
+  // up `require(address(this).balance >= V)` paths (e.g. library_
+  // caller_balance_debit_fail, new_value_empty_ctor_args_fail). The
+  // nondet over-approximation is load-bearing because the harness has
+  // no mechanism for "between-call external transfers in" — without
+  // that simulation, gen_zero makes most balance-positive paths
+  // infeasible. The proper fix is a nondet-bump at method-call entry
+  // (or per-iter dispatcher reseed) so $balance can grow externally
+  // between calls; until then, keeping this as `_ndt_uint` (audit
+  // finding F6, ledger entry #6) is the lesser evil. KNOWNBUG-locked
+  // by `new_contract_initial_balance_zero_pass_knownbug` and
+  // `transfer_standalone_balance_invariant_pass`.
   {
     exprt balance_init = _ndt_uint;
     auto str_field = [](const nlohmann::json &n, const char *k) {
