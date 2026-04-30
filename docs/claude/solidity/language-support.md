@@ -31,14 +31,18 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 
 ### A. Crypto Functions — Deterministic Bijective Abstraction
 
-`keccak256`, `sha256`, `ripemd160`, `ecrecover` are modeled as **deterministic bijective functions** using simple bitvector transformations. Each function uses a distinct transformation to ensure cross-function outputs differ:
+`keccak256`, `sha256`, `ripemd160`, `ecrecover` are modeled as **deterministic bijective functions**. Two paths coexist:
 
-| Function | Model (`solidity_crypto.c`) | Properties |
-|----------|------|------------|
-| `keccak256(x)` | `return ~x;` | Functional consistency ✓; bijective (zero collisions) ✓ |
-| `sha256(x)` | `return ~(x+1);` | Functional consistency ✓; bijective ✓; differs from keccak256 |
-| `ripemd160(x)` | `return (address_t)(~(x+2));` | 256→160 bit truncation after transform |
-| `ecrecover(hash,v,r,s)` | `return (address_t)(~hash);` | Ignores v/r/s — no signature verification |
+1. **Single-arg uint256 path** (`keccak256(x)` where `x` is already a 256-bit scalar — typically arrives via an inner `abi.encode(uint256)` lowered in the frontend): bitvector identity transform, distinct per family.
+
+   | Function | Model (`solidity_crypto.c`) | Properties |
+   |----------|------|------------|
+   | `keccak256(x)` | `return ~x;` | Functional consistency ✓; bijective (zero collisions) ✓ |
+   | `sha256(x)` | `return ~(x+1);` | Functional consistency ✓; bijective ✓; differs from keccak256 |
+   | `ripemd160(x)` | `return (address_t)(~(x+2));` | 256→160 bit truncation after transform |
+   | `ecrecover(hash,v,r,s)` | `return (address_t)(~hash);` | Ignores v/r/s — no signature verification |
+
+2. **Multi-arg / bytes-arg path** (`keccak256(abi.encode(a,b,c))`, `keccak256(bytesValue)`, `sha256(...)` with multiple args, `ripemd160(...)` ditto): the frontend concatenates each arg's pre-cast bit-vector into a wide BV, picks the smallest enclosing bucket `W ∈ {256, 512, 1024, 2048}`, and routes through `_ESBMC_<family>_table_<W>` (an `__ESBMC_inf_size:<W>`-annotated infinite array). Same-key-same-hash holds via the SMT array axiom across calls and call sites; the frontend additionally emits per-pair distinctness assumes against every prior matching call site, encoding the injectivity direction. Closes ledger #3 (F1) — see approximation-ledger row 3 for soundness details and limitations.
 
 ### A2. Modular Arithmetic — 512-bit Arbitrary Precision
 
@@ -49,14 +53,15 @@ Comprehensive audit against Solidity 0.8.x official documentation. Minimum suppo
 | `addmod(x,y,k)` | `(uint512_t)x + (uint512_t)y) % (uint512_t)k` | Correct for all inputs ✓ |
 | `mulmod(x,y,k)` | `(uint512_t)x * (uint512_t)y) % (uint512_t)k` | Correct ✓; KNOWNBUG: MAX\*MAX crashes ESBMC constant evaluator (SIGFPE) |
 
-`abi.encode*` functions are modeled as **identity functions** (`return x;`) in `solidity_abi.c` so that `keccak256(abi.encodePacked(x))` is deterministic in `x`. Multi-argument `abi.encodePacked(a, b, c)` only captures the first argument; the rest are evaluated but discarded. `abi.decode` is modeled as **nondet** (over-approximation).
+`abi.encode*` functions follow the same two-path split. Single-arg `abi.encode(x)` lowers to identity (`return x;`) in `solidity_abi.c` so `keccak256(abi.encode(x))` collapses through the single-arg uint256 path. Multi-arg `abi.encode(a, b, c)` (and `encodePacked` / `encodeWithSelector` / `encodeWithSignature` / `encodeCall` ditto) routes through `_ESBMC_abi_table_<W>` with the same wide-BV concat as the multi-arg hash path — so two distinct argument tuples land in distinct table slots, regression-locked by `abi_fold_collision_distinct_pass`. `abi.decode` is modeled as **nondet** (over-approximation, ledger row 4).
 
 **Properties:**
-- **Functional consistency**: `keccak256(x) == keccak256(x)` always holds ✓
-- **Injectivity**: `x != y → keccak256(x) != keccak256(y)` always holds ✓
+- **Functional consistency**: `keccak256(x) == keccak256(x)` always holds ✓ (single-arg path: `~x` bijection; multi-arg path: SMT array axiom on the table)
+- **Injectivity**: `x != y → keccak256(x) != keccak256(y)` always holds ✓ (single-arg: bijection; multi-arg: per-pair distinctness assume between every prior matching call site)
 - **String equality via hash**: `keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))` ↔ `s1 == s2` ✓
-- **O(1) SMT cost**: single BV NOT operation per hash call
+- **SMT cost**: single BV NOT for the single-arg uint256 path; one wide-BV array select + `O(N)` two-symbol equality assumes at the `N`-th call site for the multi-arg path (`O(N²)` total in the verified path, tractable for typical contracts).
 - **Limitation**: concrete hash values are not computed; `assert(keccak256(0) == 0xc5d2...)` is not provable
+- **Limitation (multi-arg path)**: `result != 0` is sentinelled in the table-memoised lookup (carves out one specific hash, ≈ 2^-256 collision probability — negligible); fixed `bytesN` args are still skipped from the fold (legacy gap, not regressed by F1); same syntactic call site executed across loop iterations writes the same global, so per-iter distinctness is not enforced (F1 KNOWNBUG had no loop; tracked).
 - **Limitation**: `abi.decode` is nondet — decoded values are unconstrained; `encode(x) → decode → y` does not guarantee `y == x`. Guarded round-trips still work (e.g. `require(decoded > 0); assert(decoded > 0);`).
 
 ### A3. Dynamic Array State Variables — SMT Array Model

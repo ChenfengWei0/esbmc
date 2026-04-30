@@ -215,9 +215,11 @@ The `__ESOL_nondet_state_forward(C c)` intrinsic drives `*c` through a nondet di
 
 ## keccak256/sha256 on bytes-struct arguments
 
-When the argument to `keccak256` / `sha256` is a raw source-level bytes value (`t_bytes_*` typeIdentifier: `t_bytes_storage_ptr`, `t_bytes_memory_ptr`, or `t_bytesN`), the Solidity frontend routes through a nondet-uint256 library call and then PACKS the uint256 result into a BytesStatic via `bytes_static_from_uint` (see src/solidity-frontend/solidity_convert_expr.cpp `hash_needs_nondet` branch). Without the pack, symex crashes on the uint256→BytesStatic struct-shape mismatch when the hash feeds a `bytes32` return value or comparison. The pack also keeps the identity-hash equality semantics: same input uint256 → same packed bytes32, so `keccak256(x) == keccak256(x)` still holds across two calls with identical input (important for the abi.encode_call selector-consistency tests).
+When the argument to `keccak256` / `sha256` is a raw source-level bytes value (`t_bytes_*` typeIdentifier: `t_bytes_storage_ptr`, `t_bytes_memory_ptr`, or `t_bytesN`), the Solidity frontend routes through the F1 wide-BV table mechanism (ledger #3): each `t_bytes_*` arg contributes its `.length` into the wide-BV concat that indexes `_ESBMC_<family>_table_<W>` (W ∈ {256, 512, 1024, 2048}), and the result is then PACKED into a BytesStatic via `bytes_static_from_uint` (see src/solidity-frontend/solidity_convert_expr.cpp `hash_needs_nondet` branch). Without the pack, symex crashes on the uint256→BytesStatic struct-shape mismatch when the hash feeds a `bytes32` return value or comparison. The pack preserves equality semantics: same input length → same table key → same packed bytes32, so `keccak256(x) == keccak256(x)` still holds across two calls with identical-length input. Same-length-different-content inputs collide (B7 follow-on; tracked in ledger row 3).
 
-`ripemd160` returns `address` in Solidity, not `bytes32`, so its result stays as a scalar address_t and doesn't need the pack.
+Multi-arg hashes (`keccak256(abi.encode(a,b))`) and the abi-encode family follow the same path through `_ESBMC_abi_table_<W>` / `_ESBMC_keccak_table_<W>`. Per-callsite distinctness assumes between every prior matching call site cover the injectivity direction the SMT array axiom does not provide on its own. Single-arg `keccak256(uint256)` still uses the bijective `~x` C-library identity (no table indirection) — see `docs/claude/solidity/language-support.md` Section A for the two-path split.
+
+`ripemd160` returns `address` in Solidity, not `bytes32`, so the table for ripemd160 stores 160-bit values and the result stays as a scalar `address_t` without the pack.
 
 ## EOA Balance Modeling (--bound mode)
 

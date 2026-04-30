@@ -7,8 +7,8 @@ Solidity built-in types, variables, and functions are implemented as C operation
 | `solidity_types.h` | Type definitions: `int256_t`, `uint256_t`, `address_t` via `_BitInt(256)`, `sol_llc_ret` struct |
 | `solidity_blockchain.c` | Block/tx/msg global variables, `blockhash`, `blobhash` (EIP-4844), `gasleft`/`gasConsume` — all nondet (over-approximate) |
 | `solidity_builtins.c` | Integer exponentiation (`sol_pow_uint`), modular arithmetic (`addmod`/`mulmod` with 512-bit precision), `llc_nondet_bytes`, `selfdestruct` |
-| `solidity_crypto.c` | Cryptographic hash functions: keccak256, sha256, ripemd160, ecrecover (deterministic bijective abstraction) |
-| `solidity_abi.c` | ABI encoding/decoding models: `abi_encode`, `abi_encodePacked`, `abi_encodeWithSelector`, `abi_encodeWithSignature`, `abi_encodeCall` (identity), `abi_decode` (nondet) |
+| `solidity_crypto.c` | Cryptographic hash functions: keccak256, sha256, ripemd160, ecrecover (single-arg uint256 path: bijective `~x` family) + bucketed `_ESBMC_<family>_table_<W>` arrays for the multi-arg / bytes-arg path (W ∈ {256, 512, 1024, 2048}; ledger #3) |
+| `solidity_abi.c` | ABI encoding/decoding models: single-arg identity (`abi_encode`, `abi_encodePacked`, `abi_encodeWithSelector`, `abi_encodeWithSignature`, `abi_encodeCall`) + bucketed `_ESBMC_abi_table_<W>` arrays for the multi-arg path (frontend wide-BV concat into the table); `abi_decode` nondet |
 | `solidity_bytes.c` | `BytesStatic`/`BytesDynamic` structs, 60+ byte manipulation functions, `bytes_dynamic_concat` (pass-by-value for variadic nesting) |
 | `solidity_mapping.c` | Mapping data structures (`_ESBMC_Mapping`, `mapping_t`, and `_fast` variants) + `map_fixed_arr_get` |
 | `solidity_array.c` | Dynamic array tracking: push, pop, length, arrcpy |
@@ -140,9 +140,9 @@ The `__ESOL_nondet_state_forward(C c)` intrinsic drives `*c` through a nondet di
 
 ## keccak256 / sha256 on bytes-struct arguments
 
-When the argument to `keccak256` / `sha256` is a raw source-level bytes value (`t_bytes_*` typeIdentifier: `t_bytes_storage_ptr`, `t_bytes_memory_ptr`, or `t_bytesN`), the Solidity frontend routes through a nondet-uint256 library call and then PACKS the uint256 result into a BytesStatic via `bytes_static_from_uint` (see `src/solidity-frontend/solidity_convert_expr.cpp` `hash_needs_nondet` branch). Without the pack, symex crashes on the uint256→BytesStatic struct-shape mismatch when the hash feeds a `bytes32` return value or comparison. The pack also keeps the identity-hash equality semantics: same input uint256 → same packed bytes32, so `keccak256(x) == keccak256(x)` still holds across two calls with identical input (important for the abi.encode_call selector-consistency tests).
+When the argument to `keccak256` / `sha256` is a raw source-level bytes value (`t_bytes_*` typeIdentifier: `t_bytes_storage_ptr`, `t_bytes_memory_ptr`, or `t_bytesN`), the Solidity frontend routes through the F1 wide-BV table mechanism (see `src/solidity-frontend/solidity_convert_expr.cpp` `hash_needs_nondet` branch). Each `t_bytes_*` arg contributes its `.length` (256-bit) into the wide-BV concat that indexes `_ESBMC_<family>_table_<W>`; the table-memoised result is then PACKED into a BytesStatic via `bytes_static_from_uint`. Without the pack, symex crashes on the uint256→BytesStatic struct-shape mismatch when the hash feeds a `bytes32` return value or comparison. The pack preserves equality semantics: same input length → same table key → same packed bytes32, so `keccak256(x) == keccak256(x)` still holds across two calls with identical-length input (important for the `abi.encodeCall` selector-consistency tests). **Limitation**: same-length-different-content inputs collide (B7 follow-on, ledger row 3 column "False negatives").
 
-`ripemd160` returns `address` in Solidity, not `bytes32`, so its result stays as a scalar address_t and doesn't need the pack.
+`ripemd160` returns `address` in Solidity, not `bytes32`, so the table for ripemd160 stores 160-bit values and the result stays as a scalar `address_t` without the pack.
 
 ## EOA Balance Modeling (`--bound` mode)
 
