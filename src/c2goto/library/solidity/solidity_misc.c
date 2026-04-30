@@ -62,16 +62,26 @@ __ESBMC_HIDE:;
   }
 }
 
-unsigned int _creationCode()
+/* type(C).creationCode / runtimeCode — return a value that's
+ * deterministic per source contract (the frontend assigns a unique
+ * uint32 id per contract+property pair via interface_id_table) and
+ * pairwise-distinct across distinct contracts. `~id` is a bijection
+ * on uint32, sufficient for real-EVM stability semantics: two reads
+ * of `type(C).creationCode` agree, and `type(C).creationCode !=
+ * type(D).creationCode`. Closes ledger #15 (the over-approx-nondet
+ * model is replaced by an identity-bijective model, same family as
+ * the crypto-hash abstraction).
+ */
+unsigned int _creationCode(__uint32_t id)
 {
 __ESBMC_HIDE:;
-  return nondet_uint();
+  return (unsigned int)~id;
 }
 
-unsigned int _runtimeCode()
+unsigned int _runtimeCode(__uint32_t id)
 {
 __ESBMC_HIDE:;
-  return nondet_uint();
+  return (unsigned int)~id;
 }
 
 /* type(I).interfaceId — nondet over-approximation (bytes4) */

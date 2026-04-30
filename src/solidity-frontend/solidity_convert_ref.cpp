@@ -537,23 +537,50 @@ bool solidity_convertert::get_sol_builtin_ref(
         new_expr.location() = l;
         return false;
       }
-      else if (name == "creationCode" || name == "runtimeCode")
+      else if (
+        name == "creationCode" || name == "runtimeCode" || name == "interfaceId")
       {
-        // nondet Bytes
+        // Stable per-name ID. Same `type(C).<name>` returns the same
+        // value across reads; distinct contracts/interfaces map to
+        // distinct IDs (counter-based, no probability argument).
+        // Library helper applies a uint-bijection (`~id`) so the
+        // result is a deterministic injection of the source name.
+        // Closes ledger #15 — pre-fix the helpers ignored context and
+        // returned fresh nondets, breaking real-EVM stability.
+        std::string ts =
+          expr["expression"]["typeDescriptions"]["typeString"]
+            .get<std::string>();
+        // Extract name from "type(contract C)" / "type(interface I)" /
+        // "type(library L)" patterns (mirrors the `name == "name"`
+        // case below).
+        std::string cname;
+        auto pos = ts.rfind(' ');
+        if (pos != std::string::npos && ts.back() == ')')
+          cname = ts.substr(pos + 1, ts.size() - pos - 2);
+        else
+          cname = ts;
+        // Per-helper namespace so distinct properties on the same
+        // contract (e.g. creationCode vs runtimeCode of contract C)
+        // map to distinct IDs.
+        std::string key = name + ":" + cname;
+        auto it = interface_id_table.find(key);
+        uint32_t id;
+        if (it == interface_id_table.end())
+        {
+          id = next_interface_id++;
+          interface_id_table[key] = id;
+        }
+        else
+          id = it->second;
+
+        typet ret_t =
+          (name == "interfaceId") ? typet(unsignedbv_typet(32)) : uint_type();
+        side_effect_expr_function_callt call;
         get_library_function_call_no_args(
-          "_" + name, "c:@F@_" + name, uint_type(), l, new_expr);
-        new_expr.location() = l;
-        return false;
-      }
-      else if (name == "interfaceId")
-      {
-        // type(I).interfaceId — nondet bytes4 (over-approximate)
-        get_library_function_call_no_args(
-          "_interfaceId",
-          "c:@F@_interfaceId",
-          unsignedbv_typet(32),
-          l,
-          new_expr);
+          "_" + name, "c:@F@_" + name, ret_t, l, call);
+        call.arguments().push_back(
+          from_integer(BigInt(id), unsignedbv_typet(32)));
+        new_expr = call;
         new_expr.location() = l;
         return false;
       }

@@ -1275,6 +1275,15 @@ protected:
   // src/c2goto/library/solidity/solidity_mapping.c for the runtime side.
   uint64_t next_mapping_mid = 1;
 
+  // Per-interface/contract unique ID for `type(I).interfaceId`,
+  // `type(C).creationCode`, `type(C).runtimeCode`. Each distinct name
+  // gets the next value here. Same name → same ID → same library
+  // helper output (post-fix: `~id`, bijective on uint32). Closes
+  // ledger #15 — pre-fix the helpers ignored their context and
+  // returned fresh nondets per call, breaking real-EVM stability.
+  std::map<std::string, uint32_t> interface_id_table;
+  uint32_t next_interface_id = 1;
+
   // T1.1 Stage S3: per-contract list of state-var dyn-arrays so the clone
   // helper can iterate them and emit per-instance length+element copy at
   // clone time.  Key: contract name. Value: list of (var symbol-id,
