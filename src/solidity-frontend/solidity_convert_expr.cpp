@@ -3909,39 +3909,42 @@ bool solidity_convertert::get_unary_operator_expr(
     "	@@@ got uniop.getOpcode: SolidityGrammar::{}",
     SolidityGrammar::expression_to_str(opcode));
 
-  // Handle delete specially: its type is tuple() (void), not the operand type.
-  // Solidity `delete x` resets x to its default value (0, false, address(0), etc.)
+  // delete-correctness plan (S1): recursive `delete` lowering.  See
+  // `emit_delete_block` docstring in solidity_convert.h.  Closes four
+  // empirically-confirmed Solidity-spec deviations regression-locked by
+  // `delete_dyn_array_length_pass_knownbug`,
+  // `delete_storage_alias_length_pass_knownbug`,
+  // `delete_fixed_array_elements_pass_knownbug`,
+  // `delete_struct_with_fixed_array_pass_knownbug`,
+  // `delete_nested_struct_pass_knownbug`,
+  // `delete_bytes_array_pass_knownbug`.
   if (opcode == SolidityGrammar::ExpressionT::UO_Delete)
   {
     exprt unary_sub;
     if (get_expr(expr["subExpression"], literal_type, unary_sub))
       return true;
 
-    // Resolve symbol types (e.g. structs) to their underlying type for gen_zero
-    typet resolved_type = unary_sub.type();
-    if (resolved_type.id() == "symbol")
-    {
-      const symbolt *s = ns.lookup(resolved_type.identifier());
-      if (s)
-        resolved_type = s->type;
-    }
-
-    exprt zero = gen_zero(resolved_type);
-    if (zero.is_nil())
-    {
-      log_error(
-        "delete: cannot generate default value for type {}",
-        resolved_type.id_string());
+    std::vector<exprt> assigns;
+    if (emit_delete_block(unary_sub, unary_sub.type(), assigns))
       return true;
+
+    // No-op (e.g. struct of only mapping fields after the recursive walk
+    // skipped them per spec).  Emit a self-assign so the surrounding
+    // statement-conversion stays well-formed.
+    if (assigns.empty())
+    {
+      new_expr = side_effect_exprt("assign", unary_sub.type());
+      new_expr.operands().push_back(unary_sub);
+      new_expr.operands().push_back(unary_sub);
+      return false;
     }
 
-    // For symbol-typed structs, cast back to the original symbol type
-    if (unary_sub.type().id() == "symbol" && resolved_type.id() == "struct")
-      zero.type() = unary_sub.type();
-
-    new_expr = side_effect_exprt("assign", unary_sub.type());
-    new_expr.operands().push_back(unary_sub);
-    new_expr.operands().push_back(zero);
+    // Push N-1 assigns to the front-block; return the last as the
+    // surface expression so the caller's expression-to-statement wrapper
+    // picks it up unchanged.
+    for (size_t i = 0; i + 1 < assigns.size(); ++i)
+      move_to_front_block(assigns[i]);
+    new_expr = assigns.back();
     return false;
   }
 
@@ -4001,6 +4004,195 @@ bool solidity_convertert::get_unary_operator_expr(
   }
 
   new_expr.operands().push_back(unary_sub);
+  return false;
+}
+
+// delete-correctness plan (S1).  Recursive `delete` lowering — see
+// solidity_convert.h `emit_delete_block` declaration for the contract.
+//
+// Per Solidity spec:
+//  - primitives → 0 / false / address(0)
+//  - fixed-size arrays → element-by-element reset (length stays)
+//  - dynamic arrays → length := 0 (data implicitly empty)
+//  - structs → field-by-field, EXCEPT mapping members preserved
+//  - mappings (inside structs) → preserved; standalone `delete map` is
+//    rejected by solc itself
+//  - bytes / string → length := 0 with `initialized=1` so downstream
+//    push/copy paths don't trip init checks
+//
+// Handles four type-representation quirks the naive `gen_zero(t)` can't:
+//  1. State-var dyn-arrays carry a separate `<arr>_dynarray_len[$address]`
+//     companion (per-instance addr-keyed since T1.1).  The data-array
+//     reset alone leaves the length at its pre-delete value.
+//  2. State-var fixed arrays (`uint[N]`) lower to heap-pointer-backed
+//     `pointer_typet(elem)` with `#sol_array_size=N`.  `gen_zero(pointer)`
+//     returns NULL — assigning that clobbers the pointer instead of
+//     element-zeroing through it.
+//  3. Nested struct fields are stored as `symbol_typet("tag-Inner")`.
+//     `gen_zero(symbol)` returns nil (no case in expr_util.cpp), so the
+//     resulting struct constant has nil components and symex crashes.
+//  4. Symbol-typed array element types (e.g. `BytesDynamic` inside
+//     `bytes[]`) — same root cause as (3) — produces `ARRAY_OF(nil)`.
+bool solidity_convertert::emit_delete_block(
+  const exprt &lhs,
+  const typet &type,
+  std::vector<exprt> &assigns)
+{
+  // Resolve symbol-typed wrappers via ns to inspect the underlying type.
+  // The lhs keeps the original (possibly symbol) type for assignment
+  // compatibility; only `t` is dereferenced.
+  typet t = type;
+  if (t.id() == "symbol")
+  {
+    const symbolt *s = ns.lookup(t.identifier());
+    if (s)
+      t = s->type;
+  }
+
+  // Mapping placeholder (`_ESBMC_Mapping`): standalone `delete` is
+  // rejected by solc; in struct recursion this branch is unreachable
+  // (caller skips mapping fields).  Defensive no-op.
+  if (t.id() == "struct" && t.tag().as_string() == "_ESBMC_Mapping")
+    return false;
+
+  // BytesDynamic: explicit field-level reset preserving `initialized=1`.
+  // `gen_zero` of the struct would also zero `initialized`, which while
+  // empirically harmless for tested patterns may trip future stricter
+  // init checks — locked by `delete_bytes_clear_then_push_pass`.
+  if (t.id() == "struct" && t.tag().as_string() == "BytesDynamic")
+  {
+    typet sz_t = size_type();
+    typet int_t = int_type();
+    side_effect_exprt a_off("assign", sz_t);
+    a_off.copy_to_operands(
+      member_exprt(lhs, "offset", sz_t), gen_zero(sz_t));
+    assigns.push_back(a_off);
+
+    side_effect_exprt a_len("assign", sz_t);
+    a_len.copy_to_operands(
+      member_exprt(lhs, "length", sz_t), gen_zero(sz_t));
+    assigns.push_back(a_len);
+
+    side_effect_exprt a_cap("assign", sz_t);
+    a_cap.copy_to_operands(
+      member_exprt(lhs, "capacity", sz_t), gen_zero(sz_t));
+    assigns.push_back(a_cap);
+
+    side_effect_exprt a_init("assign", int_t);
+    a_init.copy_to_operands(
+      member_exprt(lhs, "initialized", int_t), gen_one(int_t));
+    assigns.push_back(a_init);
+    return false;
+  }
+
+  // Heap-pointer-backed fixed array (state-var `uint[N]`): element-zero
+  // through the pointer.  Detected via `#sol_array_size` annotation
+  // preserved on the pointer type by the ctor walker (see
+  // solidity_convert_constructor.cpp:1207, 1297, 1521).
+  if (t.id() == "pointer" && !type.get("#sol_array_size").empty())
+  {
+    const std::string sz_str = type.get("#sol_array_size").as_string();
+    BigInt N = string2integer(sz_str);
+    typet elem_t = t.subtype();
+    for (uint64_t i = 0; i < N.to_uint64(); ++i)
+    {
+      exprt idx = constant_exprt(
+        integer2binary(BigInt(i), bv_width(int_type())),
+        integer2string(BigInt(i)),
+        int_type());
+      exprt elem_lhs = index_exprt(lhs, idx, elem_t);
+      if (emit_delete_block(elem_lhs, elem_t, assigns))
+        return true;
+    }
+    return false;
+  }
+
+  // State-var dynamic array (carries `#sol_dynarray_state` flag set in
+  // solidity_convert_decl.cpp).  Per Solidity spec, `delete arr` for
+  // `T[]` resets length to 0 — that alone makes the array logically
+  // empty since out-of-bounds element access reverts.  The underlying
+  // SMT data array isn't reset; reads past length are OOB-checked by
+  // the existing _ESBMC_array bounds machinery.  Skipping the data
+  // write also avoids the `array_of(partial_struct)` symex crash that
+  // affected `bytes[]` (Bug D root: gen_zero on BytesDynamic struct
+  // member fields returned partially-nil constants).
+  if (t.id() == "array" && type.get_bool("#sol_dynarray_state"))
+  {
+    // Reset length: `<arr>_dynarray_len[this->$address] := 0`.  Mirrors
+    // the read path in solidity_convert_ref.cpp:712-718 and the push
+    // path at 826-832.  Only fires when lhs is a direct symbol (state
+    // var); nested struct-member dyn arrays use the legacy
+    // `_ESBMC_array_*` model and don't have a `_dynarray_len` companion.
+    if (lhs.is_symbol())
+    {
+      std::string len_id =
+        lhs.identifier().as_string() + "_dynarray_len";
+      const symbolt *len_sym = ns.lookup(len_id);
+      if (len_sym)
+      {
+        exprt len_ref;
+        if (!get_dynarr_len_ref(*len_sym, len_ref))
+        {
+          side_effect_exprt assign_len("assign", len_ref.type());
+          assign_len.copy_to_operands(
+            len_ref, gen_zero(len_ref.type()));
+          assigns.push_back(assign_len);
+        }
+      }
+    }
+    return false;
+  }
+
+  // Generic struct: recurse per-component, skipping mapping fields per
+  // Solidity spec.  Handles q5 (nested-struct crash) — recursion fully
+  // resolves nested symbol-typed components instead of leaving nil.
+  if (t.id() == "struct")
+  {
+    const struct_typet &st = to_struct_type(t);
+    for (const auto &comp : st.components())
+    {
+      // Skip mapping placeholder fields — both inline-struct form and
+      // symbol-wrapped form.  Per Solidity spec mappings inside structs
+      // are preserved by `delete struct`.
+      bool is_mapping_field = false;
+      const typet &ct = comp.type();
+      if (ct.id() == "struct" && ct.tag().as_string() == "_ESBMC_Mapping")
+        is_mapping_field = true;
+      else if (ct.id() == "symbol")
+      {
+        const symbolt *cs = ns.lookup(ct.identifier());
+        if (
+          cs && cs->type.id() == "struct" &&
+          cs->type.tag().as_string() == "_ESBMC_Mapping")
+          is_mapping_field = true;
+      }
+      if (is_mapping_field)
+        continue;
+      // Skip compiler-internal padding fields (anonymous).
+      if (comp.name().empty())
+        continue;
+      exprt field = member_exprt(lhs, comp.name(), comp.type());
+      if (emit_delete_block(field, comp.type(), assigns))
+        return true;
+    }
+    return false;
+  }
+
+  // Default: scalar / unannotated pointer / anything else — single
+  // assign with gen_zero.  Unchanged from pre-S1 behaviour.
+  exprt zero = gen_zero(t);
+  if (zero.is_nil())
+  {
+    log_error(
+      "emit_delete_block: cannot generate default value for type {}",
+      t.id_string());
+    return true;
+  }
+  if (zero.type() != type)
+    zero.type() = type;
+  side_effect_exprt assign("assign", type);
+  assign.copy_to_operands(lhs, zero);
+  assigns.push_back(assign);
   return false;
 }
 

@@ -557,6 +557,27 @@ protected:
   // context.  Returns true on failure (no `this` resolvable).
   bool get_dynarr_len_ref(const symbolt &len_sym, exprt &out);
 
+  // delete-correctness plan (S1): recursive `delete` lowering.  Solidity
+  // `delete x` resets x to its type-default per language spec — element-by-
+  // element for arrays, field-by-field for structs (skipping mapping
+  // fields), zero for primitives.  The naive single `lhs = gen_zero(t)`
+  // emission breaks four cases empirically (regression-locked):
+  //   - state-var dyn-arrays: `<arr>_dynarray_len[$address]` companion
+  //     not reset (length stays at pre-delete value)
+  //   - heap-pointer-backed fixed arrays (`uint[N]` state var): pointer
+  //     NULLed instead of element-zeroed
+  //   - nested-struct fields whose type is symbol-typed: gen_zero produces
+  //     nil components, symex crashes on the malformed assign
+  //   - `bytes[]` / arrays-of-struct elements: same gen_zero(symbol) → nil
+  // This helper recurses through composite types, resolves symbol-typed
+  // components via `ns`, and produces a vector of side-effect assigns.
+  // The caller pushes all but the last to `expr_frontBlockDecl` and uses
+  // the last as the returned expression — preserving the single-result
+  // shape `get_unary_operator_expr` expects.
+  bool emit_delete_block(const exprt &lhs,
+                         const typet &type,
+                         std::vector<exprt> &assigns);
+
   // T1.1 Stage S2: dyn-array per-instance element index fold.  Builds a
   // call expression `_ESBMC_dynarr_idx(this->$address, pos)` returning a
   // 64-bit slot key.  Used to substitute `pos` in `index_exprt(arr, pos)`
