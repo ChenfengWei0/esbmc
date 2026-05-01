@@ -631,6 +631,38 @@ protected:
     const locationt &l,
     const typet &key_type);
   void xor_fold_key_to_64bit(exprt &key);
+
+  // === flat-array encoder for mapping(K => T[N], T[M][N]) ====================
+  //
+  // Eligibility scan: a state-var mapping with fixed-array value type can use
+  // a per-mapping flat SMT array `array<T, infinity>` indexed by
+  // `(key << inner_bits) | inner_offset` instead of the slow `mapping_t +
+  // map_fixed_arr_get` helper path, IFF
+  //   1. !is_new_expr (already gated by caller — singleton contract)
+  //   2. no `T[N] storage ref = m[k]` storage-pointer alias anywhere
+  //   3. every access of the mapping reaches the scalar leaf (no `m[k]`
+  //      passed by reference / returned whole)
+  //
+  // The slow path remains the fallback; failing the gate keeps today's
+  // behavior verbatim.
+  bool has_mapping_storage_ref(
+    int mapping_decl_id,
+    const std::string &contract_name) const;
+  bool has_partial_mapping_access(
+    int mapping_decl_id,
+    unsigned expected_access_depth,
+    const std::string &contract_name) const;
+
+  // Walk a fixed-array typet (`array<array<...<T, N1>, N2>, ..., Nk>`),
+  // accumulating the total flat extent (∏ Ni) into `inner_extent` and
+  // setting `leaf_t` to the element type T.  Returns false on shapes the
+  // encoder cannot handle (non-constant size, non-fixed leaves, overflow).
+  bool compute_flat_extent(
+    const typet &fixed_array_t,
+    unsigned long &inner_extent,
+    typet &leaf_t) const;
+  // Number of nested fixed-array dimensions (e.g. `T[N]` = 1, `T[M][N]` = 2).
+  unsigned array_nesting_depth(const typet &fixed_array_t) const;
   // Pack a sequence of already-folded 64-bit mapping keys (outer→inner) into
   // a single uint256 by laying each key into a successive 64-bit lane. Keeps
   // 2-level nested mappings (the common case: balances, allowances, ...)

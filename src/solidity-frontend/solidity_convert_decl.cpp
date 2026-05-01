@@ -254,9 +254,60 @@ bool solidity_convertert::get_var_decl(
         (leaf_sol == SolidityGrammar::SolType::ARRAY_LITERAL ||
          leaf_sol == SolidityGrammar::SolType::ARRAY))
     {
-      t = symbol_typet(lib_prefix + "mapping_t");
-      set_sol_type(t, SolidityGrammar::SolType::MAPPING);
-      t.set("#sol_mapping_fixed_arr_value", true);
+      // Try the per-mapping flat-array encoder first.  Replaces the slow
+      // mapping_t + map_fixed_arr_get helper path with a leaf-typed
+      // `array<T, infinity>` indexed by `(key << inner_bits) | inner_offset`.
+      // Sound under three AST-detectable conditions (see header):
+      //   1. !is_new_expr (already gated by enclosing `if`)
+      //   2. no `T[N] storage ref = m[k]` storage-pointer alias
+      //   3. all mapping accesses reach the scalar leaf
+      // Failure to satisfy any condition falls back to the slow path so
+      // existing behavior is preserved bit-for-bit for unsupported shapes.
+      bool flat_encoded = false;
+      unsigned long inner_extent = 0;
+      typet leaf_t;
+      if (
+        ast_node.contains("id") &&
+        compute_flat_extent(cur_type->subtype(), inner_extent, leaf_t))
+      {
+        const int map_decl_id = ast_node["id"].get<int>();
+        const unsigned expected_depth = 1 + array_nesting_depth(cur_type->subtype());
+        if (
+          !has_mapping_storage_ref(map_decl_id, current_contractName) &&
+          !has_partial_mapping_access(
+            map_decl_id, expected_depth, current_contractName))
+        {
+          // ceil_log2(inner_extent) — bits for the inner offset slot.
+          unsigned inner_bits = 0;
+          for (unsigned long v = inner_extent - 1; v != 0; v >>= 1)
+            ++inner_bits;
+          if (inner_extent == 1)
+            inner_bits = 1; // single-element fixed array — still allow a 1-bit slot
+          // Per the existing scalar fast path (solidity_convert_type.cpp:611)
+          // the key portion is widened to 256 bits.
+          const unsigned index_width = 256 + inner_bits;
+
+          t = array_typet(leaf_t, exprt("infinity"));
+          set_sol_type(t, SolidityGrammar::SolType::MAPPING);
+          t.set("#esbmc_index_width", std::to_string(index_width));
+          t.set("#sol_mapping_flat_encoded", true);
+          // Intentionally do NOT set #sol_mapping_fixed_arr_value: the
+          // mapping-init block at line 956 reads that tag to dispatch to
+          // build_mapping_t_init_value (which constructs the slow
+          // {base, mid, addr} struct).  The flat encoder's type is a
+          // plain array_typet — the existing scalar-mapping init flow
+          // (default zero-init via __ESBMC_inf_size) is what we want.
+          t.set("#sol_flat_inner_extent", std::to_string(inner_extent));
+          t.set("#sol_flat_inner_bits", std::to_string(inner_bits));
+          flat_encoded = true;
+        }
+      }
+      if (!flat_encoded)
+      {
+        t = symbol_typet(lib_prefix + "mapping_t");
+        set_sol_type(t, SolidityGrammar::SolType::MAPPING);
+        t.set("#sol_mapping_fixed_arr_value", true);
+      }
     }
 
     /* mapping(K => V[]) state-var: promote the leaf DYNARRAY value from
