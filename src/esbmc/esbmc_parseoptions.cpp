@@ -882,6 +882,13 @@ int esbmc_parseoptionst::doit()
           if (!cmdline.isset("no-cvc5-native-tuples"))
             options.set_option("cvc5-native-tuples", true);
         }
+        else if (kind_multi_contract_detected)
+        {
+          // Pattern B: k-induction-amplified linear if-else chain on
+          // 256-bit address equality.  Bitwuzla balloons; CVC5 fast.
+          // No native-tuples — that's nested-array-specific encoding.
+          chosen = "cvc5";
+        }
         else
         {
           const char *preferred[] = {"bitwuzla", "cvc5", "boolector", "z3"};
@@ -909,6 +916,16 @@ int esbmc_parseoptionst::doit()
               "or pass --no-cvc5-native-tuples to disable native-tuple "
               "encoding.",
               native_on ? " with --cvc5-native-tuples" : "");
+          }
+          else if (kind_multi_contract_detected)
+          {
+            log_status(
+              "Solidity: detected --k-induction with multi-contract "
+              "dispatch ({} contracts); auto-selecting 'cvc5' (Bitwuzla "
+              "balloons on the linear if-else chain over 256-bit "
+              "address equality). Override with --bitwuzla / --z3 / "
+              "--boolector.",
+              contract_decl_count);
           }
           else
           {
