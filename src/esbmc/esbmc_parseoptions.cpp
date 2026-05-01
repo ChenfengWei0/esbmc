@@ -921,10 +921,11 @@ int esbmc_parseoptionst::doit()
           {
             log_status(
               "Solidity: detected --k-induction with multi-contract "
-              "dispatch ({} contracts); auto-selecting 'cvc5' (Bitwuzla "
-              "balloons on the linear if-else chain over 256-bit "
-              "address equality). Override with --bitwuzla / --z3 / "
-              "--boolector.",
+              "dispatch ({} contracts) AND value-routing call "
+              "(.transfer/.send/.call{{value:}}); auto-selecting 'cvc5' "
+              "(Bitwuzla balloons on the k-induction-amplified linear "
+              "if-else chain over 256-bit address equality). Override "
+              "with --bitwuzla / --z3 / --boolector.",
               contract_decl_count);
           }
           else
