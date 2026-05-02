@@ -1104,13 +1104,18 @@ protected:
   /// environment for `let`-bound vars (mutable; shadowing is handled by
   /// snapshot+restore at block boundaries).  `src_to_decl` maps YulIdentifier
   /// source ranges to outer-scope Solidity VariableDeclaration ids (built
-  /// once from externalReferences).  `asm_id` is the InlineAssembly node's id
-  /// — used to make Yul-local symbol names unique across multiple assembly
-  /// blocks in the same function.
+  /// once from externalReferences).  `slot_refs` is the analogous map for
+  /// `.slot` external references (`isSlot=true && isOffset=false &&
+  /// valueSize=1`) — used by sload/sstore lowering to resolve `X.slot`
+  /// arguments back to the underlying state variable's declaration id.
+  /// `asm_id` is the InlineAssembly node's id — used to make Yul-local
+  /// symbol names unique across multiple assembly blocks in the same
+  /// function.
   bool convert_yul_block(
     const nlohmann::json &yul_block,
     const std::string &asm_id,
     const std::map<std::string, int> &src_to_decl,
+    const std::map<std::string, int> &slot_refs,
     std::map<std::string, exprt> &locals,
     int &local_seq,
     const locationt &loc,
@@ -1120,6 +1125,7 @@ protected:
     const nlohmann::json &yul_stmt,
     const std::string &asm_id,
     const std::map<std::string, int> &src_to_decl,
+    const std::map<std::string, int> &slot_refs,
     std::map<std::string, exprt> &locals,
     int &local_seq,
     const locationt &loc,
@@ -1128,6 +1134,7 @@ protected:
   bool convert_yul_expression(
     const nlohmann::json &yul_expr,
     const std::map<std::string, int> &src_to_decl,
+    const std::map<std::string, int> &slot_refs,
     const std::map<std::string, exprt> &locals,
     const locationt &loc,
     exprt &out);

@@ -1059,10 +1059,12 @@ bool solidity_convertert::get_statement(
     //
     // Strategy: try precise lowering of the YulBlock against a fixed
     // supported subset (let / := / pure-256-bit builtins / if / switch /
-    // for / break / continue / nested blocks / number+bool literals).
+    // for / break / continue / sload(X.slot) / sstore(X.slot, v) on
+    // scalar state vars / nested blocks / number+bool literals).
     // All-or-nothing per block: if any unsupported Yul construct
-    // (mload/mstore/sload/sstore/calldata*/keccak256/call/return/revert/
-    // EVM-intrinsics/Yul-fn-defs/leave/.slot/.offset/multi-LHS/
+    // (mload/mstore/calldata*/keccak256/call/return/revert/
+    // EVM-intrinsics/Yul-fn-defs/leave/.offset/computed-slot
+    // sload/sstore/non-scalar-state-var sload/sstore/multi-LHS/
     // hex-or-string-literals) appears anywhere in the block, fall through
     // to the legacy havoc fallback below.  This guarantees the precise
     // portion can never observe a write the havoc'd portion would have made.
@@ -1082,7 +1084,8 @@ bool solidity_convertert::get_statement(
         "[approx] inline assembly at {}:{}: over-approximating - "
         "unsupported Yul construct '{}' ({}); supported subset: "
         "let / := / arithmetic+bitwise+shift / lt/gt/eq/slt/sgt/iszero / "
-        "and/or/xor/not / shl/shr / if / switch / for / break / continue",
+        "and/or/xor/not / shl/shr / if / switch / for / break / continue / "
+        "sload(X.slot) / sstore(X.slot, v) on scalar state vars",
         loc.get_file().c_str(),
         loc.get_line().c_str(),
         unsupported_kind,
@@ -1195,21 +1198,28 @@ bool solidity_convertert::get_statement(
 // Translates a supported subset of Yul into ESBMC IR with full precision.
 // Supported subset:
 //   - Statements:  YulBlock, YulVariableDeclaration, YulAssignment, YulIf,
-//                  YulSwitch, YulForLoop, YulBreak, YulContinue
+//                  YulSwitch, YulForLoop, YulBreak, YulContinue,
+//                  YulExpressionStatement (only sstore at statement level)
 //   - Expressions: YulIdentifier, YulLiteral (number/bool), YulFunctionCall
 //                  with a whitelisted builtin name
 //   - Builtins:    add sub mul div mod addmod mulmod
 //                  lt gt slt sgt eq iszero
 //                  and or xor not
 //                  shl shr
+//                  sload  (only sload(X.slot) on scalar state vars)
+//                  sstore (only sstore(X.slot, v) on scalar state vars)
 //
 // Unsupported (block falls back to havoc with a single warning):
-//   - Memory/storage/calldata/hashing/calls/returns/reverts/EVM intrinsics
+//   - Memory/calldata/hashing/calls/returns/reverts/EVM intrinsics
 //   - Yul function definitions, leave
 //   - Multi-LHS YulAssignment / YulVariableDeclaration
 //   - YulLiteral kinds other than number / bool
 //   - YulCase with a non-literal selector
-//   - .slot / .offset external references
+//   - .offset external references (no intra-slot packing model)
+//   - Computed-slot sload/sstore (sload(0), sload(add(X.slot, 1)),
+//     sload(keccak256(...)), etc.)
+//   - sload/sstore on non-scalar state vars (struct/mapping/array/bytes/
+//     contract-typed)
 //
 // All-or-nothing rule: pre-flight scans the entire YulBlock; the precise
 // lowerer either translates everything or refuses (returns false), and the
@@ -1223,10 +1233,16 @@ namespace
 bool is_supported_yul_builtin(const std::string &name)
 {
   static const std::set<std::string> ok = {
-    "add",     "sub", "mul", "div",  "mod", "addmod", "mulmod",
-    "lt",      "gt",  "slt", "sgt",  "eq",  "iszero",
-    "and",     "or",  "xor", "not",
-    "shl",     "shr"};
+    "add",     "sub",   "mul",    "div", "mod", "addmod", "mulmod",
+    "lt",      "gt",    "slt",    "sgt", "eq",  "iszero",
+    "and",     "or",    "xor",    "not",
+    "shl",     "shr",
+    // sload/sstore are only valid with a YulIdentifier `X.slot` argument
+    // resolving to a scalar state variable; the sload/sstore lowering
+    // paths in convert_yul_expression / convert_yul_statement enforce
+    // those constraints at lowering time (the pre-flight scan does not
+    // have access to externalReferences).
+    "sload",   "sstore"};
   return ok.count(name) != 0;
 }
 } // namespace
@@ -1388,9 +1404,23 @@ bool solidity_convertert::yul_node_is_supported(
   if (nt == "YulBreak" || nt == "YulContinue")
     return true;
 
+  if (nt == "YulExpressionStatement")
+  {
+    // Wraps a side-effecting Yul expression at statement position.  In the
+    // supported subset this is exclusively `sstore(X.slot, v)`; the
+    // statement-level lowering path enforces the sstore-only restriction
+    // and slot-arg validation.  Recurse into the expression so the scan
+    // catches an unsupported builtin (e.g. `mstore`) up-front.
+    if (node.contains("expression") && node["expression"].is_object())
+      return yul_node_is_supported(
+        node["expression"], unsupported_kind, unsupported_src);
+    unsupported_kind = "YulExpressionStatement:no-expression";
+    unsupported_src = node.value("src", "");
+    return false;
+  }
+
   // Unknown / unsupported nodeType — typically YulFunctionDefinition,
-  // YulLeave, YulExpressionStatement, YulTypedName appearing where a
-  // statement is expected, etc.
+  // YulLeave, YulTypedName appearing where a statement is expected, etc.
   unsupported_kind = nt.empty() ? "YulNode:unknown" : nt;
   unsupported_src = node.value("src", "");
   return false;
@@ -1436,6 +1466,7 @@ bool solidity_convertert::make_yul_local(
 bool solidity_convertert::convert_yul_expression(
   const nlohmann::json &yul_expr,
   const std::map<std::string, int> &src_to_decl,
+  const std::map<std::string, int> &slot_refs,
   const std::map<std::string, exprt> &locals,
   const locationt &loc,
   exprt &out)
@@ -1499,7 +1530,8 @@ bool solidity_convertert::convert_yul_expression(
     const auto &args = yul_expr["arguments"];
 
     auto eval_arg = [&](size_t i, exprt &dst) -> bool {
-      return convert_yul_expression(args[i], src_to_decl, locals, loc, dst);
+      return convert_yul_expression(
+        args[i], src_to_decl, slot_refs, locals, loc, dst);
     };
     auto u256_const = [&](const BigInt &v) {
       return from_integer(v, u256);
@@ -1681,6 +1713,41 @@ bool solidity_convertert::convert_yul_expression(
       return false;
     }
 
+    // sload(X.slot) — read scalar state variable X (widened to uint256).
+    // The argument must be a YulIdentifier whose src matches a `.slot`
+    // external reference resolving to a scalar state variable.  Any
+    // failed gate (computed slot, non-state-var, non-scalar type) returns
+    // true to abort precise lowering, so the caller falls through to
+    // havoc.  The havoc fallback's existing `.slot`-ref handling
+    // (lines 1162-1191 of this file) re-nondets every state var hit via
+    // `.slot`, preserving soundness for the rejected block.
+    if (fname == "sload")
+    {
+      if (args.size() != 1)
+        return true;
+      const nlohmann::json &a0 = args[0];
+      if (a0.value("nodeType", "") != "YulIdentifier")
+        return true;
+      auto sit = slot_refs.find(a0.value("src", ""));
+      if (sit == slot_refs.end())
+        return true;
+      const nlohmann::json &decl = find_decl_ref(sit->second);
+      if (decl.empty() || decl.value("nodeType", "") != "VariableDeclaration")
+        return true;
+      if (!decl.value("stateVariable", false))
+        return true;
+      exprt var_expr;
+      if (get_var_decl_ref(decl, /*is_state=*/true, var_expr))
+        return true;
+      const irep_idt tid = var_expr.type().id();
+      if (tid != "unsignedbv" && tid != "signedbv" && tid != "bool")
+        return true;
+      out = var_expr;
+      solidity_gen_typecast(ns, out, u256);
+      out.location() = loc;
+      return false;
+    }
+
     return true; // unknown builtin (pre-flight should have rejected)
   }
 
@@ -1691,6 +1758,7 @@ bool solidity_convertert::convert_yul_statement(
   const nlohmann::json &yul_stmt,
   const std::string &asm_id,
   const std::map<std::string, int> &src_to_decl,
+  const std::map<std::string, int> &slot_refs,
   std::map<std::string, exprt> &locals,
   int &local_seq,
   const locationt &loc,
@@ -1701,7 +1769,7 @@ bool solidity_convertert::convert_yul_statement(
 
   if (nt == "YulBlock")
     return convert_yul_block(
-      yul_stmt, asm_id, src_to_decl, locals, local_seq, loc, out);
+      yul_stmt, asm_id, src_to_decl, slot_refs, locals, local_seq, loc, out);
 
   if (nt == "YulVariableDeclaration")
   {
@@ -1723,7 +1791,7 @@ bool solidity_convertert::convert_yul_statement(
     if (yul_stmt.contains("value") && yul_stmt["value"].is_object())
     {
       if (convert_yul_expression(
-            yul_stmt["value"], src_to_decl, locals, loc, rhs))
+            yul_stmt["value"], src_to_decl, slot_refs, locals, loc, rhs))
         return true;
     }
     else
@@ -1799,7 +1867,8 @@ bool solidity_convertert::convert_yul_statement(
     }
 
     exprt rhs;
-    if (convert_yul_expression(rhs_node, src_to_decl, locals, loc, rhs))
+    if (convert_yul_expression(
+          rhs_node, src_to_decl, slot_refs, locals, loc, rhs))
       return true;
     solidity_gen_typecast(ns, rhs, lhs.type());
     code_assignt assign(lhs, rhs);
@@ -1812,13 +1881,14 @@ bool solidity_convertert::convert_yul_statement(
   {
     exprt cond_val;
     if (convert_yul_expression(
-          yul_stmt["condition"], src_to_decl, locals, loc, cond_val))
+          yul_stmt["condition"], src_to_decl, slot_refs, locals, loc, cond_val))
       return true;
     binary_relation_exprt cond_ne(cond_val, "notequal", from_integer(BigInt(0), u256));
 
     exprt body;
     if (convert_yul_block(
-          yul_stmt["body"], asm_id, src_to_decl, locals, local_seq, loc, body))
+          yul_stmt["body"], asm_id, src_to_decl, slot_refs, locals,
+          local_seq, loc, body))
       return true;
 
     codet if_expr("ifthenelse");
@@ -1832,7 +1902,7 @@ bool solidity_convertert::convert_yul_statement(
   {
     exprt e;
     if (convert_yul_expression(
-          yul_stmt["expression"], src_to_decl, locals, loc, e))
+          yul_stmt["expression"], src_to_decl, slot_refs, locals, loc, e))
       return true;
 
     const auto &cases = yul_stmt["cases"];
@@ -1853,7 +1923,8 @@ bool solidity_convertert::convert_yul_statement(
       if (is_default(c))
       {
         if (convert_yul_block(
-              c["body"], asm_id, src_to_decl, locals, local_seq, loc, tail))
+              c["body"], asm_id, src_to_decl, slot_refs, locals,
+              local_seq, loc, tail))
           return true;
         break;
       }
@@ -1868,12 +1939,13 @@ bool solidity_convertert::convert_yul_statement(
     {
       exprt key;
       if (convert_yul_expression(
-            (*it)["value"], src_to_decl, locals, loc, key))
+            (*it)["value"], src_to_decl, slot_refs, locals, loc, key))
         return true;
       equality_exprt cond(e, key);
       exprt body;
       if (convert_yul_block(
-            (*it)["body"], asm_id, src_to_decl, locals, local_seq, loc, body))
+            (*it)["body"], asm_id, src_to_decl, slot_refs, locals,
+            local_seq, loc, body))
         return true;
       codet if_expr("ifthenelse");
       if_expr.copy_to_operands(cond, body, tail);
@@ -1906,7 +1978,8 @@ bool solidity_convertert::convert_yul_statement(
       {
         exprt s_expr;
         if (convert_yul_statement(
-              s, asm_id, src_to_decl, locals, local_seq, loc, s_expr))
+              s, asm_id, src_to_decl, slot_refs, locals, local_seq, loc,
+              s_expr))
           return true;
         outer.copy_to_operands(s_expr);
       }
@@ -1914,7 +1987,7 @@ bool solidity_convertert::convert_yul_statement(
 
     exprt cond_val;
     if (convert_yul_expression(
-          yul_stmt["condition"], src_to_decl, locals, loc, cond_val))
+          yul_stmt["condition"], src_to_decl, slot_refs, locals, loc, cond_val))
       return true;
     binary_relation_exprt cond_ne(cond_val, "notequal", from_integer(BigInt(0), u256));
 
@@ -1923,6 +1996,7 @@ bool solidity_convertert::convert_yul_statement(
           yul_stmt["post"],
           asm_id,
           src_to_decl,
+          slot_refs,
           locals,
           local_seq,
           loc,
@@ -1934,6 +2008,7 @@ bool solidity_convertert::convert_yul_statement(
           yul_stmt["body"],
           asm_id,
           src_to_decl,
+          slot_refs,
           locals,
           local_seq,
           loc,
@@ -1969,6 +2044,59 @@ bool solidity_convertert::convert_yul_statement(
     return false;
   }
 
+  if (nt == "YulExpressionStatement")
+  {
+    // sstore(X.slot, v) is the only side-effecting expression statement
+    // in the supported subset.  Everything else (a bare sload at
+    // statement position, an unknown builtin call) returns true to
+    // abort precise lowering — caller falls through to havoc.
+    if (!yul_stmt.contains("expression") ||
+        !yul_stmt["expression"].is_object())
+      return true;
+    const nlohmann::json &expr = yul_stmt["expression"];
+    if (expr.value("nodeType", "") != "YulFunctionCall")
+      return true;
+    const std::string fname =
+      expr.value("functionName", nlohmann::json::object()).value("name", "");
+    if (fname != "sstore")
+      return true;
+    const auto &args = expr["arguments"];
+    if (!args.is_array() || args.size() != 2)
+      return true;
+
+    // Resolve slot arg → state-variable symbol.  Must be a YulIdentifier
+    // whose src matches a `.slot` ext-ref pointing at a scalar state var.
+    const nlohmann::json &a0 = args[0];
+    if (a0.value("nodeType", "") != "YulIdentifier")
+      return true;
+    auto sit = slot_refs.find(a0.value("src", ""));
+    if (sit == slot_refs.end())
+      return true;
+    const nlohmann::json &decl = find_decl_ref(sit->second);
+    if (decl.empty() || decl.value("nodeType", "") != "VariableDeclaration")
+      return true;
+    if (!decl.value("stateVariable", false))
+      return true;
+    exprt lhs;
+    if (get_var_decl_ref(decl, /*is_state=*/true, lhs))
+      return true;
+    const irep_idt tid = lhs.type().id();
+    if (tid != "unsignedbv" && tid != "signedbv" && tid != "bool")
+      return true;
+
+    // Lower the value expression and narrow to the state var's native type.
+    exprt rhs;
+    if (convert_yul_expression(
+          args[1], src_to_decl, slot_refs, locals, loc, rhs))
+      return true;
+    solidity_gen_typecast(ns, rhs, lhs.type());
+
+    code_assignt assign(lhs, rhs);
+    assign.location() = loc;
+    out = assign;
+    return false;
+  }
+
   return true; // unknown nodeType (pre-flight should have caught it)
 }
 
@@ -1976,6 +2104,7 @@ bool solidity_convertert::convert_yul_block(
   const nlohmann::json &yul_block,
   const std::string &asm_id,
   const std::map<std::string, int> &src_to_decl,
+  const std::map<std::string, int> &slot_refs,
   std::map<std::string, exprt> &locals,
   int &local_seq,
   const locationt &loc,
@@ -1994,7 +2123,8 @@ bool solidity_convertert::convert_yul_block(
     {
       exprt s_expr;
       if (convert_yul_statement(
-            s, asm_id, src_to_decl, locals, local_seq, loc, s_expr))
+            s, asm_id, src_to_decl, slot_refs, locals, local_seq, loc,
+            s_expr))
         return true;
       blk.copy_to_operands(s_expr);
     }
@@ -2025,29 +2155,39 @@ bool solidity_convertert::try_lower_yul_block_precise(
   if (!yul_node_is_supported(yul_root, unsupported_kind, unsupported_src))
     return false;
 
-  // Build src-range -> declaration id map for outer-scope identifier lookup.
-  // .slot / .offset references imply storage semantics this lowerer doesn't
-  // model, so reject the block if any such reference exists.
+  // Build two src-range -> declaration-id maps for outer-scope identifier
+  // lookup: `src_to_decl` for plain (non-suffixed) external references,
+  // `slot_refs` for `.slot` references consumed by sload/sstore.
+  // `.offset` references imply intra-slot packing — we have no model for
+  // that, so reject the entire block on `.offset`.
   std::map<std::string, int> src_to_decl;
+  std::map<std::string, int> slot_refs;
   if (
     asm_stmt.contains("externalReferences") &&
     asm_stmt["externalReferences"].is_array())
   {
     for (const auto &ref : asm_stmt["externalReferences"])
     {
-      if (
-        (ref.contains("isSlot") && ref["isSlot"].get<bool>()) ||
-        (ref.contains("isOffset") && ref["isOffset"].get<bool>()))
+      const bool is_slot =
+        ref.contains("isSlot") && ref["isSlot"].get<bool>();
+      const bool is_offset =
+        ref.contains("isOffset") && ref["isOffset"].get<bool>();
+      if (is_offset)
       {
-        unsupported_kind = "ExternalReference:slot-or-offset";
+        unsupported_kind = "ExternalReference:offset";
         unsupported_src = ref.value("src", "");
         return false;
       }
       if (
-        ref.contains("declaration") && ref["declaration"].is_number() &&
-        ref.contains("src") && ref["src"].is_string())
-        src_to_decl[ref["src"].get<std::string>()] =
-          ref["declaration"].get<int>();
+        !ref.contains("declaration") || !ref["declaration"].is_number() ||
+        !ref.contains("src") || !ref["src"].is_string())
+        continue;
+      const std::string src_key = ref["src"].get<std::string>();
+      const int decl_id = ref["declaration"].get<int>();
+      if (is_slot)
+        slot_refs[src_key] = decl_id;
+      else
+        src_to_decl[src_key] = decl_id;
     }
   }
 
@@ -2056,7 +2196,8 @@ bool solidity_convertert::try_lower_yul_block_precise(
   int local_seq = 0;
 
   if (convert_yul_block(
-        yul_root, asm_id, src_to_decl, locals, local_seq, loc, out))
+        yul_root, asm_id, src_to_decl, slot_refs, locals, local_seq, loc,
+        out))
   {
     unsupported_kind = "convert_failure";
     unsupported_src = asm_stmt.value("src", "");
