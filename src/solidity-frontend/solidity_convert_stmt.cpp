@@ -1059,13 +1059,13 @@ bool solidity_convertert::get_statement(
     //
     // Strategy: try precise lowering of the YulBlock against a fixed
     // supported subset (let / := / pure-256-bit builtins / if / switch /
-    // for / nested blocks / number+bool literals).  All-or-nothing per
-    // block: if any unsupported Yul construct (mload/mstore/sload/sstore/
-    // calldata*/keccak256/call/return/revert/EVM-intrinsics/Yul-fn-defs/
-    // break/continue/leave/.slot/.offset/multi-LHS/hex-or-string-literals)
-    // appears anywhere in the block, fall through to the legacy havoc
-    // fallback below.  This guarantees the precise portion can never
-    // observe a write the havoc'd portion would have made.
+    // for / break / continue / nested blocks / number+bool literals).
+    // All-or-nothing per block: if any unsupported Yul construct
+    // (mload/mstore/sload/sstore/calldata*/keccak256/call/return/revert/
+    // EVM-intrinsics/Yul-fn-defs/leave/.slot/.offset/multi-LHS/
+    // hex-or-string-literals) appears anywhere in the block, fall through
+    // to the legacy havoc fallback below.  This guarantees the precise
+    // portion can never observe a write the havoc'd portion would have made.
     {
       std::string unsupported_kind, unsupported_src;
       exprt precise;
@@ -1082,7 +1082,7 @@ bool solidity_convertert::get_statement(
         "[approx] inline assembly at {}:{}: over-approximating - "
         "unsupported Yul construct '{}' ({}); supported subset: "
         "let / := / arithmetic+bitwise+shift / lt/gt/eq/slt/sgt/iszero / "
-        "and/or/xor/not / shl/shr / if / switch / for",
+        "and/or/xor/not / shl/shr / if / switch / for / break / continue",
         loc.get_file().c_str(),
         loc.get_line().c_str(),
         unsupported_kind,
@@ -1195,7 +1195,7 @@ bool solidity_convertert::get_statement(
 // Translates a supported subset of Yul into ESBMC IR with full precision.
 // Supported subset:
 //   - Statements:  YulBlock, YulVariableDeclaration, YulAssignment, YulIf,
-//                  YulSwitch, YulForLoop
+//                  YulSwitch, YulForLoop, YulBreak, YulContinue
 //   - Expressions: YulIdentifier, YulLiteral (number/bool), YulFunctionCall
 //                  with a whitelisted builtin name
 //   - Builtins:    add sub mul div mod addmod mulmod
@@ -1205,7 +1205,7 @@ bool solidity_convertert::get_statement(
 //
 // Unsupported (block falls back to havoc with a single warning):
 //   - Memory/storage/calldata/hashing/calls/returns/reverts/EVM intrinsics
-//   - Yul function definitions, leave/break/continue
+//   - Yul function definitions, leave
 //   - Multi-LHS YulAssignment / YulVariableDeclaration
 //   - YulLiteral kinds other than number / bool
 //   - YulCase with a non-literal selector
@@ -1385,10 +1385,12 @@ bool solidity_convertert::yul_node_is_supported(
     unsupported_src = node.value("src", "");
     return false;
   }
+  if (nt == "YulBreak" || nt == "YulContinue")
+    return true;
 
   // Unknown / unsupported nodeType — typically YulFunctionDefinition,
-  // YulLeave, YulBreak, YulContinue, YulExpressionStatement, YulTypedName
-  // appearing where a statement is expected, etc.
+  // YulLeave, YulExpressionStatement, YulTypedName appearing where a
+  // statement is expected, etc.
   unsupported_kind = nt.empty() ? "YulNode:unknown" : nt;
   unsupported_src = node.value("src", "");
   return false;
@@ -1942,6 +1944,22 @@ bool solidity_convertert::convert_yul_statement(
     out = outer;
 
     locals = snapshot;
+    return false;
+  }
+
+  if (nt == "YulBreak")
+  {
+    code_breakt brk;
+    brk.location() = loc;
+    out = brk;
+    return false;
+  }
+
+  if (nt == "YulContinue")
+  {
+    code_continuet cont;
+    cont.location() = loc;
+    out = cont;
     return false;
   }
 
