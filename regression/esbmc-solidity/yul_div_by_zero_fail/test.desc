@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--sol contract.sol --contract H --k-induction --max-k-step 20 --k-step 3
+^VERIFICATION FAILED$
+assertion r == 100
