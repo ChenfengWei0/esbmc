@@ -1,5 +1,4 @@
 CORE
 contract.sol
 --sol contract.sol --contract H --unwind 8 --no-unwinding-assertions
-^VERIFICATION FAILED$
-division by zero
+^VERIFICATION SUCCESSFUL$

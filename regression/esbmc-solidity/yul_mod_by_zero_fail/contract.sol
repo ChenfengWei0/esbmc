@@ -2,17 +2,14 @@
 pragma solidity >=0.8.0;
 
 contract H {
-    // Same shape as yul_div_by_zero_fail: Yul `mod(_, 0) == 0` deviates
-    // from Solidity 0.8+ panic. T2.4's lowering uses
-    // `if (b == 0) return 0; else bvurem(a, b)`, so ESBMC's built-in
-    // div-by-zero check never fires on the bvurem op. To detect, the
-    // programmer must assert a post-condition the Yul model violates.
-    function check() public pure {
+    // Same shape as yul_div_by_zero_fail: ESBMC's goto-check inserts
+    // `assert(y != 0)` on the Yul `mod`'s divisor; symbolic y == 0 is
+    // reachable; "division by zero" violation. (The check covers both
+    // div and mod — same property name.)
+    function check(uint256 y) public pure {
         uint256 r;
         assembly {
-            r := mod(7, 0)
+            r := mod(100, y)
         }
-        // Would only hold under Solidity-style panic semantics.
-        assert(r == 7);
     }
 }

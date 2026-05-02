@@ -1,5 +1,5 @@
 CORE
 contract.sol
---sol contract.sol --contract H --k-induction --max-k-step 20 --k-step 3
+--sol contract.sol --contract H --unwind 8 --no-unwinding-assertions
 ^VERIFICATION FAILED$
-assertion r == 7
+division by zero

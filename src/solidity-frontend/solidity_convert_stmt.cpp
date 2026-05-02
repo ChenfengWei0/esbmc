@@ -1527,7 +1527,16 @@ bool solidity_convertert::convert_yul_expression(
       return false;
     }
 
-    // div / mod with Yul's `_(_, 0) == 0` rule
+    // div / mod: lower to plain div_exprt / mod_exprt so goto_check's
+    // div-by-zero check fires when the divisor is symbolically reachable
+    // as 0. EVM/Yul defines `div(_, 0) == 0` (no panic, no revert), but
+    // this is almost always a bug pattern in user code (programmer
+    // expected Solidity 0.8+ panic semantics). With default checks
+    // enabled, ESBMC reports "division by zero" violations on reachable
+    // zero divisors — which is the verification-useful behavior. With
+    // `--no-div-by-zero-check`, the check is suppressed and the model
+    // returns SMT-LIB's bvudiv-zero result (all-1s), NOT Yul's 0 — see
+    // approximation-ledger.md row #1 for this soundness gap.
     if (fname == "div" || fname == "mod")
     {
       if (args.size() != 2)
@@ -1535,19 +1544,19 @@ bool solidity_convertert::convert_yul_expression(
       exprt a, b;
       if (eval_arg(0, a) || eval_arg(1, b))
         return true;
-      exprt op;
       if (fname == "div")
-        op = div_exprt(a, b);
+        out = div_exprt(a, b);
       else
-        op = mod_exprt(a, b);
-      op.type() = u256;
-      equality_exprt is_zero(b, u256_const(0));
-      out = if_exprt(is_zero, u256_const(0), op);
+        out = mod_exprt(a, b);
       out.type() = u256;
       out.location() = loc;
       return false;
     }
 
+    // addmod / mulmod: same div-by-zero exposure for the modulus arg.
+    // (Note: the inner add/mul still uses 2^256-wrap arithmetic, not the
+    // EVM-spec arbitrary-precision intermediate — that's a separate T2.4
+    // gap, not addressed here.)
     if (fname == "addmod" || fname == "mulmod")
     {
       if (args.size() != 3)
@@ -1561,10 +1570,7 @@ bool solidity_convertert::convert_yul_expression(
       else
         inner = mult_exprt(a, b);
       inner.type() = u256;
-      mod_exprt mod_op(inner, m);
-      mod_op.type() = u256;
-      equality_exprt is_zero(m, u256_const(0));
-      out = if_exprt(is_zero, u256_const(0), mod_op);
+      out = mod_exprt(inner, m);
       out.type() = u256;
       out.location() = loc;
       return false;
