@@ -170,6 +170,24 @@ protected:
     const std::string &c_name,
     const locationt &loc,
     exprt &body_exprt);
+  // For --reentry-balance-drain-check: at every value-transfer call
+  // site (transfer / send / call{value:V}), emit
+  //   __re_drain_val = V; __re_drain_pre = this->$balance;
+  // into the front block, and after the call:
+  //   assert(__re_drain_val > __re_drain_pre ||
+  //          this->$balance >= __re_drain_pre - __re_drain_val);
+  // into the back block.  Returns the symbol exprt to substitute for
+  // `value` in the call's argument list (single-evaluation snapshot
+  // — never let the call's `value` arg double-eval the user's
+  // expression).  When the check is disabled or `this_expr` is nil
+  // (library context) the helper writes `value` straight back into
+  // `replacement_value` and returns false (no-op).
+  bool emit_balance_drain_wrapper(
+    const std::string &cname,
+    const exprt &this_expr,
+    const exprt &value,
+    const locationt &loc,
+    exprt &replacement_value);
   bool get_func_modifier(
     const nlohmann::json &ast_node,
     const std::string &c_name,
@@ -1413,6 +1431,15 @@ protected:
 
   // reentry-check setting
   bool is_reentry_check;
+
+  // reentry-balance-drain-check setting (independent of is_reentry_check)
+  bool is_reentry_balance_drain_check;
+
+  // Per-contract counter of value-transfer call sites we instrumented for
+  // --reentry-balance-drain-check.  Used at the per-contract finalisation
+  // boundary to emit a single skip warning when a contract has no outbound
+  // call sites.
+  std::map<std::string, int> outbound_drain_site_count;
 
   // pointer-check setting
   bool is_pointer_check;

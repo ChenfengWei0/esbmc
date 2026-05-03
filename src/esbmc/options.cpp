@@ -152,6 +152,14 @@ const struct group_opt_templ all_cmd_options[] = {
     {"reentry-check",
      NULL,
      "Detect reentrancy behavior during contract execution"},
+    {"reentry-balance-drain-check",
+     NULL,
+     "Detect DAO-style balance drain via reentrancy: assert at every "
+     "transfer/send/call{value:V} call site that the contract's $balance "
+     "drops by at most V.  Skipped for contracts with no outbound "
+     "value-transfer call sites.  Low-level call{value:} requires "
+     "--bound (under unbound the call is special-cased to skip "
+     "balance accounting)."},
     {"negating-property",
      boost::program_options::value<std::string>()->value_name("fname"),
      "Convert the assert(cond) to assert(!cond)"},

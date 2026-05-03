@@ -1349,12 +1349,21 @@ bool solidity_convertert::get_low_level_member_accsss(
       if (get_expr(options[0], literal_type, value))
         return true;
 
+      // --reentry-balance-drain-check: emit pre-snapshots and post-assert
+      // around the call.  `value_for_call` is the symbol the caller MUST
+      // pass into call.arguments() so the user-side value expression is
+      // evaluated exactly once (the assert references the same snapshot).
+      exprt value_for_call;
+      if (emit_balance_drain_wrapper(
+            cname, this_object, value, loc, value_for_call))
+        return true;
+
       std::string func_id = "sol:@C@" + cname + "@F@$call#1";
 
       get_library_function_call_no_args(func_name, func_id, bool_t, loc, call);
       call.arguments().push_back(this_object);
       call.arguments().push_back(addr);
-      call.arguments().push_back(value);
+      call.arguments().push_back(value_for_call);
     }
     else
     {
@@ -1408,12 +1417,17 @@ bool solidity_convertert::get_low_level_member_accsss(
     exprt addr = base;
     assert(!arg.is_nil());
 
+    // --reentry-balance-drain-check: see emit_balance_drain_wrapper
+    exprt value_for_call;
+    if (emit_balance_drain_wrapper(cname, this_object, arg, loc, value_for_call))
+      return true;
+
     std::string func_name = "transfer";
     std::string func_id = "sol:@C@" + cname + "@F@$transfer#0";
     get_library_function_call_no_args(func_name, func_id, bool_t, loc, call);
     call.arguments().push_back(this_object);
     call.arguments().push_back(addr);
-    call.arguments().push_back(arg);
+    call.arguments().push_back(value_for_call);
 
     new_expr = call;
   }
@@ -1423,12 +1437,17 @@ bool solidity_convertert::get_low_level_member_accsss(
     exprt addr = base;
     assert(!arg.is_nil());
 
+    // --reentry-balance-drain-check: see emit_balance_drain_wrapper
+    exprt value_for_call;
+    if (emit_balance_drain_wrapper(cname, this_object, arg, loc, value_for_call))
+      return true;
+
     std::string func_name = "send";
     std::string func_id = "sol:@C@" + cname + "@F@$send#0";
     get_library_function_call_no_args(func_name, func_id, bool_t, loc, call);
     call.arguments().push_back(this_object);
     call.arguments().push_back(addr);
-    call.arguments().push_back(arg);
+    call.arguments().push_back(value_for_call);
 
     new_expr = call;
   }
@@ -2979,6 +2998,114 @@ bool solidity_convertert::model_transaction(
 
   convert_expression_to_code(front_block);
   convert_expression_to_code(back_block);
+  return false;
+}
+
+// --reentry-balance-drain-check: at every value-transfer call site,
+// emit
+//   uint256 __re_drain_val = V;
+//   uint256 __re_drain_pre = this->$balance;
+// to the front block, and
+//   __ESBMC_assert(
+//     __re_drain_val > __re_drain_pre ||
+//     this->$balance >= __re_drain_pre - __re_drain_val,
+//     "reentrancy balance drain")
+// to the back block.  Returns the symbol exprt to substitute for
+// `value` in the call's argument list — guarantees single evaluation
+// of an arbitrary value expression (e.g. `computeAmount()`) across
+// the call argument and the post-assert.
+//
+// When the check is disabled or `this_expr` is nil (library context),
+// `replacement_value` is set to `value` and the helper returns false
+// without touching front/back blocks.
+//
+// Postcondition: on a successful injection,
+// `outbound_drain_site_count[cname]` is incremented by 1.
+bool solidity_convertert::emit_balance_drain_wrapper(
+  const std::string &cname,
+  const exprt &this_expr,
+  const exprt &value,
+  const locationt &loc,
+  exprt &replacement_value)
+{
+  // Default no-op fallthrough: caller's call argument stays as-is.
+  replacement_value = value;
+
+  if (!is_reentry_balance_drain_check)
+    return false;
+  if (this_expr.is_nil())
+    return false;
+  if (cname.empty())
+    return false;
+
+  typet u256 = unsignedbv_typet(256);
+  std::string mname = get_modulename_from_path(absolute_path);
+
+  // 1. uint256 __re_drain_val = V;
+  symbolt val_sym;
+  std::string val_id = "sol:@C@" + cname + "@F@__re_drain_val#" +
+                       std::to_string(aux_counter++);
+  get_default_symbol(val_sym, mname, u256, "__re_drain_val", val_id, loc);
+  symbolt &added_val = *move_symbol_to_context(val_sym);
+  added_val.value = value;
+  code_declt val_decl(symbol_expr(added_val));
+  val_decl.operands().push_back(value);
+  move_to_front_block(val_decl);
+
+  // 2. uint256 __re_drain_pre = this->$balance;
+  exprt this_balance = member_exprt(this_expr, "$balance", u256);
+  symbolt pre_sym;
+  std::string pre_id = "sol:@C@" + cname + "@F@__re_drain_pre#" +
+                       std::to_string(aux_counter++);
+  get_default_symbol(pre_sym, mname, u256, "__re_drain_pre", pre_id, loc);
+  symbolt &added_pre = *move_symbol_to_context(pre_sym);
+  added_pre.value = this_balance;
+  code_declt pre_decl(symbol_expr(added_pre));
+  pre_decl.operands().push_back(this_balance);
+  move_to_front_block(pre_decl);
+
+  // 3. __ESBMC_assert(
+  //      __re_drain_val > __re_drain_pre ||
+  //      this->$balance >= __re_drain_pre - __re_drain_val,
+  //      "reentrancy balance drain");
+  //
+  // The disjunction guards against unsigned underflow when
+  // `__re_drain_val > __re_drain_pre` (the transfer would have
+  // failed in real EVM — call returns false / transfer reverts —
+  // so balance is unchanged on that path).  Without the guard,
+  // `pre - val` wraps to a giant unsigned value and the >= check
+  // almost certainly fails, producing a spurious counterexample.
+  exprt val_sym_expr = symbol_expr(added_val);
+  exprt pre_sym_expr = symbol_expr(added_pre);
+
+  exprt under_guard(">", bool_t);
+  under_guard.copy_to_operands(val_sym_expr, pre_sym_expr);
+
+  exprt sub("-", u256);
+  sub.copy_to_operands(pre_sym_expr, val_sym_expr);
+  exprt geq(">=", bool_t);
+  geq.copy_to_operands(this_balance, sub);
+
+  exprt or_expr("or", bool_t);
+  or_expr.copy_to_operands(under_guard, geq);
+
+  side_effect_expr_function_callt assert_call;
+  get_library_function_call_no_args(
+    "__ESBMC_assert",
+    "c:@F@__ESBMC_assert",
+    empty_typet(),
+    loc,
+    assert_call);
+  assert_call.arguments().push_back(or_expr);
+  string_constantt msg("reentrancy balance drain");
+  assert_call.arguments().push_back(msg);
+  convert_expression_to_code(assert_call);
+  move_to_back_block(assert_call);
+
+  // Replace V with the snapshot symbol in the call's argument list —
+  // single-evaluation guarantee.
+  replacement_value = val_sym_expr;
+  outbound_drain_site_count[cname]++;
   return false;
 }
 

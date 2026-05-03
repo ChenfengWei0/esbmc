@@ -56,6 +56,8 @@ solidity_convertert::solidity_convertert(
     aux_counter(0),
     is_bound(false),
     is_reentry_check(false),
+    is_reentry_balance_drain_check(false),
+    outbound_drain_site_count(),
     is_pointer_check(true),
     nondet_bool_expr(),
     nondet_uint_expr(),
@@ -74,6 +76,11 @@ solidity_convertert::solidity_convertert(
   const std::string reentry_check = config.options.get_option("reentry-check");
   if (!reentry_check.empty())
     is_reentry_check = true;
+
+  const std::string reentry_balance_drain_check =
+    config.options.get_option("reentry-balance-drain-check");
+  if (!reentry_balance_drain_check.empty())
+    is_reentry_balance_drain_check = true;
 
   // solidity does not have pointer
   // however, in esbmc some array bounds check is related to the pointer check
@@ -382,6 +389,27 @@ bool solidity_convertert::convert()
   // this is to ensure that we have populated other auxiliary static variables before them
   for (const auto &c_name : contractNamesList)
     add_static_contract_instance(c_name);
+
+  // --reentry-balance-drain-check: emit one [approx] warning per
+  // contract that the user opted into the check on but had no
+  // outbound transfer/send/call{value:} call sites for the helper to
+  // wrap.  (Pure-deposit / payable-only contracts and pure
+  // computational contracts both fall into this bucket — neither
+  // needs the assert.)  Skip non-tracked contracts (interfaces,
+  // libraries) since the conversion path doesn't reach them anyway.
+  if (is_reentry_balance_drain_check)
+  {
+    for (const auto &c_name : contractNamesList)
+    {
+      if (nonContractNamesList.count(c_name) != 0)
+        continue;
+      if (outbound_drain_site_count[c_name] == 0)
+        log_warning(
+          "[approx] --reentry-balance-drain-check skipped: {} has no "
+          "outbound value-transfer call sites",
+          c_name);
+    }
+  }
 
   // Emit the enclosing-debit helper NOW — after every contract's
   // `_ESBMC_Object_<C>` static instance is registered and ctor
