@@ -601,7 +601,15 @@ const struct group_opt_templ all_cmd_options[] = {
     {"no-standard-checks", NULL, "Disable default checks"},
     {"no-assertions", NULL, "Ignore assertions"},
     {"no-bounds-check", NULL, "Do not do array bounds check"},
+    {"bounds-check",
+     NULL,
+     "Enable array bounds check (Solidity: opt-in, default OFF; "
+     "C/C++: default ON; overrides --no-standard-checks)"},
     {"no-div-by-zero-check", NULL, "Do not do division by zero check"},
+    {"div-by-zero-check",
+     NULL,
+     "Enable division-by-zero check (Solidity: opt-in, default OFF; "
+     "C/C++: default ON; overrides --no-standard-checks)"},
     {"no-pointer-check", NULL, "Do not do pointer check"},
     {"no-align-check", NULL, "Do not check pointer alignment"},
     {"no-unlimited-scanf-check",

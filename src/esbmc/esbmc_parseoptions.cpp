@@ -2645,6 +2645,24 @@ bool esbmc_parseoptionst::parse_goto_program(
         exit(0);
     }
 
+    // Solidity implicit default: enable --no-standard-checks for any
+    // Solidity run. C-level safety checks (pointer/align/vla/scanf/...)
+    // emit false positives on Yul-lowered code, and the two
+    // semantically-meaningful checks (bounds, div-by-zero) are now
+    // opt-in via the positive --bounds-check / --div-by-zero-check.
+    {
+      bool is_solidity = cmdline.isset("sol");
+      if (!is_solidity)
+        for (const auto &arg : cmdline.args)
+          if (arg.size() >= 4 && arg.substr(arg.size() - 4) == ".sol")
+          {
+            is_solidity = true;
+            break;
+          }
+      if (is_solidity)
+        options.set_option("no-standard-checks", true);
+    }
+
     // Expand --no-standard-checks into individual options before goto_convert,
     // because VLA size checks are generated during goto conversion.
     // NOTE: `no-narrowing-check` is deliberately NOT expanded here — it
@@ -2657,13 +2675,21 @@ bool esbmc_parseoptionst::parse_goto_program(
       cmdline.isset("no-standard-checks") ||
       options.get_bool_option("no-standard-checks"))
     {
+      // Positive opt-in flags override the umbrella for the two
+      // Solidity-relevant checks. SMTChecker idiom:
+      //   --no-standard-checks --div-by-zero-check
+      // means "disable everything standard except div-by-zero".
+      auto set_neg_unless_pos = [&](const char *neg, const char *pos) {
+        if (!cmdline.isset(pos))
+          options.set_option(neg, true);
+      };
       options.set_option("no-pointer-check", true);
-      options.set_option("no-div-by-zero-check", true);
+      set_neg_unless_pos("no-div-by-zero-check", "div-by-zero-check");
       options.set_option("no-pointer-relation-check", true);
       options.set_option("no-unlimited-scanf-check", true);
       options.set_option("no-vla-size-check", true);
       options.set_option("no-align-check", true);
-      options.set_option("no-bounds-check", true);
+      set_neg_unless_pos("no-bounds-check", "bounds-check");
     }
 
     log_progress("Generating GOTO Program");
@@ -2766,6 +2792,21 @@ bool esbmc_parseoptionst::process_goto_program(
       }
     }
 
+    // Solidity implicit default: re-applied here for the read_goto_binary
+    // path that bypasses parse_goto_program's earlier setter.
+    {
+      bool is_solidity = cmdline.isset("sol");
+      if (!is_solidity)
+        for (const auto &arg : cmdline.args)
+          if (arg.size() >= 4 && arg.substr(arg.size() - 4) == ".sol")
+          {
+            is_solidity = true;
+            break;
+          }
+      if (is_solidity)
+        options.set_option("no-standard-checks", true);
+    }
+
     // Expand --no-standard-checks before goto_check (also expanded before
     // goto_convert in parse_goto_program; re-expanding here is idempotent
     // and covers the read_goto_binary path).
@@ -2773,13 +2814,17 @@ bool esbmc_parseoptionst::process_goto_program(
       cmdline.isset("no-standard-checks") ||
       options.get_bool_option("no-standard-checks"))
     {
+      auto set_neg_unless_pos = [&](const char *neg, const char *pos) {
+        if (!cmdline.isset(pos))
+          options.set_option(neg, true);
+      };
       options.set_option("no-pointer-check", true);
-      options.set_option("no-div-by-zero-check", true);
+      set_neg_unless_pos("no-div-by-zero-check", "div-by-zero-check");
       options.set_option("no-pointer-relation-check", true);
       options.set_option("no-unlimited-scanf-check", true);
       options.set_option("no-vla-size-check", true);
       options.set_option("no-align-check", true);
-      options.set_option("no-bounds-check", true);
+      set_neg_unless_pos("no-bounds-check", "bounds-check");
       options.set_option("no-narrowing-check", true);
     }
 
