@@ -1,0 +1,4 @@
+KNOWNBUG
+contract.sol
+--sol contract.sol --contract C --bound --k-induction --k-step 2 --max-k-step 10
+^VERIFICATION SUCCESSFUL$
