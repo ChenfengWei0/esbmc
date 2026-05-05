@@ -25,6 +25,15 @@ CC_DIAGNOSTIC_POP()
 #include <cstdlib>
 #include <regex>
 
+// Use boost::process v1 on macOS or when Boost >= 1.87
+#if defined(__APPLE__) || (BOOST_VERSION >= 108700)
+#  include <boost/process/v1.hpp>
+namespace bp = boost::process::v1;
+#else
+#  include <boost/process.hpp>
+namespace bp = boost::process;
+#endif
+
 languaget *new_solidity_language()
 {
   return new solidity_languaget;
@@ -113,39 +122,40 @@ std::string solidity_languaget::find_solc() const
     return env;
   }
 
-  // Search $PATH via "which solc"
-  FILE *pipe = popen("which solc 2>/dev/null", "r");
-  if (pipe)
-  {
-    char buf[512];
-    std::string result;
-    while (fgets(buf, sizeof(buf), pipe))
-      result += buf;
-    pclose(pipe);
-
-    // Trim trailing newline
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-      result.pop_back();
-
-    if (!result.empty() && boost::filesystem::exists(result))
-      return result;
-  }
+  // Search $PATH for solc via boost::process (portable replacement for `which`)
+  boost::filesystem::path found = bp::search_path("solc");
+  if (!found.empty())
+    return found.string();
 
   return "";
 }
 
 std::string solidity_languaget::get_solc_version(const std::string &solc) const
 {
-  std::string cmd = solc + " --version 2>&1";
-  FILE *pipe = popen(cmd.c_str(), "r");
-  if (!pipe)
-    return "unknown";
-
-  char buf[512];
+  // Run `solc --version`; merge stdout+stderr by reading both streams.
+  bp::ipstream out_stream;
+  bp::ipstream err_stream;
   std::string output;
-  while (fgets(buf, sizeof(buf), pipe))
-    output += buf;
-  pclose(pipe);
+  try
+  {
+    bp::child proc(
+      solc,
+      "--version",
+      bp::std_out > out_stream,
+      bp::std_err > err_stream);
+
+    std::string line;
+    while (out_stream && std::getline(out_stream, line))
+      output += line + "\n";
+    while (err_stream && std::getline(err_stream, line))
+      output += line + "\n";
+
+    proc.wait();
+  }
+  catch (const std::exception &)
+  {
+    return "unknown";
+  }
 
   // Extract version number (e.g. "0.8.28+commit...")
   std::regex ver_re(R"((\d+\.\d+\.\d+))");
