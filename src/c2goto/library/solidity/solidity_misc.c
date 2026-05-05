@@ -10,7 +10,7 @@ unsigned int nondet_uint();
 
 extern uint256_t msg_data;
 extern address_t msg_sender;
-extern __uint32_t msg_sig;
+extern uint32_t msg_sig;
 extern uint256_t msg_value;
 extern uint256_t tx_gasprice;
 extern address_t tx_origin;
@@ -63,10 +63,10 @@ __ESBMC_HIDE:;
 }
 
 /* type(I).interfaceId — nondet over-approximation (bytes4) */
-__uint32_t _interfaceId()
+uint32_t _interfaceId()
 {
 __ESBMC_HIDE:;
-  return (__uint32_t)nondet_uint();
+  return (uint32_t)nondet_uint();
 }
 
 void _ESBMC_check_reentrancy(const bool _ESBMC_mutex)

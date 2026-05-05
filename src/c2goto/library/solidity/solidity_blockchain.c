@@ -13,7 +13,7 @@
 /* ── msg variables ─────────────────────────────────────────────── */
 uint256_t msg_data;
 address_t msg_sender;
-__uint32_t msg_sig;
+uint32_t msg_sig;
 uint256_t msg_value;
 
 /* ── tx variables ──────────────────────────────────────────────── */
