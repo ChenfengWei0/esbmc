@@ -2602,11 +2602,6 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
     a = mk_bvnor(args[0], args[1]);
     break;
   }
-  case expr2t::bitnxor_id:
-  {
-    a = mk_bvnxor(args[0], args[1]);
-    break;
-  }
   case expr2t::bitnot_id:
   {
     a = mk_bvnot(args[0]);
@@ -5142,13 +5137,6 @@ smt_astt smt_convt::mk_bvneg(smt_astt a)
 smt_astt smt_convt::mk_bvnot(smt_astt a)
 {
   (void)a;
-  abort();
-}
-
-smt_astt smt_convt::mk_bvnxor(smt_astt a, smt_astt b)
-{
-  (void)a;
-  (void)b;
   abort();
 }
 
