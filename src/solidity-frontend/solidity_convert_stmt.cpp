@@ -293,8 +293,7 @@ bool solidity_convertert::get_statement(
           else
           {
             assert(decl_idx < decls.operands().size());
-            lhs_block.copy_to_operands(
-              decls.operands()[decl_idx].op0());
+            lhs_block.copy_to_operands(decls.operands()[decl_idx].op0());
             ++decl_idx;
           }
         }
@@ -339,7 +338,8 @@ bool solidity_convertert::get_statement(
           stmt["expression"]["typeDescriptions"], return_exrp_type))
       return true;
 
-    if (get_sol_type(return_exrp_type) == SolidityGrammar::SolType::TUPLE_RETURNS)
+    if (
+      get_sol_type(return_exrp_type) == SolidityGrammar::SolType::TUPLE_RETURNS)
     {
       if (
         stmt["expression"]["nodeType"].get<std::string>() !=
@@ -705,11 +705,13 @@ bool solidity_convertert::get_statement(
     // one contract at a time and cannot resolve cross-contract calls.
     // Return variables in the success clause are assigned nondet values.
 
-    if (!stmt.contains("clauses") || !stmt["clauses"].is_array() ||
-        stmt["clauses"].size() < 2)
+    if (
+      !stmt.contains("clauses") || !stmt["clauses"].is_array() ||
+      stmt["clauses"].size() < 2)
     {
-      log_error("TryStatement must have at least 2 clauses "
-                "(success + catch)");
+      log_error(
+        "TryStatement must have at least 2 clauses "
+        "(success + catch)");
       return true;
     }
 
@@ -720,11 +722,11 @@ bool solidity_convertert::get_statement(
     code_blockt success_block;
 
     // Declare return parameters with nondet initial values
-    if (success_clause.contains("parameters") &&
-        success_clause["parameters"].contains("parameters"))
+    if (
+      success_clause.contains("parameters") &&
+      success_clause["parameters"].contains("parameters"))
     {
-      for (const auto &param :
-           success_clause["parameters"]["parameters"])
+      for (const auto &param : success_clause["parameters"]["parameters"])
       {
         // Use get_var_decl to declare the variable in the symbol table
         exprt var_decl;
@@ -771,8 +773,7 @@ bool solidity_convertert::get_statement(
 
       // Declare catch parameters if present (e.g. Error(string memory reason))
       code_blockt catch_block;
-      if (cc.contains("parameters") &&
-          cc["parameters"].contains("parameters"))
+      if (cc.contains("parameters") && cc["parameters"].contains("parameters"))
       {
         for (const auto &param : cc["parameters"]["parameters"])
         {
@@ -812,8 +813,9 @@ bool solidity_convertert::get_statement(
       // Build right-to-left: last clause is the final else
       const auto &last_cc = clauses[clauses.size() - 1];
       code_blockt last_block;
-      if (last_cc.contains("parameters") &&
-          last_cc["parameters"].contains("parameters"))
+      if (
+        last_cc.contains("parameters") &&
+        last_cc["parameters"].contains("parameters"))
       {
         for (const auto &param : last_cc["parameters"]["parameters"])
         {
@@ -836,8 +838,8 @@ bool solidity_convertert::get_statement(
       {
         const auto &cc = clauses[i];
         code_blockt clause_block;
-        if (cc.contains("parameters") &&
-            cc["parameters"].contains("parameters"))
+        if (
+          cc.contains("parameters") && cc["parameters"].contains("parameters"))
         {
           for (const auto &param : cc["parameters"]["parameters"])
           {
@@ -877,8 +879,9 @@ bool solidity_convertert::get_statement(
     // conservatively assign nondet values to each one.
     code_blockt havoc_block;
 
-    if (stmt.contains("externalReferences") &&
-        stmt["externalReferences"].is_array())
+    if (
+      stmt.contains("externalReferences") &&
+      stmt["externalReferences"].is_array())
     {
       // Collect unique declaration IDs (a variable may appear multiple times)
       std::set<int> seen_decls;
@@ -901,8 +904,8 @@ bool solidity_convertert::get_statement(
           continue;
 
         // Resolve the variable to a symbol expression
-        bool is_state = decl.contains("stateVariable") &&
-                        decl["stateVariable"].get<bool>();
+        bool is_state =
+          decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
         exprt var_expr;
         if (get_var_decl_ref(decl, is_state, var_expr))
           continue; // best-effort: skip if resolution fails
@@ -921,8 +924,7 @@ bool solidity_convertert::get_statement(
       {
         if (!ref.contains("declaration"))
           continue;
-        bool is_slot =
-          ref.contains("isSlot") && ref["isSlot"].get<bool>();
+        bool is_slot = ref.contains("isSlot") && ref["isSlot"].get<bool>();
         if (!is_slot)
           continue;
 

@@ -139,10 +139,7 @@ std::string solidity_languaget::get_solc_version(const std::string &solc) const
   try
   {
     bp::child proc(
-      solc,
-      "--version",
-      bp::std_out > out_stream,
-      bp::std_err > err_stream);
+      solc, "--version", bp::std_out > out_stream, bp::std_err > err_stream);
 
     std::string line;
     while (out_stream && std::getline(out_stream, line))

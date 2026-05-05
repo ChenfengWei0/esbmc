@@ -755,8 +755,7 @@ void report_coverage(
         {
           ++sat_instance;
           if (cond_show_claims)
-            log_result(
-              "  {} : SATISFIED", prettify_solidity_expr(r_claim_sig));
+            log_result("  {} : SATISFIED", prettify_solidity_expr(r_claim_sig));
         }
         else
         {

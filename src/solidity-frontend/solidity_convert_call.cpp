@@ -36,7 +36,8 @@ bool solidity_convertert::get_library_function_call(
   if (get_type_description(decl_ref["returnParameters"], t.return_type()))
     return true;
 
-  return get_library_function_call(func, t, decl_ref, caller, call, skip_first_param);
+  return get_library_function_call(
+    func, t, decl_ref, caller, call, skip_first_param);
 }
 
 // library/error/event functions have no definition node
@@ -446,7 +447,8 @@ bool solidity_convertert::assign_param_nondet(
         get_static_contract_instance_ref(base_cname, s);
         call.arguments().push_back(s);
       }
-      else if (get_sol_type(t) == SolidityGrammar::SolType::STRING && is_pointer_check)
+      else if (
+        get_sol_type(t) == SolidityGrammar::SolType::STRING && is_pointer_check)
       {
         //! specific for string, we need to explicitly assign it as nondet_string()
         // otherwise we will get invalid_object
@@ -1274,8 +1276,8 @@ static std::string strip_spaces(const std::string &s)
   return out;
 }
 
-std::string solidity_convertert::build_canonical_signature(
-  const nlohmann::json &func_def)
+std::string
+solidity_convertert::build_canonical_signature(const nlohmann::json &func_def)
 {
   if (
     !func_def.is_object() || !func_def.contains("name") ||
@@ -1388,8 +1390,7 @@ bool solidity_convertert::extract_abi_encode_signature(
     return true;
   const auto &base_expr = callee["expression"];
   if (
-    !base_expr.is_object() ||
-    base_expr.value("nodeType", "") != "Identifier" ||
+    !base_expr.is_object() || base_expr.value("nodeType", "") != "Identifier" ||
     base_expr.value("name", "") != "abi")
     return true;
   const std::string encoder = callee.value("memberName", "");
@@ -1429,13 +1430,12 @@ bool solidity_convertert::extract_abi_encode_signature(
   {
     const auto &first = args[0];
     if (
-      !first.is_object() ||
-      first.value("nodeType", "") != "MemberAccess" ||
+      !first.is_object() || first.value("nodeType", "") != "MemberAccess" ||
       first.value("memberName", "") != "selector" ||
       !first.contains("expression"))
       return true;
     const nlohmann::json *fdecl =
-      resolve_function_reference(src_ast_json,first["expression"]);
+      resolve_function_reference(src_ast_json, first["expression"]);
     if (fdecl == nullptr)
       return true;
     std::string canonical = build_canonical_signature(*fdecl);
@@ -1454,7 +1454,8 @@ bool solidity_convertert::extract_abi_encode_signature(
   {
     if (args.size() < 2)
       return true;
-    const nlohmann::json *fdecl = resolve_function_reference(src_ast_json,args[0]);
+    const nlohmann::json *fdecl =
+      resolve_function_reference(src_ast_json, args[0]);
     if (fdecl == nullptr)
       return true;
     std::string canonical = build_canonical_signature(*fdecl);
@@ -1571,7 +1572,8 @@ bool solidity_convertert::get_typed_call_definition(
   {
     if (nonContractNamesList.count(str) != 0 && str != caller_cname)
       continue;
-    const nlohmann::json &decl_ref = find_function_by_signature(str, target_sig);
+    const nlohmann::json &decl_ref =
+      find_function_by_signature(str, target_sig);
     if (decl_ref.empty() || decl_ref.is_null())
       continue;
 
@@ -1719,10 +1721,9 @@ bool solidity_convertert::validate_delegate_shadow_compatible(
         decl.value("stateVariable", false))
       {
         std::string name = decl.value("name", "");
-        std::string ty =
-          decl.contains("typeDescriptions")
-            ? decl["typeDescriptions"].value("typeString", "")
-            : "";
+        std::string ty = decl.contains("typeDescriptions")
+                           ? decl["typeDescriptions"].value("typeString", "")
+                           : "";
         auto it = caller_state_vars.find(name);
         if (it == caller_state_vars.end())
         {
@@ -1801,8 +1802,9 @@ bool solidity_convertert::try_inline_delegate_shadow_helper_call(
   // Must have a body to inline. Abstract/virtual functions fall through.
   if (!fdecl.contains("body"))
     return true;
-  if (!fdecl.contains("parameters") ||
-      !fdecl["parameters"].contains("parameters"))
+  if (
+    !fdecl.contains("parameters") ||
+    !fdecl["parameters"].contains("parameters"))
     return true;
 
   // Convert the caller-side argument expressions first, under the CURRENT
@@ -1810,9 +1812,9 @@ bool solidity_convertert::try_inline_delegate_shadow_helper_call(
   // outer $dl_arg_i locals).  This happens before we swap to the helper's
   // remap, so argument expressions that reference the outer parameters
   // still resolve correctly.
-  const auto &arg_json =
-    call_expr.contains("arguments") ? call_expr["arguments"]
-                                     : nlohmann::json::array();
+  const auto &arg_json = call_expr.contains("arguments")
+                           ? call_expr["arguments"]
+                           : nlohmann::json::array();
   std::vector<exprt> arg_exprs;
   arg_exprs.reserve(arg_json.size());
   for (const auto &aj : arg_json)
@@ -1905,8 +1907,7 @@ bool solidity_convertert::try_inline_delegate_shadow_helper_call(
   for (size_t i = 0; i < params.size(); ++i)
     delegate_shadow_param_remap[params[i]["id"].get<int>()] = helper_arg_ids[i];
 
-  const nlohmann::json *saved_ret_params =
-    delegate_shadow_target_return_params;
+  const nlohmann::json *saved_ret_params = delegate_shadow_target_return_params;
   if (fdecl.contains("returnParameters"))
     delegate_shadow_target_return_params = &fdecl["returnParameters"];
 
@@ -1980,7 +1981,8 @@ bool solidity_convertert::try_get_delegate_shadow_call(
     // Skip interface/abstract unless it's the caller itself.
     if (nonContractNamesList.count(str) != 0 && str != caller_cname)
       continue;
-    const nlohmann::json &decl_ref = find_function_by_signature(str, target_sig);
+    const nlohmann::json &decl_ref =
+      find_function_by_signature(str, target_sig);
     if (decl_ref.empty() || decl_ref.is_null())
       continue;
     if (!decl_ref.contains("body"))
@@ -2030,8 +2032,7 @@ bool solidity_convertert::try_get_delegate_shadow_call(
   {
     std::string local_name =
       "$dl_arg" + std::to_string(i) + "$" + std::to_string(slot);
-    std::string local_id =
-      "sol:@C@" + caller_cname + "@F@" + local_name + "#0";
+    std::string local_id = "sol:@C@" + caller_cname + "@F@" + local_name + "#0";
 
     symbolt ls;
     get_default_symbol(
@@ -2116,29 +2117,24 @@ bool solidity_convertert::try_get_delegate_shadow_call(
     // without escaping the enclosing caller function. Multi-return tuples
     // are left to the fallback path for now.
     exprt ret_lvalue = nil_exprt();
-    std::string end_label =
-      "$dl_end$" + std::to_string(slot) + "$" +
-      std::to_string(&cand - &candidates[0]);
+    std::string end_label = "$dl_end$" + std::to_string(slot) + "$" +
+                            std::to_string(&cand - &candidates[0]);
     {
       const auto &ret_params_node =
         (*cand.func_decl).value("returnParameters", nlohmann::json::object());
-      const auto &ret_params =
-        ret_params_node.contains("parameters")
-          ? ret_params_node["parameters"]
-          : nlohmann::json::array();
+      const auto &ret_params = ret_params_node.contains("parameters")
+                                 ? ret_params_node["parameters"]
+                                 : nlohmann::json::array();
       if (ret_params.is_array() && ret_params.size() == 1)
       {
         typet rt;
-        if (get_type_description(
-              ret_params[0]["typeDescriptions"], rt))
+        if (get_type_description(ret_params[0]["typeDescriptions"], rt))
         {
           return true;
         }
-        std::string rname =
-          "$dl_ret$" + std::to_string(slot) + "$" +
-          std::to_string(&cand - &candidates[0]);
-        std::string rid =
-          "sol:@C@" + caller_cname + "@F@" + rname + "#0";
+        std::string rname = "$dl_ret$" + std::to_string(slot) + "$" +
+                            std::to_string(&cand - &candidates[0]);
+        std::string rid = "sol:@C@" + caller_cname + "@F@" + rname + "#0";
         symbolt rs;
         get_default_symbol(rs, debug_modulename, rt, rname, rid, loc);
         rs.lvalue = true;
@@ -3308,8 +3304,8 @@ bool solidity_convertert::get_staticcall_definition(
 
   // param: address _addr;
   std::string addr_name = "_addr";
-  std::string addr_id = "sol:@C@" + cname + "@F@staticcall@" + addr_name +
-                        "#" + std::to_string(aux_counter++);
+  std::string addr_id = "sol:@C@" + cname + "@F@staticcall@" + addr_name + "#" +
+                        std::to_string(aux_counter++);
   symbolt addr_s;
   get_default_symbol(
     addr_s, debug_modulename, addr_t, addr_name, addr_id, locationt());
@@ -3614,8 +3610,7 @@ bool solidity_convertert::get_super_function_call(
   assert(member_access.contains("referencedDeclaration"));
   int func_id = member_access["referencedDeclaration"].get<int>();
 
-  log_debug(
-    "solidity", "\t@@@ super call: resolving func_id={}", func_id);
+  log_debug("solidity", "\t@@@ super call: resolving func_id={}", func_id);
 
   // Strategy: prefer the merged copy of the base function that was folded into
   // the derived contract (it carries the correct Derived* this type), unless

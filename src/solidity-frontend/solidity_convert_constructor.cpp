@@ -260,9 +260,8 @@ bool solidity_convertert::get_unbound_function(
     // function is set, restrict the dispatch loop to only that function.
     // Other contracts (e.g., cross-contract targets reached from inside the
     // focus function) keep their full nondet dispatch.
-    const bool focus_applies =
-      !focus_func.empty() && tgt_cnt_set.size() == 1 &&
-      c_name == *tgt_cnt_set.begin();
+    const bool focus_applies = !focus_func.empty() && tgt_cnt_set.size() == 1 &&
+                               c_name == *tgt_cnt_set.begin();
 
     for (const auto &method : methods)
     {

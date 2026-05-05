@@ -847,11 +847,7 @@ smt_astt z3_convt::mk_zero_ext(smt_astt a, unsigned int topwidth)
 {
   auto &za = to_solver_smt_ast<z3_smt_ast>(a)->a;
   smt_sortt s = mk_bv_sort(a->sort->get_data_width() + topwidth);
-  return new_ast(
-    z3::to_expr(
-      z3_ctx,
-      Z3_mk_zero_ext(z3_ctx, topwidth, za)),
-    s);
+  return new_ast(z3::to_expr(z3_ctx, Z3_mk_zero_ext(z3_ctx, topwidth, za)), s);
 }
 
 smt_astt z3_convt::mk_concat(smt_astt a, smt_astt b)

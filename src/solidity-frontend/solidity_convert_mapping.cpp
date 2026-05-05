@@ -101,8 +101,8 @@ bool solidity_convertert::get_dynamic_pool(
       return true;
   }
 
-  pool =
-    member_exprt(cur_this_expr, "$dynamic_pool", symbol_typet(lib_prefix + "BytesPool"));
+  pool = member_exprt(
+    cur_this_expr, "$dynamic_pool", symbol_typet(lib_prefix + "BytesPool"));
 
   return false;
 }
@@ -199,8 +199,8 @@ bool solidity_convertert::has_contract_bytes(const nlohmann::json &node)
       // Match "bytes", "bytes storage pointer", "bytes memory", etc.
       // Also match "string" variants since string uses BytesDynamic internally.
       if (
-        ts == "bytes" || ts.substr(0, 6) == "bytes " ||
-        ts == "string" || ts.substr(0, 7) == "string ")
+        ts == "bytes" || ts.substr(0, 6) == "bytes " || ts == "string" ||
+        ts.substr(0, 7) == "string ")
         return true;
     }
 

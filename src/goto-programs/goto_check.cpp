@@ -306,11 +306,7 @@ void goto_checkt::cast_overflow_check(
   make_not(cast_overflow);
 
   add_guarded_claim(
-    cast_overflow,
-    claim_msg + get_expr_id(expr),
-    "overflow",
-    loc,
-    guard);
+    cast_overflow, claim_msg + get_expr_id(expr), "overflow", loc, guard);
 }
 
 void goto_checkt::overflow_check(

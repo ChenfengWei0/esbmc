@@ -575,8 +575,7 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
                 return true;
 
               exprt member;
-              if (get_tuple_member_call(
-                    tuple_inst.identifier(), comp, member))
+              if (get_tuple_member_call(tuple_inst.identifier(), comp, member))
                 return true;
 
               get_tuple_assignment(expr, target, member);
@@ -604,13 +603,11 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
     {
       // Leaf LHS target — direct assignment
       exprt target;
-      if (get_expr(
-            lhs_comps[i], lhs_comps[i]["typeDescriptions"], target))
+      if (get_expr(lhs_comps[i], lhs_comps[i]["typeDescriptions"], target))
         return true;
 
       exprt value;
-      if (get_expr(
-            rhs_comps[i], rhs_comps[i]["typeDescriptions"], value))
+      if (get_expr(rhs_comps[i], rhs_comps[i]["typeDescriptions"], value))
         return true;
 
       get_tuple_assignment(expr, target, value);

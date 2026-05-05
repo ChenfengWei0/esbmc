@@ -575,9 +575,7 @@ protected:
   bool prepare_harness_entry_functions(
     const std::set<std::string> &cname_set,
     std::vector<const symbolt *> &entry_syms);
-  bool register_harness_main(
-    const std::string &sol_id,
-    const codet &func_body);
+  bool register_harness_main(const std::string &sol_id, const codet &func_body);
   void reset_auxiliary_vars();
 
   // auxiliary functions

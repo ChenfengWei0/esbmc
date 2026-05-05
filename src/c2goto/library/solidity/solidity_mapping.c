@@ -33,8 +33,11 @@ __ESBMC_HIDE:;
   return NULL;
 }
 
-void map_set_raw(struct _ESBMC_Mapping a[], address_t addr,
-                 uint256_t key, void *val)
+void map_set_raw(
+  struct _ESBMC_Mapping a[],
+  address_t addr,
+  uint256_t key,
+  void *val)
 {
 __ESBMC_HIDE:;
   struct _ESBMC_Mapping *n = (struct _ESBMC_Mapping *)malloc(sizeof *n);
@@ -145,11 +148,11 @@ __ESBMC_HIDE:;
   return NULL;
 }
 
-void map_set_raw_fast(struct _ESBMC_Mapping_fast a[],
-                      uint256_t key, void *val)
+void map_set_raw_fast(struct _ESBMC_Mapping_fast a[], uint256_t key, void *val)
 {
 __ESBMC_HIDE:;
-  struct _ESBMC_Mapping_fast *n = (struct _ESBMC_Mapping_fast *)malloc(sizeof *n);
+  struct _ESBMC_Mapping_fast *n =
+    (struct _ESBMC_Mapping_fast *)malloc(sizeof *n);
   n->key = key;
   n->value = val;
   n->next = a[0].next;
@@ -217,7 +220,11 @@ __ESBMC_HIDE:;
 }
 
 /* generic */
-void map_generic_set_fast(struct mapping_t_fast *m, uint256_t k, const void *v, size_t sz)
+void map_generic_set_fast(
+  struct mapping_t_fast *m,
+  uint256_t k,
+  const void *v,
+  size_t sz)
 {
 __ESBMC_HIDE:;
   void *p = malloc(sz);

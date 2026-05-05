@@ -92,8 +92,7 @@ solidity_convertert::solidity_convertert(
   }
   if (context.find_symbol("c:@F@llc_nondet_bytes") == nullptr)
   {
-    log_error(
-      "Preprocessing error. Cannot find the llc_nondet_bytes symbol");
+    log_error("Preprocessing error. Cannot find the llc_nondet_bytes symbol");
     abort();
   }
   locationt l;
@@ -739,7 +738,6 @@ bool solidity_convertert::populate_auxiliary_vars()
       }
       if (linearizedBaseList[c_name].empty())
         return true;
-
     }
   }
 

@@ -108,9 +108,8 @@ bool solidity_convertert::add_auxiliary_members(
       for (const auto &node : json["nodes"])
       {
         if (
-          node["nodeType"] == "FunctionDefinition" &&
-          node.contains("kind") && node["kind"] == "constructor" &&
-          node.contains("stateMutability") &&
+          node["nodeType"] == "FunctionDefinition" && node.contains("kind") &&
+          node["kind"] == "constructor" && node.contains("stateMutability") &&
           node["stateMutability"] == "payable")
         {
           balance_init = symbol_expr(*context.find_symbol("c:@msg_value"));
@@ -495,8 +494,9 @@ void solidity_convertert::get_builtin_property_expr(
 
   exprt mem;
   if (
-    base.is_member() && (base.op0().name() == "this" ||
-                         get_sol_type(base.op0().type()) == SolidityGrammar::SolType::CONTRACT))
+    base.is_member() &&
+    (base.op0().name() == "this" ||
+     get_sol_type(base.op0().type()) == SolidityGrammar::SolType::CONTRACT))
     // e.g. address(_ins_).balance => _ins_.balance
     //      address(this) => this->address
     //TODO: fixme! this pattern match is weak

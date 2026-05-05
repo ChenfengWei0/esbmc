@@ -736,19 +736,15 @@ int esbmc_parseoptionst::doit()
       // Exception: k-induction and incremental-bmc issue many incremental
       // queries where Z3 has historically been more robust than CVC5; keep
       // the default (Z3) there so existing regression tests do not regress.
-      const bool incremental_mode = cmdline.isset("k-induction") ||
-                                    cmdline.isset("k-induction-parallel") ||
-                                    cmdline.isset("incremental-bmc") ||
-                                    cmdline.isset("falsification");
-      const bool user_picked_solver = cmdline.isset("z3") ||
-                                      cmdline.isset("cvc5") ||
-                                      cmdline.isset("bitwuzla") ||
-                                      cmdline.isset("boolector") ||
-                                      cmdline.isset("yices") ||
-                                      cmdline.isset("mathsat") ||
-                                      cmdline.isset("cvc4") ||
-                                      cmdline.isset("smtlib") ||
-                                      cmdline.isset("default-solver");
+      const bool incremental_mode =
+        cmdline.isset("k-induction") || cmdline.isset("k-induction-parallel") ||
+        cmdline.isset("incremental-bmc") || cmdline.isset("falsification");
+      const bool user_picked_solver =
+        cmdline.isset("z3") || cmdline.isset("cvc5") ||
+        cmdline.isset("bitwuzla") || cmdline.isset("boolector") ||
+        cmdline.isset("yices") || cmdline.isset("mathsat") ||
+        cmdline.isset("cvc4") || cmdline.isset("smtlib") ||
+        cmdline.isset("default-solver");
       if (!user_picked_solver && !incremental_mode)
       {
         const std::string padded =
