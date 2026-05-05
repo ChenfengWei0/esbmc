@@ -1,30 +1,25 @@
 // SPDX-License-Identifier: MIT
-// KNOWNBUG: a Solidity modifier body of shape `{ _; assert(...); }` —
-// any `assert(...)` placed AFTER the `_;` placeholder, even
-// `assert(true)` — crashes ESBMC during the conversion phase with
-// `to_symbol_expr` arity assertion at src/util/std_expr.h:88.
+// Regression for the modifier `{ _; assert(...); }` `to_symbol_expr` crash.
+// Pre-fix, the modifier-inline splice walker recursed into every operand
+// including bare leaf symbols, and its first-line non-const
+// `node.operands()` call lazy-allocated an empty operands sub-irep on
+// the assert function-symbol (`c:@F@assert`). The poisoned symbol then
+// failed the `id == symbol && !has_operands()` precondition of
+// `to_symbol_expr` when `clang_c_adjust::do_special_functions` revisited
+// it (clang_c_adjust_expr.cpp:892), aborting during Solidity conversion.
 //
-// Empirical filter (verified during Bug 1 work): the trigger is
-// specifically `assert(...)`. None of these post-`_;` shapes crash:
-//   require(...)      — explicit intercept at solidity_convert_expr.cpp:2180
-//   revert()          — explicit intercept at solidity_convert_expr.cpp:2161
-//   plain assignment  — never enters the builtin-call path
-//   _; alone          — no post-statement to lower
+// `require(...)` and `revert()` were unaffected because they are
+// intercepted at solidity_convert_expr.cpp:2161-2205 BEFORE the generic
+// builtin path, so the splice walker never saw the bare stdlib symbol.
+// `assert(...)` had no such intercept.
 //
-// Suspected crash callsite: clang_c_adjust_expr.cpp:892-894, where the
-// guard `if (f_op.is_symbol())` lacks the `!has_operands()` part of
-// `to_symbol_expr`'s precondition. Some downstream rewrite of the
-// unintercepted `assert` builtin produces a symbol-shaped exprt with
-// operands, tripping the assertion when clang_c_adjust revisits it.
+// Post-fix: a one-line guard at the splice walker's entry returns early
+// for leaf nodes (`!node.has_operands()`), preventing lazy-allocation.
+// The same fix simultaneously cleared pre-existing failing tests
+// modifier_3 and modifier_4, which shared the identical root cause.
 //
-// Pre-fix output: `to_symbol_expr` assertion + abort during conversion.
-// Post-fix output: VERIFICATION SUCCESSFUL.
-//
-// KNOWNBUG mode + regex `^VERIFICATION SUCCESSFUL$` silently passes
-// today (regex does NOT match the abort output) and will flag for
-// promotion to CORE once the fix lands. Pre-existing failing tests
-// modifier_3 and modifier_4 share this root cause and are expected to
-// clear automatically alongside this pin once the fix is in.
+// Originally pinned as KNOWNBUG (commit 458b42beb0); flipped to CORE in
+// the splice-walker guard fix commit.
 pragma solidity >=0.8.0;
 
 contract C {

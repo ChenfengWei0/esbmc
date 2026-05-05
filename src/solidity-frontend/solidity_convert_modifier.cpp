@@ -1221,6 +1221,21 @@ bool solidity_convertert::get_func_modifier(
     // `aux_var = x`) continues to see naked statements.
     std::function<void(exprt &)> splice_placeholders =
       [&](exprt &node) {
+        // Skip leaves so the non-const operands() accessor below does
+        // not lazy-allocate an empty operands sub-irep on bare symbol
+        // exprts. exprt::operands() (util/expr.h:57-60) calls
+        // add(o_operands).get_sub() which materialises the field even
+        // when no operands will be appended; once present, has_operands()
+        // returns true based on `!find(o_operands).is_nil()` regardless
+        // of operand count, poisoning the symbol for downstream
+        // is_symbol-based casts. The trigger that surfaced this was a
+        // modifier of shape `{ _; assert(...); }` whose unintercepted
+        // c:@F@assert function-symbol got walked into and silently
+        // poisoned, then crashed clang_c_adjust::do_special_functions
+        // (clang_c_adjust_expr.cpp:892) on `to_symbol_expr`'s
+        // `id == symbol && !has_operands()` precondition.
+        if (!node.has_operands())
+          return;
         const bool parent_is_block =
           node.is_code() && node.statement() == "block";
         auto &ops = node.operands();
