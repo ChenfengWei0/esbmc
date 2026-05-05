@@ -1202,17 +1202,48 @@ bool solidity_convertert::get_func_modifier(
     // `VERIFICATION SUCCESSFUL` on overflows it should catch.
     // Recurse into every container operand so placeholders at any depth are
     // replaced by a copy of body_exprt's statements.
+    // Splice the wrapped function's body into every `_;` placeholder.
+    // Substitution is parent-aware: a flat splice (erase placeholder,
+    // insert N body operands as siblings) is only safe when the parent
+    // is itself a code_blockt — a fixed-arity parent like
+    // code_ifthenelset / code_whilet / code_fort cannot absorb N != 1
+    // siblings without corrupting its operand count. In particular, a
+    // bare `if (cond) _;` modifier with an empty function body (N = 0)
+    // would drop the parent ifthenelse from 2 operands to 1 and crash
+    // goto_convert.cpp:1647-1651; a `if (cond) _;` modifier with a
+    // 2-statement body (N = 2) would silently inflate the parent to a
+    // phantom 3-operand ifthenelse, splitting the body across the
+    // conditional. When the parent is fixed-arity, wrap body_exprt's
+    // operands in a single code_blockt so exactly one operand replaces
+    // the placeholder. The block-parent path keeps the legacy flatten
+    // behaviour so the top-level rewriter at line 1265-1283 (which
+    // walks mod_body's outer operands looking for `return` to lift to
+    // `aux_var = x`) continues to see naked statements.
     std::function<void(exprt &)> splice_placeholders =
       [&](exprt &node) {
+        const bool parent_is_block =
+          node.is_code() && node.statement() == "block";
         auto &ops = node.operands();
         for (auto it = ops.begin(); it != ops.end();)
         {
           if (it->get_bool("#is_modifier_placeholder"))
           {
-            it = ops.erase(it);
-            it = ops.insert(
-              it, body_exprt.operands().begin(), body_exprt.operands().end());
-            std::advance(it, body_exprt.operands().size());
+            if (parent_is_block)
+            {
+              it = ops.erase(it);
+              it = ops.insert(
+                it,
+                body_exprt.operands().begin(),
+                body_exprt.operands().end());
+              std::advance(it, body_exprt.operands().size());
+            }
+            else
+            {
+              code_blockt wrapped;
+              wrapped.operands() = body_exprt.operands();
+              *it = wrapped;
+              ++it;
+            }
           }
           else
           {
