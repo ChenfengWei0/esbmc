@@ -1,0 +1,4 @@
+KNOWNBUG
+contract.sol
+--sol contract.sol --no-standard-checks --unwind 1
+^VERIFICATION SUCCESSFUL$
