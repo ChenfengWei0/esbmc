@@ -26,6 +26,20 @@ typedef struct BytesStatic
  * symbolic (e.g. when a BytesStatic flows in from a nondet parameter). */
 #define _ESBMC_BYTES_STATIC_MAX 32
 
+/* Compile-time 32-step unroll. Each STEP(i) macro receives a literal
+ * constant i so b->data[i] resolves to a concrete memory offset and
+ * symex never has to unwind a symbolic-bound loop.  Used by every
+ * BytesStatic helper that previously had a `for (i < 32; if (i >=
+ * length) break)` loop — that pattern relied on `--unwind` to
+ * statically resolve, which (a) flooded stderr with "Not unwinding"
+ * messages on every visit and (b) silently truncated the result for
+ * `--unwind < length`. */
+#define _ESBMC_BS_UNROLL_32(STEP) \
+    STEP(0);  STEP(1);  STEP(2);  STEP(3);  STEP(4);  STEP(5);  STEP(6);  STEP(7);  \
+    STEP(8);  STEP(9);  STEP(10); STEP(11); STEP(12); STEP(13); STEP(14); STEP(15); \
+    STEP(16); STEP(17); STEP(18); STEP(19); STEP(20); STEP(21); STEP(22); STEP(23); \
+    STEP(24); STEP(25); STEP(26); STEP(27); STEP(28); STEP(29); STEP(30); STEP(31)
+
 void bytes_dynamic_init_check(const int initialized)
 {
 __ESBMC_HIDE:;
