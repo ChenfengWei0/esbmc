@@ -1057,6 +1057,14 @@ exprt solidity_convertert::make_aux_var(exprt &val, const locationt &location)
   get_aux_var(aux_name, aux_id);
 
   typet t = val.type();
+  // The value-side type can carry a `#sol_state_var = "1"` tag inherited
+  // from a state-var operand (e.g. `bytes(s)` where `s` is a state var).
+  // Aux vars are file-local by construction, so strip the tag — otherwise
+  // the constructor-init walker (solidity_convert_constructor.cpp) treats
+  // the aux as a state-var member and emits `this->_ESBMC_auxN`, which
+  // doesn't exist on the contract struct and aborts goto generation.
+  if (!t.get("#sol_state_var").empty())
+    t.remove("#sol_state_var");
   std::string debug_modulename = get_modulename_from_path(absolute_path);
 
   symbolt aux_sym;
