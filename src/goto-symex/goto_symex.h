@@ -654,22 +654,27 @@ protected:
   determine_fallback_element_type(const sideeffect2t &code, const expr2tc &lhs);
 
   /**
-   *  Analyze the old object being reallocated.
-   *  Examines the source pointer to extract information about the existing
-   *  allocation, including element type, base array, array status, and count.
-   *  @param src_ptr The source pointer being reallocated.
-   *  @param elem_type Output parameter for the element type.
-   *  @param old_base_array Output parameter for the base array symbol.
-   *  @param old_is_array Output parameter indicating if it's a typed array.
-   *  @param old_elem_count Output parameter for the element count.
-   *  @return True if analysis succeeded and old object information was found.
+   *  Derive (elem_type, base_array, is_array, elem_count) from a single
+   *  dereference candidate. Used by symex_realloc to iterate all candidates
+   *  returned by `dereference(..., INTERNAL)` and emit a per-candidate
+   *  guarded copy. Picking only `internal_deref_items.front()` (former
+   *  behaviour) silently selected an arbitrary symex-explored allocation
+   *  on multi-branch heap-pointer chains, sometimes an untaken-branch
+   *  dyn-obj with nondet contents -- leaving the realloc'd buffer's bytes
+   *  unconstrained at SMT level.
+   *  @param item A single internal_item (object + offset + per-path guard).
+   *  @param elem_type Output: the element type.
+   *  @param base_array Output: the base array/object expression.
+   *  @param is_array Output: true iff base_array has array type.
+   *  @param elem_count Output: number of elements in the candidate.
+   *  @return True if analysis succeeded; false if base_array is nil.
    */
-  bool analyze_old_object(
-    const expr2tc &src_ptr,
+  bool analyze_candidate(
+    const dereference_callbackt::internal_item &item,
     type2tc &elem_type,
-    expr2tc &old_base_array,
-    bool &old_is_array,
-    expr2tc &old_elem_count);
+    expr2tc &base_array,
+    bool &is_array,
+    expr2tc &elem_count);
 
   /**
    *  Handle realloc with zero size parameter.
