@@ -919,14 +919,19 @@ int esbmc_parseoptionst::doit()
           }
           else if (kind_multi_contract_detected)
           {
+            const char *bound_reason = cmdline.isset("bound")
+                                         ? "--bound"
+                                         : "--reentry-check";
             log_status(
               "Solidity: detected --k-induction with multi-contract "
               "dispatch ({} contracts) AND value-routing call "
-              "(.transfer/.send/.call{{value:}}); auto-selecting 'cvc5' "
-              "(Bitwuzla balloons on the k-induction-amplified linear "
-              "if-else chain over 256-bit address equality). Override "
+              "(.transfer/.send/.call{{value:}}) under {}; auto-selecting "
+              "'cvc5' (Bitwuzla balloons on the k-induction-amplified "
+              "linear if-else chain over 256-bit address equality "
+              "materialized in bounded inter-contract mode). Override "
               "with --bitwuzla / --z3 / --boolector.",
-              contract_decl_count);
+              contract_decl_count,
+              bound_reason);
           }
           else
           {
