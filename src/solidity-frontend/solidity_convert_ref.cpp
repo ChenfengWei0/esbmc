@@ -750,7 +750,42 @@ bool solidity_convertert::get_sol_builtin_ref(
           // uint length — sound for unconstrained external bytes.
           if (base.type().is_unsignedbv() || base.type().is_signedbv())
           {
-            get_nondet_expr(uint_type(), new_expr);
+            // If the base is a `get_code(this, addr)` call (the wrapper
+            // around `_ESBMC_code_of`), route the `.length` request
+            // through a parallel per-address summary helper so that
+            // `addr.code.length == addr.code.length` holds within a
+            // path. Without this, every `.length` read on a uint256-
+            // modeled bytes is a fresh nondet, defeating determinism.
+            bool routed_to_helper = false;
+            if (
+              base.id() == "sideeffect" && !base.operands().empty() &&
+              base.op0().is_symbol())
+            {
+              const std::string &fid =
+                base.op0().identifier().as_string();
+              // Match any contract's `get_code` wrapper; the wrapper id
+              // is `sol:@C@<contract>@F@get_code#`.
+              if (
+                fid.find("@F@get_code#") != std::string::npos &&
+                base.operands().size() >= 1 &&
+                to_side_effect_expr_function_call(base).arguments().size() >= 2)
+              {
+                exprt addr_arg =
+                  to_side_effect_expr_function_call(base).arguments().at(1);
+                side_effect_expr_function_callt len_call;
+                get_library_function_call_no_args(
+                  "_ESBMC_code_length_of",
+                  "c:@F@_ESBMC_code_length_of",
+                  unsignedbv_typet(256),
+                  l,
+                  len_call);
+                len_call.arguments().push_back(addr_arg);
+                new_expr = len_call;
+                routed_to_helper = true;
+              }
+            }
+            if (!routed_to_helper)
+              get_nondet_expr(uint_type(), new_expr);
           }
           else
           {

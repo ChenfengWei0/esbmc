@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.sol
 --contract C --bound --no-standard-checks --unwind 5 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$

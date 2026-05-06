@@ -35,6 +35,14 @@ __attribute__((annotate("__ESBMC_inf_size"))) uint256_t sol_eoa_balance_array[1]
  * stable per-instance from constructor time. */
 __attribute__((annotate("__ESBMC_inf_size"))) uint256_t sol_eoa_code_array[1];
 __attribute__((annotate("__ESBMC_inf_size"))) uint256_t sol_eoa_codehash_array[1];
+/* Per-address `.code.length` summary. Solidity's `.code` lowers to a
+ * 256-bit identity token (sol_eoa_code_array slot), but the user-
+ * observable `.length` member of bytes can't reach that token, so two
+ * reads of `addr.code.length` would otherwise see independent fresh
+ * nondets and fail `addr.code.length == addr.code.length` invariants.
+ * Parallel summary array keyed by the same EOA pool gives both reads
+ * the same length per-address. */
+__attribute__((annotate("__ESBMC_inf_size"))) uint256_t sol_eoa_code_length_array[1];
 unsigned int sol_eoa_max_cnt;
 
 int _ESBMC_get_addr_array_idx(address_t tgt)
@@ -173,6 +181,7 @@ __ESBMC_HIDE:;
     sol_eoa_balance_array[new_idx] = nondet_uint256();
     sol_eoa_code_array[new_idx] = nondet_uint256();
     sol_eoa_codehash_array[new_idx] = nondet_uint256();
+    sol_eoa_code_length_array[new_idx] = nondet_uint256();
     ++sol_eoa_max_cnt;
     return new_idx;
 }
@@ -209,4 +218,16 @@ uint256_t _ESBMC_codehash_of(address_t addr)
 __ESBMC_HIDE:;
     unsigned int idx = _ESBMC_eoa_get_or_init(addr);
     return sol_eoa_codehash_array[idx];
+}
+
+/* Per-address `.code.length` summary; same shape as _ESBMC_code_of.
+ * The frontend reroutes the `.length`-on-uint256-bytes fallback to
+ * this helper when it can recognize the base as a `_ESBMC_code_of`
+ * call — without that, two reads of `addr.code.length` produced
+ * independent fresh nondets. */
+uint256_t _ESBMC_code_length_of(address_t addr)
+{
+__ESBMC_HIDE:;
+    unsigned int idx = _ESBMC_eoa_get_or_init(addr);
+    return sol_eoa_code_length_array[idx];
 }

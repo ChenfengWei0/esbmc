@@ -565,9 +565,17 @@ void solidity_convertert::get_aux_property_function(
   // populate body
   added_symbol.value = _block;
 
-  // do function call
+  // do function call. Set the call's own type to the helper's return
+  // type — without this, the first invocation produces an untyped
+  // sideeffect expr and downstream consumers (e.g. the `.length`
+  // member-on-bytes fallback in solidity_convert_ref.cpp) fail their
+  // is_unsignedbv()/is_signedbv() guards and emit ill-formed
+  // member_exprt over a typeless source. The cached path at line
+  // ~412 uses get_library_function_call_no_args which already sets
+  // the type; this branch was the missing match.
   side_effect_expr_function_callt _call;
   _call.function() = symbol_expr(added_symbol);
+  _call.type() = return_t;
   _call.location() = loc;
   _call.arguments().push_back(cur_this_expr);
   _call.arguments().push_back(base);
