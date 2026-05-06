@@ -4276,9 +4276,47 @@ exprt solidity_convertert::gen_default_value_resolved(const typet &t_in)
     return result;
   }
 
-  // Default: gen_zero (handles primitives, plain pointers, fixed-size
-  // arrays — recursive into subtype itself).  May still return nil for
-  // genuinely unhandled types; caller responsibility to detect.
+  // Generic array: handle BEFORE gen_zero fallback so recursion re-enters
+  // this function (which resolves symbol_typet at the top), rather than
+  // gen_zero (which has no symbol-id case and returns make_nil() for every
+  // operand of an array<symbol-wrapped element>, producing
+  // constant_array{nil, nil, ...} that crashes symex on subsequent
+  // foreach_operand walks).  Closes Bug 6
+  // (napp_struct_multifield_{pass,fail} SIGSEGV on bytes32[3] zero-init):
+  // bytes32 is symbol_typet("tag-BytesStatic"); without this case
+  // gen_default_value_resolved(bytes32[3]) bypasses to gen_zero which
+  // returns nil for each symbol-typed element, leaving null-typed operands
+  // in the constant_array that null-deref later in goto_symex_state.cpp:67.
+  if (t.id() == "array")
+  {
+    array_typet arr_type = to_array_type(t);
+    if (arr_type.size().id() == "infinity")
+    {
+      exprt elem = gen_default_value_resolved(t.subtype());
+      if (elem.is_nil())
+        return elem;
+      exprt result = array_of_exprt(elem, t);
+      if (t_in.id() == "symbol")
+        result.type() = t_in;
+      return result;
+    }
+    BigInt size = string2integer(arr_type.size().value().as_string(), 2);
+    exprt result = exprt("constant", t);
+    for (uint64_t i = 0; i < size.to_uint64(); i++)
+    {
+      exprt elem = gen_default_value_resolved(t.subtype());
+      if (elem.is_nil())
+        return elem;
+      result.copy_to_operands(elem);
+    }
+    if (t_in.id() == "symbol")
+      result.type() = t_in;
+    return result;
+  }
+
+  // Default: gen_zero (handles primitives, plain pointers).  May still
+  // return nil for genuinely unhandled types; caller responsibility to
+  // detect.
   exprt z = gen_zero(t);
   if (!z.is_nil() && t_in.id() == "symbol")
     z.type() = t_in;
