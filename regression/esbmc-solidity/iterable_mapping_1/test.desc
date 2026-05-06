@@ -1,4 +1,4 @@
-CORE
+KNOWNBUG
 contract.sol
 --contract User --no-standard-checks --multi-property --unwind 5 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
