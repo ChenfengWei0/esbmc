@@ -3699,7 +3699,7 @@ expr2tc equality2t::do_simplify() const
     to_add2t(side_1).side_1->type == side_2->type &&
     to_add2t(side_1).side_2->type == side_2->type)
   {
-    const add2t &add_expr = to_add2t(side_1);
+    const add2t &add_expr = to_add2t(lhs_unwrapped);
 
     if (is_constant_int2t(add_expr.side_2))
     {
@@ -3711,7 +3711,7 @@ expr2tc equality2t::do_simplify() const
             diff, side_2->type->get_width(), is_signedbv_type(side_2->type)))
       {
         expr2tc new_const = constant_int2tc(side_2->type, diff);
-        return equality2tc(add_expr.side_1, new_const);
+        return equality2tc(match_side2_type(add_expr.side_1), new_const);
       }
     }
 
@@ -3725,7 +3725,7 @@ expr2tc equality2t::do_simplify() const
             diff, side_2->type->get_width(), is_signedbv_type(side_2->type)))
       {
         expr2tc new_const = constant_int2tc(side_2->type, diff);
-        return equality2tc(add_expr.side_2, new_const);
+        return equality2tc(match_side2_type(add_expr.side_2), new_const);
       }
     }
   }
@@ -3737,7 +3737,7 @@ expr2tc equality2t::do_simplify() const
     to_sub2t(side_1).side_1->type == side_2->type &&
     to_sub2t(side_1).side_2->type == side_2->type)
   {
-    const sub2t &sub_expr = to_sub2t(side_1);
+    const sub2t &sub_expr = to_sub2t(lhs_unwrapped);
 
     if (is_constant_int2t(sub_expr.side_2))
     {
@@ -3749,7 +3749,7 @@ expr2tc equality2t::do_simplify() const
             sum, side_2->type->get_width(), is_signedbv_type(side_2->type)))
       {
         expr2tc new_const = constant_int2tc(side_2->type, sum);
-        return equality2tc(sub_expr.side_1, new_const);
+        return equality2tc(match_side2_type(sub_expr.side_1), new_const);
       }
     }
   }
@@ -3768,7 +3768,7 @@ expr2tc equality2t::do_simplify() const
   // side_2->type.
   if (is_mul2t(side_1) && is_constant_int2t(side_2))
   {
-    const mul2t &mul_expr = to_mul2t(side_1);
+    const mul2t &mul_expr = to_mul2t(lhs_unwrapped);
     const BigInt &c2 = to_constant_int2t(side_2).value;
 
     if (c2 == 0)
