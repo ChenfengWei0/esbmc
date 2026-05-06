@@ -191,44 +191,8 @@ bool solidity_convertert::add_auxiliary_members(
     contract_name);
 
   // for dynamic bytes
-  // for each contract, we add a static infinity array {$cname}_pool
-  // e.g. __attribute__((annotate("__ESBMC_inf_size"))) unsigned char base_pool[1];
-  // then we add symbol call $dynamic_pool
-  // e.g. BytesPool pool = bytes_pool_init(base_pool);
-  // 1. declare static base pool
-
-  // however, this will affect the performance,
-  // so first check if we need to add this
-  if (has_contract_bytes(json))
-  {
-    symbolt pool_sym;
-    typet pool_t = array_typet(unsigned_char_type(), exprt("infinity"));
-    std::string pool_name = "$" + contract_name + "_pool#";
-    std::string pool_id = "sol:@C@" + contract_name + "@" + pool_name;
-
-    get_default_symbol(pool_sym, "C++", pool_t, pool_name, pool_id, l);
-    pool_sym.file_local = true;
-    pool_sym.lvalue = true;
-    pool_sym.static_lifetime = true;
-    auto &added_pool_sym = *move_symbol_to_context(pool_sym);
-
-    side_effect_expr_function_callt init_call;
-    get_library_function_call_no_args(
-      "bytes_pool_init",
-      "c:@F@bytes_pool_init",
-      symbol_typet(lib_prefix + "BytesPool"),
-      l,
-      init_call);
-
-    init_call.arguments().push_back(symbol_expr(added_pool_sym));
-    get_builtin_symbol(
-      "$dynamic_pool",
-      sol_prefix + "$dynamic_pool#",
-      symbol_typet(lib_prefix + "BytesPool"),
-      l,
-      init_call,
-      contract_name);
-  }
+  if (add_dynamic_pool_member(json, contract_name))
+    return true;
 
   if (is_reentry_check)
   {
@@ -272,6 +236,59 @@ bool solidity_convertert::add_auxiliary_members(
 
   if (populate_low_level_functions(contract_name))
     return true;
+
+  return false;
+}
+
+// For each contract/library whose AST contains bytes/string usage, add a
+// static infinity-sized backing array ($<entity>_pool) and a $dynamic_pool
+// BytesPool struct member that wraps it. Without this member, lowering of
+// `_b[i]` / string-literal-to-bytes conversions inside the entity's
+// functions emits `member_exprt(this, "$dynamic_pool")` and crashes goto
+// migration with "Looking up index of nonexistant member".
+//
+// Called from add_auxiliary_members for contracts; called directly from
+// the library handler (see solidity_convert_decl.cpp) since libraries
+// skip add_auxiliary_members but still need the pool when their bodies
+// touch bytes.
+bool solidity_convertert::add_dynamic_pool_member(
+  const nlohmann::json &json,
+  const std::string &contract_name)
+{
+  if (!has_contract_bytes(json))
+    return false;
+
+  std::string sol_prefix = "sol:@C@" + contract_name + "@";
+  locationt l;
+  l.function(contract_name);
+
+  symbolt pool_sym;
+  typet pool_t = array_typet(unsigned_char_type(), exprt("infinity"));
+  std::string pool_name = "$" + contract_name + "_pool#";
+  std::string pool_id = "sol:@C@" + contract_name + "@" + pool_name;
+
+  get_default_symbol(pool_sym, "C++", pool_t, pool_name, pool_id, l);
+  pool_sym.file_local = true;
+  pool_sym.lvalue = true;
+  pool_sym.static_lifetime = true;
+  auto &added_pool_sym = *move_symbol_to_context(pool_sym);
+
+  side_effect_expr_function_callt init_call;
+  get_library_function_call_no_args(
+    "bytes_pool_init",
+    "c:@F@bytes_pool_init",
+    symbol_typet(lib_prefix + "BytesPool"),
+    l,
+    init_call);
+
+  init_call.arguments().push_back(symbol_expr(added_pool_sym));
+  get_builtin_symbol(
+    "$dynamic_pool",
+    sol_prefix + "$dynamic_pool#",
+    symbol_typet(lib_prefix + "BytesPool"),
+    l,
+    init_call,
+    contract_name);
 
   return false;
 }

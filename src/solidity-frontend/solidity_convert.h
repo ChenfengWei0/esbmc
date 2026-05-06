@@ -900,6 +900,14 @@ protected:
   bool add_auxiliary_members(
     const nlohmann::json &json,
     const std::string contract_name);
+  // Add the BytesDynamic `$dynamic_pool` member + per-entity backing array
+  // for any contract or library whose AST contains bytes/string usage. The
+  // contract path inlines this via `add_auxiliary_members`; the library
+  // path calls it directly because `add_auxiliary_members` does too much
+  // (constructor lookup, $balance/$address binding) for library scope.
+  bool add_dynamic_pool_member(
+    const nlohmann::json &json,
+    const std::string &contract_name);
   void get_builtin_symbol(
     const std::string name,
     const std::string id,

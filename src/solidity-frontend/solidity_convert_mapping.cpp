@@ -576,6 +576,10 @@ bool solidity_convertert::has_contract_bytes(const nlohmann::json &node)
       const std::string &ts = node["typeDescriptions"]["typeString"].get_ref<const std::string &>();
       // Match "bytes", "bytes storage pointer", "bytes memory", etc.
       // Also match "string" variants since string uses BytesDynamic internally.
+      // Inline literals carry the `literal_string "..."` / `literal_bytes
+      // "..."` typeString prefix — they decay to `bytes`/`string` at the
+      // call site and therefore drive `$dynamic_pool` use just like a
+      // declared state var would.
       if (
         ts == "bytes" || ts.substr(0, 6) == "bytes " || ts == "string" ||
         ts.substr(0, 7) == "string ")

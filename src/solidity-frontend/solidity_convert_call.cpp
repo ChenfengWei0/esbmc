@@ -2116,12 +2116,37 @@ bool solidity_convertert::validate_delegate_shadow_compatible(
       node["referencedDeclaration"].get<int>() > 0)
     {
       int ref_id = node["referencedDeclaration"].get<int>();
-      const nlohmann::json &decl = find_decl_ref(ref_id);
+      // The body being validated is from a non-caller contract whose
+      // own state vars are NOT visible to find_decl_ref (which scopes
+      // by current_baseContractName + libs/interfaces). Searching the
+      // top-level src_ast_json directly finds the decl regardless of
+      // which contract owns it — required for the cross-contract
+      // delegate-shadow validation to actually inspect target-side
+      // state-var refs.
+      auto find_decl_anywhere = [&](int id) -> const nlohmann::json * {
+        for (const auto &cn : src_ast_json["nodes"]) {
+          if (!cn.is_object())
+            continue;
+          if (cn.value("nodeType", "") != "ContractDefinition")
+            continue;
+          if (!cn.contains("nodes"))
+            continue;
+          for (const auto &sub : cn["nodes"]) {
+            if (sub.is_object() && sub.contains("id") &&
+                sub["id"].is_number_integer() &&
+                sub["id"].get<int>() == id)
+              return &sub;
+          }
+        }
+        return nullptr;
+      };
+      const nlohmann::json *decl_p = find_decl_anywhere(ref_id);
       if (
-        !decl.empty() && !decl.is_null() &&
-        decl.value("nodeType", "") == "VariableDeclaration" &&
-        decl.value("stateVariable", false))
+        decl_p != nullptr &&
+        decl_p->value("nodeType", "") == "VariableDeclaration" &&
+        decl_p->value("stateVariable", false))
       {
+        const nlohmann::json &decl = *decl_p;
         std::string name = decl.value("name", "");
         std::string ty = decl.contains("typeDescriptions")
                            ? decl["typeDescriptions"].value("typeString", "")

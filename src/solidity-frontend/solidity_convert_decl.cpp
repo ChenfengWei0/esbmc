@@ -1577,6 +1577,19 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
     if (get_struct_class(ast_node))
       return true;
 
+    // Library bodies that touch bytes/string need a `$dynamic_pool`
+    // member on the library struct — bytes operations lower to
+    // `member_exprt(this, "$dynamic_pool")` regardless of whether `this`
+    // points at a contract or a library, and the lookup crashes goto
+    // migration if the member is missing. The pool data is per-library
+    // (not shared with the calling contract) which makes the read an
+    // over-approximation: `b[i]` returns 0 rather than the caller's
+    // actual byte. Acceptable trade-off: calldata is read-only and
+    // libraries have no other channel to read non-trivial data, so the
+    // verification semantics stay sound.
+    if (add_dynamic_pool_member(ast_node, lib_name))
+      return true;
+
     // Register per-library low-level call helpers (`$call#0`, `$call#1`,
     // `$transfer#0`, `$send#0`, `$staticcall#0`, `$delegatecall#0`) so
     // that `.call(data)` / `.transfer(v)` / ... emitted from inside a
