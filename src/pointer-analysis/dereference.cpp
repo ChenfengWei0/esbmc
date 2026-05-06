@@ -420,6 +420,30 @@ expr2tc dereferencet::dereference_expr_nonscalar(
   {
     index2t &index = to_index2t(expr);
     dereference_expr(index.index, guard, dereferencet::READ);
+
+    // An inline-array literal indexed by a constant has no single underlying
+    // memory location to recurse into; the addressed value is just the
+    // indexed element. Fold it now so any nested dereference inside that
+    // element is handled normally (otherwise the recursion bottoms out on
+    // constant_array2t and trips the !has_dereference assertion below).
+    if (
+      !is_write(mode) && is_constant_array2t(index.source_value) &&
+      is_constant_int2t(index.index))
+    {
+      const constant_array2t &arr = to_constant_array2t(index.source_value);
+      const constant_int2t &idx = to_constant_int2t(index.index);
+      if (!idx.value.is_negative() && idx.value.is_uint64())
+      {
+        uint64_t i = idx.as_ulong();
+        if (i < arr.datatype_members.size())
+        {
+          expr2tc element = arr.datatype_members[i];
+          dereference_expr(element, guard, mode);
+          return element;
+        }
+      }
+    }
+
     return dereference_expr_nonscalar(index.source_value, guard, mode, base);
   }
 
