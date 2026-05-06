@@ -37,8 +37,15 @@ tmp_path::~tmp_path()
 {
   if (_keep)
     return;
-  uintmax_t removed [[maybe_unused]] = boost::filesystem::remove_all(_path);
-  assert(removed >= 1 && "expected to remove temp path");
+  // Idempotent: silently no-op if the path was already removed by another
+  // mechanism. ESBMC's k-induction `fork()` pattern (esbmc_parseoptions.cpp:1722)
+  // spawns 3 child processes that inherit the same static tmp_path from
+  // clang_resource_dir(); the first child to exit removes the path, and
+  // subsequent children's destructors used to abort here via the assertion.
+  // The error_code-based remove matches the pattern in
+  // cleanup_registered_tmps() above.
+  boost::system::error_code ec;
+  boost::filesystem::remove_all(_path, ec);
 }
 
 tmp_path &tmp_path::operator=(tmp_path o)
