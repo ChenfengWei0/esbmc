@@ -2967,9 +2967,18 @@ bool solidity_convertert::model_transaction(
   old_val_decl.operands().push_back(msg_value);
   front_block.move_to_operands(old_val_decl);
 
+  // Solidity int literals default to signedbv at the source level, but
+  // every balance / msg_value field is unsignedbv_256. Align the value
+  // type once so the downstream comparison and arithmetic don't feed
+  // mismatched-signedness operands into smt_conv's `<` / `+=` / `-=`
+  // (which assert is_signedbv == is_signedbv at encoding time).
+  exprt value_typed = value;
+  if (value_typed.type() != val_t)
+    solidity_gen_typecast(ns, value_typed, val_t);
+
   // msg_value = _val;
-  exprt assign_val = side_effect_exprt("assign", value.type());
-  assign_val.copy_to_operands(msg_value, value);
+  exprt assign_val = side_effect_exprt("assign", val_t);
+  assign_val.copy_to_operands(msg_value, value_typed);
   convert_expression_to_code(assign_val);
   front_block.move_to_operands(assign_val);
 
@@ -2985,7 +2994,7 @@ bool solidity_convertert::model_transaction(
   // if(this.balance < val) __ESBMC_assume(false);
   {
     exprt less_than = exprt("<", bool_t);
-    less_than.copy_to_operands(this_balance, value);
+    less_than.copy_to_operands(this_balance, value_typed);
     codet cmp_less_than("ifthenelse");
 
     side_effect_expr_function_callt assume_call;
@@ -3004,14 +3013,14 @@ bool solidity_convertert::model_transaction(
 
   // this.balance -= _val;
   exprt sub_assign = side_effect_exprt("assign-", val_t);
-  sub_assign.copy_to_operands(this_balance, value);
+  sub_assign.copy_to_operands(this_balance, value_typed);
   convert_expression_to_code(sub_assign);
   front_block.move_to_operands(sub_assign);
 
   // base.balance += _val;
   exprt target_balance = member_exprt(base, "$balance", val_t);
   exprt add_assign = side_effect_exprt("assign+", val_t);
-  add_assign.copy_to_operands(target_balance, value);
+  add_assign.copy_to_operands(target_balance, value_typed);
   convert_expression_to_code(add_assign);
   front_block.move_to_operands(add_assign);
 
