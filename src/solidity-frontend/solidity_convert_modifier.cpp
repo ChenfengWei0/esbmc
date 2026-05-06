@@ -1364,6 +1364,39 @@ bool solidity_convertert::get_func_modifier(
         return true;
       func_modifier.arguments().push_back(this_ptr);
 
+      // Pass through the wrapped function's own parameters so the next
+      // wrapper's signature [this, wrapped_params, mod_params] is
+      // satisfied. The wrapper signature was built at lines 1077-1106
+      // and DOES include the wrapped params, but without this loop the
+      // call only pushes [this, mod_args] and clang_c_adjust later
+      // aborts with `function call: not enough arguments`. Mirrors the
+      // final-call branch loop below. current_functionDecl/Name is still
+      // the OUTER wrapper here (the switch to next_aux happens after),
+      // and the wrapped params were registered under the outer wrapper's
+      // scope by the signature loop at 1087-1098, so find_symbol
+      // resolves against that aux scope.
+      if (
+        ast_node.contains("parameters") &&
+        ast_node["parameters"].contains("parameters"))
+      {
+        for (const auto &param : ast_node["parameters"]["parameters"])
+        {
+          std::string pname, pid;
+          get_local_var_decl_name(param, c_name, pname, pid);
+          const symbolt *psym = context.find_symbol(pid);
+          if (psym == nullptr)
+          {
+            log_error(
+              "modifier wrapper: missing parameter symbol `{}` for function "
+              "`{}` (intermediate-modifier-call)",
+              pid,
+              f_name);
+            return true;
+          }
+          func_modifier.arguments().push_back(symbol_expr(*psym));
+        }
+      }
+
       if (insert_modifier_json(
             ast_node, c_name, next_aux_func_name, modifier_func))
         return true;
