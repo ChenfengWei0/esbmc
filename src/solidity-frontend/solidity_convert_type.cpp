@@ -1821,6 +1821,19 @@ void solidity_convertert::convert_type_expr(
 
         src_expr = new_arr;
       }
+      else if (src_expr.id() != irept::id_array)
+      {
+        // Runtime fixed-array reference (id_index for `s[1]`, id_symbol for
+        // `local_arr`, etc.). The aux-array materialization below assumes
+        // src_expr is a literal whose operands can become a static
+        // initializer; for live expressions that path produces a
+        // static-lifetime symbol whose `value` references function-local
+        // state (e.g. `((uint256)(&s[0][0]))[1]`) and migrate_expr crashes
+        // on the type-mismatched index2t source. Decay to a pointer the
+        // normal C way and skip the rest of this branch.
+        solidity_gen_typecast(ns, src_expr, dest_type);
+        return;
+      }
 
       // allow fall-through
       if (src_expr.id() == irept::id_array)
