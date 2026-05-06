@@ -597,9 +597,14 @@ bool solidity_convertert::get_type_description(
         "typeIdentifier": "t_mapping$_t_address_$_t_uint256_$",
         "typeString": "mapping(address => uint256)"
     */
-    // we need to check if it's inside a contract used in a new expression statement
-    assert(!current_baseContractName.empty());
-    bool is_new_expr = should_treat_as_new(current_baseContractName);
+    // Mappings declared inside free-standing structs (e.g. `struct itmap {
+    // mapping(uint => IndexValue) data; ... }` declared at file scope) are
+    // converted before any contract scope is set. There's no contract to
+    // gate `is_new_expr` against — fall through to the slow infinite-array
+    // encoding which is correct in every mode (`should_treat_as_new("")`
+    // returns false, but explicit short-circuit avoids relying on that).
+    bool is_new_expr = !current_baseContractName.empty() &&
+                       should_treat_as_new(current_baseContractName);
 
     if (is_new_expr)
       new_type = symbol_typet(lib_prefix + "mapping_t");
