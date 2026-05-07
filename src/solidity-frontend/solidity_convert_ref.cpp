@@ -1030,31 +1030,50 @@ bool solidity_convertert::get_sol_builtin_ref(
             if (get_expr(func["arguments"][0], expr["argumentTypes"][0], args))
               return true;
 
-            std::string aux_name = "_idx#" + std::to_string(aux_counter++);
-            std::string aux_id;
-            std::string cname;
-            get_current_contract_name(expr, cname);
-            assert(!cname.empty());
-            if (current_functionDecl)
-              aux_id = "sol:@C@" + cname + "@F@" + current_functionName + "@" +
-                       aux_name + "#" + std::to_string(aux_counter++);
+            // Phase 9 fix (cast bug): when push elem type is array<T,N>
+            // and args is pointer<T> (Solidity memory T[N] is already
+            // a heap pointer to row data), pass args DIRECTLY to
+            // `_ESBMC_array_push`. The default pattern below allocates
+            // an aux of `args.type()` (= pointer<T>), copies the pointer
+            // value to it, then takes `&aux` (pointer<pointer<T>>). The
+            // helper's memcpy(dst, &aux, sizeof(T[N])) then copies the
+            // BIT REPRESENTATION of the local pointer — not the row data.
+            // Closes 1-push T[N][] for struct field and mapping value.
+            if (
+              base_t.subtype().is_array() &&
+              args.type().id() == "pointer")
+            {
+              // args already points to row data; pass straight through.
+            }
             else
-              aux_id = "sol:@C@" + cname + "@" + aux_name + "#" +
-                       std::to_string(aux_counter++);
-            symbolt aux_idx;
-            get_default_symbol(
-              aux_idx,
-              get_modulename_from_path(absolute_path),
-              args.type(),
-              aux_name,
-              aux_id,
-              l);
-            auto &added_aux = *move_symbol_to_context(aux_idx);
-            code_declt decl(symbol_expr(added_aux));
-            added_aux.value = args;
-            decl.operands().push_back(args);
-            move_to_front_block(decl);
-            args = address_of_exprt(symbol_expr(added_aux));
+            {
+              std::string aux_name =
+                "_idx#" + std::to_string(aux_counter++);
+              std::string aux_id;
+              std::string cname;
+              get_current_contract_name(expr, cname);
+              assert(!cname.empty());
+              if (current_functionDecl)
+                aux_id = "sol:@C@" + cname + "@F@" + current_functionName +
+                         "@" + aux_name + "#" + std::to_string(aux_counter++);
+              else
+                aux_id = "sol:@C@" + cname + "@" + aux_name + "#" +
+                         std::to_string(aux_counter++);
+              symbolt aux_idx;
+              get_default_symbol(
+                aux_idx,
+                get_modulename_from_path(absolute_path),
+                args.type(),
+                aux_name,
+                aux_id,
+                l);
+              auto &added_aux = *move_symbol_to_context(aux_idx);
+              code_declt decl(symbol_expr(added_aux));
+              added_aux.value = args;
+              decl.operands().push_back(args);
+              move_to_front_block(decl);
+              args = address_of_exprt(symbol_expr(added_aux));
+            }
           }
 
           /* Route uint256-element pushes on a mapping-backing slot
@@ -1118,10 +1137,22 @@ bool solidity_convertert::get_sol_builtin_ref(
           }
           else
           {
+            // Phase 9 fix (writeback bug): build the call with `void*`
+            // return type so the realloc-relocated new pointer can be
+            // written back to `base`. Without writeback, the caller's
+            // stored pointer goes stale after first realloc-relocate;
+            // subsequent pushes see `array == NULL` and allocate fresh
+            // 1-elem buffers; pop sees length 0 → "Pop From Empty Array".
+            // Mirrors the mapping-of-dynarr writeback above (line 1241).
+            typet ret_t;
+            if (name == "push")
+              ret_t = pointer_typet(empty_typet());
+            else
+              ret_t = empty_typet();
             get_library_function_call_no_args(
               "_ESBMC_array_" + name,
               "c:@F@_ESBMC_array_" + name,
-              empty_typet(),
+              ret_t,
               l,
               mem);
 
@@ -1138,7 +1169,19 @@ bool solidity_convertert::get_sol_builtin_ref(
             }
           }
 
-          new_expr = mem;
+          if (name == "push")
+          {
+            // base = (base.type())_ESBMC_array_push(...)
+            exprt rhs = mem;
+            solidity_gen_typecast(ns, rhs, base.type());
+            exprt assign_back = side_effect_exprt("assign", base.type());
+            assign_back.copy_to_operands(base, rhs);
+            new_expr = assign_back;
+          }
+          else
+          {
+            new_expr = mem;
+          }
         }
         else if (is_bytes_type(base_t))
         {
