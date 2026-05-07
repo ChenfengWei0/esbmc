@@ -226,6 +226,47 @@ bool solidity_convertert::get_type_description(
             base_type))
         return true;
 
+      // Phase 5 Surface 1: preserve fixed-inner-array typing through outer
+      // dyn-array wrap. The recursion above decays inner `T[N]` to
+      // `pointer<T>` with `#sol_array_size=N` tag (via get_array_pointer_type).
+      // If we hand that to get_array_pointer_type unchanged, the outer wrap
+      // produces `pointer<pointer<T>>` (= T**) and the N tag is lost — which
+      // creates a read/write asymmetry on `T[N][]` parameter access (writes
+      // hit packed N*sizeof(T) byte offsets but reads follow T** typed
+      // deref). Lift back to `array<T, N>` so the outer wrap produces
+      // `pointer<array<T, N>>` and the per-row stride is preserved on both
+      // sides. Gate strictly on pointer + #sol_array_size + SolType::ARRAY
+      // (NOT DYNARRAY) so fully-dyn `T[][]` and 1D dyn paths are unaffected.
+      if (
+        base_type.id() == "pointer" &&
+        !base_type.get("#sol_array_size").empty() &&
+        get_sol_type(base_type) == SolidityGrammar::SolType::ARRAY)
+      {
+        const std::string n_str = id2string(base_type.get("#sol_array_size"));
+        try
+        {
+          unsigned long n = std::stoul(n_str);
+          if (n != 0)
+          {
+            constant_exprt sz(
+              integer2binary(BigInt(n), bv_width(int_type())),
+              integer2string(BigInt(n)),
+              int_type());
+            typet inner_subtype = base_type.subtype();
+            base_type = array_typet(inner_subtype, sz);
+            // Preserve the size tag at the new array_typet level so
+            // downstream code that reads #sol_array_size still works.
+            base_type.set("#sol_array_size", n_str);
+            set_sol_type(base_type, SolidityGrammar::SolType::ARRAY);
+          }
+        }
+        catch (const std::exception &)
+        {
+          // base_type stays as pointer<T> (degraded); outer wrap produces
+          // T** as before. Soundness preserved by falling through.
+        }
+      }
+
       if (get_array_pointer_type(decl, base_type, new_type))
         return true;
     }
