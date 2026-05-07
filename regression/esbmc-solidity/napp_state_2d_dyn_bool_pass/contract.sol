@@ -77,5 +77,13 @@ contract C {
         assert(flags[1].length == 2);
         assert(flags[1][1] == true);
         assert(flags[0][0] == true);
+
+        // restore state for inductive harness — dispatcher loop calls
+        // run() repeatedly; without restore the second call's entry
+        // assertion `flags.length == 0` would fail
+        popInner(0); popInner(0); popInner(0); popInner(0);
+        popInner(1); popInner(1);
+        flags.pop(); flags.pop();
+        assert(flags.length == 0);
     }
 }
