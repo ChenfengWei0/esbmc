@@ -275,7 +275,45 @@ void goto_symext::symex_realloc(
     if (!opt_val.empty())
       max_symbolic_copy = std::stoull(opt_val);
 
-    for (uint64_t i = 0; i < max_symbolic_copy; i++)
+    // Phase 4 micro-optimisation: derive an effective upper bound on the
+    // iteration count by inspecting candidates' copy_count.  If ALL
+    // candidates have constant copy_counts, the loop's effective range is
+    // [0, max(constants)).  Past that, every candidate's bound_check is
+    // statically false, every fire condition is `(... && false) = false`,
+    // every ITE is `if(false, src, rhs) = rhs`, the do_simplify folds the
+    // ASSIGN to a no-op self-write `new[i] := new[i]`, but the ASSIGN is
+    // still emitted, and each ASSIGN feeds the SSA store-select cost.
+    //
+    // For napp_* dispatcher-loop tests, candidates' copy_counts are small
+    // constants (1..16 typical) so the effective bound is tiny vs the
+    // default 128 cap.  Empirically yields >5x reduction in emitted
+    // ASSIGNs on napp_state_2d_dyn_bool_pass.
+    uint64_t effective_bound = max_symbolic_copy;
+    {
+      uint64_t max_const_count = 0;
+      bool all_const = !cands.empty();
+      for (const auto &c : cands)
+      {
+        if (!is_constant_int2t(c.copy_count))
+        {
+          all_const = false;
+          break;
+        }
+        BigInt v = to_constant_int2t(c.copy_count).value;
+        if (v.is_negative())
+        {
+          all_const = false;
+          break;
+        }
+        uint64_t u = v.to_uint64();
+        if (u > max_const_count)
+          max_const_count = u;
+      }
+      if (all_const && max_const_count < max_symbolic_copy)
+        effective_bound = max_const_count;
+    }
+
+    for (uint64_t i = 0; i < effective_bound; i++)
     {
       expr2tc idx = constant_int2tc(size_type2(), BigInt(i));
       expr2tc new_elem_target = index2tc(new_elem_type, new_array, idx);
