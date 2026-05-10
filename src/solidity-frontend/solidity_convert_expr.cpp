@@ -898,7 +898,7 @@ bool solidity_convertert::get_expr(
     // Default: forward the outer caller's `literal_type` so that downstream
     // literal handlers (e.g. `bytes32(0)` → bytes-zero helper) keep working.
     //
-    // Exception: if the *outer* literal_type is a contract pointer (the
+    // Exception 1: if the *outer* literal_type is a contract pointer (the
     // caller is, e.g., comparing this conversion's result against a state
     // var of a contract type), passing it down for a nested cast like
     // `Pool(address(0))` cascades to `convert_integer_literal`, which
@@ -906,6 +906,20 @@ bool solidity_convertert::get_expr(
     // constant_exprt whose value() slot is empty — that then trips
     // `migrate expr failed` in the goto layer. Strip the contract-pointer
     // hint and let the argument be sized against its own typeDescriptions.
+    //
+    // Exception 2 (2026-05-10): if the outer literal_type would force a
+    // NESTED inner-cast's argument to be lowered through a wrong-type
+    // path, override with this cast's own dest type. Concrete trigger:
+    // `bytes32(uint256(1))` — outer caller's literal_type is bytes32, so
+    // both casts forward bytes32 down to the literal `1`; the literal
+    // gets emitted as a BytesStatic, the inner uint256 cast then routes
+    // through `bytes_static_to_uint`, and the outer bytes32 cast wraps
+    // it with `bytes_static_from_uint` — a 64-step round-trip emitting
+    // ~45 post-slice SSA per occurrence (Stage 0 hotspot at 15-30% of
+    // post-slice live SSA on `napp_struct_multifield_fail`). Detect a
+    // type mismatch between the outer hint and this cast's dest and
+    // strip the outer hint so the literal is sized against this cast's
+    // OWN dest instead.
     nlohmann::json arg_literal_type = literal_type;
     {
       typet hint_type;
@@ -917,6 +931,23 @@ bool solidity_convertert::get_expr(
       {
         arg_literal_type = expr["arguments"][0].contains("typeDescriptions")
                              ? expr["arguments"][0]["typeDescriptions"]
+                             : nlohmann::json(nullptr);
+      }
+      // Type-incompatibility strip: outer hint differs from this cast's
+      // dest type. The hint is a hint for ABOVE this cast; passing it
+      // through this cast's argument processing forces the argument
+      // (often a literal) into the wrong type before THIS cast even
+      // gets to convert it. Use this cast's `typeDescriptions` instead
+      // — the conversion EXPLICITLY changes the type, so the argument
+      // should be lowered to match this cast's dest, not the outer
+      // caller's expectation.
+      else if (
+        literal_type != nullptr && !literal_type.is_null() &&
+        !get_type_description(literal_type, hint_type) &&
+        !(hint_type == type))
+      {
+        arg_literal_type = conv_expr.contains("typeDescriptions")
+                             ? conv_expr["typeDescriptions"]
                              : nlohmann::json(nullptr);
       }
     }
