@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.solast
 --sol contract.sol --k-induction --bound --max-k-step 10
 ^VERIFICATION FAILED$
