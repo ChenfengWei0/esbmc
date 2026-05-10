@@ -1,4 +1,9 @@
 KNOWNBUG
 contract.solast
---sol contract.sol --no-unwinding-assertion --overflow-check --k-induction --max-k-step 20 --k-step 3
+--sol contract.sol --no-unwinding-assertions --overflow-check --k-induction --max-k-step 20 --k-step 3
 ^VERIFICATION SUCCESSFUL$
+# Cluster-B parking ticket: SafeMath.sub with require-guarded subtraction
+# is provable in <1s under plain BMC (`--unwind 5 --no-unwinding-assertions`),
+# but k-induction's inductive step does not converge under the dispatcher
+# harness. Same structural gap as nested_array_1d_1 / tod_harness_dep_topo_sort.
+# Not a frontend bug; do not investigate as part of the bytes/cast cluster.
