@@ -161,6 +161,36 @@ void goto_symext::symex_realloc(
   expr2tc src_ptr = code.operand;
   expr2tc realloc_size = code.size; // This is in bytes
   cur_state->rename(realloc_size);
+  do_simplify(realloc_size);
+
+  // Phase 12 fix (2026-05-10): freeze the renamed size expression into a
+  // fresh free symbol. Without this, the size's nested level-2-versioned
+  // symbols (e.g., new_len?N#1) get stripped back to level-1 by
+  // `level2.get_original_name` at goto_symex_state.cpp:310 when the
+  // realloc result enters the value-set. Subsequent value-set queries
+  // from a different symex frame (e.g., the caller frame after the
+  // helper returns) re-rename the level-1 names against current bindings
+  // and recover #0 (initial/uninit) instead of the original #N. This
+  // makes the dynamic symbol's size unconstrained, which breaks the
+  // realloc preservation chain's `idx < min(old_size, new_size)` bound
+  // check. Repro: regression/esbmc/realloc_helper_typed_load_chain_knownbug.
+  if (!is_constant_int2t(realloc_size))
+  {
+    unsigned int &dyn_counter = get_dynamic_counter();
+    std::string size_name = "realloc_size_" + i2string(dyn_counter);
+    std::string size_id = "symex::" + size_name;
+    symbolt size_symbol;
+    size_symbol.name = size_name;
+    size_symbol.id = size_id;
+    size_symbol.lvalue = true;
+    size_symbol.mode = "C";
+    size_symbol.type = migrate_type_back(realloc_size->type);
+    new_context.add(size_symbol);
+    expr2tc size_sym = symbol2tc(realloc_size->type, size_id);
+    symex_assign(code_assign2tc(size_sym, realloc_size), false, guard);
+    cur_state->rename(size_sym);
+    realloc_size = size_sym;
+  }
 
   // ===== handle reallocC(ptr, 0) - free and return NULL =====
   if (handle_realloc_zero_size(lhs, code, guard, realloc_size))
