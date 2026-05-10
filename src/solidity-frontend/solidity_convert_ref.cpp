@@ -1114,8 +1114,47 @@ bool solidity_convertert::get_sol_builtin_ref(
             base_t.subtype().id() == "unsignedbv" &&
             base_t.subtype().get("width").as_string() == "256";
 
+          /* Stage 1.a (2026-05-10): typed-element push for bytes32 /
+           * BytesStatic. Any push onto a `BytesStatic[]`-typed inner
+           * array — whether it's a mapping backing slot or a state-var
+           * nested dynamic array — gets the typed helper, which avoids
+           * the per-byte memcpy preservation chain in the generic
+           * `_ESBMC_array_push` (~64 SSA per push for bytes32).
+           *
+           * Stage 0 measurement on `napp_struct_multifield_fail`
+           * showed `_ESBMC_array_push` accounting for 34.2% of
+           * post-slice live SSA at k-induction inductive step k=3;
+           * routing bytes32 pushes through the typed helper drops
+           * per-push SSA cost to ~3.
+           *
+           * Element type detection uses get_sol_type so we don't need
+           * to re-derive the BytesStatic struct shape from the irep
+           * tree. */
+          bool is_bytes32_push =
+            name == "push" && base_t.id() == "pointer" &&
+            get_sol_type(base_t.subtype()) ==
+              SolidityGrammar::SolType::BYTES_STATIC;
+
           side_effect_expr_function_callt mem;
-          if (is_mapping_backing_slot)
+          if (is_bytes32_push)
+          {
+            /* typed helper: (array, element-by-value-as-BytesStatic)
+             * returning void*. Element is already a BytesStatic value
+             * via the address_of-then-deref unwrap below. */
+            get_library_function_call_no_args(
+              "_ESBMC_array_push_bytes32",
+              "c:@F@_ESBMC_array_push_bytes32",
+              pointer_typet(empty_typet()),
+              l,
+              mem);
+            exprt elem_by_value = args;
+            if (elem_by_value.id() == "address_of" &&
+                !elem_by_value.operands().empty())
+              elem_by_value = elem_by_value.op0();
+            mem.arguments().push_back(base);
+            mem.arguments().push_back(elem_by_value);
+          }
+          else if (is_mapping_backing_slot)
           {
             /* typed helper: (array, element-by-value) returning void*. */
             get_library_function_call_no_args(
