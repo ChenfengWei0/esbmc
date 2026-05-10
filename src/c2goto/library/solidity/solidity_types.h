@@ -30,17 +30,6 @@ typedef struct BytesDynamic
   int initialized;
 } BytesDynamic;
 
-/* Static bytes type (Solidity bytes1..bytes32). Defined in
- * solidity_bytes.c; declared here so other model files
- * (e.g. solidity_array.c's typed-element push helper) can
- * pass/copy by value without needing to include bytes-specific
- * headers. Layout MUST match solidity_bytes.c. */
-typedef struct BytesStatic
-{
-  unsigned char data[32];
-  size_t length;
-} BytesStatic;
-
 struct sol_llc_ret
 {
   unsigned int x;
