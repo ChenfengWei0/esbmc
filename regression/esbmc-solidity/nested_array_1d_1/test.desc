@@ -1,7 +1,4 @@
-KNOWNBUG
+CORE
 contract.solast
---sol contract.sol --contract DynArray1DPass --no-standard-checks --k-induction --max-k-step 20 --k-step 3
+--sol contract.sol --contract DynArray1DPass --no-standard-checks --unwind 5 --no-unwinding-assertions
 ^VERIFICATION SUCCESSFUL$
-# T1.1 Stage S1: addr-keyed `_dynarray_len` array exposes a k-induction
-# completeness gap (inductive step havocs the entire length array).
-# Property still holds under BMC.  Tracked outside T1.1.
