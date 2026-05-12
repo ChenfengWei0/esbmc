@@ -27,7 +27,7 @@
 /* ── msg variables ─────────────────────────────────────────────── */
 uint256_t msg_data;
 address_t msg_sender;
-uint32_t msg_sig;
+__uint32_t msg_sig;
 uint256_t msg_value;
 
 /* ── enclosing contract ambient ────────────────────────────────────

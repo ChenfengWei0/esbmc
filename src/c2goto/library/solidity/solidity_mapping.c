@@ -95,11 +95,7 @@ __ESBMC_HIDE:;
   return result;
 }
 
-void map_set_raw(
-  struct _ESBMC_Mapping a[],
-  address_t addr,
-  uint256_t key,
-  void *val)
+void *map_get_raw(struct mapping_t *m, uint256_t key)
 {
 __ESBMC_HIDE:;
   return _ESBMC_map_storage[_ESBMC_map_idx(m->mid, m->addr, key)];
@@ -264,15 +260,16 @@ __ESBMC_HIDE:;
   return result;
 }
 
-void map_set_raw_fast(struct _ESBMC_Mapping_fast a[], uint256_t key, void *val)
+void *map_get_raw_fast(struct mapping_t_fast *m, uint256_t key)
 {
 __ESBMC_HIDE:;
-  struct _ESBMC_Mapping_fast *n =
-    (struct _ESBMC_Mapping_fast *)malloc(sizeof *n);
-  n->key = key;
-  n->value = val;
-  n->next = a[0].next;
-  a[0].next = n;
+  return _ESBMC_map_storage[_ESBMC_map_idx_fast(m->mid, key)];
+}
+
+void map_set_raw_fast(struct mapping_t_fast *m, uint256_t key, void *val)
+{
+__ESBMC_HIDE:;
+  _ESBMC_map_storage[_ESBMC_map_idx_fast(m->mid, key)] = val;
 }
 
 /* uint256_t */
@@ -336,11 +333,7 @@ __ESBMC_HIDE:;
 }
 
 /* generic */
-void map_generic_set_fast(
-  struct mapping_t_fast *m,
-  uint256_t k,
-  const void *v,
-  size_t sz)
+void map_generic_set_fast(struct mapping_t_fast *m, uint256_t k, const void *v, size_t sz)
 {
 __ESBMC_HIDE:;
   void *p = malloc(sz);

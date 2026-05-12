@@ -188,8 +188,8 @@ bool solidity_convertert::get_dynamic_pool(
       return true;
   }
 
-  pool = member_exprt(
-    cur_this_expr, "$dynamic_pool", symbol_typet(lib_prefix + "BytesPool"));
+  pool =
+    member_exprt(cur_this_expr, "$dynamic_pool", symbol_typet(lib_prefix + "BytesPool"));
 
   return false;
 }
@@ -581,8 +581,10 @@ bool solidity_convertert::has_contract_bytes(const nlohmann::json &node)
       // call site and therefore drive `$dynamic_pool` use just like a
       // declared state var would.
       if (
-        ts == "bytes" || ts.substr(0, 6) == "bytes " || ts == "string" ||
-        ts.substr(0, 7) == "string ")
+        ts == "bytes" || ts.substr(0, 6) == "bytes " ||
+        ts == "string" || ts.substr(0, 7) == "string " ||
+        ts.substr(0, 14) == "literal_string" ||
+        ts.substr(0, 13) == "literal_bytes")
         return true;
     }
 
@@ -701,29 +703,27 @@ void solidity_convertert::combine_mapping_keys_256(
 
 void solidity_convertert::xor_fold_key_to_64bit(exprt &key)
 {
-  // Fold a 256-bit mapping key to 64-bit to avoid SMT performance issues
-  // with 256-bit array domains, while preserving collision resistance at 2^-64.
-  //
-  // Routed through a single library call _ESBMC_str_key_fold64 so the side
-  // effect of `key` (e.g. a str2uint or bytes_static_to_mapping_key
-  // function call) is evaluated exactly once. An inline 4-way XOR over `key`
-  // would duplicate the side effect and produce four independent symbolic
-  // results that fail to alias on equal inputs (causing false negatives on
-  // mapping reads that should hit a previously-stored entry).
+  // 2026-05-01: function name kept for callsite compatibility but
+  // body is now a 256-bit identity normalise. The wide-BV array index
+  // infrastructure (commit 9bd1cecf92) lets per-mapping array_typets
+  // carry an explicit index_width = 256 so the SMT layer can index
+  // wider than word_size; the per-decl annotations are added in
+  // solidity_convert_decl.cpp at array creation time. Closes
+  // ledger #22's 256→64 fold unsoundness for path-1 (frontend
+  // direct index_exprt) accesses.
 
-  const locationt loc = static_cast<const locationt &>(key.find("#location"));
-
-  side_effect_expr_function_callt fold_call;
-  assert(context.find_symbol("c:@F@_ESBMC_str_key_fold64") != nullptr);
-  get_library_function_call_no_args(
-    "_ESBMC_str_key_fold64",
-    "c:@F@_ESBMC_str_key_fold64",
-    unsignedbv_typet(64),
-    loc,
-    fold_call);
-  fold_call.arguments().push_back(key);
-
-  key = fold_call;
+  const typet u256 = unsignedbv_typet(256);
+  // Normalise the key to a plain 256-bit value. For bytes32 mapping
+  // keys the frontend models them as the BytesStatic struct (array +
+  // length), and `shr(BytesStatic, uint256)` has no irep2 mapping —
+  // casting through solidity_gen_typecast routes through the
+  // bytesN→uint256 lowering.
+  if (!key.type().is_unsignedbv())
+    solidity_gen_typecast(ns, key, u256);
+  // Coerce narrower unsignedbv (e.g. address_t = uint160) to uint256.
+  // For wider unsigned types (uint256), the cast is a no-op.
+  if (key.type() != u256)
+    solidity_gen_typecast(ns, key, u256);
 }
 
 /**

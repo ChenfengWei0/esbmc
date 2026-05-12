@@ -102,9 +102,9 @@ bool solidity_convertert::get_var_decl_ref(
     get_sol_type(type) == SolidityGrammar::SolType::DYNARRAY &&
     decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
   bool is_global_static_mapping =
-    (get_sol_type(type) == SolidityGrammar::SolType::MAPPING &&
-     type.is_array()) ||
-    type.get_bool("#sol_mapping_array") || is_dynarray_state_var;
+    (get_sol_type(type) == SolidityGrammar::SolType::MAPPING && type.is_array()) ||
+    type.get_bool("#sol_mapping_array") ||
+    is_dynarray_state_var;
 
   if (context.find_symbol(id) != nullptr)
     new_expr = symbol_expr(*context.find_symbol(id));
@@ -587,8 +587,9 @@ bool solidity_convertert::get_sol_builtin_ref(
       else if (name == "name")
       {
         // type(C).name returns the contract name as a string literal
-        std::string ts = expr["expression"]["typeDescriptions"]["typeString"]
-                           .get<std::string>();
+        std::string ts =
+          expr["expression"]["typeDescriptions"]["typeString"]
+            .get<std::string>();
         // Extract name from "type(contract MyContract)" or "type(interface I)"
         std::string cname;
         auto pos = ts.rfind(' ');
@@ -668,15 +669,13 @@ bool solidity_convertert::get_sol_builtin_ref(
               expr["expression"]["typeDescriptions"], base_t))
           return true;
         SolidityGrammar::SolType solt = get_sol_type(base_t);
-        if (
-          solt == SolidityGrammar::SolType::ARRAY ||
-          solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
-          solt == SolidityGrammar::SolType::DYNARRAY)
+        if (solt == SolidityGrammar::SolType::ARRAY ||
+            solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
+            solt == SolidityGrammar::SolType::DYNARRAY)
         {
           // mapping array: return the auxiliary _length variable
-          if (
-            solt == SolidityGrammar::SolType::DYNARRAY &&
-            base_t.get_bool("#sol_mapping_array"))
+          if (solt == SolidityGrammar::SolType::DYNARRAY &&
+              base_t.get_bool("#sol_mapping_array"))
           {
             assert(base.is_symbol());
             std::string len_id =
@@ -702,10 +701,12 @@ bool solidity_convertert::get_sol_builtin_ref(
             new_expr = index_exprt(
               symbol_expr(*len_sym), folded_k, unsignedbv_typet(256));
           }
-          // dynarray state var: return the auxiliary _dynarray_len variable
-          else if (
-            solt == SolidityGrammar::SolType::DYNARRAY && base.is_symbol() &&
-            base.type().get_bool("#sol_dynarray_state"))
+          // dynarray state var: return the addr-keyed length read.
+          // T1.1 Stage S1: `<arr>_dynarray_len` is now an addr-keyed
+          // infinite array; resolve via get_dynarr_len_ref.
+          else if (solt == SolidityGrammar::SolType::DYNARRAY &&
+                   base.is_symbol() &&
+                   base.type().get_bool("#sol_dynarray_state"))
           {
             assert(base.is_symbol());
             std::string len_id =
@@ -795,9 +796,7 @@ bool solidity_convertert::get_sol_builtin_ref(
         }
         else
         {
-          log_error(
-            "Unexpected length of {} type",
-            SolidityGrammar::sol_type_to_str(solt));
+          log_error("Unexpected length of {} type", SolidityGrammar::sol_type_to_str(solt));
           return true;
         }
         new_expr.location() = l;
@@ -867,14 +866,16 @@ bool solidity_convertert::get_sol_builtin_ref(
           }
         }
         else if (
-          solt == SolidityGrammar::SolType::DYNARRAY && base.is_symbol() &&
+          solt == SolidityGrammar::SolType::DYNARRAY &&
+          base.is_symbol() &&
           base.type().get_bool("#sol_dynarray_state"))
         {
           // Dynarray state var: write element at len, then increment len.
           // T1.1 Stage S1: `len_ref` is now `<arr>_dynarray_len[this->$address]`
           // (addr-keyed) so two `new C()` instances no longer share length.
           assert(base.is_symbol());
-          std::string len_id = base.identifier().as_string() + "_dynarray_len";
+          std::string len_id =
+            base.identifier().as_string() + "_dynarray_len";
           const symbolt *len_sym = ns.lookup(len_id);
           assert(len_sym);
           exprt len_ref;
@@ -924,7 +925,8 @@ bool solidity_convertert::get_sol_builtin_ref(
             else
             {
               exprt val;
-              if (get_expr(func["arguments"][0], expr["argumentTypes"][0], val))
+              if (get_expr(
+                    func["arguments"][0], expr["argumentTypes"][0], val))
                 return true;
               solidity_gen_typecast(ns, val, elem_type);
               assign_elem.copy_to_operands(idx_expr, val);
@@ -968,9 +970,323 @@ bool solidity_convertert::get_sol_builtin_ref(
           }
         }
         else if (
-          solt == SolidityGrammar::SolType::ARRAY ||
-          solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
-          solt == SolidityGrammar::SolType::DYNARRAY)
+          solt == SolidityGrammar::SolType::DYNARRAY &&
+          base.id() == "index" && !base.operands().empty() &&
+          base.op0().id() == "symbol" &&
+          base.op0().type().get_bool("#sol_mapping_of_dynarr"))
+        {
+          /* mapping(K => V[]) state-var push/pop (nested infinite SMT
+           * array model, 2026-04-21). Base is `m[k]` of type
+           * `array_typet(elem, inf)` — the inner row. Length is tracked
+           * per-key in the sibling `<m>_mapdynarr_len` aux, a
+           * `array_typet(uint256, inf)` indexed by the same folded key.
+           *
+           *   data[k][ len[k] ] = v;    // front
+           *   len[k] = len[k] + 1;      // back (push) / -1 (pop)
+           *
+           * The folded key was already computed when `m[k]` was lowered
+           * (get_index_access_expr -> xor_fold_key_to_64bit on the
+           * mapping key), so we reuse `base.op1()`. */
+          exprt m_sym = base.op0();
+          exprt folded_k = base.op1();
+          std::string len_id =
+            m_sym.identifier().as_string() + "_mapdynarr_len";
+          const symbolt *len_sym = ns.lookup(len_id);
+          assert(len_sym);
+          exprt len_arr = symbol_expr(*len_sym);
+          exprt len_ref = index_exprt(len_arr, folded_k, unsignedbv_typet(256));
+          exprt one = constant_exprt(
+            integer2binary(1, bv_width(unsignedbv_typet(256))),
+            "1",
+            unsignedbv_typet(256));
+          typet elem_type = base.type().subtype();
+
+          if (name == "push")
+          {
+            const nlohmann::json &func =
+              find_last_parent(src_ast_json["nodes"], expr);
+            assert(!func.empty());
+            // data[k][len[k]] = val
+            exprt idx_expr = index_exprt(base, len_ref, elem_type);
+            exprt assign_elem = side_effect_exprt("assign", elem_type);
+            if (func["arguments"].size() == 0)
+            {
+              // P1 fix: see state-var branch above for rationale.
+              exprt zero_val = gen_default_value_resolved(elem_type);
+              if (zero_val.is_nil())
+              {
+                log_error(
+                  "push: cannot generate default value for elem type {}",
+                  elem_type.id_string());
+                return true;
+              }
+              assign_elem.copy_to_operands(idx_expr, zero_val);
+            }
+            else
+            {
+              exprt val;
+              if (get_expr(
+                    func["arguments"][0], expr["argumentTypes"][0], val))
+                return true;
+              solidity_gen_typecast(ns, val, elem_type);
+              assign_elem.copy_to_operands(idx_expr, val);
+            }
+            convert_expression_to_code(assign_elem);
+            move_to_front_block(assign_elem);
+
+            // len[k] = len[k] + 1
+            new_expr = side_effect_exprt("assign", len_ref.type());
+            new_expr.operands().push_back(len_ref);
+            new_expr.operands().push_back(
+              gen_binary("+", unsignedbv_typet(256), len_ref, one));
+          }
+          else
+          {
+            // pop: len[k] = len[k] - 1. P3 fix: assume len[k] > 0 to
+            // prune the underflow path (matches lib-call paths' check).
+            exprt zero_p = gen_zero(unsignedbv_typet(256));
+            exprt len_gt_zero_p = exprt("notequal", bool_t);
+            len_gt_zero_p.copy_to_operands(len_ref, zero_p);
+            side_effect_expr_function_callt assume_p_call;
+            get_library_function_call_no_args(
+              "__ESBMC_assume",
+              "c:@F@__ESBMC_assume",
+              empty_typet(),
+              locationt(),
+              assume_p_call);
+            assume_p_call.arguments().push_back(len_gt_zero_p);
+            convert_expression_to_code(assume_p_call);
+            move_to_front_block(assume_p_call);
+
+            new_expr = side_effect_exprt("assign", len_ref.type());
+            new_expr.operands().push_back(len_ref);
+            new_expr.operands().push_back(
+              gen_binary("-", unsignedbv_typet(256), len_ref, one));
+          }
+        }
+        else if (
+          solt == SolidityGrammar::SolType::DYNARRAY &&
+          is_map_dynarr_get_base(base))
+        {
+          /* mapping(K => T[]) push / pop write-through (2026-04-21).
+           *
+           * `m[k].push(x)` previously lowered to
+           *   _ESBMC_array_push(map_dynarr_get(m, k), &x, sizeof)
+           * with the return value discarded — the mapping slot kept its
+           * stale pre-push pointer. Lower instead to a three-stmt
+           * sequence that reads the current pointer, lets the typed push
+           * helper allocate a fresh slab, and writes the new pointer
+           * back to the slot:
+           *
+           *   void *tmp = map_dynarr_get(m, k);              // front
+           *   tmp = _ESBMC_array_push_uint256(tmp, x);       // main (push)
+           *   tmp = <no-op assign>;                          // main (pop)
+           *   map_dynarr_set(m, k, tmp);                     // back
+           *
+           * The front decl lands before the current stmt, the back set
+           * after it, so post-push reads of m[k] observe the new data
+           * pointer. For pop the middle step only decrements the length
+           * header via _ESBMC_array_pop (in-place, no realloc), so we
+           * still end up writing the same pointer back — harmless but
+           * keeps the emission shape uniform. */
+
+          assert(base_t.has_subtype());
+          exprt size_of;
+          get_size_of_expr(base_t.subtype(), size_of);
+
+          /* Extract (m, k) from the underlying map_dynarr_get call so we
+           * can build the companion map_dynarr_set without re-evaluating
+           * any side-effects of the index expression. */
+          const side_effect_expr_function_callt &get_call =
+            find_map_dynarr_get_call(base);
+          assert(get_call.arguments().size() == 2);
+          exprt m_arg = get_call.arguments()[0];
+          exprt k_arg = get_call.arguments()[1];
+
+          /* Aux local: void *tmp. The Solidity-level element type is
+           * carried through base_t.subtype(); we use void* for the
+           * storage because _ESBMC_array_push_uint256 returns void*. */
+          typet ptr_void_t = pointer_typet(empty_typet());
+          std::string aux_name = "_mdtmp#" + std::to_string(aux_counter++);
+          std::string aux_id;
+          std::string cname;
+          get_current_contract_name(expr, cname);
+          assert(!cname.empty());
+          if (current_functionDecl)
+            aux_id = "sol:@C@" + cname + "@F@" + current_functionName +
+                     "@" + aux_name + "#" + std::to_string(aux_counter++);
+          else
+            aux_id = "sol:@C@" + cname + "@" + aux_name + "#" +
+                     std::to_string(aux_counter++);
+          symbolt aux_sym;
+          get_default_symbol(
+            aux_sym,
+            get_modulename_from_path(absolute_path),
+            ptr_void_t,
+            aux_name,
+            aux_id,
+            l);
+          aux_sym.file_local = true;
+          aux_sym.lvalue = true;
+          auto &added_aux = *move_symbol_to_context(aux_sym);
+
+          /* front: void *tmp = map_dynarr_get(m, k); */
+          code_declt decl(symbol_expr(added_aux));
+          exprt init_call = base;  // already a (typecast over) map_dynarr_get
+          solidity_gen_typecast(ns, init_call, ptr_void_t);
+          added_aux.value = init_call;
+          decl.operands().push_back(init_call);
+          move_to_front_block(decl);
+
+          if (name == "push")
+          {
+            /* Fetch the push argument. */
+            const nlohmann::json &func =
+              find_last_parent(src_ast_json["nodes"], expr);
+            assert(!func.empty());
+            exprt val;
+            if (func["arguments"].size() == 0)
+            {
+              // P1 fix: see state-var dyn-array branch above.
+              val = gen_default_value_resolved(base_t.subtype());
+              if (val.is_nil())
+              {
+                log_error(
+                  "push: cannot generate default value for elem type {}",
+                  base_t.subtype().id_string());
+                return true;
+              }
+            }
+            else if (get_expr(
+                       func["arguments"][0],
+                       expr["argumentTypes"][0],
+                       val))
+              return true;
+            solidity_gen_typecast(ns, val, base_t.subtype());
+
+            /* Dispatch by element type:
+             *  - uint256 scalar elements route through the typed
+             *    `_ESBMC_array_push_uint256` (loop-free typed copy).
+             *  - Every other element type (structs, fixed bytes,
+             *    smaller integers, nested pointers — e.g. SolidiFi
+             *    buggy_46's `mapping(address => FileExistenceStruct[])`
+             *    where the struct carries a BytesStatic `QRCodeHash`
+             *    after the keccak pack fix 31106af1c5) routes through
+             *    the generic `_ESBMC_array_push(array, &elem, sizeof)`
+             *    which memcpys the element by size.  Without the
+             *    dispatch split, the typed helper's uint256 parameter
+             *    rejects the struct-valued argument at GOTO call
+             *    binding with
+             *      `_ESBMC_array_push_uint256@element type mismatch:
+             *       got struct, expected unsignedbv`. */
+            bool elem_is_uint256 =
+              base_t.subtype().id() == "unsignedbv" &&
+              base_t.subtype().get("width").as_string() == "256";
+
+            side_effect_expr_function_callt push_call;
+            if (elem_is_uint256)
+            {
+              get_library_function_call_no_args(
+                "_ESBMC_array_push_uint256",
+                "c:@F@_ESBMC_array_push_uint256",
+                ptr_void_t,
+                l,
+                push_call);
+              push_call.arguments().push_back(symbol_expr(added_aux));
+              push_call.arguments().push_back(val);
+            }
+            else
+            {
+              /* Generic path: `_ESBMC_array_push(array, &element, sizeof(element))`.
+               * The helper takes a void* element pointer so we bind `val`
+               * to a local and pass its address. */
+              std::string elem_name =
+                "_mdelem#" + std::to_string(aux_counter++);
+              std::string elem_id;
+              if (current_functionDecl)
+                elem_id = "sol:@C@" + cname + "@F@" +
+                          current_functionName + "@" + elem_name + "#" +
+                          std::to_string(aux_counter++);
+              else
+                elem_id = "sol:@C@" + cname + "@" + elem_name + "#" +
+                          std::to_string(aux_counter++);
+              symbolt elem_sym;
+              get_default_symbol(
+                elem_sym,
+                get_modulename_from_path(absolute_path),
+                base_t.subtype(),
+                elem_name,
+                elem_id,
+                l);
+              elem_sym.file_local = true;
+              elem_sym.lvalue = true;
+              auto &added_elem = *move_symbol_to_context(elem_sym);
+              code_declt elem_decl(symbol_expr(added_elem));
+              added_elem.value = val;
+              elem_decl.operands().push_back(val);
+              move_to_front_block(elem_decl);
+
+              get_library_function_call_no_args(
+                "_ESBMC_array_push",
+                "c:@F@_ESBMC_array_push",
+                ptr_void_t,
+                l,
+                push_call);
+              push_call.arguments().push_back(symbol_expr(added_aux));
+              push_call.arguments().push_back(
+                address_of_exprt(symbol_expr(added_elem)));
+              push_call.arguments().push_back(size_of);
+            }
+
+            new_expr = side_effect_exprt("assign", ptr_void_t);
+            new_expr.operands().push_back(symbol_expr(added_aux));
+            new_expr.operands().push_back(push_call);
+          }
+          else
+          {
+            /* pop: decrement length in place via _ESBMC_array_pop.
+             * The pointer doesn't change (no realloc), but we still
+             * emit the writeback below to keep the stored slot
+             * consistent. Express the main statement as a no-op
+             * self-assign so the outer wrapper at
+             * solidity_convert_expr.cpp:2107 returns early. */
+            side_effect_expr_function_callt pop_call;
+            get_library_function_call_no_args(
+              "_ESBMC_array_pop",
+              "c:@F@_ESBMC_array_pop",
+              empty_typet(),
+              l,
+              pop_call);
+            pop_call.arguments().push_back(symbol_expr(added_aux));
+            pop_call.arguments().push_back(size_of);
+            convert_expression_to_code(pop_call);
+            move_to_front_block(pop_call);
+
+            new_expr = side_effect_exprt("assign", ptr_void_t);
+            new_expr.operands().push_back(symbol_expr(added_aux));
+            new_expr.operands().push_back(symbol_expr(added_aux));
+          }
+
+          /* back: map_dynarr_set(m, k, tmp); */
+          side_effect_expr_function_callt set_call;
+          get_library_function_call_no_args(
+            "map_dynarr_set",
+            "c:@F@map_dynarr_set",
+            empty_typet(),
+            l,
+            set_call);
+          set_call.arguments().push_back(m_arg);
+          set_call.arguments().push_back(k_arg);
+          set_call.arguments().push_back(symbol_expr(added_aux));
+          convert_expression_to_code(set_call);
+          move_to_back_block(set_call);
+
+          new_expr.location() = l;
+          return false;
+        }
+        else if (solt == SolidityGrammar::SolType::ARRAY ||
+            solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
+            solt == SolidityGrammar::SolType::DYNARRAY)
         {
           // Original array push/pop logic (pointer-based model)
           assert(base_t.has_subtype());
@@ -1223,10 +1539,7 @@ bool solidity_convertert::get_sol_builtin_ref(
         }
         else
         {
-          log_error(
-            "Unexpected .{}() on non-array/bytes type: {}",
-            name,
-            SolidityGrammar::sol_type_to_str(solt));
+          log_error("Unexpected .{}() on non-array/bytes type: {}", name, SolidityGrammar::sol_type_to_str(solt));
           return true;
         }
         new_expr.location() = l;
@@ -1234,108 +1547,205 @@ bool solidity_convertert::get_sol_builtin_ref(
       }
       else if (name == "concat")
       {
-        // string.concat(...) or bytes.concat(...)
-        // Determine base type name from the ElementaryTypeNameExpression
-        std::string base_name;
-        if (
-          expr["expression"].contains("typeName") &&
-          expr["expression"]["typeName"].contains("name"))
-          base_name = expr["expression"]["typeName"]["name"].get<std::string>();
-        else if (expr["expression"].contains("name"))
-          base_name = expr["expression"]["name"].get<std::string>();
-        else
+      // string.concat(...) or bytes.concat(...)
+      // Determine base type name from the ElementaryTypeNameExpression
+      std::string base_name;
+      if (
+        expr["expression"].contains("typeName") &&
+        expr["expression"]["typeName"].contains("name"))
+        base_name =
+          expr["expression"]["typeName"]["name"].get<std::string>();
+      else if (expr["expression"].contains("name"))
+        base_name = expr["expression"]["name"].get<std::string>();
+      else
+      {
+        log_debug("solidity", "\t@@@ concat: cannot determine base_name");
+        return true;
+      }
+
+      // Get arguments from parent FunctionCall node
+      const nlohmann::json &func_call =
+        find_last_parent(src_ast_json["nodes"], expr);
+      assert(!func_call.empty() && func_call.contains("arguments"));
+
+      const auto &args_json = func_call["arguments"];
+      size_t nargs = args_json.size();
+
+      // Convert all arguments
+      std::vector<exprt> args;
+      for (const auto &arg : args_json)
+      {
+        exprt a;
+        if (get_expr(arg, arg["typeDescriptions"], a))
           return true;
+        args.push_back(a);
+      }
 
-        // Get arguments from parent FunctionCall node
-        const nlohmann::json &func_call =
-          find_last_parent(src_ast_json["nodes"], expr);
-        assert(!func_call.empty() && func_call.contains("arguments"));
-
-        const auto &args_json = func_call["arguments"];
-        size_t nargs = args_json.size();
-        if (nargs < 2)
-          return true;
-
-        // Convert all arguments
-        std::vector<exprt> args;
-        for (const auto &arg : args_json)
-        {
-          exprt a;
-          if (get_expr(arg, arg["typeDescriptions"], a))
-            return true;
-          args.push_back(a);
-        }
-
+      // nargs == 0/1: pad with an empty-string/bytes argument so the
+      // fold below always has at least two operands. The outer
+      // get_call_expr branch inspects new_expr.id()=="sideeffect" and
+      // the callee function id; returning a bare literal here would
+      // make it wrap the result in a bogus function call whose
+      // function() is a string constant, which later crashes GOTO
+      // conversion with "unexpected function argument: string-constant".
+      if (nargs < 2)
+      {
+        exprt empty;
         if (base_name == "string")
-        {
-          // string.concat: fold N-ary into nested binary string_concat calls
-          const symbolt *sym = context.find_symbol("c:@F@string_concat");
-          if (!sym)
-            return true;
+          empty = string_constantt(std::string(""));
+        else
+          empty = side_effect_expr_nondett(byte_dynamic_t);
+        while (args.size() < 2)
+          args.push_back(empty);
+        nargs = 2;
+      }
 
-          side_effect_expr_function_callt first;
+      if (base_name == "string")
+      {
+        // string.concat: fold N-ary into nested binary string_concat calls
+        const symbolt *sym = context.find_symbol("c:@F@string_concat");
+        if (!sym)
+          return true;
+
+        side_effect_expr_function_callt first;
+        get_library_function_call_no_args(
+          "string_concat", "c:@F@string_concat", sym->type, l, first);
+        first.arguments().push_back(args[0]);
+        first.arguments().push_back(args[1]);
+
+        exprt result = first;
+        for (size_t i = 2; i < nargs; i++)
+        {
+          side_effect_expr_function_callt next;
           get_library_function_call_no_args(
-            "string_concat", "c:@F@string_concat", sym->type, l, first);
-          first.arguments().push_back(args[0]);
-          first.arguments().push_back(args[1]);
-
-          exprt result = first;
-          for (size_t i = 2; i < nargs; i++)
-          {
-            side_effect_expr_function_callt next;
-            get_library_function_call_no_args(
-              "string_concat", "c:@F@string_concat", sym->type, l, next);
-            next.arguments().push_back(result);
-            next.arguments().push_back(args[i]);
-            result = next;
-          }
-          new_expr = result;
+            "string_concat", "c:@F@string_concat", sym->type, l, next);
+          next.arguments().push_back(result);
+          next.arguments().push_back(args[i]);
+          result = next;
         }
-        else if (base_name == "bytes")
+        new_expr = result;
+      }
+      else if (base_name == "bytes")
+      {
+        // bytes.concat: fold into nested binary bytes_dynamic_concat calls
+        exprt pool_member;
+        if (get_dynamic_pool(expr, pool_member))
+          return true;
+
+        const symbolt *sym =
+          context.find_symbol("c:@F@bytes_dynamic_concat");
+        if (!sym)
+          return true;
+
+        side_effect_expr_function_callt first;
+        get_library_function_call_no_args(
+          "bytes_dynamic_concat",
+          "c:@F@bytes_dynamic_concat",
+          sym->type,
+          l,
+          first);
+        first.arguments().push_back(args[0]);
+        first.arguments().push_back(args[1]);
+        first.arguments().push_back(pool_member);
+
+        exprt result = first;
+        for (size_t i = 2; i < nargs; i++)
         {
-          // bytes.concat: fold into nested binary bytes_dynamic_concat calls
-          exprt pool_member;
-          if (get_dynamic_pool(expr, pool_member))
-            return true;
-
-          const symbolt *sym = context.find_symbol("c:@F@bytes_dynamic_concat");
-          if (!sym)
-            return true;
-
-          side_effect_expr_function_callt first;
+          side_effect_expr_function_callt next;
           get_library_function_call_no_args(
             "bytes_dynamic_concat",
             "c:@F@bytes_dynamic_concat",
             sym->type,
             l,
-            first);
-          first.arguments().push_back(args[0]);
-          first.arguments().push_back(args[1]);
-          first.arguments().push_back(pool_member);
-
-          exprt result = first;
-          for (size_t i = 2; i < nargs; i++)
-          {
-            side_effect_expr_function_callt next;
-            get_library_function_call_no_args(
-              "bytes_dynamic_concat",
-              "c:@F@bytes_dynamic_concat",
-              sym->type,
-              l,
-              next);
-            next.arguments().push_back(result);
-            next.arguments().push_back(args[i]);
-            next.arguments().push_back(pool_member);
-            result = next;
-          }
-          new_expr = result;
+            next);
+          next.arguments().push_back(result);
+          next.arguments().push_back(args[i]);
+          next.arguments().push_back(pool_member);
+          result = next;
         }
-        else
-          return true;
+        new_expr = result;
+      }
+      else
+        return true;
 
+      new_expr.location() = l;
+      return false;
+    }
+    else if (name == "address")
+    {
+      // <external_func_ref>.address — returns the contract address
+      // e.g. this.f.address ≡ address(this) ≡ this.$address
+      std::string ts =
+        expr["expression"]["typeDescriptions"]["typeString"]
+          .get<std::string>();
+      if (
+        ts.find("function") != std::string::npos &&
+        ts.find("external") != std::string::npos)
+      {
+        typet addr_t = unsignedbv_typet(160);
+
+        // Shape 1: `this.f.address` — base of the outer MemberAccess is
+        // itself a MemberAccess (`this.f`). Read `$address` from the
+        // contract instance on the innermost expression (`this`).
+        if (
+          expr["expression"]["nodeType"] == "MemberAccess" &&
+          expr["expression"].contains("expression"))
+        {
+          exprt base;
+          if (get_expr(expr["expression"]["expression"], base))
+            return true;
+
+          new_expr = member_exprt(base, "$address", addr_t);
+          new_expr.location() = l;
+          return false;
+        }
+
+        // Shape 2: `cb.address` where `cb` is a local variable of
+        // external-function type. ESBMC lowers external function types
+        // to an opaque void* that does not carry the bound contract
+        // address, so we cannot recover a concrete address here. Fall
+        // back to a nondet address — matches how `.selector` handles
+        // the unresolved case.
+        new_expr = side_effect_expr_nondett(addr_t);
         new_expr.location() = l;
         return false;
       }
+    }
+    else if (name == "selector")
+    {
+      // <external_func_ref>.selector — returns the 4-byte function selector
+      // e.g. this.f.selector => bytes4(keccak256("f()"))
+      std::string ts =
+        expr["expression"]["typeDescriptions"]["typeString"]
+          .get<std::string>();
+      if (ts.find("function") != std::string::npos)
+      {
+        // Try to extract functionSelector from the referenced declaration
+        int ref_id = -1;
+        if (expr["expression"].contains("referencedDeclaration"))
+          ref_id = expr["expression"]["referencedDeclaration"].get<int>();
+        const nlohmann::json &func_ref =
+          find_decl_ref(ref_id);
+
+        if (
+          !func_ref.empty() && func_ref.contains("functionSelector"))
+        {
+          // Parse the hex selector string to a numeric value
+          std::string sel_hex =
+            func_ref["functionSelector"].get<std::string>();
+          BigInt sel_val = string2integer("0x" + sel_hex, 16);
+          new_expr = constant_exprt(
+            integer2binary(sel_val, 32), sel_hex, unsignedbv_typet(32));
+        }
+        else
+        {
+          // Fall back to nondet bytes4
+          new_expr = side_effect_expr_nondett(unsignedbv_typet(32));
+        }
+        new_expr.location() = l;
+        return false;
+      }
+    }
     }
     if (expr["expression"].contains("name"))
       bs = expr["expression"]["name"].get<std::string>();

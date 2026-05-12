@@ -195,17 +195,25 @@ bool solidity_convertert::get_var_decl(
 
   bool is_contract =
     get_sol_type(t) == SolidityGrammar::SolType::CONTRACT ? true : false;
-  bool is_mapping =
-    get_sol_type(t) == SolidityGrammar::SolType::MAPPING ? true : false;
+  bool is_mapping = get_sol_type(t) == SolidityGrammar::SolType::MAPPING ? true : false;
   bool is_mapping_array = t.get_bool("#sol_mapping_array");
   bool is_new_expr = should_treat_as_new(current_contractName);
   bool is_byte_static = is_bytesN_type(t);
-  // Detect state-var dynamic arrays: model as infinite SMT array + length var
-  bool is_state_var_check =
-    ast_node.contains("stateVariable") && ast_node["stateVariable"].get<bool>();
+  // Detect state-var dynamic arrays: model as infinite SMT array + length var.
+  //
+  // T1.1 Stage S1: dropped the previous `!is_new_expr` gate.  Before, only
+  // singleton/unbound contracts used the SMT-array model; `new`'d contracts
+  // fell through to a heap-malloc path whose `_ESBMC_array_push` memcpy
+  // truncated under low --unwind, killing every post-push verification path.
+  // Unifying on the SMT-array model removes that hazard.  Per-instance
+  // length isolation is added in the same stage by addr-keying the length
+  // companion (see the `_dynarray_len` symbol creation block below).
+  bool is_state_var_check = ast_node.contains("stateVariable") &&
+                            ast_node["stateVariable"].get<bool>();
   bool is_dynarray_state =
     get_sol_type(t) == SolidityGrammar::SolType::DYNARRAY &&
-    is_state_var_check && !is_new_expr && !t.get_bool("#sol_mapping_array");
+    is_state_var_check &&
+    !t.get_bool("#sol_mapping_array");
 
   // for mapping: populate the element type (recursively for nested mappings)
   bool is_mapping_of_dynarr = false;
@@ -224,9 +232,8 @@ bool solidity_convertert::get_var_decl(
       cur_type->subtype() = val_t;
 
       // If inner value is also a mapping, continue recursion
-      if (
-        get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
-        val_t.is_array())
+      if (get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
+          val_t.is_array())
       {
         cur_type = &cur_type->subtype();
         cur_node = &val_json;
@@ -516,7 +523,8 @@ bool solidity_convertert::get_var_decl(
   symbol.static_lifetime = current_contractName.empty() ||
                            (is_mapping && !is_new_expr) ||
                            (is_mapping_array && !is_new_expr) ||
-                           is_dynarray_state || (is_library && is_constant);
+                           is_dynarray_state ||
+                           (is_library && is_constant);
   symbol.file_local = true;
   symbol.is_extern = false;
 
@@ -644,9 +652,16 @@ bool solidity_convertert::get_var_decl(
   }
 
   exprt val;
-  if (
-    t_sol_type == SolidityGrammar::SolType::ARRAY ||
-    t_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
+  // Native nested multi-dim fixed arrays (B2): the type is an
+  // embedded `array_typet(array_typet(..))` on the contract struct,
+  // zero-initialised by the struct's default construction — no calloc
+  // / arrcpy needed. Literal initialisers on such fields are
+  // uncommon in Solidity; if/when we support them, they go here.
+  bool is_native_nested_array =
+    (t_sol_type == SolidityGrammar::SolType::ARRAY) && t.is_array() &&
+    t.has_subtype() && t.subtype().is_array();
+
+  if (is_native_nested_array)
   {
     // Nothing to emit at decl time. Fall through to the post-decl
     // block below (which handles other state-var housekeeping).
@@ -723,10 +738,10 @@ bool solidity_convertert::get_var_decl(
     // Elements are zero by default in the infinite SMT array.
     // For `new uint[](n)`: set length = n
     // For literal init like `= [1,2,3]`: handled in assignment expression
-    if (
-      init_value.contains("nodeType") &&
-      init_value["nodeType"] == "FunctionCall" &&
-      init_value.contains("arguments") && init_value["arguments"].size() > 0)
+    if (init_value.contains("nodeType") &&
+        init_value["nodeType"] == "FunctionCall" &&
+        init_value.contains("arguments") &&
+        init_value["arguments"].size() > 0)
     {
       nlohmann::json callee_arg_json = init_value["arguments"][0];
       exprt size_expr;
@@ -761,9 +776,28 @@ bool solidity_convertert::get_var_decl(
     if (get_init_expr(init_value, literal_type, t, val))
       return true;
 
+    // Detect the `uint[] x = new T[](N)` / `new bytes(N)` shape: the AST
+    // init value is a FunctionCall whose callee is a NewExpression. This
+    // is the only shape where reading `init_value["arguments"][0]` as the
+    // length is correct. Other typecast-wrapped function-call returns
+    // (e.g. `abi.decode(corrupt, (uint[][]))`) accidentally matched the
+    // old `val.is_typecast() || ARRAY_CALLOC` gate and ended up handing
+    // the bytes payload to _ESBMC_store_array as a "length", which then
+    // tripped a struct-vs-unsignedbv type mismatch in goto-symex.
+    const bool init_is_new_array =
+      init_value.contains("nodeType") &&
+      init_value["nodeType"] == "FunctionCall" &&
+      init_value.contains("expression") &&
+      init_value["expression"].contains("nodeType") &&
+      init_value["expression"]["nodeType"] == "NewExpression" &&
+      init_value.contains("arguments") &&
+      init_value["arguments"].is_array() &&
+      !init_value["arguments"].empty();
+
     if (
-      val.is_typecast() ||
-      get_sol_type(val.type()) == SolidityGrammar::SolType::ARRAY_CALLOC)
+      init_is_new_array &&
+      (val.is_typecast() ||
+       get_sol_type(val.type()) == SolidityGrammar::SolType::ARRAY_CALLOC))
     {
       // uint[] zz = new uint(10);
       // uint[] zz = new uint(len);
@@ -1036,7 +1070,8 @@ bool solidity_convertert::get_var_decl(
   // Only add if no init operand was already pushed by a special-case handler above
   // (arrays, dynarray, mapping, etc. handle their own initialization).
   if (
-    !is_state_var && decl.operands().size() == 1 && !is_contract && !is_mapping)
+    !is_state_var && decl.operands().size() == 1 &&
+    !is_contract && !is_mapping)
     decl.operands().push_back(gen_zero(get_complete_type(t, ns), true));
 
   // store state variable, which will be initialized in the constructor
@@ -1054,8 +1089,11 @@ bool solidity_convertert::get_var_decl(
   const bool inherited_mapping_needs_per_instance_init =
     is_inherited && is_mapping && is_new_expr;
   if (
-    is_state_var && !is_inherited && !(is_contract && !has_init) &&
-    !(is_mapping && !is_new_expr) && !(is_mapping_array && !is_new_expr) &&
+    is_state_var &&
+    (!is_inherited || inherited_mapping_needs_per_instance_init) &&
+    !(is_contract && !has_init) &&
+    !(is_mapping && !is_new_expr) &&
+    !(is_mapping_array && !is_new_expr) &&
     !is_dynarray_state)
     move_to_initializer(decl);
 
@@ -1328,9 +1366,7 @@ bool solidity_convertert::get_struct_class_fields(
   if (get_var_decl_ref(ast_node, false, comp))
     return true;
 
-  if (
-    get_sol_type(comp.type()) == SolidityGrammar::SolType::MAPPING &&
-    comp.type().is_array())
+  if (get_sol_type(comp.type()) == SolidityGrammar::SolType::MAPPING && comp.type().is_array())
   {
     // Mappings (including nested) in contracts not used in `new` expressions
     // are converted to global static infinite arrays.
@@ -1528,15 +1564,6 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
       return false;
     }
 
-    // Free function (outside any contract) — only handle at top-level scope.
-    // Contract-internal functions are handled by convert_ast_nodes after
-    // get_struct_class has registered the contract struct symbol.
-    if (get_function_definition(ast_node))
-      return true;
-  }
-  else if (
-    node_type == "FunctionDefinition" && current_baseContractName.empty())
-  {
     // Free function (outside any contract) — only handle at top-level scope.
     // Contract-internal functions are handled by convert_ast_nodes after
     // get_struct_class has registered the contract struct symbol.

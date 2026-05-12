@@ -277,12 +277,13 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     else if (
       uint_string_to_type_map.count(typeString) ||
       int_string_to_type_map.count(typeString) || typeString == "bool" ||
-      typeString == "string" || typeString.starts_with("literal_string") ||
+      typeString == "string" ||
+      typeString.compare(0, 14, "literal_string") == 0 ||
       typeString == "string storage ref" ||
       typeString == "string storage pointer" || typeString == "string memory" ||
       typeString == "string calldata" ||
       typeString == "address payable" || typeString == "address" ||
-      typeString.starts_with("bytes"))
+      typeString.compare(0, 5, "bytes") == 0)
     {
       // For state var declaration,
       return ElementaryTypeName;
@@ -448,7 +449,7 @@ ElementaryTypeNameT get_elementary_type_name_t(const nlohmann::json &type_name)
     // Will not be used
     return RA_LITERAL;
   }
-  if (typeString.starts_with("literal_string"))
+  if (typeString.compare(0, 14, "literal_string") == 0)
   {
     return STRING_LITERAL;
   }

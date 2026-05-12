@@ -1197,8 +1197,9 @@ const nlohmann::json &solidity_convertert::find_parent_contract(
 // Pure DFS: find the first node with matching "id" field in any JSON subtree.
 // This is the low-level building block used by find_decl_ref and external
 // callers that need unscoped lookup (e.g., during inheritance merging).
-const nlohmann::json &
-solidity_convertert::find_node_by_id(const nlohmann::json &subtree, int ref_id)
+const nlohmann::json &solidity_convertert::find_node_by_id(
+  const nlohmann::json &subtree,
+  int ref_id)
 {
   if (!subtree.is_structured())
     return empty_json;
@@ -1244,7 +1245,8 @@ solidity_convertert::find_node_by_id(const nlohmann::json &subtree, int ref_id)
 //   2. Library contracts
 //   3. Global-scope nodes (structs, enums outside any contract)
 // If not found, falls back to overrideMap for virtual/override resolution.
-const nlohmann::json &solidity_convertert::find_decl_ref(int ref_id)
+const nlohmann::json &
+solidity_convertert::find_decl_ref(int ref_id)
 {
   log_debug(
     "solidity",
@@ -1255,7 +1257,8 @@ const nlohmann::json &solidity_convertert::find_decl_ref(int ref_id)
   if (!src_ast_json.contains("nodes"))
     return empty_json;
 
-  auto search_scoped = [&](int id) -> const nlohmann::json & {
+  auto search_scoped = [&](int id) -> const nlohmann::json &
+  {
     for (const auto &node : src_ast_json["nodes"])
     {
       if (!node.is_object())
@@ -1272,9 +1275,11 @@ const nlohmann::json &solidity_convertert::find_decl_ref(int ref_id)
 
         bool is_library =
           node.contains("contractKind") && node["contractKind"] == "library";
-        bool is_base = !current_baseContractName.empty() &&
-                       node.contains("name") &&
-                       node["name"] == current_baseContractName;
+        bool is_interface =
+          node.contains("contractKind") && node["contractKind"] == "interface";
+        bool is_base =
+          !current_baseContractName.empty() && node.contains("name") &&
+          node["name"] == current_baseContractName;
 
         // Search inside the current base, libraries, and interfaces.
         // Interfaces routinely host struct definitions that are referenced

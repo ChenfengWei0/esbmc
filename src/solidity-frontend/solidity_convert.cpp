@@ -101,7 +101,8 @@ solidity_convertert::solidity_convertert(
   }
   if (context.find_symbol("c:@F@llc_nondet_bytes") == nullptr)
   {
-    log_error("Preprocessing error. Cannot find the llc_nondet_bytes symbol");
+    log_error(
+      "Preprocessing error. Cannot find the llc_nondet_bytes symbol");
     abort();
   }
   locationt l;
@@ -912,6 +913,7 @@ bool solidity_convertert::populate_auxiliary_vars()
       }
       if (linearizedBaseList[c_name].empty())
         return true;
+
     }
   }
 
@@ -938,12 +940,13 @@ bool solidity_convertert::populate_auxiliary_vars()
     {
       for (auto inherit_id : j.second)
       {
+        std::string base_cname = j.first;
+
         auto c_def = find_decl_ref(inherit_id);
         assert(!c_def.empty());
 
         if (cname == c_def["name"].get<std::string>())
         {
-          const std::string base_cname = j.first;
           inheritanceMap[cname].insert(base_cname);
           break;
         }
