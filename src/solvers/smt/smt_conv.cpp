@@ -2836,15 +2836,21 @@ smt_sortt smt_convt::convert_sort(const type2tc &type)
   case type2t::vector_id:
   case type2t::array_id:
   {
-    // Nested infinite arrays (e.g. Solidity nested mappings): do NOT flatten.
-    // Create Array(BV64, Array(BV64, V)) with recursive convert_sort.
+    // Nested arrays with ANY infinite level (e.g. Solidity nested mappings,
+    // `T[N][]`, `uint256[4][][2]`): do NOT flatten — emit one solver-array
+    // sort per source-level array, with recursive convert_sort on the
+    // subtype.  This matches flatten_array_type / make_array_domain_type /
+    // convert_array_of_prep, which all keep such chains structural.
     // Only applicable to genuine array types — vectors are always finite,
     // and to_array_type(vector_type) throws std::bad_cast under -DNDEBUG-off
     // builds (where the type_macros' dynamic_cast is real, not static_cast).
     if (is_array_type(type))
     {
       const array_type2t &arrtype = to_array_type(type);
-      if (arrtype.size_is_infinite && is_array_type(arrtype.subtype))
+      if (
+        is_array_type(arrtype.subtype) &&
+        (arrtype.size_is_infinite ||
+         array_chain_has_infinite_level(arrtype.subtype)))
       {
         type2tc t = make_array_domain_type(arrtype);
         smt_sortt d = mk_int_bv_sort(t->get_width());
@@ -3797,13 +3803,21 @@ smt_astt smt_convt::convert_array_index(const expr2tc &expr)
   expr2tc src_value = index.source_value;
 
   expr2tc newidx;
-  // Source type might not be an array (e.g. vector); to_array_type() throws
-  // std::bad_cast under -DNDEBUG-off builds. Gate the size_is_infinite probe
-  // on is_array_type() before dereferencing.
-  const bool src_is_infinite_array =
-    is_array_type(index.source_value->type) &&
-    to_array_type(index.source_value->type).size_is_infinite;
-  if (is_index2t(index.source_value) && !src_is_infinite_array)
+  // Only decompose into a flat multi-dim index when every level of the
+  // chain is finite.  For e.g. `array<array<T,N>, inf>` (Solidity's
+  // `T[N][]` or `mapping(K => T[N])`) the outermost domain stays a
+  // single-level infinite key; a flat `i*N + j` key would be applied
+  // against that outer domain and read the wrong slot.  Likewise for
+  // finite-of-infinite-of-finite shapes (`uint256[4][][2]`,
+  // `uint256[][][]`), the size product is non-constant and the flat
+  // domain bit-width doesn't match what the per-level array sorts emit.
+  const expr2tc *root = &index.source_value;
+  while (is_index2t(*root))
+    root = &to_index2t(*root).source_value;
+  const bool chain_is_all_finite =
+    is_array_type((*root)->type) &&
+    !array_chain_has_infinite_level((*root)->type);
+  if (is_index2t(index.source_value) && chain_is_all_finite)
   {
     // Finite multi-dimensional arrays: flatten via decompose_select_chain.
     newidx = decompose_select_chain(expr, src_value);
@@ -4064,11 +4078,9 @@ expr2tc smt_convt::get(const expr2tc &expr)
     expr2tc src_value = index.source_value;
 
     expr2tc newidx;
-    // Same NDEBUG-off safety guard as in convert_array_index() above.
-    const bool src_is_infinite_array =
-      is_array_type(index.source_value->type) &&
-      to_array_type(index.source_value->type).size_is_infinite;
-    if (is_index2t(index.source_value) && !src_is_infinite_array)
+    if (
+      is_index2t(index.source_value) &&
+      !to_array_type(index.source_value->type).size_is_infinite)
     {
       newidx = decompose_select_chain(expr, src_value);
     }
