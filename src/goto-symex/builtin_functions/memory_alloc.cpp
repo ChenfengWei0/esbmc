@@ -148,21 +148,72 @@ void goto_symext::symex_realloc(
   expr2tc src_ptr = code.operand;
   expr2tc realloc_size = code.size; // This is in bytes
   cur_state->rename(realloc_size);
+  do_simplify(realloc_size);
+
+  // Phase 12 fix (2026-05-10): freeze the renamed size expression into a
+  // fresh free symbol. Without this, the size's nested level-2-versioned
+  // symbols (e.g., new_len?N#1) get stripped back to level-1 by
+  // `level2.get_original_name` at goto_symex_state.cpp:310 when the
+  // realloc result enters the value-set. Subsequent value-set queries
+  // from a different symex frame (e.g., the caller frame after the
+  // helper returns) re-rename the level-1 names against current bindings
+  // and recover #0 (initial/uninit) instead of the original #N. This
+  // makes the dynamic symbol's size unconstrained, which breaks the
+  // realloc preservation chain's `idx < min(old_size, new_size)` bound
+  // check. Repro: regression/esbmc/realloc_helper_typed_load_chain_knownbug.
+  if (!is_constant_int2t(realloc_size))
+  {
+    unsigned int &dyn_counter = get_dynamic_counter();
+    std::string size_name = "realloc_size_" + i2string(dyn_counter);
+    std::string size_id = "symex::" + size_name;
+    symbolt size_symbol;
+    size_symbol.name = size_name;
+    size_symbol.id = size_id;
+    size_symbol.lvalue = true;
+    size_symbol.mode = "C";
+    size_symbol.type = migrate_type_back(realloc_size->type);
+    new_context.add(size_symbol);
+    expr2tc size_sym = symbol2tc(realloc_size->type, size_id);
+    symex_assign(code_assign2tc(size_sym, realloc_size), false, guard);
+    cur_state->rename(size_sym);
+    realloc_size = size_sym;
+  }
 
   // ===== handle reallocC(ptr, 0) - free and return NULL =====
   if (handle_realloc_zero_size(lhs, code, guard, realloc_size))
     return;
 
-  // ===== determine element type and old object info =====
-  type2tc elem_type;
-  expr2tc old_base_array;
-  bool old_is_array = false;
-  expr2tc old_elem_count;
+  // ===== collect ALL dereference candidates for src_ptr =====
+  // Each candidate carries its own per-path guard. The realloc copy must
+  // emit a guarded write per candidate so that only the runtime-active
+  // source contributes to the new buffer's bytes. Picking only the front()
+  // candidate (previous behaviour) silently selects an arbitrary symex-
+  // explored allocation, which on multi-branch heap-pointer chains may be
+  // an untaken-branch dyn-obj with nondet contents. The SMT solver then
+  // leaves the new buffer's bytes unconstrained where the chosen source
+  // had no writes.
+  internal_deref_items.clear();
+  expr2tc deref = dereference2tc(get_uint8_type(), src_ptr);
+  dereference(deref, dereferencet::INTERNAL);
 
-  if (!analyze_old_object(
-        src_ptr, elem_type, old_base_array, old_is_array, old_elem_count))
+  type2tc elem_type;
+  if (!internal_deref_items.empty())
   {
-    // Fallback element type determination
+    // Use the first candidate's elem_type for new_array allocation. All
+    // candidates from a single realloc site are typically byte-typed
+    // dyn_objs (malloc/calloc/realloc allocate uint8[N] buffers), so this
+    // is consistent. Per-candidate copies use their own elem_type for
+    // source indexing.
+    type2tc first_elem;
+    expr2tc first_base, first_count;
+    bool first_is_array;
+    analyze_candidate(
+      internal_deref_items.front(),
+      first_elem, first_base, first_is_array, first_count);
+    elem_type = first_elem;
+  }
+  else
+  {
     elem_type = determine_fallback_element_type(code, lhs);
   }
 
@@ -177,15 +228,138 @@ void goto_symext::symex_realloc(
   expr2tc new_array =
     create_dynamic_memory_symbol(elem_type, realloc_size, "realloc");
 
-  // copy data
-  copy_memory_content(
-    old_base_array,
-    new_array,
-    old_elem_count,
-    new_elem_count,
-    elem_type,
-    old_is_array,
-    guard);
+  // Multi-candidate copy via element-wise ITE chain.
+  //
+  // Each runtime-active candidate may contribute its old[i] to new[i]; only
+  // one fires per path under the dereference engine's guards. To avoid
+  // emitting N separate guarded ASSIGNs per element (which produces N*K
+  // SSA store-select chains and quadratic SMT array-theory cost), we build
+  // a single ASSIGN per element with an ITE-chain RHS:
+  //
+  //   new[i] := ITE(g_N AND i<cnt_N, src_N[i],
+  //                ITE(g_{N-1} AND i<cnt_{N-1}, src_{N-1}[i],
+  //                  ... ITE(g_1 AND i<cnt_1, src_1[i], new[i])))
+  //
+  // Forward iteration places the last-built ITE outermost (= highest
+  // priority on guard overlap), matching the previous per-ASSIGN forward
+  // sequencing where the last guarded write wins.
+  //
+  // SSA equivalence: under outer guard G, each per-ASSIGN form
+  //     new[i]_k := if (G AND g_k AND b_k) then src_k else new[i]_(k-1)
+  // composes left-to-right into the same nested ITE; the single ASSIGN
+  // form is byte-identical at the SMT level but creates 1 SSA variable
+  // per element instead of N.
+  struct realloc_cand_t
+  {
+    type2tc elem_type;
+    expr2tc base;
+    expr2tc copy_count;  // min(old, new)
+    bool is_array;
+    expr2tc item_guard;  // raw, may be nil
+  };
+  std::vector<realloc_cand_t> cands;
+  cands.reserve(internal_deref_items.size());
+
+  for (const auto &item : internal_deref_items)
+  {
+    type2tc cand_elem_type;
+    expr2tc cand_base, cand_count;
+    bool cand_is_array;
+    if (!analyze_candidate(
+          item, cand_elem_type, cand_base, cand_is_array, cand_count))
+      continue;
+
+    expr2tc cand_copy_count = if2tc(
+      size_type2(),
+      lessthan2tc(cand_count, new_elem_count),
+      cand_count,
+      new_elem_count);
+
+    cands.push_back(
+      {cand_elem_type,
+       cand_base,
+       cand_copy_count,
+       cand_is_array,
+       item.guard});
+  }
+
+  if (!cands.empty())
+  {
+    type2tc new_elem_type = to_array_type(new_array->type).subtype;
+
+    uint64_t max_symbolic_copy = 128;
+    std::string opt_val = options.get_option("max-symbolic-realloc-copy");
+    if (!opt_val.empty())
+      max_symbolic_copy = std::stoull(opt_val);
+
+    // Phase 4 micro-optimisation: derive an effective upper bound on the
+    // iteration count by inspecting candidates' copy_count.  If ALL
+    // candidates have constant copy_counts, the loop's effective range is
+    // [0, max(constants)).  Past that, every candidate's bound_check is
+    // statically false, every fire condition is `(... && false) = false`,
+    // every ITE is `if(false, src, rhs) = rhs`, the do_simplify folds the
+    // ASSIGN to a no-op self-write `new[i] := new[i]`, but the ASSIGN is
+    // still emitted, and each ASSIGN feeds the SSA store-select cost.
+    //
+    // For napp_* dispatcher-loop tests, candidates' copy_counts are small
+    // constants (1..16 typical) so the effective bound is tiny vs the
+    // default 128 cap.  Empirically yields >5x reduction in emitted
+    // ASSIGNs on napp_state_2d_dyn_bool_pass.
+    uint64_t effective_bound = max_symbolic_copy;
+    {
+      uint64_t max_const_count = 0;
+      bool all_const = !cands.empty();
+      for (const auto &c : cands)
+      {
+        if (!is_constant_int2t(c.copy_count))
+        {
+          all_const = false;
+          break;
+        }
+        BigInt v = to_constant_int2t(c.copy_count).value;
+        if (v.is_negative())
+        {
+          all_const = false;
+          break;
+        }
+        uint64_t u = v.to_uint64();
+        if (u > max_const_count)
+          max_const_count = u;
+      }
+      if (all_const && max_const_count < max_symbolic_copy)
+        effective_bound = max_const_count;
+    }
+
+    for (uint64_t i = 0; i < effective_bound; i++)
+    {
+      expr2tc idx = constant_int2tc(size_type2(), BigInt(i));
+      expr2tc new_elem_target = index2tc(new_elem_type, new_array, idx);
+
+      // Fallback: keep new[i] at its post-allocation (uninit) value when no
+      // candidate's fire condition holds.
+      expr2tc rhs = new_elem_target;
+
+      for (const auto &c : cands)
+      {
+        expr2tc src =
+          c.is_array ? index2tc(c.elem_type, c.base, idx) : c.base;
+        cur_state->rename(src);
+
+        if (src->type != new_elem_type)
+          src = typecast2tc(new_elem_type, src);
+
+        expr2tc bound_check = lessthan2tc(idx, c.copy_count);
+        expr2tc fire = is_nil_expr(c.item_guard)
+                         ? bound_check
+                         : and2tc(c.item_guard, bound_check);
+
+        rhs = if2tc(new_elem_type, fire, src, rhs);
+      }
+
+      do_simplify(rhs);
+      symex_assign(code_assign2tc(new_elem_target, rhs), false, guard);
+    }
+  }
 
   // create result and handle failure modelling
   expr2tc result = create_result_pointer(new_array, lhs->type);
@@ -215,48 +389,37 @@ bool goto_symext::handle_realloc_zero_size(
   return false;
 }
 
-bool goto_symext::analyze_old_object(
-  const expr2tc &src_ptr,
+bool goto_symext::analyze_candidate(
+  const dereference_callbackt::internal_item &item,
   type2tc &elem_type,
-  expr2tc &old_base_array,
-  bool &old_is_array,
-  expr2tc &old_elem_count)
+  expr2tc &base_array,
+  bool &is_array,
+  expr2tc &elem_count)
 {
-  internal_deref_items.clear();
-  expr2tc deref = dereference2tc(get_uint8_type(), src_ptr);
-  dereference(deref, dereferencet::INTERNAL);
+  expr2tc obj = item.object;
 
-  if (internal_deref_items.empty())
-    return false;
-
-  expr2tc old_obj = internal_deref_items.front().object;
-
-  // Determine element type and base array from old object
-  if (is_index2t(old_obj))
+  if (is_index2t(obj))
   {
-    old_base_array = to_index2t(old_obj).source_value;
-    old_is_array = is_array_type(old_base_array->type);
-    elem_type = old_is_array ? to_array_type(old_base_array->type).subtype
-                             : old_base_array->type;
+    base_array = to_index2t(obj).source_value;
+    is_array = is_array_type(base_array->type);
+    elem_type = is_array ? to_array_type(base_array->type).subtype
+                         : base_array->type;
   }
-  else if (is_array_type(old_obj->type))
+  else if (is_array_type(obj->type))
   {
-    old_base_array = old_obj;
-    old_is_array = true;
-    elem_type = to_array_type(old_obj->type).subtype;
+    base_array = obj;
+    is_array = true;
+    elem_type = to_array_type(obj->type).subtype;
   }
   else
   {
-    old_base_array = old_obj;
-    old_is_array = false;
-    elem_type = old_obj->type;
+    base_array = obj;
+    is_array = false;
+    elem_type = obj->type;
   }
 
-  // Calculate old element count
-  old_elem_count =
-    calculate_old_element_count(old_base_array, elem_type, old_is_array);
-
-  return true;
+  elem_count = calculate_old_element_count(base_array, elem_type, is_array);
+  return !is_nil_expr(base_array);
 }
 
 type2tc goto_symext::determine_fallback_element_type(

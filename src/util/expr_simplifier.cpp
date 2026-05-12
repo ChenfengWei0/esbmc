@@ -3689,15 +3689,29 @@ expr2tc equality2t::do_simplify() const
     return simplify_floatbv_relations<IEEE_equalitytor, equality2t>(
       type, side_1, side_2);
 
-  // (x + c1) == c2 -> x == (c2 - c1). Requires homogeneous types across
-  // the entire shape: the add, BOTH its operands, and c2 must share a
-  // single arithmetic domain. Mixed widths (e.g. (x_u8 + c_u16) == c2_u16)
-  // would silently rewrite into something that confuses modular semantics.
-  if (
-    is_add2t(side_1) && is_constant_int2t(side_2) &&
-    side_1->type == side_2->type &&
-    to_add2t(side_1).side_1->type == side_2->type &&
-    to_add2t(side_1).side_2->type == side_2->type)
+  // Phase 1 (H-3b): typecast-unwrap on side_1 before structural fold.
+  // Without this, `(typecast<T2>(typecast<T1>(x + c1))) == c2` doesn't
+  // match `is_add2t(side_1)` because the outer typecasts hide the add.
+  // The unwrap lets the existing `(x+c1) == c2 -> x == c2-c1` rule fire
+  // on cast-wrapped pointer arithmetic produced by Solidity dyn-array
+  // address-of-header math (e.g. `(addr**)(ulong*)(&dyn_obj[0]) + 1`
+  // for length reads through `__ESBMC_array_length`).
+  expr2tc lhs_unwrapped = side_1;
+  while (is_typecast2t(lhs_unwrapped))
+    lhs_unwrapped = to_typecast2t(lhs_unwrapped).from;
+
+  // Helper: equality2t requires both sides to share a type.  After
+  // unwrapping casts off side_1 the inner expression's type may
+  // differ from side_2's type (since the casts may have reshaped it).
+  // Re-cast so the rewritten equality stays well-typed.
+  auto match_side2_type = [&](const expr2tc &e) -> expr2tc {
+    if (e->type == side_2->type)
+      return e;
+    return typecast2tc(side_2->type, e);
+  };
+
+  // (x + c1) == c2 -> x == (c2 - c1)
+  if (is_add2t(lhs_unwrapped) && is_constant_int2t(side_2))
   {
     const add2t &add_expr = to_add2t(lhs_unwrapped);
 
@@ -3707,8 +3721,7 @@ expr2tc equality2t::do_simplify() const
       const BigInt &c2 = to_constant_int2t(side_2).value;
       BigInt diff = c2 - c1;
 
-      if (fits_in_width(
-            diff, side_2->type->get_width(), is_signedbv_type(side_2->type)))
+      if (fits_in_width(diff, type->get_width(), is_signedbv_type(type)))
       {
         expr2tc new_const = constant_int2tc(side_2->type, diff);
         return equality2tc(match_side2_type(add_expr.side_1), new_const);
@@ -3721,8 +3734,7 @@ expr2tc equality2t::do_simplify() const
       const BigInt &c2 = to_constant_int2t(side_2).value;
       BigInt diff = c2 - c1;
 
-      if (fits_in_width(
-            diff, side_2->type->get_width(), is_signedbv_type(side_2->type)))
+      if (fits_in_width(diff, type->get_width(), is_signedbv_type(type)))
       {
         expr2tc new_const = constant_int2tc(side_2->type, diff);
         return equality2tc(match_side2_type(add_expr.side_2), new_const);
@@ -3730,12 +3742,8 @@ expr2tc equality2t::do_simplify() const
     }
   }
 
-  // (x - c1) == c2 -> x == (c2 + c1). Same homogeneity requirement.
-  if (
-    is_sub2t(side_1) && is_constant_int2t(side_2) &&
-    side_1->type == side_2->type &&
-    to_sub2t(side_1).side_1->type == side_2->type &&
-    to_sub2t(side_1).side_2->type == side_2->type)
+  // (x - c1) == c2 -> x == (c2 + c1)
+  if (is_sub2t(lhs_unwrapped) && is_constant_int2t(side_2))
   {
     const sub2t &sub_expr = to_sub2t(lhs_unwrapped);
 
@@ -3745,8 +3753,7 @@ expr2tc equality2t::do_simplify() const
       const BigInt &c2 = to_constant_int2t(side_2).value;
       BigInt sum = c2 + c1;
 
-      if (fits_in_width(
-            sum, side_2->type->get_width(), is_signedbv_type(side_2->type)))
+      if (fits_in_width(sum, type->get_width(), is_signedbv_type(type)))
       {
         expr2tc new_const = constant_int2tc(side_2->type, sum);
         return equality2tc(match_side2_type(sub_expr.side_1), new_const);
@@ -3754,72 +3761,49 @@ expr2tc equality2t::do_simplify() const
     }
   }
 
-  // (x * c) == 0 -> x == 0 when c is odd. Restricted to odd constants
-  // because modular bv multiplication is injective only for invertibles
-  // mod 2^width — i.e. constants coprime to 2^width, which for power-of-two
-  // moduli is exactly the odd constants. With c=2 in 8-bit unsigned, for
-  // example, x=128 also satisfies x*2 == 0 (mod 256), so dropping the
-  // multiplication would silently strengthen the predicate.
-  //
-  // Defensive type guard: equality2tc requires both sides to share a type.
-  // A well-formed mul2t already has homogeneous operands, but if a future
-  // construction path produces a mixed-width mul, the rewritten equality
-  // would mix widths too. Skip the rewrite unless mul.side_*->type matches
-  // side_2->type.
-  if (is_mul2t(side_1) && is_constant_int2t(side_2))
+  // (x * c) == 0 -> x == 0 (when c != 0)
+  if (is_mul2t(lhs_unwrapped) && is_constant_int2t(side_2))
   {
     const mul2t &mul_expr = to_mul2t(lhs_unwrapped);
     const BigInt &c2 = to_constant_int2t(side_2).value;
 
     if (c2 == 0)
     {
-      if (
-        is_constant_int2t(mul_expr.side_2) &&
-        mul_expr.side_1->type == side_2->type)
+      // Check if either operand is a non-zero constant
+      if (is_constant_int2t(mul_expr.side_2))
       {
         const BigInt &c1 = to_constant_int2t(mul_expr.side_2).value;
-        if (c1.is_odd())
-          return equality2tc(mul_expr.side_1, side_2);
+        if (c1 != 0)
+          return equality2tc(match_side2_type(mul_expr.side_1), side_2);
       }
 
-      if (
-        is_constant_int2t(mul_expr.side_1) &&
-        mul_expr.side_2->type == side_2->type)
+      if (is_constant_int2t(mul_expr.side_1))
       {
         const BigInt &c1 = to_constant_int2t(mul_expr.side_1).value;
-        if (c1.is_odd())
-          return equality2tc(mul_expr.side_2, side_2);
+        if (c1 != 0)
+          return equality2tc(match_side2_type(mul_expr.side_2), side_2);
       }
     }
   }
 
-  // d + c == d + e -> c == e (cancel common addend). When the surviving
-  // operands have differing concrete types (pointer-arith chains often mix
-  // `(int)c` with `(long)e`), coerce both to a common type so the rebuilt
-  // equality is well-formed.
-  auto cancel_eq = [](expr2tc a, expr2tc b) -> expr2tc {
-    if (!coerce_to_common_type(a, b))
-      return expr2tc();
-    return equality2tc(a, b);
-  };
-
+  // d + c == d + e -> c == e (cancel common addend)
   if (is_add2t(side_1) && is_add2t(side_2))
   {
     const add2t &add1 = to_add2t(side_1);
     const add2t &add2 = to_add2t(side_2);
-    expr2tc r;
+    // Check all four combinations for common operands
+    // Case 1: (d + c) == (d + e) -> c == e
     if (add1.side_1 == add2.side_1)
-      if (!is_nil_expr(r = cancel_eq(add1.side_2, add2.side_2)))
-        return r;
+      return equality2tc(add1.side_2, add2.side_2);
+    // Case 2: (d + c) == (e + d) -> c == e
     if (add1.side_1 == add2.side_2)
-      if (!is_nil_expr(r = cancel_eq(add1.side_2, add2.side_1)))
-        return r;
+      return equality2tc(add1.side_2, add2.side_1);
+    // Case 3: (c + d) == (d + e) -> c == e
     if (add1.side_2 == add2.side_1)
-      if (!is_nil_expr(r = cancel_eq(add1.side_1, add2.side_2)))
-        return r;
+      return equality2tc(add1.side_1, add2.side_2);
+    // Case 4: (c + d) == (e + d) -> c == e
     if (add1.side_2 == add2.side_2)
-      if (!is_nil_expr(r = cancel_eq(add1.side_1, add2.side_1)))
-        return r;
+      return equality2tc(add1.side_1, add2.side_1);
   }
 
   // (d - c) == (d - e) -> c == e (cancel common minuend)
@@ -3827,28 +3811,26 @@ expr2tc equality2t::do_simplify() const
   {
     const sub2t &sub1 = to_sub2t(side_1);
     const sub2t &sub2 = to_sub2t(side_2);
+
+    // (d - c) == (d - e) -> c == e
     if (sub1.side_1 == sub2.side_1)
-    {
-      expr2tc r = cancel_eq(sub1.side_2, sub2.side_2);
-      if (!is_nil_expr(r))
-        return r;
-    }
+      return equality2tc(sub1.side_2, sub2.side_2);
   }
 
   // (-x) == (-y) -> x == y
   if (is_neg2t(side_1) && is_neg2t(side_2))
   {
-    expr2tc r = cancel_eq(to_neg2t(side_1).value, to_neg2t(side_2).value);
-    if (!is_nil_expr(r))
-      return r;
+    const neg2t &neg1 = to_neg2t(side_1);
+    const neg2t &neg2 = to_neg2t(side_2);
+    return equality2tc(neg1.value, neg2.value);
   }
 
   // (~x) == (~y) -> x == y
   if (is_bitnot2t(side_1) && is_bitnot2t(side_2))
   {
-    expr2tc r = cancel_eq(to_bitnot2t(side_1).value, to_bitnot2t(side_2).value);
-    if (!is_nil_expr(r))
-      return r;
+    const bitnot2t &not1 = to_bitnot2t(side_1);
+    const bitnot2t &not2 = to_bitnot2t(side_2);
+    return equality2tc(not1.value, not2.value);
   }
 
   return simplify_relations<Equalitytor, equality2t>(type, side_1, side_2);

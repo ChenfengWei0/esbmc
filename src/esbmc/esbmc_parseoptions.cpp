@@ -859,20 +859,426 @@ int esbmc_parseoptionst::doit()
       // explicitly ask for one. Z3 is significantly slower than modern QF_BV
       // engines on the 256-bit bit-vector arithmetic pervasive in Solidity
       // (uint256, mappings, etc.), so prefer Bitwuzla / CVC5 / Boolector.
+      // The auto-selection also covers incremental modes (k-induction,
+      // incremental-bmc, falsification): Solidity contracts model storage
+      // as recursive struct datatypes which Z3 sometimes rejects with
+      // "datatype is not well-founded" — Bitwuzla handles them correctly.
+      const bool user_picked_solver = cmdline.isset("z3") ||
+                                      cmdline.isset("cvc5") ||
+                                      cmdline.isset("bitwuzla") ||
+                                      cmdline.isset("boolector") ||
+                                      cmdline.isset("yices") ||
+                                      cmdline.isset("mathsat") ||
+                                      cmdline.isset("cvc4") ||
+                                      cmdline.isset("smtlib") ||
+                                      cmdline.isset("default-solver");
+
+      // Nested-dynamic-array shapes (`T[][]`, `T[N][][M]`, etc.) hit the
+      // Phase-0 bare-smt_sort abort under default Bitwuzla because the
+      // tuple flattener cannot represent `array<array<tuple, N>, ...>`.
+      // CVC5 with `--cvc5-native-tuples` (commit 41878f36cb) handles them
+      // via native datatype encoding. Detect the pattern in the source by
+      // scanning for `[]` immediately followed by `[` — the marker of a
+      // nested-dynamic-array dimension. False positives (memory or local
+      // arrays) only result in CVC5 being chosen instead of Bitwuzla,
+      // which is sound (just potentially slower for non-nested shapes).
+      const std::string padded_solvers =
+        std::string(" ") + ESBMC_AVAILABLE_SOLVERS + " ";
+      const bool cvc5_available =
+        padded_solvers.find(" cvc5 ") != std::string::npos;
+      bool nested_dyn_detected = false;
+      // Pattern B: --k-induction with multi-contract dispatch.  The
+      // generated $call#0 / $call#1 dispatcher (solidity_convert_call.cpp
+      // around line 2777+ / 3135+) emits a sequential O(N) if-else
+      // chain on `this->$address`.  Under k-induction iteration this
+      // chain is replicated per step, producing a linear chain of
+      // 256-bit BV equalities that Bitwuzla's BV-quantifier engine
+      // balloons on (see src/solidity-frontend/README.md:564 and memory
+      // reference_cvc5_vs_bitwuzla_eoa.md).  CVC5's array+datatype
+      // engine handles the chain in seconds.
       //
-      // Exception: k-induction and incremental-bmc issue many incremental
-      // queries where Z3 has historically been more robust than CVC5; keep
-      // the default (Z3) there so existing regression tests do not regress.
-      const bool incremental_mode =
-        cmdline.isset("k-induction") || cmdline.isset("k-induction-parallel") ||
-        cmdline.isset("incremental-bmc") || cmdline.isset("falsification");
-      const bool user_picked_solver =
-        cmdline.isset("z3") || cmdline.isset("cvc5") ||
-        cmdline.isset("bitwuzla") || cmdline.isset("boolector") ||
-        cmdline.isset("yices") || cmdline.isset("mathsat") ||
-        cmdline.isset("cvc4") || cmdline.isset("smtlib") ||
-        cmdline.isset("default-solver");
-      if (!user_picked_solver && !incremental_mode)
+      // The trigger requires multi-contract AND value-call AND
+      // (--bound OR --reentry-check): the dispatcher chain on
+      // `this->$address` and the EOA-balance linear scan are only
+      // materialized under bounded inter-contract modelling. Without
+      // --bound / --reentry-check, ESBMC nondeterministically models
+      // external calls and there is no chain to be amplified by
+      // k-induction iteration, so CVC5's array+datatype advantage
+      // evaporates and Bitwuzla (or the default fallback) handles the
+      // residual VC at parity. A multi-contract test without
+      // value-call (e.g. inheritance with direct method calls)
+      // doesn't materialize the EOA-fallback path, so the dispatcher
+      // chain stays small and Bitwuzla is fine. Conversely, a
+      // value-call test without --k-induction is BMC-mode and either
+      // has too few EOA scans for the chain to matter (single-EOA:
+      // Bitwuzla wins) or is best handled with explicit --cvc5
+      // (multi-EOA UNSAT: case-by-case). See memory
+      // reference_solidity_solver_auto_hint.md "Why NOT auto-route
+      // bare value-call".
+      int contract_decl_count = 0;
+      bool value_call_detected = false;
+      if (!user_picked_solver && cvc5_available)
+      {
+        // Detection strategy:
+        //
+        //   (1) Prefer a `.solast` file in cmdline.args — it carries
+        //       precise `typeIdentifier` strings.  Scan for three
+        //       consecutive `t_array$_t_array$_t_array$_` substrings,
+        //       the unambiguous marker of ≥3-dimensional array types
+        //       (where the flattener produces bare smt_sorts that
+        //       trip the Phase-0 abort under default Bitwuzla).
+        //
+        //   (2) Fall back to `.sol` source scanning only if no
+        //       `.solast` is present.  Source-level bracket counting
+        //       can't reliably distinguish type declarations from
+        //       index expressions, so the fallback is conservative —
+        //       it requires three consecutive `[]` (truly empty
+        //       brackets, the most reliable type-level marker).
+        const std::string ext_solast = ".solast";
+        const std::string ext_sol = ".sol";
+        std::string solast_path, sol_path;
+        for (const auto &arg : cmdline.args)
+        {
+          if (arg.size() >= ext_solast.size() &&
+              arg.compare(
+                arg.size() - ext_solast.size(),
+                ext_solast.size(),
+                ext_solast) == 0)
+          {
+            solast_path = arg;
+          }
+          else if (
+            arg.size() >= ext_sol.size() &&
+            arg.compare(
+              arg.size() - ext_sol.size(), ext_sol.size(), ext_sol) == 0)
+          {
+            sol_path = arg;
+          }
+        }
+
+        const std::string &scan_path =
+          !solast_path.empty() ? solast_path : sol_path;
+        const bool scanning_solast = !solast_path.empty();
+
+        std::ifstream f(scan_path);
+        if (f.is_open())
+        {
+          static const std::string ta_marker = "t_array$_";
+          int ta_run = 0;
+          size_t ta_match_pos = 0;
+          int empty_bracket_run = 0;
+          int prev_emit = -1;  // last non-whitespace char (.sol scan only)
+          bool in_line = false, in_block = false, in_str = false;
+          char str_quote = '\0';
+          int c;
+          while ((c = f.get()) != EOF)
+          {
+            char ch = static_cast<char>(c);
+            // Comment/string stripping only for .sol source — .solast
+            // is JSON where typeIdentifier values live INSIDE double
+            // quotes; stripping them would skip the markers we need.
+            if (!scanning_solast)
+            {
+              if (in_line)
+              {
+                if (ch == '\n')
+                  in_line = false;
+                continue;
+              }
+              if (in_block)
+              {
+                if (ch == '*' && f.peek() == '/')
+                {
+                  f.get();
+                  in_block = false;
+                }
+                continue;
+              }
+              if (in_str)
+              {
+                if (ch == '\\')
+                {
+                  f.get();
+                  continue;
+                }
+                if (ch == str_quote)
+                  in_str = false;
+                continue;
+              }
+              if (ch == '/' && f.peek() == '/')
+              {
+                f.get();
+                in_line = true;
+                continue;
+              }
+              if (ch == '/' && f.peek() == '*')
+              {
+                f.get();
+                in_block = true;
+                continue;
+              }
+              if (ch == '"' || ch == '\'')
+              {
+                in_str = true;
+                str_quote = ch;
+                continue;
+              }
+            }
+
+            if (scanning_solast)
+            {
+              // Sliding match on `t_array$_` markers in
+              // typeIdentifier strings.  Three consecutive markers
+              // ⇒ array of array of array of ... (≥3 nesting).
+              if (ch == ta_marker[ta_match_pos])
+              {
+                ++ta_match_pos;
+                if (ta_match_pos == ta_marker.size())
+                {
+                  ++ta_run;
+                  ta_match_pos = 0;
+                  if (ta_run >= 3)
+                  {
+                    nested_dyn_detected = true;
+                    break;
+                  }
+                }
+              }
+              else
+              {
+                ta_match_pos = (ch == ta_marker[0]) ? 1 : 0;
+                if (ta_match_pos == 0)
+                  ta_run = 0;
+              }
+            }
+            else
+            {
+              // .sol fallback: count CONSECUTIVE empty brackets
+              // `[][][]` etc.  Three-or-more in a row marks a real
+              // 3+D type declaration; index expressions like
+              // `a[i][j]` or `a[0][0][0]` have non-empty inner brackets
+              // and don't bump the run.  Whitespace between `]` and
+              // `[` is allowed.
+              if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
+                continue;
+              if (prev_emit == '[' && ch == ']')
+              {
+                ++empty_bracket_run;
+                if (empty_bracket_run >= 3)
+                {
+                  nested_dyn_detected = true;
+                  break;
+                }
+              }
+              else if (ch != '[' || prev_emit != ']')
+              {
+                // Not part of `]\[` or `[]` chain → reset.
+                if (!(prev_emit == ']' && ch == '['))
+                  empty_bracket_run = 0;
+              }
+              prev_emit = ch;
+            }
+          }
+        }
+
+        // Pattern B contract count: prefer .sol (text-greppable with
+        // word-boundary check); fall back to .solast (JSON) when .sol
+        // isn't given as a positional argument — which happens when
+        // testing_tool.py invokes ESBMC with `--sol contract.sol`
+        // (a flag, not positional) plus `contract.solast` (positional).
+        if (sol_path.empty() && !solast_path.empty())
+        {
+          // .solast fallback: each contract definition appears as
+          // `"contractKind":"contract"` in the JSON.  No comment/string
+          // filtering needed — JSON has neither, and the marker only
+          // appears as a key/value pair.  Note: this counts both regular
+          // contracts and abstract contracts (both use "contract"), but
+          // not interfaces (`"contractKind":"interface"`) or libraries
+          // (`"contractKind":"library"`) — matching .sol semantics.
+          std::ifstream lf(solast_path);
+          if (lf.is_open())
+          {
+            static const std::string p_kind = "\"contractKind\":\"contract\"";
+            // Value-call markers in solidity solast typeIdentifier
+            // strings: transfer/send for built-in address calls;
+            // barecall_payable for low-level `.call{value:}`.
+            static const std::string p_xfer = "t_function_transfer";
+            static const std::string p_send_id = "t_function_send";
+            static const std::string p_bare = "t_function_barecall_payable";
+            size_t mp_kind = 0, mp_xfer = 0, mp_send = 0, mp_bare = 0;
+            auto step =
+              [](char ch, size_t &pos, const std::string &pat) -> bool {
+              if (ch == pat[pos])
+                ++pos;
+              else
+                pos = (ch == pat[0]) ? 1 : 0;
+              if (pos == pat.size())
+              {
+                pos = 0;
+                return true;
+              }
+              return false;
+            };
+            int c;
+            while ((c = lf.get()) != EOF)
+            {
+              char ch = static_cast<char>(c);
+              if (step(ch, mp_kind, p_kind))
+                ++contract_decl_count;
+              if (step(ch, mp_xfer, p_xfer))
+                value_call_detected = true;
+              if (step(ch, mp_send, p_send_id))
+                value_call_detected = true;
+              if (step(ch, mp_bare, p_bare))
+                value_call_detected = true;
+            }
+          }
+        }
+        else if (!sol_path.empty())
+        {
+          std::ifstream sf(sol_path);
+          if (sf.is_open())
+          {
+            static const std::string p_contract = "contract";
+            static const std::string p_xfer = ".transfer(";
+            static const std::string p_send_d = ".send(";
+            static const std::string p_call = ".call{";
+            size_t mp_contract = 0;
+            size_t mp_xfer = 0, mp_send = 0, mp_call = 0;
+            char prev_for_contract = '\0';
+            bool sin_line = false, sin_block = false, sin_str = false;
+            char sstr_quote = '\0';
+            int sc;
+            while ((sc = sf.get()) != EOF)
+            {
+              char ch = static_cast<char>(sc);
+              if (sin_line)
+              {
+                if (ch == '\n')
+                  sin_line = false;
+                continue;
+              }
+              if (sin_block)
+              {
+                if (ch == '*' && sf.peek() == '/')
+                {
+                  sf.get();
+                  sin_block = false;
+                }
+                continue;
+              }
+              if (sin_str)
+              {
+                if (ch == '\\')
+                {
+                  sf.get();
+                  continue;
+                }
+                if (ch == sstr_quote)
+                  sin_str = false;
+                continue;
+              }
+              if (ch == '/' && sf.peek() == '/')
+              {
+                sf.get();
+                sin_line = true;
+                continue;
+              }
+              if (ch == '/' && sf.peek() == '*')
+              {
+                sf.get();
+                sin_block = true;
+                continue;
+              }
+              if (ch == '"' || ch == '\'')
+              {
+                sin_str = true;
+                sstr_quote = ch;
+                continue;
+              }
+
+              // Value-call detection (sliding match, no boundary check
+              // needed — the leading `.` is the boundary).
+              auto step =
+                [ch](size_t &pos, const std::string &pat) -> bool {
+                if (ch == pat[pos])
+                  ++pos;
+                else
+                  pos = (ch == pat[0]) ? 1 : 0;
+                if (pos == pat.size())
+                {
+                  pos = 0;
+                  return true;
+                }
+                return false;
+              };
+              if (step(mp_xfer, p_xfer))
+                value_call_detected = true;
+              if (step(mp_send, p_send_d))
+                value_call_detected = true;
+              if (step(mp_call, p_call))
+                value_call_detected = true;
+
+              // `contract` keyword count: must be a whole word —
+              // preceded by non-identifier char (or start-of-file) AND
+              // followed by non-identifier char.  Filters out usage as
+              // an identifier substring (rare but possible in import
+              // paths etc., already string-stripped above).
+              if (mp_contract == 0)
+              {
+                bool boundary = (prev_for_contract == '\0' ||
+                                 !(std::isalnum(static_cast<unsigned char>(
+                                                  prev_for_contract)) ||
+                                   prev_for_contract == '_'));
+                if (boundary && ch == p_contract[0])
+                  mp_contract = 1;
+              }
+              else if (ch == p_contract[mp_contract])
+              {
+                ++mp_contract;
+                if (mp_contract == p_contract.size())
+                {
+                  int nx = sf.peek();
+                  bool word_end = (nx == EOF ||
+                                   !(std::isalnum(static_cast<unsigned char>(
+                                                    nx)) ||
+                                     nx == '_'));
+                  if (word_end)
+                    ++contract_decl_count;
+                  mp_contract = 0;
+                }
+              }
+              else
+              {
+                mp_contract = (ch == p_contract[0]) ? 1 : 0;
+              }
+
+              prev_for_contract = ch;
+            }
+          }
+        }
+      }
+
+      // Pattern B fires only when ALL four signals align:
+      //   (1) k-induction iteration multiplier
+      //   (2) ≥2 contracts (dispatcher chain materializes)
+      //   (3) value-call (transfer/send/.call{value:}) — the EOA
+      //       fallback path that makes the chain hot
+      //   (4) --bound or --reentry-check: the `this->$address` chain
+      //       and the EOA-balance linear scan are only materialized
+      //       under bounded inter-contract modelling. Without either,
+      //       external calls are nondet, the chain doesn't exist, and
+      //       CVC5's array+datatype advantage evaporates — Bitwuzla
+      //       (or the default fallback order) handles the residual
+      //       VC at parity. (--reentry-check internally enables
+      //       --bound through the reentry harness.)
+      // Without any of (1)..(4), Bitwuzla handles the workload fine.
+      const bool kind_multi_contract_detected =
+        cmdline.isset("k-induction") &&
+        (cmdline.isset("bound") || cmdline.isset("reentry-check")) &&
+        contract_decl_count >= 2 && value_call_detected;
+
+      if (!user_picked_solver)
       {
         const char *chosen = nullptr;
         if (nested_dyn_detected)
