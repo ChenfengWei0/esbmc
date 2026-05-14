@@ -619,6 +619,15 @@ const struct group_opt_templ all_cmd_options[] = {
      "Enable division-by-zero check (Solidity: opt-in, default OFF; "
      "C/C++: default ON; overrides --no-standard-checks)"},
     {"no-pointer-check", NULL, "Do not do pointer check"},
+    {"no-symex-pointer-check",
+     NULL,
+     "Do not emit symex 'pointer can point to' assertions "
+     "(Solidity coverage modes default ON; opt back in with "
+     "--symex-pointer-check)"},
+    {"symex-pointer-check",
+     NULL,
+     "Enable symex 'pointer can point to' assertions "
+     "(overrides Solidity coverage default)"},
     {"no-align-check", NULL, "Do not check pointer alignment"},
     {"no-unlimited-scanf-check",
      NULL,
