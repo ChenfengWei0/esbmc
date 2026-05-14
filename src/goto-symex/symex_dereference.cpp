@@ -113,8 +113,11 @@ void symex_dereference_statet::get_value_set(
       }
 
       // add the set of objects that the pointer can point to as an assertion.
-      goto_symex.claim(
-        or_accuml, "check the objects that the pointer can point to");
+      // Gated by --no-symex-pointer-check (Solidity coverage default; user can
+      // re-enable with --symex-pointer-check, handled in esbmc_parseoptions).
+      if (!goto_symex.options.get_bool_option("no-symex-pointer-check"))
+        goto_symex.claim(
+          or_accuml, "check the objects that the pointer can point to");
     }
   }
 }
