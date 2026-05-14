@@ -1,5 +1,5 @@
-KNOWNBUG
+CORE
 contract.solast
 --sol contract.sol --contract Doftcoin --k-induction --no-standard-check --branch-coverage-claims
-^Branches :
-^Branch Coverage:
+^Branches : [1-9]
+^Branch Coverage: [0-9]

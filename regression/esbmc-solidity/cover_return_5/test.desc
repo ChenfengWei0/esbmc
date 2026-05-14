@@ -1,5 +1,5 @@
-KNOWNBUG
+CORE
 contract.solast
 --sol contract.sol --contract A --k-induction --no-standard-check --branch-coverage-claims
-^Branches :
-^Branch Coverage:
+^No branch detected$
+^VERIFICATION SUCCESSFUL$

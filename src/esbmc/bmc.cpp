@@ -894,21 +894,25 @@ void report_coverage(
     // which is not what we want
     const size_t tracked_instance = reached_claims.size();
     log_success("\n[Coverage]\n");
-    log_result("Branches : {}", total);
-    log_result("Reached : {}", tracked_instance);
-
-    // show claims
-    if (options.get_bool_option("branch-coverage-claims"))
+    if (total == 0)
     {
-      // reached claims:
-      for (const auto &claim : reached_claims)
-        log_status("  {}", prettify_solidity_expr(claim));
+      log_result("No branch detected");
     }
-
-    if (total != 0)
-      log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
     else
-      log_result("Branch Coverage: N/A (no branches)");
+    {
+      log_result("Branches : {}", total);
+      log_result("Reached : {}", tracked_instance);
+
+      // show claims
+      if (options.get_bool_option("branch-coverage-claims"))
+      {
+        // reached claims:
+        for (const auto &claim : reached_claims)
+          log_status("  {}", prettify_solidity_expr(claim));
+      }
+
+      log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
+    }
   }
 
   else if (is_branch_func_cov)
@@ -920,21 +924,25 @@ void report_coverage(
     // which is not what we want
     const size_t tracked_instance = reached_claims.size();
     log_success("\n[Coverage]\n");
-    log_result("Function Entry Points & Branches : {}", total);
-    log_result("Reached : {}", tracked_instance);
-
-    // show claims
-    if (options.get_bool_option("branch-function-coverage-claims"))
+    if (total == 0)
     {
-      // reached claims:
-      for (const auto &claim : reached_claims)
-        log_status("  {}", prettify_solidity_expr(claim));
+      log_result("No branch detected");
     }
-
-    if (total != 0)
-      log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
     else
-      log_result("Branch Coverage: N/A (no branches)");
+    {
+      log_result("Function Entry Points & Branches : {}", total);
+      log_result("Reached : {}", tracked_instance);
+
+      // show claims
+      if (options.get_bool_option("branch-function-coverage-claims"))
+      {
+        // reached claims:
+        for (const auto &claim : reached_claims)
+          log_status("  {}", prettify_solidity_expr(claim));
+      }
+
+      log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
+    }
   }
 
   else if (is_k_path_cov)
@@ -1068,6 +1076,12 @@ void report_coverage(
     report["summary"]["uncovered"] = total - covered_count;
     report["summary"]["percentage"] =
       total > 0 ? covered_count * 100.0 / total : 0.0;
+    // For branch / branch-function modes: explicit "no_branch" marker when the
+    // source has zero branches. Key absent when total > 0 — consumers should
+    // read with default false. Not emitted for condition/assertion/k-path
+    // modes (their zero-claim case has different semantics).
+    if (total == 0 && (is_branch_cov || is_branch_func_cov))
+      report["summary"]["no_branch"] = true;
 
     std::ofstream out("cov-report.json");
     out << report.dump(2) << std::endl;
@@ -1154,36 +1168,42 @@ void bmct::report_coverage_verbose(
     {
       size_t totals = goto_coveraget::total_branch;
       const int tracked_instance = reached_claims.size();
-      // show claims
-      if (options.get_bool_option("branch-coverage-claims"))
+      if (totals == 0)
       {
-        // reached claims:
-        for (const auto &claim : reached_claims)
-          log_status("  {}", prettify_solidity_expr(claim));
+        log_result("No branch detected");
       }
-
-      if (totals != 0)
-        log_result("Branch Coverage: {}%", tracked_instance * 100.0 / totals);
       else
-        log_result("Branch Coverage: 0%");
+      {
+        // show claims
+        if (options.get_bool_option("branch-coverage-claims"))
+        {
+          // reached claims:
+          for (const auto &claim : reached_claims)
+            log_status("  {}", prettify_solidity_expr(claim));
+        }
+        log_result("Branch Coverage: {}%", tracked_instance * 100.0 / totals);
+      }
     }
     else if (is_branch_func_cov)
     {
       size_t totals = goto_coveraget::total_func_branch;
       const int tracked_instance = reached_claims.size();
-      // show claims
-      if (options.get_bool_option("branch-function-coverage-claims"))
+      if (totals == 0)
       {
-        // reached claims:
-        for (const auto &claim : reached_claims)
-          log_status("  {}", prettify_solidity_expr(claim));
+        log_result("No branch detected");
       }
-
-      if (totals != 0)
+      else
+      {
+        // show claims
+        if (options.get_bool_option("branch-function-coverage-claims"))
+        {
+          // reached claims:
+          for (const auto &claim : reached_claims)
+            log_status("  {}", prettify_solidity_expr(claim));
+        }
         log_result(
           "Branch Function Coverage: {}%", tracked_instance * 100.0 / totals);
-      else
-        log_result("Branch Function Coverage: 0%");
+      }
     }
     else
     {
