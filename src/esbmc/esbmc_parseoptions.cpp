@@ -3072,6 +3072,37 @@ bool esbmc_parseoptionst::parse_goto_program(
           }
       if (is_solidity)
         options.set_option("no-standard-checks", true);
+
+      // Solidity coverage auto-enable: drop user/library asserts (under
+      // branch/condition coverage modes only — assertion-coverage is exempt
+      // because it would self-zero) and symex pointer-points-to claims, so
+      // coverage metrics aren't contaminated by stdlib/Solidity-model guards
+      // nor by dynamic dereference claims. Must run BEFORE goto_convert
+      // because no-assertions is consumed by convert_assert
+      // (goto_convert.cpp:978).
+      if (is_solidity)
+      {
+        const bool any_assert_cov = cmdline.isset("assertion-coverage") ||
+                                    cmdline.isset("assertion-coverage-claims");
+        const bool any_branch_or_cond_cov =
+          cmdline.isset("branch-coverage") ||
+          cmdline.isset("branch-coverage-claims") ||
+          cmdline.isset("branch-function-coverage") ||
+          cmdline.isset("branch-function-coverage-claims") ||
+          cmdline.isset("condition-coverage") ||
+          cmdline.isset("condition-coverage-claims") ||
+          cmdline.isset("condition-coverage-rm") ||
+          cmdline.isset("condition-coverage-claims-rm");
+        if (any_branch_or_cond_cov)
+          options.set_option("no-assertions", true);
+        if (any_branch_or_cond_cov || any_assert_cov)
+        {
+          // Mirror set_neg_unless_pos pattern below so explicit
+          // --symex-pointer-check wins over the auto-enable.
+          if (!cmdline.isset("symex-pointer-check"))
+            options.set_option("no-symex-pointer-check", true);
+        }
+      }
     }
 
     // Expand --no-standard-checks into individual options before goto_convert,
@@ -3216,6 +3247,32 @@ bool esbmc_parseoptionst::process_goto_program(
           }
       if (is_solidity)
         options.set_option("no-standard-checks", true);
+
+      // Coverage auto-enable on the read_goto_binary path. Only the symex
+      // gate is meaningful here (no-assertions is too late: ASSERT
+      // instructions were already baked into the loaded .goto), but we
+      // set both for symmetry with the parse_goto_program branch.
+      if (is_solidity)
+      {
+        const bool any_assert_cov = cmdline.isset("assertion-coverage") ||
+                                    cmdline.isset("assertion-coverage-claims");
+        const bool any_branch_or_cond_cov =
+          cmdline.isset("branch-coverage") ||
+          cmdline.isset("branch-coverage-claims") ||
+          cmdline.isset("branch-function-coverage") ||
+          cmdline.isset("branch-function-coverage-claims") ||
+          cmdline.isset("condition-coverage") ||
+          cmdline.isset("condition-coverage-claims") ||
+          cmdline.isset("condition-coverage-rm") ||
+          cmdline.isset("condition-coverage-claims-rm");
+        if (any_branch_or_cond_cov)
+          options.set_option("no-assertions", true);
+        if (any_branch_or_cond_cov || any_assert_cov)
+        {
+          if (!cmdline.isset("symex-pointer-check"))
+            options.set_option("no-symex-pointer-check", true);
+        }
+      }
     }
 
     // Expand --no-standard-checks before goto_check (also expanded before
