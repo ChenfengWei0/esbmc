@@ -1,6 +1,7 @@
 #include <bitwuzla_conv.h>
 #include <cstring>
 #include <cstdio>
+#include <unordered_set>
 
 #define new_ast new_solver_ast<bitw_smt_ast>
 
@@ -803,13 +804,47 @@ bitwuzla_convt::convert_array_of(smt_astt init_val, unsigned long domain_width)
 {
   smt_sortt dom_sort = mk_int_bv_sort(domain_width);
   smt_sortt arrsort = mk_array_sort(dom_sort, init_val->sort);
+  BitwuzlaSort bw_arr_sort = to_solver_smt_sort<BitwuzlaSort>(arrsort)->s;
+  BitwuzlaTerm bw_init = to_solver_smt_ast<bitw_smt_ast>(init_val)->a;
 
-  return new_ast(
-    bitwuzla_mk_const_array(
-      bitw_term_manager,
-      to_solver_smt_sort<BitwuzlaSort>(arrsort)->s,
-      to_solver_smt_ast<bitw_smt_ast>(init_val)->a),
-    arrsort);
+  // Avoid bitwuzla_mk_const_array: bitwuzla cannot reason about equality
+  // between two ((as const ...) v) terms ("Equality over constant arrays
+  // not fully supported yet") and aborts via its registered abort callback
+  // during bitwuzla_check_sat. Mirror CVC5's accepted fallback at
+  // src/solvers/cvc5/cvc5_conv.cpp:1214-1244: emit a fresh array constant
+  // and, for bounded domains, pin every slot via a STORE chain so existing
+  // CORE tests retain full semantic strength.
+  constexpr unsigned BOUNDED_DOMAIN_BITS = 16;
+
+  std::string name = mk_fresh_name("bitwuzla_convt::convert_array_of_fresh");
+  BitwuzlaTerm arr_const =
+    bitwuzla_mk_const(bitw_term_manager, bw_arr_sort, name.c_str());
+
+  if (domain_width <= BOUNDED_DOMAIN_BITS)
+  {
+    const uint64_t n = 1ULL << domain_width;
+    BitwuzlaSort dom_bw = to_solver_smt_sort<BitwuzlaSort>(dom_sort)->s;
+    BitwuzlaTerm acc = arr_const;
+    for (uint64_t i = 0; i < n; ++i)
+    {
+      BitwuzlaTerm idx =
+        bitwuzla_mk_bv_value_uint64(bitw_term_manager, dom_bw, i);
+      acc = bitwuzla_mk_term3(
+        bitw_term_manager, BITWUZLA_KIND_ARRAY_STORE, acc, idx, bw_init);
+    }
+    return new_ast(acc, arrsort);
+  }
+
+  // Dedup: emit the [approx] warning at most once per distinct domain_width
+  // per process invocation. Solidity claim sweeps invoke this on every claim
+  // pre-solve, so a per-call warning floods stdout (1700+ on cover_stress_VE_token).
+  static std::unordered_set<unsigned long> warned_widths;
+  if (warned_widths.insert(domain_width).second)
+    log_warning(
+      "[approx] bitwuzla: dropping const-array init constraint for unbounded "
+      "domain (width={}); using fresh unconstrained array",
+      domain_width);
+  return new_ast(arr_const, arrsort);
 }
 
 std::string bitwuzla_convt::dump_smt()
