@@ -201,9 +201,8 @@ static void replace_name_in_body(
       body = replacement;
     return;
   }
-  body->Foreach_operand([&lhs, &replacement](expr2tc &e) {
-    replace_name_in_body(lhs, replacement, e);
-  });
+  body->Foreach_operand([&lhs, &replacement](expr2tc &e)
+                        { replace_name_in_body(lhs, replacement, e); });
 }
 
 /** Recursively expand any symbol in @p e that is a key in @p defs, replacing
@@ -224,8 +223,8 @@ static void expand_quantifier_defs_in(
     }
     return;
   }
-  e->Foreach_operand(
-    [&defs](expr2tc &sub) { expand_quantifier_defs_in(sub, defs); });
+  e->Foreach_operand([&defs](expr2tc &sub)
+                     { expand_quantifier_defs_in(sub, defs); });
 }
 
 void smt_convt::pop_ctx()
@@ -1407,8 +1406,8 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
   {
     // Convert all the arguments and store them in 'args'.
     args.reserve(expr->get_num_sub_exprs());
-    expr->foreach_operand(
-      [this, &args](const expr2tc &e) { args.push_back(convert_ast(e)); });
+    expr->foreach_operand([this, &args](const expr2tc &e)
+                          { args.push_back(convert_ast(e)); });
   }
   }
 
@@ -1648,7 +1647,8 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
            fbv_type.fraction == single_spec.f))
         {
           // Lookup with unconditional point-interval fallback.
-          auto get_iv = [this](smt_astt t) -> ra_interval_t {
+          auto get_iv = [this](smt_astt t) -> ra_interval_t
+          {
             auto it = ir_ra_interval_map.find(t);
             return it != ir_ra_interval_map.end() ? it->second
                                                   : ra_interval_t{t, t};
@@ -1741,7 +1741,8 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
            fbv_type.fraction == single_spec.f))
         {
           // Lookup with unconditional point-interval fallback.
-          auto get_iv = [this](smt_astt t) -> ra_interval_t {
+          auto get_iv = [this](smt_astt t) -> ra_interval_t
+          {
             auto it = ir_ra_interval_map.find(t);
             return it != ir_ra_interval_map.end() ? it->second
                                                   : ra_interval_t{t, t};
@@ -1819,7 +1820,8 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
           (fbv_type.exponent == single_spec.e &&
            fbv_type.fraction == single_spec.f))
         {
-          auto get_iv = [this](smt_astt t) -> ra_interval_t {
+          auto get_iv = [this](smt_astt t) -> ra_interval_t
+          {
             auto it = ir_ra_interval_map.find(t);
             return it != ir_ra_interval_map.end() ? it->second
                                                   : ra_interval_t{t, t};
@@ -1943,7 +1945,8 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
          is_round_to_minus_inf(rounding_mode) ||
          is_round_to_zero(rounding_mode)))
       {
-        auto get_iv = [this](smt_astt t) -> ra_interval_t {
+        auto get_iv = [this](smt_astt t) -> ra_interval_t
+        {
           auto it = ir_ra_interval_map.find(t);
           return it != ir_ra_interval_map.end() ? it->second
                                                 : ra_interval_t{t, t};
@@ -2844,6 +2847,24 @@ smt_sortt smt_convt::convert_sort(const type2tc &type)
     // Only applicable to genuine array types — vectors are always finite,
     // and to_array_type(vector_type) throws std::bad_cast under -DNDEBUG-off
     // builds (where the type_macros' dynamic_cast is real, not static_cast).
+    // 2C.2d (NW1): an array whose (possibly nested) leaf is a tuple is
+    // owned by the tuple flattener — its sort is the recursive bare
+    // nested sort built by mk_struct_sort (2C.2a), never a backend
+    // mk_array_sort with a bare struct range.  This subsumes the K=1 /
+    // finite array-of-struct carve-out below (those already reach the
+    // identical mk_struct_sort path), so they stay byte-identical; the
+    // only behavioural change is the K>=2 infinite-nested case, which
+    // previously fell into the backend mk_array_sort branch and aborted
+    // with `bare smt_sort`.  Primitive-leaf nested arrays (struct leaf
+    // absent) skip this and keep the native backend array sort.
+    if (is_array_type(type) && is_tuple_array_ast_type(type))
+    {
+      type2tc thetype = flatten_array_type(type);
+      rewrite_ptrs_to_structs(thetype);
+      result = tuple_api->mk_struct_sort(thetype);
+      break;
+    }
+
     if (is_array_type(type))
     {
       const array_type2t &arrtype = to_array_type(type);
@@ -3047,15 +3068,16 @@ smt_astt smt_convt::convert_terminal(const expr2tc &expr)
       return tuple_api->mk_tuple_symbol(
         sym.get_symbol_name(), convert_sort(sym.type));
 
-    if (is_array_type(expr))
-    {
-      // Determine the range if we have arrays of arrays.
-      type2tc range = get_flattened_array_subtype(expr->type);
-
-      // If this is an array of structs, we have a tuple array sym.
-      if (is_tuple_ast_type(range))
-        return tuple_api->mk_tuple_array_symbol(expr);
-    }
+    // If this is an array whose (possibly nested) leaf is a tuple, we
+    // have a tuple-array sym.  2C.2b: is_tuple_array_ast_type walks every
+    // array dimension down to the leaf, so K>=2 nested arrays-of-struct
+    // route here too (NW0).  For K=1 (array<Struct,inf>) the leaf *is*
+    // the struct and this is byte-identical to the historical
+    //   is_tuple_ast_type(get_flattened_array_subtype(expr->type))
+    // (get_flattened_array_subtype returns the struct itself for K=1) —
+    // so the K=1 routing is unchanged.
+    if (is_tuple_array_ast_type(expr->type))
+      return tuple_api->mk_tuple_array_symbol(expr);
 
     // Just a normal symbol. Possibly an array symbol.
     std::string name = sym.get_symbol_name();
@@ -4241,34 +4263,38 @@ expr2tc smt_convt::get(const expr2tc &expr)
     if (!is_nil_expr(arr_size) && is_symbol2t(arr_size))
       arr_size = get(arr_size);
 
-    res->type->Foreach_subtype([this](type2tc &t) {
-      if (!is_array_type(t))
-        return;
+    res->type->Foreach_subtype(
+      [this](type2tc &t)
+      {
+        if (!is_array_type(t))
+          return;
 
-      expr2tc &arr_size = to_array_type(t).array_size;
-      if (!is_nil_expr(arr_size) && is_symbol2t(arr_size))
-        arr_size = get(arr_size);
-    });
+        expr2tc &arr_size = to_array_type(t).array_size;
+        if (!is_nil_expr(arr_size) && is_symbol2t(arr_size))
+          arr_size = get(arr_size);
+      });
   }
 
   // Recurse on operands
   bool have_all = true;
   bool has_null_operands = false;
 
-  res->Foreach_operand([this, &have_all, &has_null_operands](expr2tc &e) {
-    if (!e)
+  res->Foreach_operand(
+    [this, &have_all, &has_null_operands](expr2tc &e)
     {
-      has_null_operands = true;
-      have_all = false;
-      return;
-    }
+      if (!e)
+      {
+        has_null_operands = true;
+        have_all = false;
+        return;
+      }
 
-    expr2tc new_e = get(e);
-    if (new_e)
-      e = new_e;
-    else
-      have_all = false;
-  });
+      expr2tc new_e = get(e);
+      if (new_e)
+        e = new_e;
+      else
+        have_all = false;
+    });
 
   // If we have null operands, return early to avoid crashes in simplify()
   if (has_null_operands)
@@ -4393,7 +4419,8 @@ double smt_convt::convert_rational_to_double(
   // Populate the buffer with the decimal representation of `value`, growing the
   // buffer as needed. We keep the legacy fixed-size path to avoid extra
   // allocations on the common fast path.
-  auto ensure_string = [&](const BigInt &value, std::vector<char> &buffer) {
+  auto ensure_string = [&](const BigInt &value, std::vector<char> &buffer)
+  {
     while (true)
     {
       // 1) Try to reuse the current buffer (may already be large).
@@ -4585,6 +4612,16 @@ expr2tc smt_convt::get_array(const type2tc &type, smt_astt array)
 {
   // XXX -- printing multidimensional arrays?
 
+  // 2C.2d: a K>=2 struct-of-arrays value (mk_tuple_array_symbol) is a
+  // tuple_node whose sort is the leaf STRUCT, not an array sort —
+  // get_domain_width()/the array_conv readback below would assert.
+  // Counterexample model extraction for nested tuple-arrays is
+  // unimplemented (same convention as tuple_get_array_elem /
+  // tuple_get_rec's is_tuple_array_ast_type member): return an empty
+  // model entry.  The verdict comes from the solver and is unaffected.
+  if (array->sort->id != SMT_SORT_ARRAY)
+    return expr2tc();
+
   // Fetch the array bounds, if it's huge then assume this is a 1024 element
   // array. Then fetch all elements and formulate a constant_array.
   size_t w = array->sort->get_domain_width();
@@ -4692,12 +4729,60 @@ smt_astt smt_convt::array_create(const expr2tc &expr)
   return newsym_ast;
 }
 
+// 2C.2d: rebuild a K-dim array_type chain with its leaf replaced by
+// `leaf_type` (each dimension's size / size_is_infinite preserved).
+static type2tc
+caof_rebuild_array_leaf(const type2tc &t, const type2tc &leaf_type)
+{
+  if (!is_array_type(t))
+    return leaf_type;
+  const array_type2t &a = to_array_type(t);
+  return array_type2tc(
+    caof_rebuild_array_leaf(a.subtype, leaf_type),
+    a.array_size,
+    a.size_is_infinite,
+    a.index_width);
+}
+
 smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
 {
   const constant_array_of2t &arrof = to_constant_array_of2t(expr);
   const array_type2t &arrtype = to_array_type(arrof.type);
   expr2tc base_init;
   unsigned long array_size = 0;
+
+  // 2C.2d: K>=2 array-of-struct constant (immediate subtype is itself
+  // an array, struct leaf) — emit the struct-of-arrays representation so
+  // it equates field-wise with the 2C.2c symbol tuple_node and no bare
+  // nested array-of-struct sort ever reaches the backend.  Each field is
+  // a FRESH per-field native array: an infinite array-of-struct init is
+  // modelling-only ("guarantees nothing"), exactly the semantics the
+  // historical K=1 infinite-mapping init already has via
+  // tuple_array_create's infinite short-circuit — this keeps K>=2 at
+  // parity with K=1 (no new approximation) and avoids bitwuzla's
+  // unsupported const-array equality.  K=1 (immediate subtype is the
+  // struct) keeps the historical tuple_array_of route -> byte-identical.
+  if (is_array_type(arrtype.subtype))
+  {
+    type2tc leaf = arrof.type;
+    while (is_array_type(leaf))
+      leaf = to_array_type(leaf).subtype;
+
+    if (is_struct_type(leaf))
+    {
+      const struct_union_data &sd = get_type_def(leaf);
+      std::vector<expr2tc> fields;
+      fields.reserve(sd.members.size());
+      for (unsigned int i = 0; i < sd.members.size(); i++)
+      {
+        type2tc fld_arr = caof_rebuild_array_leaf(arrof.type, sd.members[i]);
+        std::string fname = mk_fresh_name("array_of_soa::");
+        fields.push_back(symbol2tc(fld_arr, irep_idt(fname)));
+      }
+      return tuple_api->tuple_create(
+        constant_struct2tc(leaf, std::move(fields)));
+    }
+  }
 
   // Nested arrays with ANY infinite level (Solidity nested mappings,
   // `T[N][]`, `uint256[4][][2]`): do NOT flatten or peel through.  Convert

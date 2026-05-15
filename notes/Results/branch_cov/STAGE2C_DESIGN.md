@@ -131,13 +131,47 @@ never fires for single-level → before/after SMT2 byte-identical.
 ## 5. Sub-stages (each gated, each separately authorised)
 
 ```
-2C.2-0  M3 feasibility investigation (NO source change)      → G2-0 → authorise →
-2C.2a   mk_struct_sort recursion (re-apply, proven clean)     → G2a  → authorise →
-2C.2b   router discriminator → is_tuple_array_ast_type        → G2b  → authorise →
-2C.2c   mk_tuple_array_symbol K≥2 per-field NATIVE symbols     → G2c  → authorise →
-2C.2d   commutation in convert_member/index/store (THE stage)  → G2d  → authorise →   ← semantic core
-2C.2e   full regression gauntlet (+ --cvc5 slice)              → G2e  → authorise →
-2C.2f   KNOWNBUG→CORE flips + new CORE tests                   → G2f
+2C.2-0  M3 feasibility investigation (NO source change)      → G2-0 ✅ GREEN (2026-05-15) →
+2C.2a   mk_struct_sort recursion (re-apply, proven clean)     → G2a ✅ GREEN (re-applied 2026-05-15) →
+2C.2b   router discriminator → is_tuple_array_ast_type        → G2b ✅ GREEN (2026-05-15) →
+2C.2c   mk_tuple_array_symbol K≥2 per-field NATIVE symbols     → G2c ✅ GREEN (2026-05-15) →
+2C.2d   commutation (OO: select/update/assign distribute)      → G2d ✅ GREEN (2026-05-15) →   ← semantic core
+2C.2e   full regression gauntlet (+ --cvc5 slice)              → G2e ✅ GREEN (2026-05-15) →
+2C.2f   KNOWNBUG→CORE flips + new CORE tests                   → G2f ✅ GREEN (2026-05-15)
+
+> **STAGE 2C CLOSED 2026-05-15.** Mechanism refinement vs design §3.2:
+> the commutation was implemented as OO dispatch on the tuple_node
+> (`tuple_node_smt_ast::select` distribute, `::update` per-field native
+> store, `::assign` fall back to field-wise eq for the eager SoA symbol
+> target) rather than as explicit branches in convert_member/index/
+> store — those three call select/update/project unchanged and need
+> ZERO edits (cleaner, smaller blast radius, same M3 representation,
+> identical soundness/completeness). Four code sites total:
+> (a) `smt_conv.cpp` NW0 router → is_tuple_array_ast_type (2C.2b);
+> (b) `smt_conv.cpp` NW1 array_id case → tuple-array carve-out above
+> the nested-backend branch (subsumes the K=1/finite mk_struct_sort
+> path → byte-identical there);
+> (c) `smt_tuple_node.cpp` mk_tuple_array_symbol K≥2 SoA build (2C.2c)
+> + `convert_array_of_prep` K≥2 constant → fresh per-field SoA (parity
+> with the existing K=1 infinite-mapping modelling-only nondet init —
+> NOT a new approximation; avoids bitwuzla's unsupported const-array
+> eq); rebuild_array_leaf propagates index_width (ledger #22 480-bit);
+> (d) `smt_tuple_node_ast.cpp` select/update/assign distribute;
+> tuple_get_array_elem + `smt_conv.cpp` get_array return empty for the
+> SoA tuple_node (model-readback unimplemented for nested tuple-array,
+> same convention as tuple_get_rec — verdict from solver, unaffected).
+> Soundness: STRENGTHENED (NW1 abort removed, no new approximation; 7
+> manual probes — round-trip, dual, sibling-independence, dim-order
+> non-aliasing, cross-slot — all correct; dual/sibling/dimorder landed
+> as CORE FAILED regressions). Completeness: STRENGTHENED (K≥2
+> nested-mapping/array-of-struct gains a verdict; K=1/finite/non-tuple
+> byte-identical). Overhead: linear in m (one native nested array per
+> field); pin family <1 s. Flips: Solidity
+> `mapping_struct_smtsort_k2_knownbug`→`_k2_pass` (CORE SUCCESSFUL) and
+> C `regression/esbmc/nested_inf_array_of_struct_knownbug`→
+> `nested_inf_array_of_struct` (CORE, Branch Coverage 75%). Gauntlets:
+> 29/29 then final 21/21 (Solidity+C+C++ struct·array·mapping slices,
+> zero regressions); --cvc5 inert (native tuple_api path untouched).
 ```
 
 - **2C.2-0 (investigation, no code)**: prove M3's commutation is
