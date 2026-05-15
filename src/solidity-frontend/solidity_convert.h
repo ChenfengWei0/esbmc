@@ -928,6 +928,12 @@ protected:
     bool is_method);
   const nlohmann::json &
   get_func_decl_ref(const std::string &c_name, const std::string &f_name);
+  // True iff `type`, resolved through pointer/symbol-type indirection
+  // to its underlying struct, declares a component named `comp`.
+  // Used to distinguish a contract-instance struct (carries the
+  // synthetic $address/$balance members) from a `library` struct
+  // (does not) when lowering address(this)/.balance.
+  bool struct_type_has_component(const typet &type, const std::string &comp);
   void get_builtin_property_expr(
     const std::string &cname,
     const std::string &name,

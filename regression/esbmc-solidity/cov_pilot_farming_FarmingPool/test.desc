@@ -1,0 +1,5 @@
+KNOWNBUG
+contract.solast
+--sol contract.sol --contract FarmingPool --branch-coverage-claims --k-induction --unlimited-k-steps --memlimit 8g --timeout 90 --quiet --no-assertions
+^Branches : 338$
+^Branch Coverage: [1-9]

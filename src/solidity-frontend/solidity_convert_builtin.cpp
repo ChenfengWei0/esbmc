@@ -582,6 +582,25 @@ void solidity_convertert::get_aux_property_function(
   new_expr = _call;
 }
 
+bool solidity_convertert::struct_type_has_component(
+  const typet &type,
+  const std::string &comp)
+{
+  typet rt = type;
+  if (rt.id() == "pointer")
+    rt = rt.subtype();
+  while (rt.id() == "symbol")
+  {
+    const symbolt *s = context.find_symbol(to_symbol_type(rt).get_identifier());
+    if (s == nullptr)
+      return false;
+    rt = s->type;
+  }
+  if (rt.id() != "struct")
+    return false;
+  return to_struct_type(rt).has_component(comp);
+}
+
 // get member access of built-in property.
 // e.g. x.$balance, x.$code ...
 void solidity_convertert::get_builtin_property_expr(

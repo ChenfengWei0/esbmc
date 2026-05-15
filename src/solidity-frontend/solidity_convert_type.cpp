@@ -1748,7 +1748,26 @@ void solidity_convertert::convert_type_expr(
       else
         t = addrp_t;
 
-      src_expr = member_exprt(src_expr, comp_name, t);
+      // Only build the synthetic $address member when src_expr's
+      // resolved struct actually carries it (a contract instance).
+      // Inside a `library` function body src_expr is the library
+      // struct, which has no $address. A library executes via
+      // DELEGATECALL in the caller's context, so address(this) is the
+      // enclosing contract's address — model it with the ambient
+      // _ESBMC_enclosing_contract_address (same choice as the library
+      // branch in solidity_convert_call.cpp ~3336). Without this guard
+      // member_exprt(<library struct>, "$address") survives the
+      // frontend and aborts at migrate.cpp -> irep2_type.cpp
+      // get_component_number during goto_convert.
+      if (struct_type_has_component(src_expr.type(), comp_name))
+        src_expr = member_exprt(src_expr, comp_name, t);
+      else
+      {
+        exprt encl = symbol_expr(
+          *context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
+        solidity_gen_typecast(ns, encl, t);
+        src_expr = encl;
+      }
     }
     else if (
       (SolidityGrammar::is_address_type(src_sol_type) ||
