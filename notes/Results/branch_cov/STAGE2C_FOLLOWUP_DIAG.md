@@ -122,7 +122,46 @@ KNOWNBUG→CORE flip targets = the 7 re-pinned aqua pilots
 pair; full Solidity regression gauntlet; soundness probes
 (read-back of the deep-nested write round-trips).
 
+## Fix LANDED 2026-05-15
+
+Applied exactly the sketch above — `solidity_convert_expr.cpp:4203`:
+
+```cpp
+new_expr = index_exprt(
+  array, pos, array.type().is_array() ? array.type().subtype() : t);
+```
+
+The `is_array()` guard preserves the `t` path for the non-array
+(mapping_t struct: fixed-array-value / new-expr / cloned) base, so
+those shapes are untouched; the array case now mirrors the
+direct-access fast path (:4174). One-line semantic change (+ comment);
+`git clang-format`-clean; **no whole-file reformat**.
+
+### Verification
+
+- **Soundness** (cvc5, deep nested-mapping scalar): p3 write→read
+  round-trip SUCCESSFUL; f3 dual (`==v+1`) FAILED (non-vacuous); p4i
+  depth-4 key-independence (`[a][b][c][d]=v; [a][b][c][c]=0; d!=c`)
+  SUCCESSFUL (no slot aliasing). Default-solver struct: sp3 SUCCESSFUL,
+  sf3 FAILED, sp4 SUCCESSFUL.
+- **Flips**: 6 aqua pilots KNOWNBUG→CORE (+ `_readonly` already CORE)
+  = 7 emitting clean `Branch Coverage: 75%` (4 br, 3 reached, clean
+  exit). `_uint256` stays KNOWNBUG: abort fixed, but scalar deep
+  nested-mapping is k-induction-non-convergent under coverage and trips
+  bitwuzla const-array-eq under assertion BMC — pre-existing,
+  orthogonal, not introduced by the fix (documented in its header).
+- **New CORE regressions**: `nested_mapping_write_3lvl_struct_{pass,
+  fail}` (default solver), `nested_mapping_write_4lvl_struct_pass`
+  (`--cvc5`; bitwuzla is 64 s vs cvc5 0.01 s — solver-perf, not
+  soundness).
+- **No regression**: focused gauntlet 22/24 (the only non-passes were
+  `_uint256` KNOWNBUG-timeout — expected — and `4lvl_struct_pass`
+  pre-`--cvc5` perf, since resolved). Stage 2C pin family,
+  `nested_inf_array_of_struct`, `mapping_1[0-2]`, `nested_array_2d`,
+  `napp_map_2d_struct` all green. cppcheck clean for the changed file.
+
 ## Scope
 
-This document is **diagnosis only**. No source change, no test
-change, no commit. The fix is a distinct, separately-authorised stage.
+Diagnosis + fix complete. The residual `_uint256` k-induction /
+const-array-eq limitation is a separate, pre-existing, orthogonal item
+(KNOWNBUG-pinned, not the diagnosed bug).

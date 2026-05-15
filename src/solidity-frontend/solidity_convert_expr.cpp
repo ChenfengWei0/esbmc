@@ -4200,7 +4200,21 @@ bool solidity_convertert::get_index_access_expr(
         gen_mapping_key_typecast(
           current_contractName, pos, location, pos.type());
         xor_fold_key_to_64bit(pos);
-        new_expr = index_exprt(array, pos, t);
+        // Use the resolved base array's declared subtype rather than
+        // `t` from get_type_description: for nested mappings (>=3
+        // levels) `t` is the AST value type and lacks the inner array
+        // dimensions, so it under-nests the intermediate index node
+        // (e.g. `array<uint256,inf>` collapsed to `uint256`).  That
+        // mis-typed index later makes symex_assign_array build a
+        // with2t whose value is non-array while the source subtype is
+        // an array -> with2t::assert_consistency / value_sett::assign
+        // abort on the deep nested-mapping WRITE.  This mirrors the
+        // direct-access fast path (array.type().subtype(), above).
+        // Fall back to `t` only when the resolved base is not
+        // array-typed (mapping_t struct: fixed-array-value / new-expr
+        // / cloned shapes), where index_exprt typing is unaffected.
+        new_expr = index_exprt(
+          array, pos, array.type().is_array() ? array.type().subtype() : t);
       }
       return false;
     }

@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT
 //
-// KNOWNBUG. Stage 2C (commit 3d6d424b73) removed the `bare smt_sort
-// (id=4)` SMT-backend abort this was pinned for.  Post-2C blocker is
-// independent and upstream of the SMT backend:
-//   src/irep2/irep2_expr.cpp:366 assert_type_compat_for_with:
-//   Assertion `is_array_type(b)' failed
-// (goto-symex with2t chain on a 4-level mapping-of-X storage-ref
-// write; reproduces even with a non-struct value — see the
-// _uint256 sibling — so it is NOT Stage 2C's struct-of-arrays path).
-// KNOWNBUG regex `^Branch Coverage:` unchanged — still stable (no
-// coverage emitted), flips when this symex/IR wall is fixed.
-// See notes/Results/branch_cov/STAGE2C_FOLLOWUP_REPIN.md.
+// CORE (flipped from KNOWNBUG 2026-05-15 by the deep-nested-mapping
+// WRITE fix in src/solidity-frontend/solidity_convert_expr.cpp:4203:
+// the nested mapping-access branch now types the intermediate
+// index_exprt with array.type().subtype() instead of the under-nested
+// get_type_description `t` (mirrors the direct-access fast path :4174).
+// Previously: bare smt_sort (Stage 0/1) -> after Stage 2C, symex/IR
+// abort (irep2_expr.cpp:366 / value_set.cpp:1258) on the >=3-level
+// nested-mapping storage-ref write.  Now completes: Branch Coverage
+// 75% (4 branches, 3 reached).  See
+// notes/Results/branch_cov/STAGE2C_FOLLOWUP_DIAG.md.
 pragma solidity ^0.8.0;
 
 struct Balance { uint248 amount; uint8 tokensCount; }

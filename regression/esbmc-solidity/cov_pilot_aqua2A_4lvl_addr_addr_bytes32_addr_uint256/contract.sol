@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: MIT
 //
-// KNOWNBUG. Stage 2C (commit 3d6d424b73) removed the `bare smt_sort
-// (id=4)` SMT-backend abort this was pinned for.  Post-2C blocker is
-// independent and upstream of the SMT backend:
-//   src/irep2/irep2_expr.cpp:366 assert_type_compat_for_with:
-//   Assertion `is_array_type(b)' failed
-// This pilot's mapping value is a plain `uint256` (NOT a struct), so
-// the wall is the 4-level nested-mapping storage-ref WRITE itself in
-// goto-symex/IR — categorically not Stage 2C's struct-of-arrays path.
-// KNOWNBUG regex `^Branch Coverage:` unchanged — still stable (no
-// coverage emitted), flips when this symex/IR wall is fixed.
-// See notes/Results/branch_cov/STAGE2C_FOLLOWUP_REPIN.md.
+// KNOWNBUG. The deep-nested-mapping WRITE symex/IR abort
+// (irep2_expr.cpp:366) IS fixed (solidity_convert_expr.cpp:4203); this
+// pilot no longer aborts.  Residual, pre-existing, ORTHOGONAL solver
+// limits keep it from emitting coverage: scalar (uint256-valued) deep
+// nested-mapping does not converge under k-induction coverage
+// (k-induction budget-burn) and trips bitwuzla const-array-equality
+// under assertion BMC.  Not the diagnosed bug, not introduced by the
+// fix; stays KNOWNBUG (regex `^Branch Coverage:` unmatched).  See
+// notes/Results/branch_cov/STAGE2C_FOLLOWUP_DIAG.md.
 pragma solidity ^0.8.0;
 contract C {
     mapping(address => mapping(address => mapping(bytes32 => mapping(address => uint256)))) private _b;
