@@ -288,8 +288,24 @@ void goto_coveraget::branch_coverage()
       }
     }
 
-  total_branch = get_total_instrument();
+  // File/project-level branch coverage: the denominator must count each
+  // *distinct source decision* once. ESBMC's Solidity frontend flattens
+  // inheritance by emitting one physical function copy per derived
+  // contract (e.g. @C@A@F@bumpInternal#29 and @C@B@F@bumpInternal#29),
+  // and splices a modifier body at each use site. get_total_instrument()
+  // is a raw per-instruction count over forall_goto_functions, so it
+  // double-counts these artifact copies. get_total_cond_assert() keys
+  // each claim by (condition, location.as_string()) where as_string()
+  // uses the *source* function name + file:line — exactly the file-level
+  // source identity — and returns a std::set, so the copies fold to one.
+  // The numerator (reached_claims, matched against all_claims) already
+  // uses this deduplicated set; making the denominator use the same set
+  // restores numerator/denominator parity. Override and sibling
+  // decisions stay distinct (different source line). Other coverage
+  // modes (assertion/k-path/branch-function) keep get_total_instrument()
+  // by design — only branch coverage is file-level-aggregated.
   all_claims = get_total_cond_assert();
+  total_branch = static_cast<size_t>(all_claims.size());
 
   // avoid Assertion `call_stack.back().goto_state_map.size() == 0' failed
   goto_functions.update();
