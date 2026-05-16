@@ -10,9 +10,11 @@ pragma solidity ^0.8.0;
 // attributed to A and EXCLUDED from B's own count even though B applies
 // the modifier. B's setB has no own decision => "No branch detected".
 // This is the named, accepted completeness trade-off (a base/other-
-// contract-defined modifier applied by B is not counted under
-// --contract B; there is no opt-in whole-unit escape hatch). KNOWNBUG
-// pins this gap honestly; it flips only if that trade-off is revisited.
+// contract-defined modifier applied by B is not counted under bare
+// --contract B). The opt-in escape hatch is `--coverage-whole-unit`,
+// which recovers these decisions while keeping B as the harness entry
+// (see cov_whole_unit_modifier_crosscontract_pass). This test pins the
+// scoped (no-flag) behavior, which is unchanged and correct.
 contract A {
     uint256 public a;
     modifier gate(uint256 z) {

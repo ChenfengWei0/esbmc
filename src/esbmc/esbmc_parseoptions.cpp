@@ -3561,9 +3561,11 @@ bool esbmc_parseoptionst::process_goto_program(
       // for function mode
       if (cmdline.isset("function"))
         tmp.set_target(cmdline.getval("function"));
-      // Per-contract branch coverage: scope the denominator/numerator to
-      // decisions lexically declared inside the --contract target only.
-      if (cmdline.isset("contract"))
+      // Per-contract branch coverage (semantics A): scope the
+      // denominator/numerator to decisions lexically declared inside the
+      // --contract target only. --coverage-whole-unit opts out: keep the
+      // contract as the harness entry but count the whole compilation unit.
+      if (cmdline.isset("contract") && !cmdline.isset("coverage-whole-unit"))
         tmp.scope_contract = cmdline.getval("contract");
       tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
       tmp.branch_coverage();

@@ -789,6 +789,12 @@ const struct group_opt_templ all_cmd_options[] = {
      {"branch-coverage-claims",
       NULL,
       "Enable branch-coverage and shows all reached claims"},
+     {"coverage-whole-unit",
+      NULL,
+      "With --contract C, keep C as the harness entry but count branch "
+      "coverage over the whole compilation unit instead of scoping the "
+      "denominator/numerator to C's own lexically-declared decisions "
+      "(opt-out of per-contract semantics A)"},
      {"branch-function-coverage",
       NULL,
       "Show the coverage of branches and function entry"},
