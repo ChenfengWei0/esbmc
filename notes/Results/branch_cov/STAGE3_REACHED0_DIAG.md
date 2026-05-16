@@ -1,5 +1,19 @@
 # Stage 3 — diagnosis of the "Reached: 0" cluster (post-2C)
 
+> **CORRECTION 2026-05-15 (same day, later).** The "EscrowDst → CORE"
+> conclusion in this document (the `Branches : 90 / Reached : 37 /
+> 41.11%` flip) was **WRONG and has been walked back**. The
+> library-receiver crash-fix below is sound and is kept; it only
+> *unblocked* EscrowDst from aborting. It did NOT make EscrowDst's
+> coverage correct: `Branches : 90` for a contract with ~4 own
+> branches is the **`--contract` scoping bug** — `--show-claims`
+> (captured 2026-05-15) shows 48 library + 38 base-modifier-spliced +
+> 4 own. EscrowDst's `test.desc` is reverted to **KNOWNBUG**
+> (`^Branches : 90$` + `^Branch Coverage: [1-9]$`). Pinning the
+> bug's output as CORE encoded a bug as correct behaviour. Full
+> root-cause + fix design: **`COVERAGE_CONTRACT_SCOPING_ROOTCAUSE.md`**.
+> Read the EscrowDst rows below through this correction.
+
 Generated 2026-05-15. **Diagnosis only — no fix** (fix is a separate,
 separately-authorised stage, per `feedback_strict_stage_authorization`).
 Cluster: `cov_pilot_cross_chain_swap_EscrowDst`,
@@ -187,9 +201,15 @@ replaces performed no analysis at all.
 | `FarmingPool` | SIGABRT `$address in SafeERC20` | library crash GONE; **new independent** SIGABRT `nonexistant member "getTotalSupply" in "struct BytesStatic"` (abi/bytes path — distinct root cause) |
 | `St1inch` | SIGABRT `$address in SafeERC20` | library crash GONE; runs to completion (`VERIFICATION SUCCESSFUL`), k-induction coverage non-convergent within `--timeout` (`Reached : 0` via budget-burn — documented orthogonal class) |
 
-- **EscrowDst → CORE.** `test.desc` flipped KNOWNBUG→CORE with the
-  deterministic real-coverage regex (`^Branches : 90$` /
-  `^Reached : 37$` / `^Branch Coverage: 41\.111111111111114%$`).
+- **EscrowDst → CORE. ❌ WALKED BACK 2026-05-15 (see top banner).**
+  This flip was wrong: `Branches : 90` is the `--contract` scoping
+  bug, not real coverage (48 lib + 38 base-modifier-spliced + 4 own,
+  per `--show-claims`). Reverted to **KNOWNBUG** pinned
+  `^Branches : 90$` + `^Branch Coverage: [1-9]$` (the latter fails on
+  today's `41.111…%` → stable KNOWNBUG, mirrors the
+  FarmingPool/St1inch sentinel). The crash-fix that unblocked the run
+  is unaffected and kept. Root cause + fix:
+  `COVERAGE_CONTRACT_SCOPING_ROOTCAUSE.md`.
 - **FarmingPool / St1inch → KNOWNBUG re-pinned.** The original regex
   pinned the *buggy* `^Branches : N$ / ^Reached : 0$ /
   ^Branch Coverage: 0%$` output. KNOWNBUG semantics
