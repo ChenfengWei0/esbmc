@@ -82,6 +82,27 @@ Reached:3 75%` 通过。2026-05-15 已由 `solidity_convert_expr.cpp:4203`
 深层嵌套 mapping WRITE 修复翻 CORE(本会话前已提交)。
 完整 87KB aqua 扁平合约是否仍有其他墙 = 待探(下一步)。
 
+## 5b. (A) 完成:完整 aqua CORE pin 已落地 + 新暴露 S-D 残留
+
+`regression/esbmc-solidity/cov_pilot_aqua_Aqua_full/`(88KB flat,CORE,
+`ctest` 2.61s PASS,远低于 in-desc `--timeout 90` → 无超时 flake)。
+实测 11 次:**10/11 = Branches 164 / Reached 13 / 7.926829268292683%**;
+**1/11 冷启动离群 = 166(7.831%)**;`Reached 13` 11/11 稳定。
+
+test.desc 只钉**稳定信号**(`^Reached : 13$`、`^Branch Coverage: 7\.`),
+**不钉** exact `Branches`(避免 1/11 wobble 导致 CORE flake);SIGABRT
+回归 → `[Coverage]` 块消失 → 两条 regex 失败 → 告警(达成防回归目的)。
+
+**新暴露的 S-D 残留(诚实记录,非掩盖):** S-D 的去重键
+`(condition, location.as_string())` 对简单条件确定(cov_scope 稳定、
+goto-coverage 109/109),但对带 SSA 临时计数器(`return_value$..$N`)
+的复杂 Solidity 条件、**且 `--no-assertions` 下 `location` 塌成
+`line 1`(R3)** 时,两个重复副本偶尔不折叠 → 分母 164↔166 冷跑抖动
+(1/11)。这是字符串键 vs 结构化源身份的固有脆弱点。**S-D 净仍为
+改进**(修正 6→4 / 90→80 粗重复、简单情形确定、零 goto-coverage 回归),
+但有此鲁棒性缺口。**硬化候选(独立 stage,不在本次):** 去重键改用
+AST-node-id,或令 `--no-assertions` 下 `location` 保留真实行号。
+
 ## 6. 残留 / 下一步
 
 - **S-N2**:跨 `--contract` run 的 reached 取并聚合器(真项目覆盖率
