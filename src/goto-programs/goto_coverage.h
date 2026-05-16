@@ -99,6 +99,14 @@ public:
 
   std::string target_function = "";
   bool cov_assume_asserts = false;
+  // When non-empty (set from --contract), branch_coverage() instruments
+  // ONLY decisions whose lexically-declaring Solidity contract equals this
+  // name (location's "sol_decl_contract", stamped by the frontend). This
+  // makes per-contract branch coverage count C's own source decisions
+  // only; inherited/library decisions are attributed to their own
+  // declaring contract and excluded. Empty => no scoping (unchanged
+  // whole-unit behaviour, e.g. C/C++/no --contract).
+  std::string scope_contract = "";
 
   // k-path coverage knobs (see #4325 "Decided defaults").
   // n  : prefix depth — number of consecutive branches in each witness

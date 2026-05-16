@@ -24,6 +24,54 @@
 
 #include <fstream>
 
+// Lexically-declaring contract of an AST node: the top-level
+// ContractDefinition whose source byte span contains the node's `src`
+// start offset. This is the definition of "lexical declarer" itself and
+// is invariant across inheritance merge-by-copy and modifier splicing
+// (merge/splice copy the json verbatim including `src`, so a decision
+// keeps its original textual offset = inside its declaring contract's
+// span). Uniform for FunctionDefinition AND ModifierDefinition (the
+// latter has no `scope` field). Done on the AST at stamp time — not on
+// goto `it->location` line ranges (that was the unsound rejected Fix-A,
+// a different layer). Empty for file-scope/free constructs (correctly
+// unattributed → excluded under --contract). Contract spans do not
+// overlap (siblings in the flattened SourceUnit).
+const std::string &
+solidity_convertert::current_decl_contract(const nlohmann::json &ast_node)
+{
+  static const std::string empty;
+  if (!cd_id_to_name_built)
+  {
+    cd_id_to_name_built = true;
+    if (src_ast_json.contains("nodes") && src_ast_json["nodes"].is_array())
+      for (const auto &n : src_ast_json["nodes"])
+        if (
+          n.is_object() && n.value("nodeType", "") == "ContractDefinition" &&
+          n.contains("name") && n.contains("src"))
+        {
+          const std::string s = n["src"].get<std::string>();
+          size_t c1 = s.find(':');
+          size_t c2 = s.find(':', c1 + 1);
+          long st = std::stol(s.substr(0, c1));
+          long ln = std::stol(s.substr(c1 + 1, c2 - c1 - 1));
+          cd_spans.push_back({st, st + ln, n["name"].get<std::string>()});
+        }
+  }
+
+  if (!ast_node.is_object())
+    return empty;
+  const std::string src = ast_node.contains("src")
+                            ? ast_node["src"].get<std::string>()
+                            : get_src_from_json(ast_node);
+  if (src.empty() || src.find(':') == std::string::npos)
+    return empty;
+  long off = std::stol(src.substr(0, src.find(':')));
+  for (const auto &sp : cd_spans)
+    if (off >= sp.start && off < sp.end)
+      return sp.name;
+  return empty;
+}
+
 void solidity_convertert::get_location_from_node(
   const nlohmann::json &ast_node,
   locationt &location)
@@ -37,6 +85,9 @@ void solidity_convertert::get_location_from_node(
   {
     location.set_function(
       current_functionName); // set the function where this local variable belongs to
+    const std::string &dc = current_decl_contract(ast_node);
+    if (!dc.empty())
+      location.set("sol_decl_contract", dc);
   }
 }
 
@@ -57,6 +108,13 @@ void solidity_convertert::get_start_location_from_stmt(
 
   if (!function_name.empty())
     location.set_function(function_name);
+
+  if (current_functionDecl)
+  {
+    const std::string &dc = current_decl_contract(ast_node);
+    if (!dc.empty())
+      location.set("sol_decl_contract", dc);
+  }
 }
 
 void solidity_convertert::get_final_location_from_stmt(
@@ -76,6 +134,13 @@ void solidity_convertert::get_final_location_from_stmt(
 
   if (!function_name.empty())
     location.set_function(function_name);
+
+  if (current_functionDecl)
+  {
+    const std::string &dc = current_decl_contract(ast_node);
+    if (!dc.empty())
+      location.set("sol_decl_contract", dc);
+  }
 }
 
 unsigned int solidity_convertert::get_line_number(

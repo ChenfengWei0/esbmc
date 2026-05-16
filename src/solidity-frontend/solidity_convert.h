@@ -706,6 +706,12 @@ protected:
   void extract_new_contracts();
 
   // line number and locations
+  // Name of the ContractDefinition that lexically declares an AST node
+  // (its `src` byte offset falls inside the contract's source span).
+  // Invariant across inheritance merge-by-copy and modifier splicing.
+  // Stamped onto every statement location as "sol_decl_contract" so
+  // per-contract branch coverage can attribute by lexical declarer.
+  const std::string &current_decl_contract(const nlohmann::json &ast_node);
   void
   get_location_from_node(const nlohmann::json &ast_node, locationt &location);
   void get_start_location_from_stmt(
@@ -1274,6 +1280,17 @@ protected:
 
   const nlohmann::json *current_functionDecl;
   const nlohmann::json *current_forStmt;
+  // Lazily-built source byte spans of top-level ContractDefinitions,
+  // backing current_decl_contract(). cd_id_to_name_built guards the
+  // one-time scan (handles the zero-contract source correctly).
+  struct cd_span_t
+  {
+    long start;
+    long end;
+    std::string name;
+  };
+  std::vector<cd_span_t> cd_spans;
+  bool cd_id_to_name_built = false;
   // store multiple exprt and flatten the block
   code_blockt expr_frontBlockDecl;
   code_blockt expr_backBlockDecl;

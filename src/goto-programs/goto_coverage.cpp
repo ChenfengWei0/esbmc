@@ -278,6 +278,21 @@ void goto_coveraget::branch_coverage()
         // e.g. IF !(a > 1) THEN GOTO 3
         else if (it->is_goto() && !is_true(it->guard))
         {
+          // Per-contract scoping (--contract C, Solidity): only instrument
+          // decisions lexically declared inside contract C. The frontend
+          // stamps each statement location with "sol_decl_contract" (its
+          // declaring ContractDefinition, invariant across inheritance
+          // merge-by-copy). Skipping the assert pair for C-foreign
+          // decisions auto-scopes BOTH the denominator
+          // (get_total_cond_assert counts instrumented asserts only) and
+          // the numerator (reached_claims can only hit instrumented
+          // asserts), so the percentage stays correct by construction.
+          if (
+            !scope_contract.empty() &&
+            it->location.get("sol_decl_contract").as_string() !=
+              scope_contract)
+            continue;
+
           if (it->is_target())
             target_num = it->target_number;
           // assert(!(a > 1));
