@@ -10,17 +10,35 @@ locked decisions → implement on confirmation
 The algorithm doc's Item 2e note framed this as "which contract to run
 first". The measurement showed the dominant lever is different:
 
-- **ESBMC `--timeout` is inconsistent.** St1inch scoped `--timeout 40`:
-  graceful — reaches `report_coverage()`, writes the JSON (but
-  `Reached: 0`, see below). EscrowDst **`--coverage-whole-unit`
-  `--timeout 20`**: the timeout fires *mid-SMT-solve* (claim at
-  contract.sol:1500), the process dies **before `report_coverage()`** —
-  **no JSON, zero edges persisted** (`ls`: file absent; output ends
-  `Solving with solver Bitwuzla` → `ERROR: Timed out`).
-- ⇒ The Item-2 write-back is **end-only** (bmc.cpp `report_coverage()`).
-  A bounded heavy run that is killed mid-solve persists **nothing**, so
-  repeated bounded runs do **not** accumulate — exactly the
-  whole-unit-heavy case Item 2e must serve.
+- **`--timeout` is ALWAYS a hard `_exit(1)` from the SIGALRM handler**
+  (verified: `esbmc_parseoptions.cpp:520-521`
+  `signal(SIGALRM,timeout_handler); alarm(N)`; `:114-120`
+  `timeout_handler` → `log_error("Timed out")` →
+  `cleanup_registered_tmps()` → `_exit(1)`). It never unwinds, never
+  runs atexit, never returns control to `report_coverage()`. It is not
+  "graceful" and there are not two timeout behaviours — it is one
+  unconditional kill that can land on any instruction.
+- The observed difference is therefore **not** about timeout behaviour
+  but about **whether the process had reached a `report_coverage()`
+  call at least once before SIGALRM fired** (the Item-2 write-back is
+  end-of-report only):
+  - St1inch scoped `--timeout 40`: k-induction's base case completed
+    inside the budget, `report_coverage()` ran once (wrote the JSON —
+    `Reached: 0` due to the upstream blocker below), the run kept
+    going to higher k, and SIGALRM `_exit(1)` fired later. JSON
+    exists (0 edges).
+  - EscrowDst `--coverage-whole-unit --timeout 20`: a single claim
+    solve (contract.sol:1500) alone exceeded 20s, so
+    `report_coverage()` was **never reached even once** before
+    SIGALRM `_exit(1)` — no JSON, zero edges (output ends
+    `Solving with solver Bitwuzla` → `ERROR: Timed out`).
+- ⇒ The Item-2 end-only write-back is **fundamentally unreliable
+  under `--timeout`**: it survives only if the run happened to reach
+  ≥1 `report_coverage()` before the alarm. A heavy whole-unit run that
+  can't reach one in the budget persists **nothing**, so bounded
+  re-runs do **not** accumulate — exactly the case Item 2e must serve
+  (persist *during* solving, before any report, so progress survives
+  the `_exit(1)` whenever it lands).
 - **St1inch / Farming are OUT OF SCOPE.** Their `Reached: 0` is the
   pre-existing upstream GOTO-gen / lib-typed-receiver bug (memory
   `reference_stage2c_node_flattener_correction`): zero edges are *ever*

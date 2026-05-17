@@ -8,6 +8,17 @@ monotonically. Below is the exact before/after on the real pilot
 (the heavy ~80-edge case), `--timeout 20` (in-tool), outer `timeout 60`,
 `--k-induction` (coverage MUST use k-induction). Captured this session.
 
+Mechanism (verified `esbmc_parseoptions.cpp:114-120,520-521`):
+`--timeout` is ALWAYS an unconditional `_exit(1)` from the SIGALRM
+handler — never graceful, never returns to `report_coverage()`, can
+land on any instruction. The Item-2 write-back is end-of-report only,
+so it survives a timeout *only if* the run reached ≥1
+`report_coverage()` before the alarm. For this heavy whole-unit case a
+single claim solve exceeds the budget, so no report is ever reached →
+end-only persistence saves nothing. Item 2e persists at the
+per-`P_SATISFIABLE` hook *during* solving, before any report, so
+progress survives the `_exit(1)` whenever it lands.
+
 ## Reproduce
 
 ```sh
