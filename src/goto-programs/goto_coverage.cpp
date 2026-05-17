@@ -359,6 +359,19 @@ void goto_coveraget::branch_coverage()
               scope_contract)
             continue;
 
+          // Item 5-d: dependency exclusion. Drop the decision BEFORE the
+          // all_claims.insert below, so an excluded contract's decisions
+          // leave BOTH the denominator (static universe) and the
+          // numerator (no assert => reached_claims can never hit it) —
+          // exactly the "OZ in no denominator, no numerator" property.
+          // Default mode never reaches here for foreign code (scope
+          // filter above already skipped it), so this is a no-op there.
+          if (
+            !exclude_contracts.empty() &&
+            exclude_contracts.count(
+              it->location.get("sol_decl_contract").as_string()))
+            continue;
+
           if (it->is_target())
             target_num = it->target_number;
 

@@ -133,6 +133,16 @@ public:
   // identical to before Item 2). Read at branch_coverage() entry.
   std::string covered_set_path = "";
 
+  // Item 5-d: contracts whose own decisions are excluded from branch
+  // coverage entirely (--coverage-exclude-contract, repeatable). A
+  // decision whose "sol_decl_contract" is in this set is dropped BEFORE
+  // all_claims.insert, so it counts in NEITHER the denominator NOR the
+  // numerator (true dependency exclusion, e.g. OpenZeppelin under
+  // --coverage-whole-unit). Empty => no exclusion. In default
+  // per-contract mode scope_contract already filters foreign decisions,
+  // so this set is a no-op there by construction.
+  std::set<std::string> exclude_contracts;
+
   // k-path coverage knobs (see #4325 "Decided defaults").
   // n  : prefix depth — number of consecutive branches in each witness
   //      (default 4 if --unwind is unset, else --unwind).

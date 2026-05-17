@@ -801,6 +801,15 @@ const struct group_opt_templ all_cmd_options[] = {
       "start (edges already witnessed are not re-instrumented, cutting "
       "SMT cost) and merge-written at end. The denominator stays the "
       "full static universe, so skipping never inflates coverage"},
+     {"coverage-exclude-contract",
+      boost::program_options::value<std::vector<std::string>>()->value_name(
+        "name"),
+      "Exclude a Solidity contract's own decisions from branch coverage "
+      "(repeatable). Decisions whose lexically-declaring contract is in "
+      "this set count in NEITHER the denominator NOR the numerator. Used "
+      "with --coverage-whole-unit to drop dependency code (e.g. "
+      "OpenZeppelin); a no-op in default per-contract mode, where foreign "
+      "decisions are already scoped out"},
      {"branch-function-coverage",
       NULL,
       "Show the coverage of branches and function entry"},

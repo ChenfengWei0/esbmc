@@ -3572,6 +3572,13 @@ bool esbmc_parseoptionst::process_goto_program(
       // full static universe, so % is never inflated).
       if (cmdline.isset("coverage-covered-set"))
         tmp.covered_set_path = cmdline.getval("coverage-covered-set");
+      // Dependency exclusion (Item 5-d): decisions whose declaring
+      // contract is in this set are dropped from BOTH denominator and
+      // numerator. Meaningful under --coverage-whole-unit (a no-op in
+      // default mode, where scope_contract already filters foreign code).
+      if (cmdline.isset("coverage-exclude-contract"))
+        for (const auto &c : cmdline.get_values("coverage-exclude-contract"))
+          tmp.exclude_contracts.insert(c);
       tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
       tmp.branch_coverage();
     }
