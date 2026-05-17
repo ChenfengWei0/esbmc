@@ -890,9 +890,24 @@ void report_coverage(
   else if (is_branch_cov)
   {
     const size_t total = goto_coveraget::total_branch;
-    // this also included the non-unwinding-assertions
-    // which is not what we want
-    const size_t tracked_instance = reached_claims.size();
+    const bool cov_set_active = !goto_coveraget::covered_set_outpath.empty();
+
+    // Default (no --coverage-covered-set): unchanged — raw reached set
+    // (this also included non-universe entries like unwinding
+    // assertions, kept as-is to preserve existing pinned numbers).
+    // With the cross-run covered-set, the numerator is the universe
+    // edges EITHER witnessed this run OR already persisted — and is
+    // intersected with the universe, which also drops that over-count.
+    size_t tracked_instance = reached_claims.size();
+    if (cov_set_active)
+    {
+      tracked_instance = 0;
+      for (const auto &[cond, loc] : goto_coveraget::all_claims)
+        if (
+          goto_coveraget::covered_set.count({cond, loc}) ||
+          reached_claims.count(cond + "\t" + loc))
+          ++tracked_instance;
+    }
     log_success("\n[Coverage]\n");
     if (total == 0)
     {
@@ -912,6 +927,36 @@ void report_coverage(
       }
 
       log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
+    }
+
+    // Item 2 write-back: merge this run's witnessed universe edges into
+    // the persisted covered-set and rewrite the JSON. Monotone union —
+    // never truncated; only edges actually witnessed P_SATISFIABLE this
+    // run (present in reached_claims) are added.
+    if (cov_set_active)
+    {
+      using json = nlohmann::json;
+      auto merged = goto_coveraget::covered_set;
+      for (const auto &[cond, loc] : goto_coveraget::all_claims)
+        if (reached_claims.count(cond + "\t" + loc))
+          merged.emplace(cond, loc);
+      json out;
+      out["version"] = 1;
+      out["covered"] = json::array();
+      for (const auto &[cond, loc] : merged)
+        out["covered"].push_back({{"cond", cond}, {"loc", loc}});
+      std::ofstream f(goto_coveraget::covered_set_outpath);
+      if (f)
+      {
+        f << out.dump(2) << "\n";
+        log_success(
+          "coverage covered-set written to {}",
+          goto_coveraget::covered_set_outpath);
+      }
+      else
+        log_warning(
+          "coverage-covered-set: cannot write {}",
+          goto_coveraget::covered_set_outpath);
     }
   }
 

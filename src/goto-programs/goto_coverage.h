@@ -94,8 +94,22 @@ public:
   // the spanning-set denominator.
   static std::set<std::pair<std::string, std::string>>
     k_path_spanning_redundant;
-  // all instrumented claims (condition, location) for JSON report
+  // all instrumented claims (condition, location) for JSON report.
+  // For branch coverage this is the *static universe* (every in-scope
+  // decision edge, built with NO covered-set skip applied) so the
+  // denominator never shrinks when edges are skipped (Item 2c).
   static std::set<std::pair<std::string, std::string>> all_claims;
+
+  // Cross-run persisted covered-set (Item 2). covered_set holds the
+  // (guard_str, location.as_string()) edge keys loaded from the JSON at
+  // branch_coverage() entry; an edge present here is NOT re-instrumented
+  // this run (its assert pair is skipped) but still counted in the
+  // denominator via all_claims. covered_set_outpath, when non-empty, is
+  // where bmc.cpp merge-writes the accumulated set at run end. Static so
+  // the run-end report path (bmc.cpp) can read them like total_branch /
+  // all_claims.
+  static std::set<std::pair<std::string, std::string>> covered_set;
+  static std::string covered_set_outpath;
 
   std::string target_function = "";
   bool cov_assume_asserts = false;
@@ -107,6 +121,11 @@ public:
   // declaring contract and excluded. Empty => no scoping (unchanged
   // whole-unit behaviour, e.g. C/C++/no --contract).
   std::string scope_contract = "";
+
+  // Path to the cross-run covered-set JSON (--coverage-covered-set).
+  // Empty => disabled (no load, no skip, no write-back; behaviour
+  // identical to before Item 2). Read at branch_coverage() entry.
+  std::string covered_set_path = "";
 
   // k-path coverage knobs (see #4325 "Decided defaults").
   // n  : prefix depth — number of consecutive branches in each witness

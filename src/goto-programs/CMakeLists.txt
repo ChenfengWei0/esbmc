@@ -37,4 +37,4 @@ target_include_directories(gotoalgorithms
 )
 target_compile_definitions(gotoprograms PUBLIC BOOST_ALL_NO_LIB YAML_CPP_STATIC_DEFINE)
 
-target_link_libraries(gotoprograms PUBLIC pointeranalysis PRIVATE bigint usr_utils langapi)
+target_link_libraries(gotoprograms PUBLIC pointeranalysis PRIVATE bigint usr_utils langapi nlohmann_json::nlohmann_json)

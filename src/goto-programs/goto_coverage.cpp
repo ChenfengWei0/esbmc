@@ -2,9 +2,12 @@
 #include <goto-programs/k_path_spanning.h>
 #include <irep2/irep2_utils.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cassert>
 #include <deque>
+#include <fstream>
 #include <vector>
 
 size_t goto_coveraget::total_assert = 0;
@@ -17,6 +20,8 @@ size_t goto_coveraget::total_kpath_spanning = 0;
 std::set<std::pair<std::string, std::string>>
   goto_coveraget::k_path_spanning_redundant;
 std::set<std::pair<std::string, std::string>> goto_coveraget::all_claims;
+std::set<std::pair<std::string, std::string>> goto_coveraget::covered_set;
+std::string goto_coveraget::covered_set_outpath;
 
 std::string goto_coveraget::get_filename_from_path(std::string path)
 {
@@ -235,6 +240,40 @@ void goto_coveraget::branch_coverage()
 {
   log_progress("Adding false assertions...");
   total_branch = 0;
+  // all_claims is the no-skip static universe, rebuilt every call
+  // (Item 2c). covered_set/outpath start clean unless a path is given.
+  all_claims.clear();
+  covered_set.clear();
+  covered_set_outpath.clear();
+
+  // Cross-run covered-set (Item 2): load the persisted edge keys. A
+  // missing/unreadable/empty file is treated as "nothing covered yet"
+  // (first run). The path is still recorded so the run-end report
+  // (bmc.cpp) merge-writes the accumulated set back.
+  if (!covered_set_path.empty())
+  {
+    covered_set_outpath = covered_set_path;
+    std::ifstream in(covered_set_path);
+    if (in)
+    {
+      try
+      {
+        nlohmann::json j;
+        in >> j;
+        for (const auto &e : j.value("covered", nlohmann::json::array()))
+          covered_set.emplace(
+            e.at("cond").get<std::string>(), e.at("loc").get<std::string>());
+      }
+      catch (const std::exception &ex)
+      {
+        log_warning(
+          "coverage-covered-set: ignoring unparseable {} ({})",
+          covered_set_path,
+          ex.what());
+        covered_set.clear();
+      }
+    }
+  }
 
   std::unordered_set<std::string> location_pool = {};
   // cmdline.arg[0]
@@ -295,31 +334,56 @@ void goto_coveraget::branch_coverage()
 
           if (it->is_target())
             target_num = it->target_number;
-          // assert(!(a > 1));
+
+          // Edge keys (guard_str, location.as_string()) — exactly the
+          // identity get_total_cond_assert() and the numerator
+          // (bmc.cpp claim_sig) use, so universe / denominator /
+          // numerator stay key-aligned. as_string() excludes custom
+          // irep fields, so inheritance/modifier copies fold to one.
+          const expr2tc neg = gen_not_expr(it->guard);
+          const std::string loc = it->location.as_string();
+          const std::pair<std::string, std::string> k_g(
+            from_expr(ns, "", it->guard), loc);
+          const std::pair<std::string, std::string> k_ng(
+            from_expr(ns, "", neg), loc);
+
+          // Static universe (Item 2c): every in-scope edge counts in
+          // the denominator regardless of the covered-set skip below,
+          // so skipping can never inflate coverage.
+          all_claims.insert(k_g);
+          all_claims.insert(k_ng);
+
+          // Item 2b: an edge already witnessed P_SATISFIABLE in a prior
+          // run (covered_set) is not re-instrumented — fewer SMT
+          // obligations on re-runs. Sound: an instrumented assert is a
+          // property obligation, not a path constraint, so omitting it
+          // removes one observation only and perturbs no other branch;
+          // the cross-run cover is monotone-∃ (a real witness stays
+          // valid). Only true P_SATISFIABLE is ever written back.
           // assert(a > 1);
-          insert_assert(goto_program, it, it->guard);
-          insert_assert(goto_program, it, gen_not_expr(it->guard));
+          if (!covered_set.count(k_g))
+            insert_assert(goto_program, it, it->guard);
+          // assert(!(a > 1));
+          if (!covered_set.count(k_ng))
+            insert_assert(goto_program, it, neg);
         }
       }
     }
 
-  // File/project-level branch coverage: the denominator must count each
-  // *distinct source decision* once. ESBMC's Solidity frontend flattens
-  // inheritance by emitting one physical function copy per derived
-  // contract (e.g. @C@A@F@bumpInternal#29 and @C@B@F@bumpInternal#29),
-  // and splices a modifier body at each use site. get_total_instrument()
-  // is a raw per-instruction count over forall_goto_functions, so it
-  // double-counts these artifact copies. get_total_cond_assert() keys
-  // each claim by (condition, location.as_string()) where as_string()
-  // uses the *source* function name + file:line — exactly the file-level
-  // source identity — and returns a std::set, so the copies fold to one.
-  // The numerator (reached_claims, matched against all_claims) already
-  // uses this deduplicated set; making the denominator use the same set
-  // restores numerator/denominator parity. Override and sibling
-  // decisions stay distinct (different source line). Other coverage
-  // modes (assertion/k-path/branch-function) keep get_total_instrument()
-  // by design — only branch coverage is file-level-aggregated.
-  all_claims = get_total_cond_assert();
+  // Denominator = the no-skip static universe built in the loop above:
+  // every in-scope decision edge keyed by (condition,
+  // location.as_string()) in a std::set, so inheritance/modifier
+  // physical copies fold to one source identity and override/sibling
+  // decisions stay distinct (different source line). This decouples the
+  // denominator from what was actually instrumented (Item 2c): when the
+  // covered-set skip omits an assert, all_claims is unaffected, so
+  // coverage % can never be spuriously inflated. The numerator
+  // (reached_claims, matched against all_claims) uses the same key.
+  // When no covered-set is given this is identical to the previous
+  // get_total_cond_assert() result (same keys, same dedup), so the
+  // no-path path is behaviour-preserving. Other coverage modes
+  // (assertion/k-path/branch-function) keep get_total_cond_assert() /
+  // get_total_instrument() by design.
   total_branch = static_cast<size_t>(all_claims.size());
 
   // avoid Assertion `call_stack.back().goto_state_map.size() == 0' failed

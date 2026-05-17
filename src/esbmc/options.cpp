@@ -795,6 +795,12 @@ const struct group_opt_templ all_cmd_options[] = {
       "coverage over the whole compilation unit instead of scoping the "
       "denominator/numerator to C's own lexically-declared decisions "
       "(opt-out of per-contract semantics A)"},
+     {"coverage-covered-set",
+      boost::program_options::value<std::string>()->value_name("path"),
+      "Cross-run persisted covered-set for --branch-coverage. Read at "
+      "start (edges already witnessed are not re-instrumented, cutting "
+      "SMT cost) and merge-written at end. The denominator stays the "
+      "full static universe, so skipping never inflates coverage"},
      {"branch-function-coverage",
       NULL,
       "Show the coverage of branches and function entry"},

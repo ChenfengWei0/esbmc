@@ -3567,6 +3567,11 @@ bool esbmc_parseoptionst::process_goto_program(
       // contract as the harness entry but count the whole compilation unit.
       if (cmdline.isset("contract") && !cmdline.isset("coverage-whole-unit"))
         tmp.scope_contract = cmdline.getval("contract");
+      // Cross-run persisted covered-set: edges already witnessed in a
+      // prior run are not re-instrumented (the denominator is still the
+      // full static universe, so % is never inflated).
+      if (cmdline.isset("coverage-covered-set"))
+        tmp.covered_set_path = cmdline.getval("coverage-covered-set");
       tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
       tmp.branch_coverage();
     }
