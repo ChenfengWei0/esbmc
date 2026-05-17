@@ -929,34 +929,20 @@ void report_coverage(
       log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
     }
 
-    // Item 2 write-back: merge this run's witnessed universe edges into
-    // the persisted covered-set and rewrite the JSON. Monotone union —
-    // never truncated; only edges actually witnessed P_SATISFIABLE this
-    // run (present in reached_claims) are added.
+    // Item 2 / 2e final write-back: covered_set is the single live
+    // accumulator (loaded input ∪ every edge the Item-2e hook persisted
+    // as it was witnessed this run). Fold in any reached universe edge
+    // defensively, then one final atomic rewrite. Monotone union —
+    // never truncated; only true-P_SATISFIABLE edges are ever added.
     if (cov_set_active)
     {
-      using json = nlohmann::json;
-      auto merged = goto_coveraget::covered_set;
       for (const auto &[cond, loc] : goto_coveraget::all_claims)
         if (reached_claims.count(cond + "\t" + loc))
-          merged.emplace(cond, loc);
-      json out;
-      out["version"] = 1;
-      out["covered"] = json::array();
-      for (const auto &[cond, loc] : merged)
-        out["covered"].push_back({{"cond", cond}, {"loc", loc}});
-      std::ofstream f(goto_coveraget::covered_set_outpath);
-      if (f)
-      {
-        f << out.dump(2) << "\n";
-        log_success(
-          "coverage covered-set written to {}",
-          goto_coveraget::covered_set_outpath);
-      }
-      else
-        log_warning(
-          "coverage-covered-set: cannot write {}",
-          goto_coveraget::covered_set_outpath);
+          goto_coveraget::covered_set.emplace(cond, loc);
+      goto_coveraget::write_covered_set_atomic();
+      log_success(
+        "coverage covered-set written to {}",
+        goto_coveraget::covered_set_outpath);
     }
   }
 
@@ -2227,6 +2213,17 @@ smt_convt::resultt bmct::multi_property_check(
           reached_claims.emplace(claim_sig);
         else
           reached_claims.emplace(claim.claim_cstr);
+        // Item 2e: persist this newly-witnessed branch edge immediately
+        // and atomically, so a mid-run kill (the heavy --coverage-whole-
+        // unit case dies in-solve before report_coverage) still saves
+        // partial progress and bounded re-runs accumulate monotonically.
+        // Branch coverage only; key == Item 2's (claim_msg, claim_loc);
+        // under the same mutex as reached_claims.
+        if (
+          is_branch_cov && !goto_coveraget::covered_set_outpath.empty() &&
+          goto_coveraget::covered_set.emplace(claim.claim_msg, claim.claim_loc)
+            .second)
+          goto_coveraget::write_covered_set_atomic();
       }
 
       // for verbose output of cond coverage

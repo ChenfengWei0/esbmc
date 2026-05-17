@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdio>
 #include <deque>
 #include <fstream>
 #include <vector>
@@ -22,6 +23,32 @@ std::set<std::pair<std::string, std::string>>
 std::set<std::pair<std::string, std::string>> goto_coveraget::all_claims;
 std::set<std::pair<std::string, std::string>> goto_coveraget::covered_set;
 std::string goto_coveraget::covered_set_outpath;
+
+void goto_coveraget::write_covered_set_atomic()
+{
+  if (covered_set_outpath.empty())
+    return;
+  nlohmann::json out;
+  out["version"] = 1;
+  out["covered"] = nlohmann::json::array();
+  for (const auto &[cond, loc] : covered_set)
+    out["covered"].push_back({{"cond", cond}, {"loc", loc}});
+  const std::string tmp = covered_set_outpath + ".tmp";
+  {
+    std::ofstream f(tmp);
+    if (!f)
+    {
+      log_warning("coverage-covered-set: cannot write {}", tmp);
+      return;
+    }
+    f << out.dump(2) << "\n";
+  }
+  // Atomic publish: a kill between the two writes leaves the previous
+  // valid file intact (never a truncated/corrupt covered-set).
+  if (std::rename(tmp.c_str(), covered_set_outpath.c_str()) != 0)
+    log_warning(
+      "coverage-covered-set: atomic rename to {} failed", covered_set_outpath);
+}
 
 std::string goto_coveraget::get_filename_from_path(std::string path)
 {

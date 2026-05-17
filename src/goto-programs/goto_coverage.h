@@ -110,6 +110,12 @@ public:
   // all_claims.
   static std::set<std::pair<std::string, std::string>> covered_set;
   static std::string covered_set_outpath;
+  // Item 2e: serialize covered_set to covered_set_outpath crash-safely
+  // (write a .tmp then atomic rename). Called both incrementally as
+  // each edge is witnessed P_SATISFIABLE (bmc.cpp) and once at run end,
+  // so a mid-run kill still persists every edge proven so far and
+  // bounded re-runs accumulate monotonically. No-op if outpath empty.
+  static void write_covered_set_atomic();
 
   std::string target_function = "";
   bool cov_assume_asserts = false;
