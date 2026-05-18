@@ -1,0 +1,8 @@
+--- captured tail ---
+
+[Coverage]
+Branches : 4
+Reached : 2
+Branch Coverage: 50% (partial: run terminated before verification concluded)
+---------------------
+PASS: partial branch coverage emitted on external SIGTERM (data-even-on-UNKNOWN)

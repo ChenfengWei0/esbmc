@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <deque>
 #include <fstream>
+#include <functional>
 #include <vector>
 
 size_t goto_coveraget::total_assert = 0;
@@ -23,6 +24,11 @@ std::set<std::pair<std::string, std::string>>
 std::set<std::pair<std::string, std::string>> goto_coveraget::all_claims;
 std::set<std::pair<std::string, std::string>> goto_coveraget::covered_set;
 std::string goto_coveraget::covered_set_outpath;
+std::atomic<bool> goto_coveraget::branch_cov_active{false};
+std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
+std::atomic<bool> goto_coveraget::covered_set_mode{false};
+std::atomic<size_t> goto_coveraget::live_reached{0};
+std::atomic<size_t> goto_coveraget::covered_run{0};
 
 void goto_coveraget::write_covered_set_atomic()
 {
@@ -263,6 +269,35 @@ void goto_coveraget::branch_function_coverage()
   goto_functions.update();
 }
 
+// Walk an ASSIGN rhs / RETURN operand for short-circuit operators that
+// the frontend did NOT lower to control flow. goto_sideeffects.cpp:160
+// rewrites `||`/`&&` into an if-then-else GOTO chain ONLY when an
+// operand has a side effect; with side-effect-free operands the `or`/
+// `and` stays a flat boolean expression in one instruction and carries
+// no GOTO guard, so the `it->is_goto()` arm below never sees it
+// (ESBMC: "No branch detected" where solc instruments the operator as
+// a 2-arm decision). For each such operator, emit the same 2-arm
+// decision the GOTO arm produces, keyed on the short-circuit operand
+// (side_1 — the operand that decides whether the rest is evaluated),
+// recursing both sides to reach nested operators.
+static void collect_short_circuit_decisions(
+  const expr2tc &e,
+  const std::function<void(const expr2tc &)> &emit)
+{
+  if (is_nil_expr(e))
+    return;
+  if (is_or2t(e))
+    emit(to_or2t(e).side_1);
+  else if (is_and2t(e))
+    emit(to_and2t(e).side_1);
+  for (size_t i = 0; i < e->get_num_sub_exprs(); ++i)
+  {
+    const expr2tc *sub = e->get_sub_expr(i);
+    if (sub != nullptr)
+      collect_short_circuit_decisions(*sub, emit);
+  }
+}
+
 void goto_coveraget::branch_coverage()
 {
   log_progress("Adding false assertions...");
@@ -329,20 +364,12 @@ void goto_coveraget::branch_coverage()
           // this stands for the auxiliary condition/branch we added.
           continue;
 
-        // convert assertions to true (or assume)
-        if (
-          it->is_assert() &&
-          it->location.property().as_string() != "replaced assertion" &&
-          it->location.property().as_string() != "instrumented assertion")
-        {
-          if (cov_assume_asserts)
-            replace_assert_to_assume(it);
-          else
-            replace_assert_to_guard(gen_true_expr(), it, false);
-        }
-
-        // e.g. IF !(a > 1) THEN GOTO 3
-        else if (it->is_goto() && !is_true(it->guard))
+        // Emit one 2-arm decision (assert(cond) + assert(!cond)) for
+        // `cond` at the current instruction, under the exact scoping,
+        // edge-key, static-universe and cross-run covered-set rules the
+        // GOTO-guard path uses, so a folded short-circuit operator and
+        // a control-flow guard are counted identically.
+        auto emit_decision = [&](const expr2tc &cond)
         {
           // Per-contract scoping (--contract C, Solidity): only instrument
           // decisions lexically declared inside contract C. The frontend
@@ -355,9 +382,8 @@ void goto_coveraget::branch_coverage()
           // asserts), so the percentage stays correct by construction.
           if (
             !scope_contract.empty() &&
-            it->location.get("sol_decl_contract").as_string() !=
-              scope_contract)
-            continue;
+            it->location.get("sol_decl_contract").as_string() != scope_contract)
+            return;
 
           // Item 5-d: dependency exclusion. Drop the decision BEFORE the
           // all_claims.insert below, so an excluded contract's decisions
@@ -370,20 +396,17 @@ void goto_coveraget::branch_coverage()
             !exclude_contracts.empty() &&
             exclude_contracts.count(
               it->location.get("sol_decl_contract").as_string()))
-            continue;
-
-          if (it->is_target())
-            target_num = it->target_number;
+            return;
 
           // Edge keys (guard_str, location.as_string()) — exactly the
           // identity get_total_cond_assert() and the numerator
           // (bmc.cpp claim_sig) use, so universe / denominator /
           // numerator stay key-aligned. as_string() excludes custom
           // irep fields, so inheritance/modifier copies fold to one.
-          const expr2tc neg = gen_not_expr(it->guard);
+          const expr2tc neg = gen_not_expr(cond);
           const std::string loc = it->location.as_string();
           const std::pair<std::string, std::string> k_g(
-            from_expr(ns, "", it->guard), loc);
+            from_expr(ns, "", cond), loc);
           const std::pair<std::string, std::string> k_ng(
             from_expr(ns, "", neg), loc);
 
@@ -400,13 +423,44 @@ void goto_coveraget::branch_coverage()
           // removes one observation only and perturbs no other branch;
           // the cross-run cover is monotone-∃ (a real witness stays
           // valid). Only true P_SATISFIABLE is ever written back.
-          // assert(a > 1);
           if (!covered_set.count(k_g))
-            insert_assert(goto_program, it, it->guard);
-          // assert(!(a > 1));
+            insert_assert(goto_program, it, cond);
           if (!covered_set.count(k_ng))
             insert_assert(goto_program, it, neg);
+        };
+
+        // convert assertions to true (or assume)
+        if (
+          it->is_assert() &&
+          it->location.property().as_string() != "replaced assertion" &&
+          it->location.property().as_string() != "instrumented assertion")
+        {
+          if (cov_assume_asserts)
+            replace_assert_to_assume(it);
+          else
+            replace_assert_to_guard(gen_true_expr(), it, false);
         }
+
+        // e.g. IF !(a > 1) THEN GOTO 3
+        else if (it->is_goto() && !is_true(it->guard))
+        {
+          if (it->is_target())
+            target_num = it->target_number;
+          emit_decision(it->guard);
+        }
+
+        // Pure short-circuit ||/&& folded into an ASSIGN rhs / RETURN
+        // operand (no GOTO — see collect_short_circuit_decisions above).
+        // solc instruments every such operator as a 2-arm decision;
+        // without this ESBMC reports "No branch detected" for e.g.
+        // `return a == 0 || b == 1;`.
+        else if (it->is_assign())
+          collect_short_circuit_decisions(
+            to_code_assign2t(it->code).source, emit_decision);
+
+        else if (it->is_return())
+          collect_short_circuit_decisions(
+            to_code_return2t(it->code).operand, emit_decision);
       }
     }
 
@@ -425,6 +479,16 @@ void goto_coveraget::branch_coverage()
   // (assertion/k-path/branch-function) keep get_total_cond_assert() /
   // get_total_instrument() by design.
   total_branch = static_cast<size_t>(all_claims.size());
+  // Signal-safe snapshot for the timeout/term handlers ("data even on
+  // UNKNOWN"). Set here, at instrumentation time, before any solve can
+  // be killed. covered_set_outpath is set during option parsing (well
+  // before this), so covered_set_mode is final here.
+  total_branch_atomic.store(total_branch, std::memory_order_relaxed);
+  covered_set_mode.store(
+    !covered_set_outpath.empty(), std::memory_order_relaxed);
+  live_reached.store(0, std::memory_order_relaxed);
+  covered_run.store(0, std::memory_order_relaxed);
+  branch_cov_active.store(true, std::memory_order_relaxed);
 
   // avoid Assertion `call_stack.back().goto_state_map.size() == 0' failed
   goto_functions.update();

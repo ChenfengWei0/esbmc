@@ -278,8 +278,16 @@ def run_one(args, sol, solast, r):
     except Exception as e:  # noqa: BLE001
         out, code = f"orchestrator: failed to launch: {e}", -1
     br, re_, pct = parse_coverage(out)
+    # "data even on UNKNOWN": if ESBMC was killed (own --timeout SIGALRM,
+    # or the outer `timeout` SIGTERM) before k-induction concluded, its
+    # signal handler now still emits the [Coverage] block, tagged
+    # "(partial: ...)". The block's Branches is the full static
+    # denominator; its covered probes (banked crash-safe in union.json)
+    # are a LOWER BOUND. Surfacing the flag keeps the project aggregate
+    # honestly labelled as a lower bound rather than silently exact.
+    partial = "(partial:" in out
     return {"cmd": cmd, "exit": code, "branches": br, "reached": re_,
-            "pct": pct, "stdout": out}
+            "pct": pct, "partial": partial, "stdout": out}
 
 
 # ---------- main ---------------------------------------------------------
@@ -367,6 +375,7 @@ def main():
     # whole project run. That IS the Step-5 "cumulative union" and is
     # uniformly correct in BOTH modes; the per-run Reached is junk.
     proj_total = 0
+    partial_units = 0
     for sol, solast, contracts, cls, runs in units:
         any_whole = False
         whole_branches = 0
@@ -376,9 +385,13 @@ def main():
             log = os.path.join(args.workdir,
                                f"{r['contract']}.{os.path.basename(sol)}.log")
             open(log, "w").write(res["stdout"])
+            if res["partial"]:
+                partial_units += 1
             print(f"[run] {r['contract']:<18} exit={res['exit']:<4} "
                   f"Branches={res['branches']} Reached={res['reached']} "
-                  f"(per-run%={res['pct']}; junk — see Step 5) log={log}")
+                  f"(per-run%={res['pct']}; junk — see Step 5)"
+                  f"{' [PARTIAL — lower bound]' if res['partial'] else ''} "
+                  f"log={log}")
             if res["branches"]:
                 if r["whole"]:
                     any_whole = True
@@ -402,6 +415,13 @@ def main():
     print(f"  cumulative reached / static total : {proj_cov} / {proj_total}")
     print(f"  branch coverage                   : {pct:.4f}%")
     print(f"  union.json deduped covered probes : {union_n}")
+    if partial_units:
+        print(f"  NOTE: {partial_units} run(s) terminated before "
+              f"k-induction concluded (emitted partial coverage via the "
+              f"signal handler); their covered probes are a LOWER BOUND, "
+              f"so the project coverage above is a SOUND LOWER BOUND, not "
+              f"exact (data-even-on-UNKNOWN; STAGE5_RESIDUAL_DIAG.md "
+              f"Stage G).")
     if len(units) > 1:
         print("  NOTE: multi-unit aggregate sums per-unit static totals; a "
               "shared own-base flattened into >1 unit is double-counted in "

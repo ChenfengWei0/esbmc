@@ -68,21 +68,42 @@ strings and the stamp are correct again.
 
 | Test | Class | Example | Handling |
 |---|---|---|---|
-| ≥1 public/external function | **has-external-entry** | `Vault`, `Token` | run it as an entry (Step 2) |
-| abstract + only `internal` | **own-abstract-base** | `Base` | never run standalone; covered via a descendant's whole-unit run |
-| 3rd-party (by import path / name) | **third-party-base** | `Ownable` | always in `--coverage-exclude-contract` of every whole-unit run |
+| `contractKind == library` | **library** | `SafeERC20`, `ImmutablesLib` | **never a standalone run**; covered transitively through the whole-unit run of whatever contract calls it |
+| ≥1 public/external function (and not a library) | **has-external-entry** | `Vault`, `Token` | run it as an entry (Step 2) |
+| abstract + only `internal` (contract) | **own-abstract-base** | `Base` | never run standalone; covered via a descendant's whole-unit run |
+| origin path under `lib/` `@scope/` `node_modules/` `interfaces/` `mocks/` (auto from flatten provenance), or in `--third-party` | **third-party** | `Ownable`, `SafeERC20` | always in `--coverage-exclude-contract` of every whole-unit run; out of denom+numer (mirrors `_filter_effective.sh`) |
 
-The classifier is **"has an externally-callable entry", NOT "abstract vs
-concrete"** — measured:
+The contract classifier is **"has an externally-callable entry", NOT
+"abstract vs concrete"** — measured:
 
 - abstract base, only `internal` → `--contract A` ⇒ `Generated 0 VCC(s)`,
   Branches:2 **Reached:0**, 0% (harness has nothing callable; uncoverable).
 - abstract base, has a `public` fn → `--contract APub` ⇒
   Branches:2 **Reached:2 100%** (fully coverable standalone).
 
+**Libraries are NOT entries.** A `library` is dependency code, not a
+deployable contract — `--contract <lib>` is meaningless and
+`--function <libfn>` in isolation over-approximates (any-input
+reachability, not the project's actual call paths). A library's branches
+are covered **transitively, through the whole-unit run of the contract
+that calls it** — the exact mechanism that covers an own abstract base.
+Measured (`libuse`: `contract User` calls `library MathLib`, no abstract
+base): under whole-unit, `MathLib`'s `if` is covered **2/2 100% via
+`User.go`'s real call**, whereas default per-contract mode would scope
+`MathLib` out (declarer = the library) and leave it uncovered — hence
+Step 2's whole-unit trigger includes "unit contains a project-own
+library". The per-function `--function` path is reserved for an explicit
+*pure-library-benchmark* input mode (MakerTraitsLib-style: the library
+*is* the comparison target, no caller in the unit, matched against
+per-function lcov) — a separate mode, out of scope here.
+
 ## Step 2 — Pick the run mode per has-external-entry contract
 
-- **No own abstract base** → default per-contract mode (cheapest, scope-clean):
+- **No own abstract base AND no project-own library in the unit** →
+  default per-contract mode (cheapest, scope-clean). (If the unit has a
+  project-own library, the entry MUST go whole-unit instead — otherwise
+  semantics-A scopes the called library code out and it is never
+  covered; see Step 1.)
   ```
   esbmc Token.flat.solast --sol Token.flat.sol --contract Token \
         --branch-coverage-claims --k-induction --unlimited-k-steps \
@@ -197,10 +218,26 @@ shared union = 60% → climbs further). Only the accumulated union is honest.
    denominator is the whole flat file, so "cheapest" must be measured on
    the whole-unit static probe count, not a contract's own. ESBMC has no
    "count-only" dry-run mode (`--coverage-count-only` does not exist) yet.
-3. **Classifier AST predicate** — "has externally-callable entry" was
-   determined behaviourally here; the precise `.solast` predicate
-   (≥1 non-abstract public/external function, or a public constructor
-   path) is not yet pinned to AST fields.
+3. **Classifier AST predicate** — "has externally-callable entry" is
+   pinned in `orchestrator.py` (`has_external_entry`: ≥1 implemented
+   public/external non-constructor fn), and `library` is keyed off
+   `contractKind`. **Project-own vs third-party is now auto-detected
+   (L2 CLOSED)**: `auto_third_party` maps each contract's AST byte
+   offset onto the flatten provenance comments (`// lib/…` forge /
+   `// File @scope/…` hardhat) and excludes any under `lib/`, `@scope/`,
+   `node_modules/`, `interfaces/`, `mocks/` — **mirroring
+   `notes/coverage-comparison/_filter_effective.sh`**, so the ESBMC
+   denominator equals the native-lcov denominator. Validated on forge
+   (cross-chain-swap: 14 deps excluded, project-own `ImmutablesLib`
+   kept) and hardhat (farming: 22 deps excluded) flats; a flat with no
+   provenance (hand-flattened) degrades gracefully to the explicit
+   `--third-party` list. Residual: relies on forge/hardhat-flatten
+   provenance comment format (two formats handled; a third flattener
+   would need a parser case).
+4. **Cost metric** — static `IfStatement` count only (no ternary /
+   loop / short-circuit). Used solely for *ordering*, which tolerates
+   approximation (the shared union makes the final number
+   order-independent); see residual 2.
 
 ## Relationship to shipped ESBMC primitives
 
@@ -213,4 +250,4 @@ shared union = 60% → climbs further). Only the accumulated union is honest.
 | Step 4 cross-run skip + dedup | `--coverage-covered-set` Item 2 (`96db5e9b1d`) |
 | Step 4 crash-safe accumulation | Item 2e atomic write (`0bcf799929`) |
 | Step 5 honest denominator | Item 2c static no-skip universe |
-| The orchestrator itself (Steps 0–5 driver) | **does not exist — this spec** (Item 4 descoped) |
+| The orchestrator itself (Steps 1–5 driver) | `notes/Results/branch_cov/esbmc/orchestrator.py` (stdlib Python; Item 4 stays descoped — this is the external driver). Step 0 flatten remains `flatten_inputs.sh`'s job; the orchestrator only *guards* it (refuses a multi-source `.solast`). Validated against measured anchors: `AB` 4/4, `ozc` 3/4 (exclude `OZLike`), `libuse` 2/2 (library covered transitively via caller), EscrowDst plan-only (libraries no longer mis-run as `--contract`). |

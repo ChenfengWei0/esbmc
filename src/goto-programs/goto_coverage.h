@@ -3,6 +3,7 @@
 #include <goto-programs/loop_unroll.h>
 #include <langapi/language_util.h>
 #include <unordered_set>
+#include <atomic>
 
 class goto_coveraget
 {
@@ -116,6 +117,41 @@ public:
   // so a mid-run kill still persists every edge proven so far and
   // bounded re-runs accumulate monotonically. No-op if outpath empty.
   static void write_covered_set_atomic();
+
+  // "data even on UNKNOWN": an external kill (SIGALRM from esbmc's own
+  // --timeout, or SIGTERM/SIGINT from timeout(1)/CI/orchestrator) lands
+  // mid-solve, so report_coverage (the stdout "Branch Coverage:" line,
+  // only reached at a normal conclude/exhaustion point) never runs even
+  // though the numerator is already known. The signal handler reads
+  // this async-signal-safe snapshot and emits a SOUND LOWER BOUND
+  // before _exit. It is EXACT once any report_coverage has run (every
+  // such call re-syncs the active counter to its authoritative value);
+  // between the first per-claim hook and the first report it is a
+  // lower bound. Handler does only atomic loads + write(2); it never
+  // touches the std::set (mid-mutation under SIGALRM).
+  //   branch_cov_active   — set once branch-coverage mode is live
+  //   total_branch_atomic — |all_claims| (denominator), set at
+  //                          instrumentation, pre-solve; mirrors
+  //                          total_branch
+  //   covered_set_mode    — true iff --coverage-covered-set given; it
+  //                          selects which numerator the handler reads
+  //   live_reached        — DEFAULT mode numerator == reached_claims
+  //                          .size() (the canonical bmc.cpp:901 count,
+  //                          which intentionally includes non-universe
+  //                          entries); updated under reached_claims_
+  //                          mutex at the per-claim hook
+  //   covered_run         — COVERED-SET mode numerator == count of
+  //                          universe edges newly witnessed+persisted
+  //                          THIS run (covered_set.emplace().second at
+  //                          the Item 2e hook). A loaded prior set only
+  //                          raises true coverage, so this is a sound
+  //                          lower bound on the covered-set authoritative
+  //                          |all_claims ∩ (covered_set ∪ reached)|.
+  static std::atomic<bool> branch_cov_active;
+  static std::atomic<size_t> total_branch_atomic;
+  static std::atomic<bool> covered_set_mode;
+  static std::atomic<size_t> live_reached;
+  static std::atomic<size_t> covered_run;
 
   std::string target_function = "";
   bool cov_assume_asserts = false;

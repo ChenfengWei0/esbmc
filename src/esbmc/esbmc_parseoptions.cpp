@@ -16,7 +16,10 @@ extern "C"
 }
 #endif
 
-#include <esbmc/bmc.h>
+#include <esbmc/bmc.h> // also pulls goto-programs/goto_coverage.h, whose
+                        // signal-safe snapshot timeout_handler reads
+                        // (goto_coverage.h has no include guard — must
+                        // not be included a second time here)
 #include <esbmc/esbmc_parseoptions.h>
 #ifdef ENABLE_SOLIDITY_FRONTEND
 #  include <solidity-frontend/solidity_tod_analysis.h>
@@ -111,12 +114,104 @@ struct resultt
 };
 
 #ifndef _WIN32
+// "data even on UNKNOWN": emit the partial branch-coverage summary the
+// SIGALRM kill would otherwise discard. report_coverage (the normal
+// "Branch Coverage:" line) only runs at a conclude/exhaustion point;
+// --timeout _exit()s mid-solve before any of them. The numerator is
+// already known (goto_coveraget::live_reached, kept exactly equal to
+// the authoritative reached count) and the denominator was fixed at
+// instrumentation time. Strictly async-signal-safe: only atomic loads,
+// stack buffer, manual unsigned->decimal, one write(2). No malloc, no
+// iostream, no std::set access (it may be mid-mutation at SIGALRM).
+static void emit_branch_coverage_on_timeout()
+{
+  if (!goto_coveraget::branch_cov_active.load(std::memory_order_relaxed))
+    return;
+  const size_t total =
+    goto_coveraget::total_branch_atomic.load(std::memory_order_relaxed);
+  if (total == 0)
+    return;
+  // Mode-correct numerator: covered-set runs use covered_run (sound
+  // lower bound on |all_claims ∩ (covered_set ∪ reached)|); default
+  // runs use live_reached (== the canonical reached_claims.size()).
+  // Both are re-synced to the exact authoritative value at every
+  // report_coverage, so this is exact after the first report and a
+  // lower bound before it.
+  size_t reached =
+    goto_coveraget::covered_set_mode.load(std::memory_order_relaxed)
+      ? goto_coveraget::covered_run.load(std::memory_order_relaxed)
+      : goto_coveraget::live_reached.load(std::memory_order_relaxed);
+  if (reached > total) // defensive: numerator can never exceed universe
+    reached = total;
+  const size_t pct = reached * 100 / total;
+
+  char buf[160];
+  size_t n = 0;
+  auto put = [&](const char *s) {
+    while (*s && n < sizeof(buf))
+      buf[n++] = *s++;
+  };
+  auto put_uint = [&](size_t v) {
+    char tmp[20];
+    size_t t = 0;
+    do
+    {
+      tmp[t++] = static_cast<char>('0' + v % 10);
+      v /= 10;
+    } while (v && t < sizeof(tmp));
+    while (t && n < sizeof(buf))
+      buf[n++] = tmp[--t];
+  };
+  // Same shape as report_coverage's branch-cov block so existing
+  // stdout consumers (orchestrator / lcov-compare) parse it identically.
+  put("\n[Coverage]\nBranches : ");
+  put_uint(total);
+  put("\nReached : ");
+  put_uint(reached);
+  put("\nBranch Coverage: ");
+  put_uint(pct);
+  put("% (partial: run terminated before verification concluded)\n");
+  ssize_t w = write(STDOUT_FILENO, buf, n);
+  (void)w; // nothing actionable in a signal handler if write() fails
+}
+
 void timeout_handler(int)
 {
+  // Emit the partial coverage FIRST: log_error / cleanup below are the
+  // pre-existing (not strictly async-signal-safe) calls; if one hangs
+  // on the allocator/log mutex the sound partial number is already on
+  // stdout.
+  emit_branch_coverage_on_timeout();
   log_error("Timed out");
   file_operations::cleanup_registered_tmps();
   // Use _exit to avoid atexit handlers that may deadlock the allocator
   _exit(1);
+}
+
+// "data even on UNKNOWN", external-kill arm. esbmc's own --timeout is
+// SIGALRM (timeout_handler above), but external bounders — the
+// regression harness (testing_tool.py STRIPS --timeout and kills the
+// process group with SIGTERM, grace, then SIGKILL), `timeout(1)`, CI
+// runners, and the TWO_TRACK/project-run orchestrator — terminate via
+// SIGTERM (or SIGINT on ctrl-C). Without a handler the default action
+// discards the already-computed partial branch coverage. Emit it in
+// the SIGTERM→SIGKILL grace window using the same async-signal-safe
+// path. SIGKILL is uncatchable; for that case only the Item 2e
+// covered-set JSON survives (needs --coverage-covered-set). Installed
+// unconditionally (the kill arrives regardless of any esbmc flag, and
+// --timeout is stripped by the harness anyway).
+void term_handler(int sig)
+{
+  // Emit FIRST (see timeout_handler): the partial number must survive
+  // even if the pre-existing log_error/cleanup below hang.
+  emit_branch_coverage_on_timeout();
+  if (sig == SIGINT)
+    log_error("Interrupted");
+  else
+    log_error("Terminated");
+  file_operations::cleanup_registered_tmps();
+  // Conventional 128+signum; _exit to skip atexit (allocator deadlock).
+  _exit(sig == SIGINT ? 130 : 143);
 }
 #endif
 
@@ -522,6 +617,14 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
 #endif
   }
 
+#ifndef _WIN32
+  // Unconditional (independent of --timeout, which external harnesses
+  // strip): emit partial branch coverage on external SIGTERM/SIGINT
+  // before the killer's SIGKILL. See term_handler.
+  signal(SIGTERM, term_handler);
+  signal(SIGINT, term_handler);
+#endif
+
   if (cmdline.isset("memlimit"))
   {
 #ifdef _WIN32
@@ -887,6 +990,19 @@ int esbmc_parseoptionst::doit()
       const bool cvc5_available =
         padded_solvers.find(" cvc5 ") != std::string::npos;
       bool nested_dyn_detected = false;
+      // A scalar-valued ≥3-level nested mapping
+      // (`mapping(K1=>mapping(K2=>mapping(K3=>uint256)))`) lowers to a
+      // CONST_ARRAY-initialised infinite mapping array that Bitwuzla
+      // cannot equate (asymmetric `(= ca freshsym)` from IS-havoc →
+      // "Equality over constant arrays not fully supported yet" abort
+      // under assertion BMC; k-induction non-convergence under
+      // coverage). CVC5 handles every scalar depth cleanly (regression
+      // duals nested_mapping_write_{3,4}lvl_uint256_*). The
+      // typeIdentifier marker is `t_mapping$_` (NOT `t_array$_`), so it
+      // is detected separately below and routed to plain CVC5 (no
+      // native-tuples — that flag is array-tuple-encoding-specific).
+      // See notes/Results/branch_cov/STAGE5_RESIDUAL_DIAG.md.
+      bool deep_mapping_detected = false;
       // Pattern B: --k-induction with multi-contract dispatch.  The
       // generated $call#0 / $call#1 dispatcher (solidity_convert_call.cpp
       // around line 2777+ / 3135+) emits a sequential O(N) if-else
@@ -966,7 +1082,13 @@ int esbmc_parseoptionst::doit()
           static const std::string ta_marker = "t_array$_";
           int ta_run = 0;
           size_t ta_match_pos = 0;
+          static const std::string tm_marker = "t_mapping$_";
+          int tm_run = 0;
+          size_t tm_match_pos = 0;
           int empty_bracket_run = 0;
+          static const std::string mp_marker = "mapping(";
+          size_t mp_match_pos = 0;
+          int mapping_chain_run = 0; // .sol: consecutive `mapping(`
           int prev_emit = -1;  // last non-whitespace char (.sol scan only)
           bool in_line = false, in_block = false, in_str = false;
           char str_quote = '\0';
@@ -1050,6 +1172,38 @@ int esbmc_parseoptionst::doit()
                 if (ta_match_pos == 0)
                   ta_run = 0;
               }
+              // Count `t_mapping$_` markers WITHIN ONE typeIdentifier
+              // JSON string.  A nested mapping
+              // `mapping(K1=>mapping(K2=>mapping(K3=>V)))` lowers to a
+              // single typeIdentifier `t_mapping$_<K1>_$_t_mapping$_
+              // <K2>_$_t_mapping$_<V>...` — the markers are SEPARATED by
+              // key/value types (unlike the array case's adjacent
+              // `t_array$_t_array$_`), so the run must NOT reset on the
+              // intra-string gap; it resets only at the `"` string
+              // boundary.  This confines the count to one type, so
+              // three *separate* 1-level mappings (three distinct
+              // typeIdentifier strings) never reach 3 — only a genuine
+              // ≥3-level nested mapping does.
+              if (ch == '"')
+              {
+                tm_run = 0;
+                tm_match_pos = 0;
+              }
+              else if (ch == tm_marker[tm_match_pos])
+              {
+                ++tm_match_pos;
+                if (tm_match_pos == tm_marker.size())
+                {
+                  tm_match_pos = 0;
+                  if (++tm_run >= 3)
+                  {
+                    deep_mapping_detected = true;
+                    break;
+                  }
+                }
+              }
+              else
+                tm_match_pos = (ch == tm_marker[0]) ? 1 : 0;
             }
             else
             {
@@ -1076,6 +1230,34 @@ int esbmc_parseoptionst::doit()
                 if (!(prev_emit == ']' && ch == '['))
                   empty_bracket_run = 0;
               }
+              // .sol fallback for ≥3-level nested mapping: count
+              // `mapping(` tokens in a contiguous run.  A real nested
+              // mapping `mapping(K1=>mapping(K2=>mapping(K3=>V)))`
+              // never contains `;{}` between its `mapping(` tokens, so
+              // those reset the run.  Conservative over-approx (perf-
+              // only false positives, acceptable per this detector's
+              // documented design); the .solast arm is the precise
+              // path the regression suite exercises.
+              if (ch == ';' || ch == '{' || ch == '}')
+              {
+                mapping_chain_run = 0;
+                mp_match_pos = 0;
+              }
+              else if (ch == mp_marker[mp_match_pos])
+              {
+                ++mp_match_pos;
+                if (mp_match_pos == mp_marker.size())
+                {
+                  mp_match_pos = 0;
+                  if (++mapping_chain_run >= 3)
+                  {
+                    deep_mapping_detected = true;
+                    break;
+                  }
+                }
+              }
+              else
+                mp_match_pos = (ch == mp_marker[0]) ? 1 : 0;
               prev_emit = ch;
             }
           }
@@ -1288,6 +1470,15 @@ int esbmc_parseoptionst::doit()
           if (!cmdline.isset("no-cvc5-native-tuples"))
             options.set_option("cvc5-native-tuples", true);
         }
+        else if (deep_mapping_detected)
+        {
+          // ≥3-level nested mapping with a scalar leaf.  Bitwuzla
+          // aborts on the CONST_ARRAY-initialised infinite mapping
+          // array; CVC5's array engine handles it.  Plain CVC5 — NO
+          // native-tuples (that is array-tuple-encoding-specific;
+          // mirrors Pattern B's plain-CVC5 selection below).
+          chosen = "cvc5";
+        }
         else if (kind_multi_contract_detected)
         {
           // Pattern B: k-induction-amplified linear if-else chain on
@@ -1322,6 +1513,16 @@ int esbmc_parseoptionst::doit()
               "or pass --no-cvc5-native-tuples to disable native-tuple "
               "encoding.",
               native_on ? " with --cvc5-native-tuples" : "");
+          }
+          else if (deep_mapping_detected)
+          {
+            log_status(
+              "Solidity: detected >=3-level nested-mapping shape; "
+              "auto-selecting 'cvc5' (Bitwuzla aborts on the "
+              "CONST_ARRAY-initialised infinite mapping array — "
+              "\"Equality over constant arrays not fully supported\" "
+              "under assertion BMC, k-induction non-convergence under "
+              "coverage). Override with --bitwuzla / --z3 / --boolector.");
           }
           else if (kind_multi_contract_detected)
           {

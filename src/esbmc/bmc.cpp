@@ -929,6 +929,20 @@ void report_coverage(
       log_result("Branch Coverage: {}%", tracked_instance * 100.0 / total);
     }
 
+    // Re-sync the signal-safe snapshot to the AUTHORITATIVE number:
+    // this is the only place reached_claims is erased (short-circuit /
+    // non-universe pruning above), and tracked_instance is exactly the
+    // mode-correct numerator just printed. Storing it into the active
+    // counter makes a subsequent kill (e.g. inductive step after the
+    // base-case report) emit the exact post-report coverage, not a
+    // pre-report lower bound.
+    if (cov_set_active)
+      goto_coveraget::covered_run.store(
+        tracked_instance, std::memory_order_relaxed);
+    else
+      goto_coveraget::live_reached.store(
+        tracked_instance, std::memory_order_relaxed);
+
     // Item 2 / 2e final write-back: covered_set is the single live
     // accumulator (loaded input ∪ every edge the Item-2e hook persisted
     // as it was witnessed this run). Fold in any reached universe edge
@@ -2223,7 +2237,25 @@ smt_convt::resultt bmct::multi_property_check(
           is_branch_cov && !goto_coveraget::covered_set_outpath.empty() &&
           goto_coveraget::covered_set.emplace(claim.claim_msg, claim.claim_loc)
             .second)
+        {
           goto_coveraget::write_covered_set_atomic();
+          // "data even on UNKNOWN", covered-set-mode numerator: one
+          // more universe edge witnessed+persisted this run. A loaded
+          // prior set only raises true coverage, so this running count
+          // is a sound lower bound on the covered-set authoritative
+          // |all_claims ∩ (covered_set ∪ reached_claims)|.
+          goto_coveraget::covered_run.fetch_add(
+            1, std::memory_order_relaxed);
+        }
+        // "data even on UNKNOWN", default-mode numerator: mirror the
+        // canonical bmc.cpp:901 reached_claims.size() (intentionally
+        // incl. non-universe entries). Under reached_claims_mutex so
+        // the size() read is consistent; grows only here (erases happen
+        // exclusively inside report_coverage, which re-syncs the active
+        // counter afterwards).
+        if (is_branch_cov)
+          goto_coveraget::live_reached.store(
+            reached_claims.size(), std::memory_order_relaxed);
       }
 
       // for verbose output of cond coverage

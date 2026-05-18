@@ -165,3 +165,45 @@ direct-access fast path (:4174). One-line semantic change (+ comment);
 Diagnosis + fix complete. The residual `_uint256` k-induction /
 const-array-eq limitation is a separate, pre-existing, orthogonal item
 (KNOWNBUG-pinned, not the diagnosed bug).
+
+---
+
+# #5 residual dual matrix (Stage P, 2026-05-18)
+
+The structural abort is fixed; the only residual is the **scalar
+`mapping(…=>uint256)` deep nested-mapping WRITE**, pinned canonically
+by `cov_pilot_aqua2A_4lvl_addr_addr_bytes32_addr_uint256` (KNOWNBUG).
+Stage P added 5 CORE soundness duals + 2 standalone minimal KNOWNBUG
+wall pins. Empirical capture (foreground, bounded, **not inferred**):
+
+| shape / flags | observed |
+|---|---|
+| 3-level scalar, **default (bitwuzla)**, `--contract C --unwind 4 --no-unwinding-assertions` | `[bzla] warning: Equality over constant arrays not fully supported yet` — **no** `VERIFICATION` verdict (wall **b**, fires already at depth 3) |
+| 3-level scalar, **--cvc5**, `--unwind 4` BMC | `VERIFICATION SUCCESSFUL` (pass dual) / `VERIFICATION FAILED` (`==v+1` fail dual) |
+| 4-level scalar, **--cvc5**, `--unwind 4` BMC | `SUCCESSFUL` (pass) / `FAILED` (fail) / `SUCCESSFUL` (key-independence `l2!=l`) |
+| 4-level scalar, **default (bitwuzla)**, `--unwind 4` BMC | const-array-eq abort, no `SUCCESSFUL` (wall **b**; pins `nested_mapping_write_uint256_bitwuzla_constarrayeq_knownbug`) |
+| 4-level scalar **in a calldata-array loop**, **default (bitwuzla)**, `--branch-coverage-claims --k-induction --unlimited-k-steps --timeout 25` | k-induction climbs to `Checking inductive step, k = 18`, terminal `ERROR: Timed out`, **zero** `^Branch Coverage:` lines, exit 1 (wall **a**; pins `cov_nested_mapping_write_uint256_kinduction_knownbug`) |
+| trivial `if`-only 4-level scalar (no loop), same coverage flags | converges → `Branch Coverage: 100%` — does **not** reproduce wall a; the calldata-array loop is the k-induction amplifier (recorded so a future minimiser does not regress the repro) |
+
+**Findings:**
+- Wall (b) (Bitwuzla `Equality over constant arrays`) reproduces for
+  the scalar leaf at **both depth 3 and depth 4** under plain
+  assertion BMC — it is the scalar-leaf analogue of the struct path's
+  cvc5 requirement (`nested_mapping_write_4lvl_struct_pass` is already
+  `--cvc5`-pinned for the same reason).
+- **--cvc5 cleanly handles every scalar depth** (3 and 4),
+  round-trip + non-vacuous fail + depth-4 key-independence (no slot
+  aliasing). This is the load-bearing evidence that the fix lever is
+  **solver routing**, not a symex/IR change.
+- Wall (a) (k-induction non-convergence under coverage) needs the
+  calldata-array loop amplifier; the trivial branch shape converges.
+
+`ctest -j4` (single run, mem 4096): 7/7 new tests PASS (5 CORE duals;
+`nested_mapping_write_uint256_bitwuzla_constarrayeq_knownbug` KNOWNBUG
+PASS 1.4 s; `cov_nested_mapping_write_uint256_kinduction_knownbug`
+KNOWNBUG PASS 86 s, self-terminates via `--timeout 25` < the 180 s
+`ESBMC_REGRESS_TIMEOUT`, no coverage emitted). Pre-existing
+`cov_pilot_aqua*` CORE/struct pins all green; the canonical
+`cov_pilot_aqua2A_4lvl_…_uint256` KNOWNBUG is unchanged by this work
+(no `src/` or that-dir edit) — it remains in its pre-existing
+k-induction-non-convergent ctest-Timeout accepted class.
