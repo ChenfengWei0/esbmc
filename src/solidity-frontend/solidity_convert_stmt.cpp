@@ -1882,13 +1882,61 @@ bool solidity_convertert::convert_yul_statement(
         if (get_var_decl_ref(decl, is_state, src_expr))
           return true;
       }
+      // Resolve a type through pointer/symbol indirection down to the
+      // underlying struct; returns the resolved symbol tag iff it is a
+      // struct, else empty (mirrors struct_type_has_component's idiom;
+      // struct_union_typet exposes no plain tag accessor).
+      auto struct_tag = [this](const typet &t) -> irep_idt
+      {
+        typet rt = t;
+        if (rt.id() == "pointer")
+          rt = rt.subtype();
+        irep_idt tag;
+        while (rt.id() == "symbol")
+        {
+          tag = to_symbol_type(rt).get_identifier();
+          const symbolt *s = context.find_symbol(tag);
+          if (s == nullptr)
+            return irep_idt();
+          rt = s->type;
+        }
+        return rt.id() == "struct" ? tag : irep_idt();
+      };
+
       exprt rhs;
       if (src_expr.type().get_bool("#sol_func_ptr"))
         rhs = from_integer(BigInt(0), lhs.type());
       else
       {
-        rhs = src_expr;
-        solidity_gen_typecast(ns, rhs, lhs.type());
+        const irep_idt lt = struct_tag(lhs.type());
+        const irep_idt rt = struct_tag(src_expr.type());
+        if (!lt.empty() && !rt.empty() && lt != rt)
+        {
+          // [APPROX: OVER] EVM inline-assembly pointer/value reinterpret
+          // between two distinct struct layouts (e.g. bytes32 <-> a memory
+          // struct) that c_typecastt cannot bridge. A faithful memory-
+          // pointer-aliasing model is out of scope; over-approximate by
+          // havoc'ing the destination to a nondet of its own declared
+          // type so the dependent member access stays well-typed.
+          log_warning(
+            "[approx] inline assembly at {}:{}: over-approximating "
+            "struct/value reinterpret '{} := {}' (struct '{}' := struct "
+            "'{}') - '{}' havoc'd to nondet of its declared type; faithful "
+            "EVM memory-pointer aliasing is out of scope",
+            loc.get_file().c_str(),
+            loc.get_line().c_str(),
+            lname,
+            rname,
+            lt,
+            rt,
+            lname);
+          get_nondet_expr(lhs.type(), rhs);
+        }
+        else
+        {
+          rhs = src_expr;
+          solidity_gen_typecast(ns, rhs, lhs.type());
+        }
       }
       code_assignt assign(lhs, rhs);
       assign.location() = loc;
