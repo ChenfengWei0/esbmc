@@ -232,9 +232,13 @@ __ESBMC_HIDE:;
     __ESBMC_assume(len < _ESBMC_NONDET_STRING_MAX);
 
     /* Zero the whole buffer concretely so any later strlen() terminates at
-     * or before _ESBMC_NONDET_STRING_MAX. */
-    for (size_t i = 0; i < _ESBMC_NONDET_STRING_MAX + 1; ++i)
-        _ESBMC_rand_str[i] = '\0';
+     * or before _ESBMC_NONDET_STRING_MAX.  memset here is a constant size
+     * on a writable global with simplify on => intrinsic_memset single-
+     * shot (no per-byte loop), so the k-induction base case / a sub-33
+     * --unwind cannot spuriously prune the post-string path by k-bounding
+     * this fixed-trip-count library loop (was: 33-iter zero-fill loop;
+     * see notes/Results/branch_cov/STAGE5_RESIDUAL_DIAG.md Stage H). */
+    memset(_ESBMC_rand_str, 0, _ESBMC_NONDET_STRING_MAX + 1);
 
     /* Concrete upper bound in the loop header gives the unwinder a static
      * stop; the extra i<len lets the loop exit early for smaller lengths. */
