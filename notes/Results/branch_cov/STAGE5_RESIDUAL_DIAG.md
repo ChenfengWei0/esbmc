@@ -386,3 +386,331 @@ the end-to-end orchestrator check + the independent mechanism test,
 not a (structurally impossible) green ctest pin. Sharded
 instrumentation fallback NOT needed (incremental snapshot + signal
 emit suffices) — matching the user's "理论上完全用不到".
+
+---
+
+## Stage H — frontend AST-index perf fix (2026-05-19)
+
+**Trigger.** User observed a stall during "前端转化". Measured (not
+inferred): `--goto-functions-only` on `farming__FarmingPool.flat.sol`
+(1.6 MB solast) → `GOTO program creation time: 9.585s`, total wall
+9.70s, ~210 MB RSS = **100% frontend conversion, zero solver/symex**.
+St1inch flat: **26.114s**. This is the concrete localisation of
+`reference_solidity_frontend_ssa_inflation_gap` and the up-front cost
+every large-flat coverage k-step pays.
+
+**Root cause (42-sample gdb profile + code read).** Inclusive stacks:
+`find_parent_contract` 27/42, `get_current_contract_name` 25/42,
+`find_decl_ref`→`find_node_by_id` 8/42. Each does a full DFS over the
+*entire* src_ast_json on every call; `get_current_contract_name`
+(expr.cpp:4881 → `find_parent_contract`, deep-`==` at
+solidity_convert_util.cpp:1231) is invoked per-expression ⇒
+O(expr × full-AST). `find_decl_ref` re-scans every top-level node
+per identifier.
+
+**What shipped (verified).** A lazy memo inside `find_parent_contract`
+keyed by `target.dump()` (the node's exact serialised content).
+`find_parent_contract`'s result is a pure function of target CONTENT
+(deep-`==` returns the enclosing contract of the FIRST content-equal
+node; `root` is invariant — both callers pass `src_ast_json["nodes"]`),
+so a content key is **bug-for-bug identical** to the uncached DFS while
+being robust to the content-copies / sub-references / synthetic nodes
+that defeat pointer- and (src,id)-keys. 3 files, +48/−5
+(solidity_convert.{h,cpp}, solidity_convert_util.cpp);
+`get_current_contract_name` left pristine.
+
+| flat | before | after | Δ |
+|---|---|---|---|
+| farming/FarmingPool GOTO-creation | 9.585s | 6.404s | −33% |
+| st1inch/St1inch GOTO-creation | 26.114s | 17.683s | −32% |
+
+**Correctness gate.** `esbmc-solidity -R
+'inherit|override|interface|using_for|library|modifier'` (the exact
+find_parent_contract/get_current_contract_name-sensitive paths):
+**110/110**, identical to the pre-patch baseline. Broader
+struct/mapping/clone/cov_pilot sweep: **52/52** before the 5-min cap.
+162 tests, **zero regressions**. cppcheck clean (no
+unreadVariable/unusedVariable/variableScope). clang-format: only
+clang-format-18 available locally (whole-file v18-vs-CI-Clang-11
+drift); edits hand-matched to the file's Allman/2-space/80-col style.
+
+**Rejected approaches (the failures ARE the findings).**
+- *Stage-1 find_decl_ref fast path* — crashed (`type_error.305`):
+  its scope+override+first-match semantics do not reduce to a safe
+  O(1) probe. Reverted; ~7% potential, not worth the risk.
+- *Pointer-keyed node→contract index* — 84% MISS (frontend passes
+  content-copies, not the indexed objects) + permanent invalidation
+  by an early `get_inherit_ctor_definition` push_back ⇒ ≈0 gain.
+- *(src,id) memo key* — crashed (`namespacet::follow`): the frontend
+  mutates AST nodes **in place** during conversion (cast insertion,
+  type annotation), so (src,id) is not stable content-identity; only
+  full `dump()` captures content-at-call-time.
+- *Reroute get_current_contract_name → current_decl_contract
+  (src-span)* — 2.9s/4.3s (fast) but **8 inheritance reds**: src-span
+  gives the *declaring* contract; find_parent_contract's
+  deep-eq-first-match gives the *structural/merged* contract, and the
+  latter is what get_current_contract_name + inheritance depend on.
+
+**1231 re-characterised (user decision: ship Stage 2 only).** The
+plan's "latent correctness bug" at solidity_convert_util.cpp:1231
+(`*node == target` deep-eq where the :1230 comment says "pointer
+identity") is NOT a safely-isolatable bug: the 8-inheritance-failure
+evidence proves the deep-content-eq **first-match** is the
+load-bearing semantics get_current_contract_name + inheritance rely
+on. The :1230 comment is wrong; the code behaviour is correct and
+relied upon. Changing 1231 to pointer-identity is an unvalidated
+semantic change that also destroys the content-keyed memo's
+equivalence proof. User chose to drop the 1231 change and ship the
+verified perf fix. (The misleading :1230 comment is left untouched
+to keep this PR a pure, behaviour-zero perf change; a comment-only
+correction is a separate trivial follow-up if desired.)
+
+**Residual.** The remaining ~6.4s/17.7s is the deep-`==` DFS on the
+first (uncached) query of each distinct node + the dump() cost; a
+faithful sub-`dump()` key was disproven (in-place AST mutation). The
+Reached:0 k-induction budget-burn class (FarmingPool/St1inch) is
+orthogonal and unchanged by this frontend speedup.
+
+---
+
+# Stage I — nondet_string spurious-prune fix (memset) + github_2564 vacuous-pass co-fix (2026-05-19)
+
+## Claim
+
+The FarmingPool `Reached:0` (TWO_TRACK finding #1, the last
+`test > ESBMC` under-report) is NOT a solver/k-induction-budget issue:
+it is a **spurious path prune inside the `nondet_string()` operational
+model**. The constructor's first action builds the ERC20 base-ctor args
+via `stakingToken_.name()/.symbol()` → `nondet_string()`, whose
+**constant-bound-33 zero-fill loop** is k-bounded; under the pin's
+`--max-k-step 15` the k-induction base case prunes the entire
+post-string path, so the 24 branch claims are unreachable ⇒ false 0%.
+
+## Mechanism (file:line, read this session)
+
+- Prune: `src/goto-symex/symex_goto.cpp:472-500` `loop_bound_exceeded`
+  — when a loop exceeds the unwind/k bound and `!partial_loops`, with
+  `no_unwinding_assertions` it emits an unwinding **assumption** and
+  ALWAYS `cur_state->guard.add(negated_cond)` ⇒ for the data-exit-free
+  zero-fill loop `i < 33`, k<33 ⇒ `guard.add(false)` ⇒ all subsequent
+  assignments (constructor body + 24 branch claims) pruned.
+- The loop: `src/c2goto/library/solidity/solidity_string.c:236` (old)
+  `for (i=0;i<_ESBMC_NONDET_STRING_MAX+1;++i) _rand_str[i]='\0';`
+  (`_ESBMC_NONDET_STRING_MAX=32` ⇒ bound 33). The sibling content-fill
+  loop (:241, bound 32) has an `if(i>=len) break` nondet exit ⇒ only
+  restricts to `len<=k`, never fully prunes — so the zero-fill loop is
+  the sole culprit.
+- memset is loop-free for this shape:
+  `src/goto-symex/builtin_functions/memory_ops.cpp:737-807`
+  `intrinsic_memset` — constant byte count + writable global +
+  simplify on ⇒ single-shot symbolic array write, NO per-byte loop;
+  only falls back to the `__memset_impl` loop on symbolic size /
+  read-only target / `--no-simplify` (none apply here).
+
+## Evidence (captured, not inferred)
+
+- **Experiment 1 (k-ladder ground truth, no code change):** FarmingPool
+  with `--max-k-step 40`: k=30..33 ⇒ `Not unwinding loop 35 ... line
+  236`, `Reached:0/0%`; **k=34** (first k > bound 33) the message
+  disappears, path opens; k=40 ⇒ `Branches:24 Reached:3 ... 50%` (then
+  12/24 at higher budget). Proves the bound-33 zero-fill loop is the
+  exact cut; `--max-k-step 15 < 34` ⇒ permanent prune.
+- **Experiment 2 (memset, pinned `--max-k-step 15`, committed
+  full-body solast):** baseline(loop) `Branches:24 Reached:0 0%`
+  (WALL 10.36s harness-equiv) → fixed(memset) `Branches:24 Reached:12
+  Branch Coverage:50%` on `--timeout 90` self-emit. line-236 loop
+  gone (only the unrelated :241 content-fill loop remains).
+
+## Dual-axis (soundness / completeness)
+
+- Soundness: **unchanged**. `memset(buf,0,33)` is byte-exact-equivalent
+  to the loop (same post-state); `intrinsic_memset` verified loop-free
+  for this constant/writable/simplify-on shape. The historical
+  `25489d6fbc/0e95c83fc5` concern (symbolic-bound loop → OOM) does NOT
+  apply: the bound is a compile-time constant; a constant memset does
+  not reintroduce an unbounded unwind.
+- Completeness: **strictly improved**. Removes a spurious prune that
+  caused (a) false coverage under-report (FarmingPool 0% vs ≥50%
+  reachable — exactly the standing "test > ESBMC ⇒ investigate"
+  methodology violation) and (b) **vacuous verification passes**.
+
+## github_2564 — co-fix of an unmasked vacuous CORE pass
+
+The fix unmasked that `github_2564` (CORE, Auction contract) only
+"passed" because the same zero-fill prune fired under its
+`--unwind 20 --no-unwinding-assertions` (silent-truncation combo,
+batch `bc80114065`): pre-fix `Symex completed 0.001s (107 assignments)
+VERIFICATION SUCCESSFUL` — verified essentially nothing. Post-fix the
+path opens and `--unwind 20`/`--incremental-bmc` diverge. **Co-fix
+(authorized):** migrate its test.desc to the canonical suite form
+`--sol contract.sol --k-induction --max-k-step 20 --k-step 3`
+(matches the 531-test `bf7671ab42` migration). Verified: genuine
+`VERIFICATION SUCCESSFUL`, *Solution found by the inductive step
+(k = 4)*, ~2.5s / 6123 assignments — a real proof, not a pruned stub.
+This is a soundness improvement: a regression test that verified
+nothing now actually verifies. github_2564 = Passed in the full gate.
+
+## FarmingPool — wall-(a), accepted (user decision 2026-05-19)
+
+With the correct committed full-body solast, baseline(loop) is a fast
+**vacuous** KNOWNBUG-pass (10.36s, Reached:0 ⇒ `^Branch Coverage:
+[1-9]` no-match). Post-fix it genuinely reaches 12/24 and *would* emit
+`Branch Coverage: 50%` (all KNOWNBUG regexes match ⇒ the intended
+KNOWNBUG→CORE flip) — but `regression/testing_tool.py:137`
+`UNSUPPORTED_OPTIONS=["--timeout","--memlimit"]` strips `--timeout`,
+and `_add_test`'s `if stdout is None: self.fail()` unconditionally
+fails any harness-wall timeout (KNOWNBUG incl). So in-harness it
+becomes a **wall-(a) timeout** — the same documented class as its
+sibling `cov_pilot_st1inch_St1inch` (already a tolerated `***Timeout`
+KNOWNBUG in both baseline and gate). This is a pre-existing orthogonal
+harness limitation (Stage G ledger), NOT a memset soundness issue.
+**User decision: keep the fix; accept FarmingPool as a documented
+wall-(a) pin (option A).** `cov_pilot_farming_FarmingPool` left at its
+committed state (KNOWNBUG, full-body solast) — unchanged.
+
+## Structural-argument no-regression gate (full 1071, one run)
+
+Fixed full esbmc-solidity = 24 fails. 22 identical to the baseline
+fail set (pre-existing). The 2 deltas vs the (stale-solast-
+contaminated) prior baseline: `napp_struct_array_of_struct_fail`
+(string-surface=0 ⇒ memset produces byte-identical GOTO ⇒
+structurally impossible; SMT-scale -j4 jitter — earlier passed 56s
+isolated) and `cov_pilot_farming_FarmingPool` (the accepted wall-(a)
+above). **github_2564 = Passed.** Net memset-attributable
+**CORE→KNOWNBUG = 0**; one vacuous-KNOWNBUG-pass → documented wall-(a)
+(accepted). The 3 napp `napp_state_2d_dyn_address_*` Passed→Timeout in
+the contaminated diff were proven -j4 jitter (passed in -j1
+isolation), string-surface=0.
+
+## Tree state / residual
+
+Changes (uncommitted, no commit authorization):
+`src/c2goto/library/solidity/solidity_string.c` (zero-fill loop →
+memset), `regression/esbmc-solidity/github_2564/test.desc`
+(--unwind 20 --no-unwinding-assertions → --k-induction --max-k-step
+20 --k-step 3). Forbidden-3 carry only their pre-existing session
+M (untouched). `solidity_convert{.cpp,.h,_util.cpp}` carry the prior
+uncommitted Stage-H perf memo (constant across baseline/fixed,
+cancels in the gate). Residual: FarmingPool/St1inch coverage genuine
+k-induction non-convergence is unchanged (the fix corrects the
+*reporting* — no longer a false 0% / vacuous pass — not the
+underlying budget-burn; that is the separate Reached:0 algorithmic
+class, out of scope).
+
+# Stage J — dispatcher contract-typed param soundness fix (2026-05-20)
+
+**Claim.** Solidity dispatcher harness allocated contract-typed function
+parameters as fresh `cpp_new` heap objects (`&dynamic_N_value`), which
+are statically distinct from any contract pointer state-var (which is
+its own `&dynamic_M_value`). Source pattern `if (param == state_var) {
+body }` therefore lowered to a guard ≡ FALSE in the symex, making the
+if-body vacuously unreachable. **All claims inside the body — including
+`assert(false)` — were reported safe.** This is a real soundness
+violation (false negative on bug finding), not a coverage-precision
+gap.
+
+**Mechanism (VCC, file:line, read this session).**
+Source `solidity_convert_call.cpp:562-604` — `assign_param_nondet`,
+contract-typed branch. Before: `get_new_object_ctor_call(base_cname,
+empty_json, false, new_contract)` then `call.arguments().push_back`,
+which emits a `cpp_new struct C` initializer in the dispatcher harness
+body. Post-cpp_new, the ctor is called on the freshly-allocated object,
+giving it a unique `_ESBMC_get_unique_address` and a fresh
+`_ESBMC_bind_cname`. Meanwhile the caller-contract's state-var was set
+in its own ctor to a separate fresh allocation. The two `dynamic_*_
+value` symbols are different memory objects ⇒ pointer-equality on them
+is statically false at the SSA layer (no SAT model can make the two
+distinct heap symbols equal, regardless of nondet contents).
+
+Empirical evidence: VCC dump of V2 minimal repro (`if (x == T) { if (b
+< amount) revert() }`):
+- `{-27} _ESBMC_Object_C.T = (IERC20*)(&dynamic_1_value)`
+- `{-47} goto_symex::guard?0!0&0#1 == ((IERC20*)(&dynamic_2_value) ==
+  _ESBMC_Object_C.T)` (= the outer if's path constraint)
+- Inner VC: `... ∧ goto_symex::guard => assertion_at_L10`. With guard
+  ≡ FALSE, the implication is vacuously TRUE; the counterexample search
+  `... ∧ guard ∧ ¬assertion` is UNSAT; reported PASSED (= NOT
+  reached); body claims never enter `reached_claims`.
+
+**Flag-combo sweep refutes "flag misuse" as cause.**
+On the soundness pin `dispatcher_contract_param_eq_state_var_unsound_
+fail` (real EVM: `c.f(c.T())` triggers `assert(false)`):
+
+| combo                                | verdict (sound = FAILED) |
+|--------------------------------------|--------------------------|
+| `--k-induction --unlimited-k-steps`  | SUCCESSFUL ❌            |
+| `--k-induction --max-k-step 5`       | SUCCESSFUL ❌            |
+| `--incremental-bmc --max-k-step 5`   | UNKNOWN ❌               |
+| `--unwind 5 --no-unwinding-assertions` | SUCCESSFUL ❌          |
+| `--unwind 20 --no-unwinding-assertions` | SUCCESSFUL ❌         |
+| `--unwind 5 + --bound`                 | SUCCESSFUL ❌          |
+| `--k-ind + --bound`                    | SUCCESSFUL ❌          |
+| `--k-ind + --cvc5`                     | SUCCESSFUL ❌          |
+| `--k-ind + --z3`                       | SUCCESSFUL ❌          |
+| `--unwind 5 + --boolector`             | (couldn't reach a result) |
+| `--k-ind + --symex-pointer-check`      | SUCCESSFUL ❌          |
+
+All 4 solvers, all unwind/k-induction modes — uniformly unsound. Not
+flag-induced. Control: `dispatcher_address_param_eq_state_var_baseline
+_fail` (same shape but `address` (uint160) param) — `VERIFICATION
+FAILED` on ALL combos. The differential isolates the bug to contract-
+typed parameter modelling.
+
+**Fix (single edit, `solidity_convert_call.cpp:assign_param_nondet`).**
+Replace the unbound branch's `get_new_object_ctor_call(...)` +
+`call.arguments().push_back(new_contract)` with `get_nondet_expr(
+pointer_typet(symbol_typet(prefix + base_cname)), nondet_ptr)` +
+`call.arguments().push_back(nondet_ptr)`. The harness now emits a free
+nondet pointer of the declared contract/interface type. The SAT solver
+picks any value at evaluation time:
+- pick aliasing a tracked `_ESBMC_Object_<C>` singleton (or a state-
+  var's pointer of compatible type) ⇒ `if (param == T)` body
+  reachable, bugs inside become visible;
+- pick a value distinct from every tracked instance ⇒ preserves the
+  c1/c2 distinctness scenario the original commit was guarding against
+  (the SAT solver picks independent nondet values for each invocation
+  of `assign_param_nondet`'s contract branch).
+
+`is_bound` branch left unchanged: `build_bound_drive_helper` still
+fresh-allocates because the dispatcher loop *needs* a real allocation
+to host the state mutations it drives. Bound-mode soundness gap on
+this pattern is a separate follow-up.
+
+**End-to-end empirical validation.**
+
+1. Soundness pin: `VERIFICATION FAILED` ✓ (was SUCCESSFUL).
+2. Address-typed baseline: unchanged `VERIFICATION FAILED` ✓.
+3. V0 minimal coverage (1/4 → **4/4** = 100%) ✓.
+4. V1 sanity (uint-only param, no contract param): **unchanged** 2/2 ✓.
+5. FarmingPool re-run (5min, whole-unit, 22-exclude): reached 40 → **50**
+   (`Branch Coverage 66.67% → 83.33%`); `union.json` now contains
+   BOTH directions of L4200 and L4202 (the previously-vacuous
+   `NONDET < totalSupply() + amount` claims).
+6. TWO_TRACK rescore on `farming` benchmark: FarmingPool **10/12 →
+   12/12 = test (100%)**; Track A overall: **5= 0<** (was 4= 1<;
+   originally 0= 5<). The "ESBMC < test" residual on this benchmark
+   is fully eliminated.
+7. 53-test candidate regression sweep (tests with contract-typed
+   function parameters; cov_pilot/esol_clone/cross_contract/bound/
+   reentrancy/tod): 51 PASS, 2 FAIL — `cross_contract_3` and
+   `cover_iterable_mapping_1`. **Both are pre-existing failures**
+   verified by stash-revert: their `^VERIFICATION` lines are byte-
+   identical with and without the fix.
+8. Extra category sweep (erc20/reentrancy/napp): 13 timeouts, all in
+   `napp_*` (documented SMT-scale class per
+   `project_napp_smt_scale_bound`); pre-existing.
+
+**Tree state.** Working-tree changes (not committed; no commit
+authorization received yet):
+- `src/solidity-frontend/solidity_convert_call.cpp` (single edit)
+- `regression/esbmc-solidity/dispatcher_contract_param_eq_state_var_unsound_fail/`
+  (CORE; new; renamed from `_unsound_knownbug` after fix flipped it)
+- `regression/esbmc-solidity/dispatcher_address_param_eq_state_var_baseline_fail/`
+  (CORE; new; sound control)
+- this file (notes only).
+
+Forbidden-3 (`solidity_blockchain.c`, `solidity_misc.c`,
+`solidity_language.cpp`) untouched as required. Prior Stage-H perf
+files (`solidity_convert{.cpp,.h,_util.cpp}`) unchanged from pre-
+session state.
+

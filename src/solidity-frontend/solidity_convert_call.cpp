@@ -563,20 +563,33 @@ bool solidity_convertert::assign_param_nondet(
       {
         std::string base_cname = t.get("#sol_contract").as_string();
         assert(!base_cname.empty());
-        // Every contract-typed parameter gets its own freshly-allocated
-        // heap instance.  Pointing two params at the single global
-        // `_ESBMC_Object_<C>` singleton aliased their storage and
-        // addresses, which was a bug — a caller passing `check(c1, c2)`
-        // must see two genuinely distinct contract instances.
+        // Contract-typed harness parameter: emit a nondet pointer of the
+        // declared contract/interface type. The SAT solver then picks any
+        // value: aliasing a tracked `_ESBMC_Object_<C>` singleton (or any
+        // state-var pointer of compatible type), or staying distinct from
+        // them. This is the only sound model of "an external caller can
+        // pass any address the EVM lets it construct" — including the
+        // contract's own state-var pointers, which is the case behind the
+        // pin `dispatcher_contract_param_eq_state_var_unsound_fail`.
         //
-        // --bound mode: drive each param through a bounded nondet-
-        // dispatch loop so its state is some reachable Updated State
-        // instead of ctor defaults.
-        // --unbound / TOD modes: fresh-ctor IS.  TOD harnesses that
-        // need pre-race state sharing use the __ESOL_nondet_state_forward
-        // + __ESOL_deep_copy intrinsics *inside* the harness body
-        // (see solidity_tod_harness.cpp); they don't route through
-        // param injection.
+        // The previous default was `get_new_object_ctor_call` (fresh
+        // `cpp_new` allocation). That was sound for the c1/c2 distinctness
+        // scenario the original commit fixed, but unsound for the dual
+        // direction: a real caller invoking `c.f(c.T())` makes the param
+        // alias `T`, yet the fresh allocation gives a pointer statically
+        // != T's pointer, so `if (param == T) {body}` was vacuously
+        // unreachable and any bug in `body` was hidden from ESBMC's
+        // verification (false negative, soundness violation).
+        //
+        // Independent nondet pointers preserve c1/c2 distinctness when the
+        // solver picks different values for each call site, and witness
+        // aliasing when it picks the same — both regimes reachable.
+        //
+        // --bound mode still routes through `build_bound_drive_helper` so
+        // the dispatcher can drive state transitions on a valid instance;
+        // the bound-mode soundness gap on this pattern is a separate
+        // follow-up (the bound helper also fresh-allocates, but it needs
+        // a real allocation to host the dispatcher's state mutations).
         if (is_bound)
         {
           symbolt drive_sym;
@@ -590,11 +603,10 @@ bool solidity_convertert::assign_param_nondet(
         }
         else
         {
-          exprt new_contract;
-          if (get_new_object_ctor_call(
-                base_cname, empty_json, false, new_contract))
-            return true;
-          call.arguments().push_back(new_contract);
+          exprt nondet_ptr;
+          typet ptr_t = pointer_typet(symbol_typet(prefix + base_cname));
+          get_nondet_expr(ptr_t, nondet_ptr);
+          call.arguments().push_back(nondet_ptr);
         }
       }
       else if (get_sol_type(t) == SolidityGrammar::SolType::STRING && is_pointer_check)
