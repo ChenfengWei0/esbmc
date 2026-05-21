@@ -1793,21 +1793,43 @@ bool solidity_convertert::get_error_definition(const nlohmann::json &ast_node)
   }
   added_symbol.type = type;
 
-  // construct a "__ESBMC_assume(false)" statement
-  typet return_type = empty_typet();
-  locationt loc;
-  get_location_from_node(ast_node, loc);
-  side_effect_expr_function_callt call;
-  get_library_function_call_no_args(
-    "__ESBMC_assume", "c:@F@__ESBMC_assume", return_type, loc, call);
-
-  exprt arg = false_exprt();
-  call.arguments().push_back(arg);
-  convert_expression_to_code(call);
-
-  // insert it to the body
+  // Custom error body: `__ESBMC_assume(false)` to prune the revert path
+  // at the SMT level (matches real-EVM revert-aborts-construction
+  // semantics). Coverage-mode exception (--branch-coverage-claims):
+  // a custom error inside a constructor invariant pruning the
+  // construction path means EVERY post-constructor path is proven
+  // unreachable when SAT cannot satisfy the invariant's PASS direction
+  // (e.g. st1inch's `_votingPowerAt` nonlinear-bitshift conjunction).
+  // Native lcov reaches those post-constructor methods because the
+  // deployment satisfies the invariant by construction; for the
+  // coverage methodology to be comparable, ESBMC's coverage-mode lower
+  // must NOT prune those paths.  Emit `code_skipt()` so the revert
+  // "continues" — sound for the coverage-measurement methodology
+  // (every reach reported is a real reach in some execution model);
+  // unsound for safety verification on the same run (so this flip is
+  // gated on `--branch-coverage-claims`, which already converts
+  // assertions to guards via goto_coverage.cpp:438-441 for the same
+  // reason — the mode is for coverage, not safety).
+  const bool coverage_mode =
+    !config.options.get_option("branch-coverage-claims").empty();
   code_blockt body;
-  body.operands().push_back(call);
+  if (coverage_mode)
+  {
+    body.operands().push_back(code_skipt());
+  }
+  else
+  {
+    typet return_type = empty_typet();
+    locationt loc;
+    get_location_from_node(ast_node, loc);
+    side_effect_expr_function_callt call;
+    get_library_function_call_no_args(
+      "__ESBMC_assume", "c:@F@__ESBMC_assume", return_type, loc, call);
+    exprt arg = false_exprt();
+    call.arguments().push_back(arg);
+    convert_expression_to_code(call);
+    body.operands().push_back(call);
+  }
   added_symbol.value = body;
 
   // restore
