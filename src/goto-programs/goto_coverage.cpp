@@ -290,6 +290,12 @@ static void collect_short_circuit_decisions(
     emit(to_or2t(e).side_1);
   else if (is_and2t(e))
     emit(to_and2t(e).side_1);
+  else if (is_if2t(e))
+    // Solidity ternary `cond ? a : b`: lowered to a flat if2t SELECT
+    // when both arms are side-effect-free.  solc-coverage instruments
+    // the ternary's `cond` as a 2-arm decision; mirror that by emitting
+    // the cond expression as a probe keyed on the same location.
+    emit(to_if2t(e).cond);
   for (size_t i = 0; i < e->get_num_sub_exprs(); ++i)
   {
     const expr2tc *sub = e->get_sub_expr(i);

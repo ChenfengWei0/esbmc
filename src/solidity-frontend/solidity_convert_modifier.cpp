@@ -702,11 +702,16 @@ bool solidity_convertert::build_revert_rollback_block(
     if (get_type_description(
           (*current_functionDecl)["returnParameters"], ret_type))
       return true;
-    if (
-      get_sol_type(ret_type) == SolidityGrammar::SolType::TUPLE_RETURNS)
-      return true;
     if (ret_type.is_not_nil() && ret_type.id() != "empty")
     {
+      // Tuple-returning functions (`returns (T1 a, T2 b)`) used to bail
+      // out here, dropping back to legacy __ESBMC_assume(cond) — which
+      // loses the branch coverage decision because there is no GOTO IF
+      // for the require.  Instead, build a nondet of the (possibly
+      // tuple) return type so the if-then-else rollback shape is still
+      // emitted.  get_nondet_expr handles both scalar and tuple types
+      // (the tuple case yields a struct of nondet components, matching
+      // the tuple-return ABI used by the caller).
       exprt nondet_val;
       get_nondet_expr(ret_type, nondet_val);
       return_stmt.return_value() = nondet_val;
