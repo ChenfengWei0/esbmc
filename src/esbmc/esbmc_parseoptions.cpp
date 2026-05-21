@@ -3494,7 +3494,7 @@ bool esbmc_parseoptionst::process_goto_program(
       options.set_option("no-vla-size-check", true);
       options.set_option("no-align-check", true);
       set_neg_unless_pos("no-bounds-check", "bounds-check");
-      options.set_option("no-narrowing-check", true);
+      set_neg_unless_pos("no-narrowing-check", "narrowing-check");
     }
 
     // Start by removing all no-op instructions and unreachable code
