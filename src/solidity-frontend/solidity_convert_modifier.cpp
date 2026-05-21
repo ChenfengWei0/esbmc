@@ -1472,6 +1472,14 @@ bool solidity_convertert::get_func_modifier(
     if (has_return)
     {
       // return func_modifier();
+      // Set the call's type so the chained-modifier substitution loop
+      // (lines 1316-1334 above) recognises this as a value-returning
+      // return.  Without a type set, op->op0().type().id().as_string()
+      // is empty and the substitution mistakenly replaces this `return
+      // call(next_modifier)` with `code_skipt()`, dropping the chain
+      // entirely.  The aux wrapper's return type is the same as the
+      // wrapped function's, captured in aux_type.return_type().
+      func_modifier.type() = aux_type.return_type();
       code_returnt return_expr = code_returnt();
       return_expr.return_value() = func_modifier;
       _block.move_to_operands(return_expr);
