@@ -22,8 +22,14 @@ CC_DIAGNOSTIC_POP()
 #include "filesystem.h"
 #include <unordered_set>
 #include <unordered_map>
+#include <cstdio>
 #include <cstdlib>
 #include <regex>
+
+#ifdef _WIN32
+#  define popen _popen
+#  define pclose _pclose
+#endif
 
 languaget *new_solidity_language()
 {

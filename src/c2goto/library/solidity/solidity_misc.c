@@ -10,7 +10,7 @@ unsigned int nondet_uint();
 
 extern uint256_t msg_data;
 extern address_t msg_sender;
-extern __uint32_t msg_sig;
+extern uint32_t msg_sig;
 extern uint256_t msg_value;
 extern address_t _ESBMC_enclosing_contract_address;
 extern void *_ESBMC_enclosing_contract_this;
@@ -63,13 +63,13 @@ __ESBMC_HIDE:;
  * model is replaced by an identity-bijective model, same family as
  * the crypto-hash abstraction).
  */
-unsigned int _creationCode(__uint32_t id)
+unsigned int _creationCode(uint32_t id)
 {
 __ESBMC_HIDE:;
   return (unsigned int)~id;
 }
 
-unsigned int _runtimeCode(__uint32_t id)
+unsigned int _runtimeCode(uint32_t id)
 {
 __ESBMC_HIDE:;
   return (unsigned int)~id;
@@ -77,10 +77,10 @@ __ESBMC_HIDE:;
 
 /* type(I).interfaceId — bytes4 deterministic per interface. Same
  * stability + distinctness contract as creationCode/runtimeCode. */
-__uint32_t _interfaceId(__uint32_t id)
+uint32_t _interfaceId(uint32_t id)
 {
 __ESBMC_HIDE:;
-  return (__uint32_t)~id;
+  return (uint32_t)~id;
 }
 
 void _ESBMC_check_reentrancy(const bool _ESBMC_mutex)
