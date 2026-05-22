@@ -1291,6 +1291,21 @@ protected:
   };
   std::vector<cd_span_t> cd_spans;
   bool cd_id_to_name_built = false;
+
+  // Lazy memo for find_parent_contract (perf). That helper did a full
+  // DFS over the entire (1.6 MB+) src_ast_json on every call and is
+  // invoked per-expression via get_current_contract_name — an
+  // O(expr * AST) hot path on large flats. Its result is a pure
+  // function of the target node's CONTENT (deep-`==` returns the
+  // enclosing contract of the first content-equal node), so caching by
+  // the node's exact serialised content is bug-for-bug identical to
+  // the uncached DFS while being robust to the content-copies /
+  // sub-references / synthetic nodes that defeat pointer- or
+  // (src,id)-based keys. Static (find_parent_contract / src_ast_json
+  // are static); cleared per convert() run. Cached ContractDefinition
+  // pointers stay valid: top-level contract objects never relocate
+  // (only their inner "nodes" arrays are ever push_back'd).
+  static std::unordered_map<std::string, const nlohmann::json *> fpc_memo;
   // store multiple exprt and flatten the block
   code_blockt expr_frontBlockDecl;
   code_blockt expr_backBlockDecl;

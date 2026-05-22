@@ -27,6 +27,8 @@ const nlohmann::json solidity_convertert::empty_json = nlohmann::json::object();
 std::string solidity_convertert::current_baseContractName = "";
 nlohmann::json solidity_convertert::src_ast_json = empty_json;
 std::unordered_map<std::string, typet> solidity_convertert::UserDefinedVarMap;
+std::unordered_map<std::string, const nlohmann::json *>
+  solidity_convertert::fpc_memo;
 
 solidity_convertert::solidity_convertert(
   contextt &_context,
@@ -214,6 +216,10 @@ bool solidity_convertert::convert()
   // store auxiliary info
   if (populate_auxiliary_vars())
     return true;
+
+  // Fresh run: drop any find_parent_contract memo carried over from a
+  // previous convert() (the map is static, may persist in-process).
+  fpc_memo.clear();
 
   // --focus-function validation: must identify a single target contract.
   // If the source declares exactly one (non-library, non-interface) contract

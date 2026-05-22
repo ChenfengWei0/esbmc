@@ -1209,6 +1209,28 @@ const nlohmann::json &solidity_convertert::find_parent_contract(
   const nlohmann::json &root,
   const nlohmann::json &target)
 {
+  // Lazy memo keyed by the node's exact serialised content. This
+  // function's result is a pure function of `target` CONTENT (the DFS
+  // returns the enclosing contract of the FIRST node that deep-`==`s
+  // target; `root` is invariant — every caller passes
+  // src_ast_json["nodes"]). The key MUST be the full content: the
+  // Solidity frontend mutates AST nodes in place during conversion
+  // (implicit-cast insertion, type annotation), so a node's (src,id)
+  // is NOT a stable content identity across calls — only the
+  // serialised value captures content-at-call-time. Two nodes with
+  // equal content have equal dumps and the DFS yields the same first
+  // match for both, so caching by dump is bug-for-bug identical to the
+  // uncached DFS, and robust to copies / sub-references / synthetic
+  // nodes. Cached ContractDefinition pointers stay valid for the run
+  // (top-level contract objects never relocate). Cleared per
+  // convert() run.
+  const std::string key = target.dump();
+  auto memo_it = fpc_memo.find(key);
+  if (memo_it != fpc_memo.end())
+    return memo_it->second ? *(memo_it->second) : empty_json;
+
+  const nlohmann::json *result = nullptr; // enclosing contract, or none
+
   using Frame = std::pair<const nlohmann::json *, const nlohmann::json *>;
   std::stack<Frame> stack;
   // Begin with the root, with no current contract context.
@@ -1226,11 +1248,19 @@ const nlohmann::json &solidity_convertert::find_parent_contract(
       current_contract = node;
     }
 
-    // check if this node is the target.
-    // We use pointer identity comparison to ensure an exact match.
+    // Match by DEEP VALUE EQUALITY, not pointer identity. (A prior
+    // comment here wrongly claimed "pointer identity"; the code always
+    // did `*node == target`.) This is load-bearing, not an oversight:
+    // get_current_contract_name() and inheritance resolution depend on
+    // returning the enclosing contract of the FIRST content-equal node
+    // in DFS order — callers routinely pass content-copies / merged /
+    // synthetic nodes whose address differs from the AST original, and
+    // switching to `node == &target` regresses inherited/merged-member
+    // cases. Do not "fix" this to pointer identity.
     if (*node == target)
     {
-      return current_contract ? *current_contract : empty_json;
+      result = current_contract;
+      break;
     }
 
     // If the node is an object, iterate over its values.
@@ -1255,8 +1285,8 @@ const nlohmann::json &solidity_convertert::find_parent_contract(
     }
   }
 
-  // If the target was not found, return an empty JSON.
-  return empty_json;
+  fpc_memo.emplace(key, result);
+  return result ? *result : empty_json;
 }
 
 // Pure DFS: find the first node with matching "id" field in any JSON subtree.
