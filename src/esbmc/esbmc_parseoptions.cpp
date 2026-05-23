@@ -21,9 +21,9 @@ extern "C"
 #endif
 
 #include <esbmc/bmc.h> // also pulls goto-programs/goto_coverage.h, whose
-                        // signal-safe snapshot timeout_handler reads
-                        // (goto_coverage.h has no include guard — must
-                        // not be included a second time here)
+                       // signal-safe snapshot timeout_handler reads
+                       // (goto_coverage.h has no include guard — must
+                       // not be included a second time here)
 #include <esbmc/esbmc_parseoptions.h>
 #ifdef ENABLE_SOLIDITY_FRONTEND
 #  include <solidity-frontend/solidity_tod_analysis.h>
@@ -940,8 +940,9 @@ int esbmc_parseoptionst::doit()
       // `--function` verifies a single function whose internal loops
       // CAN be bounded (`for (i=0; i<N; ++i)`), so leave forward
       // enabled there.
-      if (!cmdline.isset("function") &&
-          !cmdline.isset("enable-forward-condition"))
+      if (
+        !cmdline.isset("function") &&
+        !cmdline.isset("enable-forward-condition"))
         options.set_option("disable-forward-condition", true);
 
       // `--sol <path>` is documented (in options.cpp) as equivalent to
@@ -970,15 +971,12 @@ int esbmc_parseoptionst::doit()
       // incremental-bmc, falsification): Solidity contracts model storage
       // as recursive struct datatypes which Z3 sometimes rejects with
       // "datatype is not well-founded" — Bitwuzla handles them correctly.
-      const bool user_picked_solver = cmdline.isset("z3") ||
-                                      cmdline.isset("cvc5") ||
-                                      cmdline.isset("bitwuzla") ||
-                                      cmdline.isset("boolector") ||
-                                      cmdline.isset("yices") ||
-                                      cmdline.isset("mathsat") ||
-                                      cmdline.isset("cvc4") ||
-                                      cmdline.isset("smtlib") ||
-                                      cmdline.isset("default-solver");
+      const bool user_picked_solver =
+        cmdline.isset("z3") || cmdline.isset("cvc5") ||
+        cmdline.isset("bitwuzla") || cmdline.isset("boolector") ||
+        cmdline.isset("yices") || cmdline.isset("mathsat") ||
+        cmdline.isset("cvc4") || cmdline.isset("smtlib") ||
+        cmdline.isset("default-solver");
 
       // Nested-dynamic-array shapes (`T[][]`, `T[N][][M]`, etc.) hit the
       // Phase-0 bare-smt_sort abort under default Bitwuzla because the
@@ -1059,18 +1057,18 @@ int esbmc_parseoptionst::doit()
         std::string solast_path, sol_path;
         for (const auto &arg : cmdline.args)
         {
-          if (arg.size() >= ext_solast.size() &&
-              arg.compare(
-                arg.size() - ext_solast.size(),
-                ext_solast.size(),
-                ext_solast) == 0)
+          if (
+            arg.size() >= ext_solast.size() &&
+            arg.compare(
+              arg.size() - ext_solast.size(), ext_solast.size(), ext_solast) ==
+              0)
           {
             solast_path = arg;
           }
           else if (
             arg.size() >= ext_sol.size() &&
-            arg.compare(
-              arg.size() - ext_sol.size(), ext_sol.size(), ext_sol) == 0)
+            arg.compare(arg.size() - ext_sol.size(), ext_sol.size(), ext_sol) ==
+              0)
           {
             sol_path = arg;
           }
@@ -1093,7 +1091,7 @@ int esbmc_parseoptionst::doit()
           static const std::string mp_marker = "mapping(";
           size_t mp_match_pos = 0;
           int mapping_chain_run = 0; // .sol: consecutive `mapping(`
-          int prev_emit = -1;  // last non-whitespace char (.sol scan only)
+          int prev_emit = -1; // last non-whitespace char (.sol scan only)
           bool in_line = false, in_block = false, in_str = false;
           char str_quote = '\0';
           int c;
@@ -1385,8 +1383,7 @@ int esbmc_parseoptionst::doit()
 
               // Value-call detection (sliding match, no boundary check
               // needed — the leading `.` is the boundary).
-              auto step =
-                [ch](size_t &pos, const std::string &pat) -> bool {
+              auto step = [ch](size_t &pos, const std::string &pat) -> bool {
                 if (ch == pat[pos])
                   ++pos;
                 else
@@ -1412,10 +1409,11 @@ int esbmc_parseoptionst::doit()
               // paths etc., already string-stripped above).
               if (mp_contract == 0)
               {
-                bool boundary = (prev_for_contract == '\0' ||
-                                 !(std::isalnum(static_cast<unsigned char>(
-                                                  prev_for_contract)) ||
-                                   prev_for_contract == '_'));
+                bool boundary =
+                  (prev_for_contract == '\0' ||
+                   !(std::isalnum(
+                       static_cast<unsigned char>(prev_for_contract)) ||
+                     prev_for_contract == '_'));
                 if (boundary && ch == p_contract[0])
                   mp_contract = 1;
               }
@@ -1425,10 +1423,10 @@ int esbmc_parseoptionst::doit()
                 if (mp_contract == p_contract.size())
                 {
                   int nx = sf.peek();
-                  bool word_end = (nx == EOF ||
-                                   !(std::isalnum(static_cast<unsigned char>(
-                                                    nx)) ||
-                                     nx == '_'));
+                  bool word_end =
+                    (nx == EOF ||
+                     !(std::isalnum(static_cast<unsigned char>(nx)) ||
+                       nx == '_'));
                   if (word_end)
                     ++contract_decl_count;
                   mp_contract = 0;
@@ -1495,8 +1493,9 @@ int esbmc_parseoptionst::doit()
           const char *preferred[] = {"bitwuzla", "cvc5", "boolector", "z3"};
           for (const char *name : preferred)
           {
-            if (padded_solvers.find(std::string(" ") + name + " ") !=
-                std::string::npos)
+            if (
+              padded_solvers.find(std::string(" ") + name + " ") !=
+              std::string::npos)
             {
               chosen = name;
               break;
@@ -1508,8 +1507,7 @@ int esbmc_parseoptionst::doit()
           options.set_option("default-solver", chosen);
           if (nested_dyn_detected)
           {
-            const bool native_on =
-              !cmdline.isset("no-cvc5-native-tuples");
+            const bool native_on = !cmdline.isset("no-cvc5-native-tuples");
             log_status(
               "Solidity: detected nested-dynamic-array shape; auto-selecting "
               "'cvc5'{} (Bitwuzla's tuple flattener cannot encode "
@@ -1530,9 +1528,8 @@ int esbmc_parseoptionst::doit()
           }
           else if (kind_multi_contract_detected)
           {
-            const char *bound_reason = cmdline.isset("bound")
-                                         ? "--bound"
-                                         : "--reentry-check";
+            const char *bound_reason =
+              cmdline.isset("bound") ? "--bound" : "--reentry-check";
             log_status(
               "Solidity: detected --k-induction with multi-contract "
               "dispatch ({} contracts) AND value-routing call "
@@ -1574,8 +1571,8 @@ int esbmc_parseoptionst::doit()
     const char *tod_flag =
       balance_mode ? "tod-balance-check" : "tod-race-check";
     const solidity_tod::Mode tod_mode = balance_mode
-      ? solidity_tod::Mode::BalanceOnly
-      : solidity_tod::Mode::RaceOnly;
+                                          ? solidity_tod::Mode::BalanceOnly
+                                          : solidity_tod::Mode::RaceOnly;
     const char *mode_tag = balance_mode ? "balance" : "race";
     // ---- shared: locate .sol / .solast paths ----
     std::string sol_path, solast_path;
@@ -1588,8 +1585,7 @@ int esbmc_parseoptionst::doit()
         if (sol_path.empty())
           sol_path = arg;
       }
-      else if (
-        arg.size() >= 7 && arg.substr(arg.size() - 7) == ".solast")
+      else if (arg.size() >= 7 && arg.substr(arg.size() - 7) == ".solast")
         solast_path = arg;
     }
     if (sol_path.empty())
@@ -1614,8 +1610,8 @@ int esbmc_parseoptionst::doit()
       std::string cmd =
         "solc --ast-compact-json " + sol_path + " > " + solast_path;
       if (cmdline.isset("solc-bin"))
-        cmd = std::string(cmdline.getval("solc-bin")) +
-              " --ast-compact-json " + sol_path + " > " + solast_path;
+        cmd = std::string(cmdline.getval("solc-bin")) + " --ast-compact-json " +
+              sol_path + " > " + solast_path;
       if (system(cmd.c_str()) != 0)
       {
         log_error("solc failed: {}", cmd);
@@ -1681,7 +1677,8 @@ int esbmc_parseoptionst::doit()
           "--{}: contract '{}' not found in AST", tod_flag, contract_name);
         return 1;
       }
-      auto candidates = solidity_tod::find_tod_candidates(*cdef, tod_mode, &ast);
+      auto candidates =
+        solidity_tod::find_tod_candidates(*cdef, tod_mode, &ast);
       log_status(
         "--{}: discovered {} candidate pair(s) in '{}'",
         tod_flag,
@@ -1709,22 +1706,19 @@ int esbmc_parseoptionst::doit()
           tod_flag);
         return 1;
       }
-      pairs.emplace_back(
-        tod_val.substr(0, comma), tod_val.substr(comma + 1));
+      pairs.emplace_back(tod_val.substr(0, comma), tod_val.substr(comma + 1));
     }
 
     // Each pair -> its own .sol file (one TOD_<a>_<b> contract per file).
-    TodHarnessMode harness_mode = balance_mode
-      ? TodHarnessMode::Balance
-      : TodHarnessMode::Race;
+    TodHarnessMode harness_mode =
+      balance_mode ? TodHarnessMode::Balance : TodHarnessMode::Race;
     std::string sol_dir;
     {
       auto slash = sol_path.find_last_of("/\\");
       sol_dir = (slash == std::string::npos) ? std::string(".")
                                              : sol_path.substr(0, slash);
     }
-    auto harness_path_for = [&](const std::string &fa,
-                                const std::string &fb) {
+    auto harness_path_for = [&](const std::string &fa, const std::string &fb) {
       return sol_dir + "/tod_" + mode_tag + "_" + fa + "_" + fb +
              "_harness.sol";
     };
@@ -1757,7 +1751,8 @@ int esbmc_parseoptionst::doit()
         harness_mode);
       if (harness.empty())
         return 1;
-      std::string harness_path = harness_path_for(pairs[0].first, pairs[0].second);
+      std::string harness_path =
+        harness_path_for(pairs[0].first, pairs[0].second);
       std::ofstream out(harness_path);
       if (!out.is_open())
       {
@@ -1807,8 +1802,11 @@ int esbmc_parseoptionst::doit()
           sol_source, ast, contract_name, p.first, p.second, harness_mode);
         if (harness.empty())
         {
-          log_error("--{}: harness generation failed for {}/{}",
-                    tod_flag, p.first, p.second);
+          log_error(
+            "--{}: harness generation failed for {}/{}",
+            tod_flag,
+            p.first,
+            p.second);
           continue;
         }
         std::string hp = harness_path_for(p.first, p.second);
