@@ -20,8 +20,15 @@ on:
 # ai-generated-code/), Jimple (jimple/), CHERI (cheri-c/, cheri-128/,
 # cheri-cpp/), CUDA (cuda/*). Substring regex; ctest -LE matches
 # against each label string individually.
+#
+# FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: silences the Node 20 deprecation
+# notice for actions/checkout@v4, actions/setup-python@v5, and
+# stefanzweifel/git-auto-commit-action@v5. GitHub will force this in
+# 2026-06; opt in early. Revert with ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION
+# if a specific action breaks on Node 24.
 env:
   E_SOL_EXCLUDE_LABELS: '(python|mopsa|numpy|humaneval|quixbugs|ai-generated|jimple|cheri|cuda)'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build-ubuntu:
@@ -100,13 +107,17 @@ jobs:
       - name: Install cmakelint
         run: pip install cmakelint
       - name: Run cmakelint
-        continue-on-error: true
         shell: bash
         run: |
           # No .cmakelintrc in repo yet — keep non-blocking until the
           # codebase is formally swept. Excludes vendored / generated trees.
+          # `|| true` + explicit `exit 0` keeps the step exit code at 0 so
+          # cmakelint findings don't show up as a red annotation; the report
+          # still lands in the run log. Promote to a hard gate after a sweep.
           find . -type f \( -name 'CMakeLists.txt' -o -name '*.cmake' \) \
             -not -path './build/*' \
             -not -path './deps/*' \
             -not -path '*/third_party/*' -print0 \
-          | xargs -0 -r cmakelint --filter=-linelength,-readability/wonkycase
+          | xargs -0 -r cmakelint --filter=-linelength,-readability/wonkycase \
+          || true
+          exit 0
