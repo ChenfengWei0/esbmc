@@ -14,6 +14,10 @@ extern "C"
 #  include <sys/time.h>
 #  include <sys/types.h>
 }
+#else
+// MSVC's pipe-capable subprocess helpers are spelt with a leading underscore.
+#  define popen _popen
+#  define pclose _pclose
 #endif
 
 #include <esbmc/bmc.h> // also pulls goto-programs/goto_coverage.h, whose
