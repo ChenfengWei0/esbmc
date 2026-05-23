@@ -30,7 +30,6 @@ namespace
 {
 namespace ByteWithRewrite
 {
-
 using DynObjDefs = std::unordered_map<std::string, const expr2tc *>;
 
 static expr2tc strip_casts(const expr2tc &e)
@@ -48,15 +47,17 @@ static expr2tc strip_casts(const expr2tc &e)
 
 static bool is_dyn_obj_symbol(const expr2tc &e)
 {
-  if (!is_symbol2t(e)) return false;
+  if (!is_symbol2t(e))
+    return false;
   const std::string &name = to_symbol2t(e).get_symbol_name();
-  return name.find("symex_dynamic::dynamic_") != std::string::npos
-      || name.find("symex_dynamic::realloc_") != std::string::npos;
+  return name.find("symex_dynamic::dynamic_") != std::string::npos ||
+         name.find("symex_dynamic::realloc_") != std::string::npos;
 }
 
 static std::string get_full_key(const expr2tc &sym)
 {
-  if (!is_symbol2t(sym)) return "";
+  if (!is_symbol2t(sym))
+    return "";
   return to_symbol2t(sym).get_symbol_name();
 }
 
@@ -64,22 +65,32 @@ static std::string get_full_key(const expr2tc &sym)
 // rewrite; the outer cast preserves type-compatibility with the surrounding
 // expression. We only fire when the concat is consumed in a pointer context.
 static bool match_outer_ptr_cast_concat(
-  const expr2tc &e, expr2tc &concat_out, type2tc &target_ptr_type_out)
+  const expr2tc &e,
+  expr2tc &concat_out,
+  type2tc &target_ptr_type_out)
 {
   expr2tc inner;
   type2tc target;
-  if (is_typecast2t(e)) {
-    if (!is_pointer_type(e->type)) return false;
+  if (is_typecast2t(e))
+  {
+    if (!is_pointer_type(e->type))
+      return false;
     inner = to_typecast2t(e).from;
     target = e->type;
-  } else if (is_bitcast2t(e)) {
-    if (!is_pointer_type(e->type)) return false;
+  }
+  else if (is_bitcast2t(e))
+  {
+    if (!is_pointer_type(e->type))
+      return false;
     inner = to_bitcast2t(e).from;
     target = e->type;
-  } else {
+  }
+  else
+  {
     return false;
   }
-  if (!is_concat2t(inner)) return false;
+  if (!is_concat2t(inner))
+    return false;
   concat_out = inner;
   target_ptr_type_out = target;
   return true;
@@ -93,27 +104,34 @@ static bool match_byte_concat_on_dynobj(
   expr2tc &dyn_obj_symbol_out,
   std::vector<BigInt> &offsets_out)
 {
-  if (!is_concat2t(e)) return false;
+  if (!is_concat2t(e))
+    return false;
   std::vector<expr2tc> leaves;
   std::function<bool(const expr2tc &)> collect = [&](const expr2tc &n) -> bool {
-    if (is_concat2t(n)) {
+    if (is_concat2t(n))
+    {
       const concat2t &c = to_concat2t(n);
       return collect(c.side_1) && collect(c.side_2);
     }
     leaves.push_back(n);
     return true;
   };
-  if (!collect(e)) return false;
-  if (leaves.size() < 2) return false;
+  if (!collect(e))
+    return false;
+  if (leaves.size() < 2)
+    return false;
 
   expr2tc first_sym;
   for (const expr2tc &leaf : leaves)
   {
     expr2tc inner = strip_casts(leaf);
-    if (!is_index2t(inner)) return false;
+    if (!is_index2t(inner))
+      return false;
     const index2t &idx = to_index2t(inner);
-    if (!is_constant_int2t(idx.index)) return false;
-    if (!is_dyn_obj_symbol(idx.source_value)) return false;
+    if (!is_constant_int2t(idx.index))
+      return false;
+    if (!is_dyn_obj_symbol(idx.source_value))
+      return false;
     if (is_nil_expr(first_sym))
       first_sym = idx.source_value;
     else if (get_full_key(first_sym) != get_full_key(idx.source_value))
@@ -124,7 +142,8 @@ static bool match_byte_concat_on_dynobj(
   return true;
 }
 
-enum class WalkResult {
+enum class WalkResult
+{
   RESOLVED_LIT,
   RESOLVED_IF,
   UNRESOLVED,
@@ -134,9 +153,12 @@ enum class WalkResult {
 
 // Per-byte resolution: the typed pointer source value AND the byte_extract
 // source_offset (so we can verify offset progression).
-struct ByteResolution {
-  expr2tc typed_source; // For RESOLVED_LIT: the typed pointer. For RESOLVED_IF: an if2tc tree.
-  BigInt source_offset; // Only meaningful for RESOLVED_LIT leaves; if-tree per-arm offsets must agree.
+struct ByteResolution
+{
+  expr2tc
+    typed_source; // For RESOLVED_LIT: the typed pointer. For RESOLVED_IF: an if2tc tree.
+  BigInt
+    source_offset; // Only meaningful for RESOLVED_LIT leaves; if-tree per-arm offsets must agree.
   WalkResult result;
 };
 
@@ -159,30 +181,44 @@ static ByteResolution walk_one_byte_chain(
   ByteResolution out;
   out.result = WalkResult::UNRESOLVED;
 
-  if (depth > 256) { out.result = WalkResult::CHAIN_BLOWUP; return out; }
-  if (if_depth > 16) { out.result = WalkResult::IF_BLOWUP; return out; }
+  if (depth > 256)
+  {
+    out.result = WalkResult::CHAIN_BLOWUP;
+    return out;
+  }
+  if (if_depth > 16)
+  {
+    out.result = WalkResult::IF_BLOWUP;
+    return out;
+  }
 
   if (is_symbol2t(current))
   {
     auto it = defs.find(get_full_key(current));
-    if (it == defs.end()) return out; // UNRESOLVED
-    return walk_one_byte_chain(*it->second, defs, target_offset, depth + 1, if_depth);
+    if (it == defs.end())
+      return out; // UNRESOLVED
+    return walk_one_byte_chain(
+      *it->second, defs, target_offset, depth + 1, if_depth);
   }
 
   if (is_with2t(current))
   {
     const with2t &w = to_with2t(current);
-    if (is_constant_int2t(w.update_field) &&
-        to_constant_int2t(w.update_field).value == target_offset)
+    if (
+      is_constant_int2t(w.update_field) &&
+      to_constant_int2t(w.update_field).value == target_offset)
     {
       expr2tc inner = strip_casts(w.update_value);
-      if (is_byte_extract2t(inner)) {
+      if (is_byte_extract2t(inner))
+      {
         const byte_extract2t &be = to_byte_extract2t(inner);
         // Soundness gate: source must be pointer-typed after strip_casts.
         // Rejects risk5 (int-to-ptr).
         expr2tc be_src = strip_casts(be.source_value);
-        if (!is_pointer_type(be_src->type)) return out; // UNRESOLVED
-        if (!is_constant_int2t(be.source_offset)) return out; // symbolic offset; bail
+        if (!is_pointer_type(be_src->type))
+          return out; // UNRESOLVED
+        if (!is_constant_int2t(be.source_offset))
+          return out; // symbolic offset; bail
         out.typed_source = be_src;
         out.source_offset = to_constant_int2t(be.source_offset).value;
         out.result = WalkResult::RESOLVED_LIT;
@@ -190,42 +226,56 @@ static ByteResolution walk_one_byte_chain(
       }
       return out; // UNRESOLVED — non-byte-extract update value
     }
-    return walk_one_byte_chain(w.source_value, defs, target_offset, depth + 1, if_depth);
+    return walk_one_byte_chain(
+      w.source_value, defs, target_offset, depth + 1, if_depth);
   }
 
   if (is_if2t(current))
   {
     const if2t &iff = to_if2t(current);
-    ByteResolution r_t = walk_one_byte_chain(iff.true_value, defs, target_offset, depth + 1, if_depth + 1);
-    ByteResolution r_f = walk_one_byte_chain(iff.false_value, defs, target_offset, depth + 1, if_depth + 1);
+    ByteResolution r_t = walk_one_byte_chain(
+      iff.true_value, defs, target_offset, depth + 1, if_depth + 1);
+    ByteResolution r_f = walk_one_byte_chain(
+      iff.false_value, defs, target_offset, depth + 1, if_depth + 1);
 
-    if (is_nil_expr(r_t.typed_source) || is_nil_expr(r_f.typed_source)) {
-      if (r_t.result == WalkResult::IF_BLOWUP || r_f.result == WalkResult::IF_BLOWUP)
+    if (is_nil_expr(r_t.typed_source) || is_nil_expr(r_f.typed_source))
+    {
+      if (
+        r_t.result == WalkResult::IF_BLOWUP ||
+        r_f.result == WalkResult::IF_BLOWUP)
         out.result = WalkResult::IF_BLOWUP;
-      else if (r_t.result == WalkResult::CHAIN_BLOWUP || r_f.result == WalkResult::CHAIN_BLOWUP)
+      else if (
+        r_t.result == WalkResult::CHAIN_BLOWUP ||
+        r_f.result == WalkResult::CHAIN_BLOWUP)
         out.result = WalkResult::CHAIN_BLOWUP;
       return out;
     }
 
     // Both arms resolved. The per-arm source_offsets must match (same byte of
     // both pointer sources is being extracted).
-    if (r_t.result == WalkResult::RESOLVED_LIT && r_f.result == WalkResult::RESOLVED_LIT
-        && r_t.source_offset != r_f.source_offset)
+    if (
+      r_t.result == WalkResult::RESOLVED_LIT &&
+      r_f.result == WalkResult::RESOLVED_LIT &&
+      r_t.source_offset != r_f.source_offset)
       return out; // UNRESOLVED — per-arm offsets disagree
 
-    if (r_t.typed_source == r_f.typed_source) {
+    if (r_t.typed_source == r_f.typed_source)
+    {
       // Both arms identical — collapse the if.
       out.typed_source = r_t.typed_source;
       out.source_offset = r_t.source_offset;
-      out.result = (r_t.result == WalkResult::RESOLVED_IF || r_f.result == WalkResult::RESOLVED_IF)
-        ? WalkResult::RESOLVED_IF : WalkResult::RESOLVED_LIT;
+      out.result = (r_t.result == WalkResult::RESOLVED_IF ||
+                    r_f.result == WalkResult::RESOLVED_IF)
+                     ? WalkResult::RESOLVED_IF
+                     : WalkResult::RESOLVED_LIT;
       return out;
     }
 
     // Build if-tree of typed sources. Both arms must have compatible types.
     if (r_t.typed_source->type != r_f.typed_source->type)
       return out; // UNRESOLVED — type mismatch
-    out.typed_source = if2tc(r_t.typed_source->type, iff.cond, r_t.typed_source, r_f.typed_source);
+    out.typed_source = if2tc(
+      r_t.typed_source->type, iff.cond, r_t.typed_source, r_f.typed_source);
     out.source_offset = r_t.source_offset; // implicitly = r_f.source_offset
     out.result = WalkResult::RESOLVED_IF;
     return out;
@@ -245,13 +295,17 @@ static bool check_source_offset_progression(
   const std::vector<BigInt> &concat_offsets,
   const std::vector<ByteResolution> &per_byte)
 {
-  if (concat_offsets.size() != per_byte.size()) return false;
-  if (concat_offsets.empty()) return false;
+  if (concat_offsets.size() != per_byte.size())
+    return false;
+  if (concat_offsets.empty())
+    return false;
 
   BigInt expected_delta = concat_offsets[0] - per_byte[0].source_offset;
-  for (size_t i = 1; i < concat_offsets.size(); ++i) {
+  for (size_t i = 1; i < concat_offsets.size(); ++i)
+  {
     BigInt delta = concat_offsets[i] - per_byte[i].source_offset;
-    if (delta != expected_delta) return false;
+    if (delta != expected_delta)
+      return false;
   }
   return true;
 }
@@ -259,12 +313,16 @@ static bool check_source_offset_progression(
 // Verify that all per-byte resolutions resolve to the SAME typed source (modulo
 // strip_casts). For RESOLVED_IF results, the typed_source is an if2t whose
 // arms must agree across bytes.
-static bool check_typed_source_coherence(const std::vector<ByteResolution> &per_byte)
+static bool
+check_typed_source_coherence(const std::vector<ByteResolution> &per_byte)
 {
-  if (per_byte.empty()) return false;
+  if (per_byte.empty())
+    return false;
   expr2tc canonical = strip_casts(per_byte[0].typed_source);
-  for (size_t i = 1; i < per_byte.size(); ++i) {
-    if (strip_casts(per_byte[i].typed_source) != canonical) return false;
+  for (size_t i = 1; i < per_byte.size(); ++i)
+  {
+    if (strip_casts(per_byte[i].typed_source) != canonical)
+      return false;
   }
   return true;
 }
@@ -281,16 +339,22 @@ static expr2tc try_recover(
   std::vector<ByteResolution> per_byte;
   per_byte.reserve(concat_offsets.size());
 
-  for (const BigInt &offset : concat_offsets) {
+  for (const BigInt &offset : concat_offsets)
+  {
     ByteResolution r = walk_one_byte_chain(dyn_obj_symbol, defs, offset, 0, 0);
-    if (r.result != WalkResult::RESOLVED_LIT && r.result != WalkResult::RESOLVED_IF)
+    if (
+      r.result != WalkResult::RESOLVED_LIT &&
+      r.result != WalkResult::RESOLVED_IF)
       return expr2tc();
-    if (is_nil_expr(r.typed_source)) return expr2tc();
+    if (is_nil_expr(r.typed_source))
+      return expr2tc();
     per_byte.push_back(r);
   }
 
-  if (!check_source_offset_progression(concat_offsets, per_byte)) return expr2tc();
-  if (!check_typed_source_coherence(per_byte)) return expr2tc();
+  if (!check_source_offset_progression(concat_offsets, per_byte))
+    return expr2tc();
+  if (!check_typed_source_coherence(per_byte))
+    return expr2tc();
 
   // All gates passed. Take the first resolution as the canonical typed source
   // (coherence guarantees all are equivalent).
@@ -307,26 +371,34 @@ static expr2tc rewrite_recursively(
   bool &any_change,
   unsigned &fired)
 {
-  if (is_nil_expr(e)) return e;
+  if (is_nil_expr(e))
+    return e;
 
   // Outer pointer-cast wrapping byte-CONCAT-of-byte-extracts.
   expr2tc inner_concat;
   type2tc target_ptr_type;
-  if (match_outer_ptr_cast_concat(e, inner_concat, target_ptr_type)) {
+  if (match_outer_ptr_cast_concat(e, inner_concat, target_ptr_type))
+  {
     expr2tc dyn_sym;
     std::vector<BigInt> concat_offsets;
-    if (match_byte_concat_on_dynobj(inner_concat, dyn_sym, concat_offsets)) {
-      expr2tc recovered = try_recover(inner_concat, dyn_sym, concat_offsets, defs);
-      if (!is_nil_expr(recovered)) {
+    if (match_byte_concat_on_dynobj(inner_concat, dyn_sym, concat_offsets))
+    {
+      expr2tc recovered =
+        try_recover(inner_concat, dyn_sym, concat_offsets, defs);
+      if (!is_nil_expr(recovered))
+      {
         any_change = true;
         ++fired;
         log_debug(
           "byte-with-rewrite",
           "rewrote concat-of-byte-extracts on '{}' to typed pointer source",
           get_full_key(dyn_sym));
-        if (recovered->type == target_ptr_type) return recovered;
+        if (recovered->type == target_ptr_type)
+          return recovered;
         return typecast2tc(target_ptr_type, recovered);
-      } else {
+      }
+      else
+      {
         log_debug(
           "byte-with-rewrite",
           "try_recover FAILED for site '{}'",
@@ -341,17 +413,18 @@ static expr2tc rewrite_recursively(
   e->foreach_operand([&](const expr2tc &child) {
     bool local_change = false;
     expr2tc rewritten = rewrite_recursively(child, defs, local_change, fired);
-    if (local_change) child_changed = true;
+    if (local_change)
+      child_changed = true;
     new_children.push_back(rewritten);
   });
-  if (!child_changed) return e;
+  if (!child_changed)
+    return e;
 
   any_change = true;
   expr2tc cloned = e->clone();
   size_t i = 0;
-  cloned->Foreach_operand([&](expr2tc &child_ref) {
-    child_ref = new_children[i++];
-  });
+  cloned->Foreach_operand(
+    [&](expr2tc &child_ref) { child_ref = new_children[i++]; });
   return cloned;
 }
 
@@ -360,10 +433,12 @@ static bool rewrite_byte_concat_on_step(
   const DynObjDefs &defs,
   unsigned &fired)
 {
-  if (is_nil_expr(step.cond)) return false;
+  if (is_nil_expr(step.cond))
+    return false;
   bool changed = false;
   expr2tc new_cond = rewrite_recursively(step.cond, defs, changed, fired);
-  if (!changed) return false;
+  if (!changed)
+    return false;
   step.cond = new_cond;
   return true;
 }
@@ -374,26 +449,36 @@ static bool rewrite_byte_concat_on_step(
 [[maybe_unused]] void run_pass(symex_target_equationt &eq)
 {
   DynObjDefs defs;
-  for (const auto &step : eq.SSA_steps) {
-    if (!step.is_assignment()) continue;
-    if (is_nil_expr(step.lhs) || !is_symbol2t(step.lhs)) continue;
-    if (is_dyn_obj_symbol(step.lhs)) {
+  for (const auto &step : eq.SSA_steps)
+  {
+    if (!step.is_assignment())
+      continue;
+    if (is_nil_expr(step.lhs) || !is_symbol2t(step.lhs))
+      continue;
+    if (is_dyn_obj_symbol(step.lhs))
+    {
       defs[get_full_key(step.lhs)] = &step.rhs;
     }
   }
 
   unsigned fired = 0;
   unsigned steps_changed = 0;
-  for (auto &step : eq.SSA_steps) {
-    if (step.ignore) continue;
-    if (rewrite_byte_concat_on_step(step, defs, fired)) ++steps_changed;
+  for (auto &step : eq.SSA_steps)
+  {
+    if (step.ignore)
+      continue;
+    if (rewrite_byte_concat_on_step(step, defs, fired))
+      ++steps_changed;
   }
 
   if (fired > 0 || steps_changed > 0)
-    log_debug("byte-with-rewrite",
-              "Surface-C: rewrote {} concat-of-byte-extracts site(s) across {} step(s) "
-              "(dyn_obj_defs: {} entries)",
-              fired, steps_changed, defs.size());
+    log_debug(
+      "byte-with-rewrite",
+      "Surface-C: rewrote {} concat-of-byte-extracts site(s) across {} step(s) "
+      "(dyn_obj_defs: {} entries)",
+      fired,
+      steps_changed,
+      defs.size());
 }
 
 } // namespace ByteWithRewrite
