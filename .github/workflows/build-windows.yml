@@ -14,6 +14,11 @@ on:
         description: "Whether to run tests (regression) for this build"
         required: true
         type: boolean
+      exclude-labels:
+        description: "Regex of test labels to exclude via ctest -LE (push events only; PR branch keeps its hard-coded filter)"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build:
@@ -55,6 +60,8 @@ jobs:
         # On push events, run everything.
         if [[ "${{ github.event_name }}" == "pull_request" ]]; then
           ctest -j4 --output-on-failure --progress -L 'esbmc/|floats/' . -C RelWithDebInfo
+        elif [[ -n "${{ inputs.exclude-labels }}" ]]; then
+          ctest -j4 --output-on-failure --progress -LE "${{ inputs.exclude-labels }}" . -C RelWithDebInfo
         else
           ctest -j4 --output-on-failure --progress . -C RelWithDebInfo
         fi

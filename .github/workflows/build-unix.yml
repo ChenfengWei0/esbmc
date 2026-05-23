@@ -14,6 +14,16 @@ on:
         description: "Whether to run tests (regression) for this build"
         required: true
         type: boolean
+      exclude-labels:
+        description: "Regex of test labels to exclude via ctest -LE (push events only; PR/macOS branches keep their hard-coded filters)"
+        required: false
+        type: string
+        default: ""
+      run-python-pre-check:
+        description: "Run scripts/check_python_tests.sh before ctest (default true to keep PR behavior)"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -42,7 +52,7 @@ jobs:
         path: ./release
     
     - name: Check Python regression tests
-      if: ${{ inputs.testing == true }}
+      if: ${{ inputs.testing == true && inputs.run-python-pre-check == true }}
       run: |
         # Set PATH to include Python 3.12 and user-installed tools (mypy, meson, etc.)
         export PATH="$(brew --prefix python@3.12)/bin:$HOME/Library/Python/3.12/bin:$PATH"
@@ -70,6 +80,9 @@ jobs:
           ctest -j4 --output-on-failure --progress -L '^python/$'
         elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
           ctest -j4 --output-on-failure --progress -LE python-intensive .
+        elif [[ -n "${{ inputs.exclude-labels }}" ]]; then
+          # Caller (e.g. E-SOL push) wants to skip specific suites
+          ctest -j4 --output-on-failure --progress -LE "${{ inputs.exclude-labels }}" .
         else
           ctest -j4 --output-on-failure --progress .
         fi
