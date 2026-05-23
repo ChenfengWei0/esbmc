@@ -27,7 +27,7 @@ repo:
 - [TOD detection](#tod-transaction-order-dependence-detection) — `--tod-race-check`, `--tod-balance-check`, `--dump-harness`
 - [Counter-example minimisation](#counter-example-minimisation) — `esbmc-minimise`, `--dump-violation-info`
 - [Structural coverage](#structural-coverage) — branch / condition / assertion coverage
-- [Externally exposed intrinsics](#externally-exposed-intrinsics) — `__ESOL_deep_copy`, `__ESOL_nondet_state_forward`, `__ESBMC_assert`, `__ESBMC_assume`
+- [Externally exposed intrinsics](#externally-exposed-intrinsics) — `__ESOL_deep_copy`, `__ESOL_nondet_state_forward`, `__ESBMC_assert`, `__ESBMC_assume`, `__ESBMC_nondet_*`
 - [Approximations you should know about](#approximations-you-should-know-about)
 - [Building](#building) — CMake options, Bitwuzla prerequisites, static release build
 - [Developer notes](#developer-notes)
@@ -495,6 +495,7 @@ that the author writes alongside the contract under verification.
 | `__ESBMC_assume(expr)` | `bool → void` | Adds `expr` as a path constraint. Unreachable paths are pruned — behaves like Solidity's `require`, but without the revert semantics. Also a VSA hint for `p != 0` pointer guards. |
 | `__ESBMC_assert(expr, msg)` | `bool, string → void` | User-level assertion. |
 | `__VERIFIER_assume` / `__VERIFIER_assert` | same as `__ESBMC_*` | Accepted for compatibility with SV-COMP style stubs; identically handled. |
+| `__ESBMC_nondet_*()` | `() → T` (T = declared return type) | Returns a fresh nondet value of the call's declared return type. Any name beginning with `__ESBMC_nondet_` is recognised — the suffix is for documentation only. Use when an instrumenter needs to inject a fresh nondet at a specific program point without changing function signatures (e.g. self-composition oracles for miner-timestamp / hyperproperty checks where neither a parameter nor a state variable is a viable injection site — parameters break internal callers, state variables start at the post-constructor default in `--contract` mode rather than being havoc'd). |
 
 Users are expected to declare solc-compile-compatible stubs in the
 source; ESBMC replaces the stub bodies at verification time. Example
@@ -503,6 +504,9 @@ stubs the TOD harness generator uses:
 ```solidity
 function __ESOL_nondet_state_forward(C c) { assembly {} }
 function __ESOL_deep_copy(C src) pure returns (C) { return src; }
+function __ESBMC_nondet_uint() internal pure returns (uint256) {}
+function __ESBMC_nondet_bool() internal pure returns (bool) {}
+function __ESBMC_nondet_address() internal pure returns (address) {}
 ```
 
 ## Approximations you should know about

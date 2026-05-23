@@ -2039,6 +2039,53 @@ bool solidity_convertert::get_call_expr(
       return false;
     }
 
+    // * __ESBMC_nondet_* family intrinsics:
+    //   Return a fresh nondet value of the call's declared return type.
+    //   Closes the "MODELING-2" gap: instrumenters that need a fresh
+    //   nondet at a specific point (e.g. for self-composition oracles
+    //   like TD-guard manipulability) cannot inject one through a
+    //   state variable (state vars start at their post-constructor
+    //   default in --contract mode, not havoc'd) nor through a new
+    //   function parameter (that would break every internal caller).
+    //
+    //   User declares an empty stub so solc accepts the call:
+    //     function __ESBMC_nondet_uint() internal returns (uint256) {}
+    //     function __ESBMC_nondet_bool() internal returns (bool) {}
+    //     function __ESBMC_nondet_address() internal returns (address) {}
+    //     // any return type works — the name prefix is the only trigger
+    //   ESBMC ignores the stub body and lowers the call directly to a
+    //   side-effect-nondet expression of the AST's return type.
+    if (
+      callee_expr_json.is_object() &&
+      callee_expr_json.value("nodeType", "") == "Identifier")
+    {
+      const std::string &nm = callee_expr_json.value("name", "");
+      static const std::string prefix = "__ESBMC_nondet_";
+      if (
+        nm.compare(0, prefix.size(), prefix) == 0 &&
+        nm.size() > prefix.size())
+      {
+        if (!expr.contains("typeDescriptions"))
+        {
+          log_error(
+            "{}: FunctionCall node has no typeDescriptions — cannot "
+            "resolve nondet return type",
+            nm);
+          return true;
+        }
+        typet ret_type;
+        if (get_type_description(expr["typeDescriptions"], ret_type))
+          return true;
+        exprt nondet("sideeffect", ret_type);
+        nondet.statement("nondet");
+        locationt l;
+        get_location_from_node(expr, l);
+        nondet.location() = l;
+        new_expr = nondet;
+        return false;
+      }
+    }
+
     // * check if it's a low-level call
     if (SolidityGrammar::is_address_member_call(callee_expr_json))
     {
