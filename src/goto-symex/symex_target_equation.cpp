@@ -368,7 +368,10 @@ static bool rewrite_byte_concat_on_step(
   return true;
 }
 
-void run_pass(symex_target_equationt &eq)
+// Not currently wired into the pipeline; kept compiled to preserve the
+// experimental rewrite (see notes/napp/heap_byte_provenance/) until it
+// is either promoted to a real pass or excised.
+[[maybe_unused]] void run_pass(symex_target_equationt &eq)
 {
   DynObjDefs defs;
   for (const auto &step : eq.SSA_steps) {
