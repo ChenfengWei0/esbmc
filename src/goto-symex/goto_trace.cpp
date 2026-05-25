@@ -718,16 +718,16 @@ namespace
 // and return (contract, function) if the id matches, otherwise
 // an empty optional pair. Robust to trailing `@` qualifiers and
 // missing `#<id>` suffix.
-std::pair<std::string, std::string>
-parse_sol_symbol_id(const std::string &id)
+std::pair<std::string, std::string> parse_sol_symbol_id(const std::string &id)
 {
   std::pair<std::string, std::string> out;
   const std::string c_tag = "@C@";
   const std::string f_tag = "@F@";
   auto c_pos = id.find(c_tag);
   auto f_pos = id.find(f_tag);
-  if (c_pos == std::string::npos || f_pos == std::string::npos ||
-      f_pos <= c_pos + c_tag.size())
+  if (
+    c_pos == std::string::npos || f_pos == std::string::npos ||
+    f_pos <= c_pos + c_tag.size())
     return out;
   auto c_begin = c_pos + c_tag.size();
   auto c_end = id.find('@', c_begin);
@@ -831,8 +831,9 @@ bool dump_violation_info_json(
       return false;
     // Reject stdlib-backed symbols (sol64 model files, C library
     // helpers) and any symbol whose underlying file is not a .sol.
-    if (sym_file.size() < 4 ||
-        sym_file.compare(sym_file.size() - 4, 4, ".sol") != 0)
+    if (
+      sym_file.size() < 4 ||
+      sym_file.compare(sym_file.size() - 4, 4, ".sol") != 0)
       return false;
     return true;
   };
@@ -919,18 +920,16 @@ bool dump_violation_info_json(
     {"function", fn_bare},
     {"bug_type", violated->comment},
     {"in_function_offset_lines", relative_offset}};
-  root["original_function"] =
-    original_function.empty() ? nlohmann::json(nullptr)
-                              : nlohmann::json(original_function);
+  root["original_function"] = original_function.empty()
+                                ? nlohmann::json(nullptr)
+                                : nlohmann::json(original_function);
   root["trace_methods"] = trace_methods;
   root["locked_symbols"] = locked_symbols;
   root["source_files"] = nlohmann::json::array();
   if (!file.empty())
     root["source_files"].push_back(file);
   root["violation_location"] = {
-    {"file", file},
-    {"line", abs_line},
-    {"function_start_line", fn_start_line}};
+    {"file", file}, {"line", abs_line}, {"function_start_line", fn_start_line}};
 
   std::ofstream out(path);
   if (!out)
