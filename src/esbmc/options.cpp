@@ -97,6 +97,10 @@ const struct group_opt_templ all_cmd_options[] = {
     {"show-stacktrace",
      NULL,
      "Show the stack trace of function call in the counterexample"},
+    {"show-funccall-trace",
+     NULL,
+     "Show the chronological sequence of function calls leading to the "
+     "counterexample (reentrancy-aware)"},
     {"simplify-trace",
      NULL,
      "Simplify the trace and exclude the assignments whose variables are not "
