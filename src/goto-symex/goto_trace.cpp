@@ -623,6 +623,18 @@ void show_goto_trace(
           for (const auto &s : goto_trace.steps)
           {
             const auto &cur = s.stack_trace;
+            // Skip steps captured outside any function context (global
+            // initializers, per-tx reseed scaffolding, etc.). Their
+            // stack_trace is empty even though the program clearly has
+            // frames on the call stack at that moment; treating that as
+            // a reset would falsely re-emit the entire chain on the
+            // next non-empty step.
+            if (cur.empty())
+            {
+              if (&s == &step)
+                break;
+              continue;
+            }
             // Common suffix length (outermost end of both vectors).
             size_t common = 0;
             while (common < prev.size() && common < cur.size() &&
