@@ -165,8 +165,13 @@ const struct group_opt_templ all_cmd_options[] = {
      "--bound (under unbound the call is special-cased to skip "
      "balance accounting)."},
     {"negating-property",
-     boost::program_options::value<std::string>()->value_name("fname"),
-     "Convert the assert(cond) to assert(!cond)"},
+     boost::program_options::value<std::string>()->value_name(
+       "[contract:]fn[:line]"),
+     "Convert assert(cond) to assert(!cond). Accepts [contract:]function"
+     "[:line]: line restricts negation to asserts on that source line "
+     "(falls back to the whole function if no assert matches the line); "
+     "contract (Solidity, case-sensitive) disambiguates same-named "
+     "functions"},
     {"tod-balance-check",
      boost::program_options::value<std::string>()
        ->value_name("auto|f1,f2")

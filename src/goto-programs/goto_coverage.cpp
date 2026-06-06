@@ -1367,23 +1367,123 @@ bool goto_coveraget::is_target_func(
   return false;
 }
 
+// Parse the --negating-property spec "[contract:]function[:line]".
+//   1 token  -> function
+//   2 tokens -> last all-digits: function:line ; else contract:function
+//   3 tokens -> contract:function:line
+// A malformed spec (>3 tokens or empty function) degrades to treating the
+// whole string as the function name (backward compatible). `line` stays
+// empty when no line is given; it is kept as a string so it can be compared
+// directly against the instruction location, with no integer parsing.
+static void parse_negate_spec(
+  const std::string &spec,
+  std::string &contract,
+  std::string &fname,
+  std::string &line)
+{
+  contract.clear();
+  line.clear();
+
+  auto all_digits = [](const std::string &s) {
+    return !s.empty() &&
+           s.find_first_not_of("0123456789") == std::string::npos;
+  };
+
+  std::vector<std::string> tok;
+  size_t start = 0;
+  for (size_t pos = spec.find(':'); pos != std::string::npos;
+       pos = spec.find(':', start))
+  {
+    tok.push_back(spec.substr(start, pos - start));
+    start = pos + 1;
+  }
+  tok.push_back(spec.substr(start));
+
+  if (tok.size() == 1)
+    fname = tok[0];
+  else if (tok.size() == 2)
+  {
+    if (all_digits(tok[1]))
+    {
+      fname = tok[0];
+      line = tok[1];
+    }
+    else
+    {
+      contract = tok[0];
+      fname = tok[1];
+    }
+  }
+  else if (tok.size() == 3)
+  {
+    contract = tok[0];
+    fname = tok[1];
+    if (all_digits(tok[2]))
+      line = tok[2];
+  }
+  else
+  {
+    log_warning(
+      "--negating-property: malformed spec '{}', treating it as a plain "
+      "function name",
+      spec);
+    fname = spec;
+  }
+
+  if (fname.empty())
+  {
+    log_warning(
+      "--negating-property: empty function name in spec '{}', treating it as "
+      "a plain function name",
+      spec);
+    contract.clear();
+    line.clear();
+    fname = spec;
+  }
+}
+
+// Extract the contract name from a Solidity mangled id of the form
+// "sol:@C@<Contract>@F@...". Returns "" for non-contract / non-Solidity ids.
+static std::string contract_of(const std::string &mangled_id)
+{
+  const std::string c_tag = "@C@";
+  const std::string f_tag = "@F@";
+  size_t cpos = mangled_id.find(c_tag);
+  if (cpos == std::string::npos)
+    return "";
+  cpos += c_tag.size();
+  size_t fpos = mangled_id.find(f_tag, cpos);
+  if (fpos == std::string::npos || fpos <= cpos)
+    return "";
+  return mangled_id.substr(cpos, fpos - cpos);
+}
+
 // negate the condition inside the assertion
 // The idea is that, if the claim is verified safe, and its negated claim is also verified safe, then we say this claim is unreachable
-void goto_coveraget::negating_asserts(const std::string &tgt_fname)
+void goto_coveraget::negating_asserts(const std::string &tgt_spec)
 {
+  std::string contract, fname, target_line;
+  parse_negate_spec(tgt_spec, contract, fname, target_line);
+
   std::string old = target_function;
-  target_function = tgt_fname;
+  target_function = fname;
 
   std::unordered_set<std::string> location_pool = {};
   location_pool.insert(get_filename_from_path(filename));
   for (auto const &inc : config.ansi_c.include_files)
     location_pool.insert(get_filename_from_path(inc));
 
+  // First pass: collect candidate asserts in functions matching the
+  // function-name filter (and the optional case-sensitive contract filter),
+  // restricted to the user source files.
+  std::vector<goto_programt::instructiont::targett> candidates;
   Forall_goto_functions (f_it, goto_functions)
     if (f_it->second.body_available && f_it->first != "__ESBMC_main")
     {
       goto_programt &goto_program = f_it->second.body;
       if (filter(f_it->first, goto_program))
+        continue;
+      if (!contract.empty() && contract_of(f_it->first.as_string()) != contract)
         continue;
 
       Forall_goto_program_instructions (it, goto_program)
@@ -1394,12 +1494,36 @@ void goto_coveraget::negating_asserts(const std::string &tgt_fname)
           continue;
 
         if (it->is_assert())
-        {
-          expr2tc guard = it->guard;
-          replace_assert_to_guard(gen_not_expr(guard), it, false);
-        }
+          candidates.push_back(it);
       }
     }
+
+  // Select the asserts to negate. When a line is given, keep only those on
+  // that source line; if none match, silently fall back to whole-function
+  // negation (all candidates).
+  std::vector<goto_programt::instructiont::targett> matched;
+  if (!target_line.empty())
+  {
+    for (auto &it : candidates)
+      if (it->location.get_line().as_string() == target_line)
+        matched.push_back(it);
+    if (matched.empty())
+    {
+      log_debug(
+        "coverage",
+        "--negating-property: no assert at line {} in '{}', falling back to "
+        "whole-function negation",
+        target_line,
+        fname);
+      matched = candidates;
+    }
+  }
+  else
+    matched = candidates;
+
+  for (auto &it : matched)
+    replace_assert_to_guard(gen_not_expr(it->guard), it, false);
+
   target_function = old;
 }
 
