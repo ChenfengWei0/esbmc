@@ -3244,15 +3244,76 @@ bool solidity_convertert::get_contract_member_call_expr(
       return false;
     }
 
-    if (!resolved_caller.contains("referencedDeclaration"))
+    // Recover the cast target contract/interface name when the caller is
+    // an explicit type cast to a contract type (e.g.
+    // `ERC721TokenReceiver(to).onERC721Received(...)` or
+    // `ICallback(msg.sender).cb()`).  Hoisted so both the variable-backed
+    // path and the no-variable address-cast path below can use it.
+    std::string cast_target_cname;
+    if (
+      caller_expr_json.contains("nodeType") &&
+      caller_expr_json["nodeType"] == "FunctionCall" &&
+      caller_expr_json.value("kind", "") == "typeConversion" &&
+      caller_expr_json.contains("typeDescriptions"))
     {
-      // e.g. `C(address(0x1234)).fun` — the innermost argument after
-      // unwrapping typeConversion is a Literal (or other non-Identifier),
-      // so there is no persistent contract variable to bind to. Model
-      // the read as a nondet value of the member's declared type; if
-      // the member is later called, the call site will be handled by
-      // the opaque fn-ptr path. This mirrors the `(new C()).x` fallback
-      // above.
+      const std::string ts =
+        caller_expr_json["typeDescriptions"].value("typeString", "");
+      // ts is like "contract ERC721TokenReceiver" or "contract IERC20"
+      auto sp = ts.rfind(' ');
+      if (sp != std::string::npos && ts.compare(0, 9, "contract ") == 0)
+        cast_target_cname = ts.substr(sp + 1);
+    }
+
+    side_effect_expr_function_callt call;
+    int contract_var_id = -1;
+    exprt base;
+    std::string base_cname = "";
+
+    if (
+      !resolved_caller.contains("referencedDeclaration") && is_bound &&
+      !cast_target_cname.empty() && structureTypingMap.count(cast_target_cname))
+    {
+      // The cast operand is not a persistent contract variable — e.g.
+      // `ICallback(msg.sender).cb()`.  The operand is an address-valued
+      // expression (msg.sender, a literal, address(this), a computed
+      // address) with no variable to which a contract type was bound.
+      //
+      // Under --bound the address still denotes a concrete system
+      // contract: `Contract(addr).f()` must dispatch to whichever tracked
+      // instance is deployed at `addr` (EVM dynamic dispatch by address).
+      // Resolve `addr`, rewrap it as a CONTRACT pointer to the cast
+      // target's singleton, and fall through to the same high-level
+      // dispatch used for typed-variable callees.  Without this the call
+      // is havoc'd and any property that depends on the callee executing
+      // (re-entrancy via `I(msg.sender).f()`, ERC777 `tokensReceived`,
+      // approveAndCall, ...) is silently missed — a soundness false
+      // negative.
+      if (get_expr(
+            resolved_caller,
+            resolved_caller.contains("typeDescriptions")
+              ? resolved_caller["typeDescriptions"]
+              : nlohmann::json(nullptr),
+            base))
+        return true;
+
+      // Rewrap the raw address as a CONTRACT pointer to the cast target's
+      // singleton (mirrors the variable-backed cast path below).
+      // convert_type_expr patches the singleton's $address to carry `addr`
+      // and returns `&singleton` as the CONTRACT-typed base.
+      typet target_type = symbol_typet(prefix + cast_target_cname);
+      target_type.set("#sol_contract", cast_target_cname);
+      set_sol_type(target_type, SolidityGrammar::SolType::CONTRACT);
+      convert_type_expr(ns, base, target_type, expr);
+      base.type().set("#sol_contract", cast_target_cname);
+      base_cname = cast_target_cname;
+    }
+    else if (!resolved_caller.contains("referencedDeclaration"))
+    {
+      // e.g. `C(address(0x1234)).fun` in unbound mode, or no tracked
+      // implementer of the cast target. Model the read as a nondet value
+      // of the member's declared type; if the member is later called, the
+      // call site will be handled by the opaque fn-ptr path. This mirrors
+      // the `(new C()).x` fallback above.
       typet ret_t;
       bool have_type = false;
       int fn_ref = expr.value("referencedDeclaration", -1);
@@ -3301,126 +3362,102 @@ bool solidity_convertert::get_contract_member_call_expr(
       new_expr = nondet;
       return false;
     }
-
-    side_effect_expr_function_callt call;
-    const int contract_var_id =
-      resolved_caller["referencedDeclaration"].get<int>();
-    assert(!current_baseContractName.empty());
-    const nlohmann::json &base_expr_json =
-      find_decl_ref(contract_var_id); // contract
-
-    // If the outer caller was an explicit type cast to a contract
-    // type (e.g. `ERC721TokenReceiver(to).onERC721Received(...)`),
-    // we unwrapped past the cast — so base_expr_json is the
-    // inner variable (an address), not a contract. Recover the
-    // target contract name from the cast's typeDescriptions.
-    std::string cast_target_cname;
-    if (
-      caller_expr_json.contains("nodeType") &&
-      caller_expr_json["nodeType"] == "FunctionCall" &&
-      caller_expr_json.value("kind", "") == "typeConversion" &&
-      caller_expr_json.contains("typeDescriptions"))
+    else
     {
-      const std::string ts =
-        caller_expr_json["typeDescriptions"].value("typeString", "");
-      // ts is like "contract ERC721TokenReceiver" or
-      // "contract IERC20"
-      auto sp = ts.rfind(' ');
-      if (sp != std::string::npos && ts.compare(0, 9, "contract ") == 0)
-        cast_target_cname = ts.substr(sp + 1);
-    }
+      contract_var_id = resolved_caller["referencedDeclaration"].get<int>();
+      assert(!current_baseContractName.empty());
+      const nlohmann::json &base_expr_json =
+        find_decl_ref(contract_var_id); // contract
 
-    // contract C{ Base x; x.call();} where base.contractname != current_ContractName;
-    // therefore, we need to extract the based contract name
-    exprt base;
-    std::string base_cname = "";
-    if (base_expr_json.empty())
-    {
-      // assume it's 'this'
-      if (contract_var_id < 0 && resolved_caller.value("name", "") == "this")
+      // contract C{ Base x; x.call();} where base.contractname != current_ContractName;
+      // therefore, we need to extract the based contract name
+      if (base_expr_json.empty())
       {
-        exprt this_expr;
-        assert(current_functionDecl);
-        if (get_func_decl_this_ref(*current_functionDecl, this_expr))
-          return true;
-        base = this_expr;
+        // assume it's 'this'
+        if (contract_var_id < 0 && resolved_caller.value("name", "") == "this")
+        {
+          exprt this_expr;
+          assert(current_functionDecl);
+          if (get_func_decl_this_ref(*current_functionDecl, this_expr))
+            return true;
+          base = this_expr;
 
-        assert(!current_contractName.empty());
-        base_cname = current_contractName;
+          assert(!current_contractName.empty());
+          base_cname = current_contractName;
+        }
+        else
+        {
+          log_error("Unexpect base expression");
+          return true;
+        }
+      }
+      else if (
+        base_expr_json.contains("nodeType") &&
+        base_expr_json["nodeType"] == "ContractDefinition")
+      {
+        // Static function reference: `ContractName.funcName` (e.g.
+        // `ERC721TokenReceiver.onERC721Received.selector`). There is
+        // no instance — use the contract name as the scope and leave
+        // base as nil.
+        base_cname = base_expr_json.value("name", "");
+        assert(!base_cname.empty());
       }
       else
       {
-        log_error("Unexpect base expression");
-        return true;
-      }
-    }
-    else if (
-      base_expr_json.contains("nodeType") &&
-      base_expr_json["nodeType"] == "ContractDefinition")
-    {
-      // Static function reference: `ContractName.funcName` (e.g.
-      // `ERC721TokenReceiver.onERC721Received.selector`). There is
-      // no instance — use the contract name as the scope and leave
-      // base as nil.
-      base_cname = base_expr_json.value("name", "");
-      assert(!base_cname.empty());
-    }
-    else
-    {
-      if (get_var_decl_ref(base_expr_json, true, base))
-        return true;
-      base_cname = base.type().get("#sol_contract").as_string();
-      // The inner variable may be an address that was cast to a
-      // contract type (e.g. `ERC721TokenReceiver(to).f()`); in
-      // that case the cast's target type is the correct scope.
-      if (base_cname.empty() && !cast_target_cname.empty())
-      {
-        base_cname = cast_target_cname;
-
-        // Re-wrap `base` so its type is CONTRACT (pointer to the
-        // target singleton) instead of the raw address.  Without this
-        // `get_high_level_member_access` aborts with
-        //   ERROR: Expecting contract type  (unsignedbv width=160)
-        // for every `Contract(addrVar).method(...)` call pattern — a
-        // pattern that is pervasive in DeFi contracts (IERC20(token).
-        // transfer(...), Callback(addr).onX(...), Oracle(feed).
-        // latestAnswer(), etc.).
-        //
-        // Semantics: Solidity `Contract(addr)` is a pure type
-        // annotation at runtime — the underlying value is still the
-        // 160-bit address.  ESBMC's address↔contract conversion logic
-        // in convert_type_expr mutates `_ESBMC_Object_<C>.$address` to
-        // carry the cast's address and returns `&singleton` as the
-        // CONTRACT-typed base.  Downstream dispatch is mode-aware:
-        //   - --bound: calls the singleton's method body, with
-        //     $address carrying the cast addr so subsequent
-        //     `address(c) == someAddr` checks line up.
-        //   - --unbound: routes through _ESBMC_Nondet_Extcall_<C>,
-        //     which havocs state regardless of the concrete address
-        //     (correct over-approximation for opaque externals).
-        if (get_sol_type(base.type()) != SolidityGrammar::SolType::CONTRACT)
+        if (get_var_decl_ref(base_expr_json, true, base))
+          return true;
+        base_cname = base.type().get("#sol_contract").as_string();
+        // The inner variable may be an address that was cast to a
+        // contract type (e.g. `ERC721TokenReceiver(to).f()`); in
+        // that case the cast's target type is the correct scope.
+        if (base_cname.empty() && !cast_target_cname.empty())
         {
-          typet target_type = symbol_typet(prefix + cast_target_cname);
-          target_type.set("#sol_contract", cast_target_cname);
-          set_sol_type(target_type, SolidityGrammar::SolType::CONTRACT);
-          convert_type_expr(ns, base, target_type, expr);
-          // `convert_type_expr` sets `#sol_type = CONTRACT` on the
-          // returned pointer but leaves `#sol_contract` unset on the
-          // pointer itself.  `get_base_contract_name` (called later by
-          // `get_high_level_member_access`) looks at the pointer's
-          // `#sol_contract`, so stamp it explicitly.
-          base.type().set("#sol_contract", cast_target_cname);
+          base_cname = cast_target_cname;
+
+          // Re-wrap `base` so its type is CONTRACT (pointer to the
+          // target singleton) instead of the raw address.  Without this
+          // `get_high_level_member_access` aborts with
+          //   ERROR: Expecting contract type  (unsignedbv width=160)
+          // for every `Contract(addrVar).method(...)` call pattern — a
+          // pattern that is pervasive in DeFi contracts (IERC20(token).
+          // transfer(...), Callback(addr).onX(...), Oracle(feed).
+          // latestAnswer(), etc.).
+          //
+          // Semantics: Solidity `Contract(addr)` is a pure type
+          // annotation at runtime — the underlying value is still the
+          // 160-bit address.  ESBMC's address↔contract conversion logic
+          // in convert_type_expr mutates `_ESBMC_Object_<C>.$address` to
+          // carry the cast's address and returns `&singleton` as the
+          // CONTRACT-typed base.  Downstream dispatch is mode-aware:
+          //   - --bound: calls the singleton's method body, with
+          //     $address carrying the cast addr so subsequent
+          //     `address(c) == someAddr` checks line up.
+          //   - --unbound: routes through _ESBMC_Nondet_Extcall_<C>,
+          //     which havocs state regardless of the concrete address
+          //     (correct over-approximation for opaque externals).
+          if (get_sol_type(base.type()) != SolidityGrammar::SolType::CONTRACT)
+          {
+            typet target_type = symbol_typet(prefix + cast_target_cname);
+            target_type.set("#sol_contract", cast_target_cname);
+            set_sol_type(target_type, SolidityGrammar::SolType::CONTRACT);
+            convert_type_expr(ns, base, target_type, expr);
+            // `convert_type_expr` sets `#sol_type = CONTRACT` on the
+            // returned pointer but leaves `#sol_contract` unset on the
+            // pointer itself.  `get_base_contract_name` (called later by
+            // `get_high_level_member_access`) looks at the pointer's
+            // `#sol_contract`, so stamp it explicitly.
+            base.type().set("#sol_contract", cast_target_cname);
+          }
         }
+        assert(!base_cname.empty());
       }
-      assert(!base_cname.empty());
     }
 
     const int member_id = callee_expr_json["referencedDeclaration"].get<int>();
     const nlohmann::json *member_decl_ptr;
     {
       ScopeGuard<std::string> guard(current_baseContractName, base_cname);
-      member_decl_ptr =
-        &find_decl_ref(member_id); // methods or variables
+      member_decl_ptr = &find_decl_ref(member_id); // methods or variables
     }
     const nlohmann::json &member_decl_ref = *member_decl_ptr;
 
