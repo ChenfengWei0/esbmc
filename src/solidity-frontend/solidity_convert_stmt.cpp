@@ -720,6 +720,21 @@ bool solidity_convertert::get_statement(
       else
         convert_type_expr(ns, rhs, return_type, stmt["expression"]);
     }
+    else if (
+      get_sol_type(return_type) == SolidityGrammar::SolType::BYTES_STATIC &&
+      !rhs.type().is_struct())
+    {
+      // `return 0;` (or any scalar) from a function declared to return
+      // bytesN. The bytesN return type is modeled as a BytesStatic struct,
+      // but the literal/scalar rhs is an integer. solidity_gen_typecast
+      // would emit a raw typecast(int -> struct); the value-set analysis
+      // then walks make_member through that typecast onto a non-struct
+      // operand and aborts (Release: SIGSEGV) in value_sett::make_member.
+      // Route through convert_type_expr, which lowers int -> BytesStatic
+      // via bytes_static_from_uint, producing a real struct value. Mirrors
+      // the BYTES_DYN handling above.
+      convert_type_expr(ns, rhs, return_type, stmt["expression"]);
+    }
     else
       solidity_gen_typecast(ns, rhs, return_type);
     ret_expr.return_value() = rhs;
