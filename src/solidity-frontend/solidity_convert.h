@@ -1204,6 +1204,14 @@ protected:
   /// function), in which case the caller must fall back to the legacy
   /// `__ESBMC_assume(false)` / `__ESBMC_assume(cond)` lowering.
   bool build_revert_rollback_block(const exprt *cond, exprt &out);
+  /// Revert observation (docs/claude/solidity/revert-observation.md): build a
+  /// hidden, coverage-skipped statement that calls a no-arg void helper from
+  /// solidity_misc.c (`__ESBMC_sol_mark_revert` / `__ESBMC_sol_clear_revert`).
+  void build_revert_flag_call(
+    const std::string &name,
+    const std::string &id,
+    const locationt &loc,
+    exprt &out_stmt);
   /// Per-statement AST classifier feeding the per-rollback granularity:
   /// returns true when the given top-level body statement is
   /// conservatively state-mutating, false for pure-decls / guards /
@@ -1346,6 +1354,21 @@ protected:
   // pre/post-mutation guards only pays the snapshot SSA cost on
   // the post-mutation guards.  Reset on entry to each function.
   bool current_function_seen_mutation = false;
+  // Revert observation (docs/claude/solidity/revert-observation.md).
+  // uses_revert_observation: unit-level feature gate — true iff the source
+  // references `__ESBMC_reverted`.  ALL revert-observation lowering changes
+  // (mark/clear injection, relaxed no-snapshot bail-out) are gated on this,
+  // so contracts that do not use the intrinsic are byte-for-byte unchanged.
+  // Set once by a prescan of src_ast_json.
+  bool uses_revert_observation = false;
+  // current_function_revert_observable: per-function scope classification —
+  // true when the function currently being lowered is a contract function /
+  // modifier-aux / internal helper (NOT a constructor / library / event /
+  // error / free function).  Read by build_revert_rollback_block to decide
+  // whether a no-snapshot revert may be lowered to `mark + return` (observable)
+  // or must keep the legacy path-pruning `__ESBMC_assume`.  Saved/restored
+  // alongside current_functionDecl.
+  bool current_function_revert_observable = false;
   // Track whether we are inside a Solidity "unchecked { ... }" block.
   // When true, arithmetic overflow checks should be suppressed.
   bool in_unchecked_block = false;

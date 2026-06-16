@@ -36,8 +36,10 @@ bool solidity_convertert::get_function_definition(
   const std::string old_functionId = current_functionId;
   const bool old_function_used_snapshot = current_function_used_snapshot;
   const bool old_function_seen_mutation = current_function_seen_mutation;
+  const bool old_function_revert_observable = current_function_revert_observable;
   current_function_used_snapshot = false;
   current_function_seen_mutation = false;
+  current_function_revert_observable = false;
 
   current_functionDecl = &ast_node;
 
@@ -123,6 +125,7 @@ bool solidity_convertert::get_function_definition(
     current_functionId = old_functionId;
     current_function_used_snapshot = old_function_used_snapshot;
     current_function_seen_mutation = old_function_seen_mutation;
+    current_function_revert_observable = old_function_revert_observable;
     log_debug(
       "solidity",
       "@@@ Already parsed function {} in contract {}",
@@ -157,6 +160,12 @@ bool solidity_convertert::get_function_definition(
      SolidityGrammar::is_sol_library_function(ast_node["id"].get<int>()));
   bool is_free_function = ast_node.contains("kind") &&
                           ast_node["kind"].get<std::string>() == "freeFunction";
+  // Revert observation: a contract function / internal helper (NOT a
+  // constructor / library / event / error / free function) is an *observable*
+  // scope — its no-snapshot revert may be lowered to `mark + return` instead
+  // of legacy path-pruning.  See build_revert_rollback_block.
+  current_function_revert_observable =
+    !is_event_err_lib && !is_free_function && !is_ctor;
   if (!is_event_err_lib && !is_free_function)
     get_function_this_pointer_param(
       c_name, id, debug_modulename, location_begin, type);
@@ -423,6 +432,24 @@ bool solidity_convertert::get_function_definition(
 
         code_blockt wrapped;
 
+        // Revert observation: clear the global revert flag at the
+        // public/external call boundary, so __ESBMC_reverted() reflects only
+        // THIS call's subtree (and no state leaks across --bound dispatcher
+        // iterations).  Gated + hidden + coverage-skipped.  Internal helpers
+        // and constructors deliberately do NOT clear, so their reverts
+        // accumulate and propagate up to the external boundary.
+        // See docs/claude/solidity/revert-observation.md.
+        if (uses_revert_observation && is_external_entry)
+        {
+          exprt clear_stmt;
+          build_revert_flag_call(
+            "_ESBMC_sol_clear_revert",
+            "c:@F@_ESBMC_sol_clear_revert",
+            location_begin,
+            clear_stmt);
+          wrapped.copy_to_operands(clear_stmt);
+        }
+
         // EVM revert state-rollback snapshot.  Emits at function entry:
         //   <Contract> _sol_save_this;
         //   _sol_save_this = *this;
@@ -531,6 +558,7 @@ bool solidity_convertert::get_function_definition(
   current_functionId = old_functionId;
   current_function_used_snapshot = old_function_used_snapshot;
   current_function_seen_mutation = old_function_seen_mutation;
+  current_function_revert_observable = old_function_revert_observable;
   return false;
 }
 
@@ -654,6 +682,24 @@ bool solidity_convertert::initializer_has_side_effect(
   return false;
 }
 
+void solidity_convertert::build_revert_flag_call(
+  const std::string &name,
+  const std::string &id,
+  const locationt &loc,
+  exprt &out_stmt)
+{
+  // A no-arg void call to a solidity_misc.c helper, lowered to a statement
+  // and tagged `skipped` so condition/branch coverage ignores it (the helper
+  // body also lives in the library file, filtered out by location_pool).
+  side_effect_expr_function_callt call;
+  get_library_function_call_no_args(name, id, empty_typet(), loc, call);
+  convert_expression_to_code(call);
+  locationt skip_loc = loc;
+  skip_loc.property("skipped");
+  call.location() = skip_loc;
+  out_stmt = call;
+}
+
 bool solidity_convertert::build_revert_rollback_block(
   const exprt *cond,
   exprt &out)
@@ -686,12 +732,23 @@ bool solidity_convertert::build_revert_rollback_block(
 
   std::string save_id = current_functionId + "#_sol_save_this";
   const symbolt *save_sym = context.find_symbol(save_id);
-  if (save_sym == nullptr)
-    return true;
-
   std::string this_id = current_functionId + "#this";
   const symbolt *this_sym = context.find_symbol(this_id);
-  if (this_sym == nullptr)
+
+  // Public/external entry points carry a `_sol_save_this` snapshot (+ `#this`)
+  // so the revert can roll `*this` back — emit the full rollback form.
+  const bool have_snapshot = (save_sym != nullptr && this_sym != nullptr);
+
+  // Without a snapshot (constructor / library / free / event-error /
+  // internal-private helper), the legacy lowering prunes the path via
+  // `__ESBMC_assume`.  Under the revert-observation gate, an *observable*
+  // scope (contract fn / internal helper — current_function_revert_observable)
+  // instead lowers to `mark + return` so the revert is visible to
+  // `__ESBMC_reverted()`; non-observable scopes (ctor / library / free /
+  // event-error) keep pruning.  See docs/claude/solidity/revert-observation.md.
+  if (
+    !have_snapshot &&
+    !(uses_revert_observation && current_function_revert_observable))
     return true;
 
   // return [nondet of return type]; — or bare `return;` when void.
@@ -731,7 +788,21 @@ bool solidity_convertert::build_revert_rollback_block(
   // shape identical to the pre-B1 baseline for guard-only patterns
   // (the common Solidity case).
   code_blockt block;
-  if (current_function_seen_mutation)
+  // Revert observation: set the global flag before restoring/returning so the
+  // caller's `__ESBMC_reverted()` sees this revert.  Hidden + coverage-skipped.
+  if (uses_revert_observation)
+  {
+    locationt mloc;
+    get_location_from_node(*current_functionDecl, mloc);
+    exprt mark_stmt;
+    build_revert_flag_call(
+      "_ESBMC_sol_mark_revert",
+      "c:@F@_ESBMC_sol_mark_revert",
+      mloc,
+      mark_stmt);
+    block.copy_to_operands(mark_stmt);
+  }
+  if (have_snapshot && current_function_seen_mutation)
   {
     // *this = _sol_save_this;
     exprt this_expr = symbol_expr(*this_sym);
@@ -768,7 +839,7 @@ bool solidity_convertert::build_revert_rollback_block(
   // the snapshot, so the decl can be skipped — keeping the SSA
   // shape identical to the pre-B1 baseline for guard-only
   // functions (important for k-induction's inductive step).
-  if (current_function_seen_mutation)
+  if (have_snapshot && current_function_seen_mutation)
     current_function_used_snapshot = true;
   return false;
 }

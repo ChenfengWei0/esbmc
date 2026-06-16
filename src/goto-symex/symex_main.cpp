@@ -1017,7 +1017,11 @@ void goto_symext::run_intrinsic(
   if (
     has_prefix(symname, "c:@F@__ESBMC_pthread_start_main_hook") ||
     has_prefix(symname, "c:@F@__ESBMC_pthread_end_main_hook") ||
-    has_prefix(symname, "c:@F@__ESBMC_atexit_handler"))
+    has_prefix(symname, "c:@F@__ESBMC_atexit_handler") ||
+    // Solidity revert observation: a real library function (returns the
+    // global revert flag) — call its body normally.  See
+    // docs/claude/solidity/revert-observation.md.
+    symname == "c:@F@__ESBMC_reverted")
   {
     bump_call(func_call, symname);
     return;

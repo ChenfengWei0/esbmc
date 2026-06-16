@@ -1,6 +1,6 @@
 # Solidity Language Support Audit
 
-Comprehensive audit against Solidity 0.8.x official documentation. Minimum supported version: 0.5.0 (recommended: 0.8.x). See also [approximation-ledger.md](approximation-ledger.md) for the full list of deliberate trade-offs.
+Comprehensive audit against Solidity 0.8.x official documentation. Minimum supported version: 0.5.0 (recommended: 0.8.x). See also [approximation-ledger.md](approximation-ledger.md) for the full list of deliberate trade-offs, and [revert-observation.md](revert-observation.md) for the `__ESBMC_reverted()` revert-observation intrinsic.
 
 ## Fully Supported
 

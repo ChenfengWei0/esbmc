@@ -485,7 +485,8 @@ bool solidity_convertert::get_sol_builtin_ref(
     // hijack for those names only.
     const bool is_intrinsic_alias =
       name == "__ESBMC_assume" || name == "__ESBMC_assert" ||
-      name == "__VERIFIER_assume" || name == "__VERIFIER_assert";
+      name == "__VERIFIER_assume" || name == "__VERIFIER_assert" ||
+      name == "__ESBMC_reverted";
     if (
       !is_intrinsic_alias && (*callee).contains("referencedDeclaration") &&
       !(*callee)["referencedDeclaration"].is_null() &&

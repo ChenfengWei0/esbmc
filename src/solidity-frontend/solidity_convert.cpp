@@ -205,6 +205,15 @@ bool solidity_convertert::convert()
 
   absolute_path = src_ast_json["absolutePath"].get<std::string>();
 
+  // Revert-observation feature gate: enable the mark/clear injection and the
+  // relaxed no-snapshot revert lowering only when the source references
+  // `__ESBMC_reverted` (the user must declare a stub of that name to compile
+  // under solc, so its mere presence is a reliable signal).  A single string
+  // scan of the merged AST keeps non-using units byte-for-byte unchanged.
+  // See docs/claude/solidity/revert-observation.md.
+  uses_revert_observation =
+    src_ast_json.dump().find("__ESBMC_reverted") != std::string::npos;
+
   // AST rewrite: specialize internal function-pointer parameters whose
   // callback is statically known at the call site. Runs before symbol
   // registration so clones participate in the normal conversion pipeline.

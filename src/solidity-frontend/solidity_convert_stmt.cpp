@@ -883,7 +883,26 @@ bool solidity_convertert::get_statement(
     //   }
     //   "nodeType": "RevertStatement",
     // }
-    if (!stmt.contains("errorCall") || get_expr(stmt["errorCall"], new_expr))
+    if (!stmt.contains("errorCall"))
+      return true;
+
+    // Revert observation: route `revert CustomError(...)` through the same
+    // rollback+mark lowering as `revert()` so __ESBMC_reverted() sees it (the
+    // error arguments are pure and dropped).  Falls back to the legacy
+    // errorCall lowering (custom-error body = __ESBMC_assume(false), which
+    // prunes the path) when the feature is off or the scope is non-observable
+    // (constructor / library).  See docs/claude/solidity/revert-observation.md.
+    if (uses_revert_observation)
+    {
+      exprt rollback;
+      if (!build_revert_rollback_block(nullptr, rollback))
+      {
+        new_expr = rollback;
+        break;
+      }
+    }
+
+    if (get_expr(stmt["errorCall"], new_expr))
       return true;
 
     break;

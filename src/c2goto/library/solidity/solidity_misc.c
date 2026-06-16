@@ -179,3 +179,41 @@ __ESBMC_HIDE:;
   block_gaslimit    = nondet_uint256();
   block_prevrandao  = nondet_uint256();
 }
+
+/* Revert observation (docs/claude/solidity/revert-observation.md): a
+ * verification-only readable flag recording whether the most recent external
+ * (public/external) call reverted.
+ *
+ * - _ESBMC_sol_reverted_flag : global flag (NOT contract state), so a revert's
+ *     `*this` rollback does not reset it.  Default zero => "no revert" before
+ *     any call.
+ * - _ESBMC_sol_mark_revert() : set by the frontend at every captured revert
+ *     site (revert / require-false / custom error) — see
+ *     build_revert_rollback_block.
+ * - _ESBMC_sol_clear_revert(): cleared by the frontend at every public/external
+ *     function entry (the EVM call boundary).
+ * - __ESBMC_reverted()        : user-facing read, hijacked from a user stub at
+ *     analysis time (solidity_convert_ref.cpp is_intrinsic_alias).
+ *
+ * The mark/clear calls are tagged `skipped` by the frontend and their bodies
+ * live in this library file, so they never contribute to condition/branch
+ * coverage. */
+bool _ESBMC_sol_reverted_flag = false;
+
+void _ESBMC_sol_mark_revert(void)
+{
+__ESBMC_HIDE:;
+  _ESBMC_sol_reverted_flag = true;
+}
+
+void _ESBMC_sol_clear_revert(void)
+{
+__ESBMC_HIDE:;
+  _ESBMC_sol_reverted_flag = false;
+}
+
+bool __ESBMC_reverted(void)
+{
+__ESBMC_HIDE:;
+  return _ESBMC_sol_reverted_flag;
+}
