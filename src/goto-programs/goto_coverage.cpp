@@ -375,8 +375,7 @@ void goto_coveraget::branch_coverage()
         // edge-key, static-universe and cross-run covered-set rules the
         // GOTO-guard path uses, so a folded short-circuit operator and
         // a control-flow guard are counted identically.
-        auto emit_decision = [&](const expr2tc &cond)
-        {
+        auto emit_decision = [&](const expr2tc &cond) {
           // Per-contract scoping (--contract C, Solidity): only instrument
           // decisions lexically declared inside contract C. The frontend
           // stamps each statement location with "sol_decl_contract" (its
@@ -1385,8 +1384,7 @@ static void parse_negate_spec(
   line.clear();
 
   auto all_digits = [](const std::string &s) {
-    return !s.empty() &&
-           s.find_first_not_of("0123456789") == std::string::npos;
+    return !s.empty() && s.find_first_not_of("0123456789") == std::string::npos;
   };
 
   std::vector<std::string> tok;
