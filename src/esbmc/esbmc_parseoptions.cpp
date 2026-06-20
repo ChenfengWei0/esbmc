@@ -1771,13 +1771,21 @@ int esbmc_parseoptionst::doit()
       options.set_option("contract", harness_contract);
       options.set_option("bound", true);
       options.set_option("no-standard-checks", true);
+      // The generated TOD harness drives two transactions in two orders via
+      // the dispatcher loop; it must use the unbounded harness, not the
+      // bounded-by-default unroll (which would hide the ordering race).
+      options.set_option("solidity-max-tx", "0");
       config.options = options;
     }
     // ---- auto: one .sol per pair, one subprocess per .sol ----
     else
     {
       std::string esbmc = executable_path.string();
-      std::string forwarded = " --bound --no-standard-checks";
+      // --solidity-max-tx 0: the TOD harness needs the unbounded dispatcher
+      // loop to explore both transaction orderings (bounded-by-default would
+      // hide the race).
+      std::string forwarded =
+        " --bound --no-standard-checks --solidity-max-tx 0";
       if (cmdline.isset("unwind"))
         forwarded += std::string(" --unwind ") + cmdline.getval("unwind");
       if (cmdline.isset("no-unwinding-assertions"))

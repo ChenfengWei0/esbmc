@@ -592,11 +592,11 @@ bool solidity_convertert::build_bound_drive_helper(
     while_body.copy_to_operands(if_expr);
   }
 
-  // while-loop statement: while (nondet_bool()) { ... }
-  code_whilet code_while;
-  code_while.cond() = nondet_bool_expr;
-  code_while.body() = while_body;
-  func_body.move_to_operands(code_while);
+  // Transaction-sequence driver for this --bound peer/external instance:
+  // bounded-by-default (deterministic unroll) so k-induction/BMC converges,
+  // unbounded under --solidity-max-tx 0 / --solidity-precise. Same bound as
+  // the top-level harness (multi_transaction_verification) for consistency.
+  emit_tx_driver(func_body, while_body);
 
   // return x;
   code_returnt ret;

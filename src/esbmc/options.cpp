@@ -230,7 +230,18 @@ const struct group_opt_templ all_cmd_options[] = {
      "contract-allocation count. Future under-approximations added to "
      "the Solidity frontend will be bound to this same flag. See "
      "src/solidity-frontend/README.md, section \"Address uniqueness "
-     "modelling\"."}}},
+     "modelling\". As of this release --solidity-precise also restores the "
+     "unbounded transaction-dispatcher harness (see --solidity-max-tx)."},
+    {"solidity-max-tx",
+     boost::program_options::value<int>()->value_name("N"),
+     "Bound the Solidity transaction-dispatcher harness to exactly N "
+     "transactions (deterministic unroll) instead of the unbounded "
+     "while(nondet_bool) loop. Default N=2: this makes k-induction/BMC "
+     "converge but is an under-approximation. A VERIFICATION SUCCESSFUL "
+     "result then means 'no violation within N transactions', NOT an "
+     "unbounded proof (a frontend warning is emitted); FAILED stays sound. "
+     "Use --solidity-max-tx 0 (or --solidity-precise) to restore the "
+     "unbounded loop for an unbounded proof."}}},
 #endif
   {"Frontend",
    {{"include,I",

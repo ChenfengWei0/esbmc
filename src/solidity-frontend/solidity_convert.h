@@ -739,6 +739,19 @@ protected:
   // (e.g. sites B/C in build_bound_drive_helper /
   // build_esol_state_forward_helper).
   void emit_per_tx_reseed_call(codet &out);
+  // Transaction-sequence bound for the harness dispatcher loops.
+  // Returns 0 = unbounded (restore while(nondet_bool)), >0 = deterministic
+  // unroll count. Honors --solidity-max-tx (explicit; 0 = unbounded) and
+  // --solidity-precise (implies unbounded); default 2 (bounded-by-default so
+  // k-induction/BMC converges). Coverage and TOD modes also force unbounded.
+  // Emits the bounded-mode under-approximation warning once per conversion.
+  // Shared by every harness driver so --bound and --unbound construction are
+  // bounded consistently.
+  long get_tx_bound();
+  // Emit the transaction driver into func_body: either while(nondet_bool)
+  // { tx_body } (unbounded) or get_tx_bound() deterministic copies of tx_body.
+  void emit_tx_driver(codet &func_body, const codet &tx_body);
+  bool tx_bound_warned = false;
   bool prepare_harness_entry_functions(
     const std::set<std::string> &cname_set,
     std::vector<const symbolt *> &entry_syms);

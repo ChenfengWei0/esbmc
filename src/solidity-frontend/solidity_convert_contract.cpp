@@ -604,6 +604,79 @@ nlohmann::json solidity_convertert::reorder_arguments(
 // sender behaviour was itself unsound (made inverted access-control
 // bugs unreachable by construction), so there is no opt-out.
 // The C symbol comes from src/c2goto/library/solidity/solidity_misc.c.
+long solidity_convertert::get_tx_bound()
+{
+  // Coverage and TOD modes manage their own exploration (k-step ladders,
+  // transaction-ordering enumeration) and need the full unbounded harness:
+  // a fixed tx bound distorts coverage counts and hides ordering races.
+  // --solidity-precise likewise opts back into the unbounded (sound) harness.
+  static const char *const unbounded_modes[] = {
+    "solidity-precise",
+    "tod-race-check",
+    "tod-balance-check",
+    "assertion-coverage",
+    "assertion-coverage-claims",
+    "branch-coverage",
+    "branch-coverage-claims",
+    "branch-function-coverage",
+    "branch-function-coverage-claims",
+    "condition-coverage",
+    "condition-coverage-claims",
+    "condition-coverage-rm",
+    "condition-coverage-claims-rm",
+    "k-path-coverage",
+    "k-path-coverage-claims"};
+
+  const std::string max_tx_opt = config.options.get_option("solidity-max-tx");
+  bool mode_forces_unbounded = false;
+  for (const char *opt : unbounded_modes)
+    if (!config.options.get_option(opt).empty())
+    {
+      mode_forces_unbounded = true;
+      break;
+    }
+
+  long bound;
+  if (!max_tx_opt.empty())
+    bound = std::stol(max_tx_opt); // explicit user choice always wins
+  else if (mode_forces_unbounded)
+    bound = 0; // unbounded
+  else
+    bound = 2; // bounded-by-default
+
+  if (bound > 0 && !tx_bound_warned)
+  {
+    log_warning(
+      "Solidity harness: transaction sequence bounded to {} tx (default). A "
+      "VERIFICATION SUCCESSFUL result is bounded -- it means no violation "
+      "within {} transaction(s), NOT an unbounded proof; bugs requiring more "
+      "transactions are not explored. Use --solidity-precise (or "
+      "--solidity-max-tx 0) for an unbounded proof.",
+      bound,
+      bound);
+    tx_bound_warned = true;
+  }
+  return bound;
+}
+
+void solidity_convertert::emit_tx_driver(codet &func_body, const codet &tx_body)
+{
+  const long bound = get_tx_bound();
+  if (bound <= 0)
+  {
+    // unbounded: while(nondet_bool) { tx_body }
+    side_effect_expr_function_callt cond_expr = nondet_bool_expr;
+    code_whilet code_while;
+    code_while.cond() = cond_expr;
+    code_while.body() = tx_body;
+    func_body.move_to_operands(code_while);
+  }
+  else
+    // bounded: deterministically emit the transaction body `bound` times.
+    for (long i = 0; i < bound; ++i)
+      func_body.copy_to_operands(tx_body);
+}
+
 void solidity_convertert::emit_per_tx_reseed_call(codet &out)
 {
   const symbolt *reseed_sym = context.find_symbol("c:@F@_sol_per_tx_reseed");
@@ -656,12 +729,12 @@ bool solidity_convertert::multi_transaction_verification(
   log_debug(
     "Solidity", "@@@ performs transaction verification on contract {}", c_name);
 
-  // 0. initialize "sol_main" body and while-loop body
-  codet func_body, while_body;
+  // 0. initialize "sol_main" body and per-transaction body
+  codet func_body, tx_body;
   static_lifetime_init(context, func_body);
   func_body.make_block();
-  static_lifetime_init(context, while_body);
-  while_body.make_block();
+  static_lifetime_init(context, tx_body);
+  tx_body.make_block();
 
   // add __ESBMC_HIDE
   code_labelt label;
@@ -688,23 +761,24 @@ bool solidity_convertert::multi_transaction_verification(
   // Without this, contracts that compare msg.sender to a stored
   // owner-like address see a frozen invariant `msg.sender == owner`
   // and access-control bugs become unreachable (false negatives).
-  emit_per_tx_reseed_call(while_body);
+  emit_per_tx_reseed_call(tx_body);
 
-  // get sol harness function and move into the while body
+  // get sol harness function and move into the per-transaction body
   code_function_callt func_call;
   if (get_unbound_funccall(c_name, func_call))
     return true;
 
-  while_body.move_to_operands(func_call);
+  tx_body.move_to_operands(func_call);
 
-  // while-cond:
-  side_effect_expr_function_callt cond_expr = nondet_bool_expr;
-
-  // while-loop statement:
-  code_whilet code_while;
-  code_while.cond() = cond_expr;
-  code_while.body() = while_body;
-  func_body.move_to_operands(code_while);
+  // Transaction-sequence driver (see --solidity-max-tx / --solidity-precise).
+  // Default: deterministically unroll to N=2 transactions so k-induction/BMC
+  // converges on the otherwise-unbounded harness loop; --solidity-max-tx 0 or
+  // --solidity-precise restores the unbounded while(nondet_bool) loop. A
+  // bounded harness is an under-approximation: SUCCESSFUL means "no violation
+  // within N tx", NOT an unbounded proof; FAILED stays sound. Each unrolled tx
+  // re-calls _sol_per_tx_reseed, so msg.sender/value/block.* are freshly
+  // havoc'd per transaction.
+  emit_tx_driver(func_body, tx_body);
 
   // construct _ESBMC_Main_Base
   symbolt new_symbol;
