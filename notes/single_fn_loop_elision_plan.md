@@ -1,8 +1,17 @@
 # Plan: Bounded-by-default Solidity transaction harness (dispatcher loop bounding)
 
 **Branch:** `feat/single-fn-loop-elision`
-**Status:** PROPOSAL v2 — revised after adversarial review + user direction
+**Status:** PROPOSAL v3 — bounded-by-default; label via frontend `log_warning`
+only (verdict line unchanged). Project-owner decision after two adversarial
+review rounds.
 **Author:** investigation 2026-06-20
+
+> **v3 delta.** Locks the labeling mechanism to a Solidity-frontend
+> `log_warning` and explicitly **keeps the `VERIFICATION SUCCESSFUL` line
+> unchanged** (§7.3). Records the accepted residual risk that verdict-line
+> parsers cannot distinguish a bounded success (§5.1, responding to Codex v2
+> critical). Narrows the §4 monotonicity claim to model-level and adds the
+> targeted validation requirements Codex v2 asked for (§8).
 
 > **v2 change of direction.** v1 proposed eliding the harness loop only for
 > single-function contracts, gated behind `--solidity-precise`. After adversarial
@@ -113,9 +122,16 @@ This is a **deliberate** trade of SUCCESSFUL-soundness for convergence
   within N transactions." Bugs needing >N txs (state accumulation, reentrancy,
   TOD) are missed. This is surfaced loudly (§7.3) and removed by
   `--solidity-precise`.
-- A bounded run can only flip a result FAILED→SUCCESSFUL relative to the
-  unbounded model, never SUCCESSFUL→FAILED (fewer paths). So the default change
-  cannot introduce *spurious* failures — only hide deep bugs, which we label.
+- **Model-level monotonicity (narrowed claim, per Codex v2 medium):** at the
+  *abstract model* level the bounded run's reachable states are a subset of the
+  unbounded run's, so a *model-level* result can only flip FAILED→SUCCESSFUL,
+  never the reverse. This is **not** automatically true of the *generated code*:
+  rewriting `while{body}` into N duplicated `reseed(); dispatch();` blocks
+  changes nondet/reseed allocation sites and trace shape, which could in
+  principle alter solver/unwinding behavior. Therefore the "never
+  SUCCESSFUL→FAILED" property must be **validated with GOTO/VCC + verdict
+  evidence** (§8), not asserted. Until then, treat it as the intended design
+  goal, not a guarantee.
 
 With N=2 the canonical `count++; assert(count<2)` example now **FAILS** by
 default (two calls reach `count==2`); `count<3` would need N≥3. The general
@@ -142,6 +158,28 @@ default (two calls reach `count==2`); `count<3` would need N≥3. The general
   `reference_k_induction_auto_invariant`). v2 chooses bounded-by-default as the
   *default* posture while keeping the sound path one flag away. Alternatives
   table in §9.
+
+### 5.1 Accepted residual risk (Codex v2 critical/high #1–2)
+
+Codex v2 objected that bounded-by-default while keeping the bare
+`VERIFICATION SUCCESSFUL` line means automation/CI/dashboards that parse only the
+verdict line will read a bounded result as a full proof — a *silent* default
+soundness change. **This is accepted, knowingly, by the project owner:**
+
+- Mitigation is the frontend `log_warning` (§7.3), which is human-visible in the
+  log but **not** consumed by verdict-line parsers. We do **not** add a distinct
+  bounded verdict line, precisely to avoid breaking existing `test.desc` regexes
+  and external CI parsers.
+- Consequence we accept: a consumer that reads only `^VERIFICATION SUCCESSFUL$`
+  will not distinguish a bounded result from an unbounded proof. Users who need
+  an unbounded proof must pass `--solidity-precise` / `--solidity-max-tx 0`.
+- Rationale: today there is **no usable sound default** anyway — the unbounded
+  loop diverges under k-induction (Codex v2 high #3), so the status-quo default
+  is timeout/UNKNOWN, not a real proof. The project chooses a fast, deterministic
+  bounded default plus a log warning over a non-terminating "sound" default.
+
+This section exists so the trade-off is recorded explicitly rather than
+discovered later.
 
 ## 6. Regression-surface risks of changing the DEFAULT (must validate)
 
@@ -177,20 +215,28 @@ dispatcher behavior. Two concrete risks:
 6. Tests (§8); cppcheck on changed frontend files; clang-format; targeted ctest;
    then a capped full-suite run to catch default-change regressions (§6).
 
-### 7.3 Loud labeling (mandatory)
+### 7.3 Labeling — frontend `log_warning` only (project-owner decision)
 
-When the dispatcher is bounded (N finite), emit once, prominently:
+When the dispatcher is bounded (N finite), emit **once** via `log_warning` in the
+Solidity frontend at harness-build time (`multi_transaction_verification`), e.g.:
 
 ```
-[approx] Solidity harness: transaction sequence bounded to 2 tx (default).
-[approx]   A SUCCESSFUL result is bounded, not an unbounded proof.
-[approx]   Use --solidity-precise (or --solidity-max-tx 0) for an unbounded proof.
+log_warning(
+  "Solidity harness: transaction sequence bounded to {} tx (default). "
+  "A SUCCESSFUL result is bounded, NOT an unbounded proof; bugs requiring "
+  "more than {} transactions are not explored. Use --solidity-precise (or "
+  "--solidity-max-tx 0) for an unbounded proof.", N, N);
 ```
 
-- Emit at harness-build time in `multi_transaction_verification` (always printed,
-  via the same channel as other `[approx]` warnings — memory
-  `feedback_approx_warning_visibility`).
-- Do **not** modify the `VERIFICATION SUCCESSFUL/FAILED` result line (§6.2).
+- `log_warning` is already used across the frontend (e.g.
+  `solidity_convert_contract.cpp:612`), consistent with memory
+  `feedback_approx_warning_visibility` (every approximation names the construct).
+- **The `VERIFICATION SUCCESSFUL/FAILED` result line is deliberately NOT
+  changed.** This is an explicit project-owner decision (see §5.1): the bound is
+  surfaced to humans reading the log, not encoded in the machine-authoritative
+  verdict line. This keeps the ~hundreds of `^VERIFICATION SUCCESSFUL$`
+  `test.desc` regexes (and external CI parsers) intact at the cost documented in
+  §5.1.
 
 ## 8. Test plan
 
@@ -212,6 +258,29 @@ PASS + FAIL exercising both modes (repo policy):
   Any flipped `_fail`→SUCCESSFUL is a real over-approximation-of-bound regression
   → either bump that test's `--solidity-max-tx`/`--solidity-precise` explicitly,
   or reclassify. Produce the before/after migration list Codex asked for.
+
+- **Targeted validation requirements (Codex v2 medium + next-steps):** before
+  relying on monotonic verdicts (§4), gather concrete evidence for:
+  1. **`--unwind` interaction:** confirm `--unwind` no longer governs dispatcher
+     iteration count (it now only bounds inner loops); document the semantic
+     change and check no test silently depended on `--unwind` for dispatcher
+     depth.
+  2. **Multi-contract harness:** each `_ESBMC_Main_<C>` gets the unroll; verify
+     the cross-contract nondet entry switch (`prepare_harness_entry_functions`)
+     still interleaves entries and that bounding per-contract doesn't drop
+     cross-contract sequences the suite cares about.
+  3. **Reentrancy / TOD:** confirm N=2 still admits the call interleavings those
+     tests need (e.g. reentrancy recipe `--incremental-bmc --bound --cvc5`,
+     memory `reference_reentrancy_bmc_recipe`); a too-small bound could hide
+     reentrancy false-negatives.
+  4. **Per-tx reseed freshness:** verify the N duplicated `emit_per_tx_reseed_call`
+     sites each produce *fresh* nondet msg.sender/value/block.* (not accidentally
+     shared), by inspecting generated GOTO for a reseed-sensitive test (e.g.
+     `frame_context_intra`, `tx_origin_msg_sender_independent`).
+  5. **GOTO/VCC diff:** for one single-contract, one multi-contract, one
+     reentrancy, and one reseed-heavy case, compare `--goto-functions-only` /
+     `--show-vcc` between unbounded and bounded harness to substantiate the
+     model-level-subset claim at the code level.
 
 ## 9. Alternatives considered
 
