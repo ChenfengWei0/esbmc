@@ -23,6 +23,7 @@ repo:
 - [Choosing what to verify](#choosing-what-to-verify) — `--contract`, `--function`, `--focus-function`
 - [External-call resolution](#external-call-resolution) — `--bound` vs default unbound
 - [Transaction-sequence bound](#transaction-sequence-bound) — `--solidity-max-tx`, bounded-by-default harness, `--solidity-precise`
+- [`assert` / `require` / `revert` semantics](#assert--require--revert-semantics) — what each lowers to, state-rollback on revert
 - [Property selection](#property-selection) — overflow, reentry, multi-property, standard checks
 - [Solver selection](#solver-selection) — automatic preference, `--16` word size, Z3/CVC5/Bitwuzla/Boolector
 - [TOD detection](#tod-transaction-order-dependence-detection) — `--tod-race-check`, `--tod-balance-check`, `--dump-harness`
@@ -415,6 +416,126 @@ The transaction bound is **orthogonal** to external-call resolution:
   to that contract's transaction driver. With no `--contract`, every
   per-contract driver in the whole-program wrapper is bounded the same
   way.
+
+## `assert` / `require` / `revert` semantics
+
+Solidity's three failure primitives lower to **different** verification
+constructs. Getting this distinction right is essential to reading an
+ESBMC verdict, because only one of them is a checked property — the other
+two are control-flow that *rolls state back*.
+
+| Solidity | Lowers to | Effect on verification |
+|---|---|---|
+| `assert(cond)` | ESBMC assertion claim (`c:@F@assert`) | **A checked property.** If `cond` can be false on a reachable path, ESBMC reports `VERIFICATION FAILED` with a counterexample. This is the thing you are trying to prove. |
+| `require(cond[, msg])` | `if (!cond) { rollback; return; }` (state-rollback) — legacy fallback: `__ESBMC_assume(cond)` | **A guard, not a property.** The `!cond` path reverts: it restores state and returns, so it never reaches downstream asserts. It cannot itself fail verification. |
+| `revert([msg])` / `revert CustomError(...)` | `{ rollback; return; }` (state-rollback) — legacy fallback: `__ESBMC_assume(false)` | **An unconditional revert.** Same rollback shape as a failed `require`. |
+
+### `assert` is a property, `require`/`revert` are rollbacks
+
+- **`assert`** is the only one that can produce `VERIFICATION FAILED`.
+  ESBMC models it as a plain checkable assertion. Note this is *stricter*
+  than real EVM semantics: on-chain, a failing `assert` triggers a
+  `Panic(0x01)` that **reverts** the transaction (state is rolled back,
+  gas burned) rather than being a "bug". ESBMC deliberately treats it as
+  a property to verify — a reachable failing `assert` is reported, not
+  silently reverted. (Lowering: `solidity_convert_ref.cpp` maps `assert`
+  → `c:@F@assert`; the claim is emitted in `solidity_convert_call.cpp`.)
+- **`require` / `revert`** lower through `build_revert_rollback_block`
+  (`solidity_convert_modifier.cpp`). The revert path stays **feasible**
+  (it is *not* pruned), restores state, and returns a nondet value of the
+  function's return type. The dispatch site is in
+  `solidity_convert_expr.cpp` (`sol_name == "revert"` / `"require"`).
+
+### Why the revert path restores state
+
+A naive lowering of `revert` to `__ESBMC_assume(false)` *prunes* the
+path — but it prunes it **with the pre-revert state writes still in the
+SSA**. Under the [bounded multi-transaction
+harness](#transaction-sequence-bound), transaction _k_ could write to a
+state variable, revert, and have that write **leak** into transaction
+_k+1_ — a false state the real EVM never reaches (a revert rolls back
+*all* state changes of the transaction).
+
+The current lowering instead makes the revert path feasible and rolls
+state back to the function-entry snapshot:
+
+- **`*this` struct fields** (scalars, structs, fixed arrays) are restored
+  from a per-frame `_sol_save_this` snapshot taken at function entry.
+- **Out-of-struct global stores** — mappings and state-variable dynamic
+  arrays are lowered to file-local infinite-array globals *outside* the
+  `*this` struct (keyed by `$address`), so `*this = save` alone does not
+  reach them. `build_revert_rollback_block` snapshots each such store at
+  entry and restores it alongside `*this` on revert
+  (`collect_contract_global_stores`).
+- Snapshots are **per call frame** (not static), so a recursive or
+  reentrant call gets its own snapshot and an outer-frame revert restores
+  to the outer entry state.
+
+The caller's frame is **not** force-reverted when a callee reverts (we do
+not propagate the revert up the stack). This is a sound
+over-approximation for safety verification — it admits more paths, never
+rules a real EVM path out.
+
+### Worked example
+
+`regression/esbmc-solidity/revert_rollback_mapping_rollback_pass`:
+
+```solidity
+contract C {
+    mapping(uint => uint) m;
+
+    function setAndRevert(uint k) public {
+        m[k] = 1;     // mapping write...
+        revert();     // ...then revert: EVM rolls m[k] back to 0
+    }
+
+    function checkClean(uint k) public view {
+        assert(m[k] == 0);   // the property
+    }
+}
+```
+
+```sh
+esbmc contract.sol --contract C --no-standard-checks --k-induction
+# VERIFICATION SUCCESSFUL
+```
+
+Walk through it under the default 2-transaction harness:
+
+1. The driver may pick `setAndRevert(k)` as transaction 1. It writes
+   `m[k] = 1`, then `revert()` restores the mapping global, so `m[k]` is
+   back to `0` when the transaction ends.
+2. Transaction 2 calls `checkClean(k)`. Because the revert rolled the
+   mapping back, `m[k] == 0` holds and the `assert` passes.
+
+Drop the rollback (the old `assume(false)` lowering) and the `m[k] = 1`
+write would survive into transaction 2, making `assert(m[k] == 0)` fail
+**spuriously**. The negative control
+`revert_rollback_mapping_persist_fail` performs a mapping write **without**
+a `revert` and asserts the write did *not* leak; it correctly reports
+`VERIFICATION FAILED` — confirming the assert is live and that the fix
+rolls back only on the revert path, not on the normal committed path. The
+`revert_rollback_dynarray_rollback_pass` /
+`revert_rollback_scalar_revert_pass` /
+`revert_rollback_reentrant_rollback_pass` tests extend this to dynamic
+arrays, plain scalars, and the recursive-reentry case.
+
+### Legacy fallback (when rollback does not apply)
+
+In a few contexts there is no `_sol_save_this` snapshot to roll back to,
+so `require` / `revert` fall back to the legacy
+`__ESBMC_assume(cond)` / `__ESBMC_assume(false)` lowering (the path is
+pruned, no state restore):
+
+- constructors,
+- `library` functions and free (file-level) functions,
+- `event` / `error` definitions.
+
+This is still **sound** (it never invents behaviour), but a reverted
+write in one of these contexts is pruned rather than rolled back, so it
+cannot leak — at the cost of dropping that path's coverage. Internal /
+private helpers and ordinary public/external functions get the full
+rollback form.
 
 ## Property selection
 
