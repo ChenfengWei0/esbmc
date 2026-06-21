@@ -1223,7 +1223,8 @@ protected:
   /// matches symbols under that prefix that are arrays, static, file-local,
   /// and not themselves a per-function snapshot or a nested function symbol.
   /// Used by build_revert_rollback_block to extend the revert rollback to
-  /// these global stores.  Cached per prefix.
+  /// these global stores.  Re-scanned per call (no caching) because the symbol
+  /// table grows during conversion.
   void collect_contract_global_stores(
     const std::string &store_prefix,
     std::vector<std::pair<std::string, typet>> &out);
@@ -1377,11 +1378,6 @@ protected:
   // on entry to each function; saved/restored across nested conversions.
   std::vector<std::pair<std::string, std::string>>
     current_function_restored_globals;
-  // Cache for collect_contract_global_stores, keyed by `sol:@C@<contract>@`
-  // store prefix, so the context scan runs once per contract rather than once
-  // per revert/require site.
-  std::map<std::string, std::vector<std::pair<std::string, typet>>>
-    contract_global_stores_cache;
   // Forward-incremental flag updated by get_block as it walks the
   // body's top-level statements: ORed with `statement_is_mutation_top_level(stmt)`
   // after each statement is converted.  build_revert_rollback_block

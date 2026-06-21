@@ -492,17 +492,19 @@ bool solidity_convertert::get_function_definition(
           }
 
           // Snapshot the out-of-struct global stores (mappings, dynarray
-          // data/length) that the body's revert rollback restores.  The
-          // save symbols are static_lifetime, so no decl is needed — just
-          // capture the entry value before the body runs.
+          // data/length) that the body's revert rollback restores.  The save
+          // symbols are per-frame locals (like _sol_save_this), so emit a decl
+          // + init to capture the entry value before the body runs.
           for (const auto &gpair : current_function_restored_globals)
           {
             const symbolt *store_sym = context.find_symbol(gpair.first);
             const symbolt *g_save_sym = context.find_symbol(gpair.second);
             if (store_sym == nullptr || g_save_sym == nullptr)
               continue;
+            code_declt g_decl(symbol_expr(*g_save_sym));
             code_assignt g_init(
               symbol_expr(*g_save_sym), symbol_expr(*store_sym));
+            wrapped.copy_to_operands(g_decl);
             wrapped.copy_to_operands(g_init);
           }
         }
@@ -724,14 +726,11 @@ void solidity_convertert::collect_contract_global_stores(
   const std::string &store_prefix,
   std::vector<std::pair<std::string, typet>> &out)
 {
-  auto cached = contract_global_stores_cache.find(store_prefix);
-  if (cached != contract_global_stores_cache.end())
-  {
-    out = cached->second;
-    return;
-  }
-
-  std::vector<std::pair<std::string, typet>> found;
+  // No caching: the symbol table keeps growing while functions are converted
+  // (e.g. lazily-created mapping globals on first member access), so a cached
+  // first scan could miss a store a later function writes and reverts.  The
+  // scan is conversion-time and only runs at revert/require sites.
+  out.clear();
   context.foreach_operand([&](const symbolt &s) {
     // Mappings and state-variable dynamic-array companions are lowered to
     // file-local static infinite-array globals that live outside *this.
@@ -747,11 +746,8 @@ void solidity_convertert::collect_contract_global_stores(
       return;
     if (sid.find("_sol_save_") != std::string::npos)
       return;
-    found.emplace_back(sid, s.type);
+    out.emplace_back(sid, s.type);
   });
-
-  contract_global_stores_cache[store_prefix] = found;
-  out = found;
 }
 
 bool solidity_convertert::build_revert_rollback_block(
@@ -895,11 +891,13 @@ bool solidity_convertert::build_revert_rollback_block(
             "_sol_save_g_" + base,
             g_save_id,
             store_sym->location);
+          // Per-frame local (NOT static), mirroring _sol_save_this: symex
+          // renames it per call frame, so a recursive / re-entrant call gets
+          // its own snapshot and the outer frame's revert restores to the
+          // outer entry state.  A shared static slot would let an inner entry
+          // overwrite the outer snapshot and leak the reverted writes.
           g_save.lvalue = true;
           g_save.file_local = true;
-          g_save.static_lifetime = true;
-          g_save.value = gen_zero(get_complete_type(store_sym->type, ns), true);
-          g_save.value.zero_initializer(true);
           move_symbol_to_context(g_save);
           current_function_restored_globals.emplace_back(st.first, g_save_id);
         }
