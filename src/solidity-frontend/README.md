@@ -22,6 +22,7 @@ repo:
 - [Supported Solidity versions](#supported-solidity-versions)
 - [Choosing what to verify](#choosing-what-to-verify) — `--contract`, `--function`, `--focus-function`
 - [External-call resolution](#external-call-resolution) — `--bound` vs default unbound
+- [Transaction-sequence bound](#transaction-sequence-bound) — `--solidity-max-tx`, bounded-by-default harness, `--solidity-precise`
 - [Property selection](#property-selection) — overflow, reentry, multi-property, standard checks
 - [Solver selection](#solver-selection) — automatic preference, `--16` word size, Z3/CVC5/Bitwuzla/Boolector
 - [TOD detection](#tod-transaction-order-dependence-detection) — `--tod-race-check`, `--tod-balance-check`, `--dump-harness`
@@ -112,7 +113,9 @@ esbmc contract.sol
 ESBMC constructs a multi-contract wrapper `_ESBMC_Main` that drives
 each contract's own `_ESBMC_Main_<C>` harness (constructor + nondet
 public-method dispatch loop). Fastest smoke test; all soundness caveats
-of `--contract` compound across contracts.
+of `--contract` compound across contracts. Each per-contract harness is
+bounded to two transactions by default — see
+[Transaction-sequence bound](#transaction-sequence-bound).
 
 ### `--contract <ContractName>` (recommended)
 
@@ -123,7 +126,11 @@ esbmc contract.sol --contract MyContract
 Narrow verification to a single contract. Constructor runs first;
 state variables take their declared/initialiser values; every
 public/external method is dispatched nondet-guarded inside a
-`while (nondet_bool())` loop.
+transaction-sequence driver. **By default that driver is bounded to
+two transactions** (a deterministic unroll) so that k-induction / BMC
+converge — see [Transaction-sequence bound](#transaction-sequence-bound)
+for what this means for soundness and how to restore the classic
+unbounded `while (nondet_bool())` loop with `--solidity-precise`.
 
 To target multiple contracts in one run, either repeat the flag or use
 a space-separated list:
@@ -189,7 +196,11 @@ conversion time — the two flags express different intents.
 
 Forces verification of *every* function, including internal/private
 functions that would otherwise be unreachable from the nondet dispatch
-harness. Rarely useful outside developer debugging.
+harness. The frontend emits a warning when this is set, because driving
+an internal/private function directly with nondet arguments **can
+produce false positives** — the function may be unreachable from any
+public entry under the states the constructor and dispatcher actually
+allow. Rarely useful outside developer debugging.
 
 ### Summary — which flag to pick
 
@@ -200,6 +211,8 @@ harness. Rarely useful outside developer debugging.
 | One function, over-approximate state | `--contract C --function f` (not in tests) |
 | Multi-contract system with known callees | `--contract A --contract B --bound` |
 | Quick smoke test of all contracts | (no `--contract`, no `--function`) |
+| Unbounded (sound) proof, any of the above | add `--solidity-precise` (or `--solidity-max-tx 0`) |
+| Deeper bounded proof (N transactions) | add `--solidity-max-tx N` |
 
 ## External-call resolution
 
@@ -259,28 +272,188 @@ trusted assumption).
 See [`docs/claude/solidity/modes.md`](../../docs/claude/solidity/modes.md)
 for the full dispatch matrix and limitations.
 
-## Property selection
+## Transaction-sequence bound
 
-### Common checks (enable as needed)
+A Solidity contract is a reactive system: after construction, the
+outside world can call its public/external methods any number of times,
+in any order. ESBMC models this with a **transaction-sequence driver**
+that wraps the nondet method dispatcher. Historically that driver was
+an unbounded `while (nondet_bool()) { reseed(); dispatch(); }` loop,
+modelling an arbitrary-length transaction sequence.
 
-```sh
-esbmc contract.sol --contract C --overflow-check --div-by-zero-check
+The unbounded loop is the single biggest reason k-induction fails to
+converge on Solidity contracts: the inductive step has to find a state
+invariant strong enough to survive an arbitrary next transaction, which
+is rarely automatic. In practice the suite worked around this by forcing
+`--unwind N --no-unwinding-assertions`, which is itself an unsound
+silent truncation.
+
+### Bounded-by-default (the new behaviour)
+
+As of `--solidity-max-tx`, the driver is **bounded to two transactions
+by default**. Instead of the while-loop, the harness deterministically
+emits the per-transaction body (`reseed(); dispatch();`) `N` times:
+
+```c
+// default N = 2, conceptually:
+_sol_per_tx_reseed(); _ESBMC_Nondet_Extcall_C();   // tx 1
+_sol_per_tx_reseed(); _ESBMC_Nondet_Extcall_C();   // tx 2
 ```
 
-| Flag | What it enables |
-|------|-----------------|
-| `--overflow-check` | Signed + unsigned overflow/underflow on all integer widths. |
-| `--unsigned-overflow-check` | Unsigned-only variant. |
-| `--div-by-zero-check` | Division by zero. |
-| `--no-bounds-check` | Suppress array-bounds checks. |
-| `--no-pointer-check` | Suppress pointer-validity checks. |
-| `--no-standard-checks` | Turn off the default claim set (useful when you only want a specific check). |
+Each copy still dispatches a nondeterministically-chosen public method
+with nondet arguments, and `_sol_per_tx_reseed()` re-havocs the ambient
+`msg.*` / `tx.*` / `block.*` environment per transaction. So a bound of
+`N` explores **every ordering of up to `N` method calls**, just not
+sequences longer than `N`.
 
-The Solidity frontend automatically injects the extra checks needed
-for faithful EVM semantics:
+Because the driver is now a finite, loop-free unroll:
+- k-induction / BMC **converge** without `--unwind` hacks;
+- there is no transaction back-edge, so no spurious "unwinding
+  assertion" noise from the harness loop itself.
+
+**Forward-condition note.** Independently of the bound, the Solidity
+dispatcher mode (any non-`--function` run) **auto-disables the
+k-induction forward-condition phase**: the `while(nondet) dispatch()`
+shape is unboundable, so forward condition can never prove and only
+burns solver budget — only the inductive step (or, now, the bounded
+unroll) closes the proof. Pass `--enable-forward-condition` to run it
+anyway, e.g. for diagnostic comparison.
+
+### Soundness posture (read this)
+
+Bounding the transaction count is an **under-approximation**:
+
+- **`VERIFICATION FAILED` is sound.** A counterexample found within `N`
+  transactions is a real bug — bounding never invents behaviour.
+- **`VERIFICATION SUCCESSFUL` is bounded.** It means *"no violation
+  within `N` transactions"*, **not** an unbounded proof. A bug that
+  requires a 3rd (or later) transaction to set up is invisible at the
+  default `N = 2`.
+
+To make this impossible to miss, the frontend emits a one-time
+`log_warning` on every bounded run (the `VERIFICATION SUCCESSFUL` /
+`FAILED` verdict line itself is left unchanged):
+
+```
+Solidity harness: transaction sequence bounded to 2 tx (default). A
+VERIFICATION SUCCESSFUL result is bounded -- it means no violation
+within 2 transaction(s), NOT an unbounded proof; bugs requiring more
+transactions are not explored. Use --solidity-precise (or
+--solidity-max-tx 0) for an unbounded proof.
+```
+
+### `--solidity-max-tx N` — choose the bound
+
+```sh
+esbmc contract.sol --contract C --solidity-max-tx 3   # unroll 3 transactions
+esbmc contract.sol --contract C --solidity-max-tx 1   # single transaction
+esbmc contract.sol --contract C --solidity-max-tx 0   # unbounded while-loop
+```
+
+| Value | Harness | Use when |
+|---|---|---|
+| `N > 0` | Deterministic unroll of `N` transactions | You want k-induction/BMC to converge and `N` transactions is enough to reach your bug / cover your property. Larger `N` ⇒ deeper sequences, more SMT cost. |
+| `0` | Unbounded `while (nondet_bool())` loop | You want an unbounded proof and are prepared to manage k-induction convergence (or pass `--unwind`). Equivalent to `--solidity-precise`'s effect on the harness. |
+| *(unset)* | Bounded to `2` (default), unless a mode below forces unbounded | Default — fast convergence, bounded guarantee. |
+
+An explicit `--solidity-max-tx` **always wins**, even over the
+mode-forced-unbounded rule below and over `--solidity-precise`.
+
+The driver treats any value `<= 0` as unbounded (`emit_tx_driver` keys
+on `bound <= 0`), so a negative `N` behaves like `0`. Only `0` is the
+supported spelling for "unbounded" — negative values are not rejected
+but are not a documented interface; use `0`.
+
+### `--solidity-precise` restores the unbounded harness
+
+`--solidity-precise` already controls precise address-uniqueness
+modelling (see [Approximations](#approximations-you-should-know-about)).
+It now *also* opts the transaction driver back into the unbounded
+`while (nondet_bool())` loop — i.e. it is the single "I want a sound,
+unbounded proof" knob:
+
+```sh
+esbmc contract.sol --contract C --solidity-precise            # unbounded harness
+esbmc contract.sol --contract C --solidity-precise --unwind 5 # ...with a manual k cap
+```
+
+This is why several regression tests that genuinely need a 3rd+
+transaction (or that exercise the precise address model) carry
+`--solidity-precise` in their `test.desc`.
+
+### Modes that force the unbounded harness automatically
+
+Some analyses manage their own exploration depth and would be distorted
+by a fixed transaction bound, so the frontend ignores the default bound
+(treats it as `0`) whenever any of these is active — unless you override
+with an explicit `--solidity-max-tx`:
+
+- `--solidity-precise`
+- TOD detection: `--tod-race-check`, `--tod-balance-check` (a fixed bound
+  hides ordering races and the TOD pairing depends on the full driver)
+- Structural coverage: every `--*-coverage` / `--*-coverage-claims`
+  family option (a fixed bound distorts branch/condition counts; the
+  coverage loop neutralisation handles the harness loop separately)
+
+Implementation: `get_tx_bound()` and `emit_tx_driver()` in
+`solidity_convert_contract.cpp`; the same driver is shared by the
+single-contract harness (`multi_transaction_verification`), the
+multi-contract wrapper, and the `--bound` peer driver
+(`build_bound_drive_helper` in `solidity_convert_constructor.cpp`), so
+the bound applies uniformly across `--contract`, default whole-program,
+and `--bound` / `--unbound` modes.
+
+### Interaction with `--bound` / `--unbound` and `--contract`
+
+The transaction bound is **orthogonal** to external-call resolution:
+
+- `--bound` / `--unbound` choose *how external calls are resolved*;
+  `--solidity-max-tx` chooses *how many transactions the driver issues*.
+  Both `--bound` and `--unbound` harnesses are bounded to 2 tx by
+  default and both honour `--solidity-max-tx` / `--solidity-precise`.
+- `--contract` selects the harness entry point; the bound then applies
+  to that contract's transaction driver. With no `--contract`, every
+  per-contract driver in the whole-program wrapper is bounded the same
+  way.
+
+## Property selection
+
+### Solidity defaults `--no-standard-checks` — most checks are opt-in
+
+This is the single most important thing to know about Solidity property
+selection. **Every `.sol` run implicitly enables `--no-standard-checks`**
+(`esbmc_parseoptions.cpp`), because the C-level safety checks
+(pointer / alignment / VLA / scanf) emit false positives on Yul-lowered
+code. `--no-standard-checks` expands to disable
+pointer / div-by-zero / bounds / narrowing / pointer-relation / VLA /
+align / scanf checks — **unless** you re-enable the EVM-relevant ones
+with their positive opt-in flag.
+
+So for a meaningful Solidity scan you must explicitly turn checks **on**:
+
+```sh
+esbmc contract.sol --contract C \
+  --overflow-check --div-by-zero-check --bounds-check --narrowing-check
+```
+
+| Flag | What it enables | Solidity default |
+|------|-----------------|------------------|
+| `--overflow-check` | Signed + unsigned overflow/underflow on all integer widths. | **OFF** (opt-in) |
+| `--unsigned-overflow-check` | Unsigned-only variant. | OFF |
+| `--div-by-zero-check` | Division by zero. Positive opt-in; overrides `--no-standard-checks`. | **OFF** (opt-in) |
+| `--bounds-check` | Array-bounds checks. Positive opt-in; overrides `--no-standard-checks`. | **OFF** (opt-in) |
+| `--narrowing-check` | Narrowing-typecast truncation overflow (e.g. `uint256 → uint8`) — this is how sub-256-bit overflow is caught despite C integer promotion. Positive opt-in. | **OFF** (opt-in) |
+| `--no-bounds-check` / `--no-div-by-zero-check` / `--no-narrowing-check` / `--no-pointer-check` | Explicitly suppress the corresponding check (redundant on Solidity, where they are already off). | — |
+| `--no-standard-checks` | Disable the default claim set. Implicit on every `.sol` run; listed here for completeness. | **ON** (implicit) |
+
+Mechanism notes:
 - **Sub-256-bit overflow** — `uint8`/`uint16`/`uint32` overflow is
-  caught despite C integer promotion; implemented as a narrowing-cast
-  check in `goto_check.cpp` when the source is `.sol`.
+  caught despite C integer promotion via a narrowing-cast check in
+  `goto_check.cpp`. This fires **only when `--narrowing-check` is
+  passed**; it is OFF by default on Solidity (part of the
+  `--no-standard-checks` expansion). Note `--16` raises the minimum
+  machine word to 16, so `uint8`/`int8` narrowing/overflow checks are
+  unavailable under `--16`.
 - **`unchecked { ... }` blocks** (Solidity 0.8+) — overflow assertions
   inside `unchecked` blocks are tagged with `#sol_unchecked` and
   skipped.
@@ -297,6 +470,28 @@ reentrant entry traces. A reported reentrancy is an **indicator**
 confirmed exploit. Inspect the counterexample to decide whether it
 translates to an actual loss-of-funds scenario.
 
+### `--reentry-balance-drain-check`
+
+```sh
+esbmc contract.sol --contract C --reentry-balance-drain-check --bound
+```
+
+Targets the DAO-style *balance drain* specifically: at every outbound
+value-transfer call site (`transfer` / `send` / `call{value: V}`), it
+asserts that the contract's `$balance` drops by **at most `V`** across
+the call. A reentrant callback that re-enters and drains more than the
+nominal transfer amount violates this assertion.
+
+- Contracts with no outbound value-transfer call sites are skipped
+  (nothing to instrument).
+- Low-level `call{value:}` requires `--bound`: under the default
+  unbound mode that call is special-cased to skip balance accounting,
+  so the drain assertion would not see the transfer. `transfer` / `send`
+  are instrumented in both modes.
+
+Implementation: `solidity_convert_call.cpp` wraps each value-transfer
+site with a pre-balance snapshot and a post-call `__ESBMC_assert`.
+
 ### `--multi-property`
 
 Report **all** reachable property violations in a single run rather
@@ -306,22 +501,54 @@ than stopping at the first one. Useful for comprehensive scans.
 esbmc contract.sol --contract C --overflow-check --multi-property
 ```
 
-### `--negating-property <function>`
+### `--negating-property [contract:]fn[:line]`
 
-Rewrites every `assert(cond)` in the named function to `assert(!cond)`.
-Handy for reachability queries.
+Rewrites `assert(cond)` to `assert(!cond)`, turning a safety check into
+a reachability query (the negated assert fails iff the original
+condition was reachable as true). The argument is more expressive than a
+bare function name:
+
+- `fn` — negate every assert in function `fn`.
+- `contract:fn` — disambiguate same-named functions across contracts
+  (Solidity, case-sensitive).
+- `[contract:]fn:line` — restrict negation to asserts on that source
+  line; falls back to the whole function if no assert matches the line.
+
+```sh
+esbmc contract.sol --contract C --negating-property "C:withdraw:42"
+```
 
 ## Solver selection
 
 When the user passes no explicit solver flag, the Solidity frontend
-auto-picks the first available backend in this order:
+auto-selects a backend. It **first checks for three contract shapes
+that force CVC5** (Bitwuzla aborts or balloons on them); if none match,
+it falls back to a preference order.
+
+**Forced-CVC5 shapes** (only when no `--<solver>` was given,
+`esbmc_parseoptions.cpp`):
+
+1. **Nested dynamic arrays** in storage — forces `--cvc5` **and**
+   auto-injects `--cvc5-native-tuples`. Opt out of the native-tuples
+   injection with `--no-cvc5-native-tuples` (plain CVC5 flattener
+   instead); the flag is a no-op when CVC5 is not auto-selected.
+2. **≥3-level nested mapping with a scalar leaf** — forces plain
+   `--cvc5` (no native tuples). Bitwuzla aborts on the
+   `CONST_ARRAY`-initialised infinite mapping array.
+3. **k-induction over a multi-contract, value-call system** (i.e.
+   `--k-induction` + `--bound`/`--reentry-check` + ≥2 contracts +
+   a detected value call) — forces plain `--cvc5`; the linear address-
+   equality if-chain balloons under Bitwuzla.
+
+**Fallback preference order** (when none of the above fires):
 
 1. Bitwuzla (fastest on 256-bit bitvectors and mapping chains)
 2. CVC5
 3. Boolector
 4. Z3
 
-If you need a specific backend:
+If you need a specific backend (this also suppresses all the
+forced-CVC5 logic above):
 
 ```sh
 esbmc contract.sol --contract C --z3
@@ -462,6 +689,24 @@ esbmc contract.sol --contract C --branch-coverage --cov-report-json
 python3 scripts/cov-report.py cov-report.json -o cov-report-html
 ```
 
+### Additional coverage controls
+
+| Flag | Purpose |
+|------|---------|
+| `--coverage-whole-unit` | With `--contract C`, keep C as the harness entry but count branch coverage over the **whole compilation unit** instead of scoping the denominator/numerator to C's own lexically-declared decisions (opt-out of per-contract "semantics A"). |
+| `--coverage-covered-set <path>` | Cross-run persisted covered-set for `--branch-coverage`. Read at start (already-witnessed edges are not re-instrumented, cutting SMT cost) and merge-written at end. The denominator stays the full static universe, so skipping never inflates coverage. |
+| `--coverage-exclude-contract <name>` | Exclude a contract's own decisions from branch coverage (repeatable). Those decisions count in **neither** denominator **nor** numerator. Pair with `--coverage-whole-unit` to drop dependency code (e.g. OpenZeppelin); a no-op in default per-contract mode. |
+| `--no-cov-asserts` | Do not count the guard in assertions. |
+| `--cov-assume-asserts` | Convert assertions to assumptions in coverage mode to preserve path constraints. |
+| `--k-path-coverage[=N]` | k-path witness coverage (PathCrawler-style; Williams et al., EDCC 2005). `N` = prefix depth (1..30); if omitted, tied to `--unwind`, falling back to 4 when `--unwind` is unset. |
+| `--k-path-coverage-claims` | Enable `--k-path-coverage` with default N and show all reached claims. |
+| `--k-path-witness-depth D` | Cap on post-simplification witness expression depth; deeper witnesses are dropped (default 8). |
+| `--k-path-max-goals M` | Per-function goal cap for `--k-path-coverage` (default 10000). |
+| `--condition-coverage-rm` / `--condition-coverage-claims-rm` | `--condition-coverage[-claims]` variant that disables `--no-remove-unreachable`. |
+
+These coverage families (like TOD) **force the unbounded transaction
+harness** — see [Transaction-sequence bound](#transaction-sequence-bound).
+
 Solidity-specific handling:
 - The `_ESBMC_Main_*` multi-transaction loop is **automatically
   neutralised** in coverage mode (back-edges converted to SKIPs), so
@@ -577,13 +822,21 @@ shows up as a real warning instead of silent truncation.
 **Future under-approximations bind to the same flag.** As we replace
 more loose modellings with precise (sound) ones, they will be
 controlled by `--solidity-precise` so users get one knob rather than
-many.
+many. The first such addition is the transaction-sequence bound:
+`--solidity-precise` also restores the unbounded
+`while (nondet_bool())` harness loop (the default is bounded to two
+transactions) — see
+[Transaction-sequence bound](#transaction-sequence-bound).
 
 **Consequences for review:**
 - `VERIFICATION SUCCESSFUL` is a real safety proof *within* the
-  approximation ledger. If the property depends on an approximation
-  marked "False negatives", the proof is NOT sound — re-verify with a
-  tighter model or manual reasoning.
+  approximation ledger **and within the default transaction bound**
+  (two transactions — see
+  [Transaction-sequence bound](#transaction-sequence-bound)). If the
+  property depends on an approximation marked "False negatives", or on a
+  transaction sequence longer than the bound, the proof is NOT a full
+  guarantee — re-verify with `--solidity-precise` (unbounded), a deeper
+  `--solidity-max-tx N`, a tighter model, or manual reasoning.
 - `VERIFICATION FAILED` may be a spurious counterexample if it
   depends on an approximation marked "False positives" (e.g.
   row 7 — nondet `msg.value` at harness entry; row 5 — non-monotonic
