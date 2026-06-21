@@ -1217,6 +1217,16 @@ protected:
   /// function), in which case the caller must fall back to the legacy
   /// `__ESBMC_assume(false)` / `__ESBMC_assume(cond)` lowering.
   bool build_revert_rollback_block(const exprt *cond, exprt &out);
+  /// Collect the contract's file-local static infinite-array global stores
+  /// (mappings and state-variable dynamic-array data/length companions) that
+  /// live outside the *this struct.  `store_prefix` is `sol:@C@<contract>@`;
+  /// matches symbols under that prefix that are arrays, static, file-local,
+  /// and not themselves a per-function snapshot or a nested function symbol.
+  /// Used by build_revert_rollback_block to extend the revert rollback to
+  /// these global stores.  Cached per prefix.
+  void collect_contract_global_stores(
+    const std::string &store_prefix,
+    std::vector<std::pair<std::string, typet>> &out);
   /// Revert observation (docs/claude/solidity/revert-observation.md): build a
   /// hidden, coverage-skipped statement that calls a no-arg void helper from
   /// solidity_misc.c (`__ESBMC_sol_mark_revert` / `__ESBMC_sol_clear_revert`).
@@ -1355,6 +1365,23 @@ protected:
   // no SSA cost for the snapshot copy.  Reset on entry to each
   // function.
   bool current_function_used_snapshot = false;
+  // EVM revert rolls back ALL state, but `*this = _sol_save_this` only
+  // restores the contract struct.  Mappings and state-variable dynamic
+  // arrays are lowered to file-local static infinite-array globals
+  // (e.g. `sol:@C@C@m`, `..._dynarray_len`) that live OUTSIDE *this, so a
+  // write to them before a revert leaks past the rollback.  When
+  // build_revert_rollback_block emits the full-restore form it also emits
+  // `<store> = _sol_save_<store>` for each such global and records the
+  // (store_id, save_id) pair here; get_function_definition's entry wrap
+  // then emits the matching `_sol_save_<store> = <store>` snapshot.  Reset
+  // on entry to each function; saved/restored across nested conversions.
+  std::vector<std::pair<std::string, std::string>>
+    current_function_restored_globals;
+  // Cache for collect_contract_global_stores, keyed by `sol:@C@<contract>@`
+  // store prefix, so the context scan runs once per contract rather than once
+  // per revert/require site.
+  std::map<std::string, std::vector<std::pair<std::string, typet>>>
+    contract_global_stores_cache;
   // Forward-incremental flag updated by get_block as it walks the
   // body's top-level statements: ORed with `statement_is_mutation_top_level(stmt)`
   // after each statement is converted.  build_revert_rollback_block

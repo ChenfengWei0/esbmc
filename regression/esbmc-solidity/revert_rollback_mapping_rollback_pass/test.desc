@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.sol
 --contract C --no-standard-checks --k-induction
 ^VERIFICATION SUCCESSFUL$

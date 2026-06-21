@@ -37,6 +37,9 @@ bool solidity_convertert::get_function_definition(
   const bool old_function_used_snapshot = current_function_used_snapshot;
   const bool old_function_seen_mutation = current_function_seen_mutation;
   const bool old_function_revert_observable = current_function_revert_observable;
+  std::vector<std::pair<std::string, std::string>>
+    old_function_restored_globals;
+  old_function_restored_globals.swap(current_function_restored_globals);
   current_function_used_snapshot = false;
   current_function_seen_mutation = false;
   current_function_revert_observable = false;
@@ -126,6 +129,7 @@ bool solidity_convertert::get_function_definition(
     current_function_used_snapshot = old_function_used_snapshot;
     current_function_seen_mutation = old_function_seen_mutation;
     current_function_revert_observable = old_function_revert_observable;
+    current_function_restored_globals.swap(old_function_restored_globals);
     log_debug(
       "solidity",
       "@@@ Already parsed function {} in contract {}",
@@ -486,6 +490,21 @@ bool solidity_convertert::get_function_definition(
             wrapped.copy_to_operands(save_decl);
             wrapped.copy_to_operands(save_init);
           }
+
+          // Snapshot the out-of-struct global stores (mappings, dynarray
+          // data/length) that the body's revert rollback restores.  The
+          // save symbols are static_lifetime, so no decl is needed — just
+          // capture the entry value before the body runs.
+          for (const auto &gpair : current_function_restored_globals)
+          {
+            const symbolt *store_sym = context.find_symbol(gpair.first);
+            const symbolt *g_save_sym = context.find_symbol(gpair.second);
+            if (store_sym == nullptr || g_save_sym == nullptr)
+              continue;
+            code_assignt g_init(
+              symbol_expr(*g_save_sym), symbol_expr(*store_sym));
+            wrapped.copy_to_operands(g_init);
+          }
         }
 
         wrapped.copy_to_operands(sa_decl);
@@ -559,6 +578,7 @@ bool solidity_convertert::get_function_definition(
   current_function_used_snapshot = old_function_used_snapshot;
   current_function_seen_mutation = old_function_seen_mutation;
   current_function_revert_observable = old_function_revert_observable;
+  current_function_restored_globals.swap(old_function_restored_globals);
   return false;
 }
 
@@ -700,6 +720,40 @@ void solidity_convertert::build_revert_flag_call(
   out_stmt = call;
 }
 
+void solidity_convertert::collect_contract_global_stores(
+  const std::string &store_prefix,
+  std::vector<std::pair<std::string, typet>> &out)
+{
+  auto cached = contract_global_stores_cache.find(store_prefix);
+  if (cached != contract_global_stores_cache.end())
+  {
+    out = cached->second;
+    return;
+  }
+
+  std::vector<std::pair<std::string, typet>> found;
+  context.foreach_operand([&](const symbolt &s) {
+    // Mappings and state-variable dynamic-array companions are lowered to
+    // file-local static infinite-array globals that live outside *this.
+    if (!s.static_lifetime || !s.file_local)
+      return;
+    if (s.type.id() != "array")
+      return;
+    const std::string sid = id2string(s.id);
+    if (sid.compare(0, store_prefix.size(), store_prefix) != 0)
+      return;
+    // Exclude nested function symbols / their locals and our own snapshots.
+    if (sid.find("@F@") != std::string::npos)
+      return;
+    if (sid.find("_sol_save_") != std::string::npos)
+      return;
+    found.emplace_back(sid, s.type);
+  });
+
+  contract_global_stores_cache[store_prefix] = found;
+  out = found;
+}
+
 bool solidity_convertert::build_revert_rollback_block(
   const exprt *cond,
   exprt &out)
@@ -810,6 +864,52 @@ bool solidity_convertert::build_revert_rollback_block(
     exprt save_ref = symbol_expr(*save_sym);
     code_assignt restore(this_deref, save_ref);
     block.copy_to_operands(restore);
+
+    // EVM revert rolls back ALL state, but `*this = save` only restores the
+    // contract struct.  Mappings and state-variable dynamic-array data/length
+    // companions are file-local static infinite-array globals outside *this,
+    // so also restore each from a per-function snapshot.  The matching
+    // `_sol_save_g_<base> = <store>` snapshot is emitted at function entry by
+    // get_function_definition for every pair recorded here.
+    const std::string::size_type fpos = current_functionId.find("@F@");
+    if (fpos != std::string::npos)
+    {
+      const std::string store_prefix = current_functionId.substr(0, fpos) + "@";
+      std::vector<std::pair<std::string, typet>> stores;
+      collect_contract_global_stores(store_prefix, stores);
+      for (const auto &st : stores)
+      {
+        const symbolt *store_sym = context.find_symbol(st.first);
+        if (store_sym == nullptr)
+          continue;
+        const std::string base = id2string(store_sym->name);
+        const std::string g_save_id =
+          current_functionId + "#_sol_save_g_" + base;
+        if (context.find_symbol(g_save_id) == nullptr)
+        {
+          symbolt g_save;
+          get_default_symbol(
+            g_save,
+            store_sym->module.as_string(),
+            store_sym->type,
+            "_sol_save_g_" + base,
+            g_save_id,
+            store_sym->location);
+          g_save.lvalue = true;
+          g_save.file_local = true;
+          g_save.static_lifetime = true;
+          g_save.value = gen_zero(get_complete_type(store_sym->type, ns), true);
+          g_save.value.zero_initializer(true);
+          move_symbol_to_context(g_save);
+          current_function_restored_globals.emplace_back(st.first, g_save_id);
+        }
+        const symbolt *g_save_sym = context.find_symbol(g_save_id);
+        // <store> = _sol_save_g_<base>;
+        code_assignt g_restore(
+          symbol_expr(*store_sym), symbol_expr(*g_save_sym));
+        block.copy_to_operands(g_restore);
+      }
+    }
   }
   block.copy_to_operands(return_stmt);
 

@@ -8,7 +8,9 @@ pragma solidity >=0.8.0;
 // next transaction.
 //
 // Real EVM: pushAndRevert reverts -> a.length stays 0 -> assert holds ->
-// SUCCESSFUL.  Current ESBMC: a.length == 1 leaks -> FAILED.  KNOWNBUG.
+// SUCCESSFUL.  Before the fix, a.length == 1 leaked -> spurious FAILED.
+// build_revert_rollback_block now snapshots the `<arr>_dynarray_len` (and
+// element-data) globals at entry and restores them on revert.  Was KNOWNBUG.
 contract C {
     uint[] a;
 
