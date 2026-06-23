@@ -103,8 +103,7 @@ solidity_convertert::solidity_convertert(
   }
   if (context.find_symbol("c:@F@llc_nondet_bytes") == nullptr)
   {
-    log_error(
-      "Preprocessing error. Cannot find the llc_nondet_bytes symbol");
+    log_error("Preprocessing error. Cannot find the llc_nondet_bytes symbol");
     abort();
   }
   locationt l;
@@ -928,7 +927,6 @@ bool solidity_convertert::populate_auxiliary_vars()
       }
       if (linearizedBaseList[c_name].empty())
         return true;
-
     }
   }
 
@@ -982,8 +980,8 @@ bool solidity_convertert::populate_auxiliary_vars()
   //   - MemberAccess lookup in solidity_convert_ref.cpp (which keys by
   //     the identifier name used in `MyInt.wrap(...)`, just `MyInt`)
   //     also succeeds.
-  auto register_udvt = [&](const nlohmann::json &def,
-                           const std::string &scope) -> bool {
+  auto register_udvt =
+    [&](const nlohmann::json &def, const std::string &scope) -> bool {
     typet t;
     if (get_type_description(def["underlyingType"]["typeDescriptions"], t))
       return true;
@@ -1313,7 +1311,7 @@ bool solidity_convertert::build_enclosing_debit_helper()
 {
   const std::string helper_id = "c:@F@_ESBMC_enclosing_debit";
   if (context.find_symbol(helper_id) != nullptr)
-    return false;  // already emitted
+    return false; // already emitted
 
   typet addr_t_local = unsignedbv_typet(160);
   typet val_t = unsignedbv_typet(256);
@@ -1337,8 +1335,7 @@ bool solidity_convertert::build_enclosing_debit_helper()
   symbolt &added_helper = *move_symbol_to_context(helper_sym);
 
   symbolt val_sym;
-  get_default_symbol(
-    val_sym, dbgmod, val_t, "val", helper_id + "::val", loc);
+  get_default_symbol(val_sym, dbgmod, val_t, "val", helper_id + "::val", loc);
   val_sym.lvalue = true;
   val_sym.is_parameter = true;
   val_sym.file_local = true;
@@ -1351,8 +1348,8 @@ bool solidity_convertert::build_enclosing_debit_helper()
   body.move_to_operands(label);
 
   exprt val_expr = symbol_expr(*context.find_symbol(helper_id + "::val"));
-  exprt encl_this = symbol_expr(
-    *context.find_symbol("c:@_ESBMC_enclosing_contract_this"));
+  exprt encl_this =
+    symbol_expr(*context.find_symbol("c:@_ESBMC_enclosing_contract_this"));
 
   // Emit one `if (encl_this == (void*)&_ESBMC_Object_<C>) { ...$balance -= val; }`
   // per known contract.  No `else` chaining — each branch short-
@@ -1361,7 +1358,7 @@ bool solidity_convertert::build_enclosing_debit_helper()
   for (const auto &cn : contractNamesList)
   {
     if (nonContractNamesList.count(cn) != 0)
-      continue;  // skip libraries, interfaces, abstract contracts
+      continue; // skip libraries, interfaces, abstract contracts
 
     exprt static_ins;
     get_static_contract_instance_ref(cn, static_ins);

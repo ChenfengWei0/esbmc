@@ -249,17 +249,18 @@ bool solidity_convertert::get_constant_value(
   while (!tmp.empty() && tmp.contains("value"))
   {
     const auto &val_json = tmp["value"];
-    if (val_json.is_object() && val_json.contains("value") &&
-        val_json["value"].is_string())
+    if (
+      val_json.is_object() && val_json.contains("value") &&
+      val_json["value"].is_string())
     {
       value = val_json["value"].get<std::string>();
       return false;
     }
     // Follow simple Identifier chains; anything else (TupleExpression,
     // BinaryOperation, ...) is not resolvable here.
-    if (val_json.is_object() &&
-        val_json.contains("referencedDeclaration") &&
-        val_json["referencedDeclaration"].is_number_integer())
+    if (
+      val_json.is_object() && val_json.contains("referencedDeclaration") &&
+      val_json["referencedDeclaration"].is_number_integer())
     {
       int new_ref_id = val_json["referencedDeclaration"].get<int>();
       if (new_ref_id <= 0)
@@ -506,9 +507,10 @@ nlohmann::json solidity_convertert::make_array_elementary_type(
   nlohmann::json elementary_type;
   const std::string typeIdentifier =
     type_descrpt["typeIdentifier"].get<std::string>();
-  const std::string typeString = type_descrpt.contains("typeString")
-                                   ? type_descrpt["typeString"].get<std::string>()
-                                   : "";
+  const std::string typeString =
+    type_descrpt.contains("typeString")
+      ? type_descrpt["typeString"].get<std::string>()
+      : "";
 
   // 2. extract element identifier by scanning the typeIdentifier from the
   // back for the outer array's size delimiter "_$<dyn|digits>".  Anything
@@ -526,8 +528,8 @@ nlohmann::json solidity_convertert::make_array_elementary_type(
   // inside substr below.
   if (typeIdentifier.compare(0, 9, "t_array$_") != 0)
   {
-    elementary_type = {{"typeIdentifier", typeIdentifier},
-                       {"typeString", typeString}};
+    elementary_type = {
+      {"typeIdentifier", typeIdentifier}, {"typeString", typeString}};
     return elementary_type;
   }
   const std::string prefix = "t_array$_";
@@ -578,11 +580,12 @@ nlohmann::json solidity_convertert::make_array_elementary_type(
   // trailing "[<size>]" from the array typeString.
   std::string elem_ts = typeString;
   auto strip_loc = [](std::string &s) {
-    for (const char *suf : {" storage ref",
-                            " storage pointer",
-                            " storage",
-                            " memory",
-                            " calldata"})
+    for (const char *suf :
+         {" storage ref",
+          " storage pointer",
+          " storage",
+          " memory",
+          " calldata"})
     {
       size_t slen = std::strlen(suf);
       if (s.size() > slen && s.compare(s.size() - slen, slen, suf) == 0)
@@ -644,14 +647,13 @@ bool solidity_convertert::is_dyn_array(const nlohmann::json &ast_node)
 {
   if (!ast_node.contains("typeDescriptions"))
     return false;
-  auto type =
-    SolidityGrammar::get_type_name_t(ast_node["typeDescriptions"]);
+  auto type = SolidityGrammar::get_type_name_t(ast_node["typeDescriptions"]);
   if (type == SolidityGrammar::DynArrayTypeName)
     return true;
   if (
     type == SolidityGrammar::NestedArrayTypeName &&
-    ast_node.contains("nodeType") &&
-    ast_node["nodeType"] == "ArrayTypeName" && !ast_node.contains("length"))
+    ast_node.contains("nodeType") && ast_node["nodeType"] == "ArrayTypeName" &&
+    !ast_node.contains("length"))
     return true;
   return false;
 }
@@ -923,8 +925,7 @@ bool solidity_convertert::get_dynarr_elem_idx(const exprt &pos, exprt &out)
   }
   else
   {
-    log_error(
-      "get_dynarr_elem_idx: no current function or contract context");
+    log_error("get_dynarr_elem_idx: no current function or contract context");
     return true;
   }
 
@@ -949,9 +950,7 @@ bool solidity_convertert::get_dynarr_elem_idx(const exprt &pos, exprt &out)
 
 // T1.1 Stage S1: addr-keyed dyn-array length helper.  See
 // solidity_convert.h:get_dynarr_len_ref docstring.
-bool solidity_convertert::get_dynarr_len_ref(
-  const symbolt &len_sym,
-  exprt &out)
+bool solidity_convertert::get_dynarr_len_ref(const symbolt &len_sym, exprt &out)
 {
   exprt this_expr;
   if (current_functionDecl)
@@ -973,8 +972,7 @@ bool solidity_convertert::get_dynarr_len_ref(
   }
 
   exprt addr_expr = member_exprt(this_expr, "$address", addr_t);
-  out = index_exprt(
-    symbol_expr(len_sym), addr_expr, unsignedbv_typet(256));
+  out = index_exprt(symbol_expr(len_sym), addr_expr, unsignedbv_typet(256));
   return false;
 }
 
@@ -1011,8 +1009,9 @@ bool solidity_convertert::is_new_created_decl(int decl_id) const
   //   new C(args)            -> FunctionCall(NewExpression, args)
   //   new C{value: v}(args)  -> FunctionCall(FunctionCallOptions(NewExpression), args)
   auto is_new_call = [](const nlohmann::json &v) {
-    if (!v.is_object() || v.value("nodeType", "") != "FunctionCall" ||
-        !v.contains("expression"))
+    if (
+      !v.is_object() || v.value("nodeType", "") != "FunctionCall" ||
+      !v.contains("expression"))
       return false;
     const auto &inner = v["expression"];
     if (!inner.is_object())
@@ -1044,7 +1043,8 @@ bool solidity_convertert::is_new_created_decl(int decl_id) const
           if (d.is_object() && d.value("id", -1) == decl_id)
           {
             if (
-              node.contains("initialValue") && is_new_call(node["initialValue"]))
+              node.contains("initialValue") &&
+              is_new_call(node["initialValue"]))
               return true;
           }
         }
@@ -1297,9 +1297,8 @@ const nlohmann::json &solidity_convertert::find_parent_contract(
 // Pure DFS: find the first node with matching "id" field in any JSON subtree.
 // This is the low-level building block used by find_decl_ref and external
 // callers that need unscoped lookup (e.g., during inheritance merging).
-const nlohmann::json &solidity_convertert::find_node_by_id(
-  const nlohmann::json &subtree,
-  int ref_id)
+const nlohmann::json &
+solidity_convertert::find_node_by_id(const nlohmann::json &subtree, int ref_id)
 {
   if (!subtree.is_structured())
     return empty_json;
@@ -1345,8 +1344,7 @@ const nlohmann::json &solidity_convertert::find_node_by_id(
 //   2. Library contracts
 //   3. Global-scope nodes (structs, enums outside any contract)
 // If not found, falls back to overrideMap for virtual/override resolution.
-const nlohmann::json &
-solidity_convertert::find_decl_ref(int ref_id)
+const nlohmann::json &solidity_convertert::find_decl_ref(int ref_id)
 {
   log_debug(
     "solidity",
@@ -1357,8 +1355,7 @@ solidity_convertert::find_decl_ref(int ref_id)
   if (!src_ast_json.contains("nodes"))
     return empty_json;
 
-  auto search_scoped = [&](int id) -> const nlohmann::json &
-  {
+  auto search_scoped = [&](int id) -> const nlohmann::json & {
     for (const auto &node : src_ast_json["nodes"])
     {
       if (!node.is_object())
@@ -1377,9 +1374,9 @@ solidity_convertert::find_decl_ref(int ref_id)
           node.contains("contractKind") && node["contractKind"] == "library";
         bool is_interface =
           node.contains("contractKind") && node["contractKind"] == "interface";
-        bool is_base =
-          !current_baseContractName.empty() && node.contains("name") &&
-          node["name"] == current_baseContractName;
+        bool is_base = !current_baseContractName.empty() &&
+                       node.contains("name") &&
+                       node["name"] == current_baseContractName;
 
         // Search inside the current base, libraries, and interfaces.
         // Interfaces routinely host struct definitions that are referenced

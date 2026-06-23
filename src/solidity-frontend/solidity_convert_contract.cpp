@@ -406,8 +406,7 @@ void solidity_convertert::get_inherit_static_contract_instance(
     if (!decl_ref.empty() && !decl_ref.is_null())
     {
       if (assign_param_nondet(decl_ref, call))
-        log_error(
-          "failed to pad nondet args for inherited ctor of {}", c_name);
+        log_error("failed to pad nondet args for inherited ctor of {}", c_name);
     }
   }
 
@@ -515,8 +514,8 @@ bool solidity_convertert::get_high_level_call_wrapper(
   exprt new_sender_value;
   if (is_library)
   {
-    new_sender_value = symbol_expr(
-      *context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
+    new_sender_value =
+      symbol_expr(*context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
   }
   else
   {
