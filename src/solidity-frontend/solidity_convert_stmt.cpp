@@ -929,16 +929,28 @@ bool solidity_convertert::get_statement(
   }
   case SolidityGrammar::StatementT::TryStatement:
   {
-    // Model try/catch as:
-    //   if (nondet_bool()) { <externalCall>; <success_body> }
-    //   else               { <catch_block(s)> }
+    // Model try/catch.  Two lowerings, selected by the revert-observation gate:
     //
-    // The success branch actually executes the external call so its
-    // side effects are visible; if the call internally reverts, the
-    // usual `__ESBMC_assume(false)` propagation prunes the success path
-    // and only the catch branch remains feasible.  Return values of the
-    // call are still modelled as nondet in the success parameter bindings
-    // (cross-contract resolution is out of scope for the AST-level frontend).
+    //  - DEFAULT (no opt-in): a free nondet branch
+    //      if (nondet_bool()) { <externalCall>; <success_body> }
+    //      else               { <catch_block(s)> }
+    //    The success arm executes the call; the catch arm is a nondet
+    //    alternative NOT correlated with whether the call actually reverted.
+    //    This is unsound for revert-rule properties but is the legacy
+    //    behaviour, kept byte-for-byte for units that do not opt in
+    //    (preserves k-induction stability).
+    //
+    //  - OPT-IN (source declares the `__ESBMC_reverted` stub, so
+    //    `uses_revert_observation` is set): a revert-CORRELATED lowering.  The
+    //    call is hoisted out of the arms and the branch tests the real revert
+    //    flag with a save / clear / snapshot / restore discipline, so the catch
+    //    arm is entered iff the call reverted within the captured scope, and the
+    //    single global flag behaves like a per-`try` scoped observation (no
+    //    contamination from nested calls).  See
+    //    docs/claude/solidity/revert-observation.md and plan.md.
+    //
+    // Return values stay nondet in the success bindings in both lowerings
+    // (cross-contract return resolution is out of scope for the AST frontend).
 
     if (!stmt.contains("clauses") || !stmt["clauses"].is_array() ||
         stmt["clauses"].size() < 2)
@@ -949,84 +961,29 @@ bool solidity_convertert::get_statement(
     }
 
     const auto &clauses = stmt["clauses"];
-
-    // --- success branch (first clause) ---
     const auto &success_clause = clauses[0];
-    code_blockt success_block;
 
-    // Step 1: execute the external call itself so its side effects land
-    // in the SSA.  A revert inside the callee emits `assume(false)` which
-    // prunes this arm, leaving the catch arm feasible.
-    if (stmt.contains("externalCall"))
-    {
-      exprt call_expr;
-      if (get_expr(stmt["externalCall"], call_expr))
-        return true;
-      convert_expression_to_code(call_expr);
-      success_block.copy_to_operands(call_expr);
-    }
-
-    // Step 2: declare return parameters with nondet initial values
-    if (success_clause.contains("parameters") &&
-        success_clause["parameters"].contains("parameters"))
-    {
-      for (const auto &param :
-           success_clause["parameters"]["parameters"])
+    // Append the success return-param nondet decls + the user-written success
+    // body to `out`.  When `include_call`, the external call is emitted first
+    // (legacy shape: call lives inside the success arm).
+    auto build_success_arm = [&](code_blockt &out, bool include_call) -> bool {
+      if (include_call && stmt.contains("externalCall"))
       {
-        // Use get_var_decl to declare the variable in the symbol table
-        exprt var_decl;
-        if (get_var_decl(param, var_decl))
+        exprt call_expr;
+        if (get_expr(stmt["externalCall"], call_expr))
           return true;
-
-        // The variable was declared; now assign it a nondet value
-        // matching its type
-        if (var_decl.is_code() && var_decl.statement() == "decl")
-        {
-          const symbolt &sym =
-            *context.find_symbol(var_decl.op0().identifier());
-          symbol_exprt sym_expr(sym.id, sym.type);
-
-          exprt nondet_val;
-          get_nondet_expr(sym.type, nondet_val);
-
-          code_assignt assign(sym_expr, nondet_val);
-          assign.location() = loc;
-
-          success_block.copy_to_operands(var_decl);
-          success_block.copy_to_operands(assign);
-        }
-        else
-        {
-          success_block.copy_to_operands(var_decl);
-        }
+        convert_expression_to_code(call_expr);
+        out.copy_to_operands(call_expr);
       }
-    }
-
-    // Step 3: convert the user-written success block body
-    exprt success_body;
-    if (get_block(success_clause["block"], success_body))
-      return true;
-    convert_expression_to_code(success_body);
-    success_block.copy_to_operands(success_body);
-
-    // --- catch branch(es) (remaining clauses) ---
-    exprt catch_expr;
-    if (clauses.size() == 2)
-    {
-      // Single catch clause
-      const auto &cc = clauses[1];
-
-      // Declare catch parameters if present (e.g. Error(string memory reason))
-      code_blockt catch_block;
-      if (cc.contains("parameters") &&
-          cc["parameters"].contains("parameters"))
+      if (
+        success_clause.contains("parameters") &&
+        success_clause["parameters"].contains("parameters"))
       {
-        for (const auto &param : cc["parameters"]["parameters"])
+        for (const auto &param : success_clause["parameters"]["parameters"])
         {
           exprt var_decl;
           if (get_var_decl(param, var_decl))
             return true;
-
           if (var_decl.is_code() && var_decl.statement() == "decl")
           {
             const symbolt &sym =
@@ -1036,85 +993,241 @@ bool solidity_convertert::get_statement(
             get_nondet_expr(sym.type, nondet_val);
             code_assignt assign(sym_expr, nondet_val);
             assign.location() = loc;
-            catch_block.copy_to_operands(var_decl);
-            catch_block.copy_to_operands(assign);
+            out.copy_to_operands(var_decl);
+            out.copy_to_operands(assign);
           }
           else
-          {
-            catch_block.copy_to_operands(var_decl);
-          }
+            out.copy_to_operands(var_decl);
         }
       }
-
-      exprt catch_body;
-      if (get_block(cc["block"], catch_body))
+      exprt success_body;
+      if (get_block(success_clause["block"], success_body))
         return true;
-      convert_expression_to_code(catch_body);
-      catch_block.copy_to_operands(catch_body);
-      catch_expr = catch_block;
-    }
-    else
-    {
-      // Multiple catch clauses: chain with nondet_bool
-      // Build right-to-left: last clause is the final else
-      const auto &last_cc = clauses[clauses.size() - 1];
-      code_blockt last_block;
-      if (last_cc.contains("parameters") &&
-          last_cc["parameters"].contains("parameters"))
-      {
-        for (const auto &param : last_cc["parameters"]["parameters"])
-        {
-          exprt var_decl;
-          if (get_var_decl(param, var_decl))
-            return true;
-          last_block.copy_to_operands(var_decl);
-        }
-      }
-      exprt last_body;
-      if (get_block(last_cc["block"], last_body))
-        return true;
-      convert_expression_to_code(last_body);
-      last_block.copy_to_operands(last_body);
+      convert_expression_to_code(success_body);
+      out.copy_to_operands(success_body);
+      return false;
+    };
 
-      catch_expr = last_block;
-
-      // Build if-else chain from second-to-last back to first catch clause
-      for (int i = static_cast<int>(clauses.size()) - 2; i >= 1; --i)
+    // Build the catch arm: single clause, or multiple clauses chained with a
+    // nondet selector (ESBMC cannot tell Error/Panic/low-level apart, so which
+    // handler runs is over-approximated as nondet).
+    auto build_catch_expr = [&](exprt &catch_expr) -> bool {
+      if (clauses.size() == 2)
       {
-        const auto &cc = clauses[i];
-        code_blockt clause_block;
-        if (cc.contains("parameters") &&
-            cc["parameters"].contains("parameters"))
+        const auto &cc = clauses[1];
+        code_blockt catch_block;
+        if (
+          cc.contains("parameters") && cc["parameters"].contains("parameters"))
         {
           for (const auto &param : cc["parameters"]["parameters"])
           {
             exprt var_decl;
             if (get_var_decl(param, var_decl))
               return true;
-            clause_block.copy_to_operands(var_decl);
+            if (var_decl.is_code() && var_decl.statement() == "decl")
+            {
+              const symbolt &sym =
+                *context.find_symbol(var_decl.op0().identifier());
+              symbol_exprt sym_expr(sym.id, sym.type);
+              exprt nondet_val;
+              get_nondet_expr(sym.type, nondet_val);
+              code_assignt assign(sym_expr, nondet_val);
+              assign.location() = loc;
+              catch_block.copy_to_operands(var_decl);
+              catch_block.copy_to_operands(assign);
+            }
+            else
+              catch_block.copy_to_operands(var_decl);
           }
         }
-        exprt clause_body;
-        if (get_block(cc["block"], clause_body))
+        exprt catch_body;
+        if (get_block(cc["block"], catch_body))
           return true;
-        convert_expression_to_code(clause_body);
-        clause_block.copy_to_operands(clause_body);
-
-        codet if_catch("ifthenelse");
-        if_catch.copy_to_operands(nondet_bool_expr, clause_block, catch_expr);
-        if_catch.location() = loc;
-        catch_expr = if_catch;
+        convert_expression_to_code(catch_body);
+        catch_block.copy_to_operands(catch_body);
+        catch_expr = catch_block;
       }
+      else
+      {
+        const auto &last_cc = clauses[clauses.size() - 1];
+        code_blockt last_block;
+        if (
+          last_cc.contains("parameters") &&
+          last_cc["parameters"].contains("parameters"))
+        {
+          for (const auto &param : last_cc["parameters"]["parameters"])
+          {
+            exprt var_decl;
+            if (get_var_decl(param, var_decl))
+              return true;
+            last_block.copy_to_operands(var_decl);
+          }
+        }
+        exprt last_body;
+        if (get_block(last_cc["block"], last_body))
+          return true;
+        convert_expression_to_code(last_body);
+        last_block.copy_to_operands(last_body);
+        catch_expr = last_block;
+
+        for (int i = static_cast<int>(clauses.size()) - 2; i >= 1; --i)
+        {
+          const auto &cc = clauses[i];
+          code_blockt clause_block;
+          if (
+            cc.contains("parameters") &&
+            cc["parameters"].contains("parameters"))
+          {
+            for (const auto &param : cc["parameters"]["parameters"])
+            {
+              exprt var_decl;
+              if (get_var_decl(param, var_decl))
+                return true;
+              clause_block.copy_to_operands(var_decl);
+            }
+          }
+          exprt clause_body;
+          if (get_block(cc["block"], clause_body))
+            return true;
+          convert_expression_to_code(clause_body);
+          clause_block.copy_to_operands(clause_body);
+
+          codet if_catch("ifthenelse");
+          if_catch.copy_to_operands(nondet_bool_expr, clause_block, catch_expr);
+          if_catch.location() = loc;
+          catch_expr = if_catch;
+        }
+      }
+      convert_expression_to_code(catch_expr);
+      return false;
+    };
+
+    if (!uses_revert_observation)
+    {
+      // ---- Legacy nondet lowering (byte-for-byte unchanged) ----
+      // Same operations in the same order as before: success arm (with the
+      // call) then catch arm, joined by a nondet branch.
+      code_blockt success_block;
+      if (build_success_arm(success_block, /*include_call=*/true))
+        return true;
+      exprt catch_expr;
+      if (build_catch_expr(catch_expr))
+        return true;
+
+      codet try_if("ifthenelse");
+      try_if.copy_to_operands(nondet_bool_expr, success_block, catch_expr);
+      try_if.location() = loc;
+      new_expr = try_if;
+      break;
     }
 
-    convert_expression_to_code(catch_expr);
+    // ---- Opt-in revert-correlated lowering ----
+    // The flag model is linked whenever uses_revert_observation; hard-error
+    // (never fall back to the unsound nondet branch) if it is missing.
+    const symbolt *flag_sym =
+      context.find_symbol("c:@_ESBMC_sol_reverted_flag");
+    if (
+      flag_sym == nullptr ||
+      context.find_symbol("c:@F@_ESBMC_sol_clear_revert") == nullptr)
+    {
+      log_error(
+        "try/catch revert observation requires the _ESBMC_sol_reverted_flag "
+        "model, but its symbols were not found");
+      return true;
+    }
+    exprt flag_expr = symbol_expr(*flag_sym);
+    const typet flag_t = flag_sym->type;
+    const std::string dbg_mod = get_modulename_from_path(absolute_path);
 
-    // Build top-level: if (nondet_bool()) { success } else { catch }
+    // Fresh bool temp matching the flag type.
+    auto make_flag_temp = [&]() -> symbol_exprt {
+      std::string nm, id;
+      get_aux_var(nm, id);
+      symbolt s;
+      get_default_symbol(s, dbg_mod, flag_t, nm, id, loc);
+      s.lvalue = true;
+      s.file_local = true;
+      const symbolt &added = *move_symbol_to_context(s);
+      return symbol_exprt(added.id, added.type);
+    };
+
+    code_blockt try_block;
+
+    // (A) save caller's prior revert status.
+    symbol_exprt saved = make_flag_temp();
+    try_block.copy_to_operands(code_declt(saved));
+    {
+      code_assignt a(saved, flag_expr);
+      a.location() = loc;
+      try_block.copy_to_operands(a);
+    }
+
+    // (B) clean baseline for THIS call.
+    {
+      exprt clear_stmt;
+      build_revert_flag_call(
+        "_ESBMC_sol_clear_revert",
+        "c:@F@_ESBMC_sol_clear_revert",
+        loc,
+        clear_stmt);
+      try_block.copy_to_operands(clear_stmt);
+    }
+
+    // (C) the external call, ALWAYS executed.  Drain the call's front/back
+    // blocks here so its wrapper code cannot leak before (B) (where the outer
+    // get_block would otherwise flush it, wiping the mark — see plan §2.2).
+    if (stmt.contains("externalCall"))
+    {
+      exprt call_expr;
+      if (get_expr(stmt["externalCall"], call_expr))
+        return true;
+      for (auto &op : expr_frontBlockDecl.operands())
+      {
+        convert_expression_to_code(op);
+        try_block.copy_to_operands(op);
+      }
+      expr_frontBlockDecl.clear();
+      convert_expression_to_code(call_expr);
+      try_block.copy_to_operands(call_expr);
+      for (auto &op : expr_backBlockDecl.operands())
+      {
+        convert_expression_to_code(op);
+        try_block.copy_to_operands(op);
+      }
+      expr_backBlockDecl.clear();
+    }
+
+    // (D) snapshot THIS call's revert outcome before either body runs.
+    symbol_exprt reverted = make_flag_temp();
+    try_block.copy_to_operands(code_declt(reverted));
+    {
+      code_assignt a(reverted, flag_expr);
+      a.location() = loc;
+      try_block.copy_to_operands(a);
+    }
+
+    // (E) restore caller's prior status (scoped observation).
+    {
+      code_assignt a(flag_expr, saved);
+      a.location() = loc;
+      try_block.copy_to_operands(a);
+    }
+
+    // (F) branch on the real outcome: if (!reverted) success else catch.
+    code_blockt success_block;
+    if (build_success_arm(success_block, /*include_call=*/false))
+      return true;
+    exprt catch_expr;
+    if (build_catch_expr(catch_expr))
+      return true;
+
     codet try_if("ifthenelse");
-    try_if.copy_to_operands(nondet_bool_expr, success_block, catch_expr);
+    not_exprt not_reverted(reverted);
+    try_if.copy_to_operands(not_reverted, success_block, catch_expr);
     try_if.location() = loc;
+    try_block.copy_to_operands(try_if);
 
-    new_expr = try_if;
+    new_expr = try_block;
     break;
   }
   case SolidityGrammar::StatementT::InlineAssemblyStatement:

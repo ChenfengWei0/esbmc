@@ -264,3 +264,83 @@ Read this before relying on a result.
   and live in a library file, so they do not add condition obligations; the
   condition count for a harness that uses the intrinsic matches the same
   harness without it.
+
+---
+
+## 10. `try/catch` is revert-correlated under opt-in
+
+When the compilation unit opts into revert observation (it declares the
+`__ESBMC_reverted` stub, so `uses_revert_observation` is set), a Solidity
+`try/catch` is lowered so the **catch arm is entered iff the call actually
+reverted** within the captured scope (§7). This lets an LLM-generated
+differential test use plain Solidity `try/catch` to capture a revert flag,
+with no ESBMC-specific syntax in the body:
+
+```solidity
+contract InvMutTest {
+  P c;
+  constructor(P _c) { c = _c; }
+  function __ESBMC_reverted() internal returns (bool) {}   // opt-in (scaffold line)
+  function run(/* params */) public {
+    /* require(<preconditions>); */
+    bool r;
+    try c.f(/* args */) { r = false; } catch { r = true; }  // r == true iff c.f reverted
+    assert(/* rule over params, values read from c, and r */);
+  }
+}
+```
+
+Without the opt-in stub the legacy lowering is used unchanged: a **free nondet
+branch** whose catch arm is *not* correlated with the real outcome (unsound for
+revert rules — see `Investigate.md`). Units that do not opt in are byte-for-byte
+unchanged (k-induction stability).
+
+### Lowering (opt-in)
+
+`solidity_convert_stmt.cpp`, `case TryStatement`. The external call is hoisted
+out of the arms and the branch tests the real flag with a save / clear /
+snapshot / restore discipline:
+
+```
+__try_saved   = _ESBMC_sol_reverted_flag;   // save caller's prior status
+_ESBMC_sol_clear_revert();                    // clean baseline for THIS call
+<externalCall>;                               // always executed
+__try_reverted = _ESBMC_sol_reverted_flag;   // snapshot, before either body
+_ESBMC_sol_reverted_flag = __try_saved;       // restore (scoped observation)
+if (!__try_reverted) { <success_body> } else { <catch_body> }
+```
+
+- The **pre-call clear** gives a clean baseline even when the call is an
+  opaque/library/constructor path that never clears, so a prior call's flag
+  cannot leak in.
+- The **save/restore** makes the single global behave like a per-`try` scoped
+  observation: a nested call that itself catches a revert (marking the flag)
+  does not contaminate the outer `try` — the inner frame restores the flag
+  before the outer snapshot is read.
+- Success/catch return bindings stay **nondet** (return-value reasoning is out
+  of scope; do not assert over `returns(...)` values).
+- Multiple catch clauses: the *outer* revert decision uses the real flag; *which*
+  clause runs (Error/Panic/low-level) stays nondet (ESBMC cannot tell them
+  apart) — assert only handler-insensitive properties.
+
+### Residual limitations (KNOWNBUG, not hidden)
+
+`try/catch` inherits the §7/§8 capture-scope limits, plus:
+
+| Limitation | Effect |
+|------------|--------|
+| **Panic in callee** (`assert`, overflow, div-by-zero, array OOB) | NOT caught. `assert` lowers to an ESBMC property, so ESBMC reports the *callee's* violation instead of entering the catch — this pollutes the verdict. Keep callees free of Panic-causing ops on covered paths. Pinned `trycatch_panic_callee_knownbug`. |
+| **Library / constructor / `transfer`-`send` reverts** | Not flag-captured (they prune or are unmodelled). Use the unreachability idiom (`new C(bad); assert(false);`). |
+| **Uncaught nested *direct* (non-`try`) revert in the subtree** | Marks the flag with no restoring frame → may propagate to the outer snapshot. |
+| **Return values** | nondet; not usable for semantic assertions. |
+
+Note: `try` is only valid (per `solc`) on external function calls and contract
+creation (`new C()`); low-level / delegatecall / staticcall in `try` is a
+compile error, so those never reach ESBMC.
+
+### Tests
+
+`regression/esbmc-solidity/trycatch_obs_*` (soundness + capture scope + stale
+flag + nested save/restore + `new C()`), `trycatch_diff_AB_*` (differential
+mutant-kill), `trycatch_panic_callee_knownbug` (R7). Legacy non-opt-in behaviour
+is guarded by the pre-existing `try_catch_1..4`.

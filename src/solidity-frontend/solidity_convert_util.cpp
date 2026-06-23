@@ -309,12 +309,17 @@ void solidity_convertert::convert_expression_to_code(exprt &expr)
 bool solidity_convertert::check_intrinsic_function(
   const nlohmann::json &ast_node)
 {
-  // function to detect special intrinsic functions, e.g. ___ESBMC_assume
+  // function to detect special intrinsic functions, e.g. ___ESBMC_assume.
+  // __ESBMC_reverted is a verification-only revert-observation stub: the user
+  // declares an empty body so solc can compile, and the frontend hijacks calls
+  // to the C intrinsic (get_sol_builtin_ref).  Treat it as intrinsic here so
+  // the dead empty body is not materialized.
   return (
     ast_node.contains("name") && (ast_node["name"] == "__ESBMC_assume" ||
                                   ast_node["name"] == "__VERIFIER_assume" ||
                                   ast_node["name"] == "__ESBMC_assert" ||
-                                  ast_node["name"] == "__VERIFIER_assert"));
+                                  ast_node["name"] == "__VERIFIER_assert" ||
+                                  ast_node["name"] == "__ESBMC_reverted"));
 }
 
 nlohmann::json solidity_convertert::make_implicit_cast_expr(
