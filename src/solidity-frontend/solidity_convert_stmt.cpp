@@ -287,9 +287,9 @@ bool solidity_convertert::get_statement(
     // typecast_exprt's constructor leaves op0 as a default-constructed
     // empty exprt, which has no meaningful side effect and trips
     // migrate_expr during GOTO generation. Replace with a skip.
-    if (new_expr.id() == "typecast" &&
-        (new_expr.operands().empty() ||
-         new_expr.op0().id().as_string().empty()))
+    if (
+      new_expr.id() == "typecast" &&
+      (new_expr.operands().empty() || new_expr.op0().id().as_string().empty()))
       new_expr = code_skipt();
     // Bare value-expression statements (`this;`, `hax;`, `tuple_instance$0;`)
     // are used in Solidity to suppress unused-variable / state-mutability
@@ -367,8 +367,7 @@ bool solidity_convertert::get_statement(
           else
           {
             assert(decl_idx < decls.operands().size());
-            lhs_block.copy_to_operands(
-              decls.operands()[decl_idx].op0());
+            lhs_block.copy_to_operands(decls.operands()[decl_idx].op0());
             ++decl_idx;
           }
         }
@@ -433,7 +432,8 @@ bool solidity_convertert::get_statement(
       return false;
     }
 
-    if (get_sol_type(return_exrp_type) == SolidityGrammar::SolType::TUPLE_RETURNS)
+    if (
+      get_sol_type(return_exrp_type) == SolidityGrammar::SolType::TUPLE_RETURNS)
     {
       if (
         stmt["expression"]["nodeType"].get<std::string>() !=
@@ -565,9 +565,9 @@ bool solidity_convertert::get_statement(
             get_nondet_expr(lop.type(), rop);
           }
           else if (get_tuple_member_call(
-                rhs.identifier(),
-                to_struct_type(rhs.type()).components().at(i),
-                rop))
+                     rhs.identifier(),
+                     to_struct_type(rhs.type()).components().at(i),
+                     rop))
             return true;
 
           // do assignment
@@ -952,11 +952,13 @@ bool solidity_convertert::get_statement(
     // Return values stay nondet in the success bindings in both lowerings
     // (cross-contract return resolution is out of scope for the AST frontend).
 
-    if (!stmt.contains("clauses") || !stmt["clauses"].is_array() ||
-        stmt["clauses"].size() < 2)
+    if (
+      !stmt.contains("clauses") || !stmt["clauses"].is_array() ||
+      stmt["clauses"].size() < 2)
     {
-      log_error("TryStatement must have at least 2 clauses "
-                "(success + catch)");
+      log_error(
+        "TryStatement must have at least 2 clauses "
+        "(success + catch)");
       return true;
     }
 
@@ -1271,8 +1273,9 @@ bool solidity_convertert::get_statement(
 
     code_blockt havoc_block;
 
-    if (stmt.contains("externalReferences") &&
-        stmt["externalReferences"].is_array())
+    if (
+      stmt.contains("externalReferences") &&
+      stmt["externalReferences"].is_array())
     {
       // Collect unique declaration IDs (a variable may appear multiple times)
       std::set<int> seen_decls;
@@ -1295,8 +1298,8 @@ bool solidity_convertert::get_statement(
           continue;
 
         // Resolve the variable to a symbol expression
-        bool is_state = decl.contains("stateVariable") &&
-                        decl["stateVariable"].get<bool>();
+        bool is_state =
+          decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
         exprt var_expr;
         if (get_var_decl_ref(decl, is_state, var_expr))
           continue; // best-effort: skip if resolution fails
@@ -1315,8 +1318,7 @@ bool solidity_convertert::get_statement(
       {
         if (!ref.contains("declaration"))
           continue;
-        bool is_slot =
-          ref.contains("isSlot") && ref["isSlot"].get<bool>();
+        bool is_slot = ref.contains("isSlot") && ref["isSlot"].get<bool>();
         if (!is_slot)
           continue;
 
@@ -1410,16 +1412,32 @@ namespace
 bool is_supported_yul_builtin(const std::string &name)
 {
   static const std::set<std::string> ok = {
-    "add",     "sub",   "mul",    "div", "mod", "addmod", "mulmod",
-    "lt",      "gt",    "slt",    "sgt", "eq",  "iszero",
-    "and",     "or",    "xor",    "not",
-    "shl",     "shr",
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "mod",
+    "addmod",
+    "mulmod",
+    "lt",
+    "gt",
+    "slt",
+    "sgt",
+    "eq",
+    "iszero",
+    "and",
+    "or",
+    "xor",
+    "not",
+    "shl",
+    "shr",
     // sload/sstore are only valid with a YulIdentifier `X.slot` argument
     // resolving to a scalar state variable; the sload/sstore lowering
     // paths in convert_yul_expression / convert_yul_statement enforce
     // those constraints at lowering time (the pre-flight scan does not
     // have access to externalReferences).
-    "sload",   "sstore"};
+    "sload",
+    "sstore"};
   return ok.count(name) != 0;
 }
 } // namespace
@@ -1710,9 +1728,7 @@ bool solidity_convertert::convert_yul_expression(
       return convert_yul_expression(
         args[i], src_to_decl, slot_refs, locals, loc, dst);
     };
-    auto u256_const = [&](const BigInt &v) {
-      return from_integer(v, u256);
-    };
+    auto u256_const = [&](const BigInt &v) { return from_integer(v, u256); };
     auto bool_to_u256 = [&](const exprt &cond) {
       return if_exprt(cond, u256_const(1), u256_const(0));
     };
@@ -1850,8 +1866,9 @@ bool solidity_convertert::convert_yul_expression(
       exprt a, b;
       if (eval_arg(0, a) || eval_arg(1, b))
         return true;
-      const char *id =
-        (fname == "and") ? "bitand" : (fname == "or") ? "bitor" : "bitxor";
+      const char *id = (fname == "and")  ? "bitand"
+                       : (fname == "or") ? "bitor"
+                                         : "bitxor";
       out = exprt(id, u256);
       out.copy_to_operands(a, b);
       out.location() = loc;
@@ -2033,8 +2050,7 @@ bool solidity_convertert::convert_yul_statement(
       // underlying struct; returns the resolved symbol tag iff it is a
       // struct, else empty (mirrors struct_type_has_component's idiom;
       // struct_union_typet exposes no plain tag accessor).
-      auto struct_tag = [this](const typet &t) -> irep_idt
-      {
+      auto struct_tag = [this](const typet &t) -> irep_idt {
         typet rt = t;
         if (rt.id() == "pointer")
           rt = rt.subtype();
@@ -2108,12 +2124,19 @@ bool solidity_convertert::convert_yul_statement(
     if (convert_yul_expression(
           yul_stmt["condition"], src_to_decl, slot_refs, locals, loc, cond_val))
       return true;
-    binary_relation_exprt cond_ne(cond_val, "notequal", from_integer(BigInt(0), u256));
+    binary_relation_exprt cond_ne(
+      cond_val, "notequal", from_integer(BigInt(0), u256));
 
     exprt body;
     if (convert_yul_block(
-          yul_stmt["body"], asm_id, src_to_decl, slot_refs, locals,
-          local_seq, loc, body))
+          yul_stmt["body"],
+          asm_id,
+          src_to_decl,
+          slot_refs,
+          locals,
+          local_seq,
+          loc,
+          body))
       return true;
 
     codet if_expr("ifthenelse");
@@ -2139,7 +2162,8 @@ bool solidity_convertert::convert_yul_statement(
       if (!c.contains("value"))
         return true;
       const auto &v = c["value"];
-      return v.is_null() || (v.is_string() && v.get<std::string>() == "default");
+      return v.is_null() ||
+             (v.is_string() && v.get<std::string>() == "default");
     };
 
     exprt tail = code_skipt();
@@ -2148,8 +2172,14 @@ bool solidity_convertert::convert_yul_statement(
       if (is_default(c))
       {
         if (convert_yul_block(
-              c["body"], asm_id, src_to_decl, slot_refs, locals,
-              local_seq, loc, tail))
+              c["body"],
+              asm_id,
+              src_to_decl,
+              slot_refs,
+              locals,
+              local_seq,
+              loc,
+              tail))
           return true;
         break;
       }
@@ -2169,8 +2199,14 @@ bool solidity_convertert::convert_yul_statement(
       equality_exprt cond(e, key);
       exprt body;
       if (convert_yul_block(
-            (*it)["body"], asm_id, src_to_decl, slot_refs, locals,
-            local_seq, loc, body))
+            (*it)["body"],
+            asm_id,
+            src_to_decl,
+            slot_refs,
+            locals,
+            local_seq,
+            loc,
+            body))
         return true;
       codet if_expr("ifthenelse");
       if_expr.copy_to_operands(cond, body, tail);
@@ -2203,7 +2239,13 @@ bool solidity_convertert::convert_yul_statement(
       {
         exprt s_expr;
         if (convert_yul_statement(
-              s, asm_id, src_to_decl, slot_refs, locals, local_seq, loc,
+              s,
+              asm_id,
+              src_to_decl,
+              slot_refs,
+              locals,
+              local_seq,
+              loc,
               s_expr))
           return true;
         outer.copy_to_operands(s_expr);
@@ -2214,7 +2256,8 @@ bool solidity_convertert::convert_yul_statement(
     if (convert_yul_expression(
           yul_stmt["condition"], src_to_decl, slot_refs, locals, loc, cond_val))
       return true;
-    binary_relation_exprt cond_ne(cond_val, "notequal", from_integer(BigInt(0), u256));
+    binary_relation_exprt cond_ne(
+      cond_val, "notequal", from_integer(BigInt(0), u256));
 
     exprt post_expr;
     if (convert_yul_block(
@@ -2275,8 +2318,7 @@ bool solidity_convertert::convert_yul_statement(
     // in the supported subset.  Everything else (a bare sload at
     // statement position, an unknown builtin call) returns true to
     // abort precise lowering — caller falls through to havoc.
-    if (!yul_stmt.contains("expression") ||
-        !yul_stmt["expression"].is_object())
+    if (!yul_stmt.contains("expression") || !yul_stmt["expression"].is_object())
       return true;
     const nlohmann::json &expr = yul_stmt["expression"];
     if (expr.value("nodeType", "") != "YulFunctionCall")
@@ -2348,8 +2390,7 @@ bool solidity_convertert::convert_yul_block(
     {
       exprt s_expr;
       if (convert_yul_statement(
-            s, asm_id, src_to_decl, slot_refs, locals, local_seq, loc,
-            s_expr))
+            s, asm_id, src_to_decl, slot_refs, locals, local_seq, loc, s_expr))
         return true;
       blk.copy_to_operands(s_expr);
     }
@@ -2393,8 +2434,7 @@ bool solidity_convertert::try_lower_yul_block_precise(
   {
     for (const auto &ref : asm_stmt["externalReferences"])
     {
-      const bool is_slot =
-        ref.contains("isSlot") && ref["isSlot"].get<bool>();
+      const bool is_slot = ref.contains("isSlot") && ref["isSlot"].get<bool>();
       const bool is_offset =
         ref.contains("isOffset") && ref["isOffset"].get<bool>();
       if (is_offset)
@@ -2421,8 +2461,7 @@ bool solidity_convertert::try_lower_yul_block_precise(
   int local_seq = 0;
 
   if (convert_yul_block(
-        yul_root, asm_id, src_to_decl, slot_refs, locals, local_seq, loc,
-        out))
+        yul_root, asm_id, src_to_decl, slot_refs, locals, local_seq, loc, out))
   {
     unsupported_kind = "convert_failure";
     unsupported_src = asm_stmt.value("src", "");
