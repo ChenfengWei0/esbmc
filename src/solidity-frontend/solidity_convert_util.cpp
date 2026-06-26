@@ -1049,6 +1049,24 @@ bool solidity_convertert::is_new_created_decl(int decl_id) const
           }
         }
       }
+      // Assignment form: `p = new C(...)` in a function body (e.g. a state var
+      // declared `C p;` then assigned in the constructor — the shape the R2
+      // differential harness uses).  The decl carries no `value`, so the two
+      // branches above miss it; recognise the Assignment whose LHS Identifier
+      // references decl_id and whose RHS is a `new` call.  Without this, a
+      // getter on such an instance is treated as a truly-unbound external call
+      // and havoc'd to nondet under --unbound (false differences).
+      if (
+        nt == "Assignment" && node.value("operator", "") == "=" &&
+        node.contains("leftHandSide") && node.contains("rightHandSide"))
+      {
+        const auto &lhs = node["leftHandSide"];
+        if (
+          lhs.is_object() && lhs.value("nodeType", "") == "Identifier" &&
+          lhs.value("referencedDeclaration", -1) == decl_id &&
+          is_new_call(node["rightHandSide"]))
+          return true;
+      }
       for (auto it = node.begin(); it != node.end(); ++it)
         if (walk(it.value()))
           return true;
