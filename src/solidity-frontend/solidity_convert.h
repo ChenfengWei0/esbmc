@@ -592,9 +592,10 @@ protected:
   // The caller pushes all but the last to `expr_frontBlockDecl` and uses
   // the last as the returned expression — preserving the single-result
   // shape `get_unary_operator_expr` expects.
-  bool emit_delete_block(const exprt &lhs,
-                         const typet &type,
-                         std::vector<exprt> &assigns);
+  bool emit_delete_block(
+    const exprt &lhs,
+    const typet &type,
+    std::vector<exprt> &assigns);
 
   // push/pop spec-conformance plan (P1 fix): symbol-resolving default-
   // value emitter.  `gen_zero(t)` from util/expr_util.cpp returns nil
@@ -755,9 +756,7 @@ protected:
   bool prepare_harness_entry_functions(
     const std::set<std::string> &cname_set,
     std::vector<const symbolt *> &entry_syms);
-  bool register_harness_main(
-    const std::string &sol_id,
-    const codet &func_body);
+  bool register_harness_main(const std::string &sol_id, const codet &func_body);
   void reset_auxiliary_vars();
 
   // auxiliary functions
@@ -907,9 +906,7 @@ protected:
   // reachable successor state.  Mirrors the while-body shape of
   // build_bound_drive_helper but without the fresh-alloc prologue so
   // users can compose it with a pre-existing pointer.
-  bool build_esol_state_forward_helper(
-    const std::string &c_name,
-    symbolt &sym);
+  bool build_esol_state_forward_helper(const std::string &c_name, symbolt &sym);
   bool get_unbound_expr(
     const nlohmann::json expr,
     const std::string &cname,
@@ -1494,8 +1491,7 @@ protected:
   // element type).  Populated during get_var_decl when is_dynarray_state
   // fires.  Inherited dyn-arrays appear under each derived contract that
   // re-processes them via merge_inheritance_ast.
-  std::map<std::string,
-           std::vector<std::pair<std::string, typet>>>
+  std::map<std::string, std::vector<std::pair<std::string, typet>>>
     dynarray_state_vars;
 
   // bound setting
@@ -1525,7 +1521,8 @@ protected:
     if (!var_decl.contains("value"))
       return false;
     const auto &val = var_decl["value"];
-    return val.value("nodeType", "") == "FunctionCall" && val.contains("expression") &&
+    return val.value("nodeType", "") == "FunctionCall" &&
+           val.contains("expression") &&
            val["expression"].value("nodeType", "") == "NewExpression";
   }
 
@@ -1553,8 +1550,9 @@ protected:
 
   // NONDET
   side_effect_expr_function_callt nondet_bool_expr;
-  side_effect_expr_function_callt nondet_uint_expr;       // 32-bit
-  side_effect_expr_function_callt nondet_uint256_expr;    // 256-bit, for $balance/$codehash/$code/etc.
+  side_effect_expr_function_callt nondet_uint_expr; // 32-bit
+  side_effect_expr_function_callt
+    nondet_uint256_expr; // 256-bit, for $balance/$codehash/$code/etc.
   side_effect_expr_function_callt nondet_bytes_dynamic_expr;
 
   // type

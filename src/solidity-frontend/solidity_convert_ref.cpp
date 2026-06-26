@@ -102,9 +102,9 @@ bool solidity_convertert::get_var_decl_ref(
     get_sol_type(type) == SolidityGrammar::SolType::DYNARRAY &&
     decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
   bool is_global_static_mapping =
-    (get_sol_type(type) == SolidityGrammar::SolType::MAPPING && type.is_array()) ||
-    type.get_bool("#sol_mapping_array") ||
-    is_dynarray_state_var;
+    (get_sol_type(type) == SolidityGrammar::SolType::MAPPING &&
+     type.is_array()) ||
+    type.get_bool("#sol_mapping_array") || is_dynarray_state_var;
 
   if (context.find_symbol(id) != nullptr)
     new_expr = symbol_expr(*context.find_symbol(id));
@@ -539,7 +539,8 @@ bool solidity_convertert::get_sol_builtin_ref(
         return false;
       }
       else if (
-        name == "creationCode" || name == "runtimeCode" || name == "interfaceId")
+        name == "creationCode" || name == "runtimeCode" ||
+        name == "interfaceId")
       {
         // Stable per-name ID. Same `type(C).<name>` returns the same
         // value across reads; distinct contracts/interfaces map to
@@ -548,9 +549,8 @@ bool solidity_convertert::get_sol_builtin_ref(
         // result is a deterministic injection of the source name.
         // Closes ledger #15 — pre-fix the helpers ignored context and
         // returned fresh nondets, breaking real-EVM stability.
-        std::string ts =
-          expr["expression"]["typeDescriptions"]["typeString"]
-            .get<std::string>();
+        std::string ts = expr["expression"]["typeDescriptions"]["typeString"]
+                           .get<std::string>();
         // Extract name from "type(contract C)" / "type(interface I)" /
         // "type(library L)" patterns (mirrors the `name == "name"`
         // case below).
@@ -588,9 +588,8 @@ bool solidity_convertert::get_sol_builtin_ref(
       else if (name == "name")
       {
         // type(C).name returns the contract name as a string literal
-        std::string ts =
-          expr["expression"]["typeDescriptions"]["typeString"]
-            .get<std::string>();
+        std::string ts = expr["expression"]["typeDescriptions"]["typeString"]
+                           .get<std::string>();
         // Extract name from "type(contract MyContract)" or "type(interface I)"
         std::string cname;
         auto pos = ts.rfind(' ');
@@ -622,8 +621,9 @@ bool solidity_convertert::get_sol_builtin_ref(
           base = &(*base)["components"][0];
 
         std::string udv;
-        if (base->is_object() && base->contains("name") &&
-            (*base)["name"].is_string())
+        if (
+          base->is_object() && base->contains("name") &&
+          (*base)["name"].is_string())
           udv = (*base)["name"].get<std::string>();
         else if (
           base->is_object() && base->value("nodeType", "") == "MemberAccess" &&
@@ -636,8 +636,9 @@ bool solidity_convertert::get_sol_builtin_ref(
           // typeString is `type(MyInt)`. For `C.T.wrap`, typeString is
           // `type(C.T)`. Strip the wrapping `type(...)` and any leading
           // contract qualifier.
-          if (base->is_object() && base->contains("typeDescriptions") &&
-              (*base)["typeDescriptions"].contains("typeString"))
+          if (
+            base->is_object() && base->contains("typeDescriptions") &&
+            (*base)["typeDescriptions"].contains("typeString"))
           {
             std::string ts =
               (*base)["typeDescriptions"]["typeString"].get<std::string>();
@@ -670,13 +671,15 @@ bool solidity_convertert::get_sol_builtin_ref(
               expr["expression"]["typeDescriptions"], base_t))
           return true;
         SolidityGrammar::SolType solt = get_sol_type(base_t);
-        if (solt == SolidityGrammar::SolType::ARRAY ||
-            solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
-            solt == SolidityGrammar::SolType::DYNARRAY)
+        if (
+          solt == SolidityGrammar::SolType::ARRAY ||
+          solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
+          solt == SolidityGrammar::SolType::DYNARRAY)
         {
           // mapping array: return the auxiliary _length variable
-          if (solt == SolidityGrammar::SolType::DYNARRAY &&
-              base_t.get_bool("#sol_mapping_array"))
+          if (
+            solt == SolidityGrammar::SolType::DYNARRAY &&
+            base_t.get_bool("#sol_mapping_array"))
           {
             assert(base.is_symbol());
             std::string len_id =
@@ -688,10 +691,11 @@ bool solidity_convertert::get_sol_builtin_ref(
           // mapping(K => V[]) state-var: per-key length aux indexed by k.
           // `base` is `m[k]` = index_exprt(m, folded_k), and m carries the
           // `#sol_mapping_of_dynarr` flag on its type.
-          else if (solt == SolidityGrammar::SolType::DYNARRAY &&
-                   base.id() == "index" && !base.operands().empty() &&
-                   base.op0().id() == "symbol" &&
-                   base.op0().type().get_bool("#sol_mapping_of_dynarr"))
+          else if (
+            solt == SolidityGrammar::SolType::DYNARRAY &&
+            base.id() == "index" && !base.operands().empty() &&
+            base.op0().id() == "symbol" &&
+            base.op0().type().get_bool("#sol_mapping_of_dynarr"))
           {
             exprt m_sym = base.op0();
             exprt folded_k = base.op1();
@@ -705,9 +709,9 @@ bool solidity_convertert::get_sol_builtin_ref(
           // dynarray state var: return the addr-keyed length read.
           // T1.1 Stage S1: `<arr>_dynarray_len` is now an addr-keyed
           // infinite array; resolve via get_dynarr_len_ref.
-          else if (solt == SolidityGrammar::SolType::DYNARRAY &&
-                   base.is_symbol() &&
-                   base.type().get_bool("#sol_dynarray_state"))
+          else if (
+            solt == SolidityGrammar::SolType::DYNARRAY && base.is_symbol() &&
+            base.type().get_bool("#sol_dynarray_state"))
           {
             assert(base.is_symbol());
             std::string len_id =
@@ -763,8 +767,7 @@ bool solidity_convertert::get_sol_builtin_ref(
               base.id() == "sideeffect" && !base.operands().empty() &&
               base.op0().is_symbol())
             {
-              const std::string &fid =
-                base.op0().identifier().as_string();
+              const std::string &fid = base.op0().identifier().as_string();
               // Match any contract's `get_code` wrapper; the wrapper id
               // is `sol:@C@<contract>@F@get_code#`.
               if (
@@ -797,7 +800,9 @@ bool solidity_convertert::get_sol_builtin_ref(
         }
         else
         {
-          log_error("Unexpected length of {} type", SolidityGrammar::sol_type_to_str(solt));
+          log_error(
+            "Unexpected length of {} type",
+            SolidityGrammar::sol_type_to_str(solt));
           return true;
         }
         new_expr.location() = l;
@@ -867,16 +872,14 @@ bool solidity_convertert::get_sol_builtin_ref(
           }
         }
         else if (
-          solt == SolidityGrammar::SolType::DYNARRAY &&
-          base.is_symbol() &&
+          solt == SolidityGrammar::SolType::DYNARRAY && base.is_symbol() &&
           base.type().get_bool("#sol_dynarray_state"))
         {
           // Dynarray state var: write element at len, then increment len.
           // T1.1 Stage S1: `len_ref` is now `<arr>_dynarray_len[this->$address]`
           // (addr-keyed) so two `new C()` instances no longer share length.
           assert(base.is_symbol());
-          std::string len_id =
-            base.identifier().as_string() + "_dynarray_len";
+          std::string len_id = base.identifier().as_string() + "_dynarray_len";
           const symbolt *len_sym = ns.lookup(len_id);
           assert(len_sym);
           exprt len_ref;
@@ -926,8 +929,7 @@ bool solidity_convertert::get_sol_builtin_ref(
             else
             {
               exprt val;
-              if (get_expr(
-                    func["arguments"][0], expr["argumentTypes"][0], val))
+              if (get_expr(func["arguments"][0], expr["argumentTypes"][0], val))
                 return true;
               solidity_gen_typecast(ns, val, elem_type);
               assign_elem.copy_to_operands(idx_expr, val);
@@ -971,9 +973,8 @@ bool solidity_convertert::get_sol_builtin_ref(
           }
         }
         else if (
-          solt == SolidityGrammar::SolType::DYNARRAY &&
-          base.id() == "index" && !base.operands().empty() &&
-          base.op0().id() == "symbol" &&
+          solt == SolidityGrammar::SolType::DYNARRAY && base.id() == "index" &&
+          !base.operands().empty() && base.op0().id() == "symbol" &&
           base.op0().type().get_bool("#sol_mapping_of_dynarr"))
         {
           /* mapping(K => V[]) state-var push/pop (nested infinite SMT
@@ -1026,8 +1027,7 @@ bool solidity_convertert::get_sol_builtin_ref(
             else
             {
               exprt val;
-              if (get_expr(
-                    func["arguments"][0], expr["argumentTypes"][0], val))
+              if (get_expr(func["arguments"][0], expr["argumentTypes"][0], val))
                 return true;
               solidity_gen_typecast(ns, val, elem_type);
               assign_elem.copy_to_operands(idx_expr, val);
@@ -1114,8 +1114,8 @@ bool solidity_convertert::get_sol_builtin_ref(
           get_current_contract_name(expr, cname);
           assert(!cname.empty());
           if (current_functionDecl)
-            aux_id = "sol:@C@" + cname + "@F@" + current_functionName +
-                     "@" + aux_name + "#" + std::to_string(aux_counter++);
+            aux_id = "sol:@C@" + cname + "@F@" + current_functionName + "@" +
+                     aux_name + "#" + std::to_string(aux_counter++);
           else
             aux_id = "sol:@C@" + cname + "@" + aux_name + "#" +
                      std::to_string(aux_counter++);
@@ -1133,7 +1133,7 @@ bool solidity_convertert::get_sol_builtin_ref(
 
           /* front: void *tmp = map_dynarr_get(m, k); */
           code_declt decl(symbol_expr(added_aux));
-          exprt init_call = base;  // already a (typecast over) map_dynarr_get
+          exprt init_call = base; // already a (typecast over) map_dynarr_get
           solidity_gen_typecast(ns, init_call, ptr_void_t);
           added_aux.value = init_call;
           decl.operands().push_back(init_call);
@@ -1159,9 +1159,7 @@ bool solidity_convertert::get_sol_builtin_ref(
               }
             }
             else if (get_expr(
-                       func["arguments"][0],
-                       expr["argumentTypes"][0],
-                       val))
+                       func["arguments"][0], expr["argumentTypes"][0], val))
               return true;
             solidity_gen_typecast(ns, val, base_t.subtype());
 
@@ -1205,9 +1203,8 @@ bool solidity_convertert::get_sol_builtin_ref(
                 "_mdelem#" + std::to_string(aux_counter++);
               std::string elem_id;
               if (current_functionDecl)
-                elem_id = "sol:@C@" + cname + "@F@" +
-                          current_functionName + "@" + elem_name + "#" +
-                          std::to_string(aux_counter++);
+                elem_id = "sol:@C@" + cname + "@F@" + current_functionName +
+                          "@" + elem_name + "#" + std::to_string(aux_counter++);
               else
                 elem_id = "sol:@C@" + cname + "@" + elem_name + "#" +
                           std::to_string(aux_counter++);
@@ -1285,9 +1282,10 @@ bool solidity_convertert::get_sol_builtin_ref(
           new_expr.location() = l;
           return false;
         }
-        else if (solt == SolidityGrammar::SolType::ARRAY ||
-            solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
-            solt == SolidityGrammar::SolType::DYNARRAY)
+        else if (
+          solt == SolidityGrammar::SolType::ARRAY ||
+          solt == SolidityGrammar::SolType::ARRAY_LITERAL ||
+          solt == SolidityGrammar::SolType::DYNARRAY)
         {
           // Original array push/pop logic (pointer-based model)
           assert(base_t.has_subtype());
@@ -1356,16 +1354,13 @@ bool solidity_convertert::get_sol_builtin_ref(
             // helper's memcpy(dst, &aux, sizeof(T[N])) then copies the
             // BIT REPRESENTATION of the local pointer — not the row data.
             // Closes 1-push T[N][] for struct field and mapping value.
-            if (
-              base_t.subtype().is_array() &&
-              args.type().id() == "pointer")
+            if (base_t.subtype().is_array() && args.type().id() == "pointer")
             {
               // args already points to row data; pass straight through.
             }
             else
             {
-              std::string aux_name =
-                "_idx#" + std::to_string(aux_counter++);
+              std::string aux_name = "_idx#" + std::to_string(aux_counter++);
               std::string aux_id;
               std::string cname;
               get_current_contract_name(expr, cname);
@@ -1423,12 +1418,10 @@ bool solidity_convertert::get_sol_builtin_ref(
            * dynarray model depends on. */
           bool is_mapping_backing_slot =
             name == "push" && base.id() == "index" &&
-            !base.operands().empty() &&
-            base.op0().id() == "symbol" &&
+            !base.operands().empty() && base.op0().id() == "symbol" &&
             base.op0().type().is_array() &&
             !base.op0().type().get_bool("#sol_dynarray_state") &&
-            base_t.id() == "pointer" &&
-            base_t.subtype().id() == "unsignedbv" &&
+            base_t.id() == "pointer" && base_t.subtype().id() == "unsignedbv" &&
             base_t.subtype().get("width").as_string() == "256";
 
           side_effect_expr_function_callt mem;
@@ -1444,11 +1437,11 @@ bool solidity_convertert::get_sol_builtin_ref(
             /* args above was set to `address_of(aux)`; the typed helper
              * takes the element by value, so pass the aux directly. */
             exprt elem_by_value = args;
-            if (elem_by_value.id() == "address_of" &&
-                !elem_by_value.operands().empty())
+            if (
+              elem_by_value.id() == "address_of" &&
+              !elem_by_value.operands().empty())
               elem_by_value = elem_by_value.op0();
-            solidity_gen_typecast(
-              ns, elem_by_value, unsignedbv_typet(256));
+            solidity_gen_typecast(ns, elem_by_value, unsignedbv_typet(256));
             mem.arguments().push_back(base);
             mem.arguments().push_back(elem_by_value);
           }
@@ -1540,7 +1533,10 @@ bool solidity_convertert::get_sol_builtin_ref(
         }
         else
         {
-          log_error("Unexpected .{}() on non-array/bytes type: {}", name, SolidityGrammar::sol_type_to_str(solt));
+          log_error(
+            "Unexpected .{}() on non-array/bytes type: {}",
+            name,
+            SolidityGrammar::sol_type_to_str(solt));
           return true;
         }
         new_expr.location() = l;
@@ -1548,205 +1544,199 @@ bool solidity_convertert::get_sol_builtin_ref(
       }
       else if (name == "concat")
       {
-      // string.concat(...) or bytes.concat(...)
-      // Determine base type name from the ElementaryTypeNameExpression
-      std::string base_name;
-      if (
-        expr["expression"].contains("typeName") &&
-        expr["expression"]["typeName"].contains("name"))
-        base_name =
-          expr["expression"]["typeName"]["name"].get<std::string>();
-      else if (expr["expression"].contains("name"))
-        base_name = expr["expression"]["name"].get<std::string>();
-      else
-      {
-        log_debug("solidity", "\t@@@ concat: cannot determine base_name");
-        return true;
-      }
-
-      // Get arguments from parent FunctionCall node
-      const nlohmann::json &func_call =
-        find_last_parent(src_ast_json["nodes"], expr);
-      assert(!func_call.empty() && func_call.contains("arguments"));
-
-      const auto &args_json = func_call["arguments"];
-      size_t nargs = args_json.size();
-
-      // Convert all arguments
-      std::vector<exprt> args;
-      for (const auto &arg : args_json)
-      {
-        exprt a;
-        if (get_expr(arg, arg["typeDescriptions"], a))
-          return true;
-        args.push_back(a);
-      }
-
-      // nargs == 0/1: pad with an empty-string/bytes argument so the
-      // fold below always has at least two operands. The outer
-      // get_call_expr branch inspects new_expr.id()=="sideeffect" and
-      // the callee function id; returning a bare literal here would
-      // make it wrap the result in a bogus function call whose
-      // function() is a string constant, which later crashes GOTO
-      // conversion with "unexpected function argument: string-constant".
-      if (nargs < 2)
-      {
-        exprt empty;
-        if (base_name == "string")
-          empty = string_constantt(std::string(""));
+        // string.concat(...) or bytes.concat(...)
+        // Determine base type name from the ElementaryTypeNameExpression
+        std::string base_name;
+        if (
+          expr["expression"].contains("typeName") &&
+          expr["expression"]["typeName"].contains("name"))
+          base_name = expr["expression"]["typeName"]["name"].get<std::string>();
+        else if (expr["expression"].contains("name"))
+          base_name = expr["expression"]["name"].get<std::string>();
         else
-          empty = side_effect_expr_nondett(byte_dynamic_t);
-        while (args.size() < 2)
-          args.push_back(empty);
-        nargs = 2;
-      }
-
-      if (base_name == "string")
-      {
-        // string.concat: fold N-ary into nested binary string_concat calls
-        const symbolt *sym = context.find_symbol("c:@F@string_concat");
-        if (!sym)
-          return true;
-
-        side_effect_expr_function_callt first;
-        get_library_function_call_no_args(
-          "string_concat", "c:@F@string_concat", sym->type, l, first);
-        first.arguments().push_back(args[0]);
-        first.arguments().push_back(args[1]);
-
-        exprt result = first;
-        for (size_t i = 2; i < nargs; i++)
         {
-          side_effect_expr_function_callt next;
-          get_library_function_call_no_args(
-            "string_concat", "c:@F@string_concat", sym->type, l, next);
-          next.arguments().push_back(result);
-          next.arguments().push_back(args[i]);
-          result = next;
+          log_debug("solidity", "\t@@@ concat: cannot determine base_name");
+          return true;
         }
-        new_expr = result;
-      }
-      else if (base_name == "bytes")
-      {
-        // bytes.concat: fold into nested binary bytes_dynamic_concat calls
-        exprt pool_member;
-        if (get_dynamic_pool(expr, pool_member))
-          return true;
 
-        const symbolt *sym =
-          context.find_symbol("c:@F@bytes_dynamic_concat");
-        if (!sym)
-          return true;
+        // Get arguments from parent FunctionCall node
+        const nlohmann::json &func_call =
+          find_last_parent(src_ast_json["nodes"], expr);
+        assert(!func_call.empty() && func_call.contains("arguments"));
 
-        side_effect_expr_function_callt first;
-        get_library_function_call_no_args(
-          "bytes_dynamic_concat",
-          "c:@F@bytes_dynamic_concat",
-          sym->type,
-          l,
-          first);
-        first.arguments().push_back(args[0]);
-        first.arguments().push_back(args[1]);
-        first.arguments().push_back(pool_member);
+        const auto &args_json = func_call["arguments"];
+        size_t nargs = args_json.size();
 
-        exprt result = first;
-        for (size_t i = 2; i < nargs; i++)
+        // Convert all arguments
+        std::vector<exprt> args;
+        for (const auto &arg : args_json)
         {
-          side_effect_expr_function_callt next;
+          exprt a;
+          if (get_expr(arg, arg["typeDescriptions"], a))
+            return true;
+          args.push_back(a);
+        }
+
+        // nargs == 0/1: pad with an empty-string/bytes argument so the
+        // fold below always has at least two operands. The outer
+        // get_call_expr branch inspects new_expr.id()=="sideeffect" and
+        // the callee function id; returning a bare literal here would
+        // make it wrap the result in a bogus function call whose
+        // function() is a string constant, which later crashes GOTO
+        // conversion with "unexpected function argument: string-constant".
+        if (nargs < 2)
+        {
+          exprt empty;
+          if (base_name == "string")
+            empty = string_constantt(std::string(""));
+          else
+            empty = side_effect_expr_nondett(byte_dynamic_t);
+          while (args.size() < 2)
+            args.push_back(empty);
+          nargs = 2;
+        }
+
+        if (base_name == "string")
+        {
+          // string.concat: fold N-ary into nested binary string_concat calls
+          const symbolt *sym = context.find_symbol("c:@F@string_concat");
+          if (!sym)
+            return true;
+
+          side_effect_expr_function_callt first;
+          get_library_function_call_no_args(
+            "string_concat", "c:@F@string_concat", sym->type, l, first);
+          first.arguments().push_back(args[0]);
+          first.arguments().push_back(args[1]);
+
+          exprt result = first;
+          for (size_t i = 2; i < nargs; i++)
+          {
+            side_effect_expr_function_callt next;
+            get_library_function_call_no_args(
+              "string_concat", "c:@F@string_concat", sym->type, l, next);
+            next.arguments().push_back(result);
+            next.arguments().push_back(args[i]);
+            result = next;
+          }
+          new_expr = result;
+        }
+        else if (base_name == "bytes")
+        {
+          // bytes.concat: fold into nested binary bytes_dynamic_concat calls
+          exprt pool_member;
+          if (get_dynamic_pool(expr, pool_member))
+            return true;
+
+          const symbolt *sym = context.find_symbol("c:@F@bytes_dynamic_concat");
+          if (!sym)
+            return true;
+
+          side_effect_expr_function_callt first;
           get_library_function_call_no_args(
             "bytes_dynamic_concat",
             "c:@F@bytes_dynamic_concat",
             sym->type,
             l,
-            next);
-          next.arguments().push_back(result);
-          next.arguments().push_back(args[i]);
-          next.arguments().push_back(pool_member);
-          result = next;
+            first);
+          first.arguments().push_back(args[0]);
+          first.arguments().push_back(args[1]);
+          first.arguments().push_back(pool_member);
+
+          exprt result = first;
+          for (size_t i = 2; i < nargs; i++)
+          {
+            side_effect_expr_function_callt next;
+            get_library_function_call_no_args(
+              "bytes_dynamic_concat",
+              "c:@F@bytes_dynamic_concat",
+              sym->type,
+              l,
+              next);
+            next.arguments().push_back(result);
+            next.arguments().push_back(args[i]);
+            next.arguments().push_back(pool_member);
+            result = next;
+          }
+          new_expr = result;
         }
-        new_expr = result;
+        else
+          return true;
+
+        new_expr.location() = l;
+        return false;
       }
-      else
-        return true;
-
-      new_expr.location() = l;
-      return false;
-    }
-    else if (name == "address")
-    {
-      // <external_func_ref>.address — returns the contract address
-      // e.g. this.f.address ≡ address(this) ≡ this.$address
-      std::string ts =
-        expr["expression"]["typeDescriptions"]["typeString"]
-          .get<std::string>();
-      if (
-        ts.find("function") != std::string::npos &&
-        ts.find("external") != std::string::npos)
+      else if (name == "address")
       {
-        typet addr_t = unsignedbv_typet(160);
-
-        // Shape 1: `this.f.address` — base of the outer MemberAccess is
-        // itself a MemberAccess (`this.f`). Read `$address` from the
-        // contract instance on the innermost expression (`this`).
+        // <external_func_ref>.address — returns the contract address
+        // e.g. this.f.address ≡ address(this) ≡ this.$address
+        std::string ts = expr["expression"]["typeDescriptions"]["typeString"]
+                           .get<std::string>();
         if (
-          expr["expression"]["nodeType"] == "MemberAccess" &&
-          expr["expression"].contains("expression"))
+          ts.find("function") != std::string::npos &&
+          ts.find("external") != std::string::npos)
         {
-          exprt base;
-          if (get_expr(expr["expression"]["expression"], base))
-            return true;
+          typet addr_t = unsignedbv_typet(160);
 
-          new_expr = member_exprt(base, "$address", addr_t);
+          // Shape 1: `this.f.address` — base of the outer MemberAccess is
+          // itself a MemberAccess (`this.f`). Read `$address` from the
+          // contract instance on the innermost expression (`this`).
+          if (
+            expr["expression"]["nodeType"] == "MemberAccess" &&
+            expr["expression"].contains("expression"))
+          {
+            exprt base;
+            if (get_expr(expr["expression"]["expression"], base))
+              return true;
+
+            new_expr = member_exprt(base, "$address", addr_t);
+            new_expr.location() = l;
+            return false;
+          }
+
+          // Shape 2: `cb.address` where `cb` is a local variable of
+          // external-function type. ESBMC lowers external function types
+          // to an opaque void* that does not carry the bound contract
+          // address, so we cannot recover a concrete address here. Fall
+          // back to a nondet address — matches how `.selector` handles
+          // the unresolved case.
+          new_expr = side_effect_expr_nondett(addr_t);
           new_expr.location() = l;
           return false;
         }
-
-        // Shape 2: `cb.address` where `cb` is a local variable of
-        // external-function type. ESBMC lowers external function types
-        // to an opaque void* that does not carry the bound contract
-        // address, so we cannot recover a concrete address here. Fall
-        // back to a nondet address — matches how `.selector` handles
-        // the unresolved case.
-        new_expr = side_effect_expr_nondett(addr_t);
-        new_expr.location() = l;
-        return false;
       }
-    }
-    else if (name == "selector")
-    {
-      // <external_func_ref>.selector — returns the 4-byte function selector
-      // e.g. this.f.selector => bytes4(keccak256("f()"))
-      std::string ts =
-        expr["expression"]["typeDescriptions"]["typeString"]
-          .get<std::string>();
-      if (ts.find("function") != std::string::npos)
+      else if (name == "selector")
       {
-        // Try to extract functionSelector from the referenced declaration
-        int ref_id = -1;
-        if (expr["expression"].contains("referencedDeclaration"))
-          ref_id = expr["expression"]["referencedDeclaration"].get<int>();
-        const nlohmann::json &func_ref =
-          find_decl_ref(ref_id);
+        // <external_func_ref>.selector — returns the 4-byte function selector
+        // e.g. this.f.selector => bytes4(keccak256("f()"))
+        std::string ts = expr["expression"]["typeDescriptions"]["typeString"]
+                           .get<std::string>();
+        if (ts.find("function") != std::string::npos)
+        {
+          // Try to extract functionSelector from the referenced declaration
+          int ref_id = -1;
+          if (expr["expression"].contains("referencedDeclaration"))
+            ref_id = expr["expression"]["referencedDeclaration"].get<int>();
+          const nlohmann::json &func_ref = find_decl_ref(ref_id);
 
-        if (
-          !func_ref.empty() && func_ref.contains("functionSelector"))
-        {
-          // Parse the hex selector string to a numeric value
-          std::string sel_hex =
-            func_ref["functionSelector"].get<std::string>();
-          BigInt sel_val = string2integer("0x" + sel_hex, 16);
-          new_expr = constant_exprt(
-            integer2binary(sel_val, 32), sel_hex, unsignedbv_typet(32));
+          if (!func_ref.empty() && func_ref.contains("functionSelector"))
+          {
+            // Parse the hex selector string to a numeric value
+            std::string sel_hex =
+              func_ref["functionSelector"].get<std::string>();
+            BigInt sel_val = string2integer("0x" + sel_hex, 16);
+            new_expr = constant_exprt(
+              integer2binary(sel_val, 32), sel_hex, unsignedbv_typet(32));
+          }
+          else
+          {
+            // Fall back to nondet bytes4
+            new_expr = side_effect_expr_nondett(unsignedbv_typet(32));
+          }
+          new_expr.location() = l;
+          return false;
         }
-        else
-        {
-          // Fall back to nondet bytes4
-          new_expr = side_effect_expr_nondett(unsignedbv_typet(32));
-        }
-        new_expr.location() = l;
-        return false;
       }
-    }
     }
     if (expr["expression"].contains("name"))
       bs = expr["expression"]["name"].get<std::string>();

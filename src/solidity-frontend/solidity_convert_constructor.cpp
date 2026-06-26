@@ -282,9 +282,8 @@ bool solidity_convertert::get_unbound_function(
     // function is set, restrict the dispatch loop to only that function.
     // Other contracts (e.g., cross-contract targets reached from inside the
     // focus function) keep their full nondet dispatch.
-    const bool focus_applies =
-      !focus_func.empty() && tgt_cnt_set.size() == 1 &&
-      c_name == *tgt_cnt_set.begin();
+    const bool focus_applies = !focus_func.empty() && tgt_cnt_set.size() == 1 &&
+                               c_name == *tgt_cnt_set.begin();
 
     for (const auto &method : methods)
     {
@@ -511,7 +510,8 @@ bool solidity_convertert::build_bound_drive_helper(
 
   // contract_var = *x (dereference of the local pointer) — used as the
   // method-access receiver and as the implicit `this` argument.
-  exprt contract_var = dereference_exprt(symbol_expr(added_x), contract_struct_t);
+  exprt contract_var =
+    dereference_exprt(symbol_expr(added_x), contract_struct_t);
 
   const auto methods = funcSignatures[c_name];
   for (const auto &method : methods)
@@ -555,8 +555,7 @@ bool solidity_convertert::build_bound_drive_helper(
             if (
               inner.contains("nodeType") &&
               inner["nodeType"] == "FunctionDefinition" &&
-              inner.contains("id") &&
-              inner["id"].get<int>() == target_node_id)
+              inner.contains("id") && inner["id"].get<int>() == target_node_id)
             {
               decl_ref = inner;
               break;
@@ -610,8 +609,7 @@ bool solidity_convertert::build_bound_drive_helper(
   symbolt new_symbol;
   locationt h_loc;
   h_loc.file(absolute_path);
-  get_default_symbol(
-    new_symbol, debug_modulename, h_type, h_name, h_id, h_loc);
+  get_default_symbol(new_symbol, debug_modulename, h_type, h_name, h_id, h_loc);
   new_symbol.lvalue = true;
   new_symbol.is_extern = false;
   new_symbol.file_local = false;
@@ -746,8 +744,7 @@ bool solidity_convertert::build_esol_state_forward_helper(
             if (
               inner.contains("nodeType") &&
               inner["nodeType"] == "FunctionDefinition" &&
-              inner.contains("id") &&
-              inner["id"].get<int>() == target_node_id)
+              inner.contains("id") && inner["id"].get<int>() == target_node_id)
             {
               decl_ref = inner;
               break;
@@ -800,8 +797,7 @@ bool solidity_convertert::build_esol_state_forward_helper(
   symbolt new_symbol;
   locationt h_loc;
   h_loc.file(absolute_path);
-  get_default_symbol(
-    new_symbol, debug_modulename, h_type, h_name, h_id, h_loc);
+  get_default_symbol(new_symbol, debug_modulename, h_type, h_name, h_id, h_loc);
   new_symbol.lvalue = true;
   new_symbol.is_extern = false;
   new_symbol.file_local = false;
@@ -961,11 +957,7 @@ bool solidity_convertert::build_tod_clone_helper(
   neq_expr.copy_to_operands(c_addr_member, base_addr_member);
   side_effect_expr_function_callt assume_call;
   get_library_function_call_no_args(
-    "__ESBMC_assume",
-    "c:@F@__ESBMC_assume",
-    empty_typet(),
-    c_loc,
-    assume_call);
+    "__ESBMC_assume", "c:@F@__ESBMC_assume", empty_typet(), c_loc, assume_call);
   assume_call.arguments().push_back(neq_expr);
   convert_expression_to_code(assume_call);
   func_body.move_to_operands(assume_call);
@@ -1008,10 +1000,10 @@ bool solidity_convertert::build_tod_clone_helper(
 
         // 1. Copy length:
         //      <arr>_dynarray_len[clone.addr] = <arr>_dynarray_len[base.addr]
-        exprt clone_len_ref = index_exprt(
-          symbol_expr(*len_sym), clone_addr_e, uint256_t_typet);
-        exprt base_len_ref = index_exprt(
-          symbol_expr(*len_sym), base_addr_e, uint256_t_typet);
+        exprt clone_len_ref =
+          index_exprt(symbol_expr(*len_sym), clone_addr_e, uint256_t_typet);
+        exprt base_len_ref =
+          index_exprt(symbol_expr(*len_sym), base_addr_e, uint256_t_typet);
         code_assignt len_copy(clone_len_ref, base_len_ref);
         func_body.move_to_operands(len_copy);
 
@@ -1037,9 +1029,7 @@ bool solidity_convertert::build_tod_clone_helper(
         // matches the pattern used by other state-var copy loops.
         exprt cond = gen_binary("<", bool_t, ctr_ref, clone_len_ref);
         exprt one = constant_exprt(
-          integer2binary(1, bv_width(uint256_t_typet)),
-          "1",
-          uint256_t_typet);
+          integer2binary(1, bv_width(uint256_t_typet)), "1", uint256_t_typet);
         code_assignt iter_assign(
           ctr_ref, gen_binary("+", uint256_t_typet, ctr_ref, one));
 
@@ -1179,8 +1169,7 @@ bool solidity_convertert::build_tod_clone_helper(
   symbolt new_symbol;
   locationt h_loc;
   h_loc.file(absolute_path);
-  get_default_symbol(
-    new_symbol, debug_modulename, h_type, h_name, h_id, h_loc);
+  get_default_symbol(new_symbol, debug_modulename, h_type, h_name, h_id, h_loc);
   new_symbol.lvalue = true;
   new_symbol.is_extern = false;
   new_symbol.file_local = false;
@@ -1196,9 +1185,9 @@ bool solidity_convertert::build_tod_clone_helper(
 bool solidity_convertert::needs_clone_deep_fixup(const typet &t)
 {
   // mapping_t struct: always needs retarget.
-  const std::string tid =
-    t.is_symbol() ? to_symbol_type(t).get_identifier().as_string()
-                  : t.get("identifier").as_string();
+  const std::string tid = t.is_symbol()
+                            ? to_symbol_type(t).get_identifier().as_string()
+                            : t.get("identifier").as_string();
   if (tid.find("mapping_t") != std::string::npos)
     return true;
 
@@ -1278,8 +1267,7 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
     type_id = resolved.get("identifier").as_string();
   }
 
-  const bool is_mapping_field =
-    type_id.find("mapping_t") != std::string::npos;
+  const bool is_mapping_field = type_id.find("mapping_t") != std::string::npos;
 
   // -- Case 1: mapping field.  Just retarget addr.  The struct-copy
   //    already carried the mapping's `$inf_storage*` (the global pool
@@ -1336,7 +1324,8 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
       const bool inner_is_ptr_backed =
         !elem_t_outer.get("#sol_array_size").empty() &&
         elem_t_outer.is_pointer();
-      if (inner_is_ptr_backed && !needs_clone_deep_fixup(elem_t_outer.subtype()))
+      if (
+        inner_is_ptr_backed && !needs_clone_deep_fixup(elem_t_outer.subtype()))
       {
         const std::string inner_sz_str =
           elem_t_outer.get("#sol_array_size").as_string();
@@ -1351,16 +1340,15 @@ bool solidity_convertert::emit_clone_deep_copy_fixup(
         }
         if (inner_N != 0)
         {
-          exprt inner_size =
-            from_integer(inner_N, size_type());
+          exprt inner_size = from_integer(inner_N, size_type());
           exprt leaf_size_of_expr;
           get_size_of_expr(elem_t_outer.subtype(), leaf_size_of_expr);
 
           side_effect_expr_function_callt acpy2d_call;
           get_arrcpy_2d_function_call(dst_lvalue.location(), acpy2d_call);
           acpy2d_call.arguments().push_back(src_lvalue);
-          acpy2d_call.arguments().push_back(size_expr);     // outer count
-          acpy2d_call.arguments().push_back(inner_size);    // inner count
+          acpy2d_call.arguments().push_back(size_expr);  // outer count
+          acpy2d_call.arguments().push_back(inner_size); // inner count
           acpy2d_call.arguments().push_back(leaf_size_of_expr);
           solidity_gen_typecast(ns, acpy2d_call, field_type);
           acpy2d_call.type().set("#sol_array_size", sz_str);
@@ -1500,9 +1488,9 @@ bool solidity_convertert::needs_ctor_deep_init(const typet &t)
   // move_to_initializer); struct-internal mappings have no decl path,
   // so the walker's Case 2 must emit the same shape.  Mirrors the
   // identifier-substring test in needs_clone_deep_fixup.
-  const std::string tid =
-    t.is_symbol() ? to_symbol_type(t).get_identifier().as_string()
-                  : t.get("identifier").as_string();
+  const std::string tid = t.is_symbol()
+                            ? to_symbol_type(t).get_identifier().as_string()
+                            : t.get("identifier").as_string();
   if (tid.find("mapping_t") != std::string::npos)
     return true;
 
@@ -1570,8 +1558,9 @@ bool solidity_convertert::emit_ctor_deep_init_fixup(
       // here because the walker is invoked from move_initializer_to_ctor.
       // Even if it were non-null, we always want the ctor's $address.
       exprt ctor_this_expr;
-      if (current_baseContractName.empty() ||
-          get_ctor_decl_this_ref(current_baseContractName, ctor_this_expr))
+      if (
+        current_baseContractName.empty() ||
+        get_ctor_decl_this_ref(current_baseContractName, ctor_this_expr))
       {
         log_error(
           "ctor walker: cannot resolve ctor `this` for nested mapping init");
@@ -1660,8 +1649,7 @@ bool solidity_convertert::emit_ctor_deep_init_fixup(
       // Recurse into the slot for deeper nesting (3D+) or struct elements.
       // Append "_<i>" so the global naming for any nested mapping inside
       // an element disambiguates per-slot.
-      const std::string elem_path =
-        path_name + "_" + std::to_string(i);
+      const std::string elem_path = path_name + "_" + std::to_string(i);
       if (emit_ctor_deep_init_fixup(elem_slot, elem_t, out_block, elem_path))
         return true;
     }
@@ -1893,8 +1881,7 @@ bool solidity_convertert::move_initializer_to_ctor(
       // `uint256[2][2]`: `assert(g[0][0] == 0)` fails post-ctor).
       if (
         comp.type().is_array() && comp.type().has_subtype() &&
-        comp.type().subtype().is_array() &&
-        rhs.get("#zero_initializer") == "1")
+        comp.type().subtype().is_array() && rhs.get("#zero_initializer") == "1")
       {
         std::function<void(const exprt &, const typet &)> unroll_zero =
           [&](const exprt &cur_lhs, const typet &cur_type) {
@@ -1922,8 +1909,7 @@ bool solidity_convertert::move_initializer_to_ctor(
             const typet &resolved = ns.follow(cur_type);
             if (resolved.is_struct())
             {
-              for (const auto &field :
-                   to_struct_type(resolved).components())
+              for (const auto &field : to_struct_type(resolved).components())
               {
                 exprt member =
                   member_exprt(cur_lhs, field.name(), field.type());
@@ -1939,8 +1925,7 @@ bool solidity_convertert::move_initializer_to_ctor(
             exprt assign = side_effect_exprt("assign", cur_type);
             assign.copy_to_operands(cur_lhs, zero);
             convert_expression_to_code(assign);
-            sym.value.operands().insert(
-              sym.value.operands().begin(), assign);
+            sym.value.operands().insert(sym.value.operands().begin(), assign);
           };
         unroll_zero(lhs, comp.type());
         continue;

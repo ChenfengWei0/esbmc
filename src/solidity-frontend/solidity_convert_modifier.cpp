@@ -36,7 +36,8 @@ bool solidity_convertert::get_function_definition(
   const std::string old_functionId = current_functionId;
   const bool old_function_used_snapshot = current_function_used_snapshot;
   const bool old_function_seen_mutation = current_function_seen_mutation;
-  const bool old_function_revert_observable = current_function_revert_observable;
+  const bool old_function_revert_observable =
+    current_function_revert_observable;
   std::vector<std::pair<std::string, std::string>>
     old_function_restored_globals;
   old_function_restored_globals.swap(current_function_restored_globals);
@@ -92,7 +93,8 @@ bool solidity_convertert::get_function_definition(
 
   // special handling for tuple:
   // construct a tuple type and a tuple instance
-  if (get_sol_type(type.return_type()) == SolidityGrammar::SolType::TUPLE_RETURNS)
+  if (
+    get_sol_type(type.return_type()) == SolidityGrammar::SolType::TUPLE_RETURNS)
   {
     exprt dump;
     if (get_tuple_definition(*current_functionDecl))
@@ -273,8 +275,7 @@ bool solidity_convertert::get_function_definition(
     !is_ctor && ast_node.contains("returnParameters") &&
     ast_node["returnParameters"].contains("parameters"))
   {
-    for (const auto &rparam :
-         ast_node["returnParameters"]["parameters"])
+    for (const auto &rparam : ast_node["returnParameters"]["parameters"])
     {
       std::string rname = rparam["name"].get<std::string>();
       if (rname.empty())
@@ -376,8 +377,9 @@ bool solidity_convertert::get_function_definition(
     //   - If the caller is the auto-dispatch loop (`_ESBMC_Main_X`),
     //     no code runs after the callee returns, so the stale value
     //     is never observed.
-    if (!is_event_err_lib && !is_free_function && has_body &&
-        body_exprt.is_code())
+    if (
+      !is_event_err_lib && !is_free_function && has_body &&
+      body_exprt.is_code())
     {
       std::string this_id = id + "#this";
       const symbolt *this_sym = context.find_symbol(this_id);
@@ -387,14 +389,17 @@ bool solidity_convertert::get_function_definition(
         typet addr_t_sym = unsignedbv_typet(160);
         typet void_ptr_t = pointer_typet(empty_typet());
 
-        exprt encl_addr_g =
-          symbol_expr(*context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
-        exprt encl_this_g =
-          symbol_expr(*context.find_symbol("c:@_ESBMC_enclosing_contract_this"));
+        exprt encl_addr_g = symbol_expr(
+          *context.find_symbol("c:@_ESBMC_enclosing_contract_address"));
+        exprt encl_this_g = symbol_expr(
+          *context.find_symbol("c:@_ESBMC_enclosing_contract_this"));
 
         symbolt sa;
         get_default_symbol(
-          sa, debug_modulename, addr_t_sym, "_saved_encl_addr",
+          sa,
+          debug_modulename,
+          addr_t_sym,
+          "_saved_encl_addr",
           "sol:@C@" + c_name + "@F@_saved_encl_addr#" +
             std::to_string(aux_counter++),
           location_begin);
@@ -405,7 +410,10 @@ bool solidity_convertert::get_function_definition(
 
         symbolt st;
         get_default_symbol(
-          st, debug_modulename, void_ptr_t, "_saved_encl_this",
+          st,
+          debug_modulename,
+          void_ptr_t,
+          "_saved_encl_this",
           "sol:@C@" + c_name + "@F@_saved_encl_this#" +
             std::to_string(aux_counter++),
           location_begin);
@@ -414,8 +422,7 @@ bool solidity_convertert::get_function_definition(
         added_st.value = encl_this_g;
         st_decl.operands().push_back(encl_this_g);
 
-        exprt this_addr_mem =
-          member_exprt(this_expr, "$address", addr_t_sym);
+        exprt this_addr_mem = member_exprt(this_expr, "$address", addr_t_sym);
         exprt assign_set_addr = side_effect_exprt("assign", addr_t_sym);
         assign_set_addr.copy_to_operands(encl_addr_g, this_addr_mem);
         convert_expression_to_code(assign_set_addr);
@@ -482,11 +489,9 @@ bool solidity_convertert::get_function_definition(
           const symbolt *save_sym_ptr = context.find_symbol(save_id);
           if (save_sym_ptr != nullptr)
           {
-            exprt this_deref =
-              dereference_exprt(this_expr, save_sym_ptr->type);
+            exprt this_deref = dereference_exprt(this_expr, save_sym_ptr->type);
             code_declt save_decl(symbol_expr(*save_sym_ptr));
-            code_assignt save_init(
-              symbol_expr(*save_sym_ptr), this_deref);
+            code_assignt save_init(symbol_expr(*save_sym_ptr), this_deref);
             wrapped.copy_to_operands(save_decl);
             wrapped.copy_to_operands(save_init);
           }
@@ -533,20 +538,18 @@ bool solidity_convertert::get_function_definition(
   {
     for (const auto &p : ast_node["parameters"]["parameters"])
     {
-      if (
-        !p.contains("storageLocation") || p["storageLocation"] != "storage")
+      if (!p.contains("storageLocation") || p["storageLocation"] != "storage")
         continue;
 
       std::string p_name = p["name"].get<std::string>();
-      std::string p_sym_id = get_library_param_id(
-        c_name, name, p_name, p["id"].get<int>());
+      std::string p_sym_id =
+        get_library_param_id(c_name, name, p_name, p["id"].get<int>());
       std::string out_id = p_sym_id + "$out";
 
       const symbolt *param_sym = context.find_symbol(p_sym_id);
       if (!param_sym)
       {
-        log_error(
-          "storage-ref bridge: param symbol {} not found", p_sym_id);
+        log_error("storage-ref bridge: param symbol {} not found", p_sym_id);
         return true;
       }
 
@@ -554,18 +557,20 @@ bool solidity_convertert::get_function_definition(
       {
         symbolt out_sym;
         get_default_symbol(
-          out_sym, debug_modulename, param_sym->type, p_name + "$out",
-          out_id, location_begin);
+          out_sym,
+          debug_modulename,
+          param_sym->type,
+          p_name + "$out",
+          out_id,
+          location_begin);
         out_sym.static_lifetime = true;
         out_sym.lvalue = true;
-        out_sym.value =
-          gen_zero(get_complete_type(param_sym->type, ns), true);
+        out_sym.value = gen_zero(get_complete_type(param_sym->type, ns), true);
         move_symbol_to_context(out_sym);
       }
 
       body_exprt.copy_to_operands(code_assignt(
-        symbol_expr(*context.find_symbol(out_id)),
-        symbol_expr(*param_sym)));
+        symbol_expr(*context.find_symbol(out_id)), symbol_expr(*param_sym)));
     }
   }
 
@@ -846,10 +851,7 @@ bool solidity_convertert::build_revert_rollback_block(
     get_location_from_node(*current_functionDecl, mloc);
     exprt mark_stmt;
     build_revert_flag_call(
-      "_ESBMC_sol_mark_revert",
-      "c:@F@_ESBMC_sol_mark_revert",
-      mloc,
-      mark_stmt);
+      "_ESBMC_sol_mark_revert", "c:@F@_ESBMC_sol_mark_revert", mloc, mark_stmt);
     block.copy_to_operands(mark_stmt);
   }
   if (have_snapshot && current_function_seen_mutation)
@@ -1137,8 +1139,7 @@ bool solidity_convertert::get_func_modifier(
   {
     int modifier_id = (*it)["modifierName"]["referencedDeclaration"];
     // we cannot use reference here, as the src_ast_json got inserted/deleted later
-    nlohmann::json mod_def =
-      find_decl_ref(modifier_id);
+    nlohmann::json mod_def = find_decl_ref(modifier_id);
     assert(!mod_def.is_null());
     assert(!mod_def.empty());
 
@@ -1171,8 +1172,8 @@ bool solidity_convertert::get_func_modifier(
           {
             if (
               member.value("nodeType", "") == "ModifierDefinition" &&
-              member.value("name", "") == mod_name &&
-              member.contains("body") && !member["body"].is_null())
+              member.value("name", "") == mod_name && member.contains("body") &&
+              !member["body"].is_null())
             {
               mod_def = member;
               resolved = true;
@@ -1293,10 +1294,10 @@ bool solidity_convertert::get_func_modifier(
       bool orig_is_tuple = false;
       if (ast_node.contains("returnParameters"))
       {
-        if (!get_type_description(
-              ast_node["returnParameters"], orig_ret_type) &&
-            get_sol_type(orig_ret_type) ==
-              SolidityGrammar::SolType::TUPLE_RETURNS)
+        if (
+          !get_type_description(ast_node["returnParameters"], orig_ret_type) &&
+          get_sol_type(orig_ret_type) ==
+            SolidityGrammar::SolType::TUPLE_RETURNS)
           orig_is_tuple = true;
       }
       if (orig_is_tuple)
@@ -1328,8 +1329,7 @@ bool solidity_convertert::get_func_modifier(
       ast_node.contains("returnParameters") &&
       ast_node["returnParameters"].contains("parameters"))
     {
-      for (const auto &rparam :
-           ast_node["returnParameters"]["parameters"])
+      for (const auto &rparam : ast_node["returnParameters"]["parameters"])
       {
         const std::string rname = rparam.value("name", "");
         if (rname.empty())
@@ -1393,54 +1393,51 @@ bool solidity_convertert::get_func_modifier(
     // behaviour so the top-level rewriter at line 1265-1283 (which
     // walks mod_body's outer operands looking for `return` to lift to
     // `aux_var = x`) continues to see naked statements.
-    std::function<void(exprt &)> splice_placeholders =
-      [&](exprt &node) {
-        // Skip leaves so the non-const operands() accessor below does
-        // not lazy-allocate an empty operands sub-irep on bare symbol
-        // exprts. exprt::operands() (util/expr.h:57-60) calls
-        // add(o_operands).get_sub() which materialises the field even
-        // when no operands will be appended; once present, has_operands()
-        // returns true based on `!find(o_operands).is_nil()` regardless
-        // of operand count, poisoning the symbol for downstream
-        // is_symbol-based casts. The trigger that surfaced this was a
-        // modifier of shape `{ _; assert(...); }` whose unintercepted
-        // c:@F@assert function-symbol got walked into and silently
-        // poisoned, then crashed clang_c_adjust::do_special_functions
-        // (clang_c_adjust_expr.cpp:892) on `to_symbol_expr`'s
-        // `id == symbol && !has_operands()` precondition.
-        if (!node.has_operands())
-          return;
-        const bool parent_is_block =
-          node.is_code() && node.statement() == "block";
-        auto &ops = node.operands();
-        for (auto it = ops.begin(); it != ops.end();)
+    std::function<void(exprt &)> splice_placeholders = [&](exprt &node) {
+      // Skip leaves so the non-const operands() accessor below does
+      // not lazy-allocate an empty operands sub-irep on bare symbol
+      // exprts. exprt::operands() (util/expr.h:57-60) calls
+      // add(o_operands).get_sub() which materialises the field even
+      // when no operands will be appended; once present, has_operands()
+      // returns true based on `!find(o_operands).is_nil()` regardless
+      // of operand count, poisoning the symbol for downstream
+      // is_symbol-based casts. The trigger that surfaced this was a
+      // modifier of shape `{ _; assert(...); }` whose unintercepted
+      // c:@F@assert function-symbol got walked into and silently
+      // poisoned, then crashed clang_c_adjust::do_special_functions
+      // (clang_c_adjust_expr.cpp:892) on `to_symbol_expr`'s
+      // `id == symbol && !has_operands()` precondition.
+      if (!node.has_operands())
+        return;
+      const bool parent_is_block =
+        node.is_code() && node.statement() == "block";
+      auto &ops = node.operands();
+      for (auto it = ops.begin(); it != ops.end();)
+      {
+        if (it->get_bool("#is_modifier_placeholder"))
         {
-          if (it->get_bool("#is_modifier_placeholder"))
+          if (parent_is_block)
           {
-            if (parent_is_block)
-            {
-              it = ops.erase(it);
-              it = ops.insert(
-                it,
-                body_exprt.operands().begin(),
-                body_exprt.operands().end());
-              std::advance(it, body_exprt.operands().size());
-            }
-            else
-            {
-              code_blockt wrapped;
-              wrapped.operands() = body_exprt.operands();
-              *it = wrapped;
-              ++it;
-            }
+            it = ops.erase(it);
+            it = ops.insert(
+              it, body_exprt.operands().begin(), body_exprt.operands().end());
+            std::advance(it, body_exprt.operands().size());
           }
           else
           {
-            splice_placeholders(*it);
+            code_blockt wrapped;
+            wrapped.operands() = body_exprt.operands();
+            *it = wrapped;
             ++it;
           }
         }
-      };
+        else
+        {
+          splice_placeholders(*it);
+          ++it;
+        }
+      }
+    };
     splice_placeholders(mod_body);
 
     // Prepend DECLs for named return parameters re-registered under
@@ -1488,8 +1485,8 @@ bool solidity_convertert::get_func_modifier(
       {
         if (op->is_code() && op->statement() == "return")
         {
-          if (op->operands().empty() ||
-              op->op0().type().id().as_string().empty())
+          if (
+            op->operands().empty() || op->op0().type().id().as_string().empty())
           {
             *op = code_skipt();
           }
@@ -1527,8 +1524,7 @@ bool solidity_convertert::get_func_modifier(
     {
       int next_modifier_id =
         (*next_it)["modifierName"]["referencedDeclaration"];
-      const nlohmann::json &next_mod_def =
-        find_decl_ref(next_modifier_id);
+      const nlohmann::json &next_mod_def = find_decl_ref(next_modifier_id);
 
       std::string next_mod_name = next_mod_def["name"];
       std::string next_aux_func_name, next_aux_func_id;
