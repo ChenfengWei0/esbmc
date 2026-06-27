@@ -7,15 +7,14 @@ pragma solidity ^0.8.0;
 // sync-wrapper per public/external function; the single differential assertion
 // `assert(snap_p == snap_m)` lives only in the boundary wrapper s3_withdraw.
 //
-// KNOWNBUG: ESBMC reports VERIFICATION SUCCESSFUL (misses M1) because of the
-// instance-vs-singleton $address duality. In the reentrant callback ESBMC sets
-// msg.sender to the dispatch-SINGLETON `_ESBMC_Object_C_ref.$address`, while
-// `address(p)` reads the `new C_ref()` HEAP-INSTANCE `$address` — they differ,
-// so both `if` branches are false, neither snapshot is taken, and 0 == 0 holds.
-// On a real EVM these are the same address and the assertion would FAIL (detect
-// M1). When the duality is fixed this flips to VERIFICATION FAILED -> CORE.
-// The flag-routed dual diff_reentrancy_M1_cei_observer_{fail,pass} is the
-// working (CORE) detector in the meantime.
+// Detects M1 -> VERIFICATION FAILED. Requires the reentrant-msg.sender fix
+// (_ESBMC_caller_inst_addr): in a multi-type cluster the method body runs on
+// the dispatch singleton, so without the fix the reentrant msg.sender would be
+// the singleton's $address, not address(p), and the callback's branches would
+// never fire (0 == 0, mutant missed). The dispatcher now records the calling
+// instance's $address and the $call builders present it as msg.sender, so
+// msg.sender == address(p) holds and the mutant is detected. Pairs with
+// diff_reentrancy_M1_cei_msgsender_pass (identical -> SUCCESSFUL).
 
 contract C_ref {
     address public owner = msg.sender;

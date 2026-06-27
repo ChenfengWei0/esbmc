@@ -30,6 +30,19 @@ address_t msg_sender;
 uint32_t msg_sig;
 uint256_t msg_value;
 
+/* Caller-instance address for reentrant msg.sender.  In a multi-type
+ * (structurally-clustered) call the method body runs on the static
+ * dispatch singleton _ESBMC_Object_<T>, whose $address differs from the
+ * actual new C() instance's.  The dispatcher records the calling
+ * instance's $address here (save/set/restore around the body) and the
+ * low-level `.call`/`$call` builders use it as the reentrant msg.sender
+ * so a callback sees msg.sender == address(p).  0 means "unset" — fall
+ * back to this->$address (single-type, where the body already runs on
+ * the instance).  Touching only this variable (not any registered
+ * $address) avoids the sol_addr_array lookup blowup an $address swap
+ * would cause. */
+address_t _ESBMC_caller_inst_addr = 0;
+
 /* ── enclosing contract ambient ────────────────────────────────────
  * When execution enters a contract method (either via Harness auto-
  * dispatch or a cross-contract .call()), the wrapper saves the

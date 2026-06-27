@@ -1196,6 +1196,57 @@ bool solidity_convertert::get_high_level_member_access(
                  nonContractNamesList.count(cname) != 0))
         return true;
 
+      // Record the calling instance's $address in the global
+      // `_ESBMC_caller_inst_addr` for the DURATION of this call (save before,
+      // restore after), so the low-level `.call`/`$call` builders can present
+      // it as the reentrant msg.sender — making a callback see
+      // msg.sender == address(p). Gated on a polymorphic cluster
+      // (cname_set.size() > 1): single-type calls run the body on the instance
+      // already, so this->$address is correct without it. Only this dedicated
+      // global is touched (no registered $address changes), so address-keyed
+      // transfer/EOA dispatch and the sol_addr_array lookups are unaffected.
+      if (cname_set.size() > 1 && str == _cname)
+      {
+        const symbolt *cia_sym_p =
+          context.find_symbol("c:@_ESBMC_caller_inst_addr");
+        if (cia_sym_p != nullptr)
+        {
+          exprt cia = symbol_expr(*cia_sym_p);
+          exprt inst_addr = member_exprt(new_base, "$address", addr_t);
+
+          std::string sv_name = "_saved_caller_inst_addr";
+          std::string sv_id = "sol:@" + sv_name + std::to_string(aux_counter++);
+          symbolt sv;
+          get_default_symbol(
+            sv,
+            get_modulename_from_path(absolute_path),
+            addr_t,
+            sv_name,
+            sv_id,
+            member.location());
+          sv.lvalue = true;
+          sv.file_local = true;
+          exprt sv_sym = symbol_expr(*move_symbol_to_context(sv));
+          code_declt sv_decl(sv_sym);
+
+          exprt save = side_effect_exprt("assign", addr_t);
+          save.copy_to_operands(sv_sym, cia);
+          exprt set = side_effect_exprt("assign", addr_t);
+          set.copy_to_operands(cia, inst_addr);
+          exprt restore = side_effect_exprt("assign", addr_t);
+          restore.copy_to_operands(cia, sv_sym);
+          convert_expression_to_code(save);
+          convert_expression_to_code(set);
+          convert_expression_to_code(restore);
+
+          back_block.operands().push_back(restore);
+          front_block.operands().insert(front_block.operands().begin(), set);
+          front_block.operands().insert(front_block.operands().begin(), save);
+          front_block.operands().insert(
+            front_block.operands().begin(), sv_decl);
+        }
+      }
+
       // if-body
       code_blockt block;
       for (auto &op : front_block.operands())
@@ -2748,6 +2799,33 @@ bool solidity_convertert::try_get_signature_dispatched_call(
 // address-dispatch ladder itself still fires: reads of _ESBMC_Object_X
 // via `get_static_contract_instance_ref(str, ...)` are preserved so
 // external state updates in X remain visible to the caller.
+exprt solidity_convertert::reentrant_msg_sender(
+  const std::string &cname,
+  const exprt &fallback_addr)
+{
+  // Only a contract in a multi-type structural cluster is invoked via the
+  // bind_cname dispatcher that records _ESBMC_caller_inst_addr; a single-type
+  // contract runs its body on the instance already, so this->$address is
+  // correct. Skip the conditional there to avoid bloating call-heavy formulas
+  // with an always-false branch on the global.
+  if (structureTypingMap[cname].size() <= 1)
+    return fallback_addr;
+
+  const symbolt *cia = context.find_symbol("c:@_ESBMC_caller_inst_addr");
+  if (cia == nullptr)
+    return fallback_addr;
+
+  exprt cia_e = symbol_expr(*cia); // addr_t (uint160)
+  exprt cond("notequal", bool_t);
+  cond.copy_to_operands(cia_e, from_integer(0, cia_e.type()));
+
+  exprt chosen = cia_e;
+  if (chosen.type() != fallback_addr.type())
+    chosen = typecast_exprt(chosen, fallback_addr.type());
+
+  return if_exprt(cond, chosen, fallback_addr);
+}
+
 bool solidity_convertert::get_call_definition(
   const std::string &cname,
   exprt &new_expr,
@@ -2853,7 +2931,8 @@ bool solidity_convertert::get_call_definition(
     {
       // msg_sender = this.address;
       exprt assign_sender = side_effect_exprt("assign", addr_t);
-      assign_sender.copy_to_operands(msg_sender, this_address);
+      assign_sender.copy_to_operands(
+        msg_sender, reentrant_msg_sender(cname, this_address));
       convert_expression_to_code(assign_sender);
       then.move_to_operands(assign_sender);
     }
@@ -3358,7 +3437,7 @@ bool solidity_convertert::get_call_value_definition(
     }
     else
     {
-      new_sender = this_address;
+      new_sender = reentrant_msg_sender(cname, this_address);
     }
     exprt assign_sender = side_effect_exprt("assign", addrp_t);
     assign_sender.copy_to_operands(msg_sender, new_sender);
@@ -3664,7 +3743,7 @@ bool solidity_convertert::get_transfer_definition(
     }
     else
     {
-      new_sender = this_address;
+      new_sender = reentrant_msg_sender(cname, this_address);
     }
     exprt assign_sender = side_effect_exprt("assign", addrp_t);
     assign_sender.copy_to_operands(msg_sender, new_sender);
@@ -4025,7 +4104,7 @@ bool solidity_convertert::get_send_definition(
     }
     else
     {
-      new_sender = this_address;
+      new_sender = reentrant_msg_sender(cname, this_address);
     }
     exprt assign_sender = side_effect_exprt("assign", addr_t);
     assign_sender.copy_to_operands(msg_sender, new_sender);
@@ -4363,7 +4442,8 @@ bool solidity_convertert::get_staticcall_definition(
 
     // msg_sender = this.address;
     exprt assign_sender = side_effect_exprt("assign", addr_t);
-    assign_sender.copy_to_operands(msg_sender, this_address);
+    assign_sender.copy_to_operands(
+      msg_sender, reentrant_msg_sender(cname, this_address));
     convert_expression_to_code(assign_sender);
     then.move_to_operands(assign_sender);
 

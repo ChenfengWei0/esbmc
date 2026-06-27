@@ -1098,6 +1098,15 @@ protected:
     exprt &front_block,
     exprt &back_block);
 
+  /// Reentrant msg.sender for a low-level call: prefer the calling instance's
+  /// $address recorded in the global `_ESBMC_caller_inst_addr` by the
+  /// multi-type dispatcher (so a callback sees msg.sender == address(p)); fall
+  /// back to `fallback_addr` (this->$address) when unset (single-type, where
+  /// the body already runs on the instance).
+  exprt reentrant_msg_sender(
+    const std::string &cname,
+    const exprt &fallback_addr);
+
   bool get_bind_cname_expr(const nlohmann::json &json, exprt &bind_cname_expr);
   void get_bind_cname_func_name(
     const std::string &cname,
