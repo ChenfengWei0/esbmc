@@ -1171,8 +1171,18 @@ bool solidity_convertert::get_high_level_member_access(
       exprt back_block = code_blockt();
       if (is_call_w_options)
       {
+        // Credit the SAME object the method body executes on. The multi-type
+        // dispatcher runs the call on the static singleton `_base`
+        // (`call.arguments().at(0) = _base` above), so for the value transfer
+        // to be visible to the body's own `this->$balance` the credit must
+        // land on `_base->$balance`, not the dynamic-instance pointer
+        // `new_base`. Crediting `new_base` left the body's balance at 0, so a
+        // subsequent `.call{value:a}` read 0 and reverted — silently dropping
+        // every `{value:}` transfer to a `new`-created instance whenever >=2
+        // contract types shared the method name (which is exactly the shape of
+        // a differential harness: P and M are two such types).
         if (model_transaction(
-              expr, this_expr, new_base, balance, l, front_block, back_block))
+              expr, this_expr, _base, balance, l, front_block, back_block))
         {
           log_error("failed to model the transaction property changes");
           return true;
