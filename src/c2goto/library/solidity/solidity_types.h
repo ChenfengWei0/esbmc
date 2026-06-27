@@ -50,6 +50,11 @@ struct sol_llc_ret
 uint256_t nondet_uint256();
 address_t nondet_address_t();
 
+/* Bounded nondet initial contract balance in [0, 2^128). See
+ * solidity_misc.c for the rationale (avoids the near-2^256 overflow corner
+ * that spuriously drops reentrant `.call{value:}` callbacks). */
+uint256_t _ESBMC_nondet_init_balance();
+
 /* T1.1 Stage S2: hash-fold of (address, index) into a 64-bit dyn-array
  * slot key for per-instance element addressing.  See solidity_array.c. */
 uint64_t _ESBMC_dynarr_idx(address_t addr, uint256_t idx);

@@ -153,7 +153,24 @@ bool solidity_convertert::add_auxiliary_members(
   // by `new_contract_initial_balance_zero_pass_knownbug` and
   // `transfer_standalone_balance_invariant_pass`.
   {
-    exprt balance_init = _ndt_uint;
+    // Non-payable ctors: initialise $balance to a BOUNDED nondet ([0, 2^128))
+    // via the `_ESBMC_nondet_init_balance()` model helper rather than a full
+    // uint256 nondet. An unbounded nondet lets the solver pick a value near
+    // 2^256 so that a later deposit (`$balance += value`) overflows and the
+    // `.call{value:}` funding check spuriously fails, silently dropping
+    // reentrant callbacks (a completeness gap that hides reentrancy bugs in
+    // differential harnesses). The bound lives inside the C helper, NOT as a
+    // compound initializer here: the ctor-init machinery
+    // (move_initializer_to_ctor) only handles a plain side-effect-call RHS,
+    // so a wrapped expression such as `nondet & mask` is silently dropped.
+    side_effect_expr_function_callt _bal_ndt;
+    get_library_function_call_no_args(
+      "_ESBMC_nondet_init_balance",
+      "c:@F@_ESBMC_nondet_init_balance",
+      unsignedbv_typet(256),
+      l,
+      _bal_ndt);
+    exprt balance_init = _bal_ndt;
     auto str_field = [](const nlohmann::json &n, const char *k) {
       if (!n.contains(k) || !n[k].is_string())
         return std::string();

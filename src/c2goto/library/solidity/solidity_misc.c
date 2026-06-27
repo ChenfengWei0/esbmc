@@ -30,6 +30,22 @@ extern unsigned int sol_max_cnt;
 extern unsigned int sol_eoa_max_cnt;
 extern unsigned int esbmc_array_count;
 
+/* Bounded nondet initial contract balance: a value in [0, 2^128).
+ * A full uint256 nondet would let the solver pick a value near 2^256 so
+ * that a later deposit (`$balance += value`) wraps around to a tiny value,
+ * spuriously failing the `.call{value:}` funding check and silently
+ * dropping reentrant callbacks (a completeness gap that hides reentrancy
+ * bugs in differential harnesses). Real ETH balances are far below 2^128,
+ * so this removes only physically-impossible states while preserving every
+ * balance-positive path (e.g. `require(address(this).balance >= V)`). */
+uint256_t _ESBMC_nondet_init_balance(void)
+{
+__ESBMC_HIDE:;
+  uint256_t b = nondet_uint256();
+  __ESBMC_assume(b < ((uint256_t)1 << 128));
+  return b;
+}
+
 uint256_t _max(unsigned int bitwidth, bool is_signed)
 {
 __ESBMC_HIDE:;
