@@ -83,11 +83,9 @@ bool solidity_convertert::add_auxiliary_members(
   // adequate --unwind values, keeping loose default + opt-in precise
   // is the lesser evil. KNOWNBUG-locked by
   // `address_allocator_17_distinct_pass_knownbug`.
-  const bool precise =
-    !config.options.get_option("solidity-precise").empty();
+  const bool precise = !config.options.get_option("solidity-precise").empty();
   const std::string addr_helper_name =
-    precise ? "_ESBMC_get_unique_address_precise"
-            : "_ESBMC_get_unique_address";
+    precise ? "_ESBMC_get_unique_address_precise" : "_ESBMC_get_unique_address";
   const std::string addr_helper_id = "c:@F@" + addr_helper_name;
 
   side_effect_expr_function_callt _addr;
@@ -647,8 +645,9 @@ void solidity_convertert::get_builtin_property_expr(
 
   exprt mem;
   if (
-    base.is_member() && (base.op0().name() == "this" ||
-                         get_sol_type(base.op0().type()) == SolidityGrammar::SolType::CONTRACT))
+    base.is_member() &&
+    (base.op0().name() == "this" ||
+     get_sol_type(base.op0().type()) == SolidityGrammar::SolType::CONTRACT))
     // e.g. address(_ins_).balance => _ins_.balance
     //      address(this) => this->address
     //TODO: fixme! this pattern match is weak
