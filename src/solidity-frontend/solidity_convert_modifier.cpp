@@ -450,6 +450,11 @@ bool solidity_convertert::get_function_definition(
         // and constructors deliberately do NOT clear, so their reverts
         // accumulate and propagate up to the external boundary.
         // See docs/claude/solidity/revert-observation.md.
+        // The low-level-call dispatcher clears the flag locally right before
+        // each callee call (emit_call_revert_clear), so a global entry-clear
+        // is unnecessary for `--bound` failure modeling — and emitting it at
+        // every external entry bloated the SSA (transfer-only paths). Keep the
+        // clear scoped to the explicit `__ESBMC_reverted` opt-in.
         if (uses_revert_observation && is_external_entry)
         {
           exprt clear_stmt;
@@ -845,7 +850,14 @@ bool solidity_convertert::build_revert_rollback_block(
   code_blockt block;
   // Revert observation: set the global flag before restoring/returning so the
   // caller's `__ESBMC_reverted()` sees this revert.  Hidden + coverage-skipped.
-  if (uses_revert_observation)
+  // Also marked under `--bound` (without the explicit opt-in) so the
+  // low-level-call dispatcher can model `.call`/`.send` failure as
+  // `ok = !reverted`.  Invariant: the only reader of the flag under plain
+  // `--bound` is that dispatcher, which clears the flag immediately before
+  // each callee call (emit_call_revert_clear) and restores it afterwards, so
+  // a stale mark from an earlier revert-and-return is never misread.  Any
+  // future `--bound` reader MUST likewise clear before reading.
+  if (uses_revert_observation || is_bound)
   {
     locationt mloc;
     get_location_from_node(*current_functionDecl, mloc);

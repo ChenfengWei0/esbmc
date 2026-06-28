@@ -1241,6 +1241,23 @@ protected:
     const std::string &id,
     const locationt &loc,
     exprt &out_stmt);
+  /// Low-level-call failure modeling (`--bound`).  A tracked-target
+  /// `.call`/`.send` success path must return `ok = !reverted` rather than a
+  /// hard-coded `true`, so a reverting callee surfaces as `ok == false`.
+  /// Mirrors the try/catch opt-in flag discipline: the caller appends, in
+  /// order, emit_call_revert_clear(blk, saved) → the callee call →
+  /// emit_call_revert_return(blk, saved, value_rollback).  `value_rollback`
+  /// (may be null) is a codet run only when the callee reverted, used to undo
+  /// a value transfer that real EVM rolls back on failure.
+  void emit_call_revert_clear(
+    code_blockt &blk,
+    symbol_exprt &saved_out,
+    const locationt &loc);
+  void emit_call_revert_return(
+    code_blockt &blk,
+    const symbol_exprt &saved,
+    const exprt *value_rollback,
+    const locationt &loc);
   /// Per-statement AST classifier feeding the per-rollback granularity:
   /// returns true when the given top-level body statement is
   /// conservatively state-mutating, false for pure-decls / guards /

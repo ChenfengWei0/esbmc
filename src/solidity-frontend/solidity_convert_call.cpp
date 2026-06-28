@@ -2826,6 +2826,78 @@ exprt solidity_convertert::reentrant_msg_sender(
   return if_exprt(cond, chosen, fallback_addr);
 }
 
+void solidity_convertert::emit_call_revert_clear(
+  code_blockt &blk,
+  symbol_exprt &saved_out,
+  const locationt &loc)
+{
+  // The revert-flag model (solidity_misc.c) is always linked into the GOTO
+  // library before frontend conversion runs.
+  const symbolt *flag_sym = context.find_symbol("c:@_ESBMC_sol_reverted_flag");
+  assert(flag_sym && "revert-flag model must be linked");
+  exprt flag_expr = symbol_expr(*flag_sym);
+
+  // bool _saved = _ESBMC_sol_reverted_flag;  (remember caller's status)
+  std::string nm, id;
+  get_aux_var(nm, id);
+  symbolt s;
+  get_default_symbol(
+    s, get_modulename_from_path(absolute_path), flag_sym->type, nm, id, loc);
+  s.lvalue = true;
+  s.file_local = true;
+  saved_out = symbol_exprt(move_symbol_to_context(s)->id, flag_sym->type);
+  blk.copy_to_operands(code_declt(saved_out));
+  blk.copy_to_operands(code_assignt(saved_out, flag_expr));
+
+  // _ESBMC_sol_clear_revert();  (clean baseline for THIS call)
+  exprt clear_stmt;
+  build_revert_flag_call(
+    "_ESBMC_sol_clear_revert", "c:@F@_ESBMC_sol_clear_revert", loc, clear_stmt);
+  blk.copy_to_operands(clear_stmt);
+}
+
+void solidity_convertert::emit_call_revert_return(
+  code_blockt &blk,
+  const symbol_exprt &saved,
+  const exprt *value_rollback,
+  const locationt &loc)
+{
+  const symbolt *flag_sym = context.find_symbol("c:@_ESBMC_sol_reverted_flag");
+  assert(flag_sym && "revert-flag model must be linked");
+  exprt flag_expr = symbol_expr(*flag_sym);
+
+  // bool _rev = _ESBMC_sol_reverted_flag;  (snapshot THIS call's outcome)
+  std::string nm, id;
+  get_aux_var(nm, id);
+  symbolt s;
+  get_default_symbol(
+    s, get_modulename_from_path(absolute_path), flag_sym->type, nm, id, loc);
+  s.lvalue = true;
+  s.file_local = true;
+  symbol_exprt reverted(move_symbol_to_context(s)->id, flag_sym->type);
+  blk.copy_to_operands(code_declt(reverted));
+  blk.copy_to_operands(code_assignt(reverted, flag_expr));
+
+  // _ESBMC_sol_reverted_flag = _saved;  (scoped observation: restore caller)
+  blk.copy_to_operands(code_assignt(flag_expr, saved));
+
+  // if (_rev) { <value_rollback> }  — undo the direct value transfer the EVM
+  // rolls back on failure.  This is transfer-only (1 level): deep state a
+  // reentrant callee subtree mutated is not unwound here, matching the
+  // pre-existing revert-model granularity (`*this = save` per frame).
+  if (value_rollback != nullptr)
+  {
+    codet rb_if("ifthenelse");
+    rb_if.copy_to_operands(reverted, *value_rollback);
+    blk.copy_to_operands(rb_if);
+  }
+
+  // return !_rev;  — ok is false iff the callee reverted.
+  code_returnt ret;
+  ret.return_value() = not_exprt(reverted);
+  blk.copy_to_operands(ret);
+}
+
 bool solidity_convertert::get_call_definition(
   const std::string &cname,
   exprt &new_expr,
@@ -2949,6 +3021,12 @@ bool solidity_convertert::get_call_definition(
       then.move_to_operands(assign_lock);
     }
 
+    // Low-level-call failure modeling: clear the revert flag, run the
+    // callee, return `ok = !reverted` (below) — a reverting callee makes
+    // `(bool ok, ) = addr.call(...)` observe `ok == false`.
+    symbol_exprt saved_revert;
+    emit_call_revert_clear(then, saved_revert, locationt());
+
     // _ESBMC_Nondet_Extcall_x();
     code_function_callt call;
     if (get_unbound_funccall(str, call))
@@ -2977,10 +3055,8 @@ bool solidity_convertert::get_call_definition(
       then.move_to_operands(assign_sender_restore);
     }
 
-    // return true;
-    code_returnt ret_true;
-    ret_true.return_value() = true_exprt();
-    then.move_to_operands(ret_true);
+    // return !reverted;  ($call#0 moves no value -> no rollback)
+    emit_call_revert_return(then, saved_revert, nullptr, locationt());
 
     // _addr == _ESBMC_Object_str.$address
     exprt static_ins;
@@ -3499,6 +3575,12 @@ bool solidity_convertert::get_call_value_definition(
       then.move_to_operands(assign_lock);
     }
 
+    // Low-level-call failure modeling: clear the revert flag, run the
+    // callee, then return `ok = !reverted` (below) instead of a constant
+    // `true`, so a reverting receive/fallback surfaces as `ok == false`.
+    symbol_exprt saved_revert;
+    emit_call_revert_clear(then, saved_revert, locationt());
+
     // func_call, e.g. receive(&_ESBMC_Object_str)
     side_effect_expr_function_callt call;
     if (get_non_library_function_call(decl_ref, empty_json, call))
@@ -3533,16 +3615,32 @@ bool solidity_convertert::get_call_value_definition(
     convert_expression_to_code(assign_sender_restore);
     then.move_to_operands(assign_sender_restore);
 
-    // Tracked-target match: the target's receive/fallback was invoked
-    // and completed (our abstract model doesn't track gas / callee
-    // revert).  Return true on the success path for BOTH contracts and
-    // libraries — library mode is a thin scope wrapper around the same
-    // dispatch, so its outcome matches.  The old "library returns
-    // nondet everywhere" rule is retained only on the EOA fallthrough
-    // below, where the target is opaque and genuinely may fail.
-    code_returnt ret_outcome;
-    ret_outcome.return_value() = true_exprt();
-    then.move_to_operands(ret_outcome);
+    // Tracked-target match: the target's receive/fallback was invoked.
+    // Return `ok = !reverted` so a reverting callee is observable as a
+    // failed call (gas exhaustion is still not modeled).  On revert, undo
+    // the value transfer the EVM rolls back: the callee's `*this = save`
+    // only restores the target's post-credit snapshot, so the caller's
+    // debit and the target's credit both survive a naive return — leaving
+    // `(ok==false ∧ balance moved)`, a state real EVM never reaches.
+    code_blockt value_rollback;
+    const exprt *vr = nullptr;
+    if (!is_library)
+    {
+      // this.$balance += _val;  (undo the debit)
+      exprt add_back = side_effect_exprt("assign+", val_t);
+      add_back.copy_to_operands(this_balance, val_expr);
+      convert_expression_to_code(add_back);
+      value_rollback.move_to_operands(add_back);
+
+      // _ESBMC_Object_str.$balance -= _val;  (undo the credit)
+      exprt tgt_bal = member_exprt(static_ins, "$balance", val_t);
+      exprt sub_back = side_effect_exprt("assign-", val_t);
+      sub_back.copy_to_operands(tgt_bal, val_expr);
+      convert_expression_to_code(sub_back);
+      value_rollback.move_to_operands(sub_back);
+      vr = &value_rollback;
+    }
+    emit_call_revert_return(then, saved_revert, vr, locationt());
 
     codet if_expr("ifthenelse");
     if_expr.copy_to_operands(_equal, then);
@@ -4151,7 +4249,11 @@ bool solidity_convertert::get_send_definition(
     convert_expression_to_code(add_assign);
     then.move_to_operands(add_assign);
 
-    // Only call receive/fallback if the contract has one
+    // Only call receive/fallback if the contract has one.  When it does,
+    // model call failure as `ok = !reverted`; without a callback there is
+    // no body that can revert, so the success path stays deterministic.
+    symbol_exprt saved_revert;
+    bool wrapped_revert = false;
     if (has_payable_callback)
     {
       if (is_reentry_check && !is_library)
@@ -4165,6 +4267,9 @@ bool solidity_convertert::get_send_definition(
         convert_expression_to_code(assign_lock);
         then.move_to_operands(assign_lock);
       }
+
+      emit_call_revert_clear(then, saved_revert, locationt());
+      wrapped_revert = true;
 
       // func_call, e.g. receive(&_ESBMC_Object_str)
       side_effect_expr_function_callt call;
@@ -4202,14 +4307,38 @@ bool solidity_convertert::get_send_definition(
     then.move_to_operands(assign_sender_restore);
 
     // Tracked-target match: receive/fallback was invoked on a known
-    // contract, so the model's success path fires deterministically
-    // (no gas / callee-revert modeling, same as non-library mode).
-    // Return true for both contracts and libraries on this path.  The
-    // "library + opaque address" revert over-approx is retained only
-    // on the EOA fallthrough below.
-    code_returnt ret_outcome;
-    ret_outcome.return_value() = true_exprt();
-    then.move_to_operands(ret_outcome);
+    // contract.  Return `ok = !reverted` when a callback ran (a reverting
+    // receive/fallback makes `send` return false), undoing the value
+    // transfer the EVM rolls back; deterministic `true` only when the
+    // target has no callback that could revert.
+    if (wrapped_revert)
+    {
+      code_blockt value_rollback;
+      const exprt *vr = nullptr;
+      if (!is_library)
+      {
+        // this.$balance += _val;  (undo the debit)
+        exprt add_back = side_effect_exprt("assign+", val_t);
+        add_back.copy_to_operands(this_balance, val_expr);
+        convert_expression_to_code(add_back);
+        value_rollback.move_to_operands(add_back);
+
+        // _ESBMC_Object_str.$balance -= _val;  (undo the credit)
+        exprt tgt_bal = member_exprt(static_ins, "$balance", val_t);
+        exprt sub_back = side_effect_exprt("assign-", val_t);
+        sub_back.copy_to_operands(tgt_bal, val_expr);
+        convert_expression_to_code(sub_back);
+        value_rollback.move_to_operands(sub_back);
+        vr = &value_rollback;
+      }
+      emit_call_revert_return(then, saved_revert, vr, locationt());
+    }
+    else
+    {
+      code_returnt ret_outcome;
+      ret_outcome.return_value() = true_exprt();
+      then.move_to_operands(ret_outcome);
+    }
 
     codet if_expr("ifthenelse");
     if_expr.copy_to_operands(_equal, then);
@@ -4352,6 +4481,9 @@ bool solidity_convertert::get_staticcall_definition(
       snap_decl.operands().push_back(static_ins);
       then.move_to_operands(snap_decl);
 
+      symbol_exprt saved_revert;
+      emit_call_revert_clear(then, saved_revert, locationt());
+
       code_function_callt call;
       if (get_unbound_funccall(str, call))
         return true;
@@ -4362,9 +4494,8 @@ bool solidity_convertert::get_staticcall_definition(
       convert_expression_to_code(assign_restore);
       then.move_to_operands(assign_restore);
 
-      code_returnt ret_true;
-      ret_true.return_value() = true_exprt();
-      then.move_to_operands(ret_true);
+      // return !reverted;  (explicit callee revert fails the staticcall)
+      emit_call_revert_return(then, saved_revert, nullptr, locationt());
 
       exprt mem_addr = member_exprt(static_ins, "$address", addr_t);
       exprt _equal = exprt("=", bool_t);
@@ -4454,6 +4585,10 @@ bool solidity_convertert::get_staticcall_definition(
     // caller is identical before and after the dispatch. Leaving the mutex
     // alone avoids spurious reentrancy reports for view-only interactions.
 
+    // Low-level-call failure modeling: clear, run callee, return !reverted.
+    symbol_exprt saved_revert;
+    emit_call_revert_clear(then, saved_revert, locationt());
+
     // _ESBMC_Nondet_Extcall_x();
     code_function_callt call;
     if (get_unbound_funccall(str, call))
@@ -4473,10 +4608,11 @@ bool solidity_convertert::get_staticcall_definition(
     convert_expression_to_code(assign_sender_restore);
     then.move_to_operands(assign_sender_restore);
 
-    // return true;
-    code_returnt ret_true;
-    ret_true.return_value() = true_exprt();
-    then.move_to_operands(ret_true);
+    // return !reverted;  (an explicit revert in the callee fails the
+    // staticcall; staticcall moves no value -> no rollback.  The implicit
+    // "state-write under staticcall reverts" case stays modeled by the
+    // snapshot restore above.)
+    emit_call_revert_return(then, saved_revert, nullptr, locationt());
 
     // _addr == _ESBMC_Object_str.$address
     exprt mem_addr = member_exprt(static_ins, "$address", addr_t);
@@ -4580,6 +4716,10 @@ bool solidity_convertert::get_delegatecall_definition(
       then.move_to_operands(assign_lock);
     }
 
+    // Low-level-call failure modeling: clear, run callee, return !reverted.
+    symbol_exprt saved_revert;
+    emit_call_revert_clear(then, saved_revert, locationt());
+
     // _ESBMC_Nondet_Extcall_x();
     code_function_callt call;
     if (get_unbound_funccall(str, call))
@@ -4596,14 +4736,12 @@ bool solidity_convertert::get_delegatecall_definition(
       then.move_to_operands(assign_unlock);
     }
 
-    // Tracked-target match: the target's nondet-extcall fired and our
-    // model completed the dispatch (no gas/revert modeling).  Return
-    // true for both contracts and libraries on this success path.
-    // Library-scope delegatecall to an unknown address still falls
-    // through to `return false` below, matching the contract path.
-    code_returnt ret_outcome;
-    ret_outcome.return_value() = true_exprt();
-    then.move_to_operands(ret_outcome);
+    // Tracked-target match: the target's nondet-extcall fired.  Return
+    // `ok = !reverted` so a reverting callee surfaces as a failed
+    // delegatecall (gas not modeled).  delegatecall moves no value, so
+    // there is no transfer to roll back.  Library-scope delegatecall to
+    // an unknown address still falls through to `return false` below.
+    emit_call_revert_return(then, saved_revert, nullptr, locationt());
 
     // _addr == _ESBMC_Object_str.$address
     exprt static_ins;
