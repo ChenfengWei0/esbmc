@@ -957,14 +957,35 @@ bool solidity_convertert::handle_foundry_cheatcode(
     return false;
   }
 
-  // Block-environment setters:
-  //   vm.warp(t) -> block_timestamp = t;
-  //   vm.roll(n) -> block_number    = n;
+  // Block/tx-environment setters — each is a single deterministic global
+  // assignment (the simplest, least-error-prone cheatcodes). Each verified
+  // against real `forge test`. All take one argument; coinbase is address-typed,
+  // the rest uint256 — handled generically by converting with the arg's own type.
+  //   vm.warp(t)       -> block_timestamp = t
+  //   vm.roll(n)       -> block_number    = n
+  //   vm.fee(x)        -> block_basefee   = x
+  //   vm.chainId(x)    -> block_chainid   = x
+  //   vm.prevrandao(x) -> block_prevrandao  = x
+  //   vm.txGasPrice(x) -> tx_gasprice     = x
+  //   vm.coinbase(a)   -> block_coinbase  = a
+  // NOTE: vm.difficulty is deliberately NOT modeled — real forge reverts on it
+  // after the Paris hard fork ("use prevrandao instead", EIP-4399), so modeling
+  // it as a set would DISAGREE with `forge test`. It falls through to prune.
   const char *global = nullptr;
   if (m == "warp")
     global = "c:@block_timestamp";
   else if (m == "roll")
     global = "c:@block_number";
+  else if (m == "fee")
+    global = "c:@block_basefee";
+  else if (m == "chainId")
+    global = "c:@block_chainid";
+  else if (m == "prevrandao")
+    global = "c:@block_prevrandao";
+  else if (m == "txGasPrice")
+    global = "c:@tx_gasprice";
+  else if (m == "coinbase")
+    global = "c:@block_coinbase";
   else
   {
     // Conservative hard-taint gate (design-plan F1.0). We cannot model this
@@ -993,9 +1014,13 @@ bool solidity_convertert::handle_foundry_cheatcode(
   exprt lhs = symbol_expr(*g);
 
   exprt arg0;
-  nlohmann::json lit = {
-    {"typeIdentifier", "t_uint256"}, {"typeString", "uint256"}};
-  if (get_expr(expr["arguments"][0], lit, arg0))
+  const nlohmann::json &a0j = expr["arguments"][0];
+  nlohmann::json lit = a0j.contains("typeDescriptions")
+                         ? a0j["typeDescriptions"]
+                         : nlohmann::json{
+                             {"typeIdentifier", "t_uint256"},
+                             {"typeString", "uint256"}};
+  if (get_expr(a0j, lit, arg0))
     return true;
   solidity_gen_typecast(ns, arg0, lhs.type());
 
@@ -1081,11 +1106,11 @@ bool solidity_convertert::get_high_level_member_access(
   locationt l;
   get_location_from_node(expr, l);
 
-  // Foundry cheatcode interception: `vm.<name>(...)` on the forge-std `Vm`
-  // handle is not a real external call. Lower recognized cheatcodes to their
-  // effect and bypass the external-call harness. Unrecognized cheatcodes fall
-  // through to the normal (currently no-op) path.
-  if (is_func_call && _cname == "Vm")
+  // Foundry cheatcode interception: `vm.<name>(...)` on the forge-std cheatcode
+  // handle is not a real external call. The handle may be typed `Vm` or its
+  // parent `VmSafe` (view/pure cheatcodes) — both must be gated so no cheatcode
+  // escapes to the external-call harness (see solidity_convert_expr.cpp).
+  if (is_func_call && (_cname == "Vm" || _cname == "VmSafe"))
   {
     bool handled = false;
     if (handle_foundry_cheatcode(expr, l, new_expr, handled))

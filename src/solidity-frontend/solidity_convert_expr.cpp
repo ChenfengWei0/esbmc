@@ -3796,7 +3796,11 @@ bool solidity_convertert::get_contract_member_call_expr(
     // so in unbound mode a `vm.<name>(...)` call would otherwise fall to the
     // nondet path and the cheatcode become a silent no-op. Recognized
     // cheatcodes lower to their effect here; unrecognized ones fall through.
-    if (base_cname == "Vm")
+    // forge-std splits cheatcodes across `interface VmSafe` (view/pure) and
+    // `interface Vm is VmSafe` (state-changing). A handle may be typed as either
+    // (e.g. StdUtils uses `VmSafe constant vm`), so both must be gated or a
+    // VmSafe call escapes to the nondet no-op path and breaks prune soundness.
+    if (base_cname == "Vm" || base_cname == "VmSafe")
     {
       locationt cl;
       get_location_from_node(func_call_json, cl);
