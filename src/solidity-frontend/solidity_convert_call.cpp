@@ -821,6 +821,88 @@ bool solidity_convertert::get_high_level_member_access(
     expr, empty_json, base, member, _mem_call, is_func_call, new_expr);
 }
 
+bool solidity_convertert::handle_forge_std_assert(
+  const std::string &name,
+  const nlohmann::json &expr,
+  const locationt &l,
+  exprt &new_expr,
+  bool &handled)
+{
+  handled = false;
+
+  // Arity-1 boolean assertions.
+  if (name == "assertTrue" || name == "assertFalse")
+  {
+    if (!expr.contains("arguments") || expr["arguments"].size() < 1)
+      return false;
+    nlohmann::json blit = {
+      {"typeIdentifier", "t_bool"}, {"typeString", "bool"}};
+    exprt x;
+    if (get_expr(expr["arguments"][0], blit, x))
+      return true;
+    exprt cond = (name == "assertFalse") ? (exprt)not_exprt(x) : x;
+    code_assertt a(cond);
+    a.location() = l;
+    new_expr = a;
+    handled = true;
+    log_warning("[foundry] lowered forge-std {} to assert", name);
+    return false;
+  }
+
+  // Arity-2 comparison assertions.
+  bool is_eq = false, is_neq = false;
+  const char *rel = nullptr;
+  if (name == "assertEq")
+    is_eq = true;
+  else if (name == "assertNotEq" || name == "assertNeq")
+    is_neq = true;
+  else if (name == "assertGt")
+    rel = ">";
+  else if (name == "assertGe")
+    rel = ">=";
+  else if (name == "assertLt")
+    rel = "<";
+  else if (name == "assertLe")
+    rel = "<=";
+  else
+    return false; // not a recognized forge-std assertion
+
+  if (!expr.contains("arguments") || expr["arguments"].size() < 2)
+    return false;
+
+  // Convert arg0 with its own type; hint arg1 with arg0's type so a literal
+  // second operand (the idiomatic `assertEq(actual, expectedLiteral)`) is
+  // typed to match. Reconcile with a typecast for the comparison.
+  const nlohmann::json &a0j = expr["arguments"][0];
+  const nlohmann::json &a1j = expr["arguments"][1];
+  nlohmann::json t0 = a0j.contains("typeDescriptions")
+                        ? a0j["typeDescriptions"]
+                        : nlohmann::json{
+                            {"typeIdentifier", "t_uint256"},
+                            {"typeString", "uint256"}};
+  exprt a0, a1;
+  if (get_expr(a0j, t0, a0))
+    return true;
+  if (get_expr(a1j, t0, a1))
+    return true;
+  solidity_gen_typecast(ns, a1, a0.type());
+
+  exprt cond;
+  if (is_eq)
+    cond = equality_exprt(a0, a1);
+  else if (is_neq)
+    cond = binary_relation_exprt(a0, "notequal", a1);
+  else
+    cond = binary_relation_exprt(a0, rel, a1);
+
+  code_assertt a(cond);
+  a.location() = l;
+  new_expr = a;
+  handled = true;
+  log_warning("[foundry] lowered forge-std {} to assert", name);
+  return false;
+}
+
 bool solidity_convertert::handle_foundry_cheatcode(
   const nlohmann::json &expr,
   const locationt &l,

@@ -3047,6 +3047,22 @@ bool solidity_convertert::get_call_expr(
     return false;
   }
 
+  // Foundry forge-std assertion lowering (F1.b): assertEq/assertTrue/... are
+  // Test-base helpers (real Foundry tests never use native assert). Recognize
+  // by name and lower to a native assert of the comparison so a wrong test's
+  // expectation actually surfaces. Placed before the normal internal-call path
+  // that would otherwise convert the (no-op) stub body.
+  {
+    const std::string callee_name = callee_expr_json.value("name", "");
+    locationt al;
+    get_location_from_node(expr, al);
+    bool ah = false;
+    if (handle_forge_std_assert(callee_name, expr, al, new_expr, ah))
+      return true;
+    if (ah)
+      return false;
+  }
+
   log_debug("solidity", "\t\t@@@ got normal function call");
   // * we had ruled out all the special cases
   // * we now confirm it is called by another contract inside current contract

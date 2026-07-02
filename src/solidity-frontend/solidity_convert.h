@@ -992,6 +992,19 @@ protected:
     const locationt &l,
     exprt &new_expr,
     bool &handled);
+  /// forge-std assertion lowering (F1.b). `assertEq/assertTrue/assertFalse/
+  /// assertGt/assertLt/assertGe/assertLe/assertNotEq(...)` are Test-base
+  /// helpers whose bodies route through forge-std `fail()` + logs, so they never
+  /// surface as ESBMC assertions. Recognized by name and lowered to a native
+  /// `assert(<comparison>)` (immediate-assert; equivalent to Foundry's
+  /// failed-flag for the "does the test fail" question). Sets `handled = true`
+  /// when it recognized and lowered the call. Returns true only on a hard error.
+  bool handle_forge_std_assert(
+    const std::string &name,
+    const nlohmann::json &expr,
+    const locationt &l,
+    exprt &new_expr,
+    bool &handled);
   bool get_bound_low_level_call(
     const nlohmann::json &expr,
     const nlohmann::json &literal_type,
