@@ -836,7 +836,30 @@ bool solidity_convertert::handle_foundry_cheatcode(
     return false;
   const std::string m = expr["expression"]["memberName"].get<std::string>();
 
-  // First increment: block-environment setters only.
+  // All modeled cheatcodes here take exactly one argument.
+  if (
+    !expr.contains("arguments") || !expr["arguments"].is_array() ||
+    expr["arguments"].empty())
+    return false;
+
+  // vm.assume(cond) -> path-pruning ASSUME (sound: assume only prunes, so it
+  // can never cause a false WRONG). Enables bounded property/fuzz tests.
+  if (m == "assume")
+  {
+    nlohmann::json blit = {
+      {"typeIdentifier", "t_bool"}, {"typeString", "bool"}};
+    exprt cond;
+    if (get_expr(expr["arguments"][0], blit, cond))
+      return true;
+    code_assumet a(cond);
+    a.location() = l;
+    new_expr = a;
+    handled = true;
+    log_warning("[foundry] modeled cheatcode vm.assume");
+    return false;
+  }
+
+  // Block-environment setters:
   //   vm.warp(t) -> block_timestamp = t;
   //   vm.roll(n) -> block_number    = n;
   // Other cheatcodes are left unhandled (no-op fall-through, tracked KNOWNBUG
@@ -847,11 +870,6 @@ bool solidity_convertert::handle_foundry_cheatcode(
   else if (m == "roll")
     global = "c:@block_number";
   else
-    return false;
-
-  if (
-    !expr.contains("arguments") || !expr["arguments"].is_array() ||
-    expr["arguments"].empty())
     return false;
 
   const symbolt *g = context.find_symbol(global);
