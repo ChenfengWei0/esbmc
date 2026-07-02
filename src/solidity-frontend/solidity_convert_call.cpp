@@ -862,15 +862,32 @@ bool solidity_convertert::handle_foundry_cheatcode(
   // Block-environment setters:
   //   vm.warp(t) -> block_timestamp = t;
   //   vm.roll(n) -> block_number    = n;
-  // Other cheatcodes are left unhandled (no-op fall-through, tracked KNOWNBUG
-  // until the taint gate / further cheatcode modeling lands).
   const char *global = nullptr;
   if (m == "warp")
     global = "c:@block_timestamp";
   else if (m == "roll")
     global = "c:@block_number";
   else
+  {
+    // Conservative hard-taint gate (design-plan F1.0). We cannot model this
+    // cheatcode's effect, so the continuation is unknown; prune it with
+    // ASSUME(false). Assertions BEFORE this reached point are still checked
+    // (reachability-sensitive), so a real pre-cheatcode bug is still found;
+    // only the un-modelable suffix is suppressed. This can never introduce a
+    // false WRONG (the never-false-WRONG invariant), at the cost of missing
+    // bugs downstream of an unmodeled cheatcode (completeness, acceptable for
+    // the conservative "report CORRECT unless definitely WRONG" contract).
+    exprt f = false_exprt();
+    code_assumet a(f);
+    a.location() = l;
+    new_expr = a;
+    handled = true;
+    log_warning(
+      "[foundry] UNMODELED cheatcode vm.{} -> path pruned "
+      "(conservative; no false WRONG, downstream bugs not explored)",
+      m);
     return false;
+  }
 
   const symbolt *g = context.find_symbol(global);
   if (g == nullptr)
