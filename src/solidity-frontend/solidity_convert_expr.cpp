@@ -3775,6 +3775,22 @@ bool solidity_convertert::get_contract_member_call_expr(
       return true;
     call.arguments().at(0) = base;
 
+    // Foundry cheatcode interception. Must precede the bound / new-instance
+    // branching below: the `vm` handle is a `constant` (not created via `new`),
+    // so in unbound mode a `vm.<name>(...)` call would otherwise fall to the
+    // nondet path and the cheatcode become a silent no-op. Recognized
+    // cheatcodes lower to their effect here; unrecognized ones fall through.
+    if (base_cname == "Vm")
+    {
+      locationt cl;
+      get_location_from_node(func_call_json, cl);
+      bool handled = false;
+      if (handle_foundry_cheatcode(func_call_json, cl, new_expr, handled))
+        return true;
+      if (handled)
+        break;
+    }
+
     if (current_contractName == base_cname)
     {
       // this.init(); we know the implementation thus cannot model it as unbound_harness

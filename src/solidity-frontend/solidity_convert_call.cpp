@@ -821,6 +821,62 @@ bool solidity_convertert::get_high_level_member_access(
     expr, empty_json, base, member, _mem_call, is_func_call, new_expr);
 }
 
+bool solidity_convertert::handle_foundry_cheatcode(
+  const nlohmann::json &expr,
+  const locationt &l,
+  exprt &new_expr,
+  bool &handled)
+{
+  handled = false;
+
+  // Cheatcode name = the MemberAccess memberName on the FunctionCall callee.
+  if (
+    !expr.contains("expression") || !expr["expression"].is_object() ||
+    !expr["expression"].contains("memberName"))
+    return false;
+  const std::string m = expr["expression"]["memberName"].get<std::string>();
+
+  // First increment: block-environment setters only.
+  //   vm.warp(t) -> block_timestamp = t;
+  //   vm.roll(n) -> block_number    = n;
+  // Other cheatcodes are left unhandled (no-op fall-through, tracked KNOWNBUG
+  // until the taint gate / further cheatcode modeling lands).
+  const char *global = nullptr;
+  if (m == "warp")
+    global = "c:@block_timestamp";
+  else if (m == "roll")
+    global = "c:@block_number";
+  else
+    return false;
+
+  if (
+    !expr.contains("arguments") || !expr["arguments"].is_array() ||
+    expr["arguments"].empty())
+    return false;
+
+  const symbolt *g = context.find_symbol(global);
+  if (g == nullptr)
+    return true;
+  exprt lhs = symbol_expr(*g);
+
+  exprt arg0;
+  nlohmann::json lit = {
+    {"typeIdentifier", "t_uint256"}, {"typeString", "uint256"}};
+  if (get_expr(expr["arguments"][0], lit, arg0))
+    return true;
+  solidity_gen_typecast(ns, arg0, lhs.type());
+
+  // Hand back an unconverted `assign` side-effect (mirrors the high-level call
+  // result at the msg_sender-prank path); the caller converts it to code.
+  exprt assign = side_effect_exprt("assign", lhs.type());
+  assign.location() = l;
+  assign.copy_to_operands(lhs, arg0);
+  new_expr = assign;
+  handled = true;
+  log_warning("[foundry] modeled cheatcode vm.{} (block env setter)", m);
+  return false;
+}
+
 /** 
  * Conversion: 
   constructor()
@@ -891,6 +947,20 @@ bool solidity_convertert::get_high_level_member_access(
 
   locationt l;
   get_location_from_node(expr, l);
+
+  // Foundry cheatcode interception: `vm.<name>(...)` on the forge-std `Vm`
+  // handle is not a real external call. Lower recognized cheatcodes to their
+  // effect and bypass the external-call harness. Unrecognized cheatcodes fall
+  // through to the normal (currently no-op) path.
+  if (is_func_call && _cname == "Vm")
+  {
+    bool handled = false;
+    if (handle_foundry_cheatcode(expr, l, new_expr, handled))
+      return true;
+    if (handled)
+      return false;
+  }
+
   std::unordered_set<std::string> cname_set = structureTypingMap[_cname];
   assert(!cname_set.empty());
   if (cname_set.size() > 1)

@@ -981,6 +981,17 @@ protected:
     const exprt &_mem_call,
     const bool is_func_call,
     exprt &new_expr);
+  /// Foundry cheatcode interception. A `vm.<name>(...)` call on the forge-std
+  /// `Vm` handle is not a real external call; recognized cheatcodes lower to
+  /// their intrinsic effect (e.g. vm.warp -> block_timestamp = t) and set
+  /// `handled = true`. Unrecognized cheatcodes leave `handled = false` and are
+  /// left to the caller's normal (no-op) external-call path. Returns true only
+  /// on a hard conversion error.
+  bool handle_foundry_cheatcode(
+    const nlohmann::json &expr,
+    const locationt &l,
+    exprt &new_expr,
+    bool &handled);
   bool get_bound_low_level_call(
     const nlohmann::json &expr,
     const nlohmann::json &literal_type,
