@@ -850,19 +850,25 @@ bool solidity_convertert::handle_forge_std_assert(
   }
 
   // Arity-2 comparison assertions.
+  // The `*Decimal` variants have an extra trailing `decimals` argument that only
+  // affects failure-message formatting, NOT the pass/fail verdict (verified vs
+  // real forge), so they map to the same comparison on args[0]/args[1] and the
+  // 3rd arg is simply ignored. `assertEqUint` is an alias of `assertEq`.
   bool is_eq = false, is_neq = false;
   const char *rel = nullptr;
-  if (name == "assertEq")
+  if (name == "assertEq" || name == "assertEqUint" || name == "assertEqDecimal")
     is_eq = true;
-  else if (name == "assertNotEq" || name == "assertNeq")
+  else if (
+    name == "assertNotEq" || name == "assertNeq" ||
+    name == "assertNotEqDecimal")
     is_neq = true;
-  else if (name == "assertGt")
+  else if (name == "assertGt" || name == "assertGtDecimal")
     rel = ">";
-  else if (name == "assertGe")
+  else if (name == "assertGe" || name == "assertGeDecimal")
     rel = ">=";
-  else if (name == "assertLt")
+  else if (name == "assertLt" || name == "assertLtDecimal")
     rel = "<";
-  else if (name == "assertLe")
+  else if (name == "assertLe" || name == "assertLeDecimal")
     rel = "<=";
   else
     return false; // not a recognized forge-std assertion
