@@ -1451,6 +1451,13 @@ protected:
   // or must keep the legacy path-pruning `__ESBMC_assume`.  Saved/restored
   // alongside current_functionDecl.
   bool current_function_revert_observable = false;
+  // Foundry `vm.expectRevert(...)` support: armed at the cheatcode site, consumed
+  // by the next external call (get_high_level_member_access injects
+  // `assert(_ESBMC_sol_reverted_flag)` after that call, so the call must revert).
+  // Selector/return-data payloads are ignored (conservative: may miss a wrong
+  // test, never false-WRONG). Requires uses_revert_observation (set when the
+  // source references "expectRevert").
+  bool pending_expect_revert = false;
   // Track whether we are inside a Solidity "unchecked { ... }" block.
   // When true, arithmetic overflow checks should be suppressed.
   bool in_unchecked_block = false;

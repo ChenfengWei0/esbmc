@@ -918,6 +918,22 @@ bool solidity_convertert::handle_foundry_cheatcode(
     return false;
   const std::string m = expr["expression"]["memberName"].get<std::string>();
 
+  // vm.expectRevert([selector|data]) — arm the expectation that the NEXT
+  // external call reverts. Handled before the one-arg guard because it may take
+  // zero args. The selector/return-data payload is ignored (conservative: a
+  // call that reverts with a *different* error still satisfies this, so we may
+  // miss a wrong test, but never emit a false WRONG). Consumed at the next
+  // external call site (get_high_level_member_access) which injects
+  // `assert(_ESBMC_sol_reverted_flag)` after the call.
+  if (m == "expectRevert")
+  {
+    pending_expect_revert = true;
+    new_expr = code_skipt();
+    handled = true;
+    log_warning("[foundry] armed vm.expectRevert (next external call must revert)");
+    return false;
+  }
+
   // All modeled cheatcodes here take exactly one argument.
   if (
     !expr.contains("arguments") || !expr["arguments"].is_array() ||

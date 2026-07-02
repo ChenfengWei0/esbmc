@@ -210,8 +210,15 @@ bool solidity_convertert::convert()
   // under solc, so its mere presence is a reliable signal).  A single string
   // scan of the merged AST keeps non-using units byte-for-byte unchanged.
   // See docs/claude/solidity/revert-observation.md.
-  uses_revert_observation =
-    src_ast_json.dump().find("__ESBMC_reverted") != std::string::npos;
+  // Foundry `vm.expectRevert(...)` reuses the same revert-observation machinery
+  // (the next-call `assert(_ESBMC_sol_reverted_flag)` needs reverts to be marked
+  // rather than path-pruned), so its presence also enables the gate.
+  {
+    const std::string ast_str = src_ast_json.dump();
+    uses_revert_observation =
+      ast_str.find("__ESBMC_reverted") != std::string::npos ||
+      ast_str.find("expectRevert") != std::string::npos;
+  }
 
   // AST rewrite: specialize internal function-pointer parameters whose
   // callback is statically known at the call site. Runs before symbol

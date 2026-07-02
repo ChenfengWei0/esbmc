@@ -3874,6 +3874,24 @@ bool solidity_convertert::get_contract_member_call_expr(
       if (get_high_level_member_access(
             func_call_json, literal_type, base, comp, call, true, new_expr))
         return true;
+      // Consume a pending vm.expectRevert(): assert the call just built
+      // reverted. Emitted into the back block so it runs AFTER the call; the
+      // revert flag reflects the callee's outcome (public entry clears it, a
+      // revert marks it). Requires uses_revert_observation (set for expectRevert).
+      if (pending_expect_revert)
+      {
+        pending_expect_revert = false;
+        const symbolt *flag =
+          context.find_symbol("c:@_ESBMC_sol_reverted_flag");
+        if (flag != nullptr)
+        {
+          locationt rl;
+          get_location_from_node(func_call_json, rl);
+          code_assertt ra(symbol_expr(*flag));
+          ra.location() = rl;
+          move_to_back_block(ra);
+        }
+      }
     }
 
     break;
