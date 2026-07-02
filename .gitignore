@@ -21,6 +21,10 @@ __pycache__
 tags
 .cache
 release
+release-bundle
+release-static
+dist
+*.log
 .gdbinit
 compile_commands.json
 .deps/
