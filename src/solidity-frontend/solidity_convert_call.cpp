@@ -733,7 +733,22 @@ bool solidity_convertert::assign_param_nondet(
         call.arguments().push_back(cast_alloc);
       }
       else
-        call.arguments().push_back(static_cast<const exprt &>(get_nil_irep()));
+      {
+        // Scalar harness parameter (uint/int/bool/address/bytesN/enum):
+        // pass an explicit nondet side-effect rather than a nil arg. The
+        // sibling branches above already pass real nondet values for
+        // string/bytes/array params; a nil scalar left the callee param as
+        // an unassigned free symbol (symex_function.cpp:168 "is this valid?"
+        // no-ops on nil), which is semantically nondet but invisible to the
+        // testcase-generation machinery (collect_nondet_values only sees
+        // `nondet$symex::` symbols). get_nondet_expr lowers to
+        // sideeffect(nondet) -> replace_nondet mints `nondet$symex::nondetN`,
+        // so the value is both sound (unchanged reachability) and recoverable
+        // for witness/testcase emission.
+        exprt nondet_scalar;
+        get_nondet_expr(t, nondet_scalar);
+        call.arguments().push_back(nondet_scalar);
+      }
     }
     ++cnt;
   }
