@@ -849,6 +849,54 @@ bool solidity_convertert::handle_forge_std_assert(
     return false;
   }
 
+  // Arity-3 approximate-equality assertion: assertApproxEqAbs(a, b, maxDelta)
+  // passes iff |a - b| <= maxDelta (boundary inclusive, order-independent —
+  // verified vs real forge). The `*Decimal` variant appends a `decimals` arg
+  // that only affects failure-message formatting (ignored, like the other
+  // *Decimal asserts). We encode the absolute difference as a ternary
+  //   (a >= b ? a - b : b - a)
+  // which is underflow-free for unsigned operands (the dominant real usage) and
+  // matches forge-std's stdMath.delta exactly. The delta is cast to maxDelta's
+  // type before the comparison. (Extreme int256 spans whose difference overflows
+  // the signed operand type are a residual — real forge-std widens internally;
+  // typical test magnitudes are unaffected.)
+  if (name == "assertApproxEqAbs" || name == "assertApproxEqAbsDecimal")
+  {
+    if (!expr.contains("arguments") || expr["arguments"].size() < 3)
+      return false;
+    const nlohmann::json &a0j = expr["arguments"][0];
+    const nlohmann::json &a1j = expr["arguments"][1];
+    const nlohmann::json &a2j = expr["arguments"][2];
+    nlohmann::json t0 =
+      a0j.contains("typeDescriptions")
+        ? a0j["typeDescriptions"]
+        : nlohmann::json{
+            {"typeIdentifier", "t_uint256"}, {"typeString", "uint256"}};
+    exprt a0, a1, maxd;
+    if (get_expr(a0j, t0, a0))
+      return true;
+    if (get_expr(a1j, t0, a1))
+      return true;
+    if (get_expr(a2j, t0, maxd))
+      return true;
+    solidity_gen_typecast(ns, a1, a0.type());
+    // |a - b| via ternary (underflow-free for unsigned).
+    exprt ge = binary_relation_exprt(a0, ">=", a1);
+    exprt fwd = exprt("-", a0.type());
+    fwd.copy_to_operands(a0, a1);
+    exprt bwd = exprt("-", a0.type());
+    bwd.copy_to_operands(a1, a0);
+    exprt absdiff = if_exprt(ge, fwd, bwd);
+    solidity_gen_typecast(ns, absdiff, maxd.type());
+    exprt cond = binary_relation_exprt(absdiff, "<=", maxd);
+    code_assertt a(cond);
+    a.location() = l;
+    new_expr = a;
+    handled = true;
+    log_warning("[foundry] lowered forge-std {} to assert", name);
+    return false;
+  }
+
   // Arity-2 comparison assertions.
   // The `*Decimal` variants have an extra trailing `decimals` argument that only
   // affects failure-message formatting, NOT the pass/fail verdict (verified vs
