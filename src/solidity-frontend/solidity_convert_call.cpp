@@ -881,11 +881,11 @@ bool solidity_convertert::handle_forge_std_assert(
   // typed to match. Reconcile with a typecast for the comparison.
   const nlohmann::json &a0j = expr["arguments"][0];
   const nlohmann::json &a1j = expr["arguments"][1];
-  nlohmann::json t0 = a0j.contains("typeDescriptions")
-                        ? a0j["typeDescriptions"]
-                        : nlohmann::json{
-                            {"typeIdentifier", "t_uint256"},
-                            {"typeString", "uint256"}};
+  nlohmann::json t0 =
+    a0j.contains("typeDescriptions")
+      ? a0j["typeDescriptions"]
+      : nlohmann::json{
+          {"typeIdentifier", "t_uint256"}, {"typeString", "uint256"}};
   exprt a0, a1;
   if (get_expr(a0j, t0, a0))
     return true;
@@ -936,7 +936,8 @@ bool solidity_convertert::handle_foundry_cheatcode(
     pending_expect_revert = true;
     new_expr = code_skipt();
     handled = true;
-    log_warning("[foundry] armed vm.expectRevert (next external call must revert)");
+    log_warning(
+      "[foundry] armed vm.expectRevert (next external call must revert)");
     return false;
   }
 
@@ -1021,11 +1022,11 @@ bool solidity_convertert::handle_foundry_cheatcode(
 
   exprt arg0;
   const nlohmann::json &a0j = expr["arguments"][0];
-  nlohmann::json lit = a0j.contains("typeDescriptions")
-                         ? a0j["typeDescriptions"]
-                         : nlohmann::json{
-                             {"typeIdentifier", "t_uint256"},
-                             {"typeString", "uint256"}};
+  nlohmann::json lit =
+    a0j.contains("typeDescriptions")
+      ? a0j["typeDescriptions"]
+      : nlohmann::json{
+          {"typeIdentifier", "t_uint256"}, {"typeString", "uint256"}};
   if (get_expr(a0j, lit, arg0))
     return true;
   solidity_gen_typecast(ns, arg0, lhs.type());
