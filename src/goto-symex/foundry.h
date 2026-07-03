@@ -1,0 +1,125 @@
+#ifndef CPROVER_GOTO_SYMEX_FOUNDRY_H
+#define CPROVER_GOTO_SYMEX_FOUNDRY_H
+
+#include <goto-symex/symex_target_equation.h>
+#include <solvers/smt/smt_conv.h>
+#include <util/namespace.h>
+#include <map>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+/// Generates Foundry (`*.t.sol`) test-cases for Solidity contracts.
+///
+/// A Solidity coverage/counterexample run drives contract methods through the
+/// multi-transaction dispatcher with nondet parameters. Since the fix that
+/// makes scalar harness parameters flow as `nondet$symex` symbols
+/// (solidity_convert_call.cpp assign_param_nondet), each param value is
+/// recoverable from the SMT model AND its SSA assignment `original_lhs` names
+/// the owning method+parameter (`sol:@C@<C>@F@<method>@<param>`). This
+/// generator reconstructs the transaction sequence from those assignments and
+/// emits a compilable Foundry test that replays it, mirroring the
+/// ctest/pytest generators used for C/Python.
+class foundry_generator
+{
+private:
+  /// One reconstructed argument: its Solidity source type (from the
+  /// `#sol_type` irep on the parameter symbol) and the formatted literal.
+  struct sol_arg
+  {
+    std::string param;    // parameter name
+    std::string sol_type; // e.g. "UINT256", "ADDRESS", "BOOL"
+    std::string literal;  // Solidity literal text, or empty if unformattable
+    expr2tc value;        // raw recovered value (nil if not recovered)
+  };
+
+  /// One reconstructed external call `c.method(args)`.
+  struct sol_call
+  {
+    std::string contract;
+    std::string method;
+    std::vector<sol_arg> args;
+    bool supported = true; // false if any arg type could not be formatted
+  };
+
+  /// One counterexample -> one test function: a sequence of calls.
+  using test_case = std::vector<sol_call>;
+
+  std::vector<test_case> test_cases;
+  std::string source_file;
+  mutable std::mutex data_mutex;
+
+  /// Cache of a method's declared parameters in source order:
+  /// key "<contract>@<method>" -> [(param_name, sol_type)].
+  mutable std::
+    map<std::string, std::vector<std::pair<std::string, std::string>>>
+      method_params;
+
+  /// Look up a method's declared parameters (source order + `#sol_type`) from
+  /// the symbol table; cached. Empty vector if the method is not found.
+  const std::vector<std::pair<std::string, std::string>> &get_method_params(
+    const namespacet &ns,
+    const std::string &contract,
+    const std::string &method) const;
+
+  /// Parse a Solidity parameter symbol name
+  /// `sol:@C@<contract>@F@<method>@<param>` into its parts. Returns false if
+  /// the name is not a Solidity function parameter.
+  static bool parse_param_symbol(
+    const std::string &name,
+    std::string &contract,
+    std::string &method,
+    std::string &param);
+
+  /// Format an SMT constant as a Solidity literal for the given `#sol_type`.
+  /// Returns empty for a type we cannot faithfully render (caller then marks
+  /// the call unsupported rather than emit a wrong test).
+  static std::string
+  format_sol_value(const std::string &sol_type, const expr2tc &value);
+
+  /// Default literal for a supported type (used for a declared parameter that
+  /// was not exercised on the path, e.g. a short-circuited operand). Returns
+  /// empty for an unsupported type.
+  static std::string default_sol_literal(const std::string &sol_type);
+
+  /// Reconstruct the ordered call sequence of one counterexample from its SSA.
+  test_case reconstruct(
+    const symex_target_equationt &target,
+    smt_convt &smt_conv,
+    const namespacet &ns) const;
+
+  /// Deduplication fingerprint for a reconstructed test case.
+  static std::string fingerprint(const test_case &tc);
+
+  /// Write the `.t.sol` file for the collected/deduplicated test cases.
+  void write_foundry_file(
+    const std::string &path,
+    const std::vector<test_case> &cases) const;
+
+public:
+  foundry_generator() = default;
+
+  /// Clear collected data (start of a coverage run).
+  void clear();
+
+  /// Collect one counterexample (called per reached goal in coverage mode).
+  void collect(
+    const symex_target_equationt &target,
+    smt_convt &smt_conv,
+    const namespacet &ns);
+
+  /// Emit the accumulated test suite.
+  void generate() const;
+
+  /// Single-shot emission for non-coverage mode.
+  void generate_single(
+    const symex_target_equationt &target,
+    smt_convt &smt_conv,
+    const namespacet &ns);
+
+  /// Whether any test case has been collected.
+  bool has_tests() const;
+};
+
+#endif

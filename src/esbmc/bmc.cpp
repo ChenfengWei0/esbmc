@@ -172,6 +172,11 @@ void bmct::error_trace(smt_convt &smt_conv, const symex_target_equationt &eq)
     ctest_gen.generate_single(".", eq, smt_conv, ns);
   }
 
+  if (options.get_bool_option("generate-foundry-testcase"))
+  {
+    foundry_gen.generate_single(eq, smt_conv, ns);
+  }
+
   if (options.get_bool_option("generate-html-report"))
     generate_html_report("1", ns, goto_trace, options);
 
@@ -185,8 +190,7 @@ void bmct::error_trace(smt_convt &smt_conv, const symex_target_equationt &eq)
   if (!violation_info_path.empty())
   {
     if (!dump_violation_info_json(violation_info_path, ns, goto_trace))
-      log_warning(
-        "Failed to write violation info to {}", violation_info_path);
+      log_warning("Failed to write violation info to {}", violation_info_path);
   }
 
   std::ostringstream oss;
@@ -716,7 +720,8 @@ void report_coverage(
   std::unordered_set<std::string> &reached_claims,
   const std::unordered_multiset<std::string> &reached_mul_claims,
   pytest_generator &pytest_gen,
-  ctest_generator &ctest_gen)
+  ctest_generator &ctest_gen,
+  foundry_generator &foundry_gen)
 {
   bool is_assert_cov = options.get_bool_option("assertion-coverage") ||
                        options.get_bool_option("assertion-coverage-claims");
@@ -1147,6 +1152,12 @@ void report_coverage(
   if (options.get_bool_option("generate-ctest-testcase"))
   {
     ctest_gen.generate();
+  }
+
+  // Generate Foundry test cases from collected data (for coverage mode)
+  if (options.get_bool_option("generate-foundry-testcase"))
+  {
+    foundry_gen.generate();
   }
 }
 
@@ -1632,8 +1643,14 @@ smt_convt::resultt bmct::run_thread(std::shared_ptr<symex_target_equationt> &eq)
         std::unordered_multiset<std::string> empty_mul_reached;
         pytest_generator empty_pytest;
         ctest_generator empty_ctest;
+        foundry_generator empty_foundry;
         report_coverage(
-          options, empty_reached, empty_mul_reached, empty_pytest, empty_ctest);
+          options,
+          empty_reached,
+          empty_mul_reached,
+          empty_pytest,
+          empty_ctest,
+          empty_foundry);
       }
 
       return smt_convt::P_UNSATISFIABLE;
@@ -1850,17 +1867,15 @@ smt_convt::resultt bmct::multi_property_check(
       ++counter;
       if (counter > remaining_claims)
         break;
-      const std::string file =
-        step.source.pc->location.get_file().as_string();
+      const std::string file = step.source.pc->location.get_file().as_string();
       const bool is_library =
         file.find("c2goto/library") != std::string::npos ||
         file.find("/library/") != std::string::npos;
       is_user[counter] = !is_library;
     }
-    std::stable_sort(
-      jobs.begin(), jobs.end(), [&is_user](size_t a, size_t b) {
-        return is_user[a] && !is_user[b];
-      });
+    std::stable_sort(jobs.begin(), jobs.end(), [&is_user](size_t a, size_t b) {
+      return is_user[a] && !is_user[b];
+    });
   }
 
   /* This is a JOB that will:
@@ -2102,6 +2117,8 @@ smt_convt::resultt bmct::multi_property_check(
         options.get_bool_option("generate-pytest-testcase");
       const bool want_ctest =
         options.get_bool_option("generate-ctest-testcase");
+      const bool want_foundry =
+        options.get_bool_option("generate-foundry-testcase");
 
       // Emit testcase metadata once per claim (not once per witness).
       if (want_testcase)
@@ -2161,6 +2178,8 @@ smt_convt::resultt bmct::multi_property_check(
           pytest_gen.collect(local_eq, *solver_ptr);
         if (want_ctest)
           ctest_gen.collect(local_eq, *solver_ptr, ns);
+        if (want_foundry)
+          foundry_gen.collect(local_eq, *solver_ptr, ns);
 
         witnesses.push_back(std::move(w));
 
@@ -2244,8 +2263,7 @@ smt_convt::resultt bmct::multi_property_check(
           // prior set only raises true coverage, so this running count
           // is a sound lower bound on the covered-set authoritative
           // |all_claims ∩ (covered_set ∪ reached_claims)|.
-          goto_coveraget::covered_run.fetch_add(
-            1, std::memory_order_relaxed);
+          goto_coveraget::covered_run.fetch_add(1, std::memory_order_relaxed);
         }
         // "data even on UNKNOWN", default-mode numerator: mirror the
         // canonical bmc.cpp:901 reached_claims.size() (intentionally
@@ -2339,7 +2357,12 @@ smt_convt::resultt bmct::multi_property_check(
     bs && !fc && !is && !options.get_bool_option("k-induction") &&
     !options.get_bool_option("incremental-bmc"))
     report_coverage(
-      options, reached_claims, reached_mul_claims, pytest_gen, ctest_gen);
+      options,
+      reached_claims,
+      reached_mul_claims,
+      pytest_gen,
+      ctest_gen,
+      foundry_gen);
 
   return final_result;
 }

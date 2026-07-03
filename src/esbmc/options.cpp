@@ -402,6 +402,10 @@ const struct group_opt_templ all_cmd_options[] = {
     {"generate-ctest-testcase",
      NULL,
      "If a solution is found, generates CTest testcases for C programs"},
+    {"generate-foundry-testcase",
+     NULL,
+     "If a solution is found, generates a Foundry (*.t.sol) testcase for "
+     "Solidity contracts"},
     {"generate-html-report",
      NULL,
      "If a violation is found, generates a HTML report"},

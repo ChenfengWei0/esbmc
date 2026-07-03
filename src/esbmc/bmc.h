@@ -8,6 +8,7 @@
 #include <goto-symex/witnesses.h>
 #include <goto-symex/pytest.h>
 #include <goto-symex/ctest.h>
+#include <goto-symex/foundry.h>
 #include <langapi/language_ui.h>
 #include <list>
 #include <map>
@@ -47,8 +48,9 @@ protected:
 
   std::unique_ptr<smt_convt> runtime_solver;
   std::unique_ptr<reachability_treet> symex;
-  pytest_generator pytest_gen; // For Python pytest test case generation
-  ctest_generator ctest_gen;   // For C/C++ CTest test case generation
+  pytest_generator pytest_gen;   // For Python pytest test case generation
+  ctest_generator ctest_gen;     // For C/C++ CTest test case generation
+  foundry_generator foundry_gen; // For Solidity Foundry test case generation
   mutable std::atomic<bool> keep_alive_running;
   mutable std::atomic<int> keep_alive_interval;
 
@@ -161,6 +163,7 @@ void report_coverage(
   std::unordered_set<std::string> &reached_claims,
   const std::unordered_multiset<std::string> &reached_mul_claims,
   pytest_generator &pytest_gen,
-  ctest_generator &ctest_gen);
+  ctest_generator &ctest_gen,
+  foundry_generator &foundry_gen);
 
 #endif
