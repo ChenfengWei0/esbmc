@@ -92,9 +92,17 @@ private:
   /// Deduplication fingerprint for a reconstructed test case.
   static std::string fingerprint(const test_case &tc);
 
-  /// Write the `.t.sol` file for the collected/deduplicated test cases.
+  /// Contract under test for a case: the first non-constructor call's contract
+  /// (fallback: the first call's contract). Files split one per primary.
+  static std::string primary_contract(const test_case &tc);
+
+  /// Write one `.t.sol` file for the given contract-under-test. Test cases are
+  /// grouped by construction signature: each distinct construction becomes its
+  /// own `contract <primary>CovTest[_n] is Test` with a `setUp()` that deploys
+  /// the instance, and the cases sharing it become its `test_cov_*` functions.
   void write_foundry_file(
     const std::string &path,
+    const std::string &primary,
     const std::vector<test_case> &cases) const;
 
 public:

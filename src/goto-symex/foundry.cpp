@@ -9,6 +9,7 @@
 #include <set>
 #include <unordered_set>
 #include <algorithm>
+#include <cctype>
 
 // ---------------------------------------------------------------------------
 // Symbol-name parsing
@@ -159,135 +160,204 @@ foundry_generator::get_method_params(
 // Reconstruction
 // ---------------------------------------------------------------------------
 
+// If `raw` is a dispatcher's FIRST nondet guard
+// (`sol:@C@<C>@_ESBMC_Nondet_Extcall_<C>#::$tmp::return_value$_nondet_bool$1`),
+// return <C>; else "". Each such guard marks the start of one transaction: the
+// harness re-enters the dispatcher loop and re-evaluates guard #1.
+static std::string dispatcher_tx_contract(const std::string &raw)
+{
+  const std::string mark = "_ESBMC_Nondet_Extcall_";
+  size_t p = raw.find(mark);
+  if (p == std::string::npos || p < 8 || !has_prefix(raw, "sol:@C@"))
+    return "";
+  if (raw[p - 1] != '@')
+    return "";
+  const std::string guard = "return_value$_nondet_bool$";
+  size_t gp = raw.find(guard);
+  if (gp == std::string::npos)
+    return "";
+  size_t d = gp + guard.size();
+  std::string num;
+  while (d < raw.size() && isdigit(static_cast<unsigned char>(raw[d])))
+    num += raw[d++];
+  if (num != "1")
+    return "";
+  return raw.substr(7, p - 1 - 7);
+}
+
+// Base method name a step is executing, from its source-location function. The
+// Solidity frontend stores either the source name ("probe") or the mangled id
+// (`sol:@C@<C>@F@<m>#..`); both reduce to the source method name.
+static std::string
+step_location_method(const symex_target_equationt::SSA_stept &step)
+{
+  std::string fn = step.source.pc->location.function().as_string();
+  if (fn.empty())
+    return "";
+  if (has_prefix(fn, "sol:@C@"))
+  {
+    size_t f = fn.find("@F@");
+    if (f == std::string::npos)
+      return "";
+    std::string after = fn.substr(f + 3);
+    size_t cut = after.find_first_of("#@");
+    return cut == std::string::npos ? after : after.substr(0, cut);
+  }
+  if (has_prefix(fn, "c::"))
+    fn = fn.substr(3);
+  return fn;
+}
+
+// Does `<contract>` declare a method with source name `<base>`? (Used to accept
+// a step's location as the transaction's called method.)
+static bool is_contract_method(
+  const namespacet &ns,
+  const std::string &contract,
+  const std::string &base)
+{
+  if (base.empty() || base == contract || base[0] == '$' || base[0] == '_')
+    return false;
+  const std::string pfx = "sol:@C@" + contract + "@F@" + base;
+  bool found = false;
+  ns.get_context().foreach_operand([&](const symbolt &s) {
+    if (found || !s.type.is_code())
+      return;
+    const std::string id = s.id.as_string();
+    if (
+      has_prefix(id, pfx) && (id.size() == pfx.size() || id[pfx.size()] == '#'))
+      found = true;
+  });
+  return found;
+}
+
 foundry_generator::test_case foundry_generator::reconstruct(
   const symex_target_equationt &target,
   smt_convt &smt_conv,
   const namespacet &ns) const
 {
-  test_case calls;
-  sol_call current;
-  bool have_current = false;
-
-  // Finalize a grouped call: emit its arguments in DECLARED order, one per
-  // declared parameter. A parameter recovered on the path uses its concrete
-  // value; a parameter not exercised (e.g. a short-circuited operand) falls
-  // back to a type default; any parameter of an unrenderable type makes the
-  // whole call unsupported. This guarantees an arity-correct, compilable call
-  // (or an explicit UNSUPPORTED marker) — never a wrong-arity call.
-  auto flush = [&]() {
-    if (!have_current || current.args.empty())
-    {
-      have_current = false;
-      current = sol_call();
-      return;
-    }
-
-    const auto &decls = get_method_params(ns, current.contract, current.method);
-
+  // Resolve a recovered (contract, method, args) into a compilable call by
+  // matching the method's DECLARED parameters in source order: a recovered
+  // value fills its slot, an un-recovered slot (parameter sliced away because
+  // it is irrelevant to the covered branch, or a short-circuited operand) takes
+  // a type default — sound, since a sliced argument cannot change which branch
+  // is reached — and an unrenderable type flags the call unsupported. This is
+  // always arity-correct: never a wrong-arity call.
+  auto build_call = [&](
+                      const std::string &contract,
+                      const std::string &method,
+                      const std::map<std::string, sol_arg> &recovered) {
     sol_call out;
-    out.contract = current.contract;
-    out.method = current.method;
-
-    if (decls.empty())
+    out.contract = contract;
+    out.method = method;
+    const auto &decls = get_method_params(ns, contract, method);
+    if (decls.empty() && !recovered.empty())
     {
-      // Unknown signature (e.g. overload we could not resolve): fall back to
-      // the recovered args as-is but flag unsupported so we never emit a
-      // possibly-wrong call shape.
-      out.args = current.args;
+      // Unknown/overloaded signature: keep recovered args but flag unsupported
+      // so we never emit a possibly-wrong call shape.
+      for (const auto &kv : recovered)
+        out.args.push_back(kv.second);
       out.supported = false;
+      return out;
     }
-    else
+    for (const auto &decl : decls)
     {
-      for (const auto &decl : decls)
-      {
-        sol_arg a;
-        a.param = decl.first;
-        a.sol_type = decl.second;
-        const sol_arg *rec = nullptr;
-        for (const auto &c : current.args)
-          if (c.param == decl.first)
-          {
-            rec = &c;
-            break;
-          }
-        if (rec && !rec->literal.empty())
-          a.literal = rec->literal;
-        else
-          a.literal = default_sol_literal(decl.second);
-        if (a.literal.empty())
-          out.supported = false;
-        out.args.push_back(a);
-      }
+      sol_arg a;
+      a.param = decl.first;
+      a.sol_type = decl.second;
+      auto it = recovered.find(decl.first);
+      a.literal = (it != recovered.end() && !it->second.literal.empty())
+                    ? it->second.literal
+                    : default_sol_literal(decl.second);
+      if (a.literal.empty())
+        out.supported = false;
+      out.args.push_back(a);
     }
-
-    calls.push_back(out);
-    have_current = false;
-    current = sol_call();
+    return out;
   };
+
+  // Constructor arguments (assigned before the dispatcher loop) and one segment
+  // per transaction. The harness constructs every contract up front, then loops
+  // dispatcher invocations, each running at most one public method chosen by
+  // its first nondet guard. Split at those guards: before the first is
+  // construction; each later segment is one transaction whose method is the
+  // first contract-method body that runs in it.
+  std::map<std::string, std::map<std::string, sol_arg>> ctor_args;
+  struct segment
+  {
+    std::string contract, method;
+    std::map<std::string, sol_arg> args;
+  };
+  std::vector<segment> segs;
 
   for (auto const &step : target.SSA_steps)
   {
-    if (!step.is_assignment())
-      continue;
     if (!smt_conv.l_get(step.guard_ast).is_true())
       continue;
 
-    // Only harness-injected nondet parameter assignments are of interest.
-    expr2tc nondet = symex_slicet::get_nondet_symbol(step.rhs);
-    if (!nondet || !is_symbol2t(nondet))
-      continue;
-    if (!is_symbol2t(step.original_lhs))
-      continue;
-
+    const bool assign_sym =
+      step.is_assignment() && is_symbol2t(step.original_lhs);
     const std::string lhs_id =
-      to_symbol2t(step.original_lhs).thename.as_string();
-    std::string contract, method, param;
-    if (!parse_param_symbol(lhs_id, contract, method, param))
-      continue;
+      assign_sym ? to_symbol2t(step.original_lhs).thename.as_string()
+                 : std::string();
 
-    // A new call starts when the method changes or a parameter repeats
-    // (arguments of one call are assigned consecutively, in declaration
-    // order, by symex_function before the body runs).
-    bool repeat = false;
-    for (const auto &a : current.args)
-      if (a.param == param)
-      {
-        repeat = true;
-        break;
-      }
-    if (
-      have_current &&
-      (current.contract != contract || current.method != method || repeat))
-      flush();
-
-    if (!have_current)
+    // Transaction boundary: a fresh dispatcher invocation.
+    if (assign_sym)
     {
-      current.contract = contract;
-      current.method = method;
-      have_current = true;
+      std::string txc = dispatcher_tx_contract(lhs_id);
+      if (!txc.empty())
+      {
+        segs.push_back(segment{txc, "", {}});
+        continue;
+      }
     }
 
-    // Recover the Solidity source type from the parameter symbol.
-    std::string sol_type;
-    if (const symbolt *psym = ns.lookup(irep_idt(lhs_id)))
-      sol_type = psym->type.get("#sol_type").as_string();
+    // A recovered nondet parameter value.
+    expr2tc nondet =
+      assign_sym ? symex_slicet::get_nondet_symbol(step.rhs) : expr2tc();
+    std::string c, m, p;
+    if (nondet && is_symbol2t(nondet) && parse_param_symbol(lhs_id, c, m, p))
+    {
+      sol_arg a;
+      a.param = p;
+      if (const symbolt *ps = ns.lookup(irep_idt(lhs_id)))
+        a.sol_type = ps->type.get("#sol_type").as_string();
+      a.value = smt_conv.get(nondet);
+      a.literal = format_sol_value(a.sol_type, a.value);
 
-    expr2tc val = smt_conv.get(nondet);
-    sol_arg arg;
-    arg.param = param;
-    arg.sol_type = sol_type;
-    arg.value = val;
-    arg.literal = format_sol_value(sol_type, val);
-    current.args.push_back(arg);
+      if (segs.empty())
+      {
+        if (m == c) // constructor argument (method == contract name)
+          ctor_args[c][p] = a;
+      }
+      else if (c == segs.back().contract)
+      {
+        segs.back().args[p] = a;
+        if (segs.back().method.empty())
+          segs.back().method = m;
+      }
+      continue;
+    }
+
+    // Otherwise fix the transaction's method from the first contract-method
+    // body that executes in it (catches parameterless / sliced-argument calls).
+    if (!segs.empty() && segs.back().method.empty())
+    {
+      const std::string base = step_location_method(step);
+      if (is_contract_method(ns, segs.back().contract, base))
+        segs.back().method = base;
+    }
   }
-  flush();
 
-  // Every contract instance is built with `new C(...)`, so a contract whose
-  // constructor declares parameters needs a constructor call (method ==
-  // contract). If one was not reconstructed from the path (e.g. the ctor args
-  // were not on a guard-true nondet assignment), synthesise it with defaults
-  // so the emitted `new C(...)` still compiles; an unrenderable ctor-arg type
-  // flags it unsupported (the instance is then dropped, never mis-built).
+  test_case calls;
+  for (const auto &kv : ctor_args)
+    calls.push_back(build_call(kv.first, kv.first, kv.second));
+  for (const auto &s : segs)
+    if (!s.method.empty()) // dispatcher chose no method on this path
+      calls.push_back(build_call(s.contract, s.method, s.args));
+
+  // Synthesise a defaulted constructor for any contract that was called but
+  // whose parameterized constructor was not reconstructed, so `new C(...)`
+  // still compiles (parameterless constructors need no call: `new C()`).
   std::set<std::string> used, has_ctor;
   for (const auto &c : calls)
   {
@@ -296,27 +366,13 @@ foundry_generator::test_case foundry_generator::reconstruct(
       has_ctor.insert(c.contract);
   }
   for (const auto &cn : used)
-  {
-    if (has_ctor.count(cn))
-      continue;
-    const auto &cp = get_method_params(ns, cn, cn);
-    if (cp.empty())
-      continue; // parameterless constructor: `new C()` is correct
-    sol_call ctor;
-    ctor.contract = cn;
-    ctor.method = cn;
-    for (const auto &d : cp)
-    {
-      sol_arg a;
-      a.param = d.first;
-      a.sol_type = d.second;
-      a.literal = default_sol_literal(d.second);
-      if (a.literal.empty())
-        ctor.supported = false;
-      ctor.args.push_back(a);
-    }
-    calls.push_back(ctor);
-  }
+    if (!has_ctor.count(cn) && !get_method_params(ns, cn, cn).empty())
+      calls.push_back(build_call(cn, cn, {}));
+
+  // Constructors precede the transactions that use their instance.
+  std::stable_partition(calls.begin(), calls.end(), [](const sol_call &c) {
+    return c.method == c.contract;
+  });
   return calls;
 }
 
@@ -385,13 +441,69 @@ static std::string file_stem(const std::string &path)
 
 void foundry_generator::write_foundry_file(
   const std::string &path,
+  const std::string &primary,
   const std::vector<test_case> &cases) const
 {
-  // Contracts that need importing (sorted for deterministic output).
-  std::set<std::string> contracts;
+  auto join_args = [](const sol_call &call) {
+    std::string s;
+    for (size_t i = 0; i < call.args.size(); ++i)
+      s += (i ? ", " : "") + call.args[i].literal;
+    return s;
+  };
+
+  // A construction plan: one instance per distinct contract (sorted for a
+  // stable var mapping shared across the group), built via its reconstructed
+  // constructor call (or `new C()` when parameterless). A single dispatcher
+  // drives one `_ESBMC_Object_<C>` across all txs, so one instance suffices.
+  struct inst
+  {
+    std::string contract, var, ctor_args;
+    bool buildable;
+  };
+  auto plan_of = [&](const test_case &tc) {
+    std::map<std::string, const sol_call *> ctor;
+    std::set<std::string> used;
+    for (const auto &c : tc)
+    {
+      used.insert(c.contract);
+      if (c.method == c.contract)
+        ctor[c.contract] = &c;
+    }
+    std::vector<inst> plan;
+    for (const auto &cn : used)
+    {
+      inst ib;
+      ib.contract = cn;
+      ib.var = "c" + std::to_string(plan.size());
+      auto it = ctor.find(cn);
+      ib.buildable = it == ctor.end() || it->second->supported;
+      ib.ctor_args = it == ctor.end() ? std::string() : join_args(*it->second);
+      plan.push_back(ib);
+    }
+    return plan;
+  };
+  auto sig_of = [&](const std::vector<inst> &plan) {
+    std::string s;
+    for (const auto &ib : plan)
+      s += ib.contract + "(" + (ib.buildable ? ib.ctor_args : "!") + ");";
+    return s;
+  };
+
+  // Group cases by construction signature, preserving first-seen order.
+  std::vector<std::string> group_order;
+  std::map<std::string, std::vector<const test_case *>> groups;
+  for (const auto &tc : cases)
+  {
+    std::string s = sig_of(plan_of(tc));
+    if (!groups.count(s))
+      group_order.push_back(s);
+    groups[s].push_back(&tc);
+  }
+
+  std::set<std::string> imports;
   for (const auto &tc : cases)
     for (const auto &call : tc)
-      contracts.insert(call.contract);
+      imports.insert(call.contract);
 
   std::string src_base = source_file;
   size_t slash = src_base.find_last_of("/\\");
@@ -404,71 +516,67 @@ void foundry_generator::write_foundry_file(
   f << "// Foundry coverage test reconstructed from ESBMC counterexamples.\n";
   f << "pragma solidity >=0.8.0;\n\n";
   f << "import {Test} from \"forge-std/Test.sol\";\n";
-  for (const auto &c : contracts)
+  for (const auto &c : imports)
     f << "import {" << c << "} from \"./" << src_base << "\";\n";
-  f << "\ncontract " << file_stem(source_file) << "CovTest is Test {\n";
 
-  auto join_args = [](const sol_call &call) {
-    std::string s;
-    for (size_t i = 0; i < call.args.size(); ++i)
-    {
-      if (i)
-        s += ", ";
-      s += call.args[i].literal;
-    }
-    return s;
-  };
-
-  size_t idx = 0;
-  for (const auto &tc : cases)
+  const bool multi = group_order.size() > 1;
+  size_t gidx = 0, fn = 0;
+  for (const auto &s : group_order)
   {
-    f << "  function test_cov_" << idx << "() public {\n";
-
-    // Constructor call (method == contract) carries the `new C(...)` args.
-    std::map<std::string, const sol_call *> ctor;
-    for (const auto &call : tc)
-      if (call.method == call.contract)
-        ctor[call.contract] = &call;
-
-    // One instance per distinct contract, shared across the call sequence: a
-    // multi-transaction counterexample drives a single `_ESBMC_Object_<C>`
-    // across txs, so every call targets the same `new C(...)`. An instance is
-    // built only if its constructor args are renderable; otherwise its calls
-    // are emitted as UNSUPPORTED comments.
-    std::map<std::string, std::string> instance;
-    for (const auto &call : tc)
+    const auto &grp = groups[s];
+    const auto plan = plan_of(*grp.front());
+    std::map<std::string, std::string> var;
+    std::set<std::string> built;
+    for (const auto &ib : plan)
     {
-      if (call.method == call.contract || instance.count(call.contract))
-        continue;
-      auto ci = ctor.find(call.contract);
-      if (ci != ctor.end() && !ci->second->supported)
-        continue; // constructor args unrenderable -> cannot build instance
-      std::string var = "c" + std::to_string(instance.size());
-      instance[call.contract] = var;
-      f << "    " << call.contract << " " << var << " = new " << call.contract
-        << "(" << (ci != ctor.end() ? join_args(*ci->second) : std::string())
-        << ");\n";
+      var[ib.contract] = ib.var;
+      if (ib.buildable)
+        built.insert(ib.contract);
     }
 
-    for (const auto &call : tc)
-    {
-      if (call.method == call.contract)
-        continue; // constructor, already emitted in the `new C(...)`
-      if (!call.supported || !instance.count(call.contract))
-      {
-        f << "    // UNSUPPORTED: " << call.contract << "." << call.method
+    f << "\ncontract " << primary << "CovTest";
+    if (multi)
+      f << "_" << gidx;
+    f << " is Test {\n";
+
+    // State-variable instances, deployed once in setUp() — Foundry re-runs
+    // setUp() before every test_cov_*, giving each a fresh construction.
+    for (const auto &ib : plan)
+      if (ib.buildable)
+        f << "  " << ib.contract << " " << ib.var << ";\n";
+    f << "  function setUp() public {\n";
+    for (const auto &ib : plan)
+      if (ib.buildable)
+        f << "    " << ib.var << " = new " << ib.contract << "(" << ib.ctor_args
+          << ");\n";
+      else
+        f << "    // UNSUPPORTED: constructor of " << ib.contract
           << " has an argument type ESBMC cannot yet render as a literal\n";
-        continue;
-      }
-      f << "    " << instance[call.contract] << "." << call.method << "("
-        << join_args(call) << ");\n";
-    }
     f << "  }\n";
-    ++idx;
+
+    for (const auto *tcp : grp)
+    {
+      f << "  function test_cov_" << fn++ << "() public {\n";
+      for (const auto &call : *tcp)
+      {
+        if (call.method == call.contract)
+          continue; // constructor -> setUp()
+        if (!call.supported || !built.count(call.contract))
+          f << "    // UNSUPPORTED: " << call.contract << "." << call.method
+            << " has an argument type ESBMC cannot yet render as a literal\n";
+        else
+          f << "    " << var[call.contract] << "." << call.method << "("
+            << join_args(call) << ");\n";
+      }
+      f << "  }\n";
+    }
+    f << "}\n";
+    ++gidx;
   }
-  f << "}\n";
 }
 
+// One file per contract-under-test; write_foundry_file then splits each file's
+// cases into per-construction test contracts.
 void foundry_generator::generate() const
 {
   std::lock_guard<std::mutex> lock(data_mutex);
@@ -485,10 +593,27 @@ void foundry_generator::generate() const
     if (seen.insert(fingerprint(tc)).second)
       unique.push_back(tc);
 
-  std::string path = file_stem(source_file) + ".cov.t.sol";
-  write_foundry_file(path, unique);
-  log_status(
-    "Generated Foundry coverage test with {} case(s): {}", unique.size(), path);
+  // Group by contract-under-test, preserving first-seen order.
+  std::vector<std::string> order;
+  std::map<std::string, std::vector<test_case>> by_primary;
+  for (const auto &tc : unique)
+  {
+    std::string p = primary_contract(tc);
+    if (p.empty())
+      p = file_stem(source_file);
+    if (!by_primary.count(p))
+      order.push_back(p);
+    by_primary[p].push_back(tc);
+  }
+
+  for (const auto &p : order)
+  {
+    const auto &cs = by_primary[p];
+    std::string path = p + ".cov.t.sol";
+    write_foundry_file(path, p, cs);
+    log_status(
+      "Generated Foundry coverage test with {} case(s): {}", cs.size(), path);
+  }
 }
 
 void foundry_generator::generate_single(
@@ -507,7 +632,18 @@ void foundry_generator::generate_single(
     return;
   }
 
-  std::string path = file_stem(source_file) + ".cov.t.sol";
-  write_foundry_file(path, {tc});
+  std::string p = primary_contract(tc);
+  if (p.empty())
+    p = file_stem(source_file);
+  std::string path = p + ".cov.t.sol";
+  write_foundry_file(path, p, {tc});
   log_status("Generated Foundry test: {}", path);
+}
+
+std::string foundry_generator::primary_contract(const test_case &tc)
+{
+  for (const auto &c : tc)
+    if (c.method != c.contract)
+      return c.contract;
+  return tc.empty() ? std::string() : tc.front().contract;
 }
