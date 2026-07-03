@@ -941,6 +941,63 @@ bool solidity_convertert::handle_forge_std_assert(
     return true;
   solidity_gen_typecast(ns, a1, a0.type());
 
+  // Reference-type equality (assertEq / assertNotEq only). The generic
+  // equality_exprt below compares heap references: for dynamic `bytes` and for
+  // arrays it would treat two content-equal-but-distinct operands as UNEQUAL —
+  // a false WRONG (reports a correct test as FAILED), violating the never-
+  // false-WRONG contract. Handle these operand types explicitly:
+  //   - dynamic `bytes`: lower to the precise content comparison via the
+  //     C-model helper bytes_dynamic_equal(a, b, $dynamic_pool);
+  //   - arrays (`T[]` / `T[N]`): no cheap content-equality lowering exists, so
+  //     conservatively PRUNE (ASSUME(false)) rather than emit a false-WRONG
+  //     reference assert. This may render the assertion vacuous (an array
+  //     mismatch bug can be missed) but never reports a correct test as WRONG.
+  if (is_eq || is_neq)
+  {
+    if (is_bytes_type(a0.type()))
+    {
+      // Mirror the existing `bytes == bytes` lowering (solidity_convert_expr.cpp
+      // BO_EQ/BO_NE): operands are passed by address via aux vars, the pool by
+      // member, and the return type is the C bool (`bool_t`), not bool_typet().
+      side_effect_expr_function_callt beq;
+      get_library_function_call_no_args(
+        "bytes_dynamic_equal", "c:@F@bytes_dynamic_equal", bool_t, l, beq);
+      exprt a0_tmp = make_aux_var(a0, l);
+      exprt a1_tmp = make_aux_var(a1, l);
+      beq.arguments().push_back(address_of_exprt(a0_tmp));
+      beq.arguments().push_back(address_of_exprt(a1_tmp));
+      exprt pool;
+      if (get_dynamic_pool(expr, pool))
+        return true;
+      beq.arguments().push_back(pool);
+      // The helper returns a C `_Bool` (a bitvector); coerce it to the SMT
+      // boolean sort so it is a valid assert/negation operand.
+      exprt pred = typecast_exprt(beq, bool_typet());
+      exprt cond = is_neq ? (exprt)not_exprt(pred) : pred;
+      code_assertt a(cond);
+      a.location() = l;
+      new_expr = a;
+      handled = true;
+      log_warning(
+        "[foundry] lowered forge-std {} on bytes to bytes_dynamic_equal", name);
+      return false;
+    }
+    const std::string tid = t0.value("typeIdentifier", "");
+    if (tid.rfind("t_array", 0) == 0)
+    {
+      exprt f = false_exprt();
+      code_assumet ap(f);
+      ap.location() = l;
+      new_expr = ap;
+      handled = true;
+      log_warning(
+        "[foundry] {} on array operands -> path pruned (no content-equality "
+        "lowering; conservative, no false WRONG)",
+        name);
+      return false;
+    }
+  }
+
   exprt cond;
   if (is_eq)
     cond = equality_exprt(a0, a1);
