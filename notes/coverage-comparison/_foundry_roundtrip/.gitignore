@@ -5,3 +5,6 @@ demo/lib/
 # large regenerable inputs (regenerate with: solc --ast-compact-json <f>.sol)
 *.solast
 Aqua.flat.sol
+
+# non-portable scratch forge project (symlinked forge-std + 88KB flat sol)
+aqua_forge/

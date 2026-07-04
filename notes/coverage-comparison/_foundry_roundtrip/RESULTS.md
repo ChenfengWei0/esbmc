@@ -86,6 +86,18 @@ empty-mapping `require`, so an assertion-free replay reverts in forge; needs a
 mock ERC20 + `vm.expectRevert`. Generation is no longer the blocker for the
 scalar/bytesN/address methods; the harness environment fidelity is.
 
+**Forge validation of the current Aqua output** (flat `Aqua.sol` as a forge
+`src`, generated test as `test/`): `test_cov_0` — the newly-rendered
+`safeBalances(address(0), address(0), bytes32(0x00..00), address(0), address(0))`
+— **compiles and runs**, and FAILs with exactly the branch ESBMC covered:
+`[FAIL: SafeBalancesForTokenNotInActiveStrategy(0x0, 0x0, 0x0..0, 0x0)]`. That is
+the require-FALSE (revert) branch on the empty mapping; the assertion-free replay
+makes forge count the top-level revert as a failure. So the sliced-bytesN fix
+closes generation, and the demonstrated next step is emitting
+`vm.expectRevert(SafeBalancesForTokenNotInActiveStrategy.selector, ...)` for a
+counterexample that reached a revert (Phase 2). (`ship` stays UNSUPPORTED — it
+takes dynamic `bytes` + arrays, Phase 1's remaining items.)
+
 ## Why the real benchmarks (aqua/EscrowDst/LOP) don't round-trip yet
 
 Ran the generator on the real `aqua Aqua` flat input (the cleanest ESBMC>native
