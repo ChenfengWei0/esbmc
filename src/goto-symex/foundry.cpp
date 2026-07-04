@@ -62,6 +62,130 @@ bool foundry_generator::parse_param_symbol(
 // Value formatting
 // ---------------------------------------------------------------------------
 
+namespace
+{
+// The effective Solidity type string of a lowered parameter type. A fixed
+// bytesN lowers to the `BytesStatic` struct (its `#sol_type` is the tag
+// "BytesStatic"); when the source width survives as `#sol_bytesn_size`
+// (set in get_elementary_type_name, solidity_convert_type.cpp) it is recovered
+// as "BYTES<N>" so the value formatter can render the exact-width literal. All
+// other types pass their `#sol_type` through unchanged. Note the width irep is
+// often stripped by type2tc migration before the generator runs, in which case
+// this returns the bare `#sol_type` and the value-side `.length` fallback in
+// format_bytes_static supplies the width.
+std::string effective_sol_type(const typet &t)
+{
+  const typet &ty = t.is_pointer() ? t.subtype() : t;
+  // A fixed bytesN carries its width as `#sol_bytesn_size`. Key off that
+  // directly — the `#sol_type` tag ("BytesStatic") is not always present on the
+  // lowered type across solc AST shapes, but the width is authoritative when
+  // set.
+  std::string sz = ty.get("#sol_bytesn_size").as_string();
+  if (!sz.empty())
+  {
+    unsigned n = static_cast<unsigned>(std::stoul(sz));
+    if (n >= 1 && n <= 32)
+      return "BYTES" + std::to_string(n);
+  }
+  return ty.get("#sol_type").as_string();
+}
+
+// A `#sol_type` like "BYTES32" names a fixed-size bytesN (N in 1..32).
+// "BytesDynamic"/"BytesStatic" (mixed case) are NOT fixed bytesN and must not
+// match. Returns N, or 0 if `sol_type` is not a fixed bytesN.
+unsigned parse_fixed_bytes_width(const std::string &sol_type)
+{
+  if (!has_prefix(sol_type, "BYTES") || sol_type.size() <= 5)
+    return 0;
+  if (!std::isdigit(static_cast<unsigned char>(sol_type[5])))
+    return 0;
+  unsigned n = static_cast<unsigned>(std::stoul(sol_type.substr(5)));
+  return (n >= 1 && n <= 32) ? n : 0;
+}
+
+// Render a `bytesN` value recovered from the model as a Solidity literal
+// `bytesN(0x..)`. bytesN is modeled as a BytesStatic struct
+// { unsigned char data[32]; size_t length; } with `data` big-endian
+// (data[0] = most-significant byte; see bytes_static_from_uint), which is
+// exactly how solc lays out a bytesN literal, so emitting data[0..N-1] as hex
+// round-trips to the same 32-byte value. Returns "" if the struct/array shape
+// is not a fully-concrete constant.
+std::string format_fixed_bytes(unsigned n, const expr2tc &value)
+{
+  if (!is_constant_struct2t(value))
+    return "";
+  const constant_struct2t &st = to_constant_struct2t(value);
+  if (st.datatype_members.empty())
+    return "";
+  const expr2tc &data = st.datatype_members[0]; // the `data[32]` array
+
+  static const char *hexd = "0123456789abcdef";
+  std::string hex;
+  auto append_byte = [&hex](const expr2tc &e) -> bool {
+    if (!is_constant_int2t(e))
+      return false;
+    unsigned b =
+      static_cast<unsigned>(to_constant_int2t(e).value.to_uint64() & 0xffu);
+    hex.push_back(hexd[(b >> 4) & 0xf]);
+    hex.push_back(hexd[b & 0xf]);
+    return true;
+  };
+
+  if (is_constant_array2t(data))
+  {
+    const constant_array2t &arr = to_constant_array2t(data);
+    for (unsigned i = 0; i < n; ++i)
+    {
+      if (
+        i >= arr.datatype_members.size() ||
+        !append_byte(arr.datatype_members[i]))
+        return "";
+    }
+  }
+  else if (is_constant_array_of2t(data))
+  {
+    // Whole array collapsed to one repeated element (e.g. all-zero).
+    const expr2tc &init = to_constant_array_of2t(data).initializer;
+    for (unsigned i = 0; i < n; ++i)
+      if (!append_byte(init))
+        return "";
+  }
+  else
+    return "";
+
+  return "bytes" + std::to_string(n) + "(0x" + hex + ")";
+}
+
+// If `value` is a recovered BytesStatic struct { unsigned char data[32];
+// size_t length; }, render it as a `bytesN(0x..)` literal, taking the width N
+// from the struct's `.length` member. This is the fallback used when the
+// source `#sol_type` width is unavailable (it is dropped from the lowered type
+// during type2tc migration). N here is the model's chosen length: on a branch
+// that constrains the bytesN (e.g. an equality against a bytesN constant) it
+// equals the true width; for a value the path does not constrain it may not,
+// so callers should prefer the source `#sol_type` width when they have it.
+// Returns "" if the value is not a BytesStatic struct with a concrete in-range
+// length.
+std::string format_bytes_static(const expr2tc &value)
+{
+  if (!is_constant_struct2t(value) || !is_struct_type(value->type))
+    return "";
+  if (
+    to_struct_type(value->type).name.as_string().find("BytesStatic") ==
+    std::string::npos)
+    return "";
+  const constant_struct2t &st = to_constant_struct2t(value);
+  if (
+    st.datatype_members.size() < 2 ||
+    !is_constant_int2t(st.datatype_members[1]))
+    return "";
+  uint64_t n = to_constant_int2t(st.datatype_members[1]).value.to_uint64();
+  if (n < 1 || n > 32)
+    return "";
+  return format_fixed_bytes(static_cast<unsigned>(n), value);
+}
+} // namespace
+
 std::string foundry_generator::format_sol_value(
   const std::string &sol_type,
   const expr2tc &value)
@@ -74,6 +198,16 @@ std::string foundry_generator::format_sol_value(
       return (to_constant_int2t(value).value != 0) ? "true" : "false";
     return "";
   }
+
+  // Fixed-size bytesN (bytes1..bytes32): recovered as a BytesStatic struct.
+  // Prefer the width N from the source `#sol_type` (authoritative for the
+  // Solidity parameter type, so the emitted literal is the exact declared
+  // width); fall back to the struct's own `.length` when the source width is
+  // unavailable (the `#sol_type` string can be dropped by type migration).
+  if (unsigned n = parse_fixed_bytes_width(sol_type))
+    return format_fixed_bytes(n, value);
+  if (std::string bs = format_bytes_static(value); !bs.empty())
+    return bs;
 
   if (!is_constant_int2t(value))
     return "";
@@ -101,6 +235,10 @@ std::string foundry_generator::default_sol_literal(const std::string &sol_type)
     return "0";
   if (sol_type == "ADDRESS" || sol_type == "ADDRESS_PAYABLE")
     return "address(0)";
+  // Fixed-size bytesN not exercised on the path: the zero value is a valid,
+  // faithful default (a sliced/unread bytesN cannot change branch reachability).
+  if (unsigned n = parse_fixed_bytes_width(sol_type))
+    return "bytes" + std::to_string(n) + "(0x" + std::string(2 * n, '0') + ")";
   return "";
 }
 
@@ -232,7 +370,16 @@ params_of_method_id(const namespacet &ns, const std::string &id)
     std::string pname = arg.get_base_name().as_string();
     if (pname.empty() || pname == "this")
       continue;
-    params.emplace_back(pname, arg.type().get("#sol_type").as_string());
+    // Prefer the parameter *symbol*'s type: the code-type argument's type can
+    // lose `#sol_bytesn_size` during type migration, but the parameter symbol
+    // retains it. Fall back to the argument type when the symbol is absent.
+    std::string st;
+    const irep_idt &pid = arg.get_identifier();
+    if (const symbolt *ps = !pid.empty() ? ns.lookup(pid) : nullptr)
+      st = effective_sol_type(ps->type);
+    if (st.empty())
+      st = effective_sol_type(arg.type());
+    params.emplace_back(pname, st);
   }
   return params;
 }
@@ -459,7 +606,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
       sol_arg a;
       a.param = p;
       if (const symbolt *ps = ns.lookup(irep_idt(lhs_id)))
-        a.sol_type = ps->type.get("#sol_type").as_string();
+        a.sol_type = effective_sol_type(ps->type);
       a.value = smt_conv.get(nondet);
       a.literal = format_sol_value(a.sol_type, a.value);
 

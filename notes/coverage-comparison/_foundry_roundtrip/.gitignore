@@ -1,0 +1,7 @@
+# forge build artifacts and non-portable vendored lib (symlink)
+demo/out/
+demo/cache/
+demo/lib/
+# large regenerable inputs (regenerate with: solc --ast-compact-json <f>.sol)
+*.solast
+Aqua.flat.sol
