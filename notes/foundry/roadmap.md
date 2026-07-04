@@ -42,12 +42,12 @@ Biggest hit-rate lever; these currently go UNSUPPORTED.
   a `bytesN` value is a `BytesStatic` struct `{data[32], length}`; read
   `data[0..N-1]` big-endian → `bytesN(0x..)` (round-trips to solc's layout).
   Forge-validated (KA `setHash(bytes32(0x..07))` covers the branch, 33%→100%).
-  OPEN: *sliced* `bytesN` params (value irrelevant to coverage, so not
-  recovered) need a default literal, which needs the width N — but
-  `#sol_bytesn_size` is stripped from the param type during `symbol_typet`→
-  `struct_typet` migration before the generator runs. Generator-side plumbing
-  (`effective_sol_type`, `params_of_method_id` param-symbol preference) is in
-  place; the remaining work is preserving the width through migration.
+  *Sliced* `bytesN` params (value irrelevant to coverage, so not recovered) also
+  DONE: the width is stamped on the code_typet argument in get_function_params
+  (survives the type migration that strips it from the param type), so a sliced
+  bytesN gets an exact-width default (`bytesN(0)`). Aqua `safeBalances` now
+  renders; KA renders both `setHash` branches. Verification-inert (argument
+  attribute, read only by the generator).
 - `bytes`: model dynamic bytes → `hex"..."`.
 - `string`: recover from `$dynamic_pool` → `"..."` (non-printable → UNSUPPORTED).
 - `enum`: `EnumName(v)` or `uint8`.

@@ -373,10 +373,24 @@ params_of_method_id(const namespacet &ns, const std::string &id)
     // Prefer the parameter *symbol*'s type: the code-type argument's type can
     // lose `#sol_bytesn_size` during type migration, but the parameter symbol
     // retains it. Fall back to the argument type when the symbol is absent.
+    // The bytesN width is stamped directly on the code_typet argument
+    // (get_function_params) because it is stripped from the parameter *type*
+    // during type resolution; prefer it. Otherwise fall back to the parameter
+    // symbol's type, then the argument type.
     std::string st;
-    const irep_idt &pid = arg.get_identifier();
-    if (const symbolt *ps = !pid.empty() ? ns.lookup(pid) : nullptr)
-      st = effective_sol_type(ps->type);
+    const std::string bn = arg.get("#sol_bytesn_size").as_string();
+    if (!bn.empty())
+    {
+      unsigned n = static_cast<unsigned>(std::stoul(bn));
+      if (n >= 1 && n <= 32)
+        st = "BYTES" + std::to_string(n);
+    }
+    if (st.empty())
+    {
+      const irep_idt &pid = arg.get_identifier();
+      if (const symbolt *ps = !pid.empty() ? ns.lookup(pid) : nullptr)
+        st = effective_sol_type(ps->type);
+    }
     if (st.empty())
       st = effective_sol_type(arg.type());
     params.emplace_back(pname, st);

@@ -59,22 +59,32 @@ c0.setHash(bytes32(0x0000..0007));                                    // == byte
   value is not fully concrete — the generator degrades gracefully rather than
   emit a value that might drive the wrong branch (anti-goal: never a wrong test).
 
-## Remaining gap — sliced `bytes32` params (why full Aqua still degrades)
+## Sliced `bytes32` params — now rendered (Aqua `safeBalances`)
 
-Regenerating Aqua: `bytes32` **values** now render when recovered, but Aqua's
-`strategyHash` is a *sliced* param (it only indexes a mapping on an empty map, so
-its value cannot change branch reachability — symex slices it away). A sliced
-param has no recovered value, so it needs a **default** literal, which needs the
-width N from the signature. The width `#sol_bytesn_size` is present on the
-parameter type at frontend creation time (verified: `strategyHash` → `32`) but is
+Aqua's `strategyHash` is a *sliced* param (it only indexes a mapping on an empty
+map, so its value cannot change branch reachability — symex slices it away). A
+sliced param has no recovered value, so it needs a **default** literal, which
+needs the width N from the signature. `#sol_bytesn_size` is present on the
+parameter type at frontend creation (verified: `strategyHash` → `32`) but is
 **stripped during `symbol_typet`→`struct_typet` type migration** before the
-generator runs — so decls carry no width and the default can't be formed. The
-generator-side plumbing (`effective_sol_type` keyed on `#sol_bytesn_size`,
-`params_of_method_id` preferring the param symbol) is in place and will activate
-once the width survives migration; that frontend-preservation change is the
-remaining work for full Aqua. Aqua additionally needs the Phase-2 revert
-fidelity (its covered branches sit behind reverting `safeTransferFrom` / empty-
-mapping `require`), so full Aqua alignment is a multi-step follow-up.
+generator runs. Fix: stamp the width directly on the **code_typet argument**
+(get_function_params, an irep on the argument, not its type — survives
+migration); `params_of_method_id` reads it back. Now Aqua generates:
+
+```solidity
+c0.safeBalances(address(0), address(0), bytes32(0x00..00), address(0), address(0));
+```
+
+and KA renders *both* `setHash` branches (the false branch defaults to
+`bytes32(0)`, which correctly `!= bytes32(7)`). The stamp is verification-inert
+(every existing `#sol_bytesn_size` reader reads it from a *type*; the argument
+attribute is read only by the generator).
+
+**Still open for full Aqua alignment:** Phase-2 revert fidelity — Aqua's covered
+branches sit behind reverting `safeTransferFrom` (token = non-contract addr) and
+empty-mapping `require`, so an assertion-free replay reverts in forge; needs a
+mock ERC20 + `vm.expectRevert`. Generation is no longer the blocker for the
+scalar/bytesN/address methods; the harness environment fidelity is.
 
 ## Why the real benchmarks (aqua/EscrowDst/LOP) don't round-trip yet
 

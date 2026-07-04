@@ -76,6 +76,18 @@ bool solidity_convertert::get_function_params(
   param.type() = param_type;
   param.cmt_base_name(name);
 
+  // Carry the fixed-bytes width on the argument itself (not just its type):
+  // bytesN lowers to the shared `BytesStatic` struct, and the per-parameter
+  // width `#sol_bytesn_size` set on the type is dropped when the parameter
+  // type is later resolved/migrated to a plain struct. Stamping it on the
+  // code_typet argument keeps it readable from the function signature (used by
+  // the Foundry testcase generator to render an exact-width `bytesN(..)`).
+  {
+    const std::string bn = param_type.get("#sol_bytesn_size").as_string();
+    if (!bn.empty())
+      param.set("#sol_bytesn_size", bn);
+  }
+
   // 3. get location
   locationt location_begin;
   get_location_from_node(pd, location_begin);
