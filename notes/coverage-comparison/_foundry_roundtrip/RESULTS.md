@@ -148,6 +148,35 @@ Blocker matrix (benchmarks where ESBMC > native):
 | cross-chain `EscrowDst` | Phase 1: methods take an `Immutables` **struct** |
 | LOP `MakerTraitsLib` | pure **library** (internal fns, no deployable dispatcher) — generator has no harness to emit |
 
+## Phase-2 revert fidelity — Phase A (custom error) SHIPPED, forge-validated (2026-07-04)
+
+`revert CustomError(...)` reverting edges are now wrapped in `vm.expectRevert()`.
+Forge round-trip: R.sol `strict(42)` went **FAIL → PASS** (2/2 non-require cases
+green), M.sol `c(42)` (custom error nested after a mutation) PASS. Mechanism:
+`#sol_error` symbol tag → `goto_coverage` conservative straight-line edge walk
+(`edge_reaches_error_revert`) stamps `sol_revert_edge` on the reverting probe →
+generator marks the tx segment active at the covered claim → bare
+`vm.expectRevert()`. Codex-reviewed design (edge direction is shape-dependent, so
+detection is CFG-reachability, not a hard-coded edge; nested/ambiguous → no tag).
+Regression `foundry_covgen_revert_fail`; 118 foundry+goto-coverage tests green.
+Phase B (require) deferred — needs marking the rollback terminator. Detail in
+`notes/foundry/roadmap.md` Phase 2 and `scratchpad/revert-fidelity-plan.md`.
+
+### Original investigation (why it's not a generator-local change)
+
+Investigation (known-answer `scratchpad/revert_ka/R.sol`) shows this is **not** a
+generator-local change:
+the revert is modeled downstream of the branch-coverage claim and sliced out of
+the per-claim equation `collect()` receives, so `foundry.cpp` cannot see it
+(the claim solves SAT — proof no `assume(false)` is on its path). `require`
+lowers to a marker-less early-return; custom-error `revert E(...)` lowers to a
+downstream `FUNCTION_CALL` to an `ASSUME false` error symbol. Faithful detection
+must key off the covered claim's static identity, requiring a cross-cutting
+change (frontend tag → goto_coverage propagation → violated-claim identity into
+`collect()` → generator emits `vm.expectRevert`). Full analysis + minimal design
+in `notes/foundry/roadmap.md` (Phase 2 § "Revert-branch fidelity"). Deferred
+pending go-ahead.
+
 ## Next step
 
 Implement `bytes32` rendering (roadmap Phase 1, top lever): extract the packed

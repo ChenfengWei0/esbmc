@@ -304,6 +304,42 @@ static void collect_short_circuit_decisions(
   }
 }
 
+bool goto_coveraget::edge_reaches_error_revert(
+  goto_programt::const_targett it,
+  goto_programt::const_targett end) const
+{
+  // Bounded straight-line walk. Stop at anything that changes control flow or
+  // merges another edge in; only an unbroken run of straight-line instructions
+  // that reaches an error call proves THIS edge reverts.
+  for (size_t steps = 0; it != end && steps < 256; ++it, ++steps)
+  {
+    // A downstream join (some other edge targets this instruction) means we can
+    // no longer attribute a later terminator to this edge alone.
+    if (steps > 0 && it->is_target())
+      return false;
+    // Control-flow / terminating instructions break the straight-line run.
+    if (
+      it->is_goto() || it->is_return() || it->is_end_function() ||
+      it->is_throw() || it->is_catch())
+      return false;
+    // A lowered `revert CustomError(...)` is a call to a `#sol_error` function.
+    if (it->is_function_call() && is_code_function_call2t(it->code))
+    {
+      const expr2tc &fn = to_code_function_call2t(it->code).function;
+      if (is_symbol2t(fn))
+      {
+        const symbolt *s = ns.lookup(to_symbol2t(fn).thename);
+        if (s && !s->type.get("#sol_error").as_string().empty())
+          return true;
+      }
+      // A non-error call is straight-line; keep walking.
+    }
+    // ASSIGN / DECL / DEAD / SKIP / LOCATION / OTHER / ATOMIC / ASSUME are
+    // straight-line: keep walking.
+  }
+  return false;
+}
+
 void goto_coveraget::branch_coverage()
 {
   log_progress("Adding false assertions...");
@@ -375,7 +411,14 @@ void goto_coveraget::branch_coverage()
         // edge-key, static-universe and cross-run covered-set rules the
         // GOTO-guard path uses, so a folded short-circuit operator and
         // a control-flow guard are counted identically.
-        auto emit_decision = [&](const expr2tc &cond) {
+        // `cond_reverts`/`neg_reverts`: the covered edge behind the
+        // assert(cond) / assert(!cond) probe reverts (require failure / revert
+        // CustomError). Stamp `sol_revert_edge` on that probe so the Foundry
+        // generator emits vm.expectRevert(). Only set for GOTO decisions.
+        auto emit_decision = [&](
+                               const expr2tc &cond,
+                               bool cond_reverts = false,
+                               bool neg_reverts = false) {
           // Per-contract scoping (--contract C, Solidity): only instrument
           // decisions lexically declared inside contract C. The frontend
           // stamps each statement location with "sol_decl_contract" (its
@@ -429,9 +472,17 @@ void goto_coveraget::branch_coverage()
           // the cross-run cover is monotone-∃ (a real witness stays
           // valid). Only true P_SATISFIABLE is ever written back.
           if (!covered_set.count(k_g))
+          {
             insert_assert(goto_program, it, cond);
+            if (cond_reverts)
+              std::prev(it)->location.set("sol_revert_edge", true);
+          }
           if (!covered_set.count(k_ng))
+          {
             insert_assert(goto_program, it, neg);
+            if (neg_reverts)
+              std::prev(it)->location.set("sol_revert_edge", true);
+          }
         };
 
         // convert assertions to true (or assume)
@@ -451,7 +502,19 @@ void goto_coveraget::branch_coverage()
         {
           if (it->is_target())
             target_num = it->target_number;
-          emit_decision(it->guard);
+          // Revert fidelity: classify which edge reverts BEFORE instrumenting
+          // (target/fall-through still point at the original successors). A
+          // probe assert(P) fails when P is false, so assert(it->guard) covers
+          // the FALL-THROUGH edge and assert(!it->guard) the GOTO-taken edge.
+          const bool taken_reverts = edge_reaches_error_revert(
+            it->get_target(), goto_program.instructions.end());
+          const bool fall_reverts = edge_reaches_error_revert(
+            std::next(it), goto_program.instructions.end());
+          // Only tag when exactly one edge reverts (both/neither -> no tag).
+          emit_decision(
+            it->guard,
+            /*cond_reverts=*/fall_reverts && !taken_reverts,
+            /*neg_reverts=*/taken_reverts && !fall_reverts);
         }
 
         // Pure short-circuit ||/&& folded into an ASSIGN rhs / RETURN

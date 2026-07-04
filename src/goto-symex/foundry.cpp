@@ -571,6 +571,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
   {
     std::string contract, method;
     std::map<std::string, sol_arg> args;
+    bool reverts = false;
   };
   std::vector<segment> segs;
 
@@ -578,6 +579,16 @@ foundry_generator::test_case foundry_generator::reconstruct(
   {
     if (!smt_conv.l_get(step.guard_ast).is_true())
       continue;
+
+    // Revert fidelity: the covered branch-coverage claim is the one kept assert
+    // whose guard is true on this path. When goto_coverage marked its edge as a
+    // revert (a `require` failure / `revert CustomError(...)`), the transaction
+    // active at this step reverts, so its call must be wrapped in
+    // vm.expectRevert() to remain a passing Foundry test.
+    if (
+      step.is_assert() && !segs.empty() &&
+      step.source.pc->location.get_bool("sol_revert_edge"))
+      segs.back().reverts = true;
 
     const bool assign_sym =
       step.is_assignment() && is_symbol2t(step.original_lhs);
@@ -644,7 +655,11 @@ foundry_generator::test_case foundry_generator::reconstruct(
     calls.push_back(build_call(kv.first, kv.first, kv.second));
   for (const auto &s : segs)
     if (!s.method.empty()) // dispatcher chose no method on this path
-      calls.push_back(build_call(s.contract, s.method, s.args));
+    {
+      sol_call c = build_call(s.contract, s.method, s.args);
+      c.reverts = s.reverts;
+      calls.push_back(std::move(c));
+    }
 
   // Synthesise a defaulted constructor for any contract that was called but
   // whose parameterized constructor was not reconstructed, so `new C(...)`
@@ -704,6 +719,8 @@ std::string foundry_generator::fingerprint(const test_case &tc)
   std::string fp;
   for (const auto &call : tc)
   {
+    if (call.reverts)
+      fp += "revert:";
     fp += call.contract;
     fp += '.';
     fp += call.method;
@@ -860,8 +877,17 @@ void foundry_generator::write_foundry_file(
           f << "    // UNSUPPORTED: " << call.contract << "." << call.method
             << " has an argument type ESBMC cannot yet render as a literal\n";
         else
+        {
+          // The covered edge reverts (require failure / revert CustomError):
+          // expect the revert so the assertion-free replay stays a PASS in
+          // forge instead of aborting on the top-level revert. Bare
+          // vm.expectRevert() matches any revert (faithful without pinning the
+          // exact selector).
+          if (call.reverts)
+            f << "    vm.expectRevert();\n";
           f << "    " << var[call.contract] << "." << call.method << "("
             << join_args(call) << ");\n";
+        }
       }
       f << "  }\n";
     }
@@ -908,6 +934,18 @@ void foundry_generator::generate() const
     write_foundry_file(path, p, cs);
     log_status(
       "Generated Foundry coverage test with {} case(s): {}", cs.size(), path);
+    // A reverting covered edge (require failure / revert CustomError) is
+    // wrapped in vm.expectRevert() so the assertion-free replay stays a PASS
+    // in forge; report the count so the wrapping is visible/testable.
+    size_t revert_cases = 0;
+    for (const auto &tc : cs)
+      for (const auto &call : tc)
+        if (call.reverts)
+          ++revert_cases;
+    if (revert_cases)
+      log_status(
+        "Foundry: {} call(s) wrapped in vm.expectRevert (reverting branch)",
+        revert_cases);
   }
 }
 

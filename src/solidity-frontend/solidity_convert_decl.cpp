@@ -195,7 +195,8 @@ bool solidity_convertert::get_var_decl(
 
   bool is_contract =
     get_sol_type(t) == SolidityGrammar::SolType::CONTRACT ? true : false;
-  bool is_mapping = get_sol_type(t) == SolidityGrammar::SolType::MAPPING ? true : false;
+  bool is_mapping =
+    get_sol_type(t) == SolidityGrammar::SolType::MAPPING ? true : false;
   bool is_mapping_array = t.get_bool("#sol_mapping_array");
   bool is_new_expr = should_treat_as_new(current_contractName);
   bool is_byte_static = is_bytesN_type(t);
@@ -208,12 +209,11 @@ bool solidity_convertert::get_var_decl(
   // Unifying on the SMT-array model removes that hazard.  Per-instance
   // length isolation is added in the same stage by addr-keying the length
   // companion (see the `_dynarray_len` symbol creation block below).
-  bool is_state_var_check = ast_node.contains("stateVariable") &&
-                            ast_node["stateVariable"].get<bool>();
+  bool is_state_var_check =
+    ast_node.contains("stateVariable") && ast_node["stateVariable"].get<bool>();
   bool is_dynarray_state =
     get_sol_type(t) == SolidityGrammar::SolType::DYNARRAY &&
-    is_state_var_check &&
-    !t.get_bool("#sol_mapping_array");
+    is_state_var_check && !t.get_bool("#sol_mapping_array");
 
   // for mapping: populate the element type (recursively for nested mappings)
   bool is_mapping_of_dynarr = false;
@@ -232,8 +232,9 @@ bool solidity_convertert::get_var_decl(
       cur_type->subtype() = val_t;
 
       // If inner value is also a mapping, continue recursion
-      if (get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
-          val_t.is_array())
+      if (
+        get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
+        val_t.is_array())
       {
         cur_type = &cur_type->subtype();
         cur_node = &val_json;
@@ -257,9 +258,10 @@ bool solidity_convertert::get_var_decl(
     // 1D fixed array leaves carry SolType::ARRAY_LITERAL; 2D+ nested
     // fixed arrays (e.g. T[M][N]) carry SolType::ARRAY — accept both.
     SolidityGrammar::SolType leaf_sol = get_sol_type(cur_type->subtype());
-    if (cur_type == &t && cur_type->is_array() &&
-        (leaf_sol == SolidityGrammar::SolType::ARRAY_LITERAL ||
-         leaf_sol == SolidityGrammar::SolType::ARRAY))
+    if (
+      cur_type == &t && cur_type->is_array() &&
+      (leaf_sol == SolidityGrammar::SolType::ARRAY_LITERAL ||
+       leaf_sol == SolidityGrammar::SolType::ARRAY))
     {
       // Try the per-mapping flat-array encoder first.  Replaces the slow
       // mapping_t + map_fixed_arr_get helper path with a leaf-typed
@@ -278,7 +280,8 @@ bool solidity_convertert::get_var_decl(
         compute_flat_extent(cur_type->subtype(), inner_extent, leaf_t))
       {
         const int map_decl_id = ast_node["id"].get<int>();
-        const unsigned expected_depth = 1 + array_nesting_depth(cur_type->subtype());
+        const unsigned expected_depth =
+          1 + array_nesting_depth(cur_type->subtype());
         if (
           !has_mapping_storage_ref(map_decl_id, current_contractName) &&
           !has_partial_mapping_access(
@@ -289,7 +292,8 @@ bool solidity_convertert::get_var_decl(
           for (unsigned long v = inner_extent - 1; v != 0; v >>= 1)
             ++inner_bits;
           if (inner_extent == 1)
-            inner_bits = 1; // single-element fixed array — still allow a 1-bit slot
+            inner_bits =
+              1; // single-element fixed array — still allow a 1-bit slot
           // Per the existing scalar fast path (solidity_convert_type.cpp:611)
           // the key portion is widened to 256 bits.
           const unsigned index_width = 256 + inner_bits;
@@ -331,20 +335,18 @@ bool solidity_convertert::get_var_decl(
      * bool/bytesN). Non-scalar elements (struct, string, nested array)
      * stay on the pointer model — they need a different element copy
      * protocol that's out of scope for this pass. */
-    if (cur_type->is_array() &&
-        cur_type->subtype().is_pointer() &&
-        get_sol_type(cur_type->subtype()) ==
-          SolidityGrammar::SolType::DYNARRAY)
+    if (
+      cur_type->is_array() && cur_type->subtype().is_pointer() &&
+      get_sol_type(cur_type->subtype()) == SolidityGrammar::SolType::DYNARRAY)
     {
       const typet &elem_t = cur_type->subtype().subtype();
       SolidityGrammar::SolType elem_sol = get_sol_type(elem_t);
-      bool elem_is_scalar =
-        SolidityGrammar::is_uint_type(elem_sol) ||
-        SolidityGrammar::is_int_type(elem_sol) ||
-        SolidityGrammar::is_address_type(elem_sol) ||
-        elem_sol == SolidityGrammar::SolType::BOOL ||
-        elem_sol == SolidityGrammar::SolType::ENUM ||
-        SolidityGrammar::is_bytes_type(elem_sol);
+      bool elem_is_scalar = SolidityGrammar::is_uint_type(elem_sol) ||
+                            SolidityGrammar::is_int_type(elem_sol) ||
+                            SolidityGrammar::is_address_type(elem_sol) ||
+                            elem_sol == SolidityGrammar::SolType::BOOL ||
+                            elem_sol == SolidityGrammar::SolType::ENUM ||
+                            SolidityGrammar::is_bytes_type(elem_sol);
       if (elem_is_scalar)
       {
         typet inner_inf = array_typet(elem_t, exprt("infinity"));
@@ -450,12 +452,10 @@ bool solidity_convertert::get_var_decl(
     // referencing the struct field as if it were a free variable — which
     // then crashes goto-symex with `phi_function: no symbol`. Always take
     // the expression-alias path for non-Identifier RHSes.
-    const bool init_is_identifier =
-      initialValue.contains("nodeType") &&
-      initialValue["nodeType"] == "Identifier";
+    const bool init_is_identifier = initialValue.contains("nodeType") &&
+                                    initialValue["nodeType"] == "Identifier";
     if (
-      init_is_identifier &&
-      initialValue.contains("referencedDeclaration") &&
+      init_is_identifier && initialValue.contains("referencedDeclaration") &&
       get_sol_type(t) == SolidityGrammar::SolType::STRUCT)
     {
       int src_id = initialValue["referencedDeclaration"].get<int>();
@@ -523,8 +523,7 @@ bool solidity_convertert::get_var_decl(
   symbol.static_lifetime = current_contractName.empty() ||
                            (is_mapping && !is_new_expr) ||
                            (is_mapping_array && !is_new_expr) ||
-                           is_dynarray_state ||
-                           (is_library && is_constant);
+                           is_dynarray_state || (is_library && is_constant);
   symbol.file_local = true;
   symbol.is_extern = false;
 
@@ -583,16 +582,10 @@ bool solidity_convertert::get_var_decl(
   {
     std::string len_name = name + "_dynarray_len";
     std::string len_id = id + "_dynarray_len";
-    typet len_arr_t =
-      array_typet(unsignedbv_typet(256), exprt("infinity"));
+    typet len_arr_t = array_typet(unsignedbv_typet(256), exprt("infinity"));
     symbolt len_sym;
     get_default_symbol(
-      len_sym,
-      debug_modulename,
-      len_arr_t,
-      len_name,
-      len_id,
-      location_begin);
+      len_sym, debug_modulename, len_arr_t, len_name, len_id, location_begin);
     len_sym.lvalue = true;
     len_sym.static_lifetime = true;
     len_sym.file_local = true;
@@ -607,8 +600,7 @@ bool solidity_convertert::get_var_decl(
     // contract on its decl pass (merge_inheritance_ast already
     // duplicates the AST node).
     if (!current_contractName.empty())
-      dynarray_state_vars[current_contractName].emplace_back(
-        id, t.subtype());
+      dynarray_state_vars[current_contractName].emplace_back(id, t.subtype());
   }
 
   // 6d. for mapping(K => V[]) state-var: create auxiliary _mapdynarr_len
@@ -666,7 +658,9 @@ bool solidity_convertert::get_var_decl(
     // Nothing to emit at decl time. Fall through to the post-decl
     // block below (which handles other state-var housekeeping).
   }
-  else if (t_sol_type == SolidityGrammar::SolType::ARRAY || t_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
+  else if (
+    t_sol_type == SolidityGrammar::SolType::ARRAY ||
+    t_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL)
   {
     /**
       uint[2] z;            // uint *z = (uint *)calloc(2, sizeof(uint));
@@ -738,10 +732,10 @@ bool solidity_convertert::get_var_decl(
     // Elements are zero by default in the infinite SMT array.
     // For `new uint[](n)`: set length = n
     // For literal init like `= [1,2,3]`: handled in assignment expression
-    if (init_value.contains("nodeType") &&
-        init_value["nodeType"] == "FunctionCall" &&
-        init_value.contains("arguments") &&
-        init_value["arguments"].size() > 0)
+    if (
+      init_value.contains("nodeType") &&
+      init_value["nodeType"] == "FunctionCall" &&
+      init_value.contains("arguments") && init_value["arguments"].size() > 0)
     {
       nlohmann::json callee_arg_json = init_value["arguments"][0];
       exprt size_expr;
@@ -790,8 +784,7 @@ bool solidity_convertert::get_var_decl(
       init_value.contains("expression") &&
       init_value["expression"].contains("nodeType") &&
       init_value["expression"]["nodeType"] == "NewExpression" &&
-      init_value.contains("arguments") &&
-      init_value["arguments"].is_array() &&
+      init_value.contains("arguments") && init_value["arguments"].is_array() &&
       !init_value["arguments"].empty();
 
     if (
@@ -1003,8 +996,8 @@ bool solidity_convertert::get_var_decl(
   // `{base=_ESBMC_inf_*, addr=this->$address}` init block; otherwise
   // `map_fixed_arr_get(&m, k, sz)` sees zero-init fields and every
   // lookup returns a fresh nondet slab.
-  else if (is_mapping &&
-           (is_new_expr || t.get_bool("#sol_mapping_fixed_arr_value")))
+  else if (
+    is_mapping && (is_new_expr || t.get_bool("#sol_mapping_fixed_arr_value")))
   {
     // mapping(string => uint) test;
     // 1. the contract that contains this mapping is also used in a new expression
@@ -1029,11 +1022,7 @@ bool solidity_convertert::get_var_decl(
 
     exprt inits;
     if (build_mapping_t_init_value(
-          current_contractName,
-          name,
-          addr_owner_this,
-          location_begin,
-          inits))
+          current_contractName, name, addr_owner_this, location_begin, inits))
       return true;
 
     added_symbol.value = inits;
@@ -1070,8 +1059,7 @@ bool solidity_convertert::get_var_decl(
   // Only add if no init operand was already pushed by a special-case handler above
   // (arrays, dynarray, mapping, etc. handle their own initialization).
   if (
-    !is_state_var && decl.operands().size() == 1 &&
-    !is_contract && !is_mapping)
+    !is_state_var && decl.operands().size() == 1 && !is_contract && !is_mapping)
     decl.operands().push_back(gen_zero(get_complete_type(t, ns), true));
 
   // store state variable, which will be initialized in the constructor
@@ -1091,10 +1079,8 @@ bool solidity_convertert::get_var_decl(
   if (
     is_state_var &&
     (!is_inherited || inherited_mapping_needs_per_instance_init) &&
-    !(is_contract && !has_init) &&
-    !(is_mapping && !is_new_expr) &&
-    !(is_mapping_array && !is_new_expr) &&
-    !is_dynarray_state)
+    !(is_contract && !has_init) && !(is_mapping && !is_new_expr) &&
+    !(is_mapping_array && !is_new_expr) && !is_dynarray_state)
     move_to_initializer(decl);
 
   decl.location() = location_begin;
@@ -1366,7 +1352,9 @@ bool solidity_convertert::get_struct_class_fields(
   if (get_var_decl_ref(ast_node, false, comp))
     return true;
 
-  if (get_sol_type(comp.type()) == SolidityGrammar::SolType::MAPPING && comp.type().is_array())
+  if (
+    get_sol_type(comp.type()) == SolidityGrammar::SolType::MAPPING &&
+    comp.type().is_array())
   {
     // Mappings (including nested) in contracts not used in `new` expressions
     // are converted to global static infinite arrays.
@@ -1545,7 +1533,8 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
       current_baseContractName = old;
     }
   }
-  else if (node_type == "FunctionDefinition" && current_baseContractName.empty())
+  else if (
+    node_type == "FunctionDefinition" && current_baseContractName.empty())
   {
     // __ESOL_* intrinsic stubs: the user declares these free functions
     // purely so solc accepts the syntax of intrinsic calls; the frontend
@@ -1664,8 +1653,7 @@ void solidity_convertert::add_empty_body_node(nlohmann::json &ast_node)
     for (auto &subNode : ast_node["nodes"])
     {
       if (
-        (subNode["nodeType"] == "FunctionDefinition") &&
-        missing_body(subNode))
+        (subNode["nodeType"] == "FunctionDefinition") && missing_body(subNode))
         subNode["body"] = {
           {"nodeType", "Block"},
           {"statements", nlohmann::json::array()},
@@ -1678,8 +1666,7 @@ void solidity_convertert::add_empty_body_node(nlohmann::json &ast_node)
     for (auto &subNode : ast_node["nodes"])
     {
       if (
-        (subNode["nodeType"] == "FunctionDefinition") &&
-        missing_body(subNode))
+        (subNode["nodeType"] == "FunctionDefinition") && missing_body(subNode))
         subNode["body"] = {
           {"nodeType", "Block"},
           {"statements", nlohmann::json::array()},
@@ -1792,6 +1779,13 @@ bool solidity_convertert::get_error_definition(const nlohmann::json &ast_node)
     }
   }
   added_symbol.type = type;
+
+  // Mark the compiled error function so the Foundry coverage-test generator can
+  // recognise a `revert CustomError(...)` (lowered to a call of this symbol) as
+  // a revert terminator and emit `vm.expectRevert()`. Verification-inert: read
+  // only by goto_coverage's branch-edge classifier and the generator, never by
+  // symex/solver/k-induction.
+  added_symbol.type.set("#sol_error", name);
 
   // Custom error body: `__ESBMC_assume(false)` to prune the revert path
   // at the SMT level (matches real-EVM revert-aborts-construction
@@ -1930,7 +1924,8 @@ void solidity_convertert::get_local_var_decl_name(
       id = "sol:@C@" + cname + "@" + struct_name + "@" + name + "#" +
            i2string(ast_node["id"].get<int>());
   }
-  else if ((current_functionDecl || !current_functionName.empty()) && !cname.empty())
+  else if (
+    (current_functionDecl || !current_functionName.empty()) && !cname.empty())
   {
     // converting local variable inside a function
     // For non-state functions, we give it different id.
@@ -2029,4 +2024,3 @@ void solidity_convertert::get_function_definition_name(
 
   log_debug("solidity", "\t\t@@@ got function name {}", name);
 }
-

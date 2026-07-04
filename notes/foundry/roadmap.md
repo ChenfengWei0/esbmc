@@ -80,8 +80,65 @@ collapse.
 - `msg.value`    → `c.f{value:v}()` + `vm.deal(sender, v)`.
 - `block.timestamp`/`number` → `vm.warp`/`vm.roll` (from `_sol_per_tx_reseed`).
 - `address.balance` → `vm.deal(addr, bal)` (from the EOA balance map).
-- revert-branch coverage → `vm.expectRevert(...)` (a reached revert currently makes
-  the assertion-free replay FAIL in forge instead of counting as covered).
+- revert-branch coverage → `vm.expectRevert(...)`. **Phase A (custom error) DONE,
+  forge-validated 2026-07-04.** A `revert CustomError(...)` reverting edge is now
+  detected and wrapped in bare `vm.expectRevert()`. Mechanism: `get_error_definition`
+  tags the compiled error function symbol `#sol_error`; `goto_coverage.branch_coverage`
+  runs a conservative straight-line walk (`edge_reaches_error_revert`) from each edge
+  of every GOTO decision and stamps `sol_revert_edge` on the reverting edge's probe
+  (only when EXACTLY one edge reverts — nested/ambiguous → no tag); the generator
+  (`foundry.cpp reconstruct`) reads that off the covered claim's kept assert and marks
+  the tx segment active at that step, emitting `vm.expectRevert()` before its call.
+  No bmc/slice signature change (the marker rides the SSA step location). Bare
+  `vm.expectRevert()` (matches any revert) sidesteps selector qualification. Regression
+  `foundry_covgen_revert_fail`; forge: R.sol `strict(42)` FAIL→PASS, M.sol `c(42)` PASS.
+  Phase B (require: mark the `*this=_sol_save_this` rollback terminator for the
+  full-restore form; early-return form needs a k-induction-safe terminator) deferred.
+
+### Revert-branch fidelity — detection is NOT generator-local (2026-07-04 investigation)
+
+Verified against known-answer `R.sol`
+(`require(v>10)` + `revert TooSmall(v)`; see
+`scratchpad/revert_ka/`). The revert is modeled strictly **downstream** of the
+branch-coverage claim and is **sliced out** of the per-claim equation the
+generator sees, so `foundry.cpp` cannot detect it from the SSA it walks:
+
+```
+ASSERT v == 42                 ← the coverage claim (what the counterexample proves reachable)
+IF !(v == 42) THEN GOTO 1
+FUNCTION_CALL: TooSmall(v)      ← the revert; TooSmall's body is `ASSUME false`
+1: ASSIGN this->x = v
+```
+
+- The claim precedes the revert; per-claim slicing drops the `TooSmall` call +
+  its `ASSUME false` from `local_eq`. Self-confirming: the claim solves **SAT**,
+  which is impossible if an `assume(false)` were on its path.
+- `require(cond)` lowers to a bare `IF !cond GOTO end` early-return
+  (`build_revert_rollback_block`, solidity_convert_modifier.cpp:763) — **no**
+  SSA-visible marker at all. Custom-error `revert E(...)` lowers to a
+  `FUNCTION_CALL` to an error symbol (`sol:@C@<C>@F@<E>#..`, body `ASSUME false`,
+  get_error_definition solidity_convert_decl.cpp:1728) — a marker, but downstream
+  and therefore sliced.
+- The only AST-level marker (`#sol_revert_rollback`) is consumed by the reentry
+  check at frontend time and never reaches SSA; `_ESBMC_sol_reverted_flag` exists
+  only under `--bound`/opt-in.
+
+**Consequence:** faithful detection must key off the covered claim's *static*
+identity ("this branch edge leads to a revert"), not the dynamic sliced trace.
+Minimal design (cross-cutting):
+1. Frontend: tag the revert/require branch condition (reuse `#sol_revert_rollback`
+   or a coverage-specific tag) with the error name when known.
+2. `goto_coverage`: propagate the tag onto the reachability assert it synthesises
+   for that edge (into the claim's location/comment).
+3. `collect()`: receive the *violated-claim identity* (bmc.cpp:2181 currently
+   passes only `local_eq` + model — the reconstruction does not know which claim
+   it covers, nor which call in a multi-call tx sequence is the reverting one).
+4. Generator: when the covered claim carries the revert tag, wrap the last call of
+   that tx in `vm.expectRevert(<C>.<E>.selector)` (bare `vm.expectRevert()` when
+   the error is unknown — still faithful, matches any revert).
+
+This is a real multi-component feature, not a `foundry.cpp` edit. Deferred pending
+explicit go-ahead (design fork logged 2026-07-04).
 
 ## Phase 3 — coverage-mode robustness  ⭐ (architectural must-fix)
 Project discipline requires coverage under **k-induction** (fixed unwind is a guess).

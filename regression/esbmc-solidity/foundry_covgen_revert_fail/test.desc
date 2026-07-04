@@ -1,0 +1,6 @@
+CORE
+contract.solast
+--sol contract.sol --contract Rev --branch-coverage --generate-foundry-testcase --no-assertions
+^Generated Foundry coverage test with 2 case\(s\)
+^Foundry: 1 call\(s\) wrapped in vm\.expectRevert \(reverting branch\)$
+^VERIFICATION FAILED$

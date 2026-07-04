@@ -41,6 +41,7 @@ private:
     std::string method;
     std::vector<sol_arg> args;
     bool supported = true; // false if any arg type could not be formatted
+    bool reverts = false;  // covered edge reverts -> wrap in vm.expectRevert()
   };
 
   /// One counterexample -> one test function: a sequence of calls.

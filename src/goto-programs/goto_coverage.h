@@ -209,6 +209,18 @@ protected:
     goto_programt &goto_program,
     goto_programt::instructiont::targett &it);
 
+  // Foundry revert fidelity: conservative straight-line walk from an edge's
+  // first instruction. Returns true iff the edge unconditionally reaches a
+  // revert terminator (a FUNCTION_CALL to a `#sol_error` function — a lowered
+  // `revert CustomError(...)`) before any control-flow change (goto/return/
+  // end/throw/catch) or downstream merge, so a nested conditional revert never
+  // taints the enclosing edge. Used by branch_coverage() to stamp the reverting
+  // edge's probe with `sol_revert_edge`; the Foundry generator reads that off
+  // the covered claim to emit `vm.expectRevert()`.
+  bool edge_reaches_error_revert(
+    goto_programt::const_targett it,
+    goto_programt::const_targett end) const;
+
   namespacet ns;
   goto_functionst &goto_functions;
 
