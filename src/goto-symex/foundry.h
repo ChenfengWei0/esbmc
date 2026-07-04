@@ -115,7 +115,8 @@ private:
   /// grouped by construction signature: each distinct construction becomes its
   /// own `contract <primary>CovTest[_n] is Test` with a `setUp()` that deploys
   /// the instance, and the cases sharing it become its `test_cov_*` functions.
-  void write_foundry_file(
+  /// Returns the number of calls wrapped in revert-tolerant try/catch.
+  size_t write_foundry_file(
     const std::string &path,
     const std::string &primary,
     const std::vector<test_case> &cases) const;

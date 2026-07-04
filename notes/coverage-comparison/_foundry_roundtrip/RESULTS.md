@@ -148,7 +148,22 @@ Blocker matrix (benchmarks where ESBMC > native):
 | cross-chain `EscrowDst` | Phase 1: methods take an `Immutables` **struct** |
 | LOP `MakerTraitsLib` | pure **library** (internal fns, no deployable dispatcher) — generator has no harness to emit |
 
-## Phase-2 revert fidelity — Phase A (custom error) SHIPPED, forge-validated (2026-07-04)
+## Phase-2 revert fidelity — Option 3 (try/catch fallback) SHIPPED, Aqua validated (2026-07-04)
+
+Aqua's revert is `require(cond, SafeBalancesForTokenNotInActiveStrategy(...))` — the
+2-arg require-with-error form, which lowers with NO detectable terminator (Phase A's
+`revert E()` detection does not fire). Rather than build fragile static require detection,
+the generator now emits a **revert-tolerant `try cN.m(args) {} catch {}`** for every call
+whose outcome it cannot prove (keeping precise `vm.expectRevert()` for Phase-A detected
+edges). Emission-only; no frontend/goto_coverage/k-induction change. Codex endorsed this
+(Option 3) over uniform try/catch and over static detection.
+**Real Aqua `safeBalances` (`--focus-function safeBalances --cvc5`): FAIL -> PASS.**
+Q.sol (require+error, Aqua's form) 2/2 + 100% branches; R.sol 4/4 (was 3/4) + 100%;
+multi-call rollback EVM-accurate. Regression `foundry_covgen_require_revert_fail`.
+Known limit: try/catch silently tolerates a wrong-tx-context revert (missing payable
+value / sender — pre-existing gap); `[revert-tolerant]` comment + count keep it auditable.
+
+### Phase A (custom error) — earlier slice, forge-validated (2026-07-04)
 
 `revert CustomError(...)` reverting edges are now wrapped in `vm.expectRevert()`.
 Forge round-trip: R.sol `strict(42)` went **FAIL → PASS** (2/2 non-require cases

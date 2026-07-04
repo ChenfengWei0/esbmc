@@ -92,8 +92,40 @@ collapse.
   No bmc/slice signature change (the marker rides the SSA step location). Bare
   `vm.expectRevert()` (matches any revert) sidesteps selector qualification. Regression
   `foundry_covgen_revert_fail`; forge: R.sol `strict(42)` FAIL→PASS, M.sol `c(42)` PASS.
-  Phase B (require: mark the `*this=_sol_save_this` rollback terminator for the
-  full-restore form; early-return form needs a k-induction-safe terminator) deferred.
+  **CAVEAT — Phase A does NOT cover Aqua.** Aqua's revert is
+  `require(cond, SafeBalancesForTokenNotInActiveStrategy(...))` — the 2-arg
+  `require(cond, ErrorInstance)` form (Solidity >=0.8.26), which the frontend lowers
+  via the require rollback path (the error arg is DROPPED, no error-function call),
+  i.e. shape `a` (early-return, no terminator). Verified: minimal `require(v!=7, Bad(v))`
+  (scratchpad/revert_ka/Q.sol) and actual Aqua `safeBalances`
+  (`--focus-function safeBalances --cvc5`, 6.25%) both generate the call with NO
+  `vm.expectRevert`. So Aqua needs Phase B.
+  **Phase B SOLVED via Option 3 (try/catch fallback) — DONE, forge + Aqua validated
+  2026-07-04.** Rather than statically detect the require revert (a hard, edge-polarity-
+  and k-induction-sensitive problem — the cond-comparison design below was DEFERRED in
+  favour of this), the generator now emits, for every external call it CANNOT prove the
+  outcome of (i.e. not a Phase-A detected `revert E()` edge):
+  `// [revert-tolerant]` + `try cN.m(args) {} catch {}`. This swallows an undetected
+  revert so the assertion-free replay stays a PASS in forge; a non-reverting call runs
+  normally in the try body. Phase-A detected edges KEEP the precise `vm.expectRevert()`
+  (so an ESBMC<->forge divergence still surfaces loudly). Emission-only change
+  (foundry.cpp write_foundry_file) — NO frontend/goto_coverage/k-induction change.
+  Counts logged ("N wrapped in vm.expectRevert (detected)" + "N in revert-tolerant
+  try/catch"). Codex-reviewed (endorsed Option 3 > uniform try/catch > static detection).
+  **Real Aqua `safeBalances` (`--focus-function safeBalances --cvc5`): FAIL -> PASS.**
+  Forge round-trips: Q.sol (require+error) 2/2 + 100% branches; R.sol 4/4 (was 3/4) +
+  100%; multi-call rollback confirmed EVM-accurate (per-call state rollback matches
+  ESBMC tx-isolation). Regression `foundry_covgen_require_revert_fail`.
+  KNOWN LIMIT (Codex): try/catch converts a wrong-tx-context divergence (missing payable
+  `{value:v}` / sender `vm.prank` — a pre-existing gap) from a loud FAIL into a silent
+  pass; the `[revert-tolerant]` comment + count keep it auditable, but value/sender-
+  dependent branches are NOT claimed as faithfully reproduced.
+  (DEFERRED cond-comparison design, kept for reference: reverting edge = edge taken when
+  require COND is false; guard polarity shape-dependent — frontend stamps simplified cond,
+  goto_coverage compares simplify(guard) to simplify(cond)/simplify(!cond). Metadata-only /
+  k-induction inert, but misses side-effecting/split conditions. Superseded by Option 3.)
+  Full Aqua whole-unit still times out (solver-scale, 0 reached/240s) => end-to-end Aqua
+  validation needs `--focus-function` + `--cvc5`.
 
 ### Revert-branch fidelity — detection is NOT generator-local (2026-07-04 investigation)
 
