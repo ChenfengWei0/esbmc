@@ -64,15 +64,15 @@ bool foundry_generator::parse_param_symbol(
 
 namespace
 {
-// The effective Solidity type string of a lowered parameter type. A fixed
+// The effective Solidity type string of a lowered parameter *type*. A fixed
 // bytesN lowers to the `BytesStatic` struct (its `#sol_type` is the tag
 // "BytesStatic"); when the source width survives as `#sol_bytesn_size`
 // (set in get_elementary_type_name, solidity_convert_type.cpp) it is recovered
 // as "BYTES<N>" so the value formatter can render the exact-width literal. All
-// other types pass their `#sol_type` through unchanged. Note the width irep is
-// often stripped by type2tc migration before the generator runs, in which case
-// this returns the bare `#sol_type` and the value-side `.length` fallback in
-// format_bytes_static supplies the width.
+// other types pass their `#sol_type` through unchanged. The width irep is often
+// stripped from the type by type2tc migration before the generator runs; for
+// that reason the authoritative source is the width stamped on the code_typet
+// argument itself (see arg_sol_type / get_function_params), not this type.
 std::string effective_sol_type(const typet &t)
 {
   const typet &ty = t.is_pointer() ? t.subtype() : t;
@@ -156,33 +156,22 @@ std::string format_fixed_bytes(unsigned n, const expr2tc &value)
   return "bytes" + std::to_string(n) + "(0x" + hex + ")";
 }
 
-// If `value` is a recovered BytesStatic struct { unsigned char data[32];
-// size_t length; }, render it as a `bytesN(0x..)` literal, taking the width N
-// from the struct's `.length` member. This is the fallback used when the
-// source `#sol_type` width is unavailable (it is dropped from the lowered type
-// during type2tc migration). N here is the model's chosen length: on a branch
-// that constrains the bytesN (e.g. an equality against a bytesN constant) it
-// equals the true width; for a value the path does not constrain it may not,
-// so callers should prefer the source `#sol_type` width when they have it.
-// Returns "" if the value is not a BytesStatic struct with a concrete in-range
-// length.
-std::string format_bytes_static(const expr2tc &value)
+// Effective sol-type string of a code_typet argument. Prefers the fixed-bytes
+// width stamped directly on the argument (`#sol_bytesn_size`, set in
+// get_function_params) — this is the authoritative source-declared width and
+// survives the type migration that strips it from the argument *type*. Falls
+// back to the argument type's own tags. `arg` is a code_typet::argumentt
+// (an exprt subtype), so both the direct irep and its type are queryable.
+std::string arg_sol_type(const exprt &arg)
 {
-  if (!is_constant_struct2t(value) || !is_struct_type(value->type))
-    return "";
-  if (
-    to_struct_type(value->type).name.as_string().find("BytesStatic") ==
-    std::string::npos)
-    return "";
-  const constant_struct2t &st = to_constant_struct2t(value);
-  if (
-    st.datatype_members.size() < 2 ||
-    !is_constant_int2t(st.datatype_members[1]))
-    return "";
-  uint64_t n = to_constant_int2t(st.datatype_members[1]).value.to_uint64();
-  if (n < 1 || n > 32)
-    return "";
-  return format_fixed_bytes(static_cast<unsigned>(n), value);
+  const std::string bn = arg.get("#sol_bytesn_size").as_string();
+  if (!bn.empty() && bn.find_first_not_of("0123456789") == std::string::npos)
+  {
+    unsigned n = static_cast<unsigned>(std::stoul(bn));
+    if (n >= 1 && n <= 32)
+      return "BYTES" + std::to_string(n);
+  }
+  return effective_sol_type(arg.type());
 }
 } // namespace
 
@@ -200,14 +189,14 @@ std::string foundry_generator::format_sol_value(
   }
 
   // Fixed-size bytesN (bytes1..bytes32): recovered as a BytesStatic struct.
-  // Prefer the width N from the source `#sol_type` (authoritative for the
-  // Solidity parameter type, so the emitted literal is the exact declared
-  // width); fall back to the struct's own `.length` when the source width is
-  // unavailable (the `#sol_type` string can be dropped by type migration).
+  // The width N MUST come from the declared source type (`#sol_type` =
+  // "BYTES<N>"); we never infer it from the recovered struct's `.length`, which
+  // is a free nondet value on any path that does not constrain the bytesN and
+  // could otherwise yield a wrong-width literal for the declared parameter. If
+  // the caller cannot supply the declared width, the value degrades to "" (the
+  // call is then UNSUPPORTED) rather than risk a wrong-width/wrong-value test.
   if (unsigned n = parse_fixed_bytes_width(sol_type))
     return format_fixed_bytes(n, value);
-  if (std::string bs = format_bytes_static(value); !bs.empty())
-    return bs;
 
   if (!is_constant_int2t(value))
     return "";
@@ -280,9 +269,10 @@ foundry_generator::get_method_params(
       std::string pname = arg.get_base_name().as_string();
       if (pname.empty() || pname == "this")
         continue;
-      // Source type from the argument's own `#sol_type`; fall back to the
-      // parameter symbol (`sol:@C@<C>@F@<method>@<param>`) if absent.
-      std::string stype = arg.type().get("#sol_type").as_string();
+      // Source type: prefer the width stamped on the argument (arg_sol_type,
+      // which also handles bytesN via `#sol_bytesn_size`), then the parameter
+      // symbol (`sol:@C@<C>@F@<method>@<param>`) if the argument carries none.
+      std::string stype = arg_sol_type(arg);
       if (stype.empty())
       {
         std::string pid = fn_prefix + "@" + pname;
@@ -370,29 +360,15 @@ params_of_method_id(const namespacet &ns, const std::string &id)
     std::string pname = arg.get_base_name().as_string();
     if (pname.empty() || pname == "this")
       continue;
-    // Prefer the parameter *symbol*'s type: the code-type argument's type can
-    // lose `#sol_bytesn_size` during type migration, but the parameter symbol
-    // retains it. Fall back to the argument type when the symbol is absent.
-    // The bytesN width is stamped directly on the code_typet argument
-    // (get_function_params) because it is stripped from the parameter *type*
-    // during type resolution; prefer it. Otherwise fall back to the parameter
-    // symbol's type, then the argument type.
-    std::string st;
-    const std::string bn = arg.get("#sol_bytesn_size").as_string();
-    if (!bn.empty())
-    {
-      unsigned n = static_cast<unsigned>(std::stoul(bn));
-      if (n >= 1 && n <= 32)
-        st = "BYTES" + std::to_string(n);
-    }
+    // Prefer the width stamped on the argument (arg_sol_type), then the
+    // parameter symbol's type when the argument carries no source tag.
+    std::string st = arg_sol_type(arg);
     if (st.empty())
     {
       const irep_idt &pid = arg.get_identifier();
       if (const symbolt *ps = !pid.empty() ? ns.lookup(pid) : nullptr)
         st = effective_sol_type(ps->type);
     }
-    if (st.empty())
-      st = effective_sol_type(arg.type());
     params.emplace_back(pname, st);
   }
   return params;
@@ -563,9 +539,18 @@ foundry_generator::test_case foundry_generator::reconstruct(
       a.param = decl.first;
       a.sol_type = decl.second;
       auto it = recovered.find(decl.first);
-      a.literal = (it != recovered.end() && !it->second.literal.empty())
-                    ? it->second.literal
-                    : default_sol_literal(decl.second);
+      // Re-format any recovered value against the DECLARED type (decl.second),
+      // which carries the authoritative source width — critical for bytesN,
+      // whose width must be the declared width, not one inferred from the
+      // recovered struct's `.length`. The recovery-site literal was computed
+      // from the (possibly width-degraded) parameter symbol type, so only use
+      // it as a fallback when re-formatting yields nothing.
+      if (it != recovered.end() && it->second.value)
+        a.literal = format_sol_value(decl.second, it->second.value);
+      if (a.literal.empty() && it != recovered.end())
+        a.literal = it->second.literal;
+      if (a.literal.empty())
+        a.literal = default_sol_literal(decl.second);
       if (a.literal.empty())
         out.supported = false;
       else if (overloaded)

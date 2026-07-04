@@ -59,6 +59,33 @@ c0.setHash(bytes32(0x0000..0007));                                    // == byte
   value is not fully concrete — the generator degrades gracefully rather than
   emit a value that might drive the wrong branch (anti-goal: never a wrong test).
 
+## Codex adversarial review — two defects found and fixed
+
+A fresh Codex review of the bytesN commits found two real defects; both fixed in
+`src/goto-symex/foundry.cpp` (generator-only; no frontend change):
+
+- **Defect 1 (soundness, wrong-width literal):** a *recovered* bytesN value was
+  formatted at the recovery site via the parameter symbol's type, which is
+  width-degraded; it then fell to a `.length`-based width fallback that could
+  emit a wrong-width literal (e.g. `bytes32(..)` for a `bytes4` param — the exact
+  anti-goal). Fix: `build_call` now re-formats every recovered value against the
+  **declared** type (`decl.second`, which carries the authoritative stamped
+  width), and the `.length` fallback was removed entirely — a bytesN with no
+  declared width degrades to UNSUPPORTED rather than guess.
+- **Defect 2 (constructor coverage):** `get_method_params` (constructor / base-
+  name path) didn't read the argument width stamp, so constructor `bytesN` args
+  went UNSUPPORTED. Fix: route it through the shared `arg_sol_type` helper.
+
+Known-answer `KB` (bytes4 param + bytes4 constructor arg, forge-validated):
+```solidity
+setUp():  c0 = new KB(bytes4(0x00000000));                 // ctor bytes4 (defect 2)
+test_0:   c0.poke(bytes4(0x12345678));                     // recovered value, EXACT width (defect 1)
+test_1:   c0.poke(bytes4(0xffffffff));                     // false branch, still bytes4
+```
+Forge: KB compiles, 2/2 tests pass, **100% (1/1) branch coverage**. Regression
+test `regression/esbmc-solidity/foundry_covgen_bytesN_fail` added; foundry suite
+8/8.
+
 ## Sliced `bytes32` params — now rendered (Aqua `safeBalances`)
 
 Aqua's `strategyHash` is a *sliced* param (it only indexes a mapping on an empty

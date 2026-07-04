@@ -21,6 +21,6 @@ contract KACovTest is Test {
     c0.setHash(bytes32(0x0000000000000000000000000000000000000000000000000000000000000007));
   }
   function test_cov_3() public {
-    // UNSUPPORTED: KA.setHash has an argument type ESBMC cannot yet render as a literal
+    c0.setHash(bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff));
   }
 }
