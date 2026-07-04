@@ -63,6 +63,20 @@ private:
     const std::string &contract,
     const std::string &method) const;
 
+  /// Cache of a contract's dispatcher-callable methods: base-name -> list of
+  /// full method-ids (`sol:@C@<C>@F@<m>#<id>`); >1 id means the base name is
+  /// overloaded. Keyed by contract name.
+  mutable std::map<std::string, std::map<std::string, std::vector<std::string>>>
+    dispatcher_methods;
+
+  /// The methods a contract's `_ESBMC_Nondet_Extcall_<C>` dispatcher can
+  /// invoke as a transaction entry, extracted from the dispatcher body. This
+  /// is the ground truth of externally-callable methods: modifier/aux helpers
+  /// (e.g. a `bump_onlyOwner` the dispatcher never calls directly) are absent,
+  /// and overloads appear as multiple ids under one base name. Cached.
+  const std::map<std::string, std::vector<std::string>> &
+  dispatcher_callable(const namespacet &ns, const std::string &contract) const;
+
   /// Parse a Solidity parameter symbol name
   /// `sol:@C@<contract>@F@<method>@<param>` into its parts. Returns false if
   /// the name is not a Solidity function parameter.

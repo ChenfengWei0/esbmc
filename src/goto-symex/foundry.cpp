@@ -4,6 +4,8 @@
 #include <util/prefix.h>
 #include <util/mp_arith.h>
 #include <util/message/format.h>
+#include <util/std_code.h>
+#include <util/std_expr.h>
 #include <irep2/irep2_expr.h>
 #include <fstream>
 #include <set>
@@ -156,6 +158,105 @@ foundry_generator::get_method_params(
   return method_params.emplace(key, std::move(params)).first->second;
 }
 
+// Recurse a dispatcher body, recording every direct call to a contract method
+// `sol:@C@<C>@F@<base>#<id>` (prefix `cpfx`) as base -> {ids}. Aux/modifier
+// helpers the dispatcher never calls directly are naturally excluded.
+static void collect_dispatch_calls(
+  const exprt &e,
+  const std::string &cpfx,
+  std::map<std::string, std::vector<std::string>> &calls)
+{
+  // The frontend emits calls as `side_effect_expr_function_call` (id
+  // "sideeffect", statement "function_call"); goto-lowered bodies use
+  // `code_function_call`. Handle both; the callee is the function operand.
+  const exprt *callee = nullptr;
+  if (e.is_code() && to_code(e).get_statement() == "function_call")
+    callee = &to_code_function_call(to_code(e)).function();
+  else if (
+    e.id() == "sideeffect" && e.get("statement") == "function_call" &&
+    !e.operands().empty())
+    callee = &e.op0();
+
+  if (callee && callee->id() == "symbol")
+  {
+    const std::string id = callee->get("identifier").as_string();
+    if (has_prefix(id, cpfx))
+    {
+      std::string rest = id.substr(cpfx.size());
+      size_t h = rest.find('#');
+      std::string base = h == std::string::npos ? rest : rest.substr(0, h);
+      if (
+        !base.empty() && base[0] != '_' && base[0] != '$' &&
+        base.find('@') == std::string::npos)
+      {
+        auto &v = calls[base];
+        if (std::find(v.begin(), v.end(), id) == v.end())
+          v.push_back(id);
+      }
+    }
+  }
+  forall_operands (op, e)
+    collect_dispatch_calls(*op, cpfx, calls);
+}
+
+const std::map<std::string, std::vector<std::string>> &
+foundry_generator::dispatcher_callable(
+  const namespacet &ns,
+  const std::string &contract) const
+{
+  auto it = dispatcher_methods.find(contract);
+  if (it != dispatcher_methods.end())
+    return it->second;
+
+  std::map<std::string, std::vector<std::string>> calls;
+  const std::string disp_id =
+    "sol:@C@" + contract + "@_ESBMC_Nondet_Extcall_" + contract + "#";
+  if (const symbolt *disp = ns.lookup(irep_idt(disp_id)))
+    collect_dispatch_calls(disp->value, "sol:@C@" + contract + "@F@", calls);
+
+  return dispatcher_methods.emplace(contract, std::move(calls)).first->second;
+}
+
+// Declared parameters (source order, `#sol_type`) of an exact method symbol id,
+// skipping the synthesised `this` self-pointer. Used to resolve overloads,
+// where the base name alone is ambiguous.
+static std::vector<std::pair<std::string, std::string>>
+params_of_method_id(const namespacet &ns, const std::string &id)
+{
+  std::vector<std::pair<std::string, std::string>> params;
+  const symbolt *fn = ns.lookup(irep_idt(id));
+  if (!fn || !fn->type.is_code())
+    return params;
+  for (const auto &arg : to_code_type(fn->type).arguments())
+  {
+    std::string pname = arg.get_base_name().as_string();
+    if (pname.empty() || pname == "this")
+      continue;
+    params.emplace_back(pname, arg.type().get("#sol_type").as_string());
+  }
+  return params;
+}
+
+// Wrap an integer literal in an explicit typed cast so Solidity's overload
+// resolution selects the intended overload; bool/address literals are already
+// unambiguous and pass through.
+static std::string
+cast_for_overload(const std::string &sol_type, const std::string &lit)
+{
+  std::string ty;
+  if (has_prefix(sol_type, "UINT"))
+    ty = "uint" + sol_type.substr(4);
+  else if (has_prefix(sol_type, "INT"))
+    ty = "int" + sol_type.substr(3);
+  else
+    return lit;
+  if (ty == "uint")
+    ty = "uint256";
+  if (ty == "int")
+    ty = "int256";
+  return ty + "(" + lit + ")";
+}
+
 // ---------------------------------------------------------------------------
 // Reconstruction
 // ---------------------------------------------------------------------------
@@ -208,28 +309,6 @@ step_location_method(const symex_target_equationt::SSA_stept &step)
   return fn;
 }
 
-// Does `<contract>` declare a method with source name `<base>`? (Used to accept
-// a step's location as the transaction's called method.)
-static bool is_contract_method(
-  const namespacet &ns,
-  const std::string &contract,
-  const std::string &base)
-{
-  if (base.empty() || base == contract || base[0] == '$' || base[0] == '_')
-    return false;
-  const std::string pfx = "sol:@C@" + contract + "@F@" + base;
-  bool found = false;
-  ns.get_context().foreach_operand([&](const symbolt &s) {
-    if (found || !s.type.is_code())
-      return;
-    const std::string id = s.id.as_string();
-    if (
-      has_prefix(id, pfx) && (id.size() == pfx.size() || id[pfx.size()] == '#'))
-      found = true;
-  });
-  return found;
-}
-
 foundry_generator::test_case foundry_generator::reconstruct(
   const symex_target_equationt &target,
   smt_convt &smt_conv,
@@ -249,16 +328,74 @@ foundry_generator::test_case foundry_generator::reconstruct(
     sol_call out;
     out.contract = contract;
     out.method = method;
-    const auto &decls = get_method_params(ns, contract, method);
-    if (decls.empty() && !recovered.empty())
+
+    // Resolve the exact method signature. For a dispatcher-callable method we
+    // use its exact id (disambiguating overloads by which recovered parameter
+    // names the candidate declares); a constructor or otherwise-unlisted method
+    // falls back to base-name lookup.
+    const auto &callable = dispatcher_callable(ns, contract);
+    auto cit = callable.find(method);
+    std::vector<std::pair<std::string, std::string>> decls;
+    bool overloaded = false;
+
+    if (cit != callable.end() && !cit->second.empty())
     {
-      // Unknown/overloaded signature: keep recovered args but flag unsupported
-      // so we never emit a possibly-wrong call shape.
-      for (const auto &kv : recovered)
-        out.args.push_back(kv.second);
-      out.supported = false;
-      return out;
+      const auto &ids = cit->second;
+      if (ids.size() == 1)
+        decls = params_of_method_id(ns, ids.front());
+      else
+      {
+        // Overloaded: pick the single candidate declaring every recovered
+        // parameter name. No unique match (incl. no recovered args) -> we
+        // cannot know which overload ran, so mark unsupported rather than guess.
+        overloaded = true;
+        std::string chosen;
+        for (const auto &id : ids)
+        {
+          auto p = params_of_method_id(ns, id);
+          bool ok = true;
+          for (const auto &kv : recovered)
+            if (std::none_of(p.begin(), p.end(), [&](const auto &d) {
+                  return d.first == kv.first;
+                }))
+            {
+              ok = false;
+              break;
+            }
+          if (ok && !recovered.empty())
+          {
+            if (!chosen.empty())
+            {
+              chosen.clear(); // ambiguous
+              break;
+            }
+            chosen = id;
+            decls = std::move(p);
+          }
+        }
+        if (chosen.empty())
+        {
+          for (const auto &kv : recovered)
+            out.args.push_back(kv.second);
+          out.supported = false;
+          return out;
+        }
+      }
     }
+    else
+    {
+      decls = get_method_params(ns, contract, method);
+      if (decls.empty() && !recovered.empty())
+      {
+        // Unknown signature: keep recovered args but flag unsupported so we
+        // never emit a possibly-wrong call shape.
+        for (const auto &kv : recovered)
+          out.args.push_back(kv.second);
+        out.supported = false;
+        return out;
+      }
+    }
+
     for (const auto &decl : decls)
     {
       sol_arg a;
@@ -270,6 +407,8 @@ foundry_generator::test_case foundry_generator::reconstruct(
                     : default_sol_literal(decl.second);
       if (a.literal.empty())
         out.supported = false;
+      else if (overloaded)
+        a.literal = cast_for_overload(decl.second, a.literal);
       out.args.push_back(a);
     }
     return out;
@@ -332,18 +471,24 @@ foundry_generator::test_case foundry_generator::reconstruct(
       else if (c == segs.back().contract)
       {
         segs.back().args[p] = a;
-        if (segs.back().method.empty())
+        // Only accept `m` as the transaction's method if the dispatcher can
+        // actually call it. A recovered parameter may belong to a modifier/aux
+        // helper (`<method>_<modifier>`) the dispatcher never enters directly;
+        // its value still belongs to the real method, but its name must not be
+        // emitted as the call. The real entry is set from source-location below.
+        if (segs.back().method.empty() && dispatcher_callable(ns, c).count(m))
           segs.back().method = m;
       }
       continue;
     }
 
-    // Otherwise fix the transaction's method from the first contract-method
-    // body that executes in it (catches parameterless / sliced-argument calls).
+    // Otherwise fix the transaction's method from the first dispatcher-callable
+    // body that executes in it (catches parameterless / sliced-argument calls,
+    // and skips modifier/aux helpers that are not external entries).
     if (!segs.empty() && segs.back().method.empty())
     {
       const std::string base = step_location_method(step);
-      if (is_contract_method(ns, segs.back().contract, base))
+      if (dispatcher_callable(ns, segs.back().contract).count(base))
         segs.back().method = base;
     }
   }
@@ -505,7 +650,11 @@ void foundry_generator::write_foundry_file(
     for (const auto &call : tc)
       imports.insert(call.contract);
 
-  std::string src_base = source_file;
+  // Import from the Solidity source (`--sol`), not the `.solast` AST input:
+  // forge compiles `.sol`, and the two share a directory.
+  std::string src_base = config.options.get_option("sol");
+  if (src_base.empty())
+    src_base = source_file;
   size_t slash = src_base.find_last_of("/\\");
   if (slash != std::string::npos)
     src_base = src_base.substr(slash + 1);
