@@ -1452,6 +1452,72 @@ bool is_supported_yul_builtin(const std::string &name)
     "sstore"};
   return ok.count(name) != 0;
 }
+
+// Storage byte size for the value types supported by single-slot struct
+// packing: unsigned integers (address is uint160 -> 20 bytes) and bool.
+// Signed ints (unpack would need `signextend`, unsupported), bytesN (modelled
+// as a BytesStatic struct, not a bitvector), and every reference type are
+// rejected so the caller aborts precise lowering and falls back to havoc.
+bool yul_pack_value_byte_size(
+  const namespacet &ns,
+  const typet &t,
+  unsigned &bytes)
+{
+  typet rt = t;
+  while (rt.id() == "symbol")
+    rt = ns.follow(rt);
+  if (rt.id() == "bool")
+  {
+    bytes = 1;
+    return true;
+  }
+  if (rt.id() == "unsignedbv")
+  {
+    unsigned w = to_unsignedbv_type(rt).get_width();
+    if (w == 0 || (w % 8) != 0 || w > 256)
+      return false;
+    bytes = w / 8;
+    return true;
+  }
+  return false;
+}
+
+struct yul_slot_field
+{
+  exprt member;
+  unsigned bitoffset;
+  unsigned bitwidth;
+};
+
+// Compute the slot-0 field layout of `struct_lval` (of struct type `st`).
+// Returns false (abort precise lowering) unless EVERY field is a supported
+// value type AND the whole struct fits in one 32-byte slot: Solidity never
+// straddles a field across a slot boundary, so a spill past 32 bytes means the
+// struct is multi-slot -> outside the single-slot subset -> abort.
+bool yul_pack_slot0_fields(
+  const namespacet &ns,
+  const exprt &struct_lval,
+  const struct_typet &st,
+  std::vector<yul_slot_field> &out)
+{
+  unsigned off = 0; // running byte offset within slot 0
+  for (const auto &comp : st.components())
+  {
+    unsigned sz = 0;
+    if (!yul_pack_value_byte_size(ns, comp.type(), sz))
+      return false;
+    if (off + sz > 32)
+      return false; // spills past slot 0 -> multi-slot -> abort
+    yul_slot_field f;
+    f.member = member_exprt(struct_lval, comp.get_name(), comp.type());
+    f.member.location() = struct_lval.location();
+    f.bitoffset = off * 8;
+    f.bitwidth = sz * 8;
+    out.push_back(f);
+    off += sz;
+  }
+  return !out.empty();
+}
 } // namespace
 
 bool solidity_convertert::yul_node_is_supported(
@@ -1940,15 +2006,59 @@ bool solidity_convertert::convert_yul_expression(
       const nlohmann::json &decl = find_decl_ref(sit->second);
       if (decl.empty() || decl.value("nodeType", "") != "VariableDeclaration")
         return true;
-      if (!decl.value("stateVariable", false))
+      const bool is_state = decl.value("stateVariable", false);
+      // A scalar state var OR a `storage` reference (state-var struct /
+      // library `T storage` param) is eligible; anything else aborts.
+      const bool is_storage =
+        is_state ||
+        decl.value("storageLocation", std::string()) == "storage";
+      if (!is_storage)
         return true;
-      exprt var_expr;
-      if (get_var_decl_ref(decl, /*is_state=*/true, var_expr))
+      exprt base;
+      if (get_var_decl_ref(decl, is_state, base))
         return true;
-      const irep_idt tid = var_expr.type().id();
+      exprt lval = base;
+      if (lval.type().id() == "pointer")
+        lval = dereference_exprt(base, base.type().subtype());
+      typet rt = lval.type();
+      while (rt.id() == "symbol")
+        rt = ns.follow(rt);
+
+      if (rt.id() == "struct")
+      {
+        // Single-slot struct: sload(X.slot) reads slot 0 as a 256-bit word.
+        // Reconstruct it by packing the slot-0 fields:
+        //   word = OR_i ( zext256(field_i) << bitoffset_i ).
+        std::vector<yul_slot_field> fields;
+        if (!yul_pack_slot0_fields(ns, lval, to_struct_type(rt), fields))
+          return true;
+        exprt word = u256_const(BigInt(0));
+        for (const auto &f : fields)
+        {
+          exprt v = f.member;
+          // bool -> 0/1, unsigned -> zero-extend, to the full slot width.
+          solidity_gen_typecast(ns, v, u256);
+          if (f.bitoffset != 0)
+          {
+            exprt sh("shl", u256);
+            sh.copy_to_operands(v, u256_const(BigInt(f.bitoffset)));
+            v = sh;
+          }
+          exprt orr("bitor", u256);
+          orr.copy_to_operands(word, v);
+          orr.location() = loc;
+          word = orr;
+        }
+        out = word;
+        out.location() = loc;
+        return false;
+      }
+
+      // scalar state variable
+      const irep_idt tid = lval.type().id();
       if (tid != "unsignedbv" && tid != "signedbv" && tid != "bool")
         return true;
-      out = var_expr;
+      out = lval;
       solidity_gen_typecast(ns, out, u256);
       out.location() = loc;
       return false;
@@ -2354,12 +2464,69 @@ bool solidity_convertert::convert_yul_statement(
     const nlohmann::json &decl = find_decl_ref(sit->second);
     if (decl.empty() || decl.value("nodeType", "") != "VariableDeclaration")
       return true;
-    if (!decl.value("stateVariable", false))
+    const bool is_state = decl.value("stateVariable", false);
+    const bool is_storage =
+      is_state || decl.value("storageLocation", std::string()) == "storage";
+    if (!is_storage)
       return true;
-    exprt lhs;
-    if (get_var_decl_ref(decl, /*is_state=*/true, lhs))
+    exprt base;
+    if (get_var_decl_ref(decl, is_state, base))
       return true;
-    const irep_idt tid = lhs.type().id();
+    exprt lval = base;
+    if (lval.type().id() == "pointer")
+      lval = dereference_exprt(base, base.type().subtype());
+    typet rt = lval.type();
+    while (rt.id() == "symbol")
+      rt = ns.follow(rt);
+
+    if (rt.id() == "struct")
+    {
+      // Single-slot struct: sstore(X.slot, w) distributes the 256-bit word w
+      // back into the slot-0 fields:
+      //   field_i = truncate_to_type_i( (w >> bitoffset_i) & mask_i ).
+      // Fields in slots >=1 do not exist here (single-slot subset), so no
+      // write is dropped. Build all field writes in a local block and only
+      // publish `out` once every field is validated (all-or-nothing).
+      std::vector<yul_slot_field> fields;
+      if (!yul_pack_slot0_fields(ns, lval, to_struct_type(rt), fields))
+        return true;
+      exprt w;
+      if (convert_yul_expression(
+            args[1], src_to_decl, slot_refs, locals, loc, w))
+        return true;
+      code_blockt blk;
+      for (const auto &f : fields)
+      {
+        exprt shifted = w;
+        if (f.bitoffset != 0)
+        {
+          exprt sh("lshr", u256);
+          sh.copy_to_operands(w, from_integer(BigInt(f.bitoffset), u256));
+          shifted = sh;
+        }
+        // Mask to the field width BEFORE the cast: a bool cast keys on
+        // `!= 0`, so higher-field bits must be cleared first; for integer
+        // fields the cast truncates anyway, so the mask is belt-and-braces.
+        exprt masked = shifted;
+        if (f.bitwidth < 256)
+        {
+          const BigInt m = (BigInt(1) << f.bitwidth) - 1;
+          exprt band("bitand", u256);
+          band.copy_to_operands(shifted, from_integer(m, u256));
+          masked = band;
+        }
+        exprt val = masked;
+        solidity_gen_typecast(ns, val, f.member.type());
+        code_assignt a(f.member, val);
+        a.location() = loc;
+        blk.copy_to_operands(a);
+      }
+      out = blk;
+      return false;
+    }
+
+    // scalar state variable
+    const irep_idt tid = lval.type().id();
     if (tid != "unsignedbv" && tid != "signedbv" && tid != "bool")
       return true;
 
@@ -2368,9 +2535,9 @@ bool solidity_convertert::convert_yul_statement(
     if (convert_yul_expression(
           args[1], src_to_decl, slot_refs, locals, loc, rhs))
       return true;
-    solidity_gen_typecast(ns, rhs, lhs.type());
+    solidity_gen_typecast(ns, rhs, lval.type());
 
-    code_assignt assign(lhs, rhs);
+    code_assignt assign(lval, rhs);
     assign.location() = loc;
     out = assign;
     return false;
