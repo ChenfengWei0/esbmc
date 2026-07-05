@@ -792,8 +792,21 @@ bool solidity_convertert::get_expr(
     // solidity_convert_modifier.cpp. The bridge is needed because the
     // parameter's SSA version is scoped to the function and not visible
     // after the call returns.
+    //
+    // Skip `view`/`pure` functions: they provably cannot modify a storage
+    // parameter, so the copy-back is a no-op — and for a tuple-return call
+    // (e.g. the 1inch/aqua `(amount, count) = balance.load()` pattern) the
+    // copy-back is queued to the back-block DURING call conversion while the
+    // call itself is queued AFTER (solidity_convert_tuple.cpp), so the
+    // assignment would land BEFORE the call and clobber the caller's state
+    // variable with the still-zero `$out` bridge. Gating on mutability is
+    // both sound (view/pure never writes) and avoids that mis-ordering.
+    const std::string state_mutability =
+      func_ref.value("stateMutability", std::string());
+    const bool call_can_modify_storage =
+      state_mutability != "view" && state_mutability != "pure";
     if (
-      func_ref.contains("id") &&
+      call_can_modify_storage && func_ref.contains("id") &&
       SolidityGrammar::is_sol_library_function(func_ref["id"].get<int>()) &&
       func_ref.contains("parameters") &&
       func_ref["parameters"].contains("parameters"))
