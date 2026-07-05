@@ -266,7 +266,10 @@ bool solidity_convertert::get_function_definition(
   // them work correctly in symex, and append an implicit return at the end.
   std::vector<exprt> named_ret_decls;
   std::vector<exprt> named_ret_syms;
+  std::vector<size_t> named_ret_positions;
   bool has_named_returns = false;
+  const bool is_tuple_return =
+    get_sol_type(type.return_type()) == SolidityGrammar::SolType::TUPLE_RETURNS;
   // Emit DECL + zero-init for named return parameters in both the
   // single-return and tuple-return cases. For tuples, this ensures that
   // body code (including inline assembly, which havocs via symbol
@@ -275,11 +278,15 @@ bool solidity_convertert::get_function_definition(
     !is_ctor && ast_node.contains("returnParameters") &&
     ast_node["returnParameters"].contains("parameters"))
   {
+    size_t pos = 0;
     for (const auto &rparam : ast_node["returnParameters"]["parameters"])
     {
       std::string rname = rparam["name"].get<std::string>();
       if (rname.empty())
+      {
+        ++pos; // keep the tuple-member index aligned with declaration order
         continue; // unnamed return parameter — skip
+      }
 
       has_named_returns = true;
       exprt var_decl;
@@ -294,6 +301,8 @@ bool solidity_convertert::get_function_definition(
       const symbolt *sym = context.find_symbol(rvar_id);
       assert(sym != nullptr);
       named_ret_syms.push_back(symbol_expr(*sym));
+      named_ret_positions.push_back(pos);
+      ++pos;
     }
   }
 
@@ -348,12 +357,58 @@ bool solidity_convertert::get_function_definition(
         if (last.is_code() && last.statement() == "return")
           has_explicit_return = true;
       }
-      if (!has_explicit_return && named_ret_syms.size() == 1)
+      if (!has_explicit_return && !is_tuple_return &&
+          named_ret_syms.size() == 1)
       {
         code_returnt implicit_ret;
         implicit_ret.return_value() = named_ret_syms[0];
         implicit_ret.location() = location_begin;
         new_body.copy_to_operands(implicit_ret);
+      }
+      else if (
+        !has_explicit_return && is_tuple_return &&
+        !has_modifier_invocation(ast_node))
+      {
+        // Multi-return function that assigns its NAMED return variables
+        // (e.g. via inline assembly `x := ...`, or plain `x = ...`) without
+        // an explicit `return (x, y)`: bind each named return into the
+        // callee's tuple_instance (mem<pos>) at the fall-through exit, then a
+        // bare `return;`. Without this the named returns are computed and
+        // discarded and the caller reads an uninitialised tuple_instance
+        // (this is the 1inch/aqua BalanceLib `(a, b) = balance.load()` bug).
+        // Reached only on the fall-through path, so an early explicit return
+        // still wins on its own path.
+        //
+        // Restricted to the non-modifier path: under a modifier the body is
+        // re-scoped into an aux wrapper (get_func_modifier) so the named
+        // returns the body actually writes are DIFFERENT symbols from the
+        // outer-scope `named_ret_syms` collected here; binding those would
+        // silently propagate zero/stale outer locals. Modifier + tuple +
+        // named-return-without-explicit-return is a separate pre-existing
+        // gap (pinned KNOWNBUG); the aqua/BalanceLib targets are modifier-free.
+        std::string tname, tid;
+        if (
+          !get_tuple_instance_name(*current_functionDecl, tname, tid) &&
+          context.find_symbol(tid) != nullptr)
+        {
+          const symbolt &tsym = *context.find_symbol(tid);
+          const struct_typet &tst = to_struct_type(tsym.type);
+          for (size_t k = 0; k < named_ret_syms.size(); ++k)
+          {
+            const size_t pos = named_ret_positions[k];
+            if (pos >= tst.components().size())
+              continue;
+            exprt lop;
+            if (get_tuple_member_call(tid, tst.components().at(pos), lop))
+              continue;
+            code_assignt bind(lop, named_ret_syms[k]);
+            bind.location() = location_begin;
+            new_body.copy_to_operands(bind);
+          }
+          code_returnt bare_ret;
+          bare_ret.location() = location_begin;
+          new_body.copy_to_operands(bare_ret);
+        }
       }
 
       body_exprt = new_body;
