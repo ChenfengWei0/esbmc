@@ -1146,6 +1146,12 @@ int esbmc_parseoptionst::doit()
           static const std::string tm_marker = "t_mapping$_";
           int tm_run = 0;
           size_t tm_match_pos = 0;
+          // A struct-VALUED nested mapping (≥2 levels) needs CVC5 too: its
+          // K≥2 array-of-struct zero-init lowers to per-field const-arrays
+          // Bitwuzla cannot equate.  `t_struct$_` trails the `t_mapping$_`
+          // markers within the same typeIdentifier.
+          static const std::string ts_marker = "t_struct$_";
+          size_t ts_match_pos = 0;
           int empty_bracket_run = 0;
           static const std::string mp_marker = "mapping(";
           size_t mp_match_pos = 0;
@@ -1249,22 +1255,47 @@ int esbmc_parseoptionst::doit()
               {
                 tm_run = 0;
                 tm_match_pos = 0;
-              }
-              else if (ch == tm_marker[tm_match_pos])
-              {
-                ++tm_match_pos;
-                if (tm_match_pos == tm_marker.size())
-                {
-                  tm_match_pos = 0;
-                  if (++tm_run >= 3)
-                  {
-                    deep_mapping_detected = true;
-                    break;
-                  }
-                }
+                ts_match_pos = 0;
               }
               else
-                tm_match_pos = (ch == tm_marker[0]) ? 1 : 0;
+              {
+                // ≥3 nested mapping levels (any leaf): Bitwuzla const-array
+                // abort on the scalar-leaf init.
+                if (ch == tm_marker[tm_match_pos])
+                {
+                  ++tm_match_pos;
+                  if (tm_match_pos == tm_marker.size())
+                  {
+                    tm_match_pos = 0;
+                    if (++tm_run >= 3)
+                    {
+                      deep_mapping_detected = true;
+                      break;
+                    }
+                  }
+                }
+                else
+                  tm_match_pos = (ch == tm_marker[0]) ? 1 : 0;
+
+                // ≥2 nested mapping levels with a STRUCT leaf: the K≥2
+                // array-of-struct SoA zero-init emits per-field const-arrays
+                // Bitwuzla cannot equate — route to CVC5 as well.
+                if (ch == ts_marker[ts_match_pos])
+                {
+                  ++ts_match_pos;
+                  if (ts_match_pos == ts_marker.size())
+                  {
+                    ts_match_pos = 0;
+                    if (tm_run >= 2)
+                    {
+                      deep_mapping_detected = true;
+                      break;
+                    }
+                  }
+                }
+                else
+                  ts_match_pos = (ch == ts_marker[0]) ? 1 : 0;
+              }
             }
             else
             {
@@ -1578,12 +1609,13 @@ int esbmc_parseoptionst::doit()
           else if (deep_mapping_detected)
           {
             log_status(
-              "Solidity: detected >=3-level nested-mapping shape; "
-              "auto-selecting 'cvc5' (Bitwuzla aborts on the "
-              "CONST_ARRAY-initialised infinite mapping array — "
-              "\"Equality over constant arrays not fully supported\" "
-              "under assertion BMC, k-induction non-convergence under "
-              "coverage). Override with --bitwuzla / --z3 / --boolector.");
+              "Solidity: detected >=3-level nested-mapping shape (or a "
+              ">=2-level struct-valued mapping); auto-selecting 'cvc5' "
+              "(Bitwuzla aborts on the CONST_ARRAY-initialised infinite "
+              "mapping array — \"Equality over constant arrays not fully "
+              "supported\" under assertion BMC, k-induction non-convergence "
+              "under coverage). Override with --bitwuzla / --z3 / "
+              "--boolector.");
           }
           else if (kind_multi_contract_detected)
           {

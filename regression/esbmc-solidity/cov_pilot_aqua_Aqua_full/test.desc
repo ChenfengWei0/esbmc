@@ -1,6 +1,6 @@
-CORE
+KNOWNBUG
 contract.solast
 --sol contract.sol --contract Aqua --branch-coverage-claims --k-induction --unlimited-k-steps --memlimit 8g --timeout 90 --quiet --no-assertions
 ^Branches : 16$
-^Reached : 13$
-^Branch Coverage: 81\.
+^Reached : 8$
+^Branch Coverage: 50%

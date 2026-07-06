@@ -4744,6 +4744,20 @@ caof_rebuild_array_leaf(const type2tc &t, const type2tc &leaf_type)
     a.index_width);
 }
 
+// 2C.2d: wrap `leaf_val` in a constant_array_of for every dimension of
+// `arr_t`, producing an `arr_t`-typed array whose every leaf slot equals
+// `leaf_val`.  Used to broadcast a struct field's default value across its
+// per-field native array so unwritten slots read that default (0 for a
+// zero-initialised mapping) rather than nondet.
+static expr2tc
+caof_broadcast_leaf(const type2tc &arr_t, const expr2tc &leaf_val)
+{
+  if (!is_array_type(arr_t))
+    return leaf_val;
+  const array_type2t &a = to_array_type(arr_t);
+  return constant_array_of2tc(arr_t, caof_broadcast_leaf(a.subtype, leaf_val));
+}
+
 smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
 {
   const constant_array_of2t &arrof = to_constant_array_of2t(expr);
@@ -4754,14 +4768,15 @@ smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
   // 2C.2d: K>=2 array-of-struct constant (immediate subtype is itself
   // an array, struct leaf) — emit the struct-of-arrays representation so
   // it equates field-wise with the 2C.2c symbol tuple_node and no bare
-  // nested array-of-struct sort ever reaches the backend.  Each field is
-  // a FRESH per-field native array: an infinite array-of-struct init is
-  // modelling-only ("guarantees nothing"), exactly the semantics the
-  // historical K=1 infinite-mapping init already has via
-  // tuple_array_create's infinite short-circuit — this keeps K>=2 at
-  // parity with K=1 (no new approximation) and avoids bitwuzla's
-  // unsupported const-array equality.  K=1 (immediate subtype is the
-  // struct) keeps the historical tuple_array_of route -> byte-identical.
+  // nested array-of-struct sort ever reaches the backend.  Each field is a
+  // per-field native array broadcasting that field's init value across the
+  // whole domain, so an unwritten slot reads the struct's default (0 for a
+  // zero-initialised mapping) — matching EVM zero-init and the K=1
+  // tuple_array_of route.  (The historical code left each field a FRESH
+  // unconstrained symbol, which made unwritten deep struct-valued mapping
+  // slots read nondet — see deep_mapping_structval_*_zeroinit tests.)  K=1
+  // (immediate subtype is the struct) keeps the historical tuple_array_of
+  // route below -> byte-identical.
   if (is_array_type(arrtype.subtype))
   {
     type2tc leaf = arrof.type;
@@ -4771,13 +4786,28 @@ smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
     if (is_struct_type(leaf))
     {
       const struct_union_data &sd = get_type_def(leaf);
+
+      // Walk the (possibly nested) array_of initializer down to the struct
+      // value being broadcast into every slot.
+      expr2tc leaf_init = arrof.initializer;
+      while (is_constant_array_of2t(leaf_init))
+        leaf_init = to_constant_array_of2t(leaf_init).initializer;
+
       std::vector<expr2tc> fields;
       fields.reserve(sd.members.size());
       for (unsigned int i = 0; i < sd.members.size(); i++)
       {
         type2tc fld_arr = caof_rebuild_array_leaf(arrof.type, sd.members[i]);
-        std::string fname = mk_fresh_name("array_of_soa::");
-        fields.push_back(symbol2tc(fld_arr, irep_idt(fname)));
+
+        // Field i's value in the broadcast struct (default 0 for a
+        // zero-initialised mapping).
+        expr2tc fld_val =
+          is_constant_struct2t(leaf_init)
+            ? to_constant_struct2t(leaf_init).datatype_members[i]
+            : expr2tc(member2tc(
+                sd.members[i], leaf_init, sd.member_names[i]));
+
+        fields.push_back(caof_broadcast_leaf(fld_arr, fld_val));
       }
       return tuple_api->tuple_create(
         constant_struct2tc(leaf, std::move(fields)));
