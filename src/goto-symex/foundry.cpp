@@ -836,12 +836,39 @@ foundry_generator::test_case foundry_generator::reconstruct(
   // whether the ctor reads it, to emit `vm.warp` before the deploy.
   expr2tc ctor_block_timestamp;
   bool ctor_reads_timestamp = false;
+  // ③A0 constructor-time msg.sender (deployer identity). A ctor binding
+  // `owner = msg.sender` stores the deploy-time sender; recover it so setUp can
+  // `vm.startPrank` before `new C()`, making a later `onlyOwner` check match (or
+  // mismatch) a known owner. `ctor_sender_dirty` guards against a ctor whose own
+  // body makes a nested call that overwrites msg_sender before the owner bind.
+  expr2tc ctor_msg_sender;
+  bool ctor_reads_msg_sender = false;
+  bool ctor_sender_dirty = false;
   // The contract setUp actually deploys is the run's --contract; attribute the
   // ctor warp there rather than to step_location_method (which for a base ctor,
   // an inlined modifier wrapper, or a user init helper names the wrong thing —
   // e.g. an aux `C_afterStart` that is not a real contract).
   const std::string ctor_ts_contract =
     config.options.get_option("contract");
+  // ③A0 constructor-time msg.value. A `payable` ctor that requires/branches on
+  // msg.value must be deployed with `new C{value: v}(...)` (and the test funded
+  // via vm.deal), else a `require(msg.value >= N)` reverts setUp and fails the
+  // whole suite. Recover the deploy-time value + whether the ctor reads it; only
+  // emit for a payable ctor (sending value to a non-payable ctor cannot compile).
+  expr2tc ctor_msg_value;
+  bool ctor_reads_value = false;
+  bool ctor_is_payable = false;
+  {
+    // The constructor symbol is `sol:@C@<C>@F@<C>#<id>`; read its payability.
+    const std::string ctor_pfx =
+      "sol:@C@" + ctor_ts_contract + "@F@" + ctor_ts_contract + "#";
+    ns.get_context().foreach_operand([&](const symbolt &s) {
+      if (
+        s.type.is_code() && has_prefix(s.id.as_string(), ctor_pfx) &&
+        s.type.get_bool("#sol_payable"))
+        ctor_is_payable = true;
+    });
+  }
   struct segment
   {
     std::string contract, method;
@@ -850,6 +877,13 @@ foundry_generator::test_case foundry_generator::reconstruct(
     expr2tc msg_value;       // ③A0: solver-picked msg.value for this tx
     expr2tc block_timestamp; // ③A0: solver-picked block.timestamp for this tx
     bool reads_timestamp = false; // ③A0: this tx's body reads block.timestamp
+    expr2tc msg_sender;      // ③A0: solver-picked top-level msg.sender for this tx
+    bool reads_msg_sender = false; // ③A0: this tx's body reads msg.sender
+    // ③A0: a nested/high/low-level call wrapper overwrote msg_sender AFTER the
+    // reseed, so the top-level `vm.prank` value is NOT what a later branch read.
+    // When dirty we refuse to pin the sender (safe under-coverage) rather than
+    // emit a call whose msg.sender the replay cannot faithfully reproduce.
+    bool sender_dirty = false;
   };
   std::vector<segment> segs;
 
@@ -858,7 +892,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
   // tx's Extcall guard marker, so the reseed for tx N precedes segment N's push.
   // Buffer the most recent recovered values and attach them to the next segment
   // when its marker fires.
-  expr2tc pending_msg_value, pending_block_timestamp;
+  expr2tc pending_msg_value, pending_block_timestamp, pending_msg_sender;
   // True iff the symbol NAME denotes the EVM ambient C global `base`
   // (solidity_blockchain.c), NOT a user Solidity symbol that merely ends with
   // the same word. User symbols live in the `sol:` namespace
@@ -1032,6 +1066,42 @@ foundry_generator::test_case foundry_generator::reconstruct(
       ctor_block_timestamp = smt_conv.get(step.lhs);
       continue;
     }
+    // ③A0 ctor-time: capture the deploy-time msg.value (set in initialize())
+    // so a payable ctor reading it can be deployed with a matching {value:}.
+    if (
+      assign_sym && segs.empty() &&
+      lhs_is_env_global(step.original_lhs, "msg_value") && !step_in_sol(step) &&
+      step_fn.find("initialize") != std::string::npos)
+    {
+      ctor_msg_value = smt_conv.get(step.lhs);
+      continue;
+    }
+    // ③A0: recover msg.sender. Three msg_sender writes exist: the per-tx reseed
+    // (top-level sender for the next segment), the deploy-time initialize() (the
+    // deployer identity a ctor stores as `owner`), and nested/high/low-level
+    // call wrappers that overwrite it with the caller address. The last makes
+    // the active tx's top-level sender un-reproducible via `vm.prank`, so it
+    // marks the segment (or ctor) sender-dirty and no sender pin is emitted.
+    if (assign_sym && lhs_is_env_global(step.original_lhs, "msg_sender"))
+    {
+      if (from_reseed)
+      {
+        pending_msg_sender = smt_conv.get(step.lhs);
+        continue;
+      }
+      if (
+        segs.empty() && !step_in_sol(step) &&
+        step_fn.find("initialize") != std::string::npos)
+      {
+        ctor_msg_sender = smt_conv.get(step.lhs);
+        continue;
+      }
+      if (!segs.empty())
+        segs.back().sender_dirty = true;
+      else
+        ctor_sender_dirty = true;
+      continue;
+    }
 
     // Transaction boundary: a fresh dispatcher invocation.
     if (assign_sym)
@@ -1043,9 +1113,11 @@ foundry_generator::test_case foundry_generator::reconstruct(
         s.contract = txc;
         s.msg_value = pending_msg_value;
         s.block_timestamp = pending_block_timestamp;
+        s.msg_sender = pending_msg_sender;
         segs.push_back(std::move(s));
         pending_msg_value = expr2tc();
         pending_block_timestamp = expr2tc();
+        pending_msg_sender = expr2tc();
         continue;
       }
     }
@@ -1065,11 +1137,20 @@ foundry_generator::test_case foundry_generator::reconstruct(
       {
         if (!segs.back().reads_timestamp && reads("block_timestamp"))
           segs.back().reads_timestamp = true;
+        if (!segs.back().reads_msg_sender && reads("msg_sender"))
+          segs.back().reads_msg_sender = true;
       }
       // A pre-segment (ctor-body) read means the constructor depends on the
       // deploy-time ambient (attributed to the deploy contract above).
-      else if (!ctor_reads_timestamp && reads("block_timestamp"))
-        ctor_reads_timestamp = true;
+      else
+      {
+        if (!ctor_reads_timestamp && reads("block_timestamp"))
+          ctor_reads_timestamp = true;
+        if (!ctor_reads_msg_sender && reads("msg_sender"))
+          ctor_reads_msg_sender = true;
+        if (!ctor_reads_value && reads("msg_value"))
+          ctor_reads_value = true;
+      }
     }
 
     // A recovered nondet parameter value.
@@ -1179,15 +1260,45 @@ foundry_generator::test_case foundry_generator::reconstruct(
     }
   }
 
-  const bool ctor_needs_env = ctor_reads_timestamp;
+  // The deployer identity is pinnable only when the ctor reads msg.sender on a
+  // clean (no nested-call overwrite) path — else `vm.startPrank` cannot
+  // faithfully reproduce the stored owner.
+  const bool ctor_needs_deployer = ctor_reads_msg_sender && !ctor_sender_dirty;
+  const std::string ctor_value_lit =
+    ctor_msg_value ? format_sol_value("UINT256", ctor_msg_value) : std::string();
+  const bool ctor_value_nonzero = !ctor_value_lit.empty() && ctor_value_lit != "0";
+  // A payable ctor reading a nonzero msg.value must deploy with `{value:}`.
+  const bool ctor_needs_value =
+    ctor_reads_value && ctor_is_payable && ctor_value_nonzero;
+  // A NON-payable ctor cannot legally receive value in the EVM, yet ESBMC's model
+  // seeds a nondet deploy msg.value regardless, so it may produce a construction
+  // counterexample that relies on a nonzero value (e.g. a contradictory
+  // `require(msg.value > 0)` in a non-payable ctor). Forge cannot reproduce it —
+  // `new C()` sends 0 and setUp reverts — so mark that deploy UNSUPPORTED rather
+  // than emit a guaranteed-reverting test.
+  const bool ctor_value_unsendable =
+    ctor_reads_value && !ctor_is_payable && ctor_value_nonzero;
+  const bool ctor_needs_env = ctor_reads_timestamp || ctor_needs_deployer ||
+                              ctor_needs_value || ctor_value_unsendable;
   bool ctor_env_attached = false;
   auto attach_ctor_env = [&](sol_call &cc) {
-    // ③A0 ctor-time env: carry deploy-time ambient so setUp can vm.warp before
-    // `new C()` when the constructor reads block.timestamp.
+    // ③A0 ctor-time env: carry deploy-time ambient so setUp can vm.warp /
+    // vm.startPrank / vm.deal+{value:} before `new C()` when the constructor
+    // reads block.timestamp / msg.sender / msg.value.
     if (ctor_reads_timestamp)
     {
       cc.block_timestamp = ctor_block_timestamp;
       cc.warp = true;
+    }
+    if (ctor_needs_deployer)
+    {
+      cc.msg_sender = ctor_msg_sender;
+      cc.deployer = true;
+    }
+    if (ctor_needs_value)
+    {
+      cc.msg_value = ctor_msg_value;
+      cc.payable = true;
     }
   };
   for (const auto &kv : ctor_args)
@@ -1196,20 +1307,31 @@ foundry_generator::test_case foundry_generator::reconstruct(
     if (ctor_needs_env && kv.first == ctor_ts_contract)
     {
       attach_ctor_env(cc);
+      // Non-payable ctor needing a nonzero deploy value: degrade to UNSUPPORTED.
+      if (ctor_value_unsendable)
+      {
+        cc.supported = false;
+        cc.ctor_value_unsendable = true;
+      }
       ctor_env_attached = true;
     }
     calls.push_back(std::move(cc));
   }
   // A PARAMETERLESS constructor produces no ctor_args entry (nothing to recover),
-  // so synthesize a bare ctor call to carry the deploy-time vm.warp — else
-  // `new C()` deploys under the default timestamp and a timelock ctor
-  // require reverts setUp.
+  // so synthesize a bare ctor call to carry the deploy-time vm.warp (or the
+  // non-payable-value UNSUPPORTED marker) — else `new C()` deploys under the
+  // default env and a timelock / value-gated ctor require reverts setUp.
   if (ctor_needs_env && !ctor_env_attached && !ctor_ts_contract.empty())
   {
     sol_call cc;
     cc.contract = ctor_ts_contract;
     cc.method = ctor_ts_contract;
     attach_ctor_env(cc);
+    if (ctor_value_unsendable)
+    {
+      cc.supported = false;
+      cc.ctor_value_unsendable = true;
+    }
     calls.push_back(std::move(cc));
   }
   for (const auto &s : segs)
@@ -1220,6 +1342,16 @@ foundry_generator::test_case foundry_generator::reconstruct(
       c.msg_value = s.msg_value; // ③A0: env pin (emitted only when c.payable)
       c.block_timestamp = s.block_timestamp;
       c.warp = s.reads_timestamp; // ③A0: warp only when the body reads time
+      c.msg_sender = s.msg_sender;
+      // ③A0: pin the per-tx sender when it is reproducible (top-level, not
+      // overwritten by a nested call) AND relevant — either the covered body
+      // reads msg.sender directly, or the contract's ctor bound an owner
+      // (`owner = msg.sender`), in which case ANY method may sit behind an
+      // `onlyOwner` modifier whose guard is on the PATH to the covered branch
+      // (not in the branch's own condition), so the sender must match the
+      // deployer for the call to reach that branch rather than revert.
+      c.prank = !s.sender_dirty && s.msg_sender &&
+                (s.reads_msg_sender || ctor_needs_deployer);
       calls.push_back(std::move(c));
     }
 
@@ -1417,6 +1549,22 @@ std::string foundry_generator::fingerprint(const test_case &tc)
       if (!t.empty())
         fp += "[warp:" + t + "]";
     }
+    // ③A0: the onlyOwner PASS arm (sender==owner) and FAIL arm (sender!=owner)
+    // may share method+args — fold the pinned sender so they do not dedup.
+    if (call.prank && call.msg_sender)
+    {
+      const std::string sdr = format_sol_value("ADDRESS", call.msg_sender);
+      if (!sdr.empty())
+        fp += "<prank:" + sdr + ">";
+    }
+    // ③A0: a ctor carrier's deployer (setUp vm.startPrank) distinguishes cases
+    // that differ ONLY by owner — fold it so they don't dedup before grouping.
+    if (call.deployer && call.msg_sender)
+    {
+      const std::string d = format_sol_value("ADDRESS", call.msg_sender);
+      if (!d.empty())
+        fp += "<dep:" + d + ">";
+    }
     fp += ";";
   }
   return fp;
@@ -1460,6 +1608,9 @@ size_t foundry_generator::write_foundry_file(
     bool buildable;
     bool abstract; // non-instantiable (abstract/interface/library)
     std::string ctor_warp; // ③A0: vm.warp timestamp for a time-dependent ctor
+    std::string deployer;  // ③A0: vm.startPrank deployer for a sender-owner ctor
+    std::string ctor_value; // ③A0: {value:} for a payable value-reading ctor
+    bool value_unsendable = false; // non-payable ctor needs value -> unsupported
   };
   auto plan_of = [&](const test_case &tc) {
     std::map<std::string, const sol_call *> ctor;
@@ -1486,6 +1637,8 @@ size_t foundry_generator::write_foundry_file(
       // are never buildable regardless of whether their ctor args rendered.
       ib.buildable =
         !ib.abstract && (it == ctor.end() || it->second->supported);
+      if (it != ctor.end() && it->second->ctor_value_unsendable)
+        ib.value_unsendable = true;
       ib.ctor_args = it == ctor.end() ? std::string() : join_args(*it->second);
       // ③A0 ctor-time env: a ctor reading block.timestamp must be deployed under
       // a matching vm.warp, else `new C()` reverts in setUp and fails the suite.
@@ -1495,6 +1648,24 @@ size_t foundry_generator::write_foundry_file(
           format_sol_value("UINT256", it->second->block_timestamp);
         if (!t.empty())
           ib.ctor_warp = t;
+      }
+      // ③A0 ctor-time deployer: a ctor binding `owner = msg.sender` must deploy
+      // under a known identity so an `onlyOwner` call can match (or mismatch) it.
+      if (it != ctor.end() && it->second->deployer && it->second->msg_sender)
+      {
+        const std::string d =
+          format_sol_value("ADDRESS", it->second->msg_sender);
+        if (!d.empty())
+          ib.deployer = d;
+      }
+      // ③A0 ctor-time value: a payable ctor reading msg.value deploys with
+      // `new C{value: v}(...)` (funded via vm.deal) so a value require passes.
+      if (it != ctor.end() && it->second->payable && it->second->msg_value)
+      {
+        const std::string v =
+          format_sol_value("UINT256", it->second->msg_value);
+        if (!v.empty() && v != "0")
+          ib.ctor_value = v;
       }
       plan.push_back(ib);
     }
@@ -1509,6 +1680,14 @@ size_t foundry_generator::write_foundry_file(
       // not share one setUp warp across cases needing different timestamps.
       if (!ib.ctor_warp.empty())
         s += "@warp" + ib.ctor_warp;
+      // ③A0: a different deploy sender means a different owner — cases needing
+      // distinct owners must not share one setUp startPrank.
+      if (!ib.deployer.empty())
+        s += "@dep" + ib.deployer;
+      // ③A0: a ctor whose state depends on deploy msg.value must not share a
+      // setUp funded with a different value.
+      if (!ib.ctor_value.empty())
+        s += "@val" + ib.ctor_value;
       s += ";";
     }
     return s;
@@ -1617,12 +1796,35 @@ size_t foundry_generator::write_foundry_file(
       }
     for (const auto &ib : plan)
       if (ib.buildable)
-        f << "    " << ib.var << " = new " << ib.contract << "(" << ib.ctor_args
-          << ");\n";
+      {
+        // ③A0 ctor-time deployer: deploy under a known msg.sender so a
+        // `owner = msg.sender` binding pins an identity a later onlyOwner call
+        // can match (or mismatch) to cover both modifier arms.
+        if (!ib.deployer.empty())
+          f << "    vm.startPrank(" << ib.deployer << ");\n";
+        // ③A0 ctor-time value: fund the test and forward `{value: v}` so a
+        // payable ctor's `require(msg.value ...)` passes instead of reverting
+        // setUp. Only emitted for a payable ctor (see reconstruct()).
+        std::string value_brace;
+        if (!ib.ctor_value.empty())
+        {
+          f << "    vm.deal(address(this), " << ib.ctor_value << ");\n";
+          value_brace = "{value: " + ib.ctor_value + "}";
+        }
+        f << "    " << ib.var << " = new " << ib.contract << value_brace << "("
+          << ib.ctor_args << ");\n";
+        if (!ib.deployer.empty())
+          f << "    vm.stopPrank();\n";
+      }
       else if (ib.abstract)
         f << "    // UNSUPPORTED: " << ib.contract
           << " is abstract / an interface / a library and cannot be "
              "instantiated with `new`\n";
+      else if (ib.value_unsendable)
+        f << "    // UNSUPPORTED: constructor of " << ib.contract
+          << " requires a nonzero deploy-time msg.value but is not payable "
+             "(EVM forbids sending value); the reconstructed deploy path is "
+             "not reproducible in Foundry\n";
       else
         f << "    // UNSUPPORTED: constructor of " << ib.contract
           << " has an argument type ESBMC cannot yet render as a literal\n";
@@ -1664,6 +1866,16 @@ size_t foundry_generator::write_foundry_file(
           const std::string t = format_sol_value("UINT256", call.block_timestamp);
           if (!t.empty())
             deal_line = "    vm.warp(" + t + ");\n" + deal_line;
+        }
+        // ③A0: msg.sender pin — vm.prank sets the sender for the NEXT call ONLY,
+        // so it must be the last cheatcode before the call. Appended after
+        // warp/deal, emitted only in call-emitting branches (and only for a
+        // top-level sender-clean read — see reconstruct()).
+        if (call.prank && call.msg_sender)
+        {
+          const std::string sdr = format_sol_value("ADDRESS", call.msg_sender);
+          if (!sdr.empty())
+            deal_line += "    vm.prank(" + sdr + ");\n";
         }
 
         if (!call.supported || (!is_lib && !built.count(call.contract)))
@@ -1775,7 +1987,7 @@ void foundry_generator::generate() const
         revert_tolerant);
     // ③A0: report payable calls whose msg.value was pinned (vm.deal + {value:}),
     // so the environment reconstruction is visible/assertable.
-    size_t value_pinned = 0, time_pinned = 0;
+    size_t value_pinned = 0, time_pinned = 0, sender_pinned = 0;
     for (const auto &tc : cs)
       for (const auto &call : tc)
       {
@@ -1796,6 +2008,14 @@ void foundry_generator::generate() const
           if (!t.empty())
             ++time_pinned;
         }
+        // Per-call sender pins (vm.prank); a ctor carrier's deployer pin is a
+        // setUp vm.startPrank, not a call, so it is excluded here.
+        if (call.prank && call.msg_sender && !is_ctor)
+        {
+          const std::string s = format_sol_value("ADDRESS", call.msg_sender);
+          if (!s.empty())
+            ++sender_pinned;
+        }
       }
     if (value_pinned)
       log_status(
@@ -1803,6 +2023,9 @@ void foundry_generator::generate() const
     if (time_pinned)
       log_status(
         "Foundry: {} call(s) with pinned block.timestamp (vm.warp)", time_pinned);
+    if (sender_pinned)
+      log_status(
+        "Foundry: {} call(s) with pinned msg.sender (vm.prank)", sender_pinned);
   }
 }
 

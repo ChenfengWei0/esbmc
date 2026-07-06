@@ -55,6 +55,20 @@ private:
     // revert unrelated arithmetic. Nil / !warp -> no warp.
     expr2tc block_timestamp;
     bool warp = false;
+    // ③A0 msg.sender pinning (deployer coordination): the per-tx sender the
+    // solver picked, emitted as `vm.prank(N)` ONLY when `prank` — the covered
+    // path reads msg.sender AND the segment is sender-clean (no nested-call
+    // wrapper overwrote the top-level sender, so `vm.prank` faithfully
+    // reproduces it). A ctor carrier instead uses `deployer` to emit a setUp
+    // `vm.startPrank(N)` around `new C()`, making `owner = msg.sender` deploy
+    // under a known identity so an `onlyOwner` call can match (or mismatch) it.
+    expr2tc msg_sender;
+    bool prank = false;
+    bool deployer = false;
+    // Set on a ctor carrier that had to be marked unsupported because the model's
+    // deploy path needs a nonzero msg.value the (non-payable) constructor cannot
+    // legally receive — used only to emit an accurate UNSUPPORTED reason.
+    bool ctor_value_unsendable = false;
   };
 
   /// One counterexample -> one test function: a sequence of calls.
