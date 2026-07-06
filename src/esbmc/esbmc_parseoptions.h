@@ -78,7 +78,8 @@ protected:
   tvt is_base_case_violated(
     optionst &options,
     goto_functionst &goto_functions,
-    const uint64_t &k_step);
+    const uint64_t &k_step,
+    foundry_generator *foundry_gen = nullptr);
 
   tvt does_forward_condition_hold(
     optionst &options,

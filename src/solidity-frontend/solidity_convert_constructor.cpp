@@ -64,6 +64,50 @@ bool solidity_convertert::get_constructor(
   return false;
 }
 
+// Tag a contract's constructor symbol as non-instantiable when the contract is
+// abstract / an interface / a library (i.e. present in nonContractNamesList).
+// Solidity forbids `new` on such contracts, so the Foundry coverage-test
+// generator reads this flag to degrade the instantiation to UNSUPPORTED rather
+// than emit an uncompilable `new <AbstractContract>(...)`. Verification-inert:
+// no symex/solver reader consults it.
+void solidity_convertert::mark_ctor_instantiability(
+  const std::string &contract_name)
+{
+  std::string ctor_id;
+  get_ctor_call_id(contract_name, ctor_id);
+  symbolt *ctor = context.find_symbol(ctor_id);
+  if (!ctor)
+    return;
+
+  // Stamp the linearized base contracts (excluding self) on the constructor.
+  // The Foundry generator uses this to instantiate ONLY the most-derived
+  // contract (`new Leaf(...)`): a base contract is constructed transitively by
+  // its derived contract and must never be `new`'d on its own. Inert for
+  // symex/solver (a `#sol_*` attribute only).
+  {
+    std::string bases;
+    auto it = linearizedBaseList.find(contract_name);
+    if (it != linearizedBaseList.end())
+      for (int id : it->second)
+      {
+        auto nm = contractNamesMap.find(id);
+        if (nm != contractNamesMap.end() && nm->second != contract_name)
+          bases += (bases.empty() ? "" : " ") + nm->second;
+      }
+    if (!bases.empty())
+      ctor->type.set("#sol_bases", bases);
+  }
+
+  if (nonContractNamesList.count(contract_name) == 0)
+    return;
+  ctor->type.set("#sol_no_new", true);
+  // Distinguish a library (called statically as `Lib.fn(args)`) from an
+  // abstract contract / interface (which cannot be called at all). The
+  // Foundry generator emits a static call for the former.
+  if (libraryNamesList.count(contract_name))
+    ctor->type.set("#sol_library", true);
+}
+
 // add a empty constructor to the contract
 bool solidity_convertert::add_implicit_constructor(
   const std::string &contract_name)

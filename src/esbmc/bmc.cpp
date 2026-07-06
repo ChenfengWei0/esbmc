@@ -46,8 +46,12 @@ std::unordered_multiset<std::string> goto_functionst::reached_mul_claims;
 std::mutex goto_functionst::reached_claims_mutex;
 std::mutex goto_functionst::reached_mul_claims_mutex;
 
-bmct::bmct(goto_functionst &funcs, optionst &opts, contextt &_context)
-  : options(opts), context(_context), ns(context)
+bmct::bmct(
+  goto_functionst &funcs,
+  optionst &opts,
+  contextt &_context,
+  foundry_generator *ext_foundry_gen)
+  : options(opts), context(_context), ns(context), foundry_gen_ext(ext_foundry_gen)
 {
   interleaving_number = 0;
   interleaving_failed = 0;
@@ -2179,7 +2183,9 @@ smt_convt::resultt bmct::multi_property_check(
         if (want_ctest)
           ctest_gen.collect(local_eq, *solver_ptr, ns);
         if (want_foundry)
-          foundry_gen.collect(local_eq, *solver_ptr, ns);
+          // Collect into the external strategy-level generator when threaded
+          // (--k-induction), else the owned member (plain BMC).
+          foundry().collect(local_eq, *solver_ptr, ns);
 
         witnesses.push_back(std::move(w));
 

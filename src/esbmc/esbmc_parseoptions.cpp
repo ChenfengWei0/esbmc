@@ -2653,7 +2653,7 @@ int esbmc_parseoptionst::do_bmc_strategy(
     if (options.get_bool_option("k-induction"))
     {
       bool is_bcv =
-        is_base_case_violated(options, goto_functions, k_step).is_true();
+        is_base_case_violated(options, goto_functions, k_step, &foundry_gen).is_true();
       if (is_bcv)
       {
         any_violation_found = true;
@@ -2747,7 +2747,7 @@ int esbmc_parseoptionst::do_bmc_strategy(
     if (options.get_bool_option("incremental-bmc"))
     {
       bool is_bcv =
-        is_base_case_violated(options, goto_functions, k_step).is_true();
+        is_base_case_violated(options, goto_functions, k_step, &foundry_gen).is_true();
       if (is_bcv)
       {
         any_violation_found = true;
@@ -2793,7 +2793,7 @@ int esbmc_parseoptionst::do_bmc_strategy(
     // falsification
     if (options.get_bool_option("falsification"))
     {
-      if (is_base_case_violated(options, goto_functions, k_step).is_true())
+      if (is_base_case_violated(options, goto_functions, k_step, &foundry_gen).is_true())
         return 1;
     }
   }
@@ -2857,7 +2857,8 @@ int esbmc_parseoptionst::do_bmc_strategy(
 tvt esbmc_parseoptionst::is_base_case_violated(
   optionst &options,
   goto_functionst &goto_functions,
-  const uint64_t &k_step)
+  const uint64_t &k_step,
+  foundry_generator *foundry_gen)
 {
   options.set_option("base-case", true);
   options.set_option("forward-condition", false);
@@ -2866,7 +2867,12 @@ tvt esbmc_parseoptionst::is_base_case_violated(
   options.set_option("partial-loops", false);
   options.set_option("unwind", integer2string(k_step));
 
-  bmct bmc(goto_functions, options, context);
+  // Collect Foundry coverage cases into the strategy-level generator (when
+  // provided) so they survive to do_bmc_strategy's report_coverage. Under
+  // --k-induction the per-phase bmct's report_coverage is suppressed
+  // (bmc.cpp), so without this the collected cases would be discarded with the
+  // throwaway bmct. Only the base case collects; FC/IS do not.
+  bmct bmc(goto_functions, options, context, foundry_gen);
 
   log_progress("Checking base case, k = {:d}", k_step);
   switch (do_bmc(bmc))

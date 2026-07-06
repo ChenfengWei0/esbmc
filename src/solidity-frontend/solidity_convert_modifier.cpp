@@ -104,6 +104,15 @@ bool solidity_convertert::get_function_definition(
     type.return_type().set("#sol_tuple_id", dump.identifier().as_string());
   }
 
+  // Stamp payability on the function type so the Foundry coverage-test
+  // generator can emit `{value: N}` ONLY for payable methods — sending value to
+  // a non-payable function reverts in the EVM. view / pure / nonpayable carry
+  // no flag.
+  if (
+    ast_node.contains("stateMutability") &&
+    ast_node["stateMutability"] == "payable")
+    type.set("#sol_payable", true);
+
   // 5. Check fd.isVariadic(), fd.isInlined()
   //  Skipped since Solidity does not support variadic (optional args) or inline function.
   //  Actually "inline" doesn not make sense in Solidity
@@ -1346,6 +1355,14 @@ bool solidity_convertert::get_func_modifier(
       aux_type.arguments().push_back(arg);
     }
     a_sym.type = aux_type;
+    // Stamp the wrapper with the base method it wraps. The wrapper is named
+    // `<f_name>_<mod_name>` (get_modifier_function_name), but `_` is a legal
+    // identifier char and the delimiter is unescaped, so the name alone cannot
+    // be split back to the real method reliably (`a_b_mod` is ambiguous between
+    // `a`+`b_mod` and `a_b`+`mod`). The Foundry coverage-test generator reads
+    // this authoritative marker to attribute a covered branch inside the wrapper
+    // to its externally-callable method, rather than guessing by name prefix.
+    a_sym.type.set("#sol_modifier_wrapper_for", f_name);
     move_builtin_to_contract(c_name, symbol_expr(a_sym), "internal", true);
 
     // If the wrapped function returns a tuple, register a tuple instance

@@ -86,6 +86,12 @@ bool solidity_convertert::get_function_params(
     const std::string bn = param_type.get("#sol_bytesn_size").as_string();
     if (!bn.empty())
       param.set("#sol_bytesn_size", bn);
+    // A user-defined value type over bytesN loses its `#sol_udvt_name` in the
+    // same migration; carry it on the argument so the generator still renders
+    // `Name.wrap(bytesN(..))` rather than a bare (unassignable) bytesN literal.
+    const std::string udvt = param_type.get("#sol_udvt_name").as_string();
+    if (!udvt.empty())
+      param.set("#sol_udvt_name", udvt);
   }
 
   // 3. get location

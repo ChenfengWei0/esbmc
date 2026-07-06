@@ -1,0 +1,6 @@
+CORE
+contract.solast
+--sol contract.sol --contract Multi --branch-coverage --generate-foundry-testcase --no-assertions
+^Generated Foundry coverage test with 3 case\(s\)
+^Foundry: 3 call\(s\) wrapped in revert-tolerant try/catch
+^VERIFICATION FAILED$

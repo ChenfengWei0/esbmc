@@ -286,6 +286,7 @@ protected:
   bool get_constructor(
     const nlohmann::json &ast_node,
     const std::string &contract_name);
+  void mark_ctor_instantiability(const std::string &contract_name);
   bool add_implicit_constructor(const std::string &contract_name);
   bool get_implicit_ctor_ref(
     const std::string &contract_name,
@@ -1504,6 +1505,8 @@ protected:
   std::vector<std::string> contractNamesList;
   // for Library/Interface/Abstract Contract
   std::set<std::string> nonContractNamesList;
+  // libraries only (subset of nonContractNamesList) — called statically
+  std::set<std::string> libraryNamesList;
   // for mapping hack
   std::set<std::string> newContractSet;
   // Store the ast_node["id"] of struct/error

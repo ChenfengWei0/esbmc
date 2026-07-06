@@ -6,6 +6,7 @@
 #include <util/namespace.h>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,6 +43,18 @@ private:
     std::vector<sol_arg> args;
     bool supported = true; // false if any arg type could not be formatted
     bool reverts = false;  // covered edge reverts -> wrap in vm.expectRevert()
+    // ③A0 environment pinning: the msg.value the solver picked for this call's
+    // transaction (recovered from the per-tx `_sol_per_tx_reseed`). Emitted as
+    // `{value: N}` ONLY when `payable` — sending value to a non-payable method
+    // reverts. Nil / non-payable -> no value pin.
+    expr2tc msg_value;
+    bool payable = false;
+    // ③A0 block.timestamp pinning: the timestamp the solver picked, emitted as
+    // `vm.warp(N)` ONLY when `warp` (the covered path actually reads
+    // block.timestamp) — otherwise a nondet timestamp is noise that can spuriously
+    // revert unrelated arithmetic. Nil / !warp -> no warp.
+    expr2tc block_timestamp;
+    bool warp = false;
   };
 
   /// One counterexample -> one test function: a sequence of calls.
@@ -50,6 +63,18 @@ private:
   std::vector<test_case> test_cases;
   std::string source_file;
   mutable std::mutex data_mutex;
+
+  /// Contracts Solidity forbids `new` on (abstract / interface / library),
+  /// detected from the `#sol_no_new` flag stamped on their constructor symbol.
+  /// The generator degrades their instantiation to UNSUPPORTED so the emitted
+  /// test always compiles. Populated during reconstruct() (needs the namespace).
+  mutable std::set<std::string> non_instantiable;
+
+  /// Contracts that are Solidity libraries (no `this` self-pointer on their
+  /// functions). A library is called statically (`Lib.fn(args)`) and never
+  /// instantiated, so it is kept out of the construction plan. Populated
+  /// during reconstruct() (needs the namespace).
+  mutable std::set<std::string> libraries;
 
   /// Cache of a method's declared parameters in source order:
   /// key "<contract>@<method>" -> [(param_name, sol_type)].
@@ -86,6 +111,17 @@ private:
     std::string &contract,
     std::string &method,
     std::string &param);
+
+  /// Model value of a focused-function parameter (contract,method,param), read
+  /// from the solver for `--function` isolated-function runs (where parameters
+  /// are free nondet inputs, not `param = nondet` assignments). Null expr when
+  /// the parameter was sliced away (irrelevant to the covered branch).
+  static expr2tc recover_focus_param(
+    const symex_target_equationt &target,
+    smt_convt &smt_conv,
+    const std::string &contract,
+    const std::string &method,
+    const std::string &param);
 
   /// Format an SMT constant as a Solidity literal for the given `#sol_type`.
   /// Returns empty for a type we cannot faithfully render (caller then marks

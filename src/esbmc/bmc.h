@@ -23,7 +23,11 @@
 class bmct
 {
 public:
-  bmct(goto_functionst &funcs, optionst &opts, contextt &_context);
+  bmct(
+    goto_functionst &funcs,
+    optionst &opts,
+    contextt &_context,
+    foundry_generator *ext_foundry_gen = nullptr);
 
   optionst &options;
   enum ltl_res
@@ -51,6 +55,18 @@ protected:
   pytest_generator pytest_gen;   // For Python pytest test case generation
   ctest_generator ctest_gen;     // For C/C++ CTest test case generation
   foundry_generator foundry_gen; // For Solidity Foundry test case generation
+  // Under --k-induction the coverage report is emitted by do_bmc_strategy from
+  // a strategy-level generator, while collection happens in the per-phase bmct
+  // this class builds. When non-null, Foundry cases are collected into this
+  // external generator (the strategy-level one) instead of the owned member, so
+  // they survive to generate(). Null on the plain-BMC path (owned member used).
+  foundry_generator *foundry_gen_ext = nullptr;
+  // The Foundry generator to collect into: the external one when threaded, else
+  // the owned member.
+  foundry_generator &foundry()
+  {
+    return foundry_gen_ext ? *foundry_gen_ext : foundry_gen;
+  }
   mutable std::atomic<bool> keep_alive_running;
   mutable std::atomic<int> keep_alive_interval;
 

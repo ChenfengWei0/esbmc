@@ -911,9 +911,11 @@ bool solidity_convertert::populate_auxiliary_vars()
       bool is_abstract = (*itr)["abstract"].get<bool>();
       if (kind == "interface" || kind == "library" || is_abstract)
         nonContractNamesList.insert(c_name);
-
       if (kind == "library")
+      {
+        libraryNamesList.insert(c_name);
         continue;
+      }
       auto c_id = (*itr)["id"].get<int>();
 
       // store contract name
@@ -993,6 +995,12 @@ bool solidity_convertert::populate_auxiliary_vars()
     if (get_type_description(def["underlyingType"]["typeDescriptions"], t))
       return true;
     const std::string name = def["name"].get<std::string>();
+    // Record the source UDVT name on the underlying type so the Foundry
+    // coverage-test generator can render `Name.wrap(<literal>)` (a bare
+    // underlying literal is not assignable to a UDVT parameter). Inert for
+    // symex/solver — it is a `#sol_*` attribute only. Scope-qualified for a
+    // contract-nested UDVT (referred to as `Scope.Name`).
+    t.set("#sol_udvt_name", scope.empty() ? name : scope + "." + name);
     UserDefinedVarMap[name] = t;
     if (!scope.empty())
       UserDefinedVarMap[scope + "." + name] = t;
@@ -1542,6 +1550,10 @@ bool solidity_convertert::convert_ast_nodes(
   // parse constructor
   if (get_constructor(contract_def, cname))
     return true;
+
+  // flag the ctor of abstract/interface/library contracts as non-instantiable
+  // so the Foundry coverage-test generator never emits `new <Abstract>(...)`
+  mark_ctor_instantiability(cname);
 
   size_t index = 0;
   nlohmann::json ast_nodes = contract_def["nodes"];
