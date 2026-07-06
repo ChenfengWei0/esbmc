@@ -546,6 +546,24 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
     }
   }
 
+  // The deterministic-unroll path (--solidity-max-tx N, N>=2) reconstructs a
+  // multi-transaction Foundry sequence UNRELIABLY: the generator can
+  // mis-attribute which method ran in each transaction (emitting fire();fire();
+  // where arm();fire(); was needed). Surface it and point at the reliable path.
+  if (
+    cmdline.isset("generate-foundry-testcase") &&
+    cmdline.isset("solidity-max-tx") && !cmdline.isset("coverage-multi-tx"))
+  {
+    const long n = strtol(cmdline.getval("solidity-max-tx"), nullptr, 10);
+    if (n >= 2)
+      log_warning(
+        "--solidity-max-tx {} with --generate-foundry-testcase reconstructs "
+        "multi-transaction sequences unreliably (methods can be mis-attributed "
+        "across transactions). For reliable ordered sequences use "
+        "--coverage-multi-tx --incremental-bmc instead.",
+        n);
+  }
+
   if (cmdline.isset("base-case"))
   {
     options.set_option("base-case", true);
