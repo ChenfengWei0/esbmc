@@ -2016,8 +2016,7 @@ bool solidity_convertert::convert_yul_expression(
       // A scalar state var OR a `storage` reference (state-var struct /
       // library `T storage` param) is eligible; anything else aborts.
       const bool is_storage =
-        is_state ||
-        decl.value("storageLocation", std::string()) == "storage";
+        is_state || decl.value("storageLocation", std::string()) == "storage";
       if (!is_storage)
         return true;
       exprt base;

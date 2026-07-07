@@ -2744,7 +2744,8 @@ int esbmc_parseoptionst::do_bmc_strategy(
     if (options.get_bool_option("k-induction"))
     {
       bool is_bcv =
-        is_base_case_violated(options, goto_functions, k_step, &foundry_gen).is_true();
+        is_base_case_violated(options, goto_functions, k_step, &foundry_gen)
+          .is_true();
       if (is_bcv)
       {
         any_violation_found = true;
@@ -2838,7 +2839,8 @@ int esbmc_parseoptionst::do_bmc_strategy(
     if (options.get_bool_option("incremental-bmc"))
     {
       bool is_bcv =
-        is_base_case_violated(options, goto_functions, k_step, &foundry_gen).is_true();
+        is_base_case_violated(options, goto_functions, k_step, &foundry_gen)
+          .is_true();
       if (is_bcv)
       {
         any_violation_found = true;
@@ -2884,7 +2886,8 @@ int esbmc_parseoptionst::do_bmc_strategy(
     // falsification
     if (options.get_bool_option("falsification"))
     {
-      if (is_base_case_violated(options, goto_functions, k_step, &foundry_gen).is_true())
+      if (is_base_case_violated(options, goto_functions, k_step, &foundry_gen)
+            .is_true())
         return 1;
     }
   }

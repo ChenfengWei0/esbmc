@@ -454,7 +454,8 @@ std::string foundry_generator::format_struct_literal(
     if (fsol.empty())
     {
       const std::string bn = comps[i].get("#sol_bytesn_size").as_string();
-      if (!bn.empty() && bn.find_first_not_of("0123456789") == std::string::npos)
+      if (
+        !bn.empty() && bn.find_first_not_of("0123456789") == std::string::npos)
       {
         unsigned n = static_cast<unsigned>(std::stoul(bn));
         if (n >= 1 && n <= 32)
@@ -481,8 +482,8 @@ std::string foundry_generator::format_struct_literal(
     if (member_user_struct)
     {
       std::string inner_q;
-      lit = format_struct_literal(
-        ns, cs.datatype_members[i], inner_q, out_imports);
+      lit =
+        format_struct_literal(ns, cs.datatype_members[i], inner_q, out_imports);
     }
     if (lit.empty())
       lit = format_sol_value(fsol, cs.datatype_members[i]);
@@ -703,8 +704,7 @@ contract_bases(const namespacet &ns, const std::string &contract)
 // The interface/contract name of a "CONTRACT:<I>" sol-type, else "".
 static std::string contract_iface_of(const std::string &sol_type)
 {
-  return has_prefix(sol_type, "CONTRACT:") ? sol_type.substr(9)
-                                           : std::string();
+  return has_prefix(sol_type, "CONTRACT:") ? sol_type.substr(9) : std::string();
 }
 
 const foundry_generator::mock_spec &foundry_generator::build_mock_spec(
@@ -831,13 +831,14 @@ const foundry_generator::mock_spec &foundry_generator::build_mock_spec(
 
     // Mutability: mirror payable (a `pure` override of a payable interface fn is
     // rejected by solc); every other mutability is validly tightened to `pure`.
-    const std::string mut = fn->type.get_bool("#sol_payable") ? "payable" : "pure";
+    const std::string mut =
+      fn->type.get_bool("#sol_payable") ? "payable" : "pure";
 
-    std::string stub = "  function " + name + "(" + params + ") external " +
-                       mut + " override";
+    std::string stub =
+      "  function " + name + "(" + params + ") external " + mut + " override";
     if (!ret_sol.empty())
-      stub += " returns (" + ret_sol + ret_loc + ") { return " + ret_default +
-              "; }";
+      stub +=
+        " returns (" + ret_sol + ret_loc + ") { return " + ret_default + "; }";
     else
       stub += " {}";
     ms.stubs.push_back(stub);
@@ -1164,13 +1165,14 @@ foundry_generator::test_case foundry_generator::reconstruct(
         // (BytesStatic) and `bytes` (BytesDynamic) values, which have their own
         // renderers; exclude those by struct tag so they are not mis-routed here.
         bool is_user_struct = false;
-        if (sit != recovered.end() && sit->second.value &&
-            is_constant_struct2t(sit->second.value))
+        if (
+          sit != recovered.end() && sit->second.value &&
+          is_constant_struct2t(sit->second.value))
         {
           const type2tc &vt = to_constant_struct2t(sit->second.value).type;
-          is_user_struct = is_struct_type(vt) &&
-                           !is_bytes_wrapper_struct(
-                             to_struct_type(vt).name.as_string());
+          is_user_struct =
+            is_struct_type(vt) &&
+            !is_bytes_wrapper_struct(to_struct_type(vt).name.as_string());
         }
         if (is_user_struct)
         {
@@ -1235,8 +1237,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
   // ctor warp there rather than to step_location_method (which for a base ctor,
   // an inlined modifier wrapper, or a user init helper names the wrong thing —
   // e.g. an aux `C_afterStart` that is not a real contract).
-  const std::string ctor_ts_contract =
-    config.options.get_option("contract");
+  const std::string ctor_ts_contract = config.options.get_option("contract");
   // ③A0 constructor-time msg.value. A `payable` ctor that requires/branches on
   // msg.value must be deployed with `new C{value: v}(...)` (and the test funded
   // via vm.deal), else a `require(msg.value >= N)` reverts setUp and fails the
@@ -1264,7 +1265,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
     expr2tc msg_value;       // ③A0: solver-picked msg.value for this tx
     expr2tc block_timestamp; // ③A0: solver-picked block.timestamp for this tx
     bool reads_timestamp = false; // ③A0: this tx's body reads block.timestamp
-    expr2tc msg_sender;      // ③A0: solver-picked top-level msg.sender for this tx
+    expr2tc msg_sender; // ③A0: solver-picked top-level msg.sender for this tx
     bool reads_msg_sender = false; // ③A0: this tx's body reads msg.sender
     // ③A0: a nested/high/low-level call wrapper overwrote msg_sender AFTER the
     // reseed, so the top-level `vm.prank` value is NOT what a later branch read.
@@ -1292,8 +1293,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
     const size_t at = name.rfind('@');
     return (at == std::string::npos ? name : name.substr(at + 1)) == base;
   };
-  auto lhs_is_env_global =
-    [&](const expr2tc &lhs, const char *base) -> bool {
+  auto lhs_is_env_global = [&](const expr2tc &lhs, const char *base) -> bool {
     return lhs && is_symbol2t(lhs) &&
            is_env_global(to_symbol2t(lhs).thename.as_string(), base);
   };
@@ -1347,8 +1347,9 @@ foundry_generator::test_case foundry_generator::reconstruct(
     const auto &callable = dispatcher_callable(ns, contract);
     if (callable.count(name))
       return name;
-    if (const symbolt *s =
-          ns.lookup(irep_idt("sol:@C@" + contract + "@F@" + name + "#0")))
+    if (
+      const symbolt *s =
+        ns.lookup(irep_idt("sol:@C@" + contract + "@F@" + name + "#0")))
     {
       const std::string real =
         s->type.get("#sol_modifier_wrapper_for").as_string();
@@ -1424,15 +1425,17 @@ foundry_generator::test_case foundry_generator::reconstruct(
     const bool from_reseed =
       step.source.pc->location.function().as_string().find(
         "_sol_per_tx_reseed") != std::string::npos;
-    if (assign_sym && from_reseed &&
-        lhs_is_env_global(step.original_lhs, "msg_value"))
+    if (
+      assign_sym && from_reseed &&
+      lhs_is_env_global(step.original_lhs, "msg_value"))
     {
       pending_msg_value = smt_conv.get(step.lhs);
       continue;
     }
     // ③A0: recover per-tx block.timestamp from the reseed (same discipline).
-    if (assign_sym && from_reseed &&
-        lhs_is_env_global(step.original_lhs, "block_timestamp"))
+    if (
+      assign_sym && from_reseed &&
+      lhs_is_env_global(step.original_lhs, "block_timestamp"))
     {
       pending_block_timestamp = smt_conv.get(step.lhs);
       continue;
@@ -1443,8 +1446,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
     // The deploy-time block.timestamp is set by the library `initialize()` (in
     // the C model, NOT a `.sol` file); capture it so a ctor reading
     // block.timestamp can be deployed under a matching vm.warp.
-    const std::string step_fn =
-      step.source.pc->location.function().as_string();
+    const std::string step_fn = step.source.pc->location.function().as_string();
     if (
       assign_sym && segs.empty() &&
       lhs_is_env_global(step.original_lhs, "block_timestamp") &&
@@ -1652,8 +1654,10 @@ foundry_generator::test_case foundry_generator::reconstruct(
   // faithfully reproduce the stored owner.
   const bool ctor_needs_deployer = ctor_reads_msg_sender && !ctor_sender_dirty;
   const std::string ctor_value_lit =
-    ctor_msg_value ? format_sol_value("UINT256", ctor_msg_value) : std::string();
-  const bool ctor_value_nonzero = !ctor_value_lit.empty() && ctor_value_lit != "0";
+    ctor_msg_value ? format_sol_value("UINT256", ctor_msg_value)
+                   : std::string();
+  const bool ctor_value_nonzero =
+    !ctor_value_lit.empty() && ctor_value_lit != "0";
   // A payable ctor reading a nonzero msg.value must deploy with `{value:}`.
   const bool ctor_needs_value =
     ctor_reads_value && ctor_is_payable && ctor_value_nonzero;
@@ -1720,8 +1724,8 @@ foundry_generator::test_case foundry_generator::reconstruct(
     // ctor `require` could revert (breaking setUp), so degrade to UNSUPPORTED —
     // UNLESS every argument is a faithful mock instance (or the ctor is
     // parameterless, giving the correct `new C()`).
-    const bool all_mock_or_none = std::all_of(
-      cc.args.begin(), cc.args.end(), [](const sol_arg &a) {
+    const bool all_mock_or_none =
+      std::all_of(cc.args.begin(), cc.args.end(), [](const sol_arg &a) {
         return !a.mock_iface.empty();
       });
     if (!all_mock_or_none)
@@ -1775,7 +1779,8 @@ foundry_generator::test_case foundry_generator::reconstruct(
       const std::string id = s.id.as_string();
       const std::string mark = "@_ESBMC_Nondet_Extcall_";
       size_t p = id.find(mark);
-      if (s.type.is_code() && has_prefix(id, "sol:@C@") && p != std::string::npos)
+      if (
+        s.type.is_code() && has_prefix(id, "sol:@C@") && p != std::string::npos)
         disp_contracts.insert(id.substr(7, p - 7));
     });
 
@@ -1790,8 +1795,8 @@ foundry_generator::test_case foundry_generator::reconstruct(
       if (raw_m.empty())
         continue;
       std::string c = config.options.get_option("contract");
-      std::string m = c.empty() ? std::string()
-                                : resolve_dispatcher_method(c, raw_m);
+      std::string m =
+        c.empty() ? std::string() : resolve_dispatcher_method(c, raw_m);
       if (m.empty())
       {
         c.clear();
@@ -2010,12 +2015,14 @@ size_t foundry_generator::write_foundry_file(
   {
     std::string contract, var, ctor_args;
     bool buildable;
-    bool abstract; // non-instantiable (abstract/interface/library)
+    bool abstract;         // non-instantiable (abstract/interface/library)
     std::string ctor_warp; // ③A0: vm.warp timestamp for a time-dependent ctor
-    std::string deployer;  // ③A0: vm.startPrank deployer for a sender-owner ctor
+    std::string deployer; // ③A0: vm.startPrank deployer for a sender-owner ctor
     std::string ctor_value; // ③A0: {value:} for a payable value-reading ctor
-    bool value_unsendable = false; // non-payable ctor needs value -> unsupported
-    bool unrecovered = false; // parameterized ctor, args not recovered -> unsupported
+    bool value_unsendable =
+      false; // non-payable ctor needs value -> unsupported
+    bool unrecovered =
+      false; // parameterized ctor, args not recovered -> unsupported
   };
   auto plan_of = [&](const test_case &tc) {
     std::map<std::string, const sol_call *> ctor;
@@ -2233,8 +2240,9 @@ size_t foundry_generator::write_foundry_file(
           if (!call.supported)
             continue;
           for (const auto &a : call.args)
-            if (!a.mock_iface.empty() && !a.literal.empty() &&
-                seen.insert(a.literal).second)
+            if (
+              !a.mock_iface.empty() && !a.literal.empty() &&
+              seen.insert(a.literal).second)
               mock_insts.emplace_back(a.literal, a.mock_iface);
         }
     }
@@ -2300,7 +2308,8 @@ size_t foundry_generator::write_foundry_file(
              "not reproducible in Foundry\n";
       else if (ib.unrecovered)
         f << "    // UNSUPPORTED: constructor of " << ib.contract
-          << " has parameters but its arguments were not recovered on this path "
+          << " has parameters but its arguments were not recovered on this "
+             "path "
              "(e.g. --focus-function nondets them); deploying with default "
              "arguments could revert setUp, so the deploy is skipped\n";
       else
@@ -2318,8 +2327,7 @@ size_t foundry_generator::write_foundry_file(
         // A library call has no instance: emit the static receiver `Lib`. A
         // contract call uses its constructed instance variable.
         const bool is_lib = libraries.count(call.contract) != 0;
-        const std::string recv =
-          is_lib ? call.contract : var[call.contract];
+        const std::string recv = is_lib ? call.contract : var[call.contract];
         // ③A0 environment pinning: for a payable method whose transaction the
         // solver gave a non-zero msg.value, reproduce it — `vm.deal` funds the
         // test contract, `{value: N}` forwards it. Non-payable methods never
@@ -2341,7 +2349,8 @@ size_t foundry_generator::write_foundry_file(
         // are emitted together, only in the branches that emit a call.
         if (call.warp && call.block_timestamp)
         {
-          const std::string t = format_sol_value("UINT256", call.block_timestamp);
+          const std::string t =
+            format_sol_value("UINT256", call.block_timestamp);
           if (!t.empty())
             deal_line = "    vm.warp(" + t + ");\n" + deal_line;
         }
@@ -2467,8 +2476,7 @@ void foundry_generator::generate() const
           if (has_prefix(a.sol_type, "STRUCT:"))
             ++struct_args;
     if (struct_args)
-      log_status(
-        "Foundry: {} struct-literal arg(s) rendered", struct_args);
+      log_status("Foundry: {} struct-literal arg(s) rendered", struct_args);
     // A contract/interface-typed argument that was NOT mocked (a concrete
     // contract, an interface whose full stub set could not render, or one not
     // materialized in the symbol table) degraded to UNSUPPORTED — report it so
@@ -2548,10 +2556,12 @@ void foundry_generator::generate() const
       }
     if (value_pinned)
       log_status(
-        "Foundry: {} call(s) with pinned msg.value (payable env)", value_pinned);
+        "Foundry: {} call(s) with pinned msg.value (payable env)",
+        value_pinned);
     if (time_pinned)
       log_status(
-        "Foundry: {} call(s) with pinned block.timestamp (vm.warp)", time_pinned);
+        "Foundry: {} call(s) with pinned block.timestamp (vm.warp)",
+        time_pinned);
     if (sender_pinned)
       log_status(
         "Foundry: {} call(s) with pinned msg.sender (vm.prank)", sender_pinned);

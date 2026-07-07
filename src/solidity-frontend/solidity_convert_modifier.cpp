@@ -293,7 +293,7 @@ bool solidity_convertert::get_function_definition(
       std::string rname = rparam["name"].get<std::string>();
       if (rname.empty())
       {
-        ++pos; // keep the tuple-member index aligned with declaration order
+        ++pos;    // keep the tuple-member index aligned with declaration order
         continue; // unnamed return parameter — skip
       }
 
@@ -366,8 +366,8 @@ bool solidity_convertert::get_function_definition(
         if (last.is_code() && last.statement() == "return")
           has_explicit_return = true;
       }
-      if (!has_explicit_return && !is_tuple_return &&
-          named_ret_syms.size() == 1)
+      if (
+        !has_explicit_return && !is_tuple_return && named_ret_syms.size() == 1)
       {
         code_returnt implicit_ret;
         implicit_ret.return_value() = named_ret_syms[0];

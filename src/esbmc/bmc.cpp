@@ -51,7 +51,10 @@ bmct::bmct(
   optionst &opts,
   contextt &_context,
   foundry_generator *ext_foundry_gen)
-  : options(opts), context(_context), ns(context), foundry_gen_ext(ext_foundry_gen)
+  : options(opts),
+    context(_context),
+    ns(context),
+    foundry_gen_ext(ext_foundry_gen)
 {
   interleaving_number = 0;
   interleaving_failed = 0;

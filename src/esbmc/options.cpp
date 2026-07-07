@@ -827,7 +827,8 @@ const struct group_opt_templ all_cmd_options[] = {
       NULL,
       "Keep the multi-transaction dispatcher loop live in Solidity coverage "
       "mode instead of neutralizing it to one call, so branches reachable only "
-      "through a state-building call sequence (e.g. deposit(); withdraw();) are "
+      "through a state-building call sequence (e.g. deposit(); withdraw();) "
+      "are "
       "covered and reconstructed into an ordered Foundry test. Requires a "
       "global bound: use with --incremental-bmc (recommended; discovers the "
       "transaction depth dynamically) or --unwind N (reaches up to ~N-1 tx). "
