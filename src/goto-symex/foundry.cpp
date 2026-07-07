@@ -93,6 +93,16 @@ std::string effective_sol_type(const typet &t)
       if (!elem.empty())
         return "ARRAY:" + elem;
     }
+    // An interface/contract-typed value lowers to `pointer<struct tag-I>` with
+    // `#sol_type: CONTRACT` and `#sol_contract: I` on the pointer. Encode as
+    // "CONTRACT:<I>" so the reconstructor can synthesize a mock instance (a bare
+    // address literal would revert when the contract calls a method on it).
+    if (ptag == "CONTRACT")
+    {
+      const std::string cn = t.get("#sol_contract").as_string();
+      if (!cn.empty())
+        return "CONTRACT:" + cn;
+    }
   }
   // A `bytes` value lowers to the `BytesDynamic` struct (tag "struct
   // BytesDynamic", no #sol_type). NOT "BytesStatic" (a fixed bytesN, rendered
@@ -155,6 +165,8 @@ std::string format_fixed_bytes(unsigned n, const expr2tc &value)
   if (st.datatype_members.empty())
     return "";
   const expr2tc &data = st.datatype_members[0]; // the `data[32]` array
+  if (!data) // an unconstrained (e.g. nested-struct) bytesN member — degrade
+    return "";
 
   static const char *hexd = "0123456789abcdef";
   std::string hex;
@@ -356,6 +368,141 @@ std::string foundry_generator::default_sol_literal(const std::string &sol_type)
   return "";
 }
 
+// A struct type NAME (possibly "struct <tag>") that is the modeled bytes value
+// wrapper — `BytesStatic` (fixed bytesN) or `BytesDynamic` (`bytes`) — which have
+// their own renderers and must NOT be treated as a user struct. Matched exactly
+// (not by substring) so a legitimately-named user struct like `BytesBundle` is
+// not misclassified.
+static bool is_bytes_wrapper_struct(const std::string &name)
+{
+  std::string n = name;
+  if (has_prefix(n, "struct "))
+    n = n.substr(7);
+  return n == "BytesStatic" || n == "BytesDynamic";
+}
+
+std::string foundry_generator::format_struct_literal(
+  const namespacet &ns,
+  const expr2tc &value,
+  std::string &qualified,
+  std::set<std::string> &out_imports)
+{
+  if (!value || !is_constant_struct2t(value))
+    return "";
+  const constant_struct2t &cs = to_constant_struct2t(value);
+  if (!is_struct_type(cs.type))
+    return "";
+
+  // The recovered value's migrated type keeps only the LOCAL struct name; the
+  // DECLARED tag symbol `tag-struct <Qualified>` retains the source field types
+  // and the Solidity-qualified name. Match the tag by local name, requiring
+  // UNIQUENESS — if two structs share a local name across scopes (`I1.S` /
+  // `I2.S`), we cannot tell which the parameter is (the declared parameter type
+  // is an inline struct that also carries only the local name), so degrade
+  // rather than pick the wrong one (an uncompilable / wrong-typed literal).
+  const std::string tag_pfx = "tag-struct ";
+  std::string local = to_struct_type(cs.type).name.as_string();
+  if (has_prefix(local, "struct "))
+    local = local.substr(7);
+  const symbolt *tag = nullptr;
+  unsigned matches = 0;
+  ns.get_context().foreach_operand([&](const symbolt &s) {
+    if (!s.type.is_struct() || !has_prefix(s.id.as_string(), tag_pfx))
+      return;
+    const std::string q = s.id.as_string().substr(tag_pfx.size());
+    // Match the local name exactly, or as the `.<local>` suffix of a
+    // contract-scoped qualified name (`IBaseEscrow.Immutables`).
+    if (
+      q == local ||
+      (q.size() > local.size() + 1 &&
+       q.compare(q.size() - local.size(), local.size(), local) == 0 &&
+       q[q.size() - local.size() - 1] == '.'))
+    {
+      ++matches;
+      tag = &s;
+    }
+  });
+  if (matches != 1)
+    return ""; // ambiguous or not found — degrade
+  qualified = tag->id.as_string().substr(tag_pfx.size());
+  // Import the struct's own scope (`Scope.Name` → `Scope`; top-level → `Name`).
+  {
+    size_t dot = qualified.find('.');
+    out_imports.insert(
+      dot == std::string::npos ? qualified : qualified.substr(0, dot));
+  }
+
+  const struct_typet &decl = to_struct_type(tag->type);
+  const auto &comps = decl.components();
+  // Declared components (incl. padding) must align 1:1 with recovered members.
+  if (comps.size() != cs.datatype_members.size())
+    return "";
+
+  std::string out;
+  for (size_t i = 0; i < comps.size(); ++i)
+  {
+    const std::string cname = comps[i].get_name().as_string();
+    if (has_prefix(cname, "anon_pad"))
+      continue; // synthetic padding — not a source field
+    if (!cs.datatype_members[i])
+      return ""; // unrecovered member — degrade rather than deref null
+    const typet &ft = comps[i].type();
+    std::string fsol = effective_sol_type(ft);
+    // A fixed `bytesN` field lost its width to the type-follow; the frontend
+    // re-stamps it on the component irep (get_struct_class_fields), which
+    // survives. Recover the exact-width sol-type from there.
+    if (fsol.empty())
+    {
+      const std::string bn = comps[i].get("#sol_bytesn_size").as_string();
+      if (!bn.empty() && bn.find_first_not_of("0123456789") == std::string::npos)
+      {
+        unsigned n = static_cast<unsigned>(std::stoul(bn));
+        if (n >= 1 && n <= 32)
+          fsol = "BYTES" + std::to_string(n);
+      }
+    }
+    // A fixed/dynamic array struct field cannot be rendered faithfully inside a
+    // positional literal (dynamic default `new T[](4)` is illegal for a fixed
+    // field) — degrade the whole struct rather than emit a wrong literal.
+    if (has_prefix(fsol, "ARRAY:") || ft.is_array())
+      return "";
+    // A nested USER struct field recurses; a bytes field is ALSO a struct
+    // (BytesStatic/BytesDynamic) but must render via format_sol_value, not
+    // recursion — distinguish by the member's struct tag.
+    bool member_user_struct = false;
+    if (is_constant_struct2t(cs.datatype_members[i]))
+    {
+      const type2tc &mt = cs.datatype_members[i]->type;
+      member_user_struct =
+        is_struct_type(mt) &&
+        !is_bytes_wrapper_struct(to_struct_type(mt).name.as_string());
+    }
+    std::string lit;
+    if (member_user_struct)
+    {
+      std::string inner_q;
+      lit = format_struct_literal(
+        ns, cs.datatype_members[i], inner_q, out_imports);
+    }
+    if (lit.empty())
+      lit = format_sol_value(fsol, cs.datatype_members[i]);
+    if (lit.empty())
+      lit = default_sol_literal(fsol);
+    if (lit.empty())
+      return ""; // all-or-nothing
+    // A UDVT field renders as `Name.wrap(...)`; import the top-level UDVT type.
+    if (has_prefix(fsol, "UDVT:"))
+    {
+      std::string un = fsol.substr(5);
+      un = un.substr(0, un.find(':'));
+      if (un.find('.') == std::string::npos)
+        out_imports.insert(un);
+    }
+    out += (out.empty() ? "" : ", ") + lit;
+  }
+  return qualified + "(" + out + ")";
+}
+
 const std::vector<std::pair<std::string, std::string>> &
 foundry_generator::get_method_params(
   const namespacet &ns,
@@ -511,6 +658,28 @@ contract_is_library(const namespacet &ns, const std::string &contract)
   return is_lib;
 }
 
+// Whether `contract` is a true Solidity interface (frontend stamps
+// `#sol_interface` on its constructor symbol, alongside `#sol_no_new`). Only an
+// interface is mocked — it is guaranteed to have no constructor arguments and no
+// abstract receive/fallback, so `contract ESBMCMock_<I> is <I> { <stubs> }` is
+// always fully implementable. An abstract contract (equally non-instantiable but
+// possibly carrying ctor args / an abstract receive-fallback) is NOT mocked.
+static bool
+contract_is_interface(const namespacet &ns, const std::string &contract)
+{
+  const std::string ctor_prefix = "sol:@C@" + contract + "@F@" + contract + "#";
+  bool is_iface = false;
+  ns.get_context().foreach_operand([&](const symbolt &s) {
+    if (is_iface || !s.type.is_code())
+      return;
+    if (
+      has_prefix(s.id.as_string(), ctor_prefix) &&
+      s.type.get_bool("#sol_interface"))
+      is_iface = true;
+  });
+  return is_iface;
+}
+
 // The linearized base contracts of `contract` (excluding self), read from the
 // `#sol_bases` list the frontend stamps on the constructor symbol. Empty when
 // the contract has no bases. Used to instantiate only the most-derived
@@ -529,6 +698,153 @@ contract_bases(const namespacet &ns, const std::string &contract)
       bases.insert(b);
   });
   return bases;
+}
+
+// The interface/contract name of a "CONTRACT:<I>" sol-type, else "".
+static std::string contract_iface_of(const std::string &sol_type)
+{
+  return has_prefix(sol_type, "CONTRACT:") ? sol_type.substr(9)
+                                           : std::string();
+}
+
+const foundry_generator::mock_spec &foundry_generator::build_mock_spec(
+  const namespacet &ns,
+  const std::string &iface) const
+{
+  auto cached = mock_specs.find(iface);
+  if (cached != mock_specs.end())
+    return cached->second;
+
+  mock_spec ms;
+  ms.name = iface;
+
+  // Name-collision guard: if the source already declares a contract literally
+  // named `ESBMCMock_<iface>`, emitting our mock would redeclare it. Degrade to
+  // UNSUPPORTED rather than emit an uncompilable duplicate declaration.
+  {
+    const std::string clash_ctor =
+      "sol:@C@ESBMCMock_" + iface + "@F@ESBMCMock_" + iface + "#";
+    bool clash = false;
+    ns.get_context().foreach_operand([&](const symbolt &s) {
+      if (!clash && has_prefix(s.id.as_string(), clash_ctor))
+        clash = true;
+    });
+    if (clash)
+      return mock_specs.emplace(iface, std::move(ms)).first->second;
+  }
+
+  // Enumerate the interface's externally-visible functions. Inherited methods
+  // are already inlined into the derived interface's `@F@` set (verified: a
+  // `IChild is IBase` carries `IChild@F@<base-method>`), so no base walk is
+  // needed. A genuine method is a CODE symbol whose first argument is the `this`
+  // self-pointer; events (`void(a,b,c)`, no `this`) are thereby excluded. The
+  // only synthesized code-with-`this` members an interface carries are the
+  // `$`-prefixed call helpers (`$call`/`$send`/…) and its own constructor
+  // (name == iface); everything else is a real interface method (including a
+  // legally `_`-prefixed one), so those two are the only exclusions.
+  const std::string fpfx = "sol:@C@" + iface + "@F@";
+  std::vector<std::pair<const symbolt *, std::string>> fns; // (symbol, name)
+  std::set<std::string> seen_sig; // dedup by (name + param-type-list)
+  ns.get_context().foreach_operand([&](const symbolt &s) {
+    const std::string id = s.id.as_string();
+    if (!s.type.is_code() || !has_prefix(id, fpfx))
+      return;
+    // `<fpfx><name>#<node>`: reject params/locals (`<fpfx><name>@..`).
+    const std::string rest = id.substr(fpfx.size());
+    size_t h = rest.find('#');
+    if (h == std::string::npos || rest.find('@') != std::string::npos)
+      return;
+    const std::string name = rest.substr(0, h);
+    if (name.empty() || name == iface || name[0] == '$')
+      return;
+    const code_typet &ct = to_code_type(s.type);
+    if (
+      ct.arguments().empty() ||
+      ct.arguments().front().get_base_name().as_string() != "this")
+      return; // an event / free function, not an interface method
+    fns.emplace_back(&s, name);
+  });
+
+  if (fns.empty())
+    return mock_specs.emplace(iface, std::move(ms)).first->second;
+
+  // A stub must NAME a `string` param/return type — but `effective_sol_type`
+  // deliberately does not surface STRING (a string call-argument stays
+  // UNSUPPORTED rather than default to "" and risk a wrong-branch replay). So
+  // recognize the string pointer locally, for the mock stub signature only.
+  auto mock_string_type = [](const typet &t) -> std::string {
+    return (t.is_pointer() && t.get("#sol_type").as_string() == "STRING")
+             ? std::string("STRING")
+             : std::string();
+  };
+
+  for (const auto &fnp : fns)
+  {
+    const symbolt *fn = fnp.first;
+    const std::string &name = fnp.second;
+    const code_typet &ct = to_code_type(fn->type);
+
+    // Parameter types (skip the `this` self-pointer). A parameter type that
+    // cannot be named as a Solidity type makes the whole interface unrenderable.
+    std::string params;
+    std::string sig = name + "(";
+    bool ok = true;
+    for (size_t i = 1; i < ct.arguments().size(); ++i)
+    {
+      std::string st = arg_sol_type(ct.arguments()[i]);
+      if (st.empty())
+        st = mock_string_type(ct.arguments()[i].type());
+      const std::string sty = sol_type_to_solidity(st);
+      if (sty.empty())
+      {
+        ok = false;
+        break;
+      }
+      // A reference type in an external signature needs a data location.
+      std::string loc;
+      if (st == "STRING" || st == "BYTES_DYN" || has_prefix(st, "ARRAY:"))
+        loc = " memory";
+      params += (params.empty() ? "" : ", ") + sty + loc;
+      sig += st + ",";
+    }
+    if (!ok)
+      return mock_specs.emplace(iface, std::move(ms)).first->second;
+    if (!seen_sig.insert(sig).second)
+      continue; // duplicate signature (already emitted) — skip
+
+    // Return type. Only a single, nameable return is supported; a tuple / struct
+    // / unnameable return degrades the whole interface (all-or-nothing).
+    std::string ret_sol, ret_default, ret_loc;
+    const typet &rt = ct.return_type();
+    if (rt.id() != "empty" && !rt.is_nil())
+    {
+      std::string rst = effective_sol_type(rt);
+      if (rst.empty())
+        rst = mock_string_type(rt);
+      ret_sol = sol_type_to_solidity(rst);
+      ret_default = default_sol_literal(rst);
+      if (ret_sol.empty() || ret_default.empty())
+        return mock_specs.emplace(iface, std::move(ms)).first->second;
+      if (rst == "STRING" || rst == "BYTES_DYN" || has_prefix(rst, "ARRAY:"))
+        ret_loc = " memory";
+    }
+
+    // Mutability: mirror payable (a `pure` override of a payable interface fn is
+    // rejected by solc); every other mutability is validly tightened to `pure`.
+    const std::string mut = fn->type.get_bool("#sol_payable") ? "payable" : "pure";
+
+    std::string stub = "  function " + name + "(" + params + ") external " +
+                       mut + " override";
+    if (!ret_sol.empty())
+      stub += " returns (" + ret_sol + ret_loc + ") { return " + ret_default +
+              "; }";
+    else
+      stub += " {}";
+    ms.stubs.push_back(stub);
+  }
+
+  ms.renderable = !ms.stubs.empty();
+  return mock_specs.emplace(iface, std::move(ms)).first->second;
 }
 
 // Model value of a focused-function parameter (contract,method,param), read
@@ -799,6 +1115,77 @@ foundry_generator::test_case foundry_generator::reconstruct(
       sol_arg a;
       a.param = decl.first;
       a.sol_type = decl.second;
+
+      // Interface/contract-typed argument: pass a synthesized mock instance
+      // rather than a literal (a bare address reverts when the contract calls a
+      // method on the handle). Only a true INTERFACE is mocked — it is
+      // guaranteed to have no constructor arguments and no abstract
+      // receive/fallback, so `ESBMCMock_<I> is <I>` is always fully
+      // implementable. An abstract contract (ctor args / abstract
+      // receive-fallback) or a concrete contract (real side effects a later
+      // branch may depend on) is NOT mocked and degrades to UNSUPPORTED.
+      // All-or-nothing: an interface whose full stub set cannot render is
+      // UNSUPPORTED.
+      //
+      // Distinctness: each interface argument gets its OWN mock instance
+      // (keyed by parameter name). ESBMC's recovered construction path already
+      // satisfied any `a != b` guard, and a fresh instance per slot reproduces
+      // it (distinct deployed addresses). A constructor that instead REQUIRES
+      // two interface parameters to be the SAME instance (`a == b`) is not
+      // reproduced — the concrete `$address` the solver equated is not
+      // recoverable from a pointer model value (get() returns an unconstrained
+      // symbol for both) — that rare shape would revert setUp; it is a
+      // documented limitation, not a silent wrong-coverage claim.
+      const std::string iface = contract_iface_of(decl.second);
+      if (!iface.empty())
+      {
+        if (
+          contract_is_interface(ns, iface) &&
+          build_mock_spec(ns, iface).renderable)
+        {
+          a.mock_iface = iface;
+          a.mock_key = decl.first; // fresh instance per slot
+          a.literal = "mk_" + iface + "_" + a.mock_key; // deployed mock var
+        }
+        else
+          out.supported = false; // literal stays empty
+        out.args.push_back(a);
+        continue;
+      }
+
+      // Struct-typed argument: render a positional struct literal from the
+      // recovered constant_struct + the declared struct tag (source field
+      // types). Detected by the recovered value being a constant_struct (the
+      // declared sol_type is "" for a user struct). All-or-nothing inside
+      // format_struct_literal.
+      {
+        auto sit = recovered.find(decl.first);
+        // A user struct value is a constant_struct — but so are `bytesN`
+        // (BytesStatic) and `bytes` (BytesDynamic) values, which have their own
+        // renderers; exclude those by struct tag so they are not mis-routed here.
+        bool is_user_struct = false;
+        if (sit != recovered.end() && sit->second.value &&
+            is_constant_struct2t(sit->second.value))
+        {
+          const type2tc &vt = to_constant_struct2t(sit->second.value).type;
+          is_user_struct = is_struct_type(vt) &&
+                           !is_bytes_wrapper_struct(
+                             to_struct_type(vt).name.as_string());
+        }
+        if (is_user_struct)
+        {
+          std::string qualified;
+          a.literal = format_struct_literal(
+            ns, sit->second.value, qualified, a.struct_imports);
+          if (a.literal.empty())
+            out.supported = false;
+          else
+            a.sol_type = "STRUCT:" + qualified; // for import resolution
+          out.args.push_back(a);
+          continue;
+        }
+      }
+
       auto it = recovered.find(decl.first);
       // Re-format any recovered value against the DECLARED type (decl.second),
       // which carries the authoritative source width — critical for bytesN,
@@ -1317,15 +1704,31 @@ foundry_generator::test_case foundry_generator::reconstruct(
     }
     calls.push_back(std::move(cc));
   }
-  // A PARAMETERLESS constructor produces no ctor_args entry (nothing to recover),
-  // so synthesize a bare ctor call to carry the deploy-time vm.warp (or the
-  // non-payable-value UNSUPPORTED marker) — else `new C()` deploys under the
-  // default env and a timelock / value-gated ctor require reverts setUp.
+  // No ctor_args entry for the deploy contract, yet its constructor reads
+  // deploy-time env: synthesize a ctor call to carry the vm.warp/startPrank.
+  // Route through build_call (not a bare no-arg `sol_call`) so a PARAMETERIZED
+  // constructor never renders as an uncompilable `new C()`. A truly
+  // parameterless ctor yields `new C()`; a parameterized ctor reached here has
+  // NO recovered arguments, so rather than emit all-default args (which a ctor
+  // `require` on a zero default could revert, breaking the whole suite) the
+  // deploy degrades to UNSUPPORTED.
   if (ctor_needs_env && !ctor_env_attached && !ctor_ts_contract.empty())
   {
-    sol_call cc;
-    cc.contract = ctor_ts_contract;
-    cc.method = ctor_ts_contract;
+    sol_call cc = build_call(ctor_ts_contract, ctor_ts_contract, {});
+    // Reached with NO recovered args, so build_call filled every slot with a
+    // mock (interface) or a type DEFAULT. A default (0/address(0)) is a guess a
+    // ctor `require` could revert (breaking setUp), so degrade to UNSUPPORTED —
+    // UNLESS every argument is a faithful mock instance (or the ctor is
+    // parameterless, giving the correct `new C()`).
+    const bool all_mock_or_none = std::all_of(
+      cc.args.begin(), cc.args.end(), [](const sol_arg &a) {
+        return !a.mock_iface.empty();
+      });
+    if (!all_mock_or_none)
+    {
+      cc.supported = false;
+      cc.ctor_unrecovered = true;
+    }
     attach_ctor_env(cc);
     if (ctor_value_unsendable)
     {
@@ -1494,6 +1897,7 @@ void foundry_generator::clear()
   source_file.clear();
   non_instantiable.clear();
   libraries.clear();
+  mock_specs.clear();
 }
 
 void foundry_generator::collect(
@@ -1611,6 +2015,7 @@ size_t foundry_generator::write_foundry_file(
     std::string deployer;  // ③A0: vm.startPrank deployer for a sender-owner ctor
     std::string ctor_value; // ③A0: {value:} for a payable value-reading ctor
     bool value_unsendable = false; // non-payable ctor needs value -> unsupported
+    bool unrecovered = false; // parameterized ctor, args not recovered -> unsupported
   };
   auto plan_of = [&](const test_case &tc) {
     std::map<std::string, const sol_call *> ctor;
@@ -1639,6 +2044,8 @@ size_t foundry_generator::write_foundry_file(
         !ib.abstract && (it == ctor.end() || it->second->supported);
       if (it != ctor.end() && it->second->ctor_value_unsendable)
         ib.value_unsendable = true;
+      if (it != ctor.end() && it->second->ctor_unrecovered)
+        ib.unrecovered = true;
       ib.ctor_args = it == ctor.end() ? std::string() : join_args(*it->second);
       // ③A0 ctor-time env: a ctor reading block.timestamp must be deployed under
       // a matching vm.warp, else `new C()` reverts in setUp and fails the suite.
@@ -1705,6 +2112,7 @@ size_t foundry_generator::write_foundry_file(
   }
 
   std::set<std::string> imports;
+  std::set<std::string> mock_ifaces_used; // interfaces needing an ESBMCMock_*
   for (const auto &tc : cases)
     for (const auto &call : tc)
     {
@@ -1714,6 +2122,7 @@ size_t foundry_generator::write_foundry_file(
       // file-level type (a contract-scoped UDVT is named `Scope.Name` and its
       // enclosing contract is already imported).
       for (const auto &a : call.args)
+      {
         if (has_prefix(a.sol_type, "UDVT:"))
         {
           std::string name = a.sol_type.substr(5);
@@ -1721,6 +2130,24 @@ size_t foundry_generator::write_foundry_file(
           if (name.find('.') == std::string::npos)
             imports.insert(name);
         }
+        // A struct literal `<Scope>.<Name>(…)` needs `<Scope>` imported; a
+        // top-level struct `<Name>(…)` needs `<Name>` itself. Plus any type the
+        // literal's fields reference (UDVT names, nested struct scopes).
+        if (has_prefix(a.sol_type, "STRUCT:"))
+        {
+          const std::string name = a.sol_type.substr(7);
+          size_t dot = name.find('.');
+          imports.insert(dot == std::string::npos ? name : name.substr(0, dot));
+        }
+        for (const auto &si : a.struct_imports)
+          imports.insert(si);
+        // An interface-arg mock `is <iface>` must import <iface> from the source.
+        if (!a.mock_iface.empty())
+        {
+          imports.insert(a.mock_iface);
+          mock_ifaces_used.insert(a.mock_iface);
+        }
+      }
     }
 
   // Import from the Solidity source (a `.sol` file), never the `.solast` AST
@@ -1757,6 +2184,25 @@ size_t foundry_generator::write_foundry_file(
   for (const auto &c : imports)
     f << "import {" << c << "} from \"./" << src_base << "\";\n";
 
+  // Interface-arg mocks: emit one `contract ESBMCMock_<iface> is <iface>` with a
+  // default-returning stub per interface method, so a constructor/method taking
+  // an `<iface>` handle can be deployed. Its calls to the handle return fixed
+  // defaults — reproducing ESBMC's havoc of those calls for every branch except
+  // one that depends on a specific return value ([approx], noted below).
+  for (const auto &iface : mock_ifaces_used)
+  {
+    auto it = mock_specs.find(iface);
+    if (it == mock_specs.end() || !it->second.renderable)
+      continue; // should not happen (only renderable ifaces reach here)
+    f << "\n// [approx] mock for interface " << iface
+      << ": all methods return fixed defaults; branches on its return values "
+         "are not reproduced.\n";
+    f << "contract ESBMCMock_" << iface << " is " << iface << " {\n";
+    for (const auto &stub : it->second.stubs)
+      f << stub << "\n";
+    f << "}\n";
+  }
+
   const bool multi = group_order.size() > 1;
   size_t gidx = 0, fn = 0;
   for (const auto &s : group_order)
@@ -1772,6 +2218,27 @@ size_t foundry_generator::write_foundry_file(
         built.insert(ib.contract);
     }
 
+    // Interface-arg mock instances this group deploys: (var name, iface),
+    // unique in first-seen order. The var names already appear in the ctor/method
+    // argument literals (`mk_<iface>_<key>`), so a distinct alias key => a
+    // distinct instance (reproducing `a != b`), a shared key => one instance.
+    std::vector<std::pair<std::string, std::string>> mock_insts;
+    {
+      std::set<std::string> seen;
+      for (const auto *tcp : grp)
+        for (const auto &call : *tcp)
+        {
+          // An UNSUPPORTED call is not emitted, so its mock arguments would be
+          // orphaned (deployed but never passed). Skip them.
+          if (!call.supported)
+            continue;
+          for (const auto &a : call.args)
+            if (!a.mock_iface.empty() && !a.literal.empty() &&
+                seen.insert(a.literal).second)
+              mock_insts.emplace_back(a.literal, a.mock_iface);
+        }
+    }
+
     f << "\ncontract " << primary << "CovTest";
     if (multi)
       f << "_" << gidx;
@@ -1779,10 +2246,16 @@ size_t foundry_generator::write_foundry_file(
 
     // State-variable instances, deployed once in setUp() — Foundry re-runs
     // setUp() before every test_cov_*, giving each a fresh construction.
+    for (const auto &mi : mock_insts)
+      f << "  ESBMCMock_" << mi.second << " " << mi.first << ";\n";
     for (const auto &ib : plan)
       if (ib.buildable)
         f << "  " << ib.contract << " " << ib.var << ";\n";
     f << "  function setUp() public {\n";
+    // Deploy interface-arg mocks first: the contract constructors below receive
+    // them (a bare address would revert when the constructor calls a method).
+    for (const auto &mi : mock_insts)
+      f << "    " << mi.first << " = new ESBMCMock_" << mi.second << "();\n";
     // ③A0 ctor-time env: if any deployed contract's constructor reads
     // block.timestamp, vm.warp to the deploy-time value BEFORE constructing, so
     // a `require(block.timestamp ...)` in the ctor does not revert setUp and fail
@@ -1825,6 +2298,11 @@ size_t foundry_generator::write_foundry_file(
           << " requires a nonzero deploy-time msg.value but is not payable "
              "(EVM forbids sending value); the reconstructed deploy path is "
              "not reproducible in Foundry\n";
+      else if (ib.unrecovered)
+        f << "    // UNSUPPORTED: constructor of " << ib.contract
+          << " has parameters but its arguments were not recovered on this path "
+             "(e.g. --focus-function nondets them); deploying with default "
+             "arguments could revert setUp, so the deploy is skipped\n";
       else
         f << "    // UNSUPPORTED: constructor of " << ib.contract
           << " has an argument type ESBMC cannot yet render as a literal\n";
@@ -1968,6 +2446,57 @@ void foundry_generator::generate() const
     size_t revert_tolerant = write_foundry_file(path, p, cs);
     log_status(
       "Generated Foundry coverage test with {} case(s): {}", cs.size(), path);
+    // Interface-arg mock synthesis: report the distinct interfaces for which an
+    // `ESBMCMock_*` was emitted (their calls return fixed defaults — [approx]).
+    std::set<std::string> mifaces;
+    for (const auto &tc : cs)
+      for (const auto &call : tc)
+        for (const auto &a : call.args)
+          if (!a.mock_iface.empty())
+            mifaces.insert(a.mock_iface);
+    if (!mifaces.empty())
+      log_status(
+        "Foundry: {} interface mock(s) synthesized (ESBMCMock_*, [approx] "
+        "fixed-default returns)",
+        mifaces.size());
+    // Struct-typed arguments rendered as positional struct literals.
+    size_t struct_args = 0;
+    for (const auto &tc : cs)
+      for (const auto &call : tc)
+        for (const auto &a : call.args)
+          if (has_prefix(a.sol_type, "STRUCT:"))
+            ++struct_args;
+    if (struct_args)
+      log_status(
+        "Foundry: {} struct-literal arg(s) rendered", struct_args);
+    // A contract/interface-typed argument that was NOT mocked (a concrete
+    // contract, an interface whose full stub set could not render, or one not
+    // materialized in the symbol table) degraded to UNSUPPORTED — report it so
+    // the coverage gap is visible rather than silent.
+    std::set<std::string> degraded;
+    for (const auto &tc : cs)
+      for (const auto &call : tc)
+        for (const auto &a : call.args)
+          if (has_prefix(a.sol_type, "CONTRACT:") && a.mock_iface.empty())
+            degraded.insert(a.sol_type.substr(9));
+    if (!degraded.empty())
+      log_status(
+        "Foundry: {} contract-typed arg type(s) UNSUPPORTED (not mocked: "
+        "concrete/unrenderable/absent handle)",
+        degraded.size());
+    // A parameterized constructor whose args were not recovered on this path
+    // (e.g. --focus-function) → deploy degraded to UNSUPPORTED rather than emit
+    // default args that could revert setUp. Report it so the gap is visible.
+    std::set<std::string> unrec;
+    for (const auto &tc : cs)
+      for (const auto &call : tc)
+        if (call.ctor_unrecovered)
+          unrec.insert(call.contract);
+    if (!unrec.empty())
+      log_status(
+        "Foundry: {} deploy(s) UNSUPPORTED (constructor args not recovered on "
+        "this path)",
+        unrec.size());
     // A DETECTED reverting edge (Phase A: conservative #sol_error straight-line)
     // is wrapped in a precise vm.expectRevert(); report both counts so the
     // wrapping (and the silently revert-tolerant try/catch fallback) is visible.

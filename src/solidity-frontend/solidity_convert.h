@@ -1507,6 +1507,13 @@ protected:
   std::set<std::string> nonContractNamesList;
   // libraries only (subset of nonContractNamesList) — called statically
   std::set<std::string> libraryNamesList;
+  // interfaces only (subset of nonContractNamesList). The Foundry coverage-test
+  // generator synthesizes a mock ONLY for a true interface (no constructor,
+  // no state, no receive/fallback, all functions external+abstract) so that
+  // `contract ESBMCMock_<I> is <I> { <stubs> }` is always fully implementable;
+  // an abstract contract (which may take constructor args or declare an abstract
+  // receive/fallback) is not mockable and degrades to UNSUPPORTED.
+  std::set<std::string> interfaceNamesList;
   // for mapping hack
   std::set<std::string> newContractSet;
   // Store the ast_node["id"] of struct/error

@@ -33,6 +33,18 @@ private:
     std::string sol_type; // e.g. "UINT256", "ADDRESS", "BOOL"
     std::string literal;  // Solidity literal text, or empty if unformattable
     expr2tc value;        // raw recovered value (nil if not recovered)
+    // Interface-arg mock synthesis: when this argument is an interface/abstract
+    // contract handle (`#sol_type: CONTRACT`), `mock_iface` names the interface
+    // and a deployed `ESBMCMock_<iface>` instance is passed instead of a
+    // literal. `mock_key` (the parameter name) gives each interface argument its
+    // OWN mock instance (fresh-per-slot), so two handles a constructor forces
+    // distinct (`a != b`) get distinct deployed addresses. Empty otherwise.
+    std::string mock_iface;
+    std::string mock_key;
+    // Extra top-level types a rendered struct literal references and that must
+    // be imported (field UDVT names, nested struct scopes) — the struct's own
+    // scope is carried via `sol_type` ("STRUCT:<Qualified>").
+    std::set<std::string> struct_imports;
   };
 
   /// One reconstructed external call `c.method(args)`.
@@ -69,6 +81,11 @@ private:
     // deploy path needs a nonzero msg.value the (non-payable) constructor cannot
     // legally receive — used only to emit an accurate UNSUPPORTED reason.
     bool ctor_value_unsendable = false;
+    // Set on a deploy-time env carrier for a PARAMETERIZED constructor whose
+    // arguments were not recovered (e.g. `--focus-function` mode nondets them):
+    // the deploy is marked UNSUPPORTED rather than emit all-default args, which
+    // could revert setUp (a require on a zero default) and break the whole suite.
+    bool ctor_unrecovered = false;
   };
 
   /// One counterexample -> one test function: a sequence of calls.
@@ -89,6 +106,35 @@ private:
   /// instantiated, so it is kept out of the construction plan. Populated
   /// during reconstruct() (needs the namespace).
   mutable std::set<std::string> libraries;
+
+  /// A synthesized mock for an interface/abstract-contract argument type. The
+  /// generator emits `contract ESBMCMock_<name> is <name> { <stubs> }` so a
+  /// constructor/method taking an `<name>` handle can be deployed in Foundry
+  /// (a bare address would revert when the contract calls a method on it).
+  struct mock_spec
+  {
+    std::string name;               // interface/contract type name
+    std::vector<std::string> stubs; // rendered function-override lines
+    // True only if EVERY function of the interface (params + returns) rendered
+    // as a default-returning stub. If false, any deploy needing this interface
+    // degrades to UNSUPPORTED — a partial mock would not satisfy `is <name>`
+    // and would fail to compile (anti-goal: never emit an uncompilable test).
+    bool renderable = false;
+  };
+
+  /// Cache of synthesized interface mocks, keyed by interface name. Populated
+  /// lazily during reconstruct(); read during emission. `renderable == false`
+  /// entries are memoized negatives (do not re-enumerate).
+  mutable std::map<std::string, mock_spec> mock_specs;
+
+  /// Build (or fetch cached) the mock for an interface/abstract contract:
+  /// enumerate its externally-visible functions from the symbol table (inherited
+  /// methods are already inlined into the derived interface's `@F@` set) and
+  /// render a default-returning `override` stub for each. All-or-nothing: any
+  /// unrenderable param/return type, or zero functions found, yields
+  /// `renderable == false`.
+  const mock_spec &
+  build_mock_spec(const namespacet &ns, const std::string &iface) const;
 
   /// Cache of a method's declared parameters in source order:
   /// key "<contract>@<method>" -> [(param_name, sol_type)].
@@ -147,6 +193,21 @@ private:
   /// was not exercised on the path, e.g. a short-circuited operand). Returns
   /// empty for an unsupported type.
   static std::string default_sol_literal(const std::string &sol_type);
+
+  /// Render a recovered `constant_struct` value as a Solidity positional struct
+  /// literal `<Qualified>(f0, f1, …)`. Field source types (UDVT / bytesN /
+  /// address / …) come from the DECLARED struct tag symbol (`tag-struct
+  /// <Qualified>`), which retains them (the recovered value's migrated type is
+  /// stripped); synthetic `anon_pad$*` padding components are skipped; each real
+  /// field reuses format_sol_value/default_sol_literal (recursing for a nested
+  /// struct field). `qualified` is set to the struct's Solidity name for import.
+  /// All-or-nothing: returns "" if any field (or a fixed-array field) cannot
+  /// render, so the call degrades to UNSUPPORTED rather than emit a bad literal.
+  static std::string format_struct_literal(
+    const namespacet &ns,
+    const expr2tc &value,
+    std::string &qualified,
+    std::set<std::string> &out_imports);
 
   /// Reconstruct the ordered call sequence of one counterexample from its SSA.
   test_case reconstruct(

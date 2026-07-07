@@ -1384,6 +1384,30 @@ bool solidity_convertert::get_struct_class_fields(
   // }
   comp.type().set("#member_name", type.tag());
 
+  // A fixed `bytesN` field lowers to the generic `BytesStatic` struct, which
+  // (unlike a top-level bytesN parameter) loses its source width. Re-stamp
+  // `#sol_bytesn_size` from the AST type string so the Foundry coverage-test
+  // generator can render a struct-literal field as `bytesN(0x..)`. The dynamic
+  // `bytes` type string is exactly "bytes" (length 5) and is excluded; an array
+  // like "bytes32[]" is excluded by the trailing-char check.
+  if (
+    ast_node.contains("typeName") &&
+    ast_node["typeName"].contains("typeDescriptions"))
+  {
+    const std::string ts =
+      ast_node["typeName"]["typeDescriptions"].value("typeString", "");
+    if (ts.compare(0, 5, "bytes") == 0 && ts.size() > 5)
+    {
+      char *end = nullptr;
+      unsigned long n = std::strtoul(ts.c_str() + 5, &end, 10);
+      if (end && *end == '\0' && n >= 1 && n <= 32)
+        // Stamp on the COMPONENT irep (not its type): a later type-follow
+        // resolves the `BytesStatic` symbol type to its struct body and would
+        // drop a stamp on the type, but the component's own attributes survive.
+        comp.set("#sol_bytesn_size", static_cast<unsigned>(n));
+    }
+  }
+
   if (get_access_from_decl(ast_node, comp))
     return true;
   type.components().push_back(comp);

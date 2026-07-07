@@ -106,6 +106,12 @@ void solidity_convertert::mark_ctor_instantiability(
   // Foundry generator emits a static call for the former.
   if (libraryNamesList.count(contract_name))
     ctor->type.set("#sol_library", true);
+  // Mark a true interface. The Foundry generator synthesizes an
+  // `ESBMCMock_<I> is <I>` only for an interface (guaranteed no constructor
+  // args and no abstract receive/fallback, so the mock is always fully
+  // implementable); an abstract contract is not mockable.
+  if (interfaceNamesList.count(contract_name))
+    ctor->type.set("#sol_interface", true);
 }
 
 // add a empty constructor to the contract

@@ -911,6 +911,8 @@ bool solidity_convertert::populate_auxiliary_vars()
       bool is_abstract = (*itr)["abstract"].get<bool>();
       if (kind == "interface" || kind == "library" || is_abstract)
         nonContractNamesList.insert(c_name);
+      if (kind == "interface")
+        interfaceNamesList.insert(c_name);
       if (kind == "library")
       {
         libraryNamesList.insert(c_name);
