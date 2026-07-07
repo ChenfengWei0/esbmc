@@ -297,6 +297,24 @@ deploy-time values from `initialize()` and whether the ctor reads them:
 The `--contract` option (not `step_location_method`) attributes the ctor env, so
 a base ctor / inlined modifier wrapper / aux init helper doesn't misname it.
 
+**Base-forwarded ctor args (remap).** A constructor whose derived body is empty
+and only forwards its args to a base ctor (EscrowDst:
+`constructor(uint32 rescueDelay, IERC20 accessToken) BaseEscrow(rescueDelay,
+accessToken) {}`) has its args recovered under the BASE contract
+(`ctor_args[BaseEscrow]`), not the deploy contract — so `new EscrowDst(...)`
+would degrade. When `ctor_args[deploy_contract]` is empty, each base's ctor args
+(from `contract_bases()`) are remapped onto the deploy contract **by parameter
+name** (`build_call` fills the deploy ctor's declared params from them). Safety:
+a remapped deploy ctor renders ONLY if every arg is recovered-or-mock; if any arg
+fell to a type DEFAULT (a base param the forwarding renamed, or an arg only a
+sibling base ctor consumed) it degrades to UNSUPPORTED — a defaulted ctor arg
+(`0`/`address(0)`) can violate a ctor `require` and revert setUp (St1inch's
+`feeReceiver_ = address(0)` / a zero `expBase_`). EscrowDst's args are all
+recovered/mock → it deploys `new EscrowDst(0, mock)` (rescueDelay recovered,
+accessToken mock); forge compiles + 32/32 tests pass. Reported as `Foundry: N
+deploy(s) with base-forwarded constructor args`. Regression:
+`foundry_covgen_ctor_base_forward_fail`.
+
 **Env carrier when no ctor args were recovered.** When a ctor reads env but
 `ctor_args` is empty (e.g. `--focus-function` nondets them, or the args are
 interface handles not captured as recovered scalars), a carrier call is

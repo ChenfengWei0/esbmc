@@ -41,6 +41,11 @@ private:
     // distinct (`a != b`) get distinct deployed addresses. Empty otherwise.
     std::string mock_iface;
     std::string mock_key;
+    // True when the literal is a type DEFAULT (0/address(0)/…) because no value
+    // was recovered for this parameter and it is not an interface mock. A
+    // defaulted constructor argument may violate a ctor `require` and revert
+    // setUp, so a deploy with any defaulted arg is degraded to UNSUPPORTED.
+    bool defaulted = false;
     // Extra top-level types a rendered struct literal references and that must
     // be imported (field UDVT names, nested struct scopes) — the struct's own
     // scope is carried via `sol_type` ("STRUCT:<Qualified>").
@@ -86,6 +91,10 @@ private:
     // the deploy is marked UNSUPPORTED rather than emit all-default args, which
     // could revert setUp (a require on a zero default) and break the whole suite.
     bool ctor_unrecovered = false;
+    // Set on a deploy ctor whose args were recovered under a BASE contract and
+    // remapped onto the deploy contract (empty derived body forwarding to a base
+    // ctor, e.g. EscrowDst -> BaseEscrow). Reported for visibility.
+    bool ctor_remapped = false;
   };
 
   /// One counterexample -> one test function: a sequence of calls.

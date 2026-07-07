@@ -1199,8 +1199,11 @@ foundry_generator::test_case foundry_generator::reconstruct(
         a.literal = format_sol_value(decl.second, it->second.value);
       if (a.literal.empty() && it != recovered.end())
         a.literal = it->second.literal;
+      const bool from_recovered = !a.literal.empty();
       if (a.literal.empty())
         a.literal = default_sol_literal(decl.second);
+      // A non-empty literal not sourced from a recovered value is a type default.
+      a.defaulted = !a.literal.empty() && !from_recovered;
       if (a.literal.empty())
         out.supported = false;
       else if (overloaded)
@@ -1592,6 +1595,29 @@ foundry_generator::test_case foundry_generator::reconstruct(
 
   test_case calls;
 
+  // Constructor args forwarded to a BASE ctor are recovered under the base
+  // contract, not the deploy contract. E.g. EscrowDst's empty body forwards its
+  // args to `BaseEscrow(rescueDelay, accessToken)`, so they land in
+  // ctor_args[BaseEscrow] while the deploy is `new EscrowDst(...)`. Remap a
+  // base's recovered ctor args onto the deploy contract (ctor_ts_contract) by
+  // parameter name — build_call fills the deploy ctor's declared params from
+  // them. (A base ctor is abstract, so its own entry would be base-dropped
+  // anyway; move it so the deploy contract's ctor is the one reconstructed.)
+  bool deploy_remapped = false;
+  if (!ctor_ts_contract.empty() && !ctor_args.count(ctor_ts_contract))
+  {
+    for (const auto &base : contract_bases(ns, ctor_ts_contract))
+    {
+      auto bit = ctor_args.find(base);
+      if (bit == ctor_args.end())
+        continue;
+      for (const auto &kv : bit->second)
+        ctor_args[ctor_ts_contract].emplace(kv.first, kv.second);
+      ctor_args.erase(bit);
+      deploy_remapped = true;
+    }
+  }
+
   // --function isolated-function mode: the run focuses one function with no
   // dispatcher, so no transaction segments were found. Reconstruct a single
   // call to the focused function with its recovered parameters. This is the
@@ -1705,6 +1731,24 @@ foundry_generator::test_case foundry_generator::reconstruct(
         cc.ctor_value_unsendable = true;
       }
       ctor_env_attached = true;
+    }
+    // A base-forwarded (remapped) deploy ctor gets its recovered args from a
+    // base, but any param not matched there falls to a type DEFAULT. A defaulted
+    // ctor arg can violate a ctor `require` and revert setUp (e.g. St1inch's
+    // `feeReceiver_ = address(0)` / a zero `expBase_`), so degrade to UNSUPPORTED
+    // unless EVERY arg is recovered or a mock. (EscrowDst's args are all
+    // recovered/mock, so it still renders.)
+    if (deploy_remapped && kv.first == ctor_ts_contract)
+    {
+      if (std::any_of(cc.args.begin(), cc.args.end(), [](const sol_arg &a) {
+            return a.defaulted;
+          }))
+      {
+        cc.supported = false;
+        cc.ctor_unrecovered = true;
+      }
+      else
+        cc.ctor_remapped = true;
     }
     calls.push_back(std::move(cc));
   }
@@ -2477,6 +2521,15 @@ void foundry_generator::generate() const
             ++struct_args;
     if (struct_args)
       log_status("Foundry: {} struct-literal arg(s) rendered", struct_args);
+    // Deploy ctors whose args were recovered under a base ctor and remapped.
+    size_t remapped = 0;
+    for (const auto &tc : cs)
+      for (const auto &call : tc)
+        if (call.ctor_remapped)
+          ++remapped;
+    if (remapped)
+      log_status(
+        "Foundry: {} deploy(s) with base-forwarded constructor args", remapped);
     // A contract/interface-typed argument that was NOT mocked (a concrete
     // contract, an interface whose full stub set could not render, or one not
     // materialized in the symbol table) degraded to UNSUPPORTED — report it so
