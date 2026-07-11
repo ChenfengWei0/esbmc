@@ -16,6 +16,8 @@
 #include <util/i2string.h>
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
+#include <util/std_code.h>
+#include <util/config.h>
 #include <util/message.h>
 #include <fstream>
 
@@ -4506,6 +4508,39 @@ bool solidity_convertert::get_index_access_expr(
   // resolve to disjoint SMT-array slots.
   else if (array.is_symbol() && array.type().get_bool("#sol_dynarray_state"))
   {
+    // --bounds-check (Solidity opt-in): a dyn-array state var is modelled with
+    // an infinity-sized element buffer, so goto-symex's built-in dereference
+    // bounds check never fires. Emit an explicit `pos < <arr>_dynarray_len`
+    // claim so an out-of-bounds access is caught. This lowering serves both a
+    // read and an assignment LHS, so one check covers both.
+    // The length companion is only created for a direct state-var dyn-array
+    // (solidity_convert_decl.cpp `is_dynarray_state` block); some paths set the
+    // `#sol_dynarray_state` type flag without a `_dynarray_len` symbol (e.g. an
+    // early return on an already-registered symbol). If it is absent, skip the
+    // check rather than assert — degrade to the prior (no-bounds) behaviour.
+    const symbolt *len_sym = nullptr;
+    if (
+      config.options.get_bool_option("bounds-check") &&
+      !config.options.get_bool_option("no-bounds-check"))
+      len_sym = ns.lookup(array.identifier().as_string() + "_dynarray_len");
+    if (len_sym)
+    {
+      exprt len_ref;
+      if (get_dynarr_len_ref(*len_sym, len_ref))
+        return true;
+
+      exprt bounds_pos = pos;
+      solidity_gen_typecast(ns, bounds_pos, len_ref.type());
+      exprt in_bounds = binary_relation_exprt(bounds_pos, "<", len_ref);
+
+      code_assertt bounds_assert(in_bounds);
+      bounds_assert.location() = location;
+      bounds_assert.location().comment(
+        "dereference failure: array bounds violated");
+      bounds_assert.location().property("array bounds");
+      move_to_front_block(bounds_assert);
+    }
+
     exprt fold_idx;
     if (get_dynarr_elem_idx(pos, fold_idx))
       return true;
