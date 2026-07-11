@@ -3445,7 +3445,14 @@ bool esbmc_parseoptionst::parse_goto_program(
         if (!cmdline.isset(pos))
           options.set_option(neg, true);
       };
-      options.set_option("no-pointer-check", true);
+      // Couple the pointer-deref check to --bounds-check: a symbolic-size
+      // dynamic array (`new T[](n)`) lowers to a malloc'd region and its OOB
+      // access surfaces as a *dereference* failure, so --bounds-check must be
+      // able to re-enable pointer-check (otherwise no flag can detect it).
+      // Only when bounds-check is EFFECTIVELY on: a contradictory
+      // `--bounds-check --no-bounds-check` keeps pointer-check disabled too.
+      if (!cmdline.isset("bounds-check") || cmdline.isset("no-bounds-check"))
+        options.set_option("no-pointer-check", true);
       set_neg_unless_pos("no-div-by-zero-check", "div-by-zero-check");
       options.set_option("no-pointer-relation-check", true);
       options.set_option("no-unlimited-scanf-check", true);
@@ -3612,7 +3619,12 @@ bool esbmc_parseoptionst::process_goto_program(
         if (!cmdline.isset(pos))
           options.set_option(neg, true);
       };
-      options.set_option("no-pointer-check", true);
+      // See the goto_convert-side block above: --bounds-check re-enables the
+      // pointer-deref check so symbolic-size dynamic-array OOB (a dereference
+      // failure) is detectable. A contradictory `--bounds-check
+      // --no-bounds-check` keeps pointer-check disabled too.
+      if (!cmdline.isset("bounds-check") || cmdline.isset("no-bounds-check"))
+        options.set_option("no-pointer-check", true);
       set_neg_unless_pos("no-div-by-zero-check", "div-by-zero-check");
       options.set_option("no-pointer-relation-check", true);
       options.set_option("no-unlimited-scanf-check", true);
