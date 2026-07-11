@@ -794,11 +794,22 @@ bool solidity_convertert::get_statement(
 
     // 4. annotate body
     codet body = code_skipt();
+    // Snapshot pending front/back-block sizes so any statement queued while
+    // converting the (possibly brace-less) body is kept inside the loop scope
+    // rather than leaking before the loop — see flush_pending_into_body.
+    std::size_t for_front_base =
+      (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+        .operands()
+        .size();
+    std::size_t for_back_base =
+      (current_functionDecl ? expr_backBlockDecl : ctor_backBlockDecl)
+        .operands()
+        .size();
     if (stmt.contains("body"))
       if (get_statement(stmt["body"], body))
         return true;
 
-    convert_expression_to_code(body);
+    flush_pending_into_body(body, for_front_base, for_back_base);
 
     code_fort code_for;
     code_for.init() = init;
@@ -819,11 +830,21 @@ bool solidity_convertert::get_statement(
       return true;
 
     // 2. Then: make a exprt for trueBody
-    exprt then;
+    codet then = code_skipt();
+    // Keep any bounds-check/decl queued by the (possibly brace-less) then-body
+    // under the branch guard instead of leaking it before the `if`.
+    std::size_t then_front_base =
+      (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+        .operands()
+        .size();
+    std::size_t then_back_base =
+      (current_functionDecl ? expr_backBlockDecl : ctor_backBlockDecl)
+        .operands()
+        .size();
     if (get_statement(stmt["trueBody"], then))
       return true;
 
-    convert_expression_to_code(then);
+    flush_pending_into_body(then, then_front_base, then_back_base);
 
     codet if_expr("ifthenelse");
     if_expr.copy_to_operands(cond, then);
@@ -833,11 +854,19 @@ bool solidity_convertert::get_statement(
     // 0.8.x omits it. Treat both as "no else".
     if (stmt.contains("falseBody") && !stmt["falseBody"].is_null())
     {
-      exprt else_expr;
+      codet else_expr = code_skipt();
+      std::size_t else_front_base =
+        (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+          .operands()
+          .size();
+      std::size_t else_back_base =
+        (current_functionDecl ? expr_backBlockDecl : ctor_backBlockDecl)
+          .operands()
+          .size();
       if (get_statement(stmt["falseBody"], else_expr))
         return true;
 
-      convert_expression_to_code(else_expr);
+      flush_pending_into_body(else_expr, else_front_base, else_back_base);
       if_expr.copy_to_operands(else_expr);
     }
 

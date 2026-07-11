@@ -2099,6 +2099,55 @@ void solidity_convertert::move_to_back_block(const exprt &expr)
     ctor_backBlockDecl.copy_to_operands(expr);
 }
 
+void solidity_convertert::flush_pending_into_body(
+  codet &body,
+  std::size_t front_base,
+  std::size_t back_base)
+{
+  // Operate on whichever pending-block pair move_to_front/back_block feeds in
+  // the current context (function vs. constructor body).
+  code_blockt &fblk =
+    current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl;
+  code_blockt &bblk =
+    current_functionDecl ? expr_backBlockDecl : ctor_backBlockDecl;
+
+  auto &fops = fblk.operands();
+  auto &bops = bblk.operands();
+
+  // Nothing new was queued while converting the body: keep prior behaviour.
+  if (fops.size() <= front_base && bops.size() <= back_base)
+  {
+    convert_expression_to_code(body);
+    return;
+  }
+
+  code_blockt wrapper;
+  // Front-block statements added by the body precede it, inside the body scope.
+  for (std::size_t i = front_base; i < fops.size(); ++i)
+  {
+    exprt op = fops[i];
+    convert_expression_to_code(op);
+    wrapper.operands().push_back(op);
+  }
+  // Drop the moved tail; statements queued before the body (e.g. by a for/if
+  // condition) stay pending so the enclosing block flushes them unconditionally.
+  fops.resize(front_base);
+
+  convert_expression_to_code(body);
+  wrapper.operands().push_back(body);
+
+  // Back-block statements added by the body follow it, still inside the scope.
+  for (std::size_t i = back_base; i < bops.size(); ++i)
+  {
+    exprt op = bops[i];
+    convert_expression_to_code(op);
+    wrapper.operands().push_back(op);
+  }
+  bops.resize(back_base);
+
+  body = wrapper;
+}
+
 bool solidity_convertert::move_inheritance_to_ctor(
   const nlohmann::json *based_contracts,
   const std::string contract_name,

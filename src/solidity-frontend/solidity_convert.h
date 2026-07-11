@@ -313,6 +313,15 @@ protected:
     symbolt &sym);
   void move_to_front_block(const exprt &expr);
   void move_to_back_block(const exprt &expr);
+  // Convert `body` to code and, if converting it left pending front/back-block
+  // statements (those added since the given base indices), wrap `body` in a
+  // synthetic block that keeps them inside the body scope instead of letting
+  // them leak to the enclosing block. Used for brace-less for/if bodies, which
+  // — unlike get_block — do not flush the pending blocks themselves.
+  void flush_pending_into_body(
+    codet &body,
+    std::size_t front_base,
+    std::size_t back_base);
 
   // Symbol id of a library function's formal parameter (pure — no reliance on
   // current_functionName). Shared between the library function body builder
