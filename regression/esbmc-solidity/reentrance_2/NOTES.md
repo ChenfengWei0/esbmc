@@ -124,20 +124,12 @@ guard observes the real drain, so the recursion can terminate, the nested frame
 returns `success == 1`, and the outer post-condition is finally evaluated on a
 drained state. `VERIFICATION FAILED` at k=2.
 
-## Still open (different bug): reentrance_13
+## reentrance_13 (also fixed, different cause)
 
-`reentrance_13` is the checks-effects-interactions-correct variant (balance
-decremented BEFORE the call). It was pinned alongside this test on the
-assumption of a shared cause; that assumption was wrong. Its `receive()` has no
-balance guard at all -- it calls `target.withdraw(msg.value)` unconditionally --
-so the constant-guard mechanism above was never what blocked it. With this fix
-applied it still reports `VERIFICATION UNKNOWN` (374s), because its violation
-needs two nested decrements rather than one drained-balance observation. It
-stays KNOWNBUG and needs its own diagnosis.
-
-Starting points that were ruled IN for that investigation, not for this one:
-`_ESBMC_sol_reverted_flag` propagation through the nested `$call#1` ->
-`receive` -> `IBank_withdraw` -> `withdraw` cycle, and the recursion cut in
-`goto_symext::symex_function_call_code`
-(src/goto-symex/symex_function.cpp:343-358), whose bound equals `max_unwind`
-(`get_unwind_recursion`, same file line 30).
+`reentrance_13` is the checks-effects-interactions-correct variant. It was
+pinned alongside this test on the assumption of a shared cause; that assumption
+was wrong. Its `receive()` had no balance guard at all, so the constant-guard
+mechanism above was never what blocked it -- its attacker simply could not
+terminate, and the resulting revert cascade meant `success` was always false.
+See ../reentrance_13/NOTES.md. It is CORE again with the same guard this test
+uses.
