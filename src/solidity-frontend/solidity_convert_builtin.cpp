@@ -643,19 +643,53 @@ void solidity_convertert::get_builtin_property_expr(
     abort();
   }
 
+  // Decide whether the handle denotes a model object whose own field is the
+  // account we must read.
+  //
+  // `this` always does — it is the executing instance.
+  //
+  // A concrete contract-typed handle does too: both `new C()` and the cast
+  // `C(_addr)` produce `&_ESBMC_Object_C` (convert_type_expr, the
+  // address->contract branch), and `x.f()` dispatches to that same singleton
+  // when `x->_ESBMC_bind_cname == C`, so reads and dispatched writes meet on
+  // one object.
+  //
+  // An interface- or abstract-typed handle does NOT.  `IBank(_addr)` also
+  // lowers to `&_ESBMC_Object_IBank`, but that singleton is never a dispatch
+  // target — `get_high_level_member_access` only ever selects implementation
+  // singletons (interfaces/abstracts are skipped everywhere the cname ladder
+  // is built).  A direct `handle->$balance` therefore reads a field no call
+  // can write: an attacker's `while (address(target).balance > 0)` guard stays
+  // constant across the nested call, re-entrancy never terminates cleanly and
+  // the violation is missed (regression/esbmc-solidity/reentrance_2).  Route
+  // these through the address-resolution ladder, which resolves the handle's
+  // `$address` against every tracked object and falls back to the EOA balance
+  // map — the account identity EVM itself uses for `address(x).balance`.
+  bool own_field = false;
+  if (base.is_member())
+  {
+    if (base.op0().name() == "this")
+      own_field = true;
+    else if (
+      get_sol_type(base.op0().type()) == SolidityGrammar::SolType::CONTRACT)
+    {
+      const std::string base_cname =
+        base.op0().type().get("#sol_contract").as_string();
+      // unclassifiable handle: keep the historical direct read
+      own_field =
+        base_cname.empty() || nonContractNamesList.count(base_cname) == 0;
+    }
+  }
+
   exprt mem;
-  if (
-    base.is_member() &&
-    (base.op0().name() == "this" ||
-     get_sol_type(base.op0().type()) == SolidityGrammar::SolType::CONTRACT))
+  if (own_field)
     // e.g. address(_ins_).balance => _ins_.balance
     //      address(this) => this->address
-    //TODO: fixme! this pattern match is weak
     mem = member_exprt(base.op0(), comp_name, t);
   else
   {
-    // e.g. address(msg.sender).balance
-    // we do not know what instance is msg.sender pointed to, so over-approximate
+    // e.g. address(msg.sender).balance, address(IBank(_addr)).balance
+    // we do not know which instance the address points to, so over-approximate
     get_aux_property_function(cname, base, t, loc, name, mem);
   }
 

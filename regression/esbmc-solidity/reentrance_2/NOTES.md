@@ -1,11 +1,15 @@
 # Re-entrancy is never allowed to complete, so the violation is missed
 
-Re-pinned CORE -> KNOWNBUG. `97e37211bc` flipped both `reentrance_2` and
-`reentrance_13` to CORE via `--incremental-bmc`; they no longer reproduce their
-violation and report `VERIFICATION UNKNOWN` instead of `VERIFICATION FAILED`.
-The regression predates 2026-07-11 (a static binary from that date behaves
-identically) and had been masked by the local 120s regression timeout, which
-fired before the UNKNOWN was ever printed.
+FIXED -- this test is CORE again and reports `VERIFICATION FAILED` at k=2 in
+about 5s. See "The fix" at the end.
+
+History: `97e37211bc` flipped both `reentrance_2` and `reentrance_13` to CORE
+via `--incremental-bmc`; they stopped reproducing their violation and reported
+`VERIFICATION UNKNOWN`, so both were re-pinned KNOWNBUG. The regression
+predates 2026-07-11 (a static binary from that date behaves identically) and
+had been masked by the local 120s regression timeout, which fired before the
+UNKNOWN was ever printed. `reentrance_13` is a DIFFERENT bug and stays
+KNOWNBUG -- see below.
 
 ## Root cause (measured, not inferred)
 
@@ -68,13 +72,26 @@ if (before > 0) {
 
 shows the balance read through the interface handle is UNCHANGED after a nested
 `withdraw` returns -- even though `$call#1` debits `this->$balance` inside the
-callee and `address(this).balance` does change there. The handle
-(`IBank public target`, bound from a nondet address via `IBank(_target)`) and
-the object the dispatch actually invokes are different model objects:
-`IBank_withdraw` selects the callee by `base->_ESBMC_bind_cname` (`Bank` ->
-`withdraw(&_ESBMC_Object_Bank, ...)`, `IBank` -> `withdraw(&_ESBMC_Object_IBank,
-...)`), while `address(target).balance` dereferences the stored pointer -- which
-a counterexample shows as `.target={ .pointer_object=nil, .pointer_offset=nil }`.
+callee and `address(this).balance` does change there.
+
+The read and the write land on two DIFFERENT model objects, and the reason is
+specific to the handle's declared type being an interface:
+
+- `IBank(_target)` lowers to `&_ESBMC_Object_IBank` -- the singleton of the
+  DECLARED type -- and sets `_ESBMC_Object_IBank.$address = _target`
+  (`convert_type_expr`, the address->contract branch,
+  src/solidity-frontend/solidity_convert_type.cpp:1776-1799). The handle is a
+  valid pointer; an earlier draft of this note read a counterexample line as a
+  nil pointer, which was wrong.
+- `target.withdraw(...)` dispatches on `base->_ESBMC_bind_cname` and selects an
+  IMPLEMENTATION singleton, `withdraw(&_ESBMC_Object_Bank, ...)`
+  (`get_high_level_member_access`, solidity_convert_call.cpp:1445,1471).
+- Interfaces and abstract contracts are skipped everywhere the cname ladder is
+  built (solidity_convert_builtin.cpp:495, solidity_convert_call.cpp:2403,
+  2840, 3349), so `_ESBMC_Object_IBank` is never a dispatch target.
+
+`address(target).balance` therefore read `_ESBMC_Object_IBank.$balance` -- a
+field that NO call in the model can ever write.
 
 So the guard is effectively constant-true, the recursion runs to the unwind
 bound on every path, no frame terminates cleanly, and the outer
@@ -82,20 +99,45 @@ bound on every path, no frame terminates cleanly, and the outer
 observation above, and it also explains why the `bool done` attacker works: its
 termination does not depend on observing the drain.
 
-## Where to look next
+## The fix
 
-`_ESBMC_sol_reverted_flag` propagation through the nested
-`$call#1` -> `receive` -> `IBank_withdraw` -> `withdraw` cycle, and its
-interaction with the recursion cut in `goto_symext::symex_function_call_code`
-(src/goto-symex/symex_function.cpp:343-358). The cut has two different
-semantics -- with unwinding assertions it emits `claim(false)` and then does
-`cur_state->source.pc++`, i.e. SKIPS the call and continues; with
-`--no-unwinding-assertions` it assumes the negated path guard, pruning instead.
-Those two treatments leave the revert flag in different states, and the
-recursion bound equals `max_unwind` (`get_unwind_recursion`, same file line 30),
-so every k step re-runs the interaction at a new depth.
+`get_builtin_property_expr` (src/solidity-frontend/solidity_convert_builtin.cpp)
+used to take `handle->$<prop>` directly for ANY contract-typed base, under a
+condition whose own comment read `//TODO: fixme! this pattern match is weak`.
+It now does that only when the field really is the account being read:
 
-`reentrance_13` is the checks-effects-interactions-correct variant of the same
-benchmark (balance decremented before the call) whose ghost-variable
-post-condition is still broken by re-entrancy; it fails for the same reason and
-is pinned alongside this one.
+- `this` -- always the executing instance.
+- a CONCRETE contract-typed handle -- both `new C()` and the cast `C(_addr)`
+  produce `&_ESBMC_Object_C`, and dispatch selects that same singleton when
+  `_ESBMC_bind_cname == C`, so read and write already meet.
+
+An interface- or abstract-typed handle (declared name in `nonContractNamesList`)
+now routes through `get_aux_property_function` instead: the existing ladder
+resolves the handle's `$address` against every tracked object and falls back to
+the EOA balance map -- the account identity EVM itself uses for
+`address(x).balance`. A handle whose declared contract name cannot be
+determined keeps the historical direct read, so the blast radius is exactly the
+interface/abstract case that was reading a dead field.
+
+This restores a path on which `_target == _ESBMC_Object_Bank.$address` and the
+guard observes the real drain, so the recursion can terminate, the nested frame
+returns `success == 1`, and the outer post-condition is finally evaluated on a
+drained state. `VERIFICATION FAILED` at k=2.
+
+## Still open (different bug): reentrance_13
+
+`reentrance_13` is the checks-effects-interactions-correct variant (balance
+decremented BEFORE the call). It was pinned alongside this test on the
+assumption of a shared cause; that assumption was wrong. Its `receive()` has no
+balance guard at all -- it calls `target.withdraw(msg.value)` unconditionally --
+so the constant-guard mechanism above was never what blocked it. With this fix
+applied it still reports `VERIFICATION UNKNOWN` (374s), because its violation
+needs two nested decrements rather than one drained-balance observation. It
+stays KNOWNBUG and needs its own diagnosis.
+
+Starting points that were ruled IN for that investigation, not for this one:
+`_ESBMC_sol_reverted_flag` propagation through the nested `$call#1` ->
+`receive` -> `IBank_withdraw` -> `withdraw` cycle, and the recursion cut in
+`goto_symext::symex_function_call_code`
+(src/goto-symex/symex_function.cpp:343-358), whose bound equals `max_unwind`
+(`get_unwind_recursion`, same file line 30).
