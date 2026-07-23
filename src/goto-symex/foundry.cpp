@@ -1235,6 +1235,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
   // body makes a nested call that overwrites msg_sender before the owner bind.
   expr2tc ctor_msg_sender;
   bool ctor_reads_msg_sender = false;
+  bool ctor_sender_shadowed = false;
   bool ctor_sender_dirty = false;
   // The contract setUp actually deploys is the run's --contract; attribute the
   // ctor warp there rather than to step_location_method (which for a base ctor,
@@ -1270,10 +1271,15 @@ foundry_generator::test_case foundry_generator::reconstruct(
     bool reads_timestamp = false; // ③A0: this tx's body reads block.timestamp
     expr2tc msg_sender; // ③A0: solver-picked top-level msg.sender for this tx
     bool reads_msg_sender = false; // ③A0: this tx's body reads msg.sender
-    // ③A0: a nested/high/low-level call wrapper overwrote msg_sender AFTER the
-    // reseed, so the top-level `vm.prank` value is NOT what a later branch read.
-    // When dirty we refuse to pin the sender (safe under-coverage) rather than
-    // emit a call whose msg.sender the replay cannot faithfully reproduce.
+    // ③A0: msg_sender currently holds a nested-call sender (a wrapper installed
+    // the callee's identity and has not restored it yet), so a read taken here
+    // did NOT see the top-level value. Tracked by model value, not by "a write
+    // occurred" — see the write handler for why the syntactic test is wrong.
+    bool sender_shadowed = false;
+    // ③A0: a read of msg.sender happened while shadowed, so the top-level
+    // `vm.prank` value is NOT what that branch read. When dirty we refuse to
+    // pin the sender (safe under-coverage) rather than emit a call whose
+    // msg.sender the replay cannot faithfully reproduce.
     bool sender_dirty = false;
   };
   std::vector<segment> segs;
@@ -1488,10 +1494,27 @@ foundry_generator::test_case foundry_generator::reconstruct(
         ctor_msg_sender = smt_conv.get(step.lhs);
         continue;
       }
-      if (!segs.empty())
-        segs.back().sender_dirty = true;
+      // Any other write is a call wrapper installing the callee's sender (and,
+      // paired with it, the restore on the way out). Whether it actually
+      // shadows the top-level sender cannot be decided syntactically: symex
+      // merges a branch-local assignment into an UNCONDITIONAL step whose RHS
+      // is `cond ? new : old`, so a wrapper this path never entered still
+      // appears here with a true guard. Treating "was written" as "was
+      // overwritten" therefore poisons EVERY path of any contract that
+      // contains a `.transfer()` / `.call()` anywhere, even one covering a
+      // method that makes no call at all. Decide on the MODEL value instead:
+      // equal to the transaction's top-level sender means this write left the
+      // sender unchanged on this path (an untaken-branch merge, or the
+      // wrapper's own restore), so a top-level `vm.prank` still reproduces it.
+      const expr2tc &top_sender =
+        segs.empty() ? ctor_msg_sender : segs.back().msg_sender;
+      const expr2tc now_sender = smt_conv.get(step.lhs);
+      const bool shadowed =
+        !top_sender || !now_sender || now_sender != top_sender;
+      if (segs.empty())
+        ctor_sender_shadowed = shadowed;
       else
-        ctor_sender_dirty = true;
+        segs.back().sender_shadowed = shadowed;
       continue;
     }
 
@@ -1529,8 +1552,17 @@ foundry_generator::test_case foundry_generator::reconstruct(
       {
         if (!segs.back().reads_timestamp && reads("block_timestamp"))
           segs.back().reads_timestamp = true;
-        if (!segs.back().reads_msg_sender && reads("msg_sender"))
-          segs.back().reads_msg_sender = true;
+        // A read taken while a call wrapper holds the sender saw the callee's
+        // identity, which `vm.prank` (a TOP-LEVEL pin) cannot reproduce — that,
+        // not the bare existence of a wrapper on some other branch, is what
+        // makes the pin unfaithful.
+        if (reads("msg_sender"))
+        {
+          if (segs.back().sender_shadowed)
+            segs.back().sender_dirty = true;
+          else
+            segs.back().reads_msg_sender = true;
+        }
       }
       // A pre-segment (ctor-body) read means the constructor depends on the
       // deploy-time ambient (attributed to the deploy contract above).
@@ -1538,8 +1570,13 @@ foundry_generator::test_case foundry_generator::reconstruct(
       {
         if (!ctor_reads_timestamp && reads("block_timestamp"))
           ctor_reads_timestamp = true;
-        if (!ctor_reads_msg_sender && reads("msg_sender"))
-          ctor_reads_msg_sender = true;
+        if (reads("msg_sender"))
+        {
+          if (ctor_sender_shadowed)
+            ctor_sender_dirty = true;
+          else
+            ctor_reads_msg_sender = true;
+        }
         if (!ctor_reads_value && reads("msg_value"))
           ctor_reads_value = true;
       }
