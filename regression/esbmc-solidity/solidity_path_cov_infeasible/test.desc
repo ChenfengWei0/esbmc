@@ -1,0 +1,9 @@
+CORE
+contract.sol
+--solidity-path-coverage --solidity-max-tx 1
+^--solidity-path-coverage: instrumented 3 complete path\(s\)
+^Complete Paths : 3$
+^Reached : 2$
+^Path Exits: normal 3, revert 0, undetermined 0$
+^Path Status: F 2, I 0, U 1$
+^VERIFICATION FAILED$

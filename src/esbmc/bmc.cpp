@@ -45,6 +45,8 @@ std::unordered_set<std::string> goto_functionst::reached_claims;
 std::unordered_multiset<std::string> goto_functionst::reached_mul_claims;
 std::mutex goto_functionst::reached_claims_mutex;
 std::mutex goto_functionst::reached_mul_claims_mutex;
+std::set<std::string> goto_functionst::truncated_loops;
+std::mutex goto_functionst::truncated_loops_mutex;
 
 bmct::bmct(
   goto_functionst &funcs,
@@ -747,6 +749,37 @@ void report_coverage(
   // (false) for valid invocations like `--k-path-coverage` (no value) or
   // `--k-path-coverage=0` (rejected at parse time, but defensive here).
   bool is_k_path_cov = options.get_bool_option("k-path-coverage-enabled");
+  // Solidity complete-path coverage: one goal per enumerated entry->exit
+  // path, keyed by the "fn:path:enc" comment (see solidity_path_coverage()).
+  bool is_path_cov = options.get_bool_option("solidity-path-coverage-enabled");
+
+  // Truncation disclosure. With --no-unwinding-assertions (which coverage
+  // mode turns on automatically whenever --unwind is given, and which the
+  // k-induction base/inductive phases set too) a loop that reaches its
+  // bound is cut with an ASSUME rather than flagged with an assertion.
+  // Every path that needed one more iteration disappears, so the code
+  // after the loop can become unreachable and its goals are reported as
+  // uncovered -- with no diagnostic at all, next to "VERIFICATION
+  // SUCCESSFUL". Say so, and name the loops, so a 0% report is not read as
+  // "the harness explored everything and covered nothing".
+  {
+    std::lock_guard lk(goto_functionst::truncated_loops_mutex);
+    if (
+      !goto_functionst::truncated_loops.empty() &&
+      options.get_bool_option("no-unwinding-assertions"))
+    {
+      log_warning(
+        "Coverage may be UNDER-REPORTED: {} loop(s) hit the unwind bound "
+        "while --no-unwinding-assertions was active, so the paths that "
+        "needed more iterations were silently assumed away. Goals reachable "
+        "only through those paths are counted as uncovered. Raise --unwind, "
+        "use --unwindset/--unwindsetname for the specific loop, or switch to "
+        "--k-induction / --incremental-bmc. Loops truncated:",
+        goto_functionst::truncated_loops.size());
+      for (const auto &l : goto_functionst::truncated_loops)
+        log_warning("  {}", l);
+    }
+  }
 
   if (is_assert_cov)
   {
@@ -1042,6 +1075,100 @@ void report_coverage(
       log_result("k-Path Coverage: N/A (no k-path goals)");
   }
 
+  else if (is_path_cov)
+  {
+    // Denominator = the no-skip static universe built by
+    // solidity_path_coverage() (one entry per enumerated complete path), so a
+    // covered-set skip never shrinks it. Numerator = universe paths EITHER
+    // witnessed this run OR already persisted by an earlier round.
+    const size_t total = goto_coveraget::all_claims.size();
+    const bool cov_set_active = !goto_coveraget::covered_set_outpath.empty();
+    size_t tracked_instance = 0;
+    for (const auto &[msg, loc] : goto_coveraget::all_claims)
+      if (
+        goto_coveraget::covered_set.count({msg, loc}) ||
+        reached_claims.count(msg + "\t" + loc))
+        ++tracked_instance;
+
+    log_success("\n[Coverage]\n");
+    if (total == 0)
+      log_result("No complete path enumerated");
+    else
+    {
+      log_result("Complete Paths : {}", total);
+      log_result("Reached : {}", tracked_instance);
+      log_result("Path Coverage: {}%", tracked_instance * 100.0 / total);
+      // Exit-shape breakdown on stdout as well as in the JSON. The JSON is a
+      // file, and the regression harness matches program OUTPUT only — without
+      // this line the whole exit classification (and in particular the refusal
+      // to call an undetermined exit "normal") cannot be regression-locked.
+      size_t n_rev = 0, n_und = 0;
+      for (const auto &k : goto_coveraget::all_claims)
+      {
+        if (
+          goto_coveraget::revert_paths.count(k) ||
+          goto_coveraget::rollback_revert_paths.count(k))
+          ++n_rev;
+        else if (goto_coveraget::undetermined_exit_paths.count(k))
+          ++n_und;
+      }
+      log_result(
+        "Path Exits: normal {}, revert {}, undetermined {}",
+        total - n_rev - n_und,
+        n_rev,
+        n_und);
+
+      // Tri-state totals on stdout too, for the same reason as the exit line:
+      // the per-path F/I/U verdicts live only in the JSON file, which the
+      // regression harness cannot inspect. Without this the central honesty
+      // rule — a claim that merely HELD within the bound is U, never I — is
+      // not regression-locked. Same rule as the JSON emission below.
+      {
+        const std::string mt = options.get_option("solidity-max-tx");
+        bool trunc = false;
+        {
+          std::lock_guard lk(goto_functionst::truncated_loops_mutex);
+          trunc = !goto_functionst::truncated_loops.empty();
+        }
+        const bool unb = (mt == "0") && !trunc;
+        size_t nF = 0, nI = 0, nU = 0;
+        for (const auto &k : goto_coveraget::all_claims)
+        {
+          const std::string sig = k.first + "\t" + k.second;
+          char v = 0;
+          {
+            std::lock_guard lk(goto_coveraget::claim_outcome_mutex);
+            auto it_o = goto_coveraget::claim_outcome.find(sig);
+            if (it_o != goto_coveraget::claim_outcome.end())
+              v = it_o->second;
+          }
+          if (goto_coveraget::covered_set.count(k) || reached_claims.count(sig))
+            ++nF;
+          else if (v == 'P' && unb)
+            ++nI;
+          else
+            ++nU;
+        }
+        log_result("Path Status: F {}, I {}, U {}", nF, nI, nU);
+      }
+    }
+
+    // Final write-back: covered_set is the live accumulator (loaded input plus
+    // every path the per-claim hook persisted as it was witnessed). Fold in any
+    // reached universe path defensively, then one atomic rewrite. Monotone
+    // union — only true P_SATISFIABLE (CE in hand) paths are ever added.
+    if (cov_set_active)
+    {
+      for (const auto &[msg, loc] : goto_coveraget::all_claims)
+        if (reached_claims.count(msg + "\t" + loc))
+          goto_coveraget::covered_set.emplace(msg, loc);
+      goto_coveraget::write_covered_set_atomic();
+      log_success(
+        "coverage covered-set written to {}",
+        goto_coveraget::covered_set_outpath);
+    }
+  }
+
   // Generate JSON coverage report
   if (options.get_bool_option("cov-report-json"))
   {
@@ -1054,6 +1181,8 @@ void report_coverage(
       cov_type = "branch-function";
     else if (is_k_path_cov)
       cov_type = "k-path";
+    else if (is_path_cov)
+      cov_type = "solidity-path";
     else if (is_cond_cov)
       cov_type = "condition";
     else if (is_assert_cov)
@@ -1062,6 +1191,28 @@ void report_coverage(
     const auto &all_claims = goto_coveraget::all_claims;
     std::set<std::string> source_files;
     json claims_json = json::array();
+
+    // Bound under which THIS run's verdicts were produced. Recorded on every
+    // path entry: a "holds" verdict is only meaningful together with the
+    // bound it was proven under, and only the unbounded harness
+    // (--solidity-max-tx 0, i.e. the open-ended `while(nondet) dispatch()`)
+    // can establish real unreachability.
+    const std::string max_tx = options.get_option("solidity-max-tx");
+    const std::string unwind_s = options.get_option("unwind");
+    // `--solidity-max-tx 0` restores the open-ended `while(nondet) dispatch()`
+    // harness, but that loop is STILL cut by --unwind: with an unwind bound the
+    // number of transactions explored is bounded too, so a claim can be UNSAT
+    // merely because the setup call sequence was longer than the bound. When
+    // any loop hit its bound and was assumed away, "holds" therefore means
+    // "no witness within this exploration", not "unreachable" — so it must NOT
+    // be promoted to I. (Without this check a budget limit would be dressed up
+    // as a proof, which is the exact failure this tri-state exists to prevent.)
+    bool loops_truncated = false;
+    {
+      std::lock_guard lk(goto_functionst::truncated_loops_mutex);
+      loops_truncated = !goto_functionst::truncated_loops.empty();
+    }
+    const bool unbounded_run = (max_tx == "0") && !loops_truncated;
 
     for (const auto &[claim_msg, claim_loc] : all_claims)
     {
@@ -1096,13 +1247,191 @@ void report_coverage(
                                        ? "spanning-set-redundant"
                                        : "feasible";
       }
+
+      // Solidity complete-path coverage: the CE->generalisation interface.
+      // Tri-state per complete path, plus the bound the verdict was reached
+      // under and how the path exits.
+      if (is_path_cov)
+      {
+        char v = 0;
+        {
+          std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+          auto it_o = goto_coveraget::claim_outcome.find(claim_sig);
+          if (it_o != goto_coveraget::claim_outcome.end())
+            v = it_o->second;
+        }
+        // Witnessed = refuted this run, or already refuted in an earlier
+        // escalation round (cross-run covered-set). Either way a concrete
+        // input exists for this path.
+        const bool prior =
+          goto_coveraget::covered_set.count({claim_msg, claim_loc}) > 0;
+        const bool witnessed = covered || prior;
+
+        // F: feasible, CE in hand.
+        // I: PROVEN unreachable — only an unbounded run can establish this.
+        // U: everything else, INCLUDING a claim that "holds" within a bound:
+        //    that means no witness up to this tx/unwind depth, not that the
+        //    path is unreachable. Reporting such a claim as I would turn a
+        //    budget limit into a false proof, so it stays U and is flagged
+        //    `bounded_holds` as an I-candidate for a later unbounded round.
+        std::string tri;
+        if (witnessed)
+          tri = "F";
+        else if (v == 'P' && unbounded_run)
+          tri = "I";
+        else
+          tri = "U";
+        claim_entry["status"] = tri;
+        if (v == 'P' && !unbounded_run)
+          claim_entry["bounded_holds"] = true;
+        if (!witnessed && v == 0)
+          // Never handed to the solver this run (sliced away, or skipped
+          // because an earlier round already covered a different path).
+          claim_entry["not_solved_this_run"] = true;
+
+        claim_entry["bound"]["max_tx"] = max_tx.empty() ? "default" : max_tx;
+        claim_entry["bound"]["unwind"] =
+          unwind_s.empty() ? "default" : unwind_s;
+        claim_entry["bound"]["kind"] = unbounded_run ? "unbounded" : "bounded";
+        if (max_tx == "0" && loops_truncated)
+          claim_entry["bound"]["unbounded_tx_but_loops_truncated"] = true;
+        // Both revert shapes exit the transaction, so both are "revert": the
+        // custom-error one (ASSUME(false) in a #sol_error callee) and the
+        // rollback one (require/revert("msg"), which restores `*this` and then
+        // reaches END_FUNCTION). Reporting the latter as "normal" would claim a
+        // reverting transaction succeeded.
+        const bool ck_err =
+          goto_coveraget::revert_paths.count({claim_msg, claim_loc}) > 0;
+        const bool ck_rb =
+          goto_coveraget::rollback_revert_paths.count({claim_msg, claim_loc}) >
+          0;
+        const bool ck_un =
+          goto_coveraget::undetermined_exit_paths.count({claim_msg, claim_loc}) >
+          0;
+        claim_entry["exit_kind"] =
+          (ck_err || ck_rb) ? "revert" : (ck_un ? "undetermined" : "normal");
+        if (ck_rb)
+          // Distinguishes the two: here the rollback IS modelled, so
+          // final_state is the correctly restored post-state.
+          claim_entry["revert_kind"] = "rollback";
+        else if (ck_err)
+          claim_entry["revert_kind"] = "custom-error";
+        else if (ck_un)
+          claim_entry["exit_kind_undetermined_reason"] =
+            "reaches END_FUNCTION bypassing the function epilogue and carries "
+            "no rollback restore: a `require` failing before any state write "
+            "and a plain early `return` compile to the same shape, so this is "
+            "either a revert or a normal early exit";
+        claim_entry["witnessed_in_earlier_round"] = prior && !covered;
+
+        // path_id == enc(pi): the integer encoding the path's whole decision
+        // sequence (tr accumulator). Text before ":path:" is the function.
+        const auto pos = claim_msg.rfind(":path:");
+        if (pos != std::string::npos)
+        {
+          claim_entry["path_id"] = claim_msg.substr(pos + 6);
+          claim_entry["path_function"] = claim_msg.substr(0, pos);
+        }
+
+        // CE payload: the concrete values behind an F. Absent for I/U (there
+        // is no counterexample to report).
+        std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+        auto it_ce = goto_coveraget::path_ce.find(claim_sig);
+        if (it_ce != goto_coveraget::path_ce.end())
+        {
+          const auto &ce = it_ce->second;
+          json ins = json::object();
+          for (const auto &[n, v] : ce.inputs)
+            ins[prettify_solidity_expr(n)] = v;
+          json envj = json::object();
+          for (const auto &[n, v] : ce.env)
+            envj[prettify_solidity_expr(n)] = v;
+          json fin = json::object();
+          for (const auto &[n, v] : ce.final_state)
+            fin[prettify_solidity_expr(n)] = v;
+          claim_entry["inputs"] = ins;
+          claim_entry["env"] = envj;
+          // A custom-error revert in a scope the revert-observation gate does
+          // NOT cover (constructor / library / free function) is still modelled
+          // by ASSUME(false) with no rollback, so the harvested values are the
+          // state AT the revert, not the post-state — on-chain the transaction
+          // is undone and the post-state is the pre-call state. Publishing
+          // those under `final_state` would be a wrong value carrying a
+          // disclaimer; publish them under their true meaning instead and leave
+          // `final_state` empty, since the post-state is genuinely unavailable.
+          if (ce.revert_pre_rollback)
+          {
+            claim_entry["state_at_revert_point"] = fin;
+            claim_entry["final_state"] = json::object();
+          }
+          else
+            claim_entry["final_state"] = fin;
+          // State this path WROTE but whose value is not renderable (mapping /
+          // dynamic-array stores). Listed so "absent from final_state" is never
+          // read as "unchanged".
+          if (!ce.state_written_unrendered.empty())
+          {
+            json un = json::array();
+            for (const auto &n : ce.state_written_unrendered)
+              un.push_back(prettify_solidity_expr(n));
+            claim_entry["state_written_value_unavailable"] = un;
+          }
+          // Not silent: say how many nondet values were classified as harness
+          // plumbing and left out of `inputs`/`env`.
+          claim_entry["ce_extraction"]["harness_nondets_dropped"] =
+            ce.dropped_internal;
+          // How the values were harvested. REQUIRED for the reader to
+          // interpret an empty final_state: with `sliced` true the symex
+          // slicer kept only what the path claim depends on — and a path
+          // claim's guard mentions only the ghost accumulators — so state
+          // writes are legitimately absent rather than non-existent. Re-run
+          // with --no-slice to obtain the post-state.
+          claim_entry["ce_extraction"]["sliced"] = ce.sliced;
+          claim_entry["ce_extraction"]["compact_trace"] = ce.compact_trace;
+          claim_entry["ce_extraction"]["scoped_to_claim"] = ce.scoped_to_claim;
+          if (!ce.scoped_to_claim)
+            claim_entry["ce_extraction"]["post_state_may_include_later_tx"] =
+              "this path's own assert was not found in the trace, so the whole "
+              "trace was scanned; with more than one transaction the reported "
+              "post-state may belong to a later transaction";
+          // A custom-error revert is modelled by ASSUME(false) in the error
+          // callee with NO state rollback, so the harvested post-state is the
+          // state at the revert point. On-chain the transaction reverts and
+          // every write is undone, i.e. the true post-state is the PRE-state.
+          // Say so rather than let a consumer read these values as the result.
+          if (ce.revert_pre_rollback)
+            claim_entry["ce_extraction"]["post_state_unavailable_reason"] =
+              "custom-error revert in a scope without rollback modelling "
+              "(constructor / library / free function): the harvested values "
+              "are published as `state_at_revert_point`, NOT as final_state. "
+              "The real post-state of a reverted transaction is the pre-call "
+              "state, which this model does not reconstruct";
+          if (ce.sliced && fin.empty())
+            claim_entry["ce_extraction"]["final_state_unavailable_reason"] =
+              "slicing active: a path claim depends only on the ghost path "
+              "accumulators, so contract state writes are sliced out of the "
+              "counterexample; re-run with --no-slice to harvest the "
+              "post-state";
+        }
+        else if (tri == "F")
+          // Witnessed, but not by THIS run: the cross-run covered-set already
+          // held it, so the path was not re-instrumented and no model was
+          // produced here. Without this the reader sees an F with no inputs and
+          // no post-state and cannot tell that from "the CE was empty".
+          claim_entry["ce_extraction"]["payload_absent_reason"] =
+            "path was already witnessed in an earlier round (covered-set) and "
+            "therefore not re-instrumented this run; its counterexample values "
+            "are in the report of the round that witnessed it";
+      }
       claims_json.push_back(claim_entry);
     }
 
     size_t total = all_claims.size();
     size_t covered_count = 0;
     for (const auto &c : claims_json)
-      if (c["status"] == "covered")
+      // Path coverage reports the tri-state in `status`; "F" is its
+      // "covered" (a complete path with a counterexample in hand).
+      if (c["status"] == "covered" || c["status"] == "F")
         covered_count++;
 
     // For k-path coverage, restrict the summary to maximal goals so the
@@ -1139,6 +1468,60 @@ void report_coverage(
     // modes (their zero-claim case has different semantics).
     if (total == 0 && (is_branch_cov || is_branch_func_cov))
       report["summary"]["no_branch"] = true;
+
+    // Path coverage: tri-state totals + the run's bound, so a consumer can
+    // see at a glance how many complete paths have a CE (F), how many are
+    // PROVEN unreachable (I, unbounded runs only), and how many are still
+    // open (U) — with `bounded_holds` counting the U's that held within this
+    // bound and are therefore worth re-checking unbounded.
+    if (is_path_cov)
+    {
+      size_t nF = 0, nI = 0, nU = 0, nBH = 0, nRevert = 0;
+      for (const auto &c : claims_json)
+      {
+        const std::string s = c["status"];
+        if (s == "F")
+          ++nF;
+        else if (s == "I")
+          ++nI;
+        else
+          ++nU;
+        if (c.contains("bounded_holds"))
+          ++nBH;
+        if (c.value("exit_kind", "") == "revert")
+          ++nRevert;
+      }
+      report["summary"]["paths_total"] = total;
+      report["summary"]["F_feasible_with_ce"] = nF;
+      report["summary"]["I_proven_unreachable"] = nI;
+      report["summary"]["U_undecided"] = nU;
+      report["summary"]["U_of_which_bounded_holds"] = nBH;
+      report["summary"]["revert_exit_paths"] = nRevert;
+      report["summary"]["bound"]["max_tx"] = max_tx.empty() ? "default" : max_tx;
+      report["summary"]["bound"]["unwind"] =
+        unwind_s.empty() ? "default" : unwind_s;
+      report["summary"]["bound"]["kind"] =
+        unbounded_run ? "unbounded" : "bounded";
+      if (!unbounded_run)
+        report["summary"]["note"] =
+          "bounded run: I is only established by --solidity-max-tx 0; every "
+          "path that merely held within this bound is reported as U with "
+          "bounded_holds=true";
+      // Known modelling limitation, stated rather than left for the reader to
+      // rediscover: the entry state of a transaction is whatever the
+      // constructor left behind. State variables are NOT havoc'd, so a path
+      // guarded by state that only a PRIOR transaction can establish (a
+      // balance, a role, an initialised flag) is unreachable at this
+      // transaction bound and lands in U — not because the path is dead, but
+      // because the run never built the state that unlocks it. Raising
+      // --solidity-max-tx explores more of those; it does not remove the
+      // limitation.
+      report["summary"]["known_limitation_entry_state"] =
+        "transaction entry state is the post-constructor state; contract state "
+        "is not havoc'd, so paths guarded by state that an earlier transaction "
+        "would have to establish are reported U at this tx bound. A U is "
+        "therefore not evidence that the path is unreachable";
+    }
 
     std::ofstream out("cov-report.json");
     out << report.dump(2) << std::endl;
@@ -1826,6 +2209,11 @@ smt_convt::resultt bmct::multi_property_check(
   // claim_slicer reads the witness comment, matching the form stored
   // in goto_coveraget::all_claims.
   bool is_k_path_cov = options.get_bool_option("k-path-coverage-enabled");
+  // "Solidity complete-path Cov" — goals carry enc(pi) in the comment, same
+  // as k-path, so it must join the is_goto_cov disjunction below or
+  // claim_slicer would read the negated-expr instead of the comment and
+  // every JSON entry would show up uncovered.
+  bool is_path_cov = options.get_bool_option("solidity-path-coverage-enabled");
 
   // is_vb: enable verbose output coverage info if the option "--verbosity coverage:N" is set, where N should larger than 0
   // By enabling this, we will output the coverage information when handling each instrumentation assertion.
@@ -1913,6 +2301,7 @@ smt_convt::resultt bmct::multi_property_check(
                        &is_branch_cov,
                        &is_branch_func_cov,
                        &is_k_path_cov,
+                       &is_path_cov,
                        &is_keep_verified,
                        &is_fail_fast,
                        &fail_fast_limit,
@@ -1941,7 +2330,7 @@ smt_convt::resultt bmct::multi_property_check(
     // as uncovered even when reached_claims has the matching reached
     // signature (PR #4330 review).
     bool is_goto_cov = is_assert_cov || is_cond_cov || is_branch_cov ||
-                       is_branch_func_cov || is_k_path_cov;
+                       is_branch_func_cov || is_k_path_cov || is_path_cov;
     claim_slicer claim(i, false, is_goto_cov, ns);
     claim.run(local_eq.SSA_steps);
 
@@ -2051,6 +2440,31 @@ smt_convt::resultt bmct::multi_property_check(
             RESET,
             prettify_solidity_expr(claim.claim_cstr));
       }
+    }
+
+    // Tri-state ledger for Solidity complete-path coverage: record THIS
+    // claim's verdict so the report can tell "proven at this bound" apart
+    // from "could not decide" (reached_claims records only the refuted
+    // ones, so both non-refuted cases would otherwise collapse into a
+    // single indistinguishable "uncovered"). An inductive-step SAT means
+    // "cannot prove", not a counterexample, so it maps to 'U'.
+    if (is_path_cov)
+    {
+      char verdict;
+      if (solver_result == smt_convt::P_SATISFIABLE)
+        verdict = is ? 'U' : 'F';
+      else if (solver_result == smt_convt::P_UNSATISFIABLE)
+        verdict = 'P';
+      else
+        verdict = 'U';
+      std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+      // 'F' is final: a witness stays valid, so a later phase's failure to
+      // reprove must never downgrade it.
+      auto it_o = goto_coveraget::claim_outcome.find(claim_sig);
+      if (it_o == goto_coveraget::claim_outcome.end())
+        goto_coveraget::claim_outcome.emplace(claim_sig, verdict);
+      else if (it_o->second != 'F')
+        it_o->second = verdict;
     }
 
     double solve_time_s = (solve_stop - solve_start);
@@ -2190,6 +2604,224 @@ smt_convt::resultt bmct::multi_property_check(
           // (--k-induction), else the owned member (plain BMC).
           foundry().collect(local_eq, *solver_ptr, ns);
 
+        // Solidity complete-path coverage: harvest this path's CE payload
+        // (concrete inputs + post-state) NOW, while this witness's solver
+        // model is live — after the next dec_solve() it is gone. Only the
+        // FIRST witness of a claim is recorded: one CE per complete path is
+        // what the report contracts for.
+        if (is_path_cov && witnesses.empty())
+        {
+          goto_coveraget::path_ce_t ce;
+          ce.sliced = !options.get_bool_option("no-slice");
+          ce.compact_trace = is_compact_trace;
+          ce.revert_pre_rollback =
+            goto_coveraget::revert_paths.count(
+              {claim.claim_msg, claim.claim_loc}) > 0;
+          // Ordered so the emitted post-state is deterministic across runs.
+          std::map<std::string, std::string> last_state;
+          std::set<std::string> input_seen;
+          // Scope prefix this path's function parameters carry. A Solidity
+          // parameter symbol is `sol:@C@<contract>@F@<method>@<param>` (see
+          // foundry.h's parse_param_symbol), i.e. the method appears WITHOUT
+          // the `#N` disambiguator that the goto function id carries. So take
+          // claim_msg's function id ("<function-id>:path:<enc>") and drop the
+          // `#N` before using it as a prefix, or nothing would ever match.
+          std::string fn_scope;
+          // Contract scope prefix (`sol:@C@<Contract>@`). Mappings and dynamic
+          // arrays do NOT live inside the contract object: the frontend lowers
+          // them to CONTRACT-LEVEL global stores, whose ids carry this prefix
+          // WITHOUT the `@F@` function marker. That is what separates a state
+          // store from a function-scoped local.
+          std::string contract_scope;
+          {
+            const auto p = claim.claim_msg.rfind(":path:");
+            if (p != std::string::npos)
+            {
+              std::string fn_id = claim.claim_msg.substr(0, p);
+              const auto fpos = fn_id.find("@F@");
+              if (fpos != std::string::npos)
+                contract_scope = fn_id.substr(0, fpos + 1);
+              const auto hash = fn_id.find('#', fpos == std::string::npos
+                                                  ? 0
+                                                  : fpos + 3);
+              if (hash != std::string::npos)
+                fn_id.erase(hash);
+              fn_scope = fn_id + "@";
+            }
+          }
+          // Base symbol id of a possibly-indexed lvalue (`m[k]` -> `m`).
+          auto base_sym_id = [](expr2tc e) -> std::string {
+            for (;;)
+            {
+              if (is_index2t(e))
+                e = to_index2t(e).source_value;
+              else if (is_member2t(e))
+                e = to_member2t(e).source_value;
+              else
+                break;
+            }
+            return is_symbol2t(e) ? to_symbol2t(e).thename.as_string()
+                                  : std::string();
+          };
+          std::set<std::string> unrendered_seen;
+          for (const auto &st : w.trace.steps)
+          {
+            // Stop at THIS path's own violated assert. The harness runs
+            // --solidity-max-tx transactions (default 2) and the trace spans
+            // all of them, so scanning past this point would let a LATER
+            // transaction's writes overwrite the post-state of the invocation
+            // that this path actually describes.
+            if (st.is_assert() && st.comment == claim.claim_msg)
+            {
+              ce.scoped_to_claim = true;
+              break;
+            }
+            if (!st.is_assignment())
+              continue;
+            if (is_nil_expr(st.lhs) || is_nil_expr(st.value))
+              continue;
+            const std::string name = from_expr(ns, "", st.lhs);
+            // Mapping / dynamic-array state: these do NOT live in the contract
+            // object, so the `this->` test below never sees them and they would
+            // be discarded as harness noise — leaving a reader to infer the
+            // mapping was untouched. Recognise them by their contract-level id
+            // and record them as state; when the model value is not a constant
+            // (an infinite-array store), record the NAME so the write is still
+            // visible rather than silently lost.
+            const std::string bid = base_sym_id(st.lhs);
+            if (
+              !contract_scope.empty() && bid.rfind(contract_scope, 0) == 0 &&
+              bid.find("@F@") == std::string::npos)
+            {
+              // ESBMC's own contract-scope plumbing (address-binding tables,
+              // call temporaries) is not user state.
+              if (
+                name.rfind("$", 0) == 0 ||
+                name.find("_bind_cname") != std::string::npos ||
+                name.find("return_value$") != std::string::npos)
+              {
+                ++ce.dropped_internal;
+                continue;
+              }
+              // A mapping/array element write (`m[k] = v`) yields a SCALAR
+              // model value — that is the useful post-state. The companion
+              // whole-store assignment (`m = with(m,k,v)`) yields the entire
+              // infinite array, which is the same information in a form no
+              // consumer can use and which would dwarf the report; name it as
+              // written-but-unrendered instead of dumping thousands of zeros.
+              // Only an ELEMENT write (`m[k] = v`) carries a usable post-state
+              // value. A bare whole-store assignment is the `with(...)` bulk
+              // form of the same update; recording it would print the entire
+              // infinite array — and its zero-initialised form reads as "the
+              // mapping is empty", contradicting the element entry beside it.
+              const bool scalar = is_index2t(st.lhs) &&
+                                  is_constant_expr(st.value) &&
+                                  !is_constant_array2t(st.value) &&
+                                  !is_constant_struct2t(st.value);
+              if (scalar)
+                last_state[name] = from_expr(ns, "", st.value);
+              else if (unrendered_seen.insert(name).second)
+                ce.state_written_unrendered.push_back(name);
+              continue;
+            }
+            // Never guess: a value that did not come back from the model as a
+            // constant is dropped rather than rendered symbolically.
+            if (!is_constant_expr(st.value))
+              continue;
+            // A Solidity state write `this->x = v` is lowered as a whole-object
+            // update, so the model hands back the ENTIRE contract struct.
+            // Project out the written member, otherwise every state variable
+            // would be reported as the same opaque object literal.
+            expr2tc val_expr = st.value;
+            if (is_member2t(st.lhs) && is_constant_struct2t(val_expr))
+            {
+              const irep_idt &mem = to_member2t(st.lhs).member;
+              const struct_type2t &sty = to_struct_type(val_expr->type);
+              for (size_t i = 0; i < sty.member_names.size(); ++i)
+                if (sty.member_names[i] == mem)
+                {
+                  val_expr = to_constant_struct2t(val_expr).datatype_members[i];
+                  break;
+                }
+            }
+            const std::string val = from_expr(ns, "", val_expr);
+            // WHOLE-OBJECT restore: require(cond) / revert("msg") lower to a
+            // rollback block that assigns the entry snapshot back as ONE
+            // aggregate — `*this = _sol_save_this` — never per field. Tracking
+            // only `this->member` writes would miss it and report the
+            // pre-rollback value as the post-state, i.e. a WRONG value. Adopt
+            // every member of the restored object as the new post-state.
+            if (
+              name.rfind("*this", 0) == 0 && is_constant_struct2t(st.value))
+            {
+              const struct_type2t &sty = to_struct_type(st.value->type);
+              const auto &mems = to_constant_struct2t(st.value).datatype_members;
+              for (size_t i = 0; i < sty.member_names.size() && i < mems.size();
+                   ++i)
+              {
+                const std::string mn = sty.member_names[i].as_string();
+                if (mn.empty() || mn[0] == '$' || mn.rfind("_ESBMC", 0) == 0 ||
+                    mn.rfind("anon_pad", 0) == 0)
+                  continue;
+                if (is_constant_expr(mems[i]))
+                  last_state[mn] = from_expr(ns, "", mems[i]);
+              }
+              continue;
+            }
+            if (name.find("this->") != std::string::npos)
+            {
+              // Contract state variable: the LAST write on this path is the
+              // post-state this path produces. ESBMC's own bookkeeping fields
+              // on the contract object ($address/$code/$codehash/binding) are
+              // not user state and would only add noise.
+              const std::string bare = name.substr(name.rfind("->") + 2);
+              if (!bare.empty() && bare[0] != '$' && bare.rfind("_ESBMC", 0) != 0)
+                last_state[bare] = val;
+            }
+            else
+            {
+              // A nondet-sourced assignment is a value the harness CHOSE. But
+              // "chosen by the harness" is far broader than "call argument":
+              // it also covers the allocator tables, dispatcher choice bits and
+              // temporaries. Classify instead of dumping the whole bag, which
+              // would bury the one value a consumer needs (and bloat the report
+              // with multi-KB internal arrays).
+              const expr2tc nd = symex_slicet::get_nondet_symbol(st.rhs);
+              if (is_nil_expr(nd))
+                continue;
+              // A Solidity parameter/local carries the mangled id
+              // `sol:@C@<Contract>@F@<fn>#N@<name>`. Requiring the prefix to be
+              // THIS path's own function id keeps the call arguments of the
+              // unit under test and drops harness/dispatcher locals that merely
+              // share the shape (`_new_ts`, `addr`, `tmp`, ...).
+              std::string sym_id;
+              if (is_symbol2t(st.lhs))
+                sym_id = to_symbol2t(st.lhs).thename.as_string();
+              const bool is_param =
+                !fn_scope.empty() && sym_id.rfind(fn_scope, 0) == 0;
+              const bool is_env = name.rfind("msg_", 0) == 0 ||
+                                  name.rfind("tx_", 0) == 0 ||
+                                  name.rfind("block_", 0) == 0;
+              if (is_param)
+              {
+                if (input_seen.insert(name).second)
+                  ce.inputs.emplace_back(name, val);
+              }
+              else if (is_env)
+              {
+                if (input_seen.insert(name).second)
+                  ce.env.emplace_back(name, val);
+              }
+              else
+                ++ce.dropped_internal;
+            }
+          }
+          for (const auto &[n, v] : last_state)
+            ce.final_state.emplace_back(n, v);
+          std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+          goto_coveraget::path_ce[claim_sig] = std::move(ce);
+        }
+
         witnesses.push_back(std::move(w));
 
         if (!enumerate)
@@ -2261,8 +2893,14 @@ smt_convt::resultt bmct::multi_property_check(
         // partial progress and bounded re-runs accumulate monotonically.
         // Branch coverage only; key == Item 2's (claim_msg, claim_loc);
         // under the same mutex as reached_claims.
+        // Solidity complete-path coverage uses the SAME cross-run covered-set
+        // so an escalation round (tx=1 -> 2 -> 3) does not re-instrument a
+        // path whose CE is already in hand; its key is the same
+        // (claim_msg, claim_loc) pair, where claim_msg is the "fn:path:enc"
+        // comment, unique per complete path.
         if (
-          is_branch_cov && !goto_coveraget::covered_set_outpath.empty() &&
+          (is_branch_cov || is_path_cov) &&
+          !goto_coveraget::covered_set_outpath.empty() &&
           goto_coveraget::covered_set.emplace(claim.claim_msg, claim.claim_loc)
             .second)
         {

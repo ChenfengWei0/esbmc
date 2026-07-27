@@ -4,6 +4,8 @@
 #include <langapi/language_util.h>
 #include <unordered_set>
 #include <atomic>
+#include <map>
+#include <mutex>
 
 class goto_coveraget
 {
@@ -34,6 +36,19 @@ public:
   // hand to the solver and is dropped (a Phase-2 ghost-flag fallback is
   // tracked in #4325). Goal count is bounded by max_goals per function.
   void k_path_coverage();
+
+  // Solidity complete-path coverage (paper: entry->exit path coverage for
+  // test generation). Unlike k_path_coverage (prefix witnesses asserted AT
+  // the branch), this snapshots each decision's guard VALUE into a ghost
+  // symbol on the decision edge (ASSIGN c_i = guard, via cov_context), then
+  // asserts assert(!(c_1==d_1 && ... && c_k==d_k)) on each edge reaching
+  // END_FUNCTION for every enumerated complete decision sequence. A probe
+  // is falsified => that complete path is feasible => multi_property emits
+  // its CE. The per-path enc(pi) is encoded into the claim comment so
+  // claim_sig stays unique per path (bmc.cpp:2000 is otherwise unsound).
+  // Slice 1: loop-free functions (acyclic DFS, scalar snapshots). Loops
+  // (occurrence-indexed snapshot slots) are Slice 2. Requires cov_context.
+  void solidity_path_coverage();
 
   void insert_assert(
     goto_programt &goto_program,
@@ -111,6 +126,103 @@ public:
   // all_claims.
   static std::set<std::pair<std::string, std::string>> covered_set;
   static std::string covered_set_outpath;
+
+  // ---- Solidity complete-path coverage: tri-state (F/I/U) reporting ----
+  //
+  // `reached_claims` alone cannot distinguish "proven unreachable" from
+  // "could not decide": both are simply absent from it. The tri-state
+  // report needs the per-claim solver verdict, so multi_property_check
+  // records it here as it solves (keyed by claim_sig == "msg\tloc"):
+  //   'F' — refuted (P_SATISFIABLE): the path is feasible and a
+  //         counterexample (concrete input) is in hand.
+  //   'P' — proven (P_UNSATISFIABLE) AT THE CURRENT BOUND. This is only a
+  //         CANDIDATE for I: a bounded proof means "no witness within this
+  //         tx/unwind bound", NOT unreachability. Only an UNBOUNDED run
+  //         (--solidity-max-tx 0) upgrades 'P' to a true I; every bounded
+  //         'P' is reported as U with `bounded_holds: true` so a
+  //         "could not reach it here" is never dressed up as a proof.
+  //   'U' — undecided: solver UNKNOWN/error, or the inductive step could
+  //         not prove it.
+  // Written under a mutex (--parallel-solving runs jobs on threads).
+  static std::map<std::string, char> claim_outcome;
+  static std::mutex claim_outcome_mutex;
+
+  // Complete paths whose exit is a detected custom-error revert
+  // (`revert E()` reaching a `#sol_error` call). Keyed like all_claims, so
+  // the report can label each path's exit_kind normal|revert. Filled by
+  // solidity_path_coverage() at instrumentation time.
+  static std::set<std::pair<std::string, std::string>> revert_paths;
+
+  // Complete paths that exit through a ROLLBACK revert: `require(cond)` /
+  // `require(cond,"msg")` / `revert("msg")` lower to a block that restores the
+  // entry snapshot (`*this = _sol_save_this`) and jumps to END_FUNCTION. These
+  // reach END_FUNCTION like a normal exit, so without this set they would be
+  // reported `exit_kind: "normal"` — actively wrong, since the transaction
+  // reverts. Unlike `revert_paths` (custom errors) the rollback IS modelled,
+  // so their post-state is the correctly restored one and needs no warning.
+  static std::set<std::pair<std::string, std::string>> rollback_revert_paths;
+
+  // Paths whose exit shape cannot be classified: they reach END_FUNCTION while
+  // skipping the epilogue and carry no rollback restore. A `require` failing
+  // before any state write and a plain early `return` both compile to exactly
+  // this, with nothing on the edge to separate them. Reported as
+  // `exit_kind: "undetermined"` — labelling them "normal" would assert that a
+  // reverted transaction succeeded.
+  static std::set<std::pair<std::string, std::string>> undetermined_exit_paths;
+
+  // The CE payload of a witnessed (F) path: the concrete values that make the
+  // path execute, harvested from the solver model while it is still live.
+  // This is the half of the report a downstream generaliser actually consumes
+  // — a path id alone says "reachable", these values say "with WHAT".
+  //   inputs      — first nondeterministically-sourced value per symbol
+  //                 (the harness's chosen call arguments / environment)
+  //   final_state — LAST value written to each contract state variable
+  //                 (`this->x`) on this path, i.e. the post-state
+  // Both are recorded ONLY from concrete model values; a symbolic or missing
+  // value is dropped rather than guessed.
+  //
+  // `sliced`/`compact_trace` record HOW the trace was produced, because both
+  // affect what can be harvested: the symex slicer keeps only steps the
+  // CLAIM depends on, and a path claim's guard mentions only the ghost
+  // accumulators, so state-variable writes are sliced away unless --no-slice
+  // is given. Without these flags an empty final_state would be ambiguous
+  // between "this path writes no state" and "the writes were sliced away".
+  struct path_ce_t
+  {
+    // Solidity call arguments only: a nondet-sourced write to a symbol whose
+    // mangled id has the `sol:@C@<C>@F@<f>@<name>` shape. Harness plumbing
+    // (allocator tables, dispatcher choice bits, temporaries) is NOT an input
+    // and is counted in `dropped_internal` instead of polluting this list.
+    std::vector<std::pair<std::string, std::string>> inputs;
+    // EVM environment the path was witnessed under (msg.*/tx.*/block.*),
+    // kept separate because it is context, not an argument.
+    std::vector<std::pair<std::string, std::string>> env;
+    // How many nondet values were classified as harness-internal and dropped.
+    // Reported so the omission is visible rather than silent.
+    size_t dropped_internal = 0;
+    std::vector<std::pair<std::string, std::string>> final_state;
+    // State variables this path provably WROTE but whose value could not be
+    // rendered as a constant (mappings / dynamic arrays lower to infinite-array
+    // globals whose model value is the whole store). Listed by name so the
+    // reader knows the variable changed: omitting them entirely would let a
+    // consumer infer "unchanged", which is a silent wrong conclusion.
+    std::vector<std::string> state_written_unrendered;
+    bool sliced = true;
+    bool compact_trace = true;
+    // The harvest stopped at this path's own violated assert, so values from
+    // any LATER transaction in a multi-tx harness cannot leak in. False means
+    // the assert was not found in the trace and the whole trace was scanned —
+    // the post-state may then belong to a later transaction.
+    bool scoped_to_claim = false;
+    // This path exits through a custom-error `revert E()`, which the Solidity
+    // frontend lowers to a `#sol_error` callee containing only ASSUME(false)
+    // — with NO state rollback (unlike require/revert("msg"), which restore
+    // `*this` from an entry snapshot). So the harvested post-state is the
+    // state AT THE REVERT POINT, not the EVM post-state (on-chain every write
+    // in the reverted transaction is undone). Reported, never silently used.
+    bool revert_pre_rollback = false;
+  };
+  static std::map<std::string, path_ce_t> path_ce;
   // Item 2e: serialize covered_set to covered_set_outpath crash-safely
   // (write a .tmp then atomic rename). Called both incrementally as
   // each edge is witnessed P_SATISFIABLE (bmc.cpp) and once at run end,
@@ -155,6 +267,23 @@ public:
 
   std::string target_function = "";
   bool cov_assume_asserts = false;
+
+  // Context for creating+registering ghost snapshot symbols in
+  // solidity_path_coverage(). namespacet only exposes a const context, so
+  // the pass needs a mutable contextt& to move() new symbols in (pattern:
+  // assign_params_as_non_det / symbol_generator). Set by the dispatch site
+  // (esbmc_parseoptions.cpp) where `context` is available; nullptr => the
+  // pass aborts with an actionable error rather than silently no-op.
+  contextt *cov_context = nullptr;
+  // Per-function cap on enumerated complete paths; on overflow the
+  // instrumentation reports the dropped count (never a silent truncation).
+  size_t path_cov_max_goals = 10000;
+  // Loop bound for path enumeration: each back-edge is followed at most this
+  // many times per path, so complete paths are enumerated up to this many
+  // loop iterations. Set from --unwind by the dispatch (default 4). Must
+  // match the symex unwind bound, or enumerated paths and solver-explored
+  // paths disagree.
+  size_t path_cov_unwind = 4;
   // When non-empty (set from --contract), branch_coverage() instruments
   // ONLY decisions whose lexically-declaring Solidity contract equals this
   // name (location's "sol_decl_contract", stamped by the frontend). This

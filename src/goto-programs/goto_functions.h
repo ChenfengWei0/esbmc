@@ -51,6 +51,18 @@ public:
   static std::mutex reached_claims_mutex;
   static std::mutex reached_mul_claims_mutex;
 
+  // Loops whose unwind bound was reached while unwinding assertions were
+  // disabled (--no-unwinding-assertions, implied by --unwind in coverage
+  // mode and by the k-induction base/inductive phases). In that
+  // configuration symex does NOT report the truncation: it silently
+  // ASSUMEs the loop is finished, so every path that needed one more
+  // iteration is cut away and everything downstream becomes unreachable.
+  // Recorded here so coverage reporting can say so instead of printing
+  // "0%" next to "VERIFICATION SUCCESSFUL" with no explanation.
+  // Entry format: "loop <n> at <location>".
+  static std::set<std::string> truncated_loops;
+  static std::mutex truncated_loops_mutex;
+
   void clear()
   {
     function_map.clear();

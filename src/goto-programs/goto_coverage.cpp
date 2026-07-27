@@ -1,6 +1,8 @@
 #include <goto-programs/goto_coverage.h>
 #include <goto-programs/k_path_spanning.h>
 #include <irep2/irep2_utils.h>
+#include <util/i2string.h>
+#include <util/std_types.h>
 
 #include <nlohmann/json.hpp>
 
@@ -10,7 +12,12 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <vector>
+
+// Defined later in this TU; used by solidity_path_coverage() for --contract
+// scoping. Extracts the contract from a Solidity mangled id "sol:@C@<C>@F@...".
+static std::string contract_of(const std::string &mangled_id);
 
 size_t goto_coveraget::total_assert = 0;
 size_t goto_coveraget::total_assert_ins = 0;
@@ -23,6 +30,14 @@ std::set<std::pair<std::string, std::string>>
   goto_coveraget::k_path_spanning_redundant;
 std::set<std::pair<std::string, std::string>> goto_coveraget::all_claims;
 std::set<std::pair<std::string, std::string>> goto_coveraget::covered_set;
+std::map<std::string, char> goto_coveraget::claim_outcome;
+std::mutex goto_coveraget::claim_outcome_mutex;
+std::set<std::pair<std::string, std::string>> goto_coveraget::revert_paths;
+std::set<std::pair<std::string, std::string>>
+  goto_coveraget::rollback_revert_paths;
+std::set<std::pair<std::string, std::string>>
+  goto_coveraget::undetermined_exit_paths;
+std::map<std::string, goto_coveraget::path_ce_t> goto_coveraget::path_ce;
 std::string goto_coveraget::covered_set_outpath;
 std::atomic<bool> goto_coveraget::branch_cov_active{false};
 std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
@@ -280,6 +295,17 @@ void goto_coveraget::branch_function_coverage()
 // decision the GOTO arm produces, keyed on the short-circuit operand
 // (side_1 — the operand that decides whether the rest is evaluated),
 // recursing both sides to reach nested operators.
+// Max folded short-circuit/ternary operands treated as decisions at ONE site.
+// Phase 1 (runtime snapshots into tr/cnt) and Phase 2 (offline enumeration of
+// the 2^K combinations) MUST apply this identically: if Phase 1 snapshots K
+// operands that Phase 2 does not enumerate, the emitted path carries a depth
+// that is short by K, so `cnt != depth` holds on EVERY real execution and the
+// path becomes permanently uncoverable — and is then reported as PASSED, i.e.
+// a false proof of unreachability. 2^12 = 4096 combinations per site is already
+// far beyond any real Solidity expression; sites above it are left out of the
+// decision set entirely (and reported) rather than half-instrumented.
+static constexpr size_t SC_DECISION_MAX = 12;
+
 static void collect_short_circuit_decisions(
   const expr2tc &e,
   const std::function<void(const expr2tc &)> &emit)
@@ -849,6 +875,694 @@ void goto_coveraget::k_path_coverage()
   for (const auto &claim : all_claims)
     if (spanning.is_redundant(claim.first, claim.second))
       k_path_spanning_redundant.insert(claim);
+
+  goto_functions.update();
+}
+
+/*
+Solidity complete-path coverage (entry->exit path coverage for test gen).
+
+For each eligible (user-source) function:
+  Phase 1: one integer path-number accumulator `tr`. At function entry
+           `tr = 1`; before every decision `tr = tr*2 + guard_value`. A single
+           scalar records the whole decision sequence in order and survives
+           loop unrolling (symex re-runs the update each iteration), so it
+           handles loops without per-occurrence ghost symbols. The guard VALUE
+           (not the direction) is accumulated; the path condition supplies the
+           direction, so no CFG edge-splitting is needed.
+  Phase 2: bounded DFS of complete entry->exit decision sequences. Each path's
+           number enc mirrors tr (start 1; enc*2+1 for the guard-true/taken
+           successor, enc*2+0 for guard-false/fallthrough). At END_FUNCTION
+           emit `assert(tr != enc)`, falsified exactly on that path (enc is
+           unique, so all path asserts can sit before the single END_FUNCTION).
+           enc goes into the claim comment for a unique claim_sig
+           (bmc.cpp:2000 is otherwise unsound). Loops: a back-edge is followed
+           at most path_cov_unwind times per path, so paths are enumerated up
+           to that many iterations, aligned with the symex --unwind bound;
+           `assert(tr != enc)` fires per distinct iteration count.
+
+Revert exits (require/revert in public/external functions) lower to a real
+branch that END_FUNCTION captures, so they are enumerated as distinct paths.
+*/
+void goto_coveraget::solidity_path_coverage()
+{
+  log_progress("Adding Solidity complete-path coverage assertions...");
+  if (cov_context == nullptr)
+  {
+    log_error(
+      "--solidity-path-coverage: no context available to create ghost "
+      "snapshot symbols (dispatch must set cov_context). Aborting rather "
+      "than silently producing no coverage.");
+    abort();
+  }
+
+  std::unordered_set<std::string> location_pool = {};
+  location_pool.insert(get_filename_from_path(filename));
+  for (auto const &inc : config.ansi_c.include_files)
+    location_pool.insert(get_filename_from_path(inc));
+
+  // Cross-run covered-set: paths already witnessed (CE obtained) in an earlier
+  // round are NOT re-instrumented this round, so each escalation round
+  // instruments a strictly smaller set and spends its solver budget only on
+  // paths still lacking a CE. Sound: an instrumented assert is a property
+  // obligation, not a path constraint, so omitting one removes an observation
+  // and perturbs no other path; the cross-run cover is monotone (a real
+  // witness stays valid). The denominator (all_claims) is built below WITHOUT
+  // the skip, so skipping can never inflate the reported coverage.
+  all_claims.clear();
+  covered_set.clear();
+  covered_set_outpath.clear();
+  revert_paths.clear();
+  rollback_revert_paths.clear();
+  undetermined_exit_paths.clear();
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    claim_outcome.clear();
+    path_ce.clear();
+  }
+  if (!covered_set_path.empty())
+  {
+    covered_set_outpath = covered_set_path;
+    std::ifstream in(covered_set_path);
+    if (in)
+    {
+      try
+      {
+        nlohmann::json j;
+        in >> j;
+        for (const auto &e : j.value("covered", nlohmann::json::array()))
+          covered_set.emplace(
+            e.at("cond").get<std::string>(), e.at("loc").get<std::string>());
+      }
+      catch (const std::exception &ex)
+      {
+        log_warning(
+          "coverage-covered-set: ignoring unparseable {} ({})",
+          covered_set_path,
+          ex.what());
+        covered_set.clear();
+      }
+    }
+  }
+
+  size_t ghost_counter = 0;
+  // Folded short-circuit sites left out of the decision set for exceeding
+  // SC_DECISION_MAX operands; reported so the incompleteness is visible.
+  size_t sc_sites_over_cap = 0;
+  size_t total_paths = 0;
+  size_t dropped_paths = 0;
+  size_t skipped_paths = 0;
+
+  Forall_goto_functions (f_it, goto_functions)
+  {
+    if (!f_it->second.body_available || f_it->first == "__ESBMC_main")
+      continue;
+    goto_programt &goto_program = f_it->second.body;
+    if (filter(f_it->first, goto_program))
+      continue;
+
+    // Only instrument functions living in the user source. c2goto library
+    // models and the synthetic _ESBMC_Main dispatcher harness carry
+    // non-user locations; enumerating their complete paths is both wrong
+    // (not the unit under test) and explodes (thousands of paths). A
+    // function is in scope iff at least one of its instructions is in
+    // location_pool.
+    bool in_user_src = false;
+    forall_goto_program_instructions (uit, goto_program)
+      if (location_pool.count(
+            get_filename_from_path(uit->location.file().as_string())))
+      {
+        in_user_src = true;
+        break;
+      }
+    if (!in_user_src)
+      continue;
+
+    // --contract scoping (codex #4): only enumerate functions declared in the
+    // target contract; sibling contracts / their helpers are out of the unit
+    // under test. Empty scope_contract => no scoping (whole-unit).
+    if (
+      !scope_contract.empty() &&
+      contract_of(f_it->first.as_string()) != scope_contract)
+      continue;
+
+    // Skip the lowered custom-error functions (`error E();` becomes a
+    // `#sol_error` function whose whole body is ASSUME(false)). They are the
+    // lowering of a `revert E()` STATEMENT, not a unit under test: counting
+    // their single degenerate path would inflate the denominator with a goal
+    // that is uncoverable by construction (its assert sits downstream of the
+    // ASSUME(false)) and so permanently reports as undecided.
+    {
+      const symbolt *fsym = ns.lookup(f_it->first);
+      if (fsym && !fsym->type.get("#sol_error").as_string().empty())
+        continue;
+    }
+
+    // Loops are handled by the tr accumulator (survives unrolling) plus a
+    // bounded DFS (each back-edge followed at most path_cov_unwind times).
+
+    // Phase 1: one integer path-number accumulator `tr` per function.
+    // tr starts at 1 (a leading sentinel bit so different-length prefixes
+    // stay distinct) and each decision does `tr = tr*2 + guard_value`. A
+    // single scalar records the whole decision sequence in order and — unlike
+    // one bool per static decision — survives loop unrolling, because symex
+    // re-runs the update on every iteration (this is the Slice-2 enabler).
+    const type2tc utype = get_uint_type(64);
+    symbolt sym;
+    sym.type = unsignedbv_typet(64);
+    sym.name = "__ESBMC_path_tr$" + i2string(ghost_counter++);
+    sym.id = "path_cov::" + id2string(sym.name);
+    sym.lvalue = true;
+    sym.static_lifetime = false;
+    sym.is_extern = false;
+    symbolt *psym;
+    cov_context->move(sym, psym);
+    expr2tc tr = symbol2tc(migrate_type(psym->type), psym->id);
+    irep_idt tr_id = psym->id;
+
+    // Companion decision-COUNT ghost `cnt` (starts 0, +1 per decision). The
+    // exit assert checks tr==enc AND cnt==depth, so a feasible path with more
+    // than 64 decisions — whose 64-bit tr WRAPS — can never spuriously match a
+    // shorter emitted path's enc (its cnt = true length differs). Without this
+    // a wrapped tr could fire another path's assert => a WRONG test (codex #1).
+    symbolt csym;
+    csym.type = unsignedbv_typet(64);
+    csym.name = "__ESBMC_path_cnt$" + i2string(ghost_counter++);
+    csym.id = "path_cov::" + id2string(csym.name);
+    csym.lvalue = true;
+    csym.static_lifetime = false;
+    csym.is_extern = false;
+    symbolt *pcsym;
+    cov_context->move(csym, pcsym);
+    expr2tc cnt = symbol2tc(migrate_type(pcsym->type), pcsym->id);
+    irep_idt cnt_id = pcsym->id;
+
+    // Snapshot one decision: insert `tr = tr*2 + (uint64)val; cnt = cnt+1`
+    // before `it` (leaving `it` unchanged), both marked "skipped" so they are
+    // not coverage claims. For K decisions at the same site, call in order —
+    // the first snapshotted becomes the higher-order bit, matching the DFS.
+    auto snapshot = [&](goto_programt::targett &sit, const expr2tc &val) {
+      goto_programt::instructiont a;
+      a.type = ASSIGN;
+      a.code = code_assign2tc(
+        tr,
+        add2tc(
+          utype,
+          mul2tc(utype, tr, constant_int2tc(utype, BigInt(2))),
+          typecast2tc(utype, val)));
+      a.location = sit->location;
+      a.location.property("skipped");
+      a.function = sit->location.get_function();
+      goto_program.insert_swap(sit++, a);
+      --sit;
+      goto_programt::instructiont b;
+      b.type = ASSIGN;
+      b.code = code_assign2tc(
+        cnt, add2tc(utype, cnt, constant_int2tc(utype, BigInt(1))));
+      b.location = sit->location;
+      b.location.property("skipped");
+      b.function = sit->location.get_function();
+      goto_program.insert_swap(sit++, b);
+      --sit;
+    };
+
+    // At each decision: snapshot its value into tr. Conditional GOTOs (guard)
+    // AND folded short-circuit &&/|| / ternary operands in ASSIGN/RETURN — the
+    // latter carry no GOTO, so branch_coverage collects them via
+    // collect_short_circuit_decisions; we mirror that (codex #2), snapshotting
+    // each in collect order (matched by the DFS fan-out).
+    Forall_goto_program_instructions (it, goto_program)
+    {
+      if (it->is_goto() && !is_true(it->guard))
+        snapshot(it, it->guard);
+      else if (
+        (it->is_assign() || it->is_return()) &&
+        it->location.property().as_string() != "skipped")
+      {
+        const expr2tc &src = it->is_assign()
+                               ? to_code_assign2t(it->code).source
+                               : to_code_return2t(it->code).operand;
+        std::vector<expr2tc> ops;
+        collect_short_circuit_decisions(
+          src, [&](const expr2tc &e) { ops.push_back(e); });
+        // Same cap as the Phase-2 fan-out. Snapshotting operands the DFS will
+        // not enumerate would desynchronise cnt from every emitted depth and
+        // silently make the whole site's paths uncoverable.
+        if (ops.size() > SC_DECISION_MAX)
+        {
+          ++sc_sites_over_cap;
+          continue;
+        }
+        for (const expr2tc &op : ops)
+          snapshot(it, op);
+      }
+    }
+
+    // DECL tr and initialise `tr = 1` at function entry (in that order),
+    // both before the original first instruction.
+    {
+      auto entry = goto_program.instructions.begin();
+      locationt eloc = entry->location;
+      irep_idt efn = entry->location.get_function();
+      goto_programt::instructiont dcl;
+      dcl.type = DECL;
+      dcl.code = code_decl2tc(utype, tr_id);
+      dcl.location = eloc;
+      dcl.location.property("skipped");
+      dcl.function = efn;
+      goto_program.insert_swap(entry++, dcl); // DECL before entry
+      --entry;                                // entry back at original
+      goto_programt::instructiont ini;
+      ini.type = ASSIGN;
+      ini.code = code_assign2tc(tr, constant_int2tc(utype, BigInt(1)));
+      ini.location = eloc;
+      ini.location.property("skipped");
+      ini.function = efn;
+      goto_program.insert_swap(entry++, ini); // ASSIGN after DECL, before orig
+      --entry;
+      goto_programt::instructiont cdcl;
+      cdcl.type = DECL;
+      cdcl.code = code_decl2tc(utype, cnt_id);
+      cdcl.location = eloc;
+      cdcl.location.property("skipped");
+      cdcl.function = efn;
+      goto_program.insert_swap(entry++, cdcl);
+      --entry;
+      goto_programt::instructiont cini;
+      cini.type = ASSIGN;
+      cini.code = code_assign2tc(cnt, constant_int2tc(utype, BigInt(0)));
+      cini.location = eloc;
+      cini.location.property("skipped");
+      cini.function = efn;
+      goto_program.insert_swap(entry++, cini);
+      --entry;
+    }
+
+    goto_program.compute_target_numbers();
+
+    // Phase 2: bounded DFS over complete entry->exit decision sequences.
+    // Each path's number enc mirrors the runtime tr (start 1; at a decision
+    // enc*2+1 for the guard-true/taken successor, enc*2+0 for
+    // guard-false/fallthrough), so `assert(tr != enc)` at the exit is
+    // falsified exactly on that path. Loops: a back-edge (goto whose target
+    // is earlier) is followed at most path_cov_unwind times per path, so
+    // paths are enumerated up to that many iterations — matching the symex
+    // --unwind bound. State per path: (pc, enc, back-edge-follow count).
+    // State per path: (pc, enc, per-loop back-edge counts, decision depth).
+    // Each loop is keyed by its head (the back-edge's target target_number),
+    // so nested loops get INDEPENDENT budgets (a single shared counter would
+    // make outer+inner share path_cov_unwind and miss valid nested paths;
+    // symex unwinds each loop independently). codex #3.
+    // 5th field: has this partial path already walked over a rollback restore
+    // (i.e. it is a require/revert("msg") reverting path)?
+    using becntt = std::map<unsigned, unsigned>;
+    // 6th field: has this partial path walked through the function epilogue?
+    std::vector<std::
+                  tuple<goto_programt::targett, uint64_t, becntt, uint64_t, bool, bool>>
+      stack;
+    stack.push_back(
+      {goto_program.instructions.begin(),
+       (uint64_t)1,
+       becntt{},
+       (uint64_t)0,
+       false,
+       false});
+
+    // Deferred exit asserts (insert after the walk so we don't mutate the
+    // program mid-DFS). Each entry: (insertion pc, tr!=enc||cnt!=depth guard,
+    // claim comment, is_revert). An is_revert path exits through a custom-error
+    // `#sol_error` revert; its assert is placed right BEFORE that call (upstream
+    // of the callee's ASSUME(false), which would otherwise make an
+    // END_FUNCTION-placed assert vacuous -> path never covered) and gets
+    // stamped `sol_revert_edge` so the Foundry generator renders
+    // vm.expectRevert() (R0). Normal paths exit at END_FUNCTION, is_revert=false.
+    std::vector<
+      std::tuple<goto_programt::targett, expr2tc, std::string, bool>>
+      to_insert;
+    bool capped = false;
+    // Indices into `to_insert` whose path exits via a rollback revert; resolved
+    // to claim keys after the walk (the key needs the insertion location).
+    std::set<size_t> rollback_exits;
+    // Indices whose exit shape is ambiguous between a bare require-revert and a
+    // plain early return (see the END_FUNCTION arm below).
+    std::set<size_t> undetermined_exits;
+    // Hard cap on DFS work so a pathological CFG can never exhaust memory.
+    size_t pushes = 0;
+    const size_t push_cap = 50 * path_cov_max_goals + 100000;
+
+    // Emit one deferred exit assert for a complete path reaching `loc` with
+    // path number `penc` and decision depth `pdepth`. Returns false (and sets
+    // capped) when the per-function goal cap is hit, so the caller stops.
+    auto emit_exit = [&](
+                       goto_programt::targett loc,
+                       uint64_t penc,
+                       uint64_t pdepth,
+                       bool is_revert) -> bool {
+      if (to_insert.size() >= path_cov_max_goals)
+      {
+        capped = true;
+        ++dropped_paths;
+        return false;
+      }
+      // assert(tr != enc || cnt != depth): falsified only on the exact path
+      // (same decision sequence AND same length), so a wrapped tr from a longer
+      // path cannot fire this shorter path's assert.
+      expr2tc g = or2tc(
+        notequal2tc(tr, constant_int2tc(utype, BigInt(penc))),
+        notequal2tc(cnt, constant_int2tc(utype, BigInt(pdepth))));
+      std::string comment =
+        id2string(f_it->first) + ":path:" + std::to_string(penc);
+      to_insert.emplace_back(loc, g, comment, is_revert);
+      return true;
+    };
+
+    // True iff `i` is the lowered call of a custom-error `revert E()` — a
+    // FUNCTION_CALL to a `#sol_error` function whose body is ASSUME(false).
+    // Reaching such a call means the path reverts unconditionally, so its
+    // identity assert must be placed right BEFORE the call (upstream of the
+    // callee's ASSUME(false)); an END_FUNCTION-placed assert would be
+    // downstream and vacuous. Checking the call instruction itself (rather than
+    // the incoming edge) catches EVERY revert shape — guarded `if(c) revert
+    // E()`, straight-line `revert E()` as the whole body, and reverts reached
+    // via an intervening unconditional GOTO — because the DFS always walks onto
+    // the call instruction. require()/revert("msg") lower to a state-restoring
+    // rollback with NO #sol_error call, so they are excluded and correctly fall
+    // through to END_FUNCTION (try/catch). (codex: an earlier per-edge check
+    // missed unguarded / goto-reached reverts; this instruction check fixes it.)
+    // True iff `i` is the state-restoring assignment of a rollback revert:
+    // `require(cond)` / `require(cond,"msg")` / `revert("msg")` in a function
+    // with an entry snapshot lower to `*this = _sol_save_this` followed by a
+    // jump to END_FUNCTION. Keying on the frontend's canonical snapshot symbol
+    // name is exact — no other assignment sources it. A path that walks over
+    // this instruction reverts, even though it reaches END_FUNCTION like a
+    // normal exit.
+    auto is_rollback_restore = [&](goto_programt::const_targett i) -> bool {
+      if (!i->is_assign() || !is_code_assign2t(i->code))
+        return false;
+      const expr2tc &src = to_code_assign2t(i->code).source;
+      return is_symbol2t(src) &&
+             to_symbol2t(src).thename.as_string().find("_sol_save_this") !=
+               std::string::npos;
+    };
+
+    // True iff `i` is the frontend's explicit revert marker
+    // `_ESBMC_sol_mark_revert()`. Under the revert-observation gate (which
+    // --solidity-path-coverage turns on) EVERY require/revert failure edge
+    // carries this call, including the shapes that emit no state restore at
+    // all. It is the ONLY positive evidence separating a reverting exit from a
+    // plain early `return`: both otherwise lower to the identical
+    // `IF <guard> THEN GOTO <END_FUNCTION>`.
+    auto is_revert_mark = [&](goto_programt::const_targett i) -> bool {
+      if (!i->is_function_call() || !is_code_function_call2t(i->code))
+        return false;
+      const expr2tc &fn = to_code_function_call2t(i->code).function;
+      return is_symbol2t(fn) &&
+             to_symbol2t(fn).thename.as_string().find(
+               "_ESBMC_sol_mark_revert") != std::string::npos;
+    };
+
+    // True iff `i` is the function EPILOGUE's restore of the enclosing-contract
+    // context (`_ESBMC_enclosing_contract_address = _saved_encl_addr`). Every
+    // ordinary exit of a Solidity public function walks through it; a
+    // `require`-failure edge that precedes any state write is compiled as a
+    // BARE jump straight to END_FUNCTION and skips it. That makes "did this
+    // path pass the epilogue?" the only positive evidence available to tell an
+    // ordinary exit from such a bare revert edge.
+    auto is_epilogue_restore = [&](goto_programt::const_targett i) -> bool {
+      if (!i->is_assign() || !is_code_assign2t(i->code))
+        return false;
+      const expr2tc &src = to_code_assign2t(i->code).source;
+      return is_symbol2t(src) &&
+             to_symbol2t(src).thename.as_string().find("_saved_encl_addr") !=
+               std::string::npos;
+    };
+
+    // Does this function HAVE an epilogue at all? Without one the marker above
+    // carries no information, so every path would look "bypassed" and be
+    // reported undetermined. Only apply the test where it is meaningful.
+    bool has_epilogue = false;
+    forall_goto_program_instructions (eit, goto_program)
+      if (is_epilogue_restore(eit))
+      {
+        has_epilogue = true;
+        break;
+      }
+
+    auto is_error_call = [&](goto_programt::const_targett i) -> bool {
+      if (!i->is_function_call() || !is_code_function_call2t(i->code))
+        return false;
+      const expr2tc &fn = to_code_function_call2t(i->code).function;
+      if (!is_symbol2t(fn))
+        return false;
+      const symbolt *s = ns.lookup(to_symbol2t(fn).thename);
+      return s && !s->type.get("#sol_error").as_string().empty();
+    };
+
+    while (!stack.empty())
+    {
+      auto [pc, enc, becnt, depth, rolled_back, saw_epilogue] = stack.back();
+      stack.pop_back();
+
+      while (true)
+      {
+        if (pc == goto_program.instructions.end() || pc->is_end_function())
+        {
+          if (pc != goto_program.instructions.end())
+          {
+            if (!emit_exit(pc, enc, depth, false))
+              break;
+            const size_t idx = to_insert.size() - 1;
+            if (rolled_back)
+              // Positive evidence of a rollback revert.
+              rollback_exits.insert(idx);
+            else if (!has_epilogue || !saw_epilogue)
+              // No positive evidence of a normal exit. Either the path reached
+              // END_FUNCTION while SKIPPING the epilogue, or the function has
+              // no epilogue at all (library / free function — exactly the
+              // scopes the revert-observation gate does NOT mark, so a revert
+              // there carries no marker either). Both a `require` failing
+              // before any state write and a plain early `return` compile to
+              // this same shape, with nothing on the edge to separate them.
+              // Report undetermined rather than guess: calling it "normal"
+              // would claim a reverted transaction succeeded — measured on
+              // a library whose function reverts, that is exactly what the
+              // previous "no epilogue => normal" default did.
+              undetermined_exits.insert(idx);
+          }
+          break;
+        }
+        if (is_rollback_restore(pc) || is_revert_mark(pc))
+          rolled_back = true;
+        if (is_epilogue_restore(pc))
+          saw_epilogue = true;
+        // Custom-error revert exit: the DFS reached the `#sol_error` call
+        // (guarded, straight-line, or via an unconditional GOTO). Emit the
+        // identity assert HERE (upstream of the callee's ASSUME(false), so it is
+        // reachable) and stop; flag it for vm.expectRevert() (R0).
+        if (is_error_call(pc))
+        {
+          if (!emit_exit(pc, enc, depth, true))
+            break;
+          break;
+        }
+        if (pc->is_goto())
+        {
+          const bool back = pc->is_backwards_goto();
+          if (is_true(pc->guard))
+          {
+            // Unconditional goto. A backward one is one iteration of the loop
+            // whose head is the goto's target; bound that loop independently.
+            if (back)
+            {
+              const unsigned key = pc->get_target()->target_number;
+              if (becnt[key] >= path_cov_unwind)
+                break; // this loop's bound reached: path truncated
+              ++becnt[key];
+            }
+            pc = pc->get_target();
+            continue;
+          }
+          // Conditional. Keep enc within 64 bits (leading sentinel + one bit
+          // per decision on the path); drop over-long paths rather than alias.
+          if (enc >= (uint64_t(1) << 62))
+          {
+            ++dropped_paths;
+            break;
+          }
+          // guard-true/taken successor -> target. If that edge is a loop
+          // back-edge, its own loop is bounded by path_cov_unwind.
+          bool take = true;
+          becntt becnt_taken = becnt;
+          if (back)
+          {
+            const unsigned key = pc->get_target()->target_number;
+            if (becnt_taken[key] >= path_cov_unwind)
+              take = false;
+            else
+              ++becnt_taken[key];
+          }
+          // Push the guard-true/taken successor; the guard-false/fall-through
+          // continues in-place. A reverting successor (custom-error revert) is
+          // detected at the top of the loop when the DFS reaches the
+          // `#sol_error` call instruction, so no per-edge revert test is needed.
+          if (take)
+          {
+            if (++pushes > push_cap)
+            {
+              capped = true;
+              ++dropped_paths;
+              break;
+            }
+            stack.push_back(
+              {pc->get_target(),
+               enc * 2 + 1,
+               becnt_taken,
+               depth + 1,
+               rolled_back,
+               saw_epilogue});
+          }
+          // guard-false/fallthrough successor -> next (never a back-edge).
+          enc = enc * 2 + 0;
+          ++depth;
+          pc = std::next(pc);
+          continue;
+        }
+        // Folded short-circuit/ternary operands (no control-flow branch):
+        // each was snapshotted into tr in Phase 1. Fan the DFS out over the
+        // 2^K operand-value combinations, appending K bits to enc/depth (in
+        // collect order, matching tr) so each combination is a distinct path.
+        if (
+          (pc->is_assign() || pc->is_return()) &&
+          pc->location.property().as_string() != "skipped")
+        {
+          const expr2tc &src = pc->is_assign()
+                                 ? to_code_assign2t(pc->code).source
+                                 : to_code_return2t(pc->code).operand;
+          size_t K = 0;
+          collect_short_circuit_decisions(src, [&](const expr2tc &) { ++K; });
+          // Cap MUST match Phase 1's (see SC_DECISION_MAX): a site Phase 1
+          // skipped contributes nothing to tr/cnt, so the DFS must not add bits
+          // for it either — and vice versa.
+          if (K > 0 && K <= SC_DECISION_MAX)
+          {
+            bool overflowed = false;
+            for (uint64_t mask = 0; mask < (uint64_t(1) << K); ++mask)
+            {
+              uint64_t e = enc, d = depth;
+              for (size_t j = 0; j < K; ++j)
+              {
+                if (e >= (uint64_t(1) << 62))
+                {
+                  overflowed = true;
+                  break;
+                }
+                e = e * 2 + ((mask >> j) & 1);
+                ++d;
+              }
+              if (overflowed)
+              {
+                ++dropped_paths;
+                break;
+              }
+              if (++pushes > push_cap)
+              {
+                capped = true;
+                ++dropped_paths;
+                break;
+              }
+              stack.push_back(
+                {std::next(pc), e, becnt, d, rolled_back, saw_epilogue});
+            }
+            break; // this path forked into the 2^K continuations
+          }
+        }
+        pc = std::next(pc); // straight-line
+      }
+      if (capped)
+        break;
+    }
+
+    size_t ins_idx = 0;
+    for (auto &[pc, g, comment, is_revert] : to_insert)
+    {
+      const size_t this_idx = ins_idx++;
+      // Claim key == the (comment, location) pair get_total_cond_assert() and
+      // bmc.cpp's claim_sig use, so universe / covered-set / numerator stay
+      // key-aligned. insert_assert copies pc->location onto the new assert,
+      // so reading it here (pre-insert) gives the same string.
+      const std::string loc = pc->location.as_string();
+      const std::pair<std::string, std::string> key(comment, loc);
+      // Static universe FIRST: every enumerated path counts in the
+      // denominator whether or not it is instrumented this round.
+      all_claims.insert(key);
+      // exit_kind for the report: this path leaves via a detected
+      // custom-error revert rather than the normal END_FUNCTION exit.
+      if (is_revert)
+        revert_paths.insert(key);
+      // ...or via a require/revert("msg") rollback, which reaches END_FUNCTION
+      // but still reverts the transaction.
+      if (rollback_exits.count(this_idx))
+        rollback_revert_paths.insert(key);
+      if (undetermined_exits.count(this_idx))
+        undetermined_exit_paths.insert(key);
+      if (covered_set.count(key))
+      {
+        ++skipped_paths; // already witnessed in an earlier round
+        continue;
+      }
+      insert_assert(goto_program, pc, g, comment);
+      // Stamp the just-inserted assert (now at std::prev(pc)) so the Foundry
+      // generator emits vm.expectRevert() for this detected revert path (R0).
+      //
+      // ONLY for `is_revert`, whose assert sits at the `#sol_error` call — an
+      // instruction reachable on that path ALONE. A rollback revert's assert
+      // sits at the shared END_FUNCTION, where every path's assert is stacked:
+      // the generator marks a transaction as reverting when ANY reached assert
+      // step carries the flag, so stamping there makes a NON-reverting path's
+      // counterexample pick the flag up and emit `vm.expectRevert()` before a
+      // call that does not revert — a test that fails when run. Measured: all 3
+      // of D's tests (two of them normal paths) got the wrapper.
+      // The JSON already carries `exit_kind: "revert"` for these, so a
+      // generator can emit the oracle from there without this bleed.
+      if (is_revert)
+        std::prev(pc)->location.set("sol_revert_edge", true);
+      ++total_paths;
+    }
+
+  }
+
+  // all_claims is the no-skip static universe built in the loop above (one
+  // entry per enumerated complete path), NOT get_total_cond_assert() — the
+  // latter counts instrumented asserts only, so a covered-set skip would
+  // shrink the denominator and spuriously inflate coverage.
+  if (dropped_paths > 0)
+    log_warning(
+      "--solidity-path-coverage: per-function path/length cap ({}) hit; {} "
+      "path(s) dropped (coverage is complete only up to the cap for those "
+      "functions)",
+      path_cov_max_goals,
+      dropped_paths);
+  log_status(
+    "--solidity-path-coverage: instrumented {} complete path(s) "
+    "(loop bound = {} iterations)",
+    total_paths,
+    path_cov_unwind);
+  if (sc_sites_over_cap > 0)
+    log_warning(
+      "--solidity-path-coverage: {} folded short-circuit/ternary site(s) have "
+      "more than {} operands and were NOT treated as decisions; the paths "
+      "through them are merged rather than enumerated (they stay coverable, "
+      "but the decision set is incomplete at those sites)",
+      sc_sites_over_cap,
+      SC_DECISION_MAX);
+  if (skipped_paths > 0)
+    log_status(
+      "--solidity-path-coverage: {} path(s) already witnessed in a previous "
+      "round were not re-instrumented (covered-set {}); denominator remains "
+      "the full {} path(s)",
+      skipped_paths,
+      covered_set_path,
+      all_claims.size());
 
   goto_functions.update();
 }

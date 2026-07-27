@@ -853,6 +853,19 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
     options.set_option(
       "dump-violation-info", cmdline.getval("dump-violation-info"));
 
+  // Solidity complete-path coverage needs REVERTS to be observable rather than
+  // path-pruned: a `require`/`revert` failure is one of the paths it enumerates,
+  // and the legacy lowering both erases it (`__ESBMC_assume(false)`) and leaves
+  // the surviving edge byte-identical to a plain early `return`, so the exit
+  // cannot be classified. Publish the flag as a boolean here — BEFORE
+  // `config.options` is captured — because the frontend runs long before the
+  // coverage dispatch, and `get_bool_option` on the raw NULL-valued CLI flag
+  // would read as false. Setting it enables the in-tree revert-observation gate
+  // (solidity_convert.cpp), which is regression-locked by the assert_revert_*
+  // suite and, unlike --bound, does not change external-call modelling.
+  if (cmdline.isset("solidity-path-coverage"))
+    options.set_option("solidity-path-coverage-enabled", true);
+
   config.options = options;
 }
 
@@ -3412,7 +3425,8 @@ bool esbmc_parseoptionst::parse_goto_program(
           cmdline.isset("condition-coverage") ||
           cmdline.isset("condition-coverage-claims") ||
           cmdline.isset("condition-coverage-rm") ||
-          cmdline.isset("condition-coverage-claims-rm");
+          cmdline.isset("condition-coverage-claims-rm") ||
+          cmdline.isset("solidity-path-coverage");
         if (any_branch_or_cond_cov)
           options.set_option("no-assertions", true);
         if (any_branch_or_cond_cov || any_assert_cov)
@@ -3520,7 +3534,8 @@ bool esbmc_parseoptionst::process_goto_program(
                   cmdline.isset("branch-function-coverage") ||
                   cmdline.isset("branch-function-coverage-claims") ||
                   cmdline.isset("k-path-coverage") ||
-                  cmdline.isset("k-path-coverage-claims");
+                  cmdline.isset("k-path-coverage-claims") ||
+                  cmdline.isset("solidity-path-coverage");
 
     // For coverage mode, treat extra input files (cmdline.args[1:]) as include
     // files so that the coverage location_pool covers all input sources.
@@ -3597,7 +3612,8 @@ bool esbmc_parseoptionst::process_goto_program(
           cmdline.isset("condition-coverage") ||
           cmdline.isset("condition-coverage-claims") ||
           cmdline.isset("condition-coverage-rm") ||
-          cmdline.isset("condition-coverage-claims-rm");
+          cmdline.isset("condition-coverage-claims-rm") ||
+          cmdline.isset("solidity-path-coverage");
         if (any_branch_or_cond_cov)
           options.set_option("no-assertions", true);
         if (any_branch_or_cond_cov || any_assert_cov)
@@ -4044,6 +4060,85 @@ bool esbmc_parseoptionst::process_goto_program(
         return true;
 
       tmp.k_path_coverage();
+    }
+
+    if (cmdline.isset("solidity-path-coverage"))
+    {
+      // `--multi-fail-fast N` stops after N satisfiable claims and abandons the
+      // rest. Every abandoned path claim then has NO verdict, and the report
+      // cannot tell "not reachable" from "never asked" — it would silently
+      // report those paths as undecided while the run looked successful. The
+      // whole point of the tri-state is that such a difference is visible, so
+      // reject the combination instead of quietly producing a truncated ledger.
+      if (cmdline.isset("multi-fail-fast"))
+      {
+        log_error(
+          "--solidity-path-coverage is incompatible with --multi-fail-fast: "
+          "fail-fast abandons the remaining path claims, so the report could "
+          "not distinguish a path that is unreachable from one that was never "
+          "solved. Drop --multi-fail-fast (every path must get a verdict).");
+        return true;
+      }
+
+      // Mirror the branch/k-path dispatch: coverage runs as base-case
+      // multi-property so each instrumented path assert is checked
+      // independently (a violated assert == that complete path is feasible).
+      options.set_option("base-case", true);
+      options.set_option("multi-property", true);
+      options.set_option("keep-verified-claims", false);
+      options.set_option("no-pointer-check", true);
+      // Dedicated boolean enable flag: get_bool_option is atoi(), and a NULL
+      // flag stores "" (atoi -> 0), so bmc.cpp keys is_goto_cov off this.
+      options.set_option("solidity-path-coverage-enabled", true);
+
+      if (cmdline.isset("unwind"))
+        options.set_option("no-unwinding-assertions", true);
+
+      // The JSON report's reason for existing is the per-path counterexample
+      // payload (inputs / post-state). The symex slicer keeps only what the
+      // CLAIM depends on, and a path claim's guard mentions nothing but the
+      // ghost accumulators — so every contract-state write and every nondet
+      // input is sliced out and the payload comes back EMPTY. Turn slicing off
+      // when the payload was asked for, and say so: silently emitting an empty
+      // interface would be worse, and silently changing a flag worse still.
+      if (
+        cmdline.isset("cov-report-json") && !cmdline.isset("no-slice") &&
+        !options.get_bool_option("no-slice"))
+      {
+        options.set_option("no-slice", true);
+        log_status(
+          "--solidity-path-coverage with --cov-report-json: disabling slicing "
+          "so each path's counterexample values (inputs / post-state) survive "
+          "into the report; slicing would drop them because a path claim "
+          "depends only on the ghost path accumulators");
+      }
+
+      std::string filename = cmdline.args[0];
+      goto_coveraget tmp(ns, goto_functions, filename);
+      // Ghost snapshot symbols are moved into `context` (available here).
+      tmp.cov_context = &context;
+      if (cmdline.isset("function"))
+        tmp.set_target(cmdline.getval("function"));
+      // --contract scoping: only enumerate functions declared in the target
+      // contract (not sibling contracts). --coverage-whole-unit opts out.
+      if (cmdline.isset("contract") && !cmdline.isset("coverage-whole-unit"))
+        tmp.scope_contract = cmdline.getval("contract");
+      // Cross-run persisted covered-set: a complete path already witnessed
+      // (CE in hand) in an earlier escalation round is not re-instrumented,
+      // so each round spends its budget only on paths still lacking a CE.
+      // The denominator stays the full enumerated path set, so the reported
+      // coverage is never inflated by the skip.
+      if (cmdline.isset("coverage-covered-set"))
+        tmp.covered_set_path = cmdline.getval("coverage-covered-set");
+      tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
+      // Align the enumeration loop bound with the symex unwind bound.
+      if (cmdline.isset("unwind"))
+      {
+        int u = atoi(cmdline.getval("unwind"));
+        if (u > 0)
+          tmp.path_cov_unwind = static_cast<size_t>(u);
+      }
+      tmp.solidity_path_coverage();
     }
 
     if (cmdline.isset("negating-property"))

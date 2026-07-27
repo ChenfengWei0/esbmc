@@ -879,6 +879,15 @@ const struct group_opt_templ all_cmd_options[] = {
         "M"),
       "Per-function goal cap for --k-path-coverage; on overflow the "
       "instrumentation aborts rather than truncating (default 10000)"},
+     {"solidity-path-coverage",
+      NULL,
+      "Solidity complete-path coverage (entry->exit path coverage for test "
+      "generation). Instruments each public/external function body's complete "
+      "decision paths (ghost snapshots on decision edges + one exit-edge assert "
+      "per enumerated path) and emits one Foundry testcase per feasible path. "
+      "Pair with --solidity-max-tx N for the transaction bound and "
+      "--generate-foundry-testcase to emit tests. Slice 1: loop-free "
+      "functions."},
      {"assign-param-nondet",
       NULL,
       "Explicitly assign every function parameters to NONDET in function "

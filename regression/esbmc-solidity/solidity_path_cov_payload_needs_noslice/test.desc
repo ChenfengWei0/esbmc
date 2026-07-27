@@ -1,0 +1,9 @@
+CORE
+contract.sol
+--solidity-path-coverage --cov-report-json --solidity-max-tx 1
+^--solidity-path-coverage with --cov-report-json: disabling slicing
+^Complete Paths : 3$
+^Reached : 3$
+^Path Exits: normal 2, revert 1, undetermined 0$
+^Path Status: F 3, I 0, U 0$
+^VERIFICATION FAILED$
