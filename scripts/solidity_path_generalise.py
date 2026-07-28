@@ -58,10 +58,34 @@ import tempfile
 UINT256_MAX = (1 << 256) - 1
 
 
-def run(esbmc, sol, contract, extra, max_tx, timeout, cwd):
-    cmd = [esbmc, "--sol", os.path.abspath(sol), "--contract", contract,
-           "--solidity-path-coverage", "--solidity-max-tx", str(max_tx),
-           "--result-only", "--memlimit", "8g"] + extra
+def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
+        memlimit="8g"):
+    """One ESBMC invocation. Returns its combined output.
+
+    `ast` names a PREBUILT .solast, passed positionally with --sol still naming
+    the source so locations resolve. Without it the driver can only handle
+    sources the locally installed solc happens to accept -- and every flattened
+    benchmark input pins an exact `pragma solidity =X.Y.Z`, so on a machine
+    carrying any other solc the driver could not run on them at all. Measured:
+    that is the FIRST of three things that stopped this script from ever
+    completing a run.
+
+    `focus` narrows the harness dispatcher to one entry. It does NOT change the
+    enumeration -- that was verified by comparing the content-addressed path key
+    sets of both configurations, not merely their counts -- so it is a pure
+    scope control. It is what makes a contract like EscrowSrc tractable at all:
+    whole-contract it exceeds a 900s budget and produces nothing, focused on one
+    method it finishes in seconds.
+    """
+    cmd = [esbmc]
+    if ast:
+        cmd.append(os.path.abspath(ast))
+    cmd += ["--sol", os.path.abspath(sol), "--contract", contract,
+            "--solidity-path-coverage", "--solidity-max-tx", str(max_tx),
+            "--result-only", "--memlimit", memlimit]
+    if focus:
+        cmd += ["--focus-function", focus]
+    cmd += extra
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
                        timeout=timeout)
     return p.stdout + p.stderr
@@ -74,22 +98,111 @@ def parse_int(s):
     return int(s)
 
 
-def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd):
-    """Step 1. Returns [(enc, depth, {coord: ce_value})] for `unit`."""
-    run(esbmc, sol, contract, ["--cov-report-json"], max_tx, timeout, cwd)
-    with open(os.path.join(cwd, "cov-report.json")) as f:
-        rep = json.load(f)
-    out = []
-    for c in rep.get("claims", []):
-        if c.get("function") != unit or c.get("status") != "F":
-            continue
-        if "path_id" not in c or "path_depth" not in c:
-            continue
-        ce = {}
-        for n, v in (c.get("inputs") or {}).items():
+def claim_unit(c):
+    """The unit a claim belongs to, spelled the way the user names it.
+
+    NOT `c["function"]`. That field exists, is spelled exactly right, and is
+    EMPTY on every complete-path claim -- measured on a toy contract and on
+    EscrowSrc alike. Filtering on it matched ZERO paths on every input ever
+    tried, which is why the stage-2 loop below had never once run to completion.
+
+    The unit's plain name does reach the report: it is the prefix of the claim
+    identity `<unit>:path:<id>`. A Solidity identifier cannot contain ':', so
+    splitting on the first one is exact rather than heuristic.
+    """
+    cond = c.get("condition") or ""
+    return cond.split(":", 1)[0] if ":" in cond else ""
+
+
+def coord_values(c):
+    """This claim's counterexample as {coordinate: int}, plus what was refused.
+
+    A coordinate must be a quantity a generated test can SET, and it can only be
+    set if it has a concrete scalar value. Two kinds of entry do not:
+
+      * struct- and bytes-typed parameters, which the report renders as a
+        pretty-printed aggregate (`{ .orderHash={ ... }, .taker=0, ... }`);
+      * entry-storage slots whose model value is symbolic
+        (`_ESBMC_aux_Escrow.PROXY_BYTECODE_HASH`).
+
+    The settled rule is that such coordinates are UNSUPPORTED and must be
+    REFUSED. Before this they were neither: `int()` was called on them and the
+    driver died with a ValueError halfway through a benchmark. Refusing is not
+    the same as ignoring -- every refused name is returned and printed, because
+    a coordinate that silently vanishes turns a region measured over a SLICE
+    into one that reads as a statement about the whole input space.
+    """
+    ce, refused = {}, []
+    for n, v in (c.get("inputs") or {}).items():
+        try:
             ce[n] = parse_int(v)
-        for n, v in (c.get("entry_storage") or {}).items():
+        except ValueError:
+            refused.append(n)
+    for n, v in (c.get("entry_storage") or {}).items():
+        try:
             ce["state." + n] = parse_int(v)
+        except ValueError:
+            refused.append("state." + n)
+    return ce, refused
+
+
+def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
+                    ast=None, focus=None, memlimit="8g", path_function=None):
+    """Step 1. Returns (paths, refused) where paths = [(enc, depth, ce)]."""
+    log = run(esbmc, sol, contract, ["--cov-report-json"], max_tx, timeout, cwd,
+              ast=ast, focus=focus, memlimit=memlimit)
+    report = os.path.join(cwd, "cov-report.json")
+    if not os.path.exists(report):
+        # Do NOT let this surface as a FileNotFoundError about a JSON file.
+        # ESBMC has already said what went wrong -- a solc version mismatch, a
+        # parse error, a missing contract -- and throwing that output away turns
+        # an actionable message into a stack trace about the wrong subject.
+        raise SystemExit(
+            "[enumerate] ESBMC produced no cov-report.json. Its output was:\n"
+            + log)
+    with open(report) as f:
+        rep = json.load(f)
+
+    claims = [c for c in rep.get("claims", [])
+              if claim_unit(c) == unit and "path_id" in c
+              and "path_depth" in c]
+    if path_function:
+        claims = [c for c in claims
+                  if c.get("path_function") == path_function]
+
+    # OVERLOADS. Two functions sharing a name are two units with two independent
+    # path-id spaces, and a stage-2 query identifies a path by (enc, depth)
+    # alone. Merging them would hand the certification query an `enc` from the
+    # wrong space -- a wrong answer, not an error. Refuse and name the
+    # candidates instead of picking one.
+    pfs = sorted({c.get("path_function") for c in claims})
+    if len(pfs) > 1:
+        raise SystemExit(
+            f"[enumerate] '{unit}' names {len(pfs)} overloads; their path-id "
+            f"spaces are independent and must not be merged. Re-run with "
+            f"--path-function set to one of:\n  " + "\n  ".join(pfs))
+
+    witnessed = [c for c in claims if c.get("status") == "F"]
+
+    # WIRING CHECK. The old code printed "no witnessed path for this unit; that
+    # is a result, not an error" whenever this list came back empty -- and it
+    # ALWAYS came back empty, so a total wiring failure explained itself to the
+    # operator as a legitimate negative result. The sentence is true only when
+    # the report genuinely holds no F claim for the unit. When the report DOES
+    # hold F claims for it and none survived, that is a hard failure.
+    if not witnessed:
+        any_f = [c for c in rep.get("claims", []) if c.get("status") == "F"]
+        if any_f:
+            units = sorted({claim_unit(c) for c in any_f})
+            raise SystemExit(
+                f"[enumerate] no F claim matched unit '{unit}', but the report "
+                f"holds {len(any_f)} F claim(s) for: {', '.join(units)}. "
+                f"That is a wiring failure, not a result.")
+
+    out, refused = [], set()
+    for c in witnessed:
+        ce, ref = coord_values(c)
+        refused.update(ref)
         out.append((int(c["path_id"]), int(c["path_depth"]), ce))
     # Same enc can appear once per transaction instance; keep one of each.
     seen, uniq = set(), []
@@ -98,7 +211,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd):
             continue
         seen.add(enc)
         uniq.append((enc, depth, ce))
-    return uniq
+    return uniq, sorted(refused)
 
 
 def geometric_values(limit):
@@ -152,7 +265,8 @@ def brackets_for(coord, brackets):
 
 
 def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
-                max_tx, timeout, cwd, spans=None, geometric=False):
+                max_tx, timeout, cwd, spans=None, geometric=False,
+                ast=None, focus=None, memlimit="8g"):
     """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned)."""
     spec_coords = []
     for c in coords:
@@ -172,7 +286,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     with open(path, "w") as f:
         json.dump(spec, f)
     log = run(esbmc, sol, contract, ["--path-cov-outer-box", path],
-              max_tx, timeout, cwd)
+              max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
     boxes, brackets, regions, warned = {}, {}, {}, set()
     for line in log.splitlines():
         m = BOX_RE.search(line)
@@ -189,9 +303,47 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     return boxes, brackets, regions, warned
 
 
+def verdict(log):
+    """'SUCCESSFUL' / 'FAILED' / 'UNKNOWN', read as a LINE, never a substring.
+
+    This function exists because of a measured, total failure of the soundness
+    gate. The test used to be:
+
+        if "VERIFICATION SUCCESSFUL" in log: return True
+
+    and ESBMC opens every bounded Solidity run with
+
+        WARNING: ... A VERIFICATION SUCCESSFUL result is bounded -- it means no
+        violation within 1 transaction(s), NOT an unbounded proof; ...
+
+    so the substring is present on EVERY run, whatever the solver said. Every
+    certification therefore came back true. Certification is the ONLY soundness
+    gate in this pipeline -- subtraction is a constructor, the outer box only
+    ever over-approximates -- so a gate that is unconditionally green does not
+    weaken the method, it removes it. Measured on the minimal contract: all
+    three paths were reported as certified regions while ESBMC's own verdict on
+    each was FAILED, one of them adding "no single-coordinate shrink ... the
+    region has to be split".
+
+    UNKNOWN is a THIRD state and must stay one. ESBMC can die on an assertion
+    inside the SMT layer (`Tuple AST mismatch`, seen on this very contract when
+    a coordinate is pinned) and then print NEITHER verdict line. Folding that
+    into FAILED would make the loop respond to a crash by shrinking the box, i.e.
+    by treating "we never found out" as "refuted".
+    """
+    seen = "UNKNOWN"
+    for line in log.splitlines():
+        s = line.strip()
+        if s == "VERIFICATION SUCCESSFUL":
+            seen = "SUCCESSFUL"
+        elif s == "VERIFICATION FAILED":
+            seen = "FAILED"
+    return seen
+
+
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
-            max_tx, timeout, cwd):
-    """Step 5. Returns (ok, suggested_box_or_None)."""
+            max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g"):
+    """Step 5. Returns (verdict, suggested_box_or_None)."""
     spec = {"unit": unit, "enc": enc, "depth": depth,
             "ce": {k: str(v) for k, v in ce.items()},
             "box": [{"name": n, "lo": str(lo), "hi": str(hi)}
@@ -203,15 +355,18 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
         json.dump(spec, f)
     log = run(esbmc, sol, contract,
               ["--path-cov-certify", path, "--cov-report-json"],
-              max_tx, timeout, cwd)
-    if "VERIFICATION SUCCESSFUL" in log:
-        return True, None
+              max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
+    v = verdict(log)
+    if v != "FAILED":
+        # SUCCESSFUL: certified. UNKNOWN: no verdict at all -- the caller must
+        # not shrink on it, so no box is suggested either.
+        return v, None
     m = SHRINK_RE.search(log)
     if not m:
-        return False, None
+        return v, None
     nb = dict(box)
     nb[m.group(1)] = (int(m.group(2)), int(m.group(3)))
-    return False, nb
+    return v, nb
 
 
 def main():
@@ -226,6 +381,26 @@ def main():
     ap.add_argument("--refine-rounds", type=int, default=3)
     ap.add_argument("--shrink-rounds", type=int, default=4)
     ap.add_argument("--timeout", type=int, default=900)
+    ap.add_argument("--ast", default=None,
+                    help="prebuilt .solast, passed positionally. Needed for "
+                         "any source whose pragma pins a solc this machine "
+                         "does not have -- every flattened benchmark input "
+                         "does.")
+    ap.add_argument("--focus", action="store_true",
+                    help="narrow the harness dispatcher to --unit. Does NOT "
+                         "change the enumeration (verified by comparing "
+                         "content-addressed path key sets, not just counts); "
+                         "it is a pure scope control, and on a real contract "
+                         "it is the difference between finishing in seconds "
+                         "and exceeding a 900s budget with nothing to show.")
+    ap.add_argument("--memlimit", default="8g",
+                    help="passed to ESBMC. Keep it at or below whatever the "
+                         "caller computed for the machine; this used to be "
+                         "hardcoded, so a caller's limit was a line nobody "
+                         "read.")
+    ap.add_argument("--path-function", default=None,
+                    help="disambiguate overloads: the exact mangled "
+                         "path_function to generalise.")
     ap.add_argument("--pin", action="append", default=[],
                     help="coord=value, e.g. state.bal=50. Pinned coordinates "
                          "are NOT generalised; every region reported is a "
@@ -242,20 +417,35 @@ def main():
     os.makedirs(cwd, exist_ok=True)
     print(f"[workdir] {cwd}")
 
-    paths = enumerate_paths(args.esbmc, args.sol, args.contract, args.unit,
-                            args.max_tx, args.timeout, cwd)
+    focus = args.unit if args.focus else None
+    paths, refused = enumerate_paths(
+        args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
+        args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
+        path_function=args.path_function)
     if not paths:
         print("[enumerate] no witnessed path for this unit; nothing to "
               "generalise. That is a result, not an error: a path with no "
               "counterexample has no known member of its domain to keep, so "
-              "there is nothing to grow a region around.")
+              "there is nothing to grow a region around. (The report was "
+              "checked: it holds no F claim for any unit, so this really is "
+              "the empty case and not a failed match.)")
         return 1
     print(f"[enumerate] {len(paths)} witnessed path(s): "
           + ", ".join(f"enc={e} depth={d}" for e, d, _ in paths))
+    if refused:
+        # Say it. Every region printed below is a statement about the SLICE
+        # through these, not about the whole input space.
+        print(f"[coords] UNSUPPORTED, refused as coordinates (not scalar): "
+              f"{', '.join(refused)}. Every region below is a statement about "
+              f"the slice through whatever values they took in the "
+              f"counterexample, and does NOT generalise over them.")
 
     coords = sorted({k for _, _, ce in paths for k in ce} - set(pins))
     if not coords:
-        print("[coords] every coordinate is pinned; nothing to generalise")
+        print("[coords] no generalisable coordinate: "
+              + ("every coordinate is pinned" if pins else
+                 "every coordinate was refused as UNSUPPORTED")
+              + "; nothing to generalise")
         return 1
     print(f"[coords] {', '.join(coords)}"
           + (f"   [pinned: {pins}]" if pins else ""))
@@ -263,7 +453,8 @@ def main():
     # Round 1: geometric bracket.
     _, brackets, regions, warned = outer_round(
         args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
-        args.probes, args.max_tx, args.timeout, cwd, geometric=True)
+        args.probes, args.max_tx, args.timeout, cwd, geometric=True,
+        ast=args.ast, focus=focus, memlimit=args.memlimit)
     print(f"[bracket] {brackets}")
 
     # Rounds 2..N: linear inside the union of the brackets, per coordinate.
@@ -272,7 +463,8 @@ def main():
     for r in range(args.refine_rounds):
         _, brackets, regions, warned = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
-            args.probes, args.max_tx, args.timeout, cwd, spans=spans)
+            args.probes, args.max_tx, args.timeout, cwd, spans=spans,
+            ast=args.ast, focus=focus, memlimit=args.memlimit)
         print(f"[refine {r+1}] spans={spans} regions={regions}"
               + (f" UNSEPARATED={sorted(warned)}" if warned else ""))
         new = {c: (brackets_for(c, brackets) or spans[c]) for c in coords}
@@ -293,11 +485,20 @@ def main():
             print(f"[certify enc={enc}] region overlaps an unseparated sibling; "
                   f"certifying anyway, the query is what decides")
         for _ in range(args.shrink_rounds):
-            good, nb = certify(args.esbmc, args.sol, args.contract, args.unit,
-                               enc, depth, box, ce, pins, args.max_tx,
-                               args.timeout, cwd)
-            if good:
+            v, nb = certify(args.esbmc, args.sol, args.contract, args.unit,
+                            enc, depth, box, ce, pins, args.max_tx,
+                            args.timeout, cwd, ast=args.ast, focus=focus,
+                            memlimit=args.memlimit)
+            if v == "SUCCESSFUL":
                 ok[enc] = box
+                break
+            if v == "UNKNOWN":
+                # No verdict at all -- ESBMC crashed, was killed, or produced
+                # neither line. Shrinking here would treat "we never found out"
+                # as "refuted" and would quietly hand back a NARROWER box that
+                # nothing ever checked.
+                failed[enc] = ("no verdict from the certification query "
+                               "(ESBMC printed neither SUCCESSFUL nor FAILED)")
                 break
             if nb is None or nb == box:
                 failed[enc] = "refuted with no single-coordinate cut available"
