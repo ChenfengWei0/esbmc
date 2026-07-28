@@ -4192,6 +4192,8 @@ bool esbmc_parseoptionst::process_goto_program(
       // pass consumes, so the pass itself has no command-line dependency.
       if (cmdline.isset("path-cov-certify"))
         tmp.path_cov_certify_path = cmdline.getval("path-cov-certify");
+      if (cmdline.isset("path-cov-outer-box"))
+        tmp.path_cov_outer_box_path = cmdline.getval("path-cov-outer-box");
       tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
       // Align the offline enumeration bound with the symex unwind bound. The
       // two MUST agree, or "this path is feasible" as enumerated and "this path

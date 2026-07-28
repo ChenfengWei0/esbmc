@@ -1133,6 +1133,42 @@ void report_coverage(
     // the whole-run version of the same failure.
     goto_coveraget::audit_entry_liveness(options.get_option("focus-function"));
 
+    // CERTIFICATION MODE PRINTS NO [Coverage] BLOCK AT ALL.
+    //
+    // The claims in this mode are `assume(box); assert(tr == pi)` — a certified
+    // box makes them HOLD, so they would be counted as U/bounded-holds and the
+    // run would read "Path Coverage: 0%" for a completely successful
+    // certification. The verdict of a certification run is VERIFICATION
+    // SUCCESSFUL versus FAILED, nothing else.
+    //
+    // Suppressed rather than annotated, on precedent: the path-distribution line
+    // once mixed a per-round count into a structural measurement and printed
+    // "1 path(s) total ... 0.33x" for a contract whose real figures are 8 and
+    // 2.67x. It was documented in a comment and still got quoted, and a measured
+    // result had to be retracted. A number that does not exist cannot be quoted;
+    // a number with a disclaimer attached can.
+    if (goto_coveraget::path_cov_outer_box_mode)
+    {
+      // Same reason as certification mode: these claims are ladder probes, and
+      // a probe that HOLDS is a measurement, not an uncovered path. Reporting
+      // them through the coverage counters would print a number that means
+      // nothing and reads like one that does.
+      goto_coveraget::report_outer_boxes();
+    }
+    else if (goto_coveraget::path_cov_certify_mode)
+    {
+      goto_coveraget::audit_certify_witness(
+        options.get_bool_option("cov-report-json"));
+      log_status(
+        "--path-cov-certify: no [Coverage] block is printed in certification "
+        "mode — the claims here are `assume(box); assert(tr == pi)`, so a "
+        "CERTIFIED box makes them hold and would be counted as uncovered. The "
+        "result of this run is the VERIFICATION SUCCESSFUL / FAILED verdict "
+        "below, and on FAILED the counterexample input inside the box");
+    }
+    else
+    {
+
     // Denominator = the no-skip static universe built by
     // solidity_path_coverage() (one entry per enumerated complete path), so a
     // covered-set skip never shrinks it. Numerator = universe paths EITHER
@@ -1279,6 +1315,7 @@ void report_coverage(
         "coverage covered-set written to {}",
         goto_coveraget::path_covered_outpath);
     }
+    } // end of the non-certification reporting block
   }
 
   // Generate JSON coverage report

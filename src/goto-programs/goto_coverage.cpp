@@ -54,6 +54,17 @@ std::map<std::pair<std::string, std::string>, std::string>
   goto_coveraget::path_stable_id;
 std::string goto_coveraget::path_covered_outpath;
 std::map<std::string, std::string> goto_coveraget::units_not_entered;
+bool goto_coveraget::path_cov_certify_mode = false;
+std::vector<std::string> goto_coveraget::path_cov_certify_box_names;
+bool goto_coveraget::path_cov_outer_box_mode = false;
+std::vector<goto_coveraget::outer_box_probet>
+  goto_coveraget::path_cov_outer_box_probes;
+std::vector<std::pair<uint64_t, uint64_t>>
+  goto_coveraget::path_cov_outer_box_paths;
+std::map<std::pair<uint64_t, std::string>, std::string>
+  goto_coveraget::path_cov_outer_box_ce;
+std::map<std::string, std::pair<std::string, std::string>>
+  goto_coveraget::path_cov_outer_box_type_range;
 std::string goto_coveraget::path_cov_fingerprint;
 std::atomic<bool> goto_coveraget::branch_cov_active{false};
 std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
@@ -228,6 +239,323 @@ std::string goto_coveraget::path_u_reason_token(
     // its own `case`.
     return std::string();
   }
+}
+
+void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
+{
+  if (!path_cov_certify_mode)
+    return;
+  // No harvest was requested, so nothing is owed. See the header comment: this
+  // narrowing came from the audit's first real run, where it accused a
+  // perfectly correct `--result-only` run of losing a witness that was never
+  // collected in the first place.
+  if (!ce_payload_requested)
+    return;
+
+  // Only a coordinate that is NOT an EVM environment value is expected in
+  // `inputs`; a box bounding only `msg.value` legitimately leaves it empty.
+  bool box_has_argument = false;
+  for (const auto &n : path_cov_certify_box_names)
+    if (
+      n.rfind("msg.", 0) != 0 && n.rfind("tx.", 0) != 0 &&
+      n.rfind("block.", 0) != 0)
+      box_has_argument = true;
+  if (!box_has_argument)
+    return;
+
+  std::vector<std::string> witnessless;
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    for (const auto &key : all_claims)
+    {
+      const std::string sig = key.first + "\t" + key.second;
+      auto v = claim_outcome.find(sig);
+      if (v == claim_outcome.end() || v->second != 'F')
+        continue; // not a refutation: nothing is owed
+      auto ce = path_ce.find(sig);
+      if (ce == path_ce.end() || ce->second.inputs.empty())
+        witnessless.push_back(key.first);
+    }
+  }
+  if (witnessless.empty())
+    return;
+
+  std::string names;
+  for (const auto &n : witnessless)
+    names += (names.empty() ? "" : "; ") + n;
+  log_error(
+    "--path-cov-certify: INTERNAL DEFECT — {} certification claim(s) were "
+    "REFUTED but carry no witness input: {}. The box bounds at least one call "
+    "argument, so a refutation is obliged to name the input inside the box that "
+    "leaves the path — that input IS the value the box gets shrunk with. A "
+    "verdict without it is not a weaker result, it is an unusable one, and the "
+    "verdict alone still prints as if everything worked.",
+    witnessless.size(),
+    names);
+  abort();
+}
+
+void goto_coveraget::report_outer_boxes()
+{
+  if (!path_cov_outer_box_mode)
+    return;
+
+  // ---- 1. Read the ladder verdicts ----
+  //
+  // A probe `assert(tr == pi -> temp_c <= v)` that HOLDS ('P') says every input
+  // walking pi has c <= v, so the tightest holding v is the outer bound. A
+  // refuted probe is not a failure — it is the ladder doing its job, and its
+  // counterexample is a real input of pi with c > v.
+  //
+  // Nothing here is "proven unreachable": these verdicts are bounded exactly
+  // like every other one in this pass, so an outer box is an outer box UNDER
+  // THE DECLARED EXPLORATION. Stated because a box is the input to a soundness
+  // argument downstream, and a bounded box silently promoted to an absolute one
+  // is precisely how a certified region ends up too wide.
+  struct bound_infot
+  {
+    bool have_u = false, have_l = false;
+    BigInt u, l;
+  };
+  std::map<std::pair<uint64_t, std::string>, bound_infot> bounds;
+  // Seed with the free bound: the coordinate's own type range (see the header).
+  for (const auto &[enc, depth] : path_cov_outer_box_paths)
+    for (const auto &[cname, r] : path_cov_outer_box_type_range)
+    {
+      bound_infot &b = bounds[{enc, cname}];
+      b.have_l = b.have_u = true;
+      b.l = string2integer(r.first);
+      b.u = string2integer(r.second);
+    }
+  size_t decided = 0, undecided = 0;
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    for (const auto &p : path_cov_outer_box_probes)
+    {
+      auto it = claim_outcome.find(p.key.first + "\t" + p.key.second);
+      if (it == claim_outcome.end())
+      {
+        ++undecided;
+        continue;
+      }
+      ++decided;
+      if (it->second != 'P')
+        continue; // refuted (or unknown): this bound does not hold
+      const BigInt v = string2integer(p.value);
+      bound_infot &b = bounds[{p.enc, p.coord}];
+      if (p.upper)
+      {
+        if (!b.have_u || v < b.u)
+        {
+          b.u = v;
+          b.have_u = true;
+        }
+      }
+      else if (!b.have_l || v > b.l)
+      {
+        b.l = v;
+        b.have_l = true;
+      }
+    }
+  }
+
+  log_status(
+    "--path-cov-outer-box: {} of {} ladder probe(s) reached the solver. A probe "
+    "that HOLDS is an outer bound; a refuted probe is the ladder working, and "
+    "its counterexample is a genuine input of that path beyond the bound",
+    decided,
+    decided + undecided);
+
+  // Coordinates, in the order the spec listed them.
+  std::vector<std::string> coords;
+  for (const auto &p : path_cov_outer_box_probes)
+    if (std::find(coords.begin(), coords.end(), p.coord) == coords.end())
+      coords.push_back(p.coord);
+
+  auto show = [&](uint64_t enc) {
+    std::string s;
+    for (const auto &c : coords)
+    {
+      auto it = bounds.find({enc, c});
+      s += (s.empty() ? "" : ", ") + c + " in ";
+      if (it == bounds.end() || (!it->second.have_l && !it->second.have_u))
+        s += "(unbounded within the probed span)";
+      else
+      {
+        s += "[";
+        s += it->second.have_l ? integer2string(it->second.l)
+                               : std::string("<span lo");
+        s += ", ";
+        s += it->second.have_u ? integer2string(it->second.u)
+                               : std::string(">span hi");
+        s += "]";
+      }
+    }
+    return s;
+  };
+
+  for (const auto &[enc, depth] : path_cov_outer_box_paths)
+    log_status(
+      "--path-cov-outer-box: path enc={} depth={} OUTER box (D_path is CONTAINED "
+      "in it): {}",
+      enc,
+      depth,
+      show(enc));
+
+  // ---- 2. Subtract the siblings, greedily, one cut per sibling ----
+  //
+  // Zero queries. Path domains partition the input space, so an input in this
+  // path's outer box and in NO sibling's outer box must walk this path. In one
+  // dimension that difference is a union of segments; in more it is an L shape,
+  // which cannot be written as one `require` per parameter. So each intersecting
+  // sibling is removed by ONE cut along ONE coordinate — the result is a box,
+  // and any point left in it is outside that sibling by construction.
+  //
+  // A cut is legal only if this path's own counterexample survives it: the CE is
+  // a known member of D_path, so a cut that drops it has certainly cut into the
+  // real domain. Among legal cuts, take the one that loses the least width on
+  // the coordinate it cuts. Shrinking only ever makes the region SMALLER, so the
+  // heuristic cannot break correctness — it only decides how much is kept, which
+  // is why it is a free parameter and is reported rather than argued for.
+  for (const auto &[enc, depth] : path_cov_outer_box_paths)
+  {
+    // Materialise this path's box; skip a coordinate with no bound at all.
+    std::map<std::string, std::pair<BigInt, BigInt>> box;
+    for (const auto &c : coords)
+    {
+      auto it = bounds.find({enc, c});
+      if (it != bounds.end() && it->second.have_l && it->second.have_u)
+        box[c] = {it->second.l, it->second.u};
+    }
+    if (box.empty())
+    {
+      log_status(
+        "--path-cov-outer-box: path enc={} has no fully bounded coordinate; no "
+        "certified region is computed for it (the ladder span did not bracket "
+        "its domain — widen the span or add probes)",
+        enc);
+      continue;
+    }
+
+    auto ce_of = [&](uint64_t e, const std::string &c, BigInt &out) {
+      auto it = path_cov_outer_box_ce.find({e, c});
+      if (it == path_cov_outer_box_ce.end())
+        return false;
+      out = string2integer(it->second);
+      return true;
+    };
+
+    size_t degenerate = 0;
+    for (const auto &[senc, sdepth] : path_cov_outer_box_paths)
+    {
+      if (senc == enc)
+        continue;
+      // Does the sibling's box still intersect ours on every coordinate?
+      bool intersects = true;
+      std::map<std::string, std::pair<BigInt, BigInt>> sbox;
+      for (const auto &c : coords)
+      {
+        auto it = bounds.find({senc, c});
+        if (it == bounds.end() || !it->second.have_l || !it->second.have_u)
+          continue; // unbounded there: cannot be used to separate on it
+        sbox[c] = {it->second.l, it->second.u};
+        auto ob = box.find(c);
+        if (ob == box.end())
+          continue;
+        if (it->second.u < ob->second.first || it->second.l > ob->second.second)
+          intersects = false;
+      }
+      if (!intersects)
+        continue; // provably disjoint already: nothing to remove
+      if (sbox.empty())
+      {
+        // The sibling has no coordinate bounded on BOTH sides, so there is no
+        // cut that can be shown to exclude it — its domain may lie anywhere in
+        // the probed span. Counting this as separated would silently keep a
+        // region that provably contains foreign inputs, which is the one
+        // outcome the subtraction must never produce. It is the same shape as
+        // the missing-path warning above: an unmeasured sibling is not an
+        // absent one.
+        ++degenerate;
+        continue;
+      }
+
+      // Best legal cut across coordinates.
+      bool best = false;
+      std::string best_c;
+      std::pair<BigInt, BigInt> best_range;
+      BigInt best_width;
+      for (const auto &[c, sr] : sbox)
+      {
+        auto ob = box.find(c);
+        if (ob == box.end())
+          continue;
+        BigInt ce;
+        if (!ce_of(enc, c, ce))
+          continue; // no CE for this coordinate: cannot check legality
+        // Keep the part strictly below the sibling, or strictly above it.
+        if (sr.first > ob->second.first && ce < sr.first)
+        {
+          std::pair<BigInt, BigInt> r{ob->second.first, sr.first - 1};
+          BigInt w = r.second - r.first;
+          if (!best || w > best_width)
+          {
+            best = true;
+            best_c = c;
+            best_range = r;
+            best_width = w;
+          }
+        }
+        if (sr.second < ob->second.second && ce > sr.second)
+        {
+          std::pair<BigInt, BigInt> r{sr.second + 1, ob->second.second};
+          BigInt w = r.second - r.first;
+          if (!best || w > best_width)
+          {
+            best = true;
+            best_c = c;
+            best_range = r;
+            best_width = w;
+          }
+        }
+      }
+      if (!best)
+      {
+        // No coordinate separates them while keeping the CE. This is the
+        // documented degenerate case: the certified region collapses towards the
+        // CE point and the path falls back to a concrete test. Reported, never
+        // papered over by keeping a region that provably contains foreign inputs.
+        ++degenerate;
+        continue;
+      }
+      box[best_c] = best_range;
+    }
+
+    std::string s;
+    for (const auto &[c, r] : box)
+      s += (s.empty() ? "" : ", ") + c + " in [" + integer2string(r.first) +
+           ", " + integer2string(r.second) + "]";
+    std::string caveat;
+    if (degenerate > 0)
+      caveat =
+        " — WARNING: " + std::to_string(degenerate) +
+        " sibling(s) could not be separated by any single coordinate cut that "
+        "keeps this path's counterexample, so the region above STILL OVERLAPS "
+        "them and must be certified before use (or the path falls back to its "
+        "concrete counterexample test)";
+    log_status(
+      "--path-cov-outer-box: path enc={} CERTIFIED region after subtracting "
+      "sibling outer boxes (zero queries): {}{}",
+      enc,
+      s,
+      caveat);
+  }
+
+  log_status(
+    "--path-cov-outer-box: these regions are CANDIDATES, not certificates. The "
+    "subtraction is sound only if path enumeration is complete for this unit; "
+    "run --path-cov-certify on each region to confirm it, which is the same "
+    "confirmation the method already prescribes when any path is undecided");
 }
 
 void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
@@ -1572,7 +1900,82 @@ void goto_coveraget::solidity_path_coverage()
   {
     std::string name, lo, hi;
   };
+  // ---- Stage-2 outer-box batch spec (--path-cov-outer-box) ----
+  struct outer_coordt
+  {
+    std::string name, lo, hi;
+  };
+  bool outer_on = false;
+  std::string outer_unit;
+  size_t outer_probes = 8;
+  std::vector<outer_coordt> outer_coords;
+  path_cov_outer_box_mode = false;
+  path_cov_outer_box_probes.clear();
+  path_cov_outer_box_paths.clear();
+  path_cov_outer_box_ce.clear();
+  if (!path_cov_outer_box_path.empty())
+  {
+    std::ifstream oin(path_cov_outer_box_path);
+    if (!oin)
+    {
+      log_error(
+        "--path-cov-outer-box: cannot open '{}'", path_cov_outer_box_path);
+      abort();
+    }
+    try
+    {
+      nlohmann::json j;
+      oin >> j;
+      outer_unit = j.at("unit").get<std::string>();
+      outer_probes = j.value("probes", (size_t)8);
+      for (const auto &c : j.at("coords"))
+        outer_coords.push_back(
+          {c.at("name").get<std::string>(),
+           c.at("lo").get<std::string>(),
+           c.at("hi").get<std::string>()});
+      for (const auto &p : j.at("paths"))
+      {
+        const uint64_t e = p.at("enc").get<uint64_t>();
+        path_cov_outer_box_paths.emplace_back(
+          e, p.at("depth").get<uint64_t>());
+        // Bound to a NAMED object first: `.items()` on the temporary returned
+        // by `value()` iterates a destroyed object.
+        const nlohmann::json ce_obj =
+          p.value("ce", nlohmann::json::object());
+        for (auto it = ce_obj.begin(); it != ce_obj.end(); ++it)
+          path_cov_outer_box_ce[{e, it.key()}] = it.value().get<std::string>();
+      }
+    }
+    catch (const std::exception &ex)
+    {
+      log_error(
+        "--path-cov-outer-box: cannot parse '{}' ({}). Expected {{\"unit\":..., "
+        "\"probes\":K, \"coords\":[{{\"name\":..,\"lo\":\"..\",\"hi\":\"..\"}}], "
+        "\"paths\":[{{\"enc\":N,\"depth\":D,\"ce\":{{\"a\":\"..\"}}}}]}}",
+        path_cov_outer_box_path,
+        ex.what());
+      abort();
+    }
+    outer_on = true;
+    path_cov_outer_box_mode = true;
+    log_status(
+      "--path-cov-outer-box: OUTER-BOX BATCH for unit '{}' — {} path(s), {} "
+      "coordinate(s), {} probe(s) per direction. One fixed assumption per path "
+      "(`tr == enc`), a whole ladder of candidate bounds as assertions, ONE "
+      "run. This measures a box CONTAINING each path's domain; the certified "
+      "region is then the difference against the siblings' boxes, at zero "
+      "further queries. Resolution is (hi-lo)/(probes+1) per coordinate — a "
+      "non-adaptive batch cannot give logarithmic precision; refine by running "
+      "another batch on a narrower span",
+      outer_unit,
+      path_cov_outer_box_paths.size(),
+      outer_coords.size(),
+      outer_probes);
+  }
+
   bool certify_on = false;
+  path_cov_certify_mode = false;
+  path_cov_certify_box_names.clear();
   std::string certify_unit;
   uint64_t certify_enc = 0, certify_depth = 0;
   std::vector<certify_boundt> certify_box;
@@ -1612,11 +2015,15 @@ void goto_coveraget::solidity_path_coverage()
       abort();
     }
     certify_on = true;
+    path_cov_certify_mode = true;
+    for (const auto &b : certify_box)
+      path_cov_certify_box_names.push_back(b.name);
     log_status(
       "--path-cov-certify: CERTIFICATION QUERY for unit '{}' path enc={} "
-      "depth={} over {} bounded input(s). The per-path identity asserts are "
-      "NOT emitted in this mode, so the [Coverage] block below is not "
-      "meaningful — the verdict of this run is VERIFICATION SUCCESSFUL (every "
+      "depth={} over {} bounded input(s). The per-path identity asserts are NOT "
+      "emitted in this mode and NO [Coverage] block is printed — a certified "
+      "box makes these claims HOLD, which the coverage counters would report as "
+      "uncovered. The verdict of this run is VERIFICATION SUCCESSFUL (every "
       "input in the box walks this path) versus FAILED (the counterexample is "
       "an input inside the box that leaves it)",
       certify_unit,
@@ -3640,6 +4047,178 @@ void goto_coveraget::solidity_path_coverage()
           abort();
         }
       }
+    }
+
+    // ---- STAGE 2, step 1: the outer-box batch ----
+    //
+    // Runs in the same place, and for the same reason, as the certification
+    // query below: expansion, the ABI gate, Phase-1 accounting and all three
+    // censuses have already run, and the `tr`/`cnt` read here are the same ones
+    // the enumeration writes.
+    if (outer_on)
+    {
+      const std::string uid = f_it->first.as_string();
+      if (
+        uid != outer_unit &&
+        uid.find("@F@" + outer_unit + "#") == std::string::npos)
+        continue;
+
+      // Snapshot each coordinate at ENTRY. The assertion sits at the exit, and
+      // a parameter may have been reassigned in between; asserting on the live
+      // symbol would then bound the wrong value — and bound it in the safe-
+      // looking direction, since a reassigned parameter usually has a smaller
+      // range than the argument did.
+      const symbolt *fsym = ns.lookup(f_it->first);
+      std::map<std::string, expr2tc> snap;
+      for (const auto &c : outer_coords)
+      {
+        const symbolt *csym = nullptr;
+        if (
+          c.name.rfind("msg.", 0) == 0 || c.name.rfind("tx.", 0) == 0 ||
+          c.name.rfind("block.", 0) == 0)
+        {
+          std::string env = c.name;
+          for (auto &ch : env)
+            if (ch == '.')
+              ch = '_';
+          csym = ns.lookup(irep_idt("c:@" + env));
+        }
+        else if (fsym != nullptr)
+          for (const auto &arg : to_code_type(fsym->type).arguments())
+            if (arg.get_base_name() == c.name)
+            {
+              csym = ns.lookup(arg.get_identifier());
+              break;
+            }
+        if (csym == nullptr)
+        {
+          log_error(
+            "--path-cov-outer-box: unit '{}' has no input named '{}'. Dropping "
+            "it would silently produce a box with one fewer constraint, i.e. a "
+            "WIDER region than the one measured.",
+            uid,
+            c.name);
+          abort();
+        }
+        const type2tc ct = migrate_type(csym->type);
+        symbolt ssym;
+        ssym.type = csym->type;
+        ssym.name = "__ESBMC_outer$" + i2string(ghost_counter++);
+        ssym.id = "path_cov::" + id2string(ssym.name);
+        ssym.lvalue = true;
+        ssym.static_lifetime = false;
+        ssym.is_extern = false;
+        symbolt *psn;
+        cov_context->move(ssym, psn);
+        expr2tc sn = symbol2tc(migrate_type(psn->type), psn->id);
+        auto entry = goto_program.instructions.begin();
+        goto_programt::instructiont dcl;
+        dcl.type = DECL;
+        dcl.code = code_decl2tc(ct, psn->id);
+        dcl.location = entry->location;
+        dcl.location.property("skipped");
+        dcl.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, dcl);
+        goto_programt::instructiont asg;
+        asg.type = ASSIGN;
+        asg.code = code_assign2tc(sn, symbol2tc(ct, csym->id));
+        asg.location = entry->location;
+        asg.location.property("skipped");
+        asg.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, asg);
+        snap[c.name] = sn;
+        // The type's own range, taken without asking the solver anything.
+        if (is_unsignedbv_type(ct))
+        {
+          BigInt hi = 1;
+          for (unsigned b = 0; b < ct->get_width(); ++b)
+            hi *= 2;
+          path_cov_outer_box_type_range[c.name] = {"0", integer2string(hi - 1)};
+        }
+      }
+
+      // Each path's ladder goes at THAT path's own exit. Putting every probe at
+      // every exit would multiply the claim count by the number of exits for no
+      // information: at another exit the antecedent `tr == enc` is false and the
+      // implication is vacuous.
+      size_t emitted = 0;
+      for (const auto &[penc, pdepth] : path_cov_outer_box_paths)
+      {
+        goto_programt::targett exit_pc;
+        bool found = false;
+        for (auto &e : to_insert)
+        {
+          const std::string &cm = std::get<2>(e);
+          const size_t q = cm.rfind(":path:");
+          if (q == std::string::npos)
+            continue;
+          if (strtoull(cm.substr(q + 6).c_str(), nullptr, 10) == penc)
+          {
+            exit_pc = std::get<0>(e);
+            found = true;
+            break;
+          }
+        }
+        if (!found)
+        {
+          log_warning(
+            "--path-cov-outer-box: path enc={} is not among this unit's "
+            "enumerated paths; no probe emitted for it, and it therefore also "
+            "contributes NOTHING to the sibling subtraction — which makes every "
+            "other path's certified region a claim about a partition that is "
+            "missing a part",
+            penc);
+          continue;
+        }
+        // `tr != enc || cnt != depth || <bound>` — the implication, written out.
+        const expr2tc not_this_path = or2tc(
+          notequal2tc(tr, constant_int2tc(utype, BigInt(penc))),
+          notequal2tc(cnt, constant_int2tc(utype, BigInt(pdepth))));
+        for (const auto &c : outer_coords)
+        {
+          const BigInt lo = string2integer(c.lo), hi = string2integer(c.hi);
+          if (hi < lo)
+          {
+            log_error(
+              "--path-cov-outer-box: coordinate '{}' has hi < lo", c.name);
+            abort();
+          }
+          const type2tc ct = snap[c.name]->type;
+          const BigInt span = hi - lo;
+          for (size_t k = 0; k <= outer_probes + 1; ++k)
+          {
+            const BigInt v =
+              lo + (span * BigInt((int64_t)k)) / BigInt((int64_t)(outer_probes + 1));
+            for (int dir = 0; dir < 2; ++dir)
+            {
+              const bool upper = dir == 0;
+              const expr2tc cmp =
+                upper ? lessthanequal2tc(snap[c.name], constant_int2tc(ct, v))
+                      : greaterthanequal2tc(
+                          snap[c.name], constant_int2tc(ct, v));
+              const std::string comment =
+                id2string(f_it->first) + ":path:" + std::to_string(penc) + "#" +
+                (upper ? "ub" : "lb") + "_" + c.name + "_" + integer2string(v);
+              const std::string loc = exit_pc->location.as_string();
+              all_claims.insert({comment, loc});
+              path_cov_outer_box_probes.push_back(
+                {penc, c.name, upper, integer2string(v), {comment, loc}});
+              insert_assert(
+                goto_program, exit_pc, or2tc(not_this_path, cmp), comment);
+              ++emitted;
+            }
+          }
+        }
+      }
+      log_status(
+        "--path-cov-outer-box: unit '{}' — emitted {} ladder probe(s) as ONE "
+        "batch. The assumption is fixed per path and only the assertions vary, "
+        "which is exactly what lets a whole ladder be judged in a single run "
+        "instead of one query per widening step",
+        uid,
+        emitted);
+      total_paths += emitted;
+      continue;
     }
 
     // ---- STAGE 2: the certification query ----

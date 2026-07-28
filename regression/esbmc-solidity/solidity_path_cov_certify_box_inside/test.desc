@@ -3,6 +3,6 @@ contract.sol
 --solidity-path-coverage --contract Box --path-cov-certify cert.json --solidity-max-tx 1
 ^--path-cov-certify: CERTIFICATION QUERY for unit 'f' path enc=2 depth=1 over 1 bounded input\(s\)
 ^--path-cov-certify: unit 'sol:@C@Box@F@f#18' — assumed 1 input bound\(s\) at entry and asserted `tr == 2 && cnt == 1` at ALL 4 exit\(s\) of the unit
-^✓ PASSED: 'f:path:2#exit0 at file .*contract.sol line 32 function f'
-^✓ PASSED: 'f:path:2#exit1 at file .*contract.sol line 34 function f'
+^✓ PASSED: 'f:path:2#exit0 at file .*contract.sol line 44 function f'
+^✓ PASSED: 'f:path:2#exit1 at file .*contract.sol line 46 function f'
 ^VERIFICATION SUCCESSFUL$

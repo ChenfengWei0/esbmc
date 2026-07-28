@@ -5,6 +5,12 @@
 // and for why the assert goes on every exit). Here the box is [5,100], which
 // contains inputs on both sides of `a > 10`.
 //
+// PASSING THIS TEST ON ITS OWN IS NOT EVIDENCE EITHER. It shows the check
+// fires; the `_inside` twin shows it does not fire always. The property under
+// test is that the two verdicts are consistently OPPOSITE — the pair is the
+// test, and deleting either half leaves something that still looks protective
+// and is not.
+//
 // Two things are pinned, and the second matters as much as the first:
 //
 //   * the refutation lands on exit1 — the OTHER path's exit. exit0 PASSES here

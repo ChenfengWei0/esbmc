@@ -15,11 +15,23 @@
 // would hold vacuously — permanently green in the one place where green has to
 // mean something.
 //
-// This directory and its `_straddles` twin measure exactly that. exit0 (this
-// path's own exit) PASSES in BOTH; only exit1 (the other path's exit) flips.
-// So the wrong implementation is not hypothetical — it is precisely the run in
-// which this pair comes out all green, which is why the pair is the test rather
-// than either half alone.
+// PASSING THIS TEST ON ITS OWN IS NOT EVIDENCE OF ANYTHING. An implementation
+// that checks nothing at all also reports SUCCESSFUL here. What this half
+// establishes is only that the check does not fire ALWAYS; the `_straddles`
+// twin establishes that it fires at all. The test is the PAIR, and the property
+// being tested is that the two verdicts are consistently OPPOSITE. Deleting
+// either half leaves something that still looks like it is protecting
+// something and is not.
+//
+// exit0 (this path's own exit) PASSES in both halves; only exit1 (the other
+// path's exit) flips. So the wrong implementation — asserting on this path's
+// exit alone — is precisely the run in which the pair comes out all green.
+//
+// This is also why neither half needs fault injection: the check comes with a
+// direction that MUST flip. A detector that has no such direction (the exit
+// census, the decision-set census: they never fire on a correct run) cannot
+// testify for itself and has to be injected. One-directional detectors need
+// injection; a detector carrying its own must-flip control does not.
 //
 // The certify spec `cert.json` is read-only: the tool never writes it back, so
 // this fixture cannot be polluted by the run that consumes it (the discipline

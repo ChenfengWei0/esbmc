@@ -625,6 +625,100 @@ public:
   //
   // Empty => disabled, and the pass behaves exactly as before.
   std::string path_cov_certify_path = "";
+  // Spec for the outer-box batch (see report_outer_boxes). Empty => disabled.
+  std::string path_cov_outer_box_path = "";
+
+  // Set by solidity_path_coverage() when a certification query was emitted, so
+  // the reporting side can behave differently WITHOUT re-reading the CLI.
+  static bool path_cov_certify_mode;
+  // The coordinate names the box bounds. Kept because the witness audit below
+  // needs to know what a refutation is obliged to report.
+  static std::vector<std::string> path_cov_certify_box_names;
+
+  // A REFUTATION WITHOUT A WITNESS IS WORTHLESS — hard-fail on one.
+  //
+  // The verdict and the witness fail INDEPENDENTLY, which is what makes this
+  // worth an invariant rather than a comment. Measured: decorating the claim
+  // comment with a `certify:` prefix left the report's `path_function` reading
+  // `certify:sol:@C@Box@F@f#18`, the counterexample harvest builds the expected
+  // argument scope from that string, every nondet failed the scope test and was
+  // filed as harness-internal (dropped 19 -> 25) — and the run still printed a
+  // perfectly correct FAILED verdict with an empty `inputs`.
+  //
+  // The damage is entirely downstream: the refuting INPUT is what the box gets
+  // shrunk with, so a witness-less refutation leaves the generalisation loop
+  // with nothing to do. Its symptom would be "the loop does not converge" or
+  // "the loop collapses to a point", several hundred lines away from a string
+  // prefix. Checking it here costs one comparison; finding it there costs hours.
+  //
+  // `ce_payload_requested` narrows the check to where its premise holds. The
+  // counterexample payload is only harvested when the report asks for it; a run
+  // that never asked has no witness to be missing, and demanding one there is
+  // the audit accusing the tool of a defect it does not have. MEASURED on this
+  // audit's very first real use — the same false positive the entry-liveness
+  // audit produced on ITS first use (with --focus-function), and the same fix:
+  // narrow to where the premise holds rather than weaken the check everywhere.
+  static void audit_certify_witness(bool ce_payload_requested);
+
+  // ---- STAGE 2, step 1: THE OUTER BOX (--path-cov-outer-box <json>) ----
+  //
+  // The certification query answers "is this box inside D_pi?". It does not say
+  // where to look, and the way NOT to find out is to widen from the CE point and
+  // ask again each time — that is a search, it has no terminating condition, and
+  // it sits exactly on the "too coarse fails / too fine is expensive" dilemma
+  // that got the widening route withdrawn.
+  //
+  // Instead measure the OUTER box first: `assume(tr == pi); assert(temp_c <= U)`
+  // says D_pi is CONTAINED in the box. Assumption fixed, assertions varied — so
+  // an entire ladder of candidate bounds, for every coordinate and every path,
+  // is judged in ONE run. Then the certified region is computed by SUBTRACTING
+  // the siblings' outer boxes, which costs no query at all: path domains
+  // partition the input space, so an input in nobody else's outer box must walk
+  // this path.
+  //
+  // The ladder's SPAN comes from the sibling counterexamples — a sibling CE at
+  // value v proves the boundary lies between this path's CE and v, so the probes
+  // go there instead of across the whole 256-bit type. The tool does not compute
+  // that span: the driver passes it in, keeping the method abstract and the tool
+  // free of any dependence on its own report format.
+  //
+  // Resolution is stated honestly rather than implied: K non-adaptive probes in
+  // one batch give resolution (hi-lo)/(K+1), NOT log(hi-lo) — that would need K
+  // adaptive rounds. Refining is the driver's job, and each round is one more
+  // batch.
+  struct outer_box_probet
+  {
+    uint64_t enc = 0;
+    std::string coord;
+    bool upper = false; // true: `temp_c <= value`; false: `temp_c >= value`
+    std::string value;
+    std::pair<std::string, std::string> key; // claim key, to read the verdict
+  };
+  static bool path_cov_outer_box_mode;
+  static std::vector<outer_box_probet> path_cov_outer_box_probes;
+  // Every path enumerated for the target unit, as (enc, depth). Needed because
+  // the subtraction is over SIBLINGS, so a path that got no probes still has to
+  // be visible as "unmeasured" rather than silently treated as absent.
+  static std::vector<std::pair<uint64_t, uint64_t>> path_cov_outer_box_paths;
+  // (enc, coordinate) -> that path's counterexample value on it. Supplied by the
+  // driver from the enumeration run. Needed because a subtraction cut is legal
+  // only if it keeps a KNOWN member of the path's domain; without one there is
+  // nothing to stop the greedy cut from carving away the real region.
+  static std::map<std::pair<uint64_t, std::string>, std::string>
+    path_cov_outer_box_ce;
+  // Each coordinate's own TYPE range, as decimal strings. This is an outer
+  // bound for free — every value of a `uint256` is in [0, 2^256-1] — and taking
+  // it is not an optimisation but a correctness fix: a probe like `a >= 0` on an
+  // unsigned type is a tautology, gets simplified out of the formula, and comes
+  // back with NO verdict. Read as "this bound was not established" it leaves the
+  // coordinate half-open and blocks the subtraction entirely, which is exactly
+  // what happened before this was added. Probes then only ever TIGHTEN it.
+  static std::map<std::string, std::pair<std::string, std::string>>
+    path_cov_outer_box_type_range;
+
+  // Read the probe verdicts, print each path's outer box, then subtract the
+  // siblings' boxes and print the certified region. Called after solving.
+  static void report_outer_boxes();
 
   // Path to the cross-run covered-set JSON (--coverage-covered-set).
   // Empty => disabled (no load, no skip, no write-back; behaviour
