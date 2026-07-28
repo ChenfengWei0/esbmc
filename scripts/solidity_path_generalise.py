@@ -497,6 +497,33 @@ def main():
                          "caller computed for the machine; this used to be "
                          "hardcoded, so a caller's limit was a line nobody "
                          "read.")
+    ap.add_argument("--env-coord", action="append", default=[],
+                    help="promote one environment quantity (e.g. "
+                         "block.timestamp) to a FREE coordinate instead of a "
+                         "pin. Named one at a time on purpose: ladder cost is "
+                         "multiplicative in the coordinate count.\n"
+                         "This exists because the blanket 'never probe the "
+                         "environment' rule blocks exactly the cases that "
+                         "matter. The environment quantities the paths DISAGREE "
+                         "on are the DISCRIMINATING ones -- a timelocked "
+                         "withdraw has its paths separated by block.timestamp, "
+                         "so pinning it is impossible (the paths disagree by "
+                         "construction) and dropping it leaves the guard "
+                         "unconstrained, which refuses certification. Such a "
+                         "coordinate has to be probed.")
+    ap.add_argument("--skip-bracket", action="store_true",
+                    help="skip round 1 and start refining from each "
+                         "coordinate's full type range. This is NOT a new "
+                         "policy: it is the branch the code already takes when "
+                         "the bracket yields nothing (`brackets_for(...) or "
+                         "(0, UINT256_MAX)`), made reachable without first "
+                         "paying for the bracket. Round 1 ignores --probes and "
+                         "lays one candidate per power of two -- 258 per "
+                         "coordinate per direction -- which on a real contract "
+                         "unit does not finish. Cost: the first refine round "
+                         "starts at full-type resolution, so separation now "
+                         "depends on the counterexamples being far apart "
+                         "rather than on a measured bracket.")
     ap.add_argument("--pin-env", action="store_true",
                     help="pin each msg./tx./block. quantity on which every "
                          "witnessed path agrees, at that value. Off by default "
@@ -562,7 +589,11 @@ def main():
     # unconstrained -- which is the status quo, and is reported rather than
     # passed over, because an unconstrained gate is exactly what refuses
     # certification.
-    env_names = sorted({k for _, _, ce in paths for k in ce if is_env(k)})
+    env_names = sorted({k for _, _, ce in paths for k in ce if is_env(k)}
+                       - set(args.env_coord))
+    if args.env_coord:
+        print(f"[env] probed as free coordinate(s): "
+              f"{', '.join(sorted(args.env_coord))}")
     if args.pin_env and env_names:
         agreed, disagreed = {}, []
         for n in env_names:
@@ -598,11 +629,17 @@ def main():
           + (f"   [pinned: {pins}]" if pins else ""))
 
     # Round 1: geometric bracket.
-    _, brackets, regions, warned, timed_out = outer_round(
-        args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
-        args.probes, args.max_tx, args.timeout, cwd, geometric=True,
-        ast=args.ast, focus=focus, memlimit=args.memlimit)
-    print(f"[bracket] {brackets}")
+    if args.skip_bracket:
+        brackets, regions, warned, timed_out = {}, {}, set(), False
+        print("[bracket] SKIPPED (--skip-bracket): refining from each "
+              "coordinate's full type range, which is the same fallback the "
+              "code takes when the bracket measures nothing")
+    else:
+        _, brackets, regions, warned, timed_out = outer_round(
+            args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
+            args.probes, args.max_tx, args.timeout, cwd, geometric=True,
+            ast=args.ast, focus=focus, memlimit=args.memlimit)
+        print(f"[bracket] {brackets}")
     # MEASURED, and it is the binding cost on real input: the geometric round
     # ignores --probes entirely (see geometric_values) and lays down one probe
     # per power of two, i.e. 258 candidate bounds per coordinate per direction.
