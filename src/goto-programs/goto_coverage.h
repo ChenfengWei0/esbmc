@@ -3,6 +3,7 @@
 #include <goto-programs/loop_unroll.h>
 #include <langapi/language_util.h>
 #include <unordered_set>
+#include <array>
 #include <atomic>
 #include <map>
 #include <mutex>
@@ -634,6 +635,15 @@ public:
   // The coordinate names the box bounds. Kept because the witness audit below
   // needs to know what a refutation is obliged to report.
   static std::vector<std::string> path_cov_certify_box_names;
+  // The box being certified, and the path's own counterexample if the driver
+  // supplied it. Kept so that a REFUTATION can be turned into the next box to
+  // try instead of just a verdict: the witness is the input inside the box that
+  // leaves the path, so the box has to be cut on the witness's side, and the
+  // path's counterexample is what says which side that is. Without both, the
+  // loop has to fall back to blind bisection, which is the search that was
+  // withdrawn.
+  static std::vector<std::array<std::string, 3>> path_cov_certify_box;
+  static std::map<std::string, std::string> path_cov_certify_ce;
 
   // A REFUTATION WITHOUT A WITNESS IS WORTHLESS — hard-fail on one.
   //
@@ -715,6 +725,12 @@ public:
   // what happened before this was added. Probes then only ever TIGHTEN it.
   static std::map<std::string, std::pair<std::string, std::string>>
     path_cov_outer_box_type_range;
+  // Coordinates pinned for this batch. Every measured and every subtracted
+  // region is a statement about the SLICE through these values, so they are
+  // printed with the region — a region measured under `bal == 0` and rendered
+  // without it would be a claim about inputs that were never examined.
+  static std::vector<std::pair<std::string, std::string>>
+    path_cov_outer_box_pins;
 
   // Read the probe verdicts, print each path's outer box, then subtract the
   // siblings' boxes and print the certified region. Called after solving.

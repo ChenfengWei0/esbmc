@@ -56,6 +56,8 @@ std::string goto_coveraget::path_covered_outpath;
 std::map<std::string, std::string> goto_coveraget::units_not_entered;
 bool goto_coveraget::path_cov_certify_mode = false;
 std::vector<std::string> goto_coveraget::path_cov_certify_box_names;
+std::vector<std::array<std::string, 3>> goto_coveraget::path_cov_certify_box;
+std::map<std::string, std::string> goto_coveraget::path_cov_certify_ce;
 bool goto_coveraget::path_cov_outer_box_mode = false;
 std::vector<goto_coveraget::outer_box_probet>
   goto_coveraget::path_cov_outer_box_probes;
@@ -65,6 +67,8 @@ std::map<std::pair<uint64_t, std::string>, std::string>
   goto_coveraget::path_cov_outer_box_ce;
 std::map<std::string, std::pair<std::string, std::string>>
   goto_coveraget::path_cov_outer_box_type_range;
+std::vector<std::pair<std::string, std::string>>
+  goto_coveraget::path_cov_outer_box_pins;
 std::string goto_coveraget::path_cov_fingerprint;
 std::atomic<bool> goto_coveraget::branch_cov_active{false};
 std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
@@ -277,6 +281,133 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
         witnessless.push_back(key.first);
     }
   }
+  // ---- Turn the refutation into the NEXT BOX, not just a verdict ----
+  //
+  // The witness is an input inside the box that leaves the path, so the box has
+  // to be cut on the witness's side. Which side that is comes from the path's
+  // own counterexample: it is a known member of the domain, so the cut keeps it
+  // and excludes the witness. That is a LANDING POINT, not a bisection — the
+  // shrink goes straight to the witness rather than halving blindly, which is
+  // what the withdrawn widening search did.
+  //
+  // Only suggested, never applied: the tool measures, the driver decides. And it
+  // is suggested per coordinate with the least-loss cut chosen, mirroring the
+  // subtraction's greedy rule.
+  if (!path_cov_certify_ce.empty() && !path_cov_certify_box.empty())
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    for (const auto &key : all_claims)
+    {
+      const std::string sig = key.first + "\t" + key.second;
+      auto v = claim_outcome.find(sig);
+      if (v == claim_outcome.end() || v->second != 'F')
+        continue;
+      auto ce = path_ce.find(sig);
+      if (ce == path_ce.end())
+        continue;
+      // Find the witness's value on a coordinate. The harvest keys parameters
+      // by their base name, the environment by `msg_value`-style names, and
+      // entry storage by the bare field name — so a coordinate written
+      // `state.bal` has to be looked up as `bal`. Reported as "not named" when
+      // absent rather than skipped, because a coordinate the witness does not
+      // mention is exactly a coordinate the shrink cannot use.
+      auto witness_of =
+        [&](const std::string &coord, std::string &out) -> bool {
+        std::string env = coord, bare = coord;
+        for (auto &ch : env)
+          if (ch == '.')
+            ch = '_';
+        if (coord.rfind("state.", 0) == 0)
+          bare = coord.substr(6);
+        for (const auto &[n, val] : ce->second.inputs)
+          if (n == coord || n == bare)
+          {
+            out = val;
+            return true;
+          }
+        for (const auto &[n, val] : ce->second.env)
+          if (n == env || n == coord)
+          {
+            out = val;
+            return true;
+          }
+        for (const auto &[n, val] : ce->second.entry_storage)
+          if (n == bare || n == coord)
+          {
+            out = val;
+            return true;
+          }
+        return false;
+      };
+      std::string best_coord, best_lo, best_hi;
+      BigInt best_width;
+      bool best = false, any_named = false;
+      for (const auto &b : path_cov_certify_box)
+      {
+        auto cit = path_cov_certify_ce.find(b[0]);
+        std::string wtxt;
+        if (cit == path_cov_certify_ce.end() || !witness_of(b[0], wtxt))
+          continue;
+        any_named = true;
+        // Values come back as decimal or 0x-prefixed hex depending on width.
+        auto parse = [](const std::string &s) {
+          return (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+                   ? BigInt(s.c_str() + 2, 16)
+                   : string2integer(s);
+        };
+        const BigInt w = parse(wtxt), c = parse(cit->second);
+        const BigInt lo = string2integer(b[1]), hi = string2integer(b[2]);
+        if (w == c)
+          continue; // the witness agrees here: this coordinate cannot separate
+        if (w > c)
+        {
+          const BigInt nhi = w - 1;
+          if (nhi >= lo && (!best || (nhi - lo) > best_width))
+          {
+            best = true;
+            best_coord = b[0];
+            best_lo = integer2string(lo);
+            best_hi = integer2string(nhi);
+            best_width = nhi - lo;
+          }
+        }
+        else
+        {
+          const BigInt nlo = w + 1;
+          if (nlo <= hi && (!best || (hi - nlo) > best_width))
+          {
+            best = true;
+            best_coord = b[0];
+            best_lo = integer2string(nlo);
+            best_hi = integer2string(hi);
+            best_width = hi - nlo;
+          }
+        }
+      }
+      if (best)
+        log_status(
+          "--path-cov-certify: SHRINK SUGGESTION for '{}' — the witness lies "
+          "outside the path on coordinate '{}', and the path's own "
+          "counterexample lies on the other side of it, so retry with {} in "
+          "[{}, {}] (everything else unchanged). The cut lands ON the witness "
+          "rather than halving the interval: the refutation already says where "
+          "the boundary is not",
+          key.first,
+          best_coord,
+          best_coord,
+          best_lo,
+          best_hi);
+      else if (any_named)
+        log_status(
+          "--path-cov-certify: no single-coordinate shrink for '{}' — on every "
+          "bounded coordinate the witness agrees with the path's own "
+          "counterexample, so no cut separates them while keeping a known "
+          "member of the domain. The region has to be split, or the path falls "
+          "back to its concrete counterexample test",
+          key.first);
+    }
+  }
+
   if (witnessless.empty())
     return;
 
@@ -358,6 +489,17 @@ void goto_coveraget::report_outer_boxes()
       }
     }
   }
+
+  std::string pin_note;
+  for (const auto &[pn, pv] : path_cov_outer_box_pins)
+    pin_note += (pin_note.empty() ? "" : ", ") + pn + " == " + pv;
+  if (!pin_note.empty())
+    log_status(
+      "--path-cov-outer-box: every box and every region below is measured under "
+      "the PIN {} — they describe that SLICE of the input space, not the whole "
+      "domain. Any test rendered from one must carry the pin as a `require` too, "
+      "or it claims something about inputs that were never examined",
+      pin_note);
 
   log_status(
     "--path-cov-outer-box: {} of {} ladder probe(s) reached the solver. A probe "
@@ -1909,10 +2051,23 @@ void goto_coveraget::solidity_path_coverage()
   std::string outer_unit;
   size_t outer_probes = 8;
   std::vector<outer_coordt> outer_coords;
+  // Coordinates PINNED to a value for this batch. The measured box is then a
+  // statement about the SLICE through those values, not about the whole domain
+  // — which is the point: when a guard ties two coordinates together
+  // (`bal >= amt`) the domain is a diagonal, no box contains it tightly, and the
+  // subtraction cannot separate anything. Pinning all but one coordinate turns
+  // the problem back into one dimension, where the interval is exact.
+  //
+  // The pin is part of the answer and is printed with it. A region measured
+  // under `bal == 0` that got rendered as `require(amt >= 1)` alone would be a
+  // claim about inputs that were never examined.
+  std::vector<std::pair<std::string, std::string>> outer_pins;
   path_cov_outer_box_mode = false;
   path_cov_outer_box_probes.clear();
   path_cov_outer_box_paths.clear();
   path_cov_outer_box_ce.clear();
+  path_cov_outer_box_type_range.clear();
+  path_cov_outer_box_pins.clear();
   if (!path_cov_outer_box_path.empty())
   {
     std::ifstream oin(path_cov_outer_box_path);
@@ -1928,6 +2083,9 @@ void goto_coveraget::solidity_path_coverage()
       oin >> j;
       outer_unit = j.at("unit").get<std::string>();
       outer_probes = j.value("probes", (size_t)8);
+      for (const auto &p : j.value("pin", nlohmann::json::array()))
+        outer_pins.emplace_back(
+          p.at("name").get<std::string>(), p.at("value").get<std::string>());
       for (const auto &c : j.at("coords"))
         outer_coords.push_back(
           {c.at("name").get<std::string>(),
@@ -1958,6 +2116,7 @@ void goto_coveraget::solidity_path_coverage()
     }
     outer_on = true;
     path_cov_outer_box_mode = true;
+    path_cov_outer_box_pins = outer_pins;
     log_status(
       "--path-cov-outer-box: OUTER-BOX BATCH for unit '{}' — {} path(s), {} "
       "coordinate(s), {} probe(s) per direction. One fixed assumption per path "
@@ -1976,6 +2135,8 @@ void goto_coveraget::solidity_path_coverage()
   bool certify_on = false;
   path_cov_certify_mode = false;
   path_cov_certify_box_names.clear();
+  path_cov_certify_box.clear();
+  path_cov_certify_ce.clear();
   std::string certify_unit;
   uint64_t certify_enc = 0, certify_depth = 0;
   std::vector<certify_boundt> certify_box;
@@ -2000,6 +2161,9 @@ void goto_coveraget::solidity_path_coverage()
           {b.at("name").get<std::string>(),
            b.at("lo").get<std::string>(),
            b.at("hi").get<std::string>()});
+      const nlohmann::json cce = j.value("ce", nlohmann::json::object());
+      for (auto it = cce.begin(); it != cce.end(); ++it)
+        path_cov_certify_ce[it.key()] = it.value().get<std::string>();
     }
     catch (const std::exception &ex)
     {
@@ -2017,7 +2181,10 @@ void goto_coveraget::solidity_path_coverage()
     certify_on = true;
     path_cov_certify_mode = true;
     for (const auto &b : certify_box)
+    {
       path_cov_certify_box_names.push_back(b.name);
+      path_cov_certify_box.push_back({b.name, b.lo, b.hi});
+    }
     log_status(
       "--path-cov-certify: CERTIFICATION QUERY for unit '{}' path enc={} "
       "depth={} over {} bounded input(s). The per-path identity asserts are NOT "
@@ -2561,6 +2728,89 @@ void goto_coveraget::solidity_path_coverage()
   size_t units_at_cap = 0;
   size_t max_unit_paths = 0;
   std::string max_unit_name;
+
+  // ---- Resolve a box / ladder coordinate name to what it denotes ----
+  //
+  // Three kinds, told apart by an EXPLICIT prefix rather than by guessing:
+  //   msg.* / tx.* / block.*   the EVM environment
+  //   state.<field>            a state variable AT FUNCTION ENTRY
+  //   anything else            a parameter of this unit
+  //
+  // `state.` is the one that matters. Real path conditions are mostly guarded by
+  // storage (`balances[msg.sender] >= amt`), and a box that can only bound
+  // parameters cannot say anything about those paths: the region it certifies is
+  // a statement about the parameter axes only, while the path taken still depends
+  // on state the box never constrained. The visible symptom is a region that
+  // fails certification with a counterexample that keeps moving — the escaping
+  // input differs in a coordinate the box does not mention, so shrinking on the
+  // coordinates it does mention never converges.
+  //
+  // Guessing between the kinds was rejected: a contract with a parameter and a
+  // state variable of the same name would silently bound the wrong one, and
+  // "silently bounds the wrong thing" is the failure this whole layer exists to
+  // avoid.
+  auto resolve_coord =
+    [&](const symbolt *fsym, const std::string &name, expr2tc &out) -> bool {
+    if (
+      name.rfind("msg.", 0) == 0 || name.rfind("tx.", 0) == 0 ||
+      name.rfind("block.", 0) == 0)
+    {
+      std::string env = name;
+      for (auto &ch : env)
+        if (ch == '.')
+          ch = '_';
+      const symbolt *s = ns.lookup(irep_idt("c:@" + env));
+      if (s == nullptr)
+        return false;
+      out = symbol2tc(migrate_type(s->type), s->id);
+      return true;
+    }
+    if (name.rfind("state.", 0) == 0)
+    {
+      const std::string field = name.substr(6);
+      // The contract instance object. Same symbol family the counterexample
+      // harvest reads `final_state` from, so a coordinate named here and a
+      // value reported there refer to the same thing by construction.
+      const symbolt *obj = nullptr;
+      cov_context->foreach_operand([&](const symbolt &s) {
+        if (obj != nullptr)
+          return;
+        const std::string id = s.id.as_string();
+        if (
+          id.rfind("sol:@_ESBMC_Object_", 0) == 0 &&
+          (scope_contract.empty() ||
+           id.find(scope_contract) != std::string::npos))
+          obj = &s;
+      });
+      if (obj == nullptr)
+        return false;
+      const typet ostruct = ns.follow(obj->type);
+      if (ostruct.id() != "struct")
+        return false;
+      for (const auto &comp : to_struct_type(ostruct).components())
+        if (comp.get_name() == field || comp.get("#base_name") == field)
+        {
+          out = member2tc(
+            migrate_type(comp.type()),
+            symbol2tc(migrate_type(ostruct), obj->id),
+            comp.get_name());
+          return true;
+        }
+      return false;
+    }
+    if (fsym == nullptr)
+      return false;
+    for (const auto &arg : to_code_type(fsym->type).arguments())
+      if (arg.get_base_name() == name)
+      {
+        const symbolt *s = ns.lookup(arg.get_identifier());
+        if (s == nullptr)
+          return false;
+        out = symbol2tc(migrate_type(s->type), s->id);
+        return true;
+      }
+    return false;
+  };
 
   Forall_goto_functions (f_it, goto_functions)
   {
@@ -4070,39 +4320,39 @@ void goto_coveraget::solidity_path_coverage()
       // range than the argument did.
       const symbolt *fsym = ns.lookup(f_it->first);
       std::map<std::string, expr2tc> snap;
-      for (const auto &c : outer_coords)
+      // Snapshot the union of measured and PINNED coordinates. A pin on a state
+      // variable has to mean its value AT ENTRY: read live at the exit it would
+      // name the post-state, so a path that writes the variable would be pinned
+      // to a value it only reaches on the way out. That is not a slice of the
+      // input space at all.
+      std::vector<outer_coordt> snap_targets = outer_coords;
+      for (const auto &[pname, pval] : outer_pins)
       {
-        const symbolt *csym = nullptr;
-        if (
-          c.name.rfind("msg.", 0) == 0 || c.name.rfind("tx.", 0) == 0 ||
-          c.name.rfind("block.", 0) == 0)
-        {
-          std::string env = c.name;
-          for (auto &ch : env)
-            if (ch == '.')
-              ch = '_';
-          csym = ns.lookup(irep_idt("c:@" + env));
-        }
-        else if (fsym != nullptr)
-          for (const auto &arg : to_code_type(fsym->type).arguments())
-            if (arg.get_base_name() == c.name)
-            {
-              csym = ns.lookup(arg.get_identifier());
-              break;
-            }
-        if (csym == nullptr)
+        bool present = false;
+        for (const auto &c : outer_coords)
+          if (c.name == pname)
+            present = true;
+        if (!present)
+          snap_targets.push_back({pname, "0", "0"});
+      }
+      for (const auto &c : snap_targets)
+      {
+        expr2tc cexpr;
+        if (!resolve_coord(fsym, c.name, cexpr))
         {
           log_error(
-            "--path-cov-outer-box: unit '{}' has no input named '{}'. Dropping "
-            "it would silently produce a box with one fewer constraint, i.e. a "
-            "WIDER region than the one measured.",
+            "--path-cov-outer-box: unit '{}' has no input named '{}'. Name a "
+            "parameter, an environment value (`msg.value` ...), or a state "
+            "variable at entry (`state.<field>`). Dropping it would silently "
+            "produce a box with one fewer constraint, i.e. a WIDER region than "
+            "the one measured.",
             uid,
             c.name);
           abort();
         }
-        const type2tc ct = migrate_type(csym->type);
+        const type2tc ct = cexpr->type;
         symbolt ssym;
-        ssym.type = csym->type;
+        ssym.type = migrate_type_back(ct);
         ssym.name = "__ESBMC_outer$" + i2string(ghost_counter++);
         ssym.id = "path_cov::" + id2string(ssym.name);
         ssym.lvalue = true;
@@ -4121,7 +4371,7 @@ void goto_coveraget::solidity_path_coverage()
         goto_program.instructions.insert(entry, dcl);
         goto_programt::instructiont asg;
         asg.type = ASSIGN;
-        asg.code = code_assign2tc(sn, symbol2tc(ct, csym->id));
+        asg.code = code_assign2tc(sn, cexpr);
         asg.location = entry->location;
         asg.location.property("skipped");
         asg.function = entry->location.get_function();
@@ -4170,10 +4420,21 @@ void goto_coveraget::solidity_path_coverage()
             penc);
           continue;
         }
-        // `tr != enc || cnt != depth || <bound>` — the implication, written out.
-        const expr2tc not_this_path = or2tc(
+        // `tr != enc || cnt != depth || !pins || <bound>` — the implication,
+        // written out. The pins join the ANTECEDENT: the bound is then asserted
+        // only about the slice through them, which is exactly what makes a
+        // diagonal domain measurable at all.
+        expr2tc not_this_path = or2tc(
           notequal2tc(tr, constant_int2tc(utype, BigInt(penc))),
           notequal2tc(cnt, constant_int2tc(utype, BigInt(pdepth))));
+        for (const auto &[pname, pval] : outer_pins)
+        {
+          const expr2tc &pexpr = snap.at(pname);
+          not_this_path = or2tc(
+            not_this_path,
+            notequal2tc(
+              pexpr, constant_int2tc(pexpr->type, string2integer(pval))));
+        }
         for (const auto &c : outer_coords)
         {
           const BigInt lo = string2integer(c.lo), hi = string2integer(c.hi);
@@ -4250,39 +4511,20 @@ void goto_coveraget::solidity_path_coverage()
       size_t bounds_emitted = 0;
       for (const auto &b : certify_box)
       {
-        const symbolt *bsym = nullptr;
-        if (
-          b.name.rfind("msg.", 0) == 0 || b.name.rfind("tx.", 0) == 0 ||
-          b.name.rfind("block.", 0) == 0)
-        {
-          std::string env = b.name;
-          for (auto &ch : env)
-            if (ch == '.')
-              ch = '_';
-          bsym = ns.lookup(irep_idt("c:@" + env));
-        }
-        else if (fsym != nullptr)
-        {
-          for (const auto &arg : to_code_type(fsym->type).arguments())
-            if (arg.get_base_name() == b.name)
-            {
-              bsym = ns.lookup(arg.get_identifier());
-              break;
-            }
-        }
-        if (bsym == nullptr)
+        expr2tc bs;
+        if (!resolve_coord(fsym, b.name, bs))
         {
           log_error(
             "--path-cov-certify: unit '{}' has no input named '{}'. Name a "
-            "parameter of this unit, or an environment value as `msg.value` / "
-            "`tx.origin` / `block.timestamp`. Dropping the bound instead would "
-            "certify a WIDER box than the one asked for.",
+            "parameter of this unit, an environment value as `msg.value` / "
+            "`tx.origin` / `block.timestamp`, or a state variable at entry as "
+            "`state.<field>`. Dropping the bound instead would certify a WIDER "
+            "box than the one asked for.",
             uid,
             b.name);
           abort();
         }
-        const type2tc bt = migrate_type(bsym->type);
-        expr2tc bs = symbol2tc(bt, bsym->id);
+        const type2tc bt = bs->type;
         goto_programt::instructiont asm_i;
         asm_i.type = ASSUME;
         asm_i.guard = and2tc(
