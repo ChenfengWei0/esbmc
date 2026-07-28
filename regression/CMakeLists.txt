@@ -65,6 +65,20 @@ function(add_esbmc_regression folder modes)
     endforeach()
 endfunction()
 
+# Stage-2 generalisation driver: pure-function regression (no ESBMC, no solver,
+# no clock), so it does not fit the test.desc runner above and is registered
+# directly.
+#
+# It is registered HERE, beside the suites, rather than left as a script someone
+# remembers to run. The defect it pins -- a certification gate that returned
+# "certified" on every input, because it substring-matched a phrase that appears
+# in an ESBMC warning -- survived precisely because nothing ever ran this driver.
+add_test(NAME regression/scripts/solidity_path_generalise
+         COMMAND ${Python_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_solidity_path_generalise.py)
+set_tests_properties(regression/scripts/solidity_path_generalise
+  PROPERTIES TIMEOUT 60 LABELS "regression;scripts/")
+
 # conditionally enable regression suites based on configured support
 if(ENABLE_BITWUZLA)
     set(REGRESSIONS_BITWUZLA bitwuzla)
