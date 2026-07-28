@@ -1,10 +1,20 @@
 // ENTRY STORAGE as a box coordinate, and the limit that comes with it.
 //
-// `f`'s guard is `bal >= amt`: one parameter, one STATE variable, tied together.
-// That is the shape real contracts are full of (`balances[msg.sender] >= amt`)
-// and the shape a parameter-only box could say nothing about — the region it
-// certified would be a statement about the parameter axis only, while the path
+// `f`'s guard is `bal >= amt`: one parameter, one STATE variable, tied together
+// — the shape a parameter-only box could say nothing about, since the region it
+// certified would be a statement about the parameter axis only while the path
 // actually taken still depended on state the box never mentioned.
+//
+// SCOPE, and it is narrower than it looks: `state.<field>` covers SCALAR state
+// variables only. A mapping or dynamic array is not a field of the contract
+// object — the frontend lowers those to contract-scope globals — so
+// `state.balances` does not resolve at all (MEASURED: the run aborts by name).
+// The commonest real guard, `balances[msg.sender] >= amt`, is therefore NOT
+// covered by this test or by the feature it pins; supporting it needs a
+// coordinate that denotes a SLOT, which is a design question rather than a
+// lookup change. Failing by name is the right failure — a silently dropped
+// bound would certify a wider region than the one asked for — but this test
+// must not be read as evidence for the mapping case.
 //
 // `set` exists so the entry state can vary at all: with ONE transaction the
 // entry state is whatever the constructor left, so `bal` is the constant 0 and

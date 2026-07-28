@@ -2818,13 +2818,25 @@ void goto_coveraget::solidity_path_coverage()
   //   anything else            a parameter of this unit
   //
   // `state.` is the one that matters. Real path conditions are mostly guarded by
-  // storage (`balances[msg.sender] >= amt`), and a box that can only bound
-  // parameters cannot say anything about those paths: the region it certifies is
-  // a statement about the parameter axes only, while the path taken still depends
-  // on state the box never constrained. The visible symptom is a region that
-  // fails certification with a counterexample that keeps moving — the escaping
-  // input differs in a coordinate the box does not mention, so shrinking on the
-  // coordinates it does mention never converges.
+  // storage, and a box that can only bound parameters cannot say anything about
+  // those paths: the region it certifies is a statement about the parameter axes
+  // only, while the path taken still depends on state the box never constrained.
+  // The visible symptom is a region that fails certification with a
+  // counterexample that keeps moving — the escaping input differs in a
+  // coordinate the box does not mention, so shrinking on the coordinates it does
+  // mention never converges.
+  //
+  // SCOPE, MEASURED: `state.<field>` resolves against the contract INSTANCE
+  // OBJECT's struct components, so it covers scalar state variables and nothing
+  // else. A mapping or dynamic array is NOT a field of that object — the
+  // frontend lowers those to contract-scope globals (`sol:@C@<C>@<name>`) — so
+  // `state.balances` does not resolve and this function returns false. The
+  // caller then aborts by name rather than dropping the coordinate, which is the
+  // right failure (a dropped bound would certify a WIDER region than the one
+  // asked for), but it does mean the commonest real guard shape,
+  // `balances[msg.sender] >= amt`, is NOT yet supported. Supporting it needs a
+  // coordinate that denotes a SLOT, i.e. a key expression, which is a design
+  // question and not a lookup change.
   //
   // Guessing between the kinds was rejected: a contract with a parameter and a
   // state variable of the same name would silently bound the wrong one, and
