@@ -86,8 +86,27 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
     if focus:
         cmd += ["--focus-function", focus]
     cmd += extra
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                       timeout=timeout)
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                           timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        # A timeout is an OUTCOME of this pipeline, not a crash of it. Measured:
+        # one outer-box round on a real contract unit (5 paths, 2 coordinates,
+        # 4 probes) does not finish in 540s, so on real input this is the common
+        # case rather than the exceptional one -- and it used to surface as a
+        # Python traceback in the middle of a benchmark. Return the partial
+        # output with an explicit marker; since it carries NEITHER verdict line,
+        # every caller reads it as UNKNOWN, which is what it is.
+        # `text=True` does NOT apply to the exception's captured output: both
+        # attributes come back as bytes. Decode each side BEFORE concatenating,
+        # or the handler itself raises -- which is what it did on its first real
+        # use, turning a handled timeout into a TypeError inside the handler.
+        def _txt(b):
+            if b is None:
+                return ""
+            return b.decode(errors="replace") if isinstance(b, bytes) else b
+        out = _txt(e.stdout) + _txt(e.stderr)
+        return out + f"\n[run] TIMEOUT after {timeout}s: {' '.join(cmd)}\n"
     return p.stdout + p.stderr
 
 
@@ -287,6 +306,14 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
         json.dump(spec, f)
     log = run(esbmc, sol, contract, ["--path-cov-outer-box", path],
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
+    # A timed-out round measures nothing, and "measured nothing" is reported
+    # downstream as "no fully bounded region was measured" -- which reads as a
+    # property of the path. Say which it was, here, where it is known.
+    timed_out = "[run] TIMEOUT after" in log
+    if timed_out:
+        print(f"[outer-box] ROUND TIMED OUT — no probe verdicts from it. "
+              f"Every region below is missing because the round did not "
+              f"finish, NOT because the path has no bounded region.")
     boxes, brackets, regions, warned = {}, {}, {}, set()
     for line in log.splitlines():
         m = BOX_RE.search(line)
@@ -300,7 +327,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             regions[int(m.group(1))] = parse_intervals(m.group(2))
             if m.group(3):
                 warned.add(int(m.group(1)))
-    return boxes, brackets, regions, warned
+    return boxes, brackets, regions, warned, timed_out
 
 
 def verdict(log):
@@ -451,20 +478,33 @@ def main():
           + (f"   [pinned: {pins}]" if pins else ""))
 
     # Round 1: geometric bracket.
-    _, brackets, regions, warned = outer_round(
+    _, brackets, regions, warned, timed_out = outer_round(
         args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
         args.probes, args.max_tx, args.timeout, cwd, geometric=True,
         ast=args.ast, focus=focus, memlimit=args.memlimit)
     print(f"[bracket] {brackets}")
+    # MEASURED, and it is the binding cost on real input: the geometric round
+    # ignores --probes entirely (see geometric_values) and lays down one probe
+    # per power of two, i.e. 258 candidate bounds per coordinate per direction.
+    # For a 5-path, 2-coordinate unit that is over five thousand ladder probes
+    # in one batch. On a toy contract it is instant; on EscrowSrc.withdraw the
+    # round does not finish in 100s, while the SAME unit with one path, one
+    # coordinate and one probe (6 ladder probes) finishes in about 2s and
+    # produces a correct outer box, bracket and candidate region. Bounding the
+    # bracket ladder is a METHOD decision -- it trades away the
+    # "magnitude-independent in ONE run" property -- so it is an open item, not
+    # something to invent here.
+    any_timeout = timed_out
 
     # Rounds 2..N: linear inside the union of the brackets, per coordinate.
     spans = {c: (brackets_for(c, brackets) or (0, UINT256_MAX))
              for c in coords}
     for r in range(args.refine_rounds):
-        _, brackets, regions, warned = outer_round(
+        _, brackets, regions, warned, timed_out = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
             ast=args.ast, focus=focus, memlimit=args.memlimit)
+        any_timeout = any_timeout or timed_out
         print(f"[refine {r+1}] spans={spans} regions={regions}"
               + (f" UNSEPARATED={sorted(warned)}" if warned else ""))
         new = {c: (brackets_for(c, brackets) or spans[c]) for c in coords}
@@ -477,7 +517,10 @@ def main():
     for enc, depth, ce in paths:
         box = regions.get(enc)
         if box is None:
-            failed[enc] = "no fully bounded region was measured"
+            failed[enc] = ("no outer-box round finished, so nothing was "
+                           "measured for this path (a BUDGET outcome, not a "
+                           "property of the path)" if any_timeout else
+                           "no fully bounded region was measured")
             continue
         if enc in warned:
             # Not fatal: certification is the arbiter. But say it, because a

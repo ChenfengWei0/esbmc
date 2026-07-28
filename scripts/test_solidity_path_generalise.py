@@ -90,6 +90,17 @@ check("crash-is-unknown", verdict(CRASHED), "UNKNOWN")
 # return "certified". If this ever goes back to SUCCESSFUL the gate is gone.
 check("warning-alone-is-not-certified", verdict(WARN), "UNKNOWN")
 
+# A killed run. On real input this is the COMMON case, not the exceptional one:
+# one outer-box round on a real contract unit does not finish in 540s. It must
+# read as UNKNOWN for the same reason a crash does.
+TIMED_OUT = "\n".join([
+    "Target: 64-bit little-endian x86_64-unknown-linux with esbmclibc",
+    WARN,
+    "Starting Bounded Model Checking",
+    "[run] TIMEOUT after 100s: esbmc --path-cov-outer-box outer.json",
+])
+check("timeout-is-unknown", verdict(TIMED_OUT), "UNKNOWN")
+
 
 # --- unit identification ---
 # `function` is present and empty on every complete-path claim; the plain name
