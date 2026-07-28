@@ -103,6 +103,13 @@ std::string effective_sol_type(const typet &t)
       if (!cn.empty())
         return "CONTRACT:" + cn;
     }
+    // A `string` value lowers to a `char *` with `#sol_type: STRING` stamped on
+    // the pointer. Surface it so a string call-argument is rendered as a
+    // Solidity string literal reconstructed from the counterexample length
+    // (see format_sol_value / reconstruct's recovered_str_len) instead of being
+    // dropped as unsupported.
+    if (ptag == "STRING")
+      return "STRING";
   }
   // A `bytes` value lowers to the `BytesDynamic` struct (tag "struct
   // BytesDynamic", no #sol_type). NOT "BytesStatic" (a fixed bytesN, rendered
@@ -308,6 +315,43 @@ std::string foundry_generator::format_sol_value(
   // call is then UNSUPPORTED) rather than risk a wrong-width/wrong-value test.
   if (unsigned n = parse_fixed_bytes_width(sol_type))
     return format_fixed_bytes(n, value);
+
+  // Dynamic `bytes`: recovered as a BytesDynamic struct
+  // {offset,length,capacity,initialized,…}. The byte CONTENT lives in a
+  // separate pool addressed by `offset` and is not faithfully recoverable, but
+  // the `.length` field is — and a branch on a `bytes` argument reads it via
+  // `.length`. Render a zero-filled literal of the recovered length so both a
+  // `d.length > k` arm and its complement get a genuinely length-correct,
+  // reaching argument. A garbage-huge nondet length (llc_nondet_bytes leaves
+  // the length unconstrained above, so the solver may pick e.g. 2^64-4 to
+  // satisfy `> k`) is clamped to a small representative that still exceeds the
+  // common small thresholds — a faithful large-content witness is not
+  // reconstructible, and an empty default would silently claim the branch
+  // without reaching it.
+  if (sol_type == "BYTES_DYN")
+  {
+    if (!is_constant_struct2t(value) ||
+        !is_struct_type(to_constant_struct2t(value).type))
+      return "";
+    const constant_struct2t &cs = to_constant_struct2t(value);
+    const struct_type2t &st = to_struct_type(cs.type);
+    size_t idx = st.member_names.size();
+    for (size_t i = 0; i < st.member_names.size(); ++i)
+      if (st.member_names[i].as_string() == "length")
+      {
+        idx = i;
+        break;
+      }
+    if (idx >= cs.datatype_members.size())
+      return "";
+    const expr2tc &lm = cs.datatype_members[idx];
+    if (!lm || !is_constant_int2t(lm))
+      return "";
+    uint64_t len = to_constant_int2t(lm).value.to_uint64();
+    // > 4096 is treated as an unconstrained-nondet "garbage" length.
+    unsigned long render_len = (len > 4096) ? 32ul : (unsigned long)len;
+    return "hex\"" + std::string(2 * render_len, '0') + "\"";
+  }
 
   if (!is_constant_int2t(value))
     return "";
@@ -856,6 +900,61 @@ const foundry_generator::mock_spec &foundry_generator::build_mock_spec(
 // path). Returns a null expr when the parameter is absent (sliced away because
 // it is irrelevant to the covered branch — the caller then uses the type
 // default, which is sound).
+// Reconstruct the length of a nondet `string` argument from the model. The
+// harness fills the fixed global buffer `_ESBMC_rand_str` with `len` non-null
+// bytes and zeroes the tail (nondet_string, solidity_string.c), so the leading
+// non-null run of any guard-true model value of that buffer is the string
+// length the covered path used. Returns the maximum such run over all
+// guard-true SSA steps (0 when the string is empty / unread on this path). The
+// buffer is shared across all nondet strings in a run, so this is a single
+// per-counterexample length — sufficient for the single-string harness entries
+// these tests exercise.
+static unsigned recover_nondet_string_length(
+  const symex_target_equationt &target,
+  smt_convt &smt_conv)
+{
+  unsigned best = 0;
+  auto leading_nonzero = [](const expr2tc &arr) -> unsigned {
+    if (!arr || !is_constant_array2t(arr))
+      return 0;
+    const auto &m = to_constant_array2t(arr).datatype_members;
+    unsigned n = 0;
+    for (const auto &e : m)
+    {
+      if (!e || !is_constant_int2t(e) || to_constant_int2t(e).value == 0)
+        break;
+      ++n;
+    }
+    return n;
+  };
+  std::function<void(const expr2tc &)> visit = [&](const expr2tc &e) {
+    if (!e)
+      return;
+    if (
+      is_symbol2t(e) && to_symbol2t(e).thename.as_string().find("rand_str") !=
+                          std::string::npos)
+    {
+      unsigned n = leading_nonzero(smt_conv.get(e));
+      if (n > best)
+        best = n;
+    }
+    e->foreach_operand([&](const expr2tc &s) { visit(s); });
+  };
+  for (auto const &step : target.SSA_steps)
+  {
+    if (!smt_conv.l_get(step.guard_ast).is_true())
+      continue;
+    if (step.is_assignment())
+    {
+      visit(step.lhs);
+      visit(step.rhs);
+    }
+    if (step.is_assume() || step.is_assert())
+      visit(step.cond);
+  }
+  return best;
+}
+
 expr2tc foundry_generator::recover_focus_param(
   const symex_target_equationt &target,
   smt_convt &smt_conv,
@@ -1012,6 +1111,13 @@ foundry_generator::test_case foundry_generator::reconstruct(
   smt_convt &smt_conv,
   const namespacet &ns) const
 {
+  // Length of a nondet `string` argument recovered from the model (see
+  // recover_nondet_string_length); used by build_call to render a string
+  // literal that reproduces a `bytes(s).length` branch. A single value per
+  // counterexample — the harness shares one nondet string buffer.
+  const unsigned recovered_str_len =
+    recover_nondet_string_length(target, smt_conv);
+
   // Resolve a recovered (contract, method, args) into a compilable call by
   // matching the method's DECLARED parameters in source order: a recovered
   // value fills its slot, an un-recovered slot (parameter sliced away because
@@ -1116,6 +1222,24 @@ foundry_generator::test_case foundry_generator::reconstruct(
       sol_arg a;
       a.param = decl.first;
       a.sol_type = decl.second;
+
+      // `string` argument: the recovered value is a bare `char *` pointer, so
+      // format_sol_value/default cannot derive a length from it. Instead render
+      // a Solidity string literal of the length reconstructed from the model
+      // (recovered_str_len). This reproduces a `bytes(s).length > k` branch
+      // with a genuinely long-enough argument, and its complement with a short
+      // / empty one — rather than both arms collapsing onto the empty default
+      // and deduplicating to a single non-reaching case. Content is filler
+      // ('a'), which is faithful for length-based branches; a content-dependent
+      // branch is a documented residual (the try/catch wrap tolerates it).
+      if (decl.second == "STRING")
+      {
+        unsigned slen = recovered_str_len > 256 ? 256 : recovered_str_len;
+        a.literal = "\"" + std::string(slen, 'a') + "\"";
+        a.defaulted = false; // reconstructed from the model length
+        out.args.push_back(a);
+        continue;
+      }
 
       // Interface/contract-typed argument: pass a synthesized mock instance
       // rather than a literal (a bare address reverts when the contract calls a

@@ -127,6 +127,196 @@ public:
   static std::set<std::pair<std::string, std::string>> covered_set;
   static std::string covered_set_outpath;
 
+  // ---- Complete-path coverage: CONTENT-ADDRESSED cross-run path keys ----
+  //
+  // Branch coverage keys an edge by (condition text, location) — content
+  // addressed already. Complete-path coverage used to key a path by its ordinal
+  // `enc`, which is a position in one particular enumeration. That is unsafe
+  // across runs: the decision set has changed three times (short-circuit
+  // operands, the ABI non-payable gate, internal-call expansion), and each
+  // change RENUMBERS every path. A key witnessed under one numbering then
+  // silently designates a DIFFERENT path under the next, so a path can be
+  // skipped as "already covered" when nothing has covered it — no crash, no
+  // warning, coverage simply reads low. An ordinal key cannot be made safe;
+  // it has to be replaced.
+  //
+  // The stable key is the decision SEQUENCE itself:
+  //     unit signature, then per decision (site, polarity, occurrence index)
+  // where `site` is the decision's SOURCE LOCATION (plus its operand index, for
+  // several folded short-circuit operands sharing one location) rather than any
+  // serial number. Enumeration order, added decisions elsewhere, and a changed
+  // unit set then leave a path's key untouched: an old key either matches
+  // exactly or does not match at all — it can never designate a different path.
+  //
+  // `path_covered_ids` holds the ids loaded from the previous run;
+  // `path_stable_id` maps this run's claim key -> its stable id so the run-end
+  // write-back can record exactly the paths that were witnessed.
+  static std::set<std::string> path_covered_ids;
+  static std::map<std::pair<std::string, std::string>, std::string>
+    path_stable_id;
+  static std::string path_covered_outpath;
+
+  // Fail-closed guard for the file above. The stable key protects against
+  // RE-NUMBERING; it cannot protect against a change that alters what a path IS
+  // (different source, a decision kind added to the set, a different loop or
+  // recursion bound). This fingerprint covers exactly those, and a mismatch
+  // DISCARDS the cache and recomputes — deliberately with no migration path,
+  // because migration logic is where this class of silent error hides.
+  static std::string path_cov_fingerprint;
+
+  // Serialise the complete-path covered set + its fingerprint (atomic publish,
+  // same .tmp-then-rename discipline as write_covered_set_atomic). No-op when
+  // no --coverage-covered-set was given.
+  static void write_path_covered_set_atomic();
+
+  // Was this claim's path already witnessed in an EARLIER round?
+  //
+  // Complete-path coverage does NOT use `covered_set` — that is the branch
+  // metric's (condition, location) pair set, and solidity_path_coverage()
+  // deliberately leaves it empty because an ordinal-keyed pair cannot survive a
+  // re-numbering. The cross-run identity here is the content-addressed stable
+  // id, so the test has to go through path_stable_id -> path_covered_ids.
+  //
+  // Getting this wrong is not cosmetic: a path skipped because a previous round
+  // already witnessed it has NO verdict this run, so reading `covered_set`
+  // (always empty) reports it as U — a path with a counterexample in hand,
+  // filed under "we could not decide". Measured: with --coverage-covered-set
+  // the file was never even written, so the whole cross-run mechanism was dead
+  // in both directions.
+  static bool
+  path_witnessed_earlier(const std::pair<std::string, std::string> &claim_key);
+
+  // ---- U REASON TOKEN: why is this path not witnessed? ----
+  //
+  // U is a FIRST-CLASS DELIVERABLE, not an internal diagnostic. The claim being
+  // made is "every uncovered path carries a named reason; there is no
+  // unexplained remainder". A U cell that can also absorb an implementation
+  // defect makes that claim false — and it has absorbed one three times already
+  // (ordinal-key mismatch, the RETURN exit, `rawBalances`). Each time the broken
+  // case was indistinguishable from an honest solver timeout, because "we do not
+  // know" is a legitimate, expected outcome.
+  //
+  // So every U must be classifiable, and a U that is not is a HARD FAILURE
+  // rather than a quiet residue. The tokens:
+  //
+  //   named-obstacle      the unit is disqualified (the model admits an
+  //                       execution the chain does not have). Not an unknown at
+  //                       all — a declared exclusion that no verdict can change.
+  //   bounded-holds       the solver proved no witness AT THIS EXPLORATION.
+  //                       Honest and precise: it is not "unreachable", it is
+  //                       "no witness within the declared tx/unwind bound from
+  //                       the post-constructor entry state".
+  //   solver-unknown      the solver returned UNKNOWN/error, or an inductive
+  //                       step could not prove it. The genuine "we do not know".
+  //   not-solved-this-run the claim was instrumented but never reached the
+  //                       solver. The entry-liveness audit catches the case
+  //                       where a WHOLE unit is in this state; this token is
+  //                       exactly the per-claim residue it cannot see.
+  //   unit-not-entered    the harness never entered this path's unit, so no
+  //                       classification of the path itself means anything.
+  //
+  // ORDER MATTERS, and `unit-not-entered` must sit SECOND — directly under
+  // named-obstacle and ABOVE the two tokens that would otherwise swallow it:
+  //
+  //   * a unit that is entered but whose claims hold vacuously gets verdict 'P'
+  //     and would be filed `bounded-holds` — "no witness within the bound",
+  //     which is a statement about the path when the truth is that nothing ran;
+  //   * a unit whose claims were never generated at all (measured on a real
+  //     benchmark: 120166 instrumented paths, ZERO verification conditions) has
+  //     no verdict and would be filed `not-solved-this-run`.
+  //
+  // Both are strictly less informative than the real reason, so putting them
+  // first loses the one fact worth having. The ordering rule is the same one
+  // that puts named-obstacle at the top: when the unit is disqualified, or was
+  // never entered, every finer classification of its paths is meaningless.
+  //
+  // This is NOT a reserved slot — it fires today. With --focus-function the
+  // audit deliberately does not abort for the units the narrowing excluded, so
+  // their paths reach the report; measured before the ordering was fixed, they
+  // were all reported `not-solved-this-run` on a run whose own log line one
+  // line earlier said the unit had not been entered.
+  //
+  // This is an INVARIANT ASSERTION, not a detector: the live tokens partition
+  // the possible states by construction (a claim's verdict is one of
+  // {none, P, U, F}, and F means witnessed, hence not U). It therefore needs no
+  // fault injection — its value is as a tripwire for a future change that
+  // introduces a U with no reason. THE PARTITION ARGUMENT ONLY HOLDS WHILE THE
+  // CLASSIFICATION HAS NO CATCH-ALL: the implementation's `default` arm returns
+  // "" so the caller aborts. Mapping `default` to any token instead would make
+  // the abort dead code while everything still looked fine — do not add one when
+  // a fifth verdict value appears; add an explicit case for it.
+  //
+  // Returns the token, or "" when the path is not a U (which callers treat as
+  // the hard failure above).
+  static std::string
+  path_u_reason_token(const std::pair<std::string, std::string> &claim_key);
+
+  // The token names, in report order. Printed in full every time, zeros
+  // included, so a category that stops occurring is visible rather than absent.
+  static const std::vector<std::string> &path_u_reason_tokens();
+
+  // ENTRY-LIVENESS AUDIT — hard-fails when a unit's results are vacuous.
+  //
+  // Measured on a real benchmark (St1inch): 120166 paths were instrumented and
+  // symex generated ZERO verification conditions — the harness never called any
+  // unit. Every path was then reported "U", which is indistinguishable from an
+  // honest solver timeout, so a completely empty run looked like a merely hard
+  // one. Nothing crashed and nothing warned; the defect was found by a human
+  // reading a log line.
+  //
+  // Two levels of the same failure, deliberately sharing ONE channel so that
+  // implementing half of it cannot leave the other half silent:
+  //   * a unit whose claims never reached the solver was never entered;
+  //   * zero verification conditions overall is the extreme case of that, where
+  //     EVERY unit was never entered.
+  //
+  // The witness is positive: a claim that produced a solver verdict proves the
+  // unit was executed. Absence of a verdict is not read as "undecided" — for a
+  // whole unit it is read as "this run says nothing about this unit", which is
+  // a tool failure, not a result. Claims deliberately skipped via the cross-run
+  // covered set are excluded, since not instrumenting them is intentional.
+  //
+  // This is also what currently makes it safe to keep `I` disabled: if
+  // unreachability were ever emitted, a never-entered unit would have every one
+  // of its `assert(tr != enc)` hold vacuously and be reported as PROVEN
+  // INFEASIBLE — the most damaging wrong answer this pass could give. The audit
+  // is the precondition for ever enabling it.
+  // `focus_function` is --focus-function's value, empty when unset. With it set
+  // the dispatcher deliberately calls only that entry, so every OTHER unit is
+  // legitimately never entered and must not be treated as a defect — measured:
+  // the first real use of this audit aborted on exactly that. The premise
+  // ("a unit with instrumented claims should be entered") only holds for the
+  // focused unit, so the check is narrowed to where it holds rather than
+  // weakened everywhere.
+  static void audit_entry_liveness(const std::string &focus_function);
+
+  // Units the audit found had claims instrumented but NONE decided, i.e. the
+  // harness never entered them — mapped to WHY, because the two causes are
+  // opposite in nature and must not be collapsed:
+  //
+  //   "excluded by --focus-function"  INTENDED and declared. The narrowing says
+  //                                   this unit is not supposed to be entered
+  //                                   in this run; its paths are meant to be
+  //                                   witnessed by the run that focuses on them
+  //                                   and unioned via the covered set. Normal
+  //                                   output, labelled `unit-not-entered`.
+  //   "harness never entered it"      A DEFECT. Measured on a real benchmark:
+  //                                   120166 instrumented paths, zero
+  //                                   verification conditions. Hard failure.
+  //
+  // Keeping the reason (rather than a bare set) is what makes this usable BEYOND
+  // token selection. The planned entry-liveness WITNESS — an `assert(false)` at
+  // each unit's body head that must be refuted — has the rule "not refuted =>
+  // hard failure", and applying that rule uniformly would abort the moment
+  // anyone passes --focus-function. It must consult this same distinction:
+  // SKIP the check for focus-excluded units, REQUIRE refutation for the rest.
+  // Recording only "not entered" would force that layer to rediscover the split.
+  //
+  // Filled by audit_entry_liveness (which runs before any figure is printed).
+  // Today the defect entries never survive to a reader — the audit aborts on
+  // them — but both are recorded so the shape is right when that changes.
+  static std::map<std::string, std::string> units_not_entered;
+
   // ---- Solidity complete-path coverage: tri-state (F/I/U) reporting ----
   //
   // `reached_claims` alone cannot distinguish "proven unreachable" from
@@ -135,12 +325,16 @@ public:
   // records it here as it solves (keyed by claim_sig == "msg\tloc"):
   //   'F' — refuted (P_SATISFIABLE): the path is feasible and a
   //         counterexample (concrete input) is in hand.
-  //   'P' — proven (P_UNSATISFIABLE) AT THE CURRENT BOUND. This is only a
-  //         CANDIDATE for I: a bounded proof means "no witness within this
-  //         tx/unwind bound", NOT unreachability. Only an UNBOUNDED run
-  //         (--solidity-max-tx 0) upgrades 'P' to a true I; every bounded
-  //         'P' is reported as U with `bounded_holds: true` so a
-  //         "could not reach it here" is never dressed up as a proof.
+  //   'P' — proven (P_UNSATISFIABLE) AT THE CURRENT EXPLORATION. This is a
+  //         CANDIDATE for I and nothing more: it means "no witness within this
+  //         tx/unwind bound, from this entry state", NOT unreachability.
+  //         NOTHING currently upgrades it. In particular --solidity-max-tx 0
+  //         does NOT: coverage rewrites the dispatcher back-edge to a SKIP, so
+  //         that flag explores ONE transaction — fewer than
+  //         --solidity-max-tx 2. Every 'P' is therefore reported as U with
+  //         `bounded_holds: true`. See path_cov_can_prove_unreachable() in
+  //         bmc.cpp, which is the single place to change if a havoc'd-entry or
+  //         loop-live exploration mode is ever added.
   //   'U' — undecided: solver UNKNOWN/error, or the inductive step could
   //         not prove it.
   // Written under a mutex (--parallel-solving runs jobs on threads).
@@ -170,6 +364,75 @@ public:
   // reverted transaction succeeded.
   static std::set<std::pair<std::string, std::string>> undetermined_exit_paths;
 
+  // Paths along which the MODEL AND THE EVM DISAGREE, keyed like all_claims,
+  // with the value naming the obstacle.
+  //
+  // These are not imprecision — they are paths where a counterexample would
+  // describe an execution that does not exist on-chain, so a test built from
+  // one is red when run while being labelled certified. That is the single
+  // failure mode this pipeline must never produce, and it is why the marking is
+  // not merely reported: a marked path must be excluded from the sibling set
+  // used for the stage-3 subtraction AND must not be turned into a test.
+  // Marking without excluding would be worthless.
+  //
+  // Counted and reported as an ABSOLUTE number, never folded into a coverage
+  // ratio: an obstacle is not partial credit.
+  //
+  // Marking is PER PATH, not per unit — a path of the same unit that never
+  // walks the offending site is unaffected and stays fully usable. The rule is
+  // conservative: any path whose decision sequence passes through the site is
+  // marked.
+  static std::map<std::pair<std::string, std::string>, std::string>
+    named_obstacle_paths;
+
+  // Paths whose certified region is NARROWER than it would otherwise be,
+  // because their unit lost paths to the goal cap. Keyed like all_claims.
+  //
+  // This is deliberately NOT named_obstacle_paths, and the reason is mechanical.
+  // Certification is a query — `assume(L <= x <= U); assert(tr == pi)` — and the
+  // goal cap limits only how many EXIT ASSERTS are emitted. Phase-1 accounting
+  // still updates `tr`/`cnt` on every decision of every path, dropped ones
+  // included, so an input that walks a dropped path carries that path's number
+  // at the exit, the query fails on it, and the candidate interval is rejected
+  // and shrunk. The query never needed the dropped path to have been enumerated.
+  //
+  // A `require` lowered to a control-flow-free assume is the opposite case and
+  // stays an obstacle: there the reverting execution does not exist in the model
+  // at all, so no query can see it and no interval can be shrunk away from it.
+  // Existing-but-unenumerated and non-existent are different failures, and only
+  // the second can ship a test that is red on the unmodified contract.
+  static std::map<std::pair<std::string, std::string>, std::string>
+    truncation_weakened;
+
+  // ---- DEGRADATION: which call points a unit gave up to fit its budget ----
+  //
+  // Degradation and TRUNCATION are two different mechanisms with two different
+  // soundness stories, so they get two separate reports and are never merged:
+  //
+  //   * DEGRADATION withdraws call points BEFORE enumeration. The callee stays
+  //     a call, so symex still executes it; it simply stops contributing
+  //     decisions to the caller's path identity. The path classes get COARSER
+  //     but still partition the input space (two different decision sequences
+  //     still differ in polarity at their first differing index; execution is
+  //     still deterministic), so the enumeration stays sound. What is lost is
+  //     assertion STRENGTH, and it is lost at named, reported places rather
+  //     than everywhere.
+  //   * TRUNCATION drops enumerated paths at the goal cap. Those paths exist
+  //     and symex will execute them; they are simply missing from the sibling
+  //     set.
+  //
+  // The order is fixed: degradation fires FIRST, truncation is the last-resort
+  // backstop. In the intended steady state truncation never fires at all — so
+  // if it does fire, that is a result in its own right (the degradation policy
+  // was not aggressive enough for that unit) and is reported as such, never
+  // folded into the degradation report.
+  //
+  // Keyed by unit id; the value names each withdrawn call point (callee plus
+  // the source location of the call), because "this unit was degraded" is not
+  // actionable while "this unit stopped recording the decisions of THIS call"
+  // is.
+  static std::map<std::string, std::vector<std::string>> degraded_call_sites;
+
   // The CE payload of a witnessed (F) path: the concrete values that make the
   // path execute, harvested from the solver model while it is still live.
   // This is the half of the report a downstream generaliser actually consumes
@@ -181,12 +444,15 @@ public:
   // Both are recorded ONLY from concrete model values; a symbolic or missing
   // value is dropped rather than guessed.
   //
-  // `sliced`/`compact_trace` record HOW the trace was produced, because both
-  // affect what can be harvested: the symex slicer keeps only steps the
-  // CLAIM depends on, and a path claim's guard mentions only the ghost
-  // accumulators, so state-variable writes are sliced away unless --no-slice
-  // is given. Without these flags an empty final_state would be ambiguous
-  // between "this path writes no state" and "the writes were sliced away".
+  // `sliced`/`compact_trace`/`payload_symbols_protected` record HOW the trace
+  // was produced, because all three affect what can be harvested: the symex
+  // slicer keeps only steps the CLAIM depends on, and a path claim's guard
+  // mentions only the ghost accumulators, so state-variable writes would be
+  // sliced away — unless the payload symbols were exempted from slicing
+  // (protect_ce_symbols, which --cov-report-json turns on) or slicing was
+  // switched off entirely. Without these flags an empty final_state would be
+  // ambiguous between "this path writes no state" and "the writes were sliced
+  // away".
   struct path_ce_t
   {
     // Solidity call arguments only: a nondet-sourced write to a symbol whose
@@ -200,6 +466,20 @@ public:
     // How many nondet values were classified as harness-internal and dropped.
     // Reported so the omission is visible rather than silent.
     size_t dropped_internal = 0;
+    // What the external calls on this path RETURNED. Under --unbound the
+    // frontend models an external call as a nondet return plus a nondet
+    // re-entry, so this value is chosen by the model, not by the caller —
+    // keeping it out of `inputs` is the difference between a replayable test
+    // and one that tries to pass an unpassable argument.
+    std::vector<std::pair<std::string, std::string>> extcall_returns;
+    // Contract state at the moment this path's function was ENTERED. A path
+    // guarded by state that an earlier transaction established is only
+    // reproducible if the entry state is known too.
+    std::vector<std::pair<std::string, std::string>> entry_storage;
+    // False when the entry marker was not seen in the trace (e.g. the entry
+    // assignment was sliced, or the path was witnessed in an earlier round), so
+    // an empty entry_storage is never read as "the contract started empty".
+    bool entry_storage_known = false;
     std::vector<std::pair<std::string, std::string>> final_state;
     // State variables this path provably WROTE but whose value could not be
     // rendered as a constant (mappings / dynamic arrays lower to infinite-array
@@ -209,6 +489,12 @@ public:
     std::vector<std::string> state_written_unrendered;
     bool sliced = true;
     bool compact_trace = true;
+    // The symbols this payload is built from (contract objects, contract-scope
+    // mapping/array stores, msg./tx./block.) were registered as no-slice names,
+    // so `sliced == true` here does NOT mean the payload was cut down. This is
+    // what makes an empty `final_state` readable as "this path writes no state"
+    // rather than "the writes were sliced away".
+    bool payload_symbols_protected = false;
     // The harvest stopped at this path's own violated assert, so values from
     // any LATER transaction in a multi-tx harness cannot leak in. False means
     // the assert was not found in the trace and the whole trace was scanned —
@@ -223,6 +509,7 @@ public:
     bool revert_pre_rollback = false;
   };
   static std::map<std::string, path_ce_t> path_ce;
+
   // Item 2e: serialize covered_set to covered_set_outpath crash-safely
   // (write a .tmp then atomic rename). Called both incrementally as
   // each edge is witnessed P_SATISFIABLE (bmc.cpp) and once at run end,
@@ -275,8 +562,11 @@ public:
   // (esbmc_parseoptions.cpp) where `context` is available; nullptr => the
   // pass aborts with an actionable error rather than silently no-op.
   contextt *cov_context = nullptr;
-  // Per-function cap on enumerated complete paths; on overflow the
-  // instrumentation reports the dropped count (never a silent truncation).
+  // Per-unit budget on enumerated complete paths (--path-cov-max-goals).
+  // TWO mechanisms are keyed off it, in a fixed order (see
+  // degraded_call_sites): degradation withdraws call points until the unit
+  // fits, and only if that fails does the enumeration truncate at the cap. On
+  // truncation the dropped count is always reported — never a silent cut.
   size_t path_cov_max_goals = 10000;
   // Loop bound for path enumeration: each back-edge is followed at most this
   // many times per path, so complete paths are enumerated up to this many
@@ -292,6 +582,49 @@ public:
   // declaring contract and excluded. Empty => no scoping (unchanged
   // whole-unit behaviour, e.g. C/C++/no --contract).
   std::string scope_contract = "";
+
+  // --cov-report-json: the report exists FOR the per-path counterexample
+  // payload (call arguments / EVM environment / post-state). The symex slicer
+  // keeps only what the CLAIM depends on, and a path claim's guard mentions
+  // nothing but the ghost accumulators `tr`/`cnt` — so every contract-state
+  // write and every environment read is sliced out and the payload comes back
+  // empty. When this is set, solidity_path_coverage() registers exactly the
+  // symbols the harvest reads (contract instance objects, contract-scope
+  // mapping/dynamic-array stores, msg./tx./block.) in config.no_slice_names,
+  // ESBMC's existing per-symbol slicing exemption. Slicing itself stays ON, so
+  // the c2goto crypto/ABI tables and the rest of the harness plumbing are
+  // still removed from the formula.
+  bool protect_ce_symbols = false;
+
+  // ---- STAGE 2: THE CERTIFICATION QUERY (--path-cov-certify <json>) ----
+  //
+  // Everything downstream of path enumeration rests on ONE query:
+  //     assume(L <= x <= U);  assert(tr == pi)
+  // "every input in the box walks path pi". It is what makes certification
+  // immune to goal-cap truncation (the cap drops exit asserts, never the
+  // Phase-1 `tr` accounting, so an input reaching a dropped path still carries
+  // that path's number and the query rejects the box). Until now that argument
+  // lived only in a comment — the query itself had no implementation at all,
+  // which made it the one contributed mechanism no code had ever exercised.
+  //
+  // THE ASSERT GOES ON EVERY EXIT OF THE UNIT, not on pi's exit. An input in
+  // the box that walks a DIFFERENT path leaves through a different exit; with
+  // the assert only on pi's exit it would never be checked and the query would
+  // hold vacuously — a permanently green check in the single place where being
+  // green must mean something. On every exit, that same input hits
+  // `tr == enc` at ITS exit, fails, and the counterexample IS the witness that
+  // shrinks the box.
+  //
+  // Deliberately implemented as a branch at the END of solidity_path_coverage()
+  // rather than a pass of its own: expansion, the ABI gate, Phase-1 accounting,
+  // the `tr`-completeness invariant and both censuses must all still run. They
+  // are the defences, and a certification mode that bypassed them would be
+  // certifying against accounting nobody checked. It also matters that the query
+  // uses the SAME `tr` the enumeration uses — if the two used different
+  // accounting, the immunity-to-truncation argument would not hold.
+  //
+  // Empty => disabled, and the pass behaves exactly as before.
+  std::string path_cov_certify_path = "";
 
   // Path to the cross-run covered-set JSON (--coverage-covered-set).
   // Empty => disabled (no load, no skip, no write-back; behaviour

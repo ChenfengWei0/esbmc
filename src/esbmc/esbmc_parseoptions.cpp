@@ -3148,8 +3148,61 @@ int esbmc_parseoptionst::do_bmc(bmct &bmc)
   log_progress("Starting Bounded Model Checking");
 
   smt_convt::resultt res = bmc.start_bmc();
+
+  // A solver that answers UNKNOWN (or errors out on an unsupported
+  // construct) is a *solver limitation*, not an ESBMC invariant violation:
+  // it must not take the process down.
+  //
+  // The motivating case: `--k-induction` on a Solidity contract. The
+  // inductive step havocs the loop-modified state, which for a storage
+  // mapping means an equality between the CONST_ARRAY-initialised global
+  // and a fresh symbol. Bitwuzla answers UNKNOWN with "Equality over
+  // constant arrays not fully supported yet" (the same limitation the
+  // Solidity solver auto-hint above already documents for >=3-level nested
+  // mappings), dec_solve maps that to P_ERROR — and the `abort()` that used
+  // to sit here turned it into SIGABRT / exit 134, killing the whole run.
+  // That also made dead code of the `case smt_convt::P_ERROR: break;` arm
+  // that `is_base_case_violated`, `does_forward_condition_hold` and
+  // `is_inductive_step_violated` each already have to degrade to TV_UNKNOWN.
+  //
+  // First try to recover: if the backend was auto-selected (the user did
+  // not name one) retry the query once with CVC5, whose array engine
+  // handles the shape. `bmct::options` is a reference to the caller's
+  // option set, so the switch also sticks for the remaining k steps.
+  static bool solver_fallback_attempted = false;
+  if (res == smt_convt::P_ERROR && !solver_fallback_attempted)
+  {
+    const bool user_picked_solver =
+      cmdline.isset("z3") || cmdline.isset("cvc5") || cmdline.isset("cvc4") ||
+      cmdline.isset("cvc") || cmdline.isset("bitwuzla") ||
+      cmdline.isset("boolector") || cmdline.isset("yices") ||
+      cmdline.isset("mathsat") || cmdline.isset("smtlib") ||
+      cmdline.isset("default-solver");
+    const std::string padded_solvers =
+      std::string(" ") + ESBMC_AVAILABLE_SOLVERS + " ";
+    const bool cvc5_available =
+      padded_solvers.find(" cvc5 ") != std::string::npos;
+    if (
+      !user_picked_solver && cvc5_available &&
+      bmc.options.get_option("default-solver") != "cvc5")
+    {
+      solver_fallback_attempted = true;
+      log_warning(
+        "The auto-selected SMT backend could not decide this query "
+        "(unsupported construct or UNKNOWN). Retrying with 'cvc5' and "
+        "keeping it for the rest of the run; pass --bitwuzla / --z3 to "
+        "pin a backend explicitly.");
+      bmc.options.set_option("default-solver", "cvc5");
+      config.options.set_option("default-solver", "cvc5");
+      res = bmc.start_bmc();
+    }
+  }
+
   if (res == smt_convt::P_ERROR)
-    abort();
+    log_warning(
+      "The solver could not decide this query; treating it as inconclusive "
+      "and continuing. Retry with a different backend (--cvc5 / --z3 / "
+      "--bitwuzla) if this repeats on every step.");
 
 #ifdef HAVE_SENDFILE_ESBMC
   if (bmc.options.get_bool_option("memstats"))
@@ -4091,28 +4144,6 @@ bool esbmc_parseoptionst::process_goto_program(
       // flag stores "" (atoi -> 0), so bmc.cpp keys is_goto_cov off this.
       options.set_option("solidity-path-coverage-enabled", true);
 
-      if (cmdline.isset("unwind"))
-        options.set_option("no-unwinding-assertions", true);
-
-      // The JSON report's reason for existing is the per-path counterexample
-      // payload (inputs / post-state). The symex slicer keeps only what the
-      // CLAIM depends on, and a path claim's guard mentions nothing but the
-      // ghost accumulators — so every contract-state write and every nondet
-      // input is sliced out and the payload comes back EMPTY. Turn slicing off
-      // when the payload was asked for, and say so: silently emitting an empty
-      // interface would be worse, and silently changing a flag worse still.
-      if (
-        cmdline.isset("cov-report-json") && !cmdline.isset("no-slice") &&
-        !options.get_bool_option("no-slice"))
-      {
-        options.set_option("no-slice", true);
-        log_status(
-          "--solidity-path-coverage with --cov-report-json: disabling slicing "
-          "so each path's counterexample values (inputs / post-state) survive "
-          "into the report; slicing would drop them because a path claim "
-          "depends only on the ghost path accumulators");
-      }
-
       std::string filename = cmdline.args[0];
       goto_coveraget tmp(ns, goto_functions, filename);
       // Ghost snapshot symbols are moved into `context` (available here).
@@ -4130,14 +4161,75 @@ bool esbmc_parseoptionst::process_goto_program(
       // coverage is never inflated by the skip.
       if (cmdline.isset("coverage-covered-set"))
         tmp.covered_set_path = cmdline.getval("coverage-covered-set");
+      // The JSON report's reason for existing is the per-path counterexample
+      // payload (call arguments / EVM environment / post-state). A path claim's
+      // guard mentions nothing but the ghost accumulators, so the symex slicer
+      // — which keeps only what the claim depends on — removes every state
+      // write and every environment read, and the payload comes back EMPTY.
+      // Exempt exactly the symbols the harvest reads (see protect_ce_symbols)
+      // instead of switching slicing off wholesale: the latter also keeps every
+      // c2goto crypto/ABI table in the formula, for no benefit to the report.
+      if (cmdline.isset("cov-report-json"))
+        tmp.protect_ce_symbols = true;
+      // Per-unit path budget. Read BEFORE solidity_path_coverage() because the
+      // pass uses it twice and in a fixed order: first as the target that
+      // degradation withdraws call points to reach, then as the goal cap that
+      // truncates whatever degradation could not fit. It also enters the
+      // cross-run fingerprint, so changing it discards the covered set rather
+      // than silently reusing entries computed under a different budget.
+      if (cmdline.isset("path-cov-max-goals"))
+      {
+        const int v = atoi(cmdline.getval("path-cov-max-goals"));
+        if (v <= 0)
+        {
+          log_error(
+            "--path-cov-max-goals requires a positive integer (got {})", v);
+          return true;
+        }
+        tmp.path_cov_max_goals = static_cast<size_t>(v);
+      }
+      // Stage-2 certification query. Read here, alongside the other knobs the
+      // pass consumes, so the pass itself has no command-line dependency.
+      if (cmdline.isset("path-cov-certify"))
+        tmp.path_cov_certify_path = cmdline.getval("path-cov-certify");
       tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
-      // Align the enumeration loop bound with the symex unwind bound.
+      // Align the offline enumeration bound with the symex unwind bound. The
+      // two MUST agree, or "this path is feasible" as enumerated and "this path
+      // is feasible" as explored are answers to different questions.
+      //
+      // With --unwind unset they did not agree: the enumeration bounded every
+      // back-edge at path_cov_unwind (4) while symex was unbounded. That is not
+      // just a mismatch on paper — it is fatal in practice, because a Solidity
+      // external call is modelled as a nondet RE-ENTRY into the contract's own
+      // dispatcher, so `t.call("")` recurses without a bound. Measured: a
+      // two-function contract with one `.call` unwound `_ESBMC_Nondet_Extcall_C`
+      // 944 times and died with `ERROR: Out of memory`; a plain `for` loop with
+      // no --unwind did the same. Both terminate immediately once a bound
+      // exists.
+      //
+      // So: honour an explicit --unwind, and otherwise ADOPT the enumeration's
+      // own bound as the unwind bound and say so. Truncation stays visible —
+      // report_coverage prints the truncated-loop warning and every JSON entry
+      // carries bound.unwind — so this buys termination without hiding what was
+      // cut.
       if (cmdline.isset("unwind"))
       {
         int u = atoi(cmdline.getval("unwind"));
         if (u > 0)
           tmp.path_cov_unwind = static_cast<size_t>(u);
       }
+      else
+      {
+        options.set_option("unwind", std::to_string(tmp.path_cov_unwind));
+        log_status(
+          "--solidity-path-coverage: no --unwind given; bounding symbolic "
+          "execution at {} to match the path enumeration's own loop bound. "
+          "Without it an external call (modelled as nondet re-entry into this "
+          "contract's dispatcher) or any loop runs unbounded until the memory "
+          "limit. Pass --unwind N to choose a different bound",
+          tmp.path_cov_unwind);
+      }
+      options.set_option("no-unwinding-assertions", true);
       tmp.solidity_path_coverage();
     }
 

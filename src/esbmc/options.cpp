@@ -879,6 +879,33 @@ const struct group_opt_templ all_cmd_options[] = {
         "M"),
       "Per-function goal cap for --k-path-coverage; on overflow the "
       "instrumentation aborts rather than truncating (default 10000)"},
+     {"path-cov-max-goals",
+      boost::program_options::value<int>()->default_value(10000)->value_name(
+        "M"),
+      "Per-unit path budget for --solidity-path-coverage (default 10000). "
+      "TWO mechanisms are keyed off it, in this fixed order. (1) DEGRADATION: "
+      "a unit whose full expansion exceeds the budget has internal call points "
+      "withdrawn from its path identity — the callees still execute, they just "
+      "stop contributing decisions, so the path classes get coarser while "
+      "still partitioning the input space (sound, weaker assertions). Which "
+      "call points were withdrawn is reported per unit. (2) TRUNCATION: if "
+      "degradation cannot make a unit fit, enumeration stops at the cap and "
+      "the dropped paths are reported as an absolute count — never silently. "
+      "Truncation is the last-resort backstop; it firing at all is reported as "
+      "a signal that degradation was not aggressive enough"},
+     {"path-cov-certify",
+      boost::program_options::value<std::string>()->value_name("file"),
+      "Run the CERTIFICATION QUERY instead of path enumeration: given a JSON "
+      "{unit, enc, depth, box} naming one enumerated path and a candidate "
+      "input box, assume the box at unit entry and assert `tr == enc && cnt == "
+      "depth` at EVERY exit of that unit. VERIFICATION SUCCESSFUL means every "
+      "input in the box walks that path (the box is certified); FAILED gives a "
+      "counterexample input that is inside the box but leaves the path, which "
+      "is exactly the witness needed to shrink the box. The assert is on every "
+      "exit on purpose — placed only on the path's own exit, an escaping input "
+      "would leave elsewhere and never be checked, making the query vacuously "
+      "true. Expansion, the ABI gate, Phase-1 accounting and both censuses all "
+      "still run, and the query uses the SAME `tr` the enumeration does"},
      {"solidity-path-coverage",
       NULL,
       "Solidity complete-path coverage (entry->exit path coverage for test "

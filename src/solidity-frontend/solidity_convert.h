@@ -160,6 +160,14 @@ protected:
   bool get_contract_definition(const std::string &c_name);
   bool get_non_function_decl(const nlohmann::json &ast_node, exprt &new_expr);
   bool get_function_decl(const nlohmann::json &ast_node);
+  // Record AST-only facts about a just-converted function on its symbol:
+  // the number of source `return` statements, and any `this.f(...)` call
+  // sites. Both are invisible after goto conversion — `this.f()` lowers to
+  // the same direct call as `f()` (so the model keeps the caller's
+  // msg.sender where the EVM would substitute the contract's own address),
+  // and a source exit the frontend dropped leaves no trace at all. See the
+  // definition in solidity_convert_decl.cpp.
+  void stamp_path_cov_ast_facts(const nlohmann::json &ast_node);
   bool get_var_decl(
     const nlohmann::json &ast_node,
     const nlohmann::json &initialValue,
@@ -228,7 +236,31 @@ protected:
     const std::string c_name,
     std::string &name,
     std::string &id);
-  void add_static_contract_instance(const std::string c_name);
+  // @run_ctor: false => register the `_ESBMC_Object_<C>` singleton but do
+  // NOT deploy it (no constructor call is emitted into __ESBMC_main).
+  // Used for contracts that are only base classes of the --contract
+  // target: deploying `Derived` must not also deploy a second, separate
+  // `Base` instance. See the call site in solidity_convert.cpp.
+  void
+  add_static_contract_instance(const std::string c_name, bool run_ctor = true);
+
+  // True iff @c_name is a STRICT base contract of the single --contract
+  // target (so it is constructed as part of the target's constructor
+  // chain and must not be deployed a second time on its own).
+  // `inheritanceMap[X]` holds "the contracts that inherit from X", plus X
+  // itself (see populate_auxiliary_vars).
+  bool is_strict_base_of_target(const std::string &c_name) const
+  {
+    if (tgt_cnt_set.size() != 1)
+      return false; // whole-file mode verifies every contract: deploy all
+    const std::string &tgt = *tgt_cnt_set.begin();
+    if (c_name == tgt)
+      return false;
+    auto it = inheritanceMap.find(c_name);
+    if (it == inheritanceMap.end())
+      return false;
+    return it->second.count(tgt) != 0;
+  }
   void
   get_static_contract_instance_ref(const std::string &c_name, exprt &new_expr);
   void get_inherit_static_contract_instance_name(

@@ -1,0 +1,13 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract RetShapes --solidity-max-tx 1
+^--solidity-path-coverage: instrumented 8 complete path\(s\) across 4 unit\(s\)
+^WARNING: --solidity-path-coverage: unit 'sol:@C@RetShapes@F@f#25' has 1 exit\(s\) with NO positive evidence of a normal exit, by cause: \(1\) 0 .*\(2\) 0 .*\(3\) 1 at a RETURN carrying no `sol_source_return` marker \[file .*contract.sol line 48 function f\]
+^WARNING: --solidity-path-coverage: unit 'sol:@C@RetShapes@F@h#41' has 1 exit\(s\) with NO positive evidence of a normal exit, by cause: \(1\) 0 .*\(2\) 1 at END_FUNCTION having SKIPPED this unit's epilogue .*\(3\) 0
+^WARNING: --solidity-path-coverage: unit 'sol:@C@RetShapes@F@g#61' has 1 exit\(s\) with NO positive evidence of a normal exit, by cause: \(1\) 0 .*\(2\) 1 at END_FUNCTION having SKIPPED this unit's epilogue .*\(3\) 0
+^Complete Paths : 8$
+^Reached : 8$
+^Path Coverage: 100%$
+^Path Exits: normal 1, revert 4, undetermined 3$
+^Path Status: F 8, I 0, U 0$
+^VERIFICATION FAILED$

@@ -1,8 +1,8 @@
 CORE
 contract.sol
 --solidity-path-coverage --solidity-max-tx 1
-^--solidity-path-coverage: instrumented 4 complete path\(s\)
-^Complete Paths : 4$
-^Reached : 4$
-^Path Exits: normal 2, revert 1, undetermined 1$
+^--solidity-path-coverage: instrumented 6 complete path\(s\) across 2 unit\(s\)
+^Complete Paths : 6$
+^Reached : 6$
+^Path Exits: normal 2, revert 3, undetermined 1$
 ^VERIFICATION FAILED$

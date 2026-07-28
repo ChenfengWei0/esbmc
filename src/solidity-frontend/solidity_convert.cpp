@@ -418,8 +418,39 @@ bool solidity_convertert::convert()
   // add static instance
   // note that we populate the static instance in the end
   // this is to ensure that we have populated other auxiliary static variables before them
+  // Base contracts of the --contract target are registered but NOT
+  // deployed.
+  //
+  // In Solidity, deploying `Derived` runs `Base`'s constructor *as part of*
+  // `Derived`'s construction; it does not create a second, independent
+  // `Base` instance.  ESBMC models a contract's mapping state variables as
+  // one static-lifetime global per contract *type*
+  // (`sol:@C@<Base>@<var>#<id>`), and the inherited constructor body that
+  // `Derived`'s constructor invokes writes exactly those globals.  So
+  // deploying `_ESBMC_Object_<Base>` in addition to `_ESBMC_Object_<Derived>`
+  // executes the base constructor TWICE against the same storage.
+  //
+  // A base constructor that is not idempotent w.r.t. its own storage then
+  // kills the entire verification path: OpenZeppelin's `MinterRole()` calls
+  // `_addMinter(msg.sender)` -> `Roles.add`, whose
+  // `require(!has(role, account))` lowers to `ASSUME !bearer[msg.sender]`.
+  // The first deployment sets `bearer[msg.sender] = true`, so the second
+  // execution assumes `false`.  Everything after it — the target's own
+  // constructor, `_ESBMC_Main_<T>`, and the whole public-function
+  // dispatcher — becomes infeasible, and coverage collapses to the
+  // base-constructor prefix regardless of --unwind.
+  // (Reproducer: Dataset/transracer_50/sources/Aavio/contract.sol with
+  // --contract Aavio; minimal form in
+  // papers_to_write/esbmc_cov_test_gen/measure/repro/d2_min_sharedmap.sol.)
+  //
+  // Trade-off: an undeployed singleton keeps its `$address` unconstrained
+  // instead of a fresh unique one. That is closer to reality (the contract
+  // was never deployed), but it does mean the address-dispatch ladder can
+  // no longer rule it out by construction. Restricted to the single
+  // `--contract` target case; whole-file mode verifies every contract in
+  // turn and keeps deploying all of them (byte-identical behaviour).
   for (const auto &c_name : contractNamesList)
-    add_static_contract_instance(c_name);
+    add_static_contract_instance(c_name, !is_strict_base_of_target(c_name));
 
   // --reentry-balance-drain-check: emit one [approx] warning per
   // contract that the user opted into the check on but had no

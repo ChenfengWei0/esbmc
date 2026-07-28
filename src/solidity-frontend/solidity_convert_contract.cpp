@@ -63,9 +63,15 @@ void solidity_convertert::get_static_contract_instance_ref(
   new_expr.pretty_name(name);
 }
 
-void solidity_convertert::add_static_contract_instance(const std::string c_name)
+void solidity_convertert::add_static_contract_instance(
+  const std::string c_name,
+  bool run_ctor)
 {
-  log_debug("solidity", "\tAdd static instance of contract {}", c_name);
+  log_debug(
+    "solidity",
+    "\tAdd static instance of contract {}{}",
+    c_name,
+    run_ctor ? "" : " (not deployed: base of the --contract target)");
 
   std::string ctor_ins_name, ctor_ins_id;
   get_static_contract_instance_name(c_name, ctor_ins_name, ctor_ins_id);
@@ -142,7 +148,12 @@ void solidity_convertert::add_static_contract_instance(const std::string c_name)
     abort();
   }
 
-  added_sym.value = ctor;
+  // The symbol's `value` is what clang_c_maint::static_lifetime_init turns
+  // into the `<C>(&_ESBMC_Object_<C>)` call at the top of __ESBMC_main.
+  // Leaving it nil registers the singleton (every `$call` ladder and the
+  // enclosing-debit helper still resolve it) without deploying it.
+  if (run_ctor)
+    added_sym.value = ctor;
 }
 
 void solidity_convertert::get_inherit_static_contract_instance_name(

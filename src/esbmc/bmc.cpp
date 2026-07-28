@@ -683,6 +683,47 @@ static std::string prettify_solidity_expr(const std::string &expr)
   return s;
 }
 
+// Solidity complete-path coverage: can THIS run establish that a path is
+// UNREACHABLE (status I), as opposed to merely "no witness found here" (U)?
+//
+// It could only do so if the exploration over-approximated every reachable
+// state. Nothing in Solidity coverage mode does:
+//
+//  * `--solidity-max-tx N` with N > 0 emits N straight-line transactions —
+//    bounded by construction.
+//  * `--solidity-max-tx 0` asks the frontend for the `while (nondet_bool())
+//    dispatch()` driver, which READS as unbounded — but that loop is then
+//    destroyed. esbmc_parseoptions.cpp::process_goto_program walks every
+//    function whose name contains `_ESBMC_Main` and calls make_skip() on each
+//    `is_backwards_goto()`, under a condition (`is_coverage &&
+//    !--coverage-multi-tx`) whose `is_coverage` disjunction includes
+//    `--solidity-path-coverage`. One guarded transaction is left, so max_tx 0
+//    is the SHALLOWEST setting, not an unbounded one.
+//
+//    Verified three independent ways, not taken from documentation:
+//      - the code above;
+//      - `--show-loops` on the same contract lists `_ESBMC_Main_S` as a loop
+//        WITHOUT the coverage flag and does not list it WITH it (every other
+//        loop identical);
+//      - behaviour: on `arm(); fire();`, where fire()'s guarded path needs a
+//        prior transaction, that path is REACHED at --solidity-max-tx 2 and
+//        NOT reached at --solidity-max-tx 0.
+//  * the entry state is whatever the constructor left; state variables are
+//    never havoc'd, so an UNSAT only says "not reachable from THIS entry
+//    state", not "not reachable".
+//
+// Treating max_tx == 0 as unbounded — which this code used to do — would dress
+// a one-transaction budget up as a proof of unreachability, the exact failure
+// the tri-state exists to prevent. So every non-refuted path is U, flagged
+// `bounded_holds` when it held at this exploration.
+//
+// Kept as a function rather than deleted so that the day a havoc'd-entry or
+// loop-live exploration mode exists, this is the single place to change.
+static bool path_cov_can_prove_unreachable()
+{
+  return false;
+}
+
 // Parse location string "file X line Y column Z function F" into components
 static nlohmann::json parse_claim_location(const std::string &loc)
 {
@@ -1077,17 +1118,37 @@ void report_coverage(
 
   else if (is_path_cov)
   {
+    // BEFORE any number is printed: does this run establish anything at all?
+    //
+    // Measured on a real benchmark, 120166 paths were instrumented and symex
+    // produced ZERO verification conditions — the harness never entered a
+    // single unit — and every path was then reported "U", which reads exactly
+    // like an honest solver timeout. The audit aborts on that, and on the
+    // per-unit version of it, so the coverage figures below are never printed
+    // for a run that is vacuous rather than merely incomplete. It runs first
+    // precisely so those figures do not appear and get quoted.
+    //
+    // This path is also reached with an empty reached-set when the equation
+    // simplifies to zero remaining claims (see run_thread), which is exactly
+    // the whole-run version of the same failure.
+    goto_coveraget::audit_entry_liveness(options.get_option("focus-function"));
+
     // Denominator = the no-skip static universe built by
     // solidity_path_coverage() (one entry per enumerated complete path), so a
     // covered-set skip never shrinks it. Numerator = universe paths EITHER
     // witnessed this run OR already persisted by an earlier round.
     const size_t total = goto_coveraget::all_claims.size();
-    const bool cov_set_active = !goto_coveraget::covered_set_outpath.empty();
+    // Complete-path coverage keys its cross-run cover on the CONTENT-ADDRESSED
+    // stable id, not on `covered_set` (which solidity_path_coverage()
+    // deliberately leaves empty — see path_witnessed_earlier). Using
+    // covered_set here reported every path carried over from an earlier round
+    // as U: a path with a counterexample in hand, filed under "undecided".
+    const bool cov_set_active = !goto_coveraget::path_covered_outpath.empty();
     size_t tracked_instance = 0;
-    for (const auto &[msg, loc] : goto_coveraget::all_claims)
+    for (const auto &k : goto_coveraget::all_claims)
       if (
-        goto_coveraget::covered_set.count({msg, loc}) ||
-        reached_claims.count(msg + "\t" + loc))
+        goto_coveraget::path_witnessed_earlier(k) ||
+        reached_claims.count(k.first + "\t" + k.second))
         ++tracked_instance;
 
     log_success("\n[Coverage]\n");
@@ -1124,14 +1185,20 @@ void report_coverage(
       // rule — a claim that merely HELD within the bound is U, never I — is
       // not regression-locked. Same rule as the JSON emission below.
       {
-        const std::string mt = options.get_option("solidity-max-tx");
-        bool trunc = false;
-        {
-          std::lock_guard lk(goto_functionst::truncated_loops_mutex);
-          trunc = !goto_functionst::truncated_loops.empty();
-        }
-        const bool unb = (mt == "0") && !trunc;
+        // See path_cov_can_prove_unreachable(): no coverage configuration can
+        // establish unreachability, so this is false and every non-refuted
+        // path is U. Deliberately NOT keyed on --solidity-max-tx 0, which the
+        // back-edge-to-SKIP pass reduces to a single guarded transaction.
+        const bool unb = path_cov_can_prove_unreachable();
         size_t nF = 0, nI = 0, nU = 0;
+        // Every U carries a reason token. See path_u_reason_token(): a U cell
+        // that can silently absorb an implementation defect has already done so
+        // three times, and each time the broken case looked exactly like an
+        // honest timeout.
+        std::map<std::string, size_t> u_reasons;
+        for (const auto &t : goto_coveraget::path_u_reason_tokens())
+          u_reasons[t] = 0;
+        std::vector<std::string> untokened;
         for (const auto &k : goto_coveraget::all_claims)
         {
           const std::string sig = k.first + "\t" + k.second;
@@ -1142,30 +1209,75 @@ void report_coverage(
             if (it_o != goto_coveraget::claim_outcome.end())
               v = it_o->second;
           }
-          if (goto_coveraget::covered_set.count(k) || reached_claims.count(sig))
+          if (
+            goto_coveraget::path_witnessed_earlier(k) ||
+            reached_claims.count(sig))
             ++nF;
           else if (v == 'P' && unb)
             ++nI;
           else
+          {
             ++nU;
+            const std::string tok = goto_coveraget::path_u_reason_token(k);
+            if (tok.empty())
+              untokened.push_back(k.first);
+            else
+              ++u_reasons[tok];
+          }
         }
         log_result("Path Status: F {}, I {}, U {}", nF, nI, nU);
+        // Printed whenever there is a U, with EVERY slot listed including the
+        // zeros: a category that stops occurring is noticed, a category that
+        // silently disappears from the output is not.
+        if (nU > 0)
+        {
+          std::string breakdown;
+          for (const auto &t : goto_coveraget::path_u_reason_tokens())
+            breakdown +=
+              (breakdown.empty() ? "" : ", ") + t + " " +
+              std::to_string(u_reasons[t]);
+          log_result("U Reasons: {}", breakdown);
+        }
+        if (!untokened.empty())
+        {
+          std::string names;
+          for (const auto &n : untokened)
+            names += (names.empty() ? "" : "; ") + n;
+          log_error(
+            "--solidity-path-coverage: INTERNAL DEFECT — {} path(s) are "
+            "reported U with NO reason token: {}. The claim this pass makes is "
+            "that every uncovered path carries a named reason and there is no "
+            "unexplained remainder. An untokened U is that claim being false, "
+            "and it is exactly the shape in which an implementation defect "
+            "hides inside an honest-looking 'we do not know'.",
+            untokened.size(),
+            names);
+          abort();
+        }
       }
     }
 
-    // Final write-back: covered_set is the live accumulator (loaded input plus
-    // every path the per-claim hook persisted as it was witnessed). Fold in any
-    // reached universe path defensively, then one atomic rewrite. Monotone
-    // union — only true P_SATISFIABLE (CE in hand) paths are ever added.
+    // Final write-back of the CONTENT-ADDRESSED cover.
+    //
+    // This call was missing, and the omission killed the whole cross-run
+    // mechanism silently. `write_path_covered_set_atomic` existed and was
+    // correct; nothing called it, while the code here called the BRANCH
+    // metric's writer, gated on `covered_set_outpath` — which
+    // solidity_path_coverage() never sets. Measured before the fix: running
+    // with `--coverage-covered-set cov.json` produced no file at all, so every
+    // round re-instrumented everything and the escalation story (round N spends
+    // its budget only on paths still lacking a CE) did not work at all.
+    //
+    // Same defect shape as the entry-liveness audit before it was wired: a
+    // function that is written, tested by eye, and never called. The function
+    // itself selects only 'F' claims, so nothing but a real witness is ever
+    // persisted.
     if (cov_set_active)
     {
-      for (const auto &[msg, loc] : goto_coveraget::all_claims)
-        if (reached_claims.count(msg + "\t" + loc))
-          goto_coveraget::covered_set.emplace(msg, loc);
-      goto_coveraget::write_covered_set_atomic();
+      goto_coveraget::write_path_covered_set_atomic();
       log_success(
         "coverage covered-set written to {}",
-        goto_coveraget::covered_set_outpath);
+        goto_coveraget::path_covered_outpath);
     }
   }
 
@@ -1194,25 +1306,37 @@ void report_coverage(
 
     // Bound under which THIS run's verdicts were produced. Recorded on every
     // path entry: a "holds" verdict is only meaningful together with the
-    // bound it was proven under, and only the unbounded harness
-    // (--solidity-max-tx 0, i.e. the open-ended `while(nondet) dispatch()`)
-    // can establish real unreachability.
+    // exploration it was obtained under.
     const std::string max_tx = options.get_option("solidity-max-tx");
     const std::string unwind_s = options.get_option("unwind");
-    // `--solidity-max-tx 0` restores the open-ended `while(nondet) dispatch()`
-    // harness, but that loop is STILL cut by --unwind: with an unwind bound the
-    // number of transactions explored is bounded too, so a claim can be UNSAT
-    // merely because the setup call sequence was longer than the bound. When
-    // any loop hit its bound and was assumed away, "holds" therefore means
-    // "no witness within this exploration", not "unreachable" — so it must NOT
-    // be promoted to I. (Without this check a budget limit would be dressed up
-    // as a proof, which is the exact failure this tri-state exists to prevent.)
     bool loops_truncated = false;
     {
       std::lock_guard lk(goto_functionst::truncated_loops_mutex);
       loops_truncated = !goto_functionst::truncated_loops.empty();
     }
-    const bool unbounded_run = (max_tx == "0") && !loops_truncated;
+    // See path_cov_can_prove_unreachable(). This used to be
+    // `max_tx == "0" && !loops_truncated`, on the belief that max_tx 0 gives an
+    // unbounded transaction sequence. It does not: coverage rewrites the
+    // dispatcher back-edge to a SKIP, so max_tx 0 explores ONE transaction —
+    // fewer than max_tx 2. Every non-refuted path is therefore U.
+    const bool unbounded_run = path_cov_can_prove_unreachable();
+    // What the transaction driver ACTUALLY explored, stated on every entry so a
+    // reader never has to infer it from the flag. `--solidity-max-tx 0` is the
+    // trap: it reads as "unbounded" and is in fact the shallowest setting.
+    const std::string tx_exploration =
+      max_tx == "0"
+        ? std::string(
+            "one guarded transaction: --solidity-max-tx 0 emits the "
+            "`while (nondet) dispatch()` driver, but Solidity coverage rewrites "
+            "every _ESBMC_Main* back-edge to a SKIP, so the loop runs at most "
+            "once. This explores FEWER transactions than --solidity-max-tx 2")
+        : (max_tx.empty()
+             ? std::string(
+                 "coverage default: the dispatcher loop back-edge is rewritten "
+                 "to a SKIP, leaving one guarded transaction")
+             : ("exactly " + max_tx +
+                " straight-line transaction(s) (no dispatcher back-edge to "
+                "remove)"));
 
     for (const auto &[claim_msg, claim_loc] : all_claims)
     {
@@ -1264,16 +1388,17 @@ void report_coverage(
         // escalation round (cross-run covered-set). Either way a concrete
         // input exists for this path.
         const bool prior =
-          goto_coveraget::covered_set.count({claim_msg, claim_loc}) > 0;
+          goto_coveraget::path_witnessed_earlier({claim_msg, claim_loc});
         const bool witnessed = covered || prior;
 
         // F: feasible, CE in hand.
-        // I: PROVEN unreachable — only an unbounded run can establish this.
-        // U: everything else, INCLUDING a claim that "holds" within a bound:
-        //    that means no witness up to this tx/unwind depth, not that the
-        //    path is unreachable. Reporting such a claim as I would turn a
-        //    budget limit into a false proof, so it stays U and is flagged
-        //    `bounded_holds` as an I-candidate for a later unbounded round.
+        // I: PROVEN unreachable. No coverage configuration can establish this
+        //    today — see path_cov_can_prove_unreachable() — so this arm is
+        //    currently unreachable by construction, deliberately.
+        // U: everything else, INCLUDING a claim that "holds" at this
+        //    exploration: that means no witness within one-or-N transactions
+        //    from the post-constructor entry state, not that the path is
+        //    unreachable. It stays U and is flagged `bounded_holds`.
         std::string tri;
         if (witnessed)
           tri = "F";
@@ -1282,6 +1407,38 @@ void report_coverage(
         else
           tri = "U";
         claim_entry["status"] = tri;
+        if (tri == "U")
+        {
+          // Same single source as the stdout breakdown, so the file and the
+          // terminal can never disagree about why a path is uncovered.
+          const std::string tok =
+            goto_coveraget::path_u_reason_token({claim_msg, claim_loc});
+          claim_entry["u_reason"] = tok;
+          if (tok == "named-obstacle")
+          {
+            auto ob =
+              goto_coveraget::named_obstacle_paths.find({claim_msg, claim_loc});
+            if (ob != goto_coveraget::named_obstacle_paths.end())
+              claim_entry["u_reason_detail"] = ob->second;
+          }
+          else if (tok == "unit-not-entered")
+          {
+            // WHY the unit was not entered, not just that it wasn't: excluded
+            // on purpose by --focus-function is a normal per-method run, while
+            // "the harness never entered it" is a defect. A consumer that
+            // cannot tell them apart would treat a deliberate narrowing as a
+            // broken run, or worse, the reverse.
+            const size_t p = claim_msg.rfind(":path:");
+            const std::string unit =
+              p == std::string::npos ? claim_msg : claim_msg.substr(0, p);
+            auto ue = goto_coveraget::units_not_entered.find(unit);
+            if (ue != goto_coveraget::units_not_entered.end())
+              claim_entry["u_reason_detail"] = ue->second;
+          }
+        }
+        // Kept alongside the token: a consumer that already reads these keys
+        // keeps working, and `bounded_holds` additionally marks the U's worth
+        // re-checking under a deeper exploration.
         if (v == 'P' && !unbounded_run)
           claim_entry["bounded_holds"] = true;
         if (!witnessed && v == 0)
@@ -1293,8 +1450,9 @@ void report_coverage(
         claim_entry["bound"]["unwind"] =
           unwind_s.empty() ? "default" : unwind_s;
         claim_entry["bound"]["kind"] = unbounded_run ? "unbounded" : "bounded";
-        if (max_tx == "0" && loops_truncated)
-          claim_entry["bound"]["unbounded_tx_but_loops_truncated"] = true;
+        claim_entry["bound"]["tx_exploration"] = tx_exploration;
+        if (loops_truncated)
+          claim_entry["bound"]["loops_truncated"] = true;
         // Both revert shapes exit the transaction, so both are "revert": the
         // custom-error one (ASSUME(false) in a #sol_error callee) and the
         // rollback one (require/revert("msg"), which restores `*this` and then
@@ -1351,6 +1509,41 @@ void report_coverage(
             fin[prettify_solidity_expr(n)] = v;
           claim_entry["inputs"] = ins;
           claim_entry["env"] = envj;
+          // What the outside world returned on this path, in call order. Kept
+          // separate from `inputs` because a consumer can CHOOSE an input and
+          // cannot choose this: a replay has to mock the callee to return these
+          // values. An ARRAY, not a map — repeated calls reuse the same symbol
+          // name and their order is part of the answer.
+          json ext = json::array();
+          for (const auto &[n, v] : ce.extcall_returns)
+            ext.push_back({{"symbol", prettify_solidity_expr(n)}, {"value", v}});
+          claim_entry["extcall_returns"] = ext;
+          if (ce.extcall_returns.empty())
+            // NOT "there were no external calls": say what is actually known.
+            claim_entry["ce_extraction"]["extcall_returns_unavailable_reason"] =
+              "not implemented yet. The value an external call returns to the "
+              "contract reaches the user's variable through a tuple-field "
+              "extraction, which get_nondet_symbol does not traverse, so that "
+              "trace step is skipped before classification. The "
+              "_ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the "
+              "re-entry model's method-choice bits, not the returned value "
+              "(measured: identical on two paths that disagree about it), so "
+              "they are deliberately not reported here. An empty list means "
+              "UNKNOWN, not 'this path performs no external call'";
+          // Contract state this path STARTED from. Without it a path guarded by
+          // state an earlier transaction established cannot be replayed from
+          // the inputs alone.
+          json entry = json::object();
+          for (const auto &[n, v] : ce.entry_storage)
+            entry[prettify_solidity_expr(n)] = v;
+          claim_entry["entry_storage"] = entry;
+          if (!ce.entry_storage_known)
+            // Never let an empty entry_storage be read as "the contract started
+            // empty": say that the marker was not observed instead.
+            claim_entry["ce_extraction"]["entry_storage_unavailable_reason"] =
+              "the entry marker for this path's function was not seen in the "
+              "trace, so the state it started from was not captured; an empty "
+              "entry_storage here means UNKNOWN, not 'no state'";
           // A custom-error revert in a scope the revert-observation gate does
           // NOT cover (constructor / library / free function) is still modelled
           // by ASSUME(false) with no rollback, so the harvested values are the
@@ -1387,6 +1580,8 @@ void report_coverage(
           // writes are legitimately absent rather than non-existent. Re-run
           // with --no-slice to obtain the post-state.
           claim_entry["ce_extraction"]["sliced"] = ce.sliced;
+          claim_entry["ce_extraction"]["payload_symbols_exempt_from_slicing"] =
+            ce.payload_symbols_protected;
           claim_entry["ce_extraction"]["compact_trace"] = ce.compact_trace;
           claim_entry["ce_extraction"]["scoped_to_claim"] = ce.scoped_to_claim;
           if (!ce.scoped_to_claim)
@@ -1406,12 +1601,17 @@ void report_coverage(
               "are published as `state_at_revert_point`, NOT as final_state. "
               "The real post-state of a reverted transaction is the pre-call "
               "state, which this model does not reconstruct";
-          if (ce.sliced && fin.empty())
+          // Only meaningful when the payload symbols were NOT exempted: with
+          // the exemption in place an empty final_state means this path writes
+          // no state, and saying "the writes were sliced away" would be a
+          // wrong explanation of a correct result.
+          if (ce.sliced && !ce.payload_symbols_protected && fin.empty())
             claim_entry["ce_extraction"]["final_state_unavailable_reason"] =
-              "slicing active: a path claim depends only on the ghost path "
-              "accumulators, so contract state writes are sliced out of the "
-              "counterexample; re-run with --no-slice to harvest the "
-              "post-state";
+              "slicing active and the payload symbols were not exempted: a "
+              "path claim depends only on the ghost path accumulators, so "
+              "contract state writes are sliced out of the counterexample. "
+              "Ask for --cov-report-json (which exempts them) or re-run with "
+              "--no-slice";
         }
         else if (tri == "F")
           // Witnessed, but not by THIS run: the cross-run covered-set already
@@ -1496,17 +1696,38 @@ void report_coverage(
       report["summary"]["I_proven_unreachable"] = nI;
       report["summary"]["U_undecided"] = nU;
       report["summary"]["U_of_which_bounded_holds"] = nBH;
+      // Every U's reason, with all slots present including the zeros — the
+      // summary must never let a category vanish by simply not appearing.
+      {
+        json ur = json::object();
+        for (const auto &t : goto_coveraget::path_u_reason_tokens())
+          ur[t] = 0;
+        for (const auto &c : claims_json)
+          if (c.value("status", "") == "U")
+          {
+            const std::string tok = c.value("u_reason", "");
+            if (!tok.empty())
+              ur[tok] = ur[tok].get<size_t>() + 1;
+          }
+        report["summary"]["U_reasons"] = ur;
+      }
       report["summary"]["revert_exit_paths"] = nRevert;
       report["summary"]["bound"]["max_tx"] = max_tx.empty() ? "default" : max_tx;
       report["summary"]["bound"]["unwind"] =
         unwind_s.empty() ? "default" : unwind_s;
       report["summary"]["bound"]["kind"] =
         unbounded_run ? "unbounded" : "bounded";
+      report["summary"]["bound"]["tx_exploration"] = tx_exploration;
       if (!unbounded_run)
         report["summary"]["note"] =
-          "bounded run: I is only established by --solidity-max-tx 0; every "
-          "path that merely held within this bound is reported as U with "
-          "bounded_holds=true";
+          "no coverage configuration can establish unreachability, so I is "
+          "never emitted and every path that merely held at this exploration "
+          "is reported as U with bounded_holds=true. In particular "
+          "--solidity-max-tx 0 is NOT an unbounded run: it emits the "
+          "`while (nondet) dispatch()` driver, whose back-edge Solidity "
+          "coverage then rewrites to a SKIP, leaving one guarded transaction "
+          "— strictly fewer than --solidity-max-tx 2. Use a larger "
+          "--solidity-max-tx N to explore deeper, not 0";
       // Known modelling limitation, stated rather than left for the reader to
       // rediscover: the entry state of a transaction is whatever the
       // constructor left behind. State variables are NOT havoc'd, so a path
@@ -2027,7 +2248,24 @@ smt_convt::resultt bmct::run_thread(std::shared_ptr<symex_target_equationt> &eq)
 
       // In coverage mode, still print the coverage summary even when all
       // claims are simplified away (e.g., straight-line code with 0 branches).
-      if (options.get_bool_option("multi-property"))
+      //
+      // BUT NOT under --k-induction / --incremental-bmc. Those drivers run
+      // several bmct phases and emit the authoritative summary themselves
+      // (do_bmc_strategy in esbmc_parseoptions.cpp), from the accumulated
+      // goto_functionst::reached_claims. A phase whose equation simplifies
+      // to zero claims -- which is the normal outcome of the final inductive
+      // step -- would otherwise print a second "[Coverage] ... Reached : 0 ...
+      // Branch Coverage: 0%" block from the deliberately EMPTY sets below,
+      // immediately before the real one. Two blocks, the first always 0%:
+      // any consumer that reads the first match (or greps `head -1`)
+      // concludes k-induction covered nothing, when the run in fact reached
+      // 9/10 on the same input. multi_property_check's own report_coverage
+      // call already carries exactly this guard; this early-return path was
+      // missing it.
+      if (
+        options.get_bool_option("multi-property") &&
+        !options.get_bool_option("k-induction") &&
+        !options.get_bool_option("incremental-bmc"))
       {
         std::unordered_set<std::string> empty_reached;
         std::unordered_multiset<std::string> empty_mul_reached;
@@ -2505,6 +2743,14 @@ smt_convt::resultt bmct::multi_property_check(
         options.get_bool_option("no-slice") &&
         !options.get_bool_option("compact-trace"))
         is_compact_trace = false;
+      // The path-coverage CE payload is harvested from THIS trace. A compact
+      // trace drops every step flagged `hidden`, and that is exactly where the
+      // EVM environment (msg./tx./block.) and the harness-side writes are
+      // assigned — the report's `env` block would come back empty even though
+      // the values are in the model. Building the full trace changes nothing
+      // about what is solved; it only costs trace-construction time.
+      if (is_path_cov && options.get_bool_option("cov-report-json"))
+        is_compact_trace = false;
 
       // --all-witnesses: re-solve with blocking clauses on the nondet input
       // tuple to enumerate further violating inputs at the current k.
@@ -2613,6 +2859,11 @@ smt_convt::resultt bmct::multi_property_check(
         {
           goto_coveraget::path_ce_t ce;
           ce.sliced = !options.get_bool_option("no-slice");
+          // Same condition the dispatch uses to set protect_ce_symbols: with
+          // the JSON requested, the payload symbols are exempt from slicing, so
+          // `sliced` alone must not be read as "the payload was cut down".
+          ce.payload_symbols_protected =
+            options.get_bool_option("cov-report-json");
           ce.compact_trace = is_compact_trace;
           ce.revert_pre_rollback =
             goto_coveraget::revert_paths.count(
@@ -2633,11 +2884,16 @@ smt_convt::resultt bmct::multi_property_check(
           // WITHOUT the `@F@` function marker. That is what separates a state
           // store from a function-scoped local.
           std::string contract_scope;
+          // The goto function id, `#N` INTACT — that is the key
+          // path_entry_ghost is stored under, so it must not be truncated the
+          // way fn_scope is.
+          std::string fn_id_full;
           {
             const auto p = claim.claim_msg.rfind(":path:");
             if (p != std::string::npos)
             {
               std::string fn_id = claim.claim_msg.substr(0, p);
+              fn_id_full = fn_id;
               const auto fpos = fn_id.find("@F@");
               if (fpos != std::string::npos)
                 contract_scope = fn_id.substr(0, fpos + 1);
@@ -2649,6 +2905,51 @@ smt_convt::resultt bmct::multi_property_check(
               fn_scope = fn_id + "@";
             }
           }
+          // Entry detection, using the SAME algorithm ESBMC already uses for
+          // `--show-funccall-trace` (goto_trace.cpp): every trace step carries
+          // the call stack at that point, innermost-first. Diff each step's
+          // stack against the previous one by common SUFFIX (the outermost end)
+          // and whatever remains at the front was pushed by this step. A new
+          // invocation of this path's function begins exactly when one of those
+          // newly-pushed frames is it.
+          //
+          // Two earlier attempts were wrong and are recorded so they are not
+          // retried. (1) The instrumentation's `tr = 1` is folded into the
+          // following `tr = tr*2 + guard`, so it never reaches the trace.
+          // (2) Comparing the location's BARE function name cannot tell one
+          // contract's `f` from another's, and cannot see a recursive or
+          // re-entrant call into the same function at all — it looks like
+          // execution never left. Stack frames carry the full goto function id,
+          // so both cases are exact.
+          //
+          // Steps with an EMPTY stack are skipped rather than treated as a
+          // reset: goto_trace.cpp documents that an empty stack means "captured
+          // outside any function context", not "no frames on the stack", and
+          // treating it as a reset re-emits the whole chain spuriously.
+          // Recursion makes "the entry state" ambiguous: with `f` nested three
+          // deep there are three different entry states, and the assert that
+          // the solver refuted belongs to exactly ONE of them. Measured on a
+          // path reachable only inside a recursive call, snapshotting on the
+          // most recent push reported the INNERMOST invocation's state, which
+          // was neither the outer nor the owning one.
+          //
+          // So key each snapshot by how many frames of this function were on
+          // the stack when it was taken, and at the end pick the depth the
+          // violated assert itself is at.
+          std::vector<stack_framet> prev_stack;
+          std::map<size_t, std::map<std::string, std::string>> entry_by_depth;
+          size_t prev_target_depth = 0;
+          size_t assert_target_depth = 0;
+          bool assert_depth_known = false;
+          auto count_target_frames =
+            [&fn_id_full](const std::vector<stack_framet> &s) {
+              size_t n = 0;
+              for (const auto &fr : s)
+                if (fr.function.as_string() == fn_id_full)
+                  ++n;
+              return n;
+            };
+          std::map<std::string, std::string> entry_snapshot;
           // Base symbol id of a possibly-indexed lvalue (`m[k]` -> `m`).
           auto base_sym_id = [](expr2tc e) -> std::string {
             for (;;)
@@ -2674,13 +2975,91 @@ smt_convt::resultt bmct::multi_property_check(
             if (st.is_assert() && st.comment == claim.claim_msg)
             {
               ce.scoped_to_claim = true;
+              // Which invocation does the refuted assert belong to? Its own
+              // stack says so.
+              if (!st.stack_trace.empty())
+              {
+                assert_target_depth = count_target_frames(st.stack_trace);
+                assert_depth_known = assert_target_depth > 0;
+              }
               break;
+            }
+            // Entry detection runs on EVERY step, not only assignments: the
+            // frame is pushed by the call instruction itself.
+            if (!st.stack_trace.empty())
+            {
+              const auto &cur = st.stack_trace;
+              size_t common = 0;
+              while (common < prev_stack.size() && common < cur.size() &&
+                     prev_stack[prev_stack.size() - 1 - common] ==
+                       cur[cur.size() - 1 - common])
+                ++common;
+              bool pushed_target = false;
+              for (size_t k = cur.size() - common; k-- > 0;)
+                if (cur[k].function.as_string() == fn_id_full)
+                {
+                  pushed_target = true;
+                  break;
+                }
+              const size_t d = count_target_frames(cur);
+              // Record only on an INCREASE, and only for the depth just
+              // reached: whatever state has accumulated is what that
+              // particular invocation started from.
+              if (pushed_target && d > prev_target_depth)
+                entry_by_depth[d] = last_state;
+              prev_target_depth = d;
+              prev_stack = cur;
             }
             if (!st.is_assignment())
               continue;
             if (is_nil_expr(st.lhs) || is_nil_expr(st.value))
               continue;
+            // Diagnostic for the classification below: `--verbosity
+            // coverage:9` prints every assignment the harvest sees, with the
+            // things the classification keys on. Without it, an empty
+            // `inputs`/`entry_storage` is indistinguishable from a rule that
+            // silently never matches — which is exactly how the two bugs above
+            // (location-based extcall matching, `tr = 1` as entry marker) were
+            // found.
+            {
+              const expr2tc dnd = symex_slicet::get_nondet_symbol(st.rhs);
+              log_debug(
+                "coverage",
+                "ce step: sym='{}' name='{}' fn='{}' nondet='{}'",
+                is_symbol2t(st.lhs) ? to_symbol2t(st.lhs).thename.as_string()
+                                    : std::string("<not-a-symbol>"),
+                from_expr(ns, "", st.lhs),
+                st.pc->location.get_function().as_string(),
+                (!is_nil_expr(dnd) && is_symbol2t(dnd))
+                  ? to_symbol2t(dnd).thename.as_string()
+                  : std::string("-"));
+              std::string frames;
+              for (const auto &fr : st.stack_trace)
+                frames += (frames.empty() ? "" : " < ") + fr.function.as_string();
+              log_debug(
+                "coverage",
+                "   stack[{}]: {}",
+                st.stack_trace.size(),
+                frames.empty() ? std::string("<empty>") : frames);
+            }
             const std::string name = from_expr(ns, "", st.lhs);
+            // NOT extcall_returns. The `_ESBMC_Nondet_Extcall_<C>` symbols are
+            // the RE-ENTRY model's own choice bits (which public method the
+            // outside world calls back into), not the value the external call
+            // returned to the contract. Measured: on the two paths of
+            // `if (ok)`, which by construction disagree about `ok`, these
+            // symbols carry the IDENTICAL tuple — so they cannot be `ok`.
+            // Publishing them under `extcall_returns` would be a wrong answer
+            // wearing the right label, so they stay counted as plumbing.
+            // See ce_extraction.extcall_returns_unavailable_reason below.
+            if (
+              is_symbol2t(st.lhs) &&
+              to_symbol2t(st.lhs).thename.as_string().find(
+                "_ESBMC_Nondet_Extcall") != std::string::npos)
+            {
+              ++ce.dropped_internal;
+              continue;
+            }
             // Mapping / dynamic-array state: these do NOT live in the contract
             // object, so the `this->` test below never sees them and they would
             // be discarded as harness noise — leaving a reader to infer the
@@ -2797,8 +3176,22 @@ smt_convt::resultt bmct::multi_property_check(
               std::string sym_id;
               if (is_symbol2t(st.lhs))
                 sym_id = to_symbol2t(st.lhs).thename.as_string();
-              const bool is_param =
+              const bool in_fn_scope =
                 !fn_scope.empty() && sym_id.rfind(fn_scope, 0) == 0;
+              // A prefix match says "declared inside this function", which is
+              // true of a PARAMETER and of every local alike. Only a parameter
+              // is something the caller supplies, so ask the symbol table
+              // instead of the name. Before this, an external call's return
+              // value (a local) was reported under `inputs`, i.e. as an
+              // argument a generated test could pass — it cannot.
+              bool is_param = false;
+              if (in_fn_scope && !sym_id.empty())
+              {
+                const symbolt *psym = ns.lookup(irep_idt(sym_id));
+                is_param = psym && psym->is_parameter;
+              }
+              // (External-call returns were already taken above, before the
+              // contract-scope-store branch could discard them.)
               const bool is_env = name.rfind("msg_", 0) == 0 ||
                                   name.rfind("tx_", 0) == 0 ||
                                   name.rfind("block_", 0) == 0;
@@ -2818,6 +3211,21 @@ smt_convt::resultt bmct::multi_property_check(
           }
           for (const auto &[n, v] : last_state)
             ce.final_state.emplace_back(n, v);
+          // Pick the snapshot for the invocation the refuted assert sits in.
+          // Anything else would be a different invocation's entry state, which
+          // for a recursive function is a different number — reporting it would
+          // be a wrong value, not an approximate one.
+          if (assert_depth_known)
+          {
+            auto ed = entry_by_depth.find(assert_target_depth);
+            if (ed != entry_by_depth.end())
+            {
+              entry_snapshot = ed->second;
+              ce.entry_storage_known = true;
+            }
+          }
+          for (const auto &[n, v] : entry_snapshot)
+            ce.entry_storage.emplace_back(n, v);
           std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
           goto_coveraget::path_ce[claim_sig] = std::move(ce);
         }
@@ -2898,9 +3306,15 @@ smt_convt::resultt bmct::multi_property_check(
         // path whose CE is already in hand; its key is the same
         // (claim_msg, claim_loc) pair, where claim_msg is the "fn:path:enc"
         // comment, unique per complete path.
+        // Complete-path coverage persists through the CONTENT-ADDRESSED writer
+        // instead: its key is the stable id, and `covered_set` is empty for
+        // this metric by construction. Incremental (not just at run end) for
+        // the same reason as branch coverage — a mid-solve kill on a large
+        // contract must not throw away the paths already witnessed.
+        if (is_path_cov && !goto_coveraget::path_covered_outpath.empty())
+          goto_coveraget::write_path_covered_set_atomic();
         if (
-          (is_branch_cov || is_path_cov) &&
-          !goto_coveraget::covered_set_outpath.empty() &&
+          is_branch_cov && !goto_coveraget::covered_set_outpath.empty() &&
           goto_coveraget::covered_set.emplace(claim.claim_msg, claim.claim_loc)
             .second)
         {
@@ -2923,8 +3337,14 @@ smt_convt::resultt bmct::multi_property_check(
             reached_claims.size(), std::memory_order_relaxed);
       }
 
-      // for verbose output of cond coverage
-      if (is_vb)
+      // for verbose output of cond coverage.
+      // NOT for path coverage: report_coverage_verbose only knows the four
+      // legacy metrics and its else-branch is `log_error(...); abort()`, so
+      // passing `--verbosity coverage:N` alongside --solidity-path-coverage
+      // used to kill the run with a core dump the moment the first path was
+      // witnessed. Path coverage already prints per-claim progress through the
+      // PASSED/FAILED lines above.
+      if (is_vb && !is_path_cov)
         report_coverage_verbose(
           claim,
           claim_sig,

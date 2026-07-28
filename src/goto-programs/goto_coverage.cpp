@@ -1,7 +1,11 @@
 #include <goto-programs/goto_coverage.h>
+#include <goto-programs/goto_inline.h>
+#include <util/arith_tools.h>
 #include <goto-programs/k_path_spanning.h>
+#include <goto-programs/remove_no_op.h>
 #include <irep2/irep2_utils.h>
 #include <util/i2string.h>
+#include <util/options.h>
 #include <util/std_types.h>
 
 #include <nlohmann/json.hpp>
@@ -37,8 +41,20 @@ std::set<std::pair<std::string, std::string>>
   goto_coveraget::rollback_revert_paths;
 std::set<std::pair<std::string, std::string>>
   goto_coveraget::undetermined_exit_paths;
+std::map<std::pair<std::string, std::string>, std::string>
+  goto_coveraget::named_obstacle_paths;
+std::map<std::pair<std::string, std::string>, std::string>
+  goto_coveraget::truncation_weakened;
+std::map<std::string, std::vector<std::string>>
+  goto_coveraget::degraded_call_sites;
 std::map<std::string, goto_coveraget::path_ce_t> goto_coveraget::path_ce;
 std::string goto_coveraget::covered_set_outpath;
+std::set<std::string> goto_coveraget::path_covered_ids;
+std::map<std::pair<std::string, std::string>, std::string>
+  goto_coveraget::path_stable_id;
+std::string goto_coveraget::path_covered_outpath;
+std::map<std::string, std::string> goto_coveraget::units_not_entered;
+std::string goto_coveraget::path_cov_fingerprint;
 std::atomic<bool> goto_coveraget::branch_cov_active{false};
 std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
 std::atomic<bool> goto_coveraget::covered_set_mode{false};
@@ -69,6 +85,269 @@ void goto_coveraget::write_covered_set_atomic()
   if (std::rename(tmp.c_str(), covered_set_outpath.c_str()) != 0)
     log_warning(
       "coverage-covered-set: atomic rename to {} failed", covered_set_outpath);
+}
+
+// FNV-1a 64. Used only to name things (path ids, fingerprints), never to make
+// a soundness decision: a collision would merge two path ids, so the space is
+// kept at 64 bits and the id is printed in full hex so a human can compare it.
+static uint64_t fnv1a(const std::string &s, uint64_t h = 1469598103934665603ULL)
+{
+  for (unsigned char c : s)
+  {
+    h ^= c;
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+static std::string hex64(uint64_t v)
+{
+  static const char *d = "0123456789abcdef";
+  std::string out(16, '0');
+  for (int i = 15; i >= 0; --i, v >>= 4)
+    out[i] = d[v & 0xF];
+  return out;
+}
+
+void goto_coveraget::write_path_covered_set_atomic()
+{
+  if (path_covered_outpath.empty())
+    return;
+  nlohmann::json out;
+  out["version"] = 2;
+  out["kind"] = "solidity-complete-path";
+  // The fingerprint is written so the NEXT run can refuse this file outright.
+  out["fingerprint"] = path_cov_fingerprint;
+  out["covered"] = nlohmann::json::array();
+  // A path counts as covered only when a counterexample was actually obtained
+  // ('F'). 'P' (no witness at this bound) and 'U' (undecided) are not evidence
+  // of anything and must never enter a cross-run cover.
+  std::set<std::string> ids = path_covered_ids;
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    for (const auto &[claim, id] : path_stable_id)
+    {
+      auto o = claim_outcome.find(claim.first + "\t" + claim.second);
+      if (o != claim_outcome.end() && o->second == 'F')
+        ids.insert(id);
+    }
+  }
+  for (const auto &id : ids)
+    out["covered"].push_back(id);
+  const std::string tmp = path_covered_outpath + ".tmp";
+  {
+    std::ofstream f(tmp);
+    if (!f)
+    {
+      log_warning("coverage-covered-set: cannot write {}", tmp);
+      return;
+    }
+    f << out.dump(2) << "\n";
+  }
+  if (std::rename(tmp.c_str(), path_covered_outpath.c_str()) != 0)
+    log_warning(
+      "coverage-covered-set: atomic rename to {} failed", path_covered_outpath);
+}
+
+bool goto_coveraget::path_witnessed_earlier(
+  const std::pair<std::string, std::string> &claim_key)
+{
+  if (path_covered_ids.empty())
+    return false;
+  auto it = path_stable_id.find(claim_key);
+  return it != path_stable_id.end() && path_covered_ids.count(it->second) != 0;
+}
+
+const std::vector<std::string> &goto_coveraget::path_u_reason_tokens()
+{
+  // Report order == classification priority, so the printed line reads in the
+  // same order the decision is made. `unit-not-entered` sits second on purpose;
+  // see path_u_reason_token.
+  static const std::vector<std::string> tokens = {
+    "named-obstacle",
+    "unit-not-entered",
+    "bounded-holds",
+    "solver-unknown",
+    "not-solved-this-run"};
+  return tokens;
+}
+
+std::string goto_coveraget::path_u_reason_token(
+  const std::pair<std::string, std::string> &claim_key)
+{
+  // Most specific first. A disqualified unit's path is not an "unknown" that
+  // better solving could resolve — no verdict can put it back in play — so the
+  // obstacle wins over whatever the solver happened to answer.
+  if (named_obstacle_paths.count(claim_key) != 0)
+    return "named-obstacle";
+
+  // SECOND, and above both verdict-derived tokens on purpose: when the harness
+  // never entered the unit, no classification OF THE PATH means anything. A
+  // vacuously-holding claim answers 'P' and would be filed "no witness within
+  // the bound"; a claim that was never generated has no verdict and would be
+  // filed "not solved this run". Both are statements about the path, and both
+  // are strictly less informative than the truth, which is that nothing ran.
+  {
+    const size_t p = claim_key.first.rfind(":path:");
+    const std::string unit =
+      p == std::string::npos ? claim_key.first : claim_key.first.substr(0, p);
+    if (units_not_entered.count(unit) != 0)
+      return "unit-not-entered";
+  }
+
+  char v = 0;
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    auto it = claim_outcome.find(claim_key.first + "\t" + claim_key.second);
+    if (it != claim_outcome.end())
+      v = it->second;
+  }
+  switch (v)
+  {
+  case 'P':
+    // Proven at THIS exploration. Deliberately not called "unreachable": see
+    // path_cov_can_prove_unreachable() in bmc.cpp.
+    return "bounded-holds";
+  case 'U':
+    return "solver-unknown";
+  case 0:
+    // Instrumented, never decided. The whole-unit version of this is what the
+    // entry-liveness audit aborts on; a single claim in this state slips past
+    // it, which is precisely why it needs a name of its own.
+    return "not-solved-this-run";
+  default:
+    // THE ABORT PATH IS THE DEFAULT, deliberately. 'F' means witnessed, hence
+    // not a U at all, so reaching here means the caller's F/I/U split and this
+    // classification disagree — the very defect this function exists to
+    // surface. Returning "" makes the caller hard-fail.
+    //
+    // DO NOT map `default` to a token. The claim that these tokens partition
+    // the possible states rests on there being no catch-all: with one, a fifth
+    // verdict value would be quietly absorbed, the abort would become dead code,
+    // and the whole invariant would read as passing. A new verdict value gets
+    // its own `case`.
+    return std::string();
+  }
+}
+
+void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
+{
+  // Rebuilt every call: report_coverage can run more than once (k-induction
+  // phases), and a stale set would label paths of a unit that WAS entered this
+  // time.
+  units_not_entered.clear();
+  if (all_claims.empty())
+    return;
+
+  // Is this unit the one --focus-function narrowed the dispatcher to? Unit ids
+  // look like "sol:@C@<C>@F@<fn>#<id>".
+  auto is_focused = [&focus_function](const std::string &unit) {
+    if (focus_function.empty())
+      return true; // no narrowing: every unit is expected to be entered
+    const std::string tag = "@F@" + focus_function + "#";
+    return unit.find(tag) != std::string::npos;
+  };
+
+  // Group the enumerated paths by unit. The claim comment is
+  // "<function-id>:path:<enc>", so the unit is the part before ":path:".
+  struct tally
+  {
+    size_t instrumented = 0; // claims actually put to the solver this run
+    size_t decided = 0;      // of those, how many came back with a verdict
+  };
+  std::map<std::string, tally> per_unit;
+  size_t total_instrumented = 0, total_decided = 0;
+
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    for (const auto &key : all_claims)
+    {
+      const std::string &comment = key.first;
+      const size_t p = comment.rfind(":path:");
+      const std::string unit =
+        p == std::string::npos ? comment : comment.substr(0, p);
+
+      // A path deliberately skipped because an earlier round already witnessed
+      // it is not evidence of anything — it was never instrumented this run.
+      auto sid = path_stable_id.find(key);
+      if (sid != path_stable_id.end() && path_covered_ids.count(sid->second))
+        continue;
+
+      tally &t = per_unit[unit];
+      ++t.instrumented;
+      ++total_instrumented;
+      if (claim_outcome.count(key.first + "\t" + key.second))
+      {
+        ++t.decided;
+        ++total_decided;
+      }
+    }
+  }
+
+  // First-class output: how much of the solve stage actually happened. Reported
+  // whether or not anything is wrong, because "0 of N" is exactly the number
+  // that was missing when a fully empty run read as a merely undecided one.
+  log_status(
+    "--solidity-path-coverage: {} of {} instrumented path claim(s) reached the "
+    "solver across {} unit(s)",
+    total_decided,
+    total_instrumented,
+    per_unit.size());
+
+  std::vector<std::string> dead, dead_by_design;
+  for (const auto &[unit, t] : per_unit)
+    if (t.instrumented > 0 && t.decided == 0)
+    {
+      // Recorded for BOTH branches, WITH the cause. Whether or not the absence
+      // is a defect, a path of this unit must be reported as "the unit was
+      // never entered" rather than by a per-path verdict that means nothing
+      // when nothing ran — and the cause has to travel with it, because the
+      // planned entry-liveness witness needs exactly this split to avoid
+      // aborting on every --focus-function run.
+      const bool focused = is_focused(unit);
+      units_not_entered[unit] =
+        focused ? "harness never entered it (no --focus-function narrowing "
+                  "explains this)"
+                : "excluded by --focus-function '" + focus_function + "'";
+      (focused ? dead : dead_by_design).push_back(unit);
+    }
+
+  if (!dead_by_design.empty())
+    log_status(
+      "--solidity-path-coverage: {} unit(s) were not entered because "
+      "--focus-function narrowed the dispatcher to '{}'. That is the intended "
+      "behaviour of per-method runs (their paths are meant to be witnessed by "
+      "the run that focuses on them and unioned via the covered set), so it is "
+      "reported, not treated as a failure",
+      dead_by_design.size(),
+      focus_function);
+
+  if (dead.empty())
+    return;
+
+  std::string names;
+  for (const auto &d : dead)
+    names += (names.empty() ? "" : "; ") + d;
+
+  if (total_decided == 0)
+    log_error(
+      "--solidity-path-coverage: INTERNAL DEFECT — NOT ONE of the {} "
+      "instrumented path claim(s) reached the solver. The harness never "
+      "entered any unit, so this run establishes nothing whatsoever; every "
+      "path would otherwise be reported 'U', which reads exactly like an "
+      "honest solver timeout. This is the extreme case of the per-unit check "
+      "below and is a tool failure, not a result.",
+      total_instrumented);
+  else
+    log_error(
+      "--solidity-path-coverage: INTERNAL DEFECT — {} unit(s) had claims "
+      "instrumented but NONE of them reached the solver, i.e. the harness "
+      "never entered them: {}. Their paths would be reported 'U', which is "
+      "indistinguishable from an honest solver timeout, so the results for "
+      "those units are vacuous rather than merely incomplete.",
+      dead.size(),
+      names);
+  abort();
 }
 
 std::string goto_coveraget::get_filename_from_path(std::string path)
@@ -879,10 +1158,252 @@ void goto_coveraget::k_path_coverage()
   goto_functions.update();
 }
 
+// Count complete paths in a goto program WITHOUT instrumenting it, using the
+// same traversal rules as the enumerating DFS: conditional GOTOs fan out 2-way,
+// each loop head gets its own back-edge budget, folded short-circuit operands in
+// ASSIGN/RETURN fan out 2^K, and RETURN / END_FUNCTION / a `#sol_error` call are
+// terminators.
+//
+// Sole purpose is measurement: it is run on a snapshot of each unit's body taken
+// BEFORE internal calls are expanded, so the ratio against the real enumeration
+// quantifies how much expansion multiplies paths — a cost that was declared when
+// expansion was adopted and until now had no number attached.
+//
+// Duplicated traversal logic is a drift hazard, so the caller checks the one
+// case where the two must agree exactly: a unit into which nothing was expanded
+// must produce the same count from both. A mismatch there is a hard failure, so
+// this measurement is itself measured rather than self-certified.
+static size_t count_paths_no_instrument(
+  const goto_programt &p,
+  const namespacet &ns,
+  size_t unwind,
+  size_t cap,
+  bool &hit_cap)
+{
+  hit_cap = false;
+  if (p.instructions.empty())
+    return 0;
+
+  auto is_err_call = [&ns](goto_programt::const_targett i) {
+    if (!i->is_function_call() || !is_code_function_call2t(i->code))
+      return false;
+    const expr2tc &fn = to_code_function_call2t(i->code).function;
+    if (!is_symbol2t(fn))
+      return false;
+    const symbolt *s = ns.lookup(to_symbol2t(fn).thename);
+    return s && !s->type.get("#sol_error").as_string().empty();
+  };
+
+  using becntt = std::map<unsigned, unsigned>;
+  std::vector<std::pair<goto_programt::const_targett, becntt>> stack;
+  stack.push_back({p.instructions.begin(), becntt{}});
+  size_t paths = 0, pushes = 0;
+  const size_t push_cap = 50 * cap + 100000;
+
+  while (!stack.empty())
+  {
+    auto [pc, becnt] = stack.back();
+    stack.pop_back();
+    while (true)
+    {
+      if (pc == p.instructions.end() || pc->is_end_function())
+      {
+        if (pc != p.instructions.end())
+          ++paths;
+        break;
+      }
+      if (is_err_call(pc))
+      {
+        ++paths;
+        break;
+      }
+      if (pc->is_return() && is_code_return2t(pc->code))
+      {
+        size_t rk = 0;
+        if (pc->location.property().as_string() != "skipped")
+          collect_short_circuit_decisions(
+            to_code_return2t(pc->code).operand,
+            [&](const expr2tc &) { ++rk; });
+        paths += (rk > 0 && rk <= SC_DECISION_MAX) ? (size_t(1) << rk) : 1;
+        break;
+      }
+      if (pc->is_goto())
+      {
+        const bool back = pc->is_backwards_goto();
+        if (is_true(pc->guard))
+        {
+          if (back)
+          {
+            const unsigned key = pc->get_target()->target_number;
+            if (becnt[key] >= unwind)
+              break;
+            ++becnt[key];
+          }
+          pc = pc->get_target();
+          continue;
+        }
+        bool take = true;
+        becntt becnt_taken = becnt;
+        if (back)
+        {
+          const unsigned key = pc->get_target()->target_number;
+          if (becnt_taken[key] >= unwind)
+            take = false;
+          else
+            ++becnt_taken[key];
+        }
+        if (take)
+        {
+          if (++pushes > push_cap)
+          {
+            hit_cap = true;
+            break;
+          }
+          stack.push_back({pc->get_target(), becnt_taken});
+        }
+        pc = std::next(pc);
+        continue;
+      }
+      if (pc->is_assign() && pc->location.property().as_string() != "skipped")
+      {
+        size_t k = 0;
+        collect_short_circuit_decisions(
+          to_code_assign2t(pc->code).source, [&](const expr2tc &) { ++k; });
+        if (k > 0 && k <= SC_DECISION_MAX)
+        {
+          for (uint64_t m = 0; m < (uint64_t(1) << k); ++m)
+          {
+            if (++pushes > push_cap)
+            {
+              hit_cap = true;
+              break;
+            }
+            stack.push_back({std::next(pc), becnt});
+          }
+          break;
+        }
+      }
+      pc = std::next(pc);
+    }
+    if (paths > cap)
+    {
+      hit_cap = true;
+      break;
+    }
+    if (hit_cap)
+      break;
+  }
+  return paths;
+}
+
+// ---------------------------------------------------------------------------
+// Selective inliner for Solidity complete-path coverage.
+//
+// The methodology fixes two separate things that are easy to conflate:
+//   * what is a UNIT (does it get a path set of its own)? -> a public/external
+//     function, because that is what an external caller can invoke;
+//   * does a CALL expand into the caller's path identity? -> an internal call
+//     expands, an external call does not (its success/failure is the branch
+//     point instead).
+// The two answers are independent: a `public` function that is also called
+// internally is BOTH a unit of its own (entered from outside, free arguments)
+// AND expanded into its internal caller's paths (entered with computed
+// arguments). Both descriptions are needed and they describe different input
+// spaces.
+//
+// Expansion must be PHYSICAL — splice the callee's body into the caller —
+// rather than a cross-function walk of the enumerator, because `tr`/`cnt` are
+// per-function ghost symbols: a callee left as a call updates ITS OWN
+// accumulator, so its decisions are invisible to the caller's path number.
+// Splicing first and instrumenting second makes the caller's own accumulator
+// record the whole expanded decision sequence, with no shared-state bookkeeping.
+//
+// goto_inlinet's own inliners cannot be used directly: `full` inlining drags in
+// every c2goto library model, and its recursion handling rewrites the recursive
+// call to a SKIP — deleting a real behaviour instead of bounding it. So the
+// call-selection policy and the recursion bound live here, and only the tested
+// mechanical pieces (parameter_assignments / replace_return) are reused.
+class sol_path_inlinet : public goto_inlinet
+{
+public:
+  sol_path_inlinet(
+    goto_functionst &_goto_functions,
+    optionst &_options,
+    const namespacet &_ns)
+    : goto_inlinet(_goto_functions, _options, _ns)
+  {
+  }
+
+  // Splice `f`'s body over the FUNCTION_CALL at `target`. On return `target`
+  // names the instruction FOLLOWING the spliced region, so a single pass
+  // expands exactly the calls that were present when the pass began — that is
+  // what makes "one pass == one level of call depth" true, and hence what
+  // bounds recursion.
+  void expand_here(
+    goto_programt &dest,
+    goto_programt::targett &target,
+    const goto_functiont &f)
+  {
+    // Copy what we need out of the call before the instruction is overwritten.
+    const code_function_call2t &call = to_code_function_call2t(target->code);
+    const expr2tc lhs = call.ret;
+    const std::vector<expr2tc> args = call.operands;
+
+    goto_programt tmp2;
+    tmp2.copy_from(f.body);
+    assert(tmp2.instructions.back().is_end_function());
+    tmp2.instructions.back().type = LOCATION;
+    replace_return(tmp2, lhs);
+
+    goto_programt tmp;
+    parameter_assignments(
+      tmp2.instructions.front().location, f.type, args, tmp);
+    // parameter_assignments emits each formal as an OTHER instruction carrying
+    // a code_decl. goto_symext::symex_other has no case for code_decl and
+    // aborts the run ("unexpected statement: code_decl") — measured. The
+    // existing inliners get away with it only because they run before the pass
+    // that normalises this; we run after goto conversion, so emit the real
+    // instruction kind.
+    Forall_goto_program_instructions (pit, tmp)
+      if (pit->type == OTHER && !is_nil_expr(pit->code) &&
+          is_code_decl2t(pit->code))
+        pit->type = DECL;
+    tmp.destructive_append(tmp2);
+
+    // Flag every spliced instruction. The exit classifier asks "did this path
+    // run the function epilogue?" via a symbol name that an inlined callee's
+    // own epilogue also matches; without the flag, a caller's bare revert edge
+    // that happened to walk through an inlined callee's epilogue would be
+    // reported `normal` instead of `undetermined`.
+    Forall_goto_program_instructions (iit, tmp)
+      iit->location.set("sol_path_inlined", true);
+
+    target->type = LOCATION;
+    target->code = expr2tc();
+    goto_programt::targett next_target(target);
+    ++next_target;
+    dest.instructions.splice(next_target, tmp.instructions);
+    target = next_target;
+  }
+};
+
 /*
 Solidity complete-path coverage (entry->exit path coverage for test gen).
 
-For each eligible (user-source) function:
+The UNIT is a public/external function — what an external caller can actually
+invoke. Internal/private helpers are not units: an internal call is EXPANDED
+into its caller (see sol_path_inlinet above), so the callee's decisions are part
+of the caller's path identity, and the helper gets no path set of its own. A
+`public` function that is also called internally is therefore described twice,
+by design: once as a unit entered from outside with free arguments, and once as
+expanded decisions inside each internal caller's paths, where its arguments are
+computed. Those are different input spaces and need different tests.
+
+Consequence for reading the totals: the same source line can appear in more than
+one unit's path set, so the path total is NOT a count of distinct code paths in
+the contract — it is the sum over units of that unit's complete paths.
+
+For each unit:
   Phase 1: one integer path-number accumulator `tr`. At function entry
            `tr = 1`; before every decision `tr = tr*2 + guard_value`. A single
            scalar records the whole decision sequence in order and survives
@@ -932,17 +1453,75 @@ void goto_coveraget::solidity_path_coverage()
   all_claims.clear();
   covered_set.clear();
   covered_set_outpath.clear();
+  path_covered_ids.clear();
+  path_stable_id.clear();
+  path_covered_outpath.clear();
   revert_paths.clear();
   rollback_revert_paths.clear();
   undetermined_exit_paths.clear();
+  named_obstacle_paths.clear();
+  truncation_weakened.clear();
+  degraded_call_sites.clear();
   {
     std::lock_guard lock(claim_outcome_mutex);
     claim_outcome.clear();
     path_ce.clear();
   }
+
+  // Fingerprint of everything that can change what a path IS. The stable path
+  // key below survives re-numbering; it cannot survive a change of identity, so
+  // that is what this covers, and a mismatch throws the cache away rather than
+  // trying to translate it.
+  //
+  // PATH_ID_SCHEMA_VERSION: bump when the shape of the stable key changes.
+  // DECISION_SET_VERSION:   bump when the SET of things counted as a decision
+  //                         changes (source ifs, short-circuit operands,
+  //                         ternaries, the ABI non-payable gate, ...). Adding a
+  //                         decision kind changes every path's identity even
+  //                         though the source is untouched.
+  {
+    static constexpr int PATH_ID_SCHEMA_VERSION = 1;
+    static constexpr int DECISION_SET_VERSION = 4;
+    uint64_t h = fnv1a("path-cov-fingerprint");
+    h = fnv1a("schema=" + std::to_string(PATH_ID_SCHEMA_VERSION), h);
+    h = fnv1a("decisions=" + std::to_string(DECISION_SET_VERSION), h);
+    h = fnv1a("sc_max=" + std::to_string(SC_DECISION_MAX), h);
+    // Loop unwinding, call/recursion depth and external-call re-entry depth are
+    // all bounded by this one number today; each is listed so that if they ever
+    // separate, the omission is visible here rather than silent.
+    h = fnv1a("loop_bound=" + std::to_string(path_cov_unwind), h);
+    h = fnv1a("call_depth=" + std::to_string(path_cov_unwind), h);
+    h = fnv1a("reentry_depth=" + std::to_string(path_cov_unwind), h);
+    h = fnv1a("goal_cap=" + std::to_string(path_cov_max_goals), h);
+    h = fnv1a("contract=" + scope_contract, h);
+    // Source content, not mtime or path: the same bytes must produce the same
+    // fingerprint on another machine.
+    std::vector<std::string> srcs;
+    srcs.push_back(filename);
+    for (const auto &inc : config.ansi_c.include_files)
+      srcs.push_back(inc);
+    std::sort(srcs.begin(), srcs.end());
+    for (const auto &s : srcs)
+    {
+      std::ifstream f(s, std::ios::binary);
+      if (!f)
+      {
+        // Unreadable source => we cannot prove the cache still applies. Make the
+        // fingerprint depend on that fact so it can never accidentally match.
+        h = fnv1a("unreadable:" + s, h);
+        continue;
+      }
+      std::string body(
+        (std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+      h = fnv1a("src:" + get_filename_from_path(s) + ":" + body, h);
+    }
+    path_cov_fingerprint = hex64(h);
+  }
+
+  // Cross-run covered set: content-addressed ids, guarded fail-closed.
   if (!covered_set_path.empty())
   {
-    covered_set_outpath = covered_set_path;
+    path_covered_outpath = covered_set_path;
     std::ifstream in(covered_set_path);
     if (in)
     {
@@ -950,9 +1529,24 @@ void goto_coveraget::solidity_path_coverage()
       {
         nlohmann::json j;
         in >> j;
-        for (const auto &e : j.value("covered", nlohmann::json::array()))
-          covered_set.emplace(
-            e.at("cond").get<std::string>(), e.at("loc").get<std::string>());
+        const std::string fp = j.value("fingerprint", std::string());
+        if (fp != path_cov_fingerprint)
+        {
+          // Fail closed. No migration: a file written under a different source,
+          // decision set or bound describes paths that no longer exist, and any
+          // attempt to carry entries over is exactly the code path in which a
+          // wrong "already covered" would hide.
+          log_status(
+            "--coverage-covered-set: discarding {} — it was written for a "
+            "different program/instrumentation (fingerprint {} != {}). "
+            "Recomputing from scratch; no entries are carried over",
+            covered_set_path,
+            fp.empty() ? "<none>" : fp,
+            path_cov_fingerprint);
+        }
+        else
+          for (const auto &e : j.value("covered", nlohmann::json::array()))
+            path_covered_ids.insert(e.get<std::string>());
       }
       catch (const std::exception &ex)
       {
@@ -960,8 +1554,568 @@ void goto_coveraget::solidity_path_coverage()
           "coverage-covered-set: ignoring unparseable {} ({})",
           covered_set_path,
           ex.what());
-        covered_set.clear();
+        path_covered_ids.clear();
       }
+    }
+  }
+
+  // ---- Stage-2 certification query spec (--path-cov-certify) ----
+  //
+  // {"unit": "<fn name or full unit id>", "enc": N, "depth": D,
+  //  "box": [{"name": "a", "lo": "0", "hi": "10"}, ...]}
+  //
+  // `lo`/`hi` are decimal STRINGS, not JSON numbers: Solidity inputs are up to
+  // 256 bits and a JSON number would be silently truncated to a double on the
+  // way in — a certified box quietly covering the wrong region is the one
+  // outcome this query exists to prevent.
+  struct certify_boundt
+  {
+    std::string name, lo, hi;
+  };
+  bool certify_on = false;
+  std::string certify_unit;
+  uint64_t certify_enc = 0, certify_depth = 0;
+  std::vector<certify_boundt> certify_box;
+  if (!path_cov_certify_path.empty())
+  {
+    std::ifstream cin_f(path_cov_certify_path);
+    if (!cin_f)
+    {
+      log_error(
+        "--path-cov-certify: cannot open '{}'", path_cov_certify_path);
+      abort();
+    }
+    try
+    {
+      nlohmann::json j;
+      cin_f >> j;
+      certify_unit = j.at("unit").get<std::string>();
+      certify_enc = j.at("enc").get<uint64_t>();
+      certify_depth = j.at("depth").get<uint64_t>();
+      for (const auto &b : j.value("box", nlohmann::json::array()))
+        certify_box.push_back(
+          {b.at("name").get<std::string>(),
+           b.at("lo").get<std::string>(),
+           b.at("hi").get<std::string>()});
+    }
+    catch (const std::exception &ex)
+    {
+      // Deliberately fatal rather than "ignore and fall back to enumeration":
+      // a malformed spec that silently produced an ordinary coverage run would
+      // print a full, plausible report that answers a different question.
+      log_error(
+        "--path-cov-certify: cannot parse '{}' ({}). Expected "
+        "{{\"unit\":..., \"enc\":N, \"depth\":D, \"box\":[{{\"name\":..., "
+        "\"lo\":\"..\", \"hi\":\"..\"}}]}}",
+        path_cov_certify_path,
+        ex.what());
+      abort();
+    }
+    certify_on = true;
+    log_status(
+      "--path-cov-certify: CERTIFICATION QUERY for unit '{}' path enc={} "
+      "depth={} over {} bounded input(s). The per-path identity asserts are "
+      "NOT emitted in this mode, so the [Coverage] block below is not "
+      "meaningful — the verdict of this run is VERIFICATION SUCCESSFUL (every "
+      "input in the box walks this path) versus FAILED (the counterexample is "
+      "an input inside the box that leaves it)",
+      certify_unit,
+      certify_enc,
+      certify_depth,
+      certify_box.size());
+  }
+
+  // Keep the counterexample payload alive through slicing, WITHOUT switching
+  // slicing off. The symex slicer works backwards from the claim, and a path
+  // claim's guard is `tr != enc || cnt != depth` — it mentions nothing but the
+  // ghost accumulators. So every contract-state write and every environment
+  // read is unreachable from the claim and gets sliced, leaving the report's
+  // `inputs`/`env`/`final_state` empty. (Call arguments survive on their own:
+  // the decisions that build `tr` are guards over them.)
+  //
+  // ESBMC already has a per-symbol exemption for exactly this — no_slice_names
+  // (`--no-slice-name`), consulted by symex_slicet::get_symbols. Register the
+  // three symbol families the harvest in bmc.cpp reads, and nothing else:
+  //   (a) the contract instance object — a Solidity `this->x = v` is an update
+  //       of THIS symbol, so without it every final_state is empty;
+  //   (b) contract-scope stores with no `@F@` in the id — mappings and dynamic
+  //       arrays are NOT fields of the contract object, the frontend lowers
+  //       them to contract-level globals; this is the same shape the harvest
+  //       keys on;
+  //   (c) the EVM environment, by the same msg_/tx_/block_ base-name test the
+  //       harvest uses to classify a value as `env` rather than an argument.
+  // Everything else — the c2goto keccak/sha256/ABI tables, the address
+  // allocator, the dispatcher plumbing — is still sliced away.
+  if (protect_ce_symbols)
+  {
+    size_t n_obj = 0, n_store = 0, n_env = 0;
+    cov_context->foreach_operand([&](const symbolt &s) {
+      const std::string id = s.id.as_string();
+      const std::string base = s.name.as_string();
+      if (id.rfind("sol:@_ESBMC_Object_", 0) == 0)
+      {
+        config.no_slice_names.insert(id);
+        ++n_obj;
+      }
+      else if (
+        id.rfind("sol:@C@", 0) == 0 && id.find("@F@") == std::string::npos)
+      {
+        config.no_slice_names.insert(id);
+        ++n_store;
+      }
+      else if (
+        base.rfind("msg_", 0) == 0 || base.rfind("tx_", 0) == 0 ||
+        base.rfind("block_", 0) == 0)
+      {
+        config.no_slice_names.insert(id);
+        ++n_env;
+      }
+    });
+    log_status(
+      "--solidity-path-coverage with --cov-report-json: exempting {} symbol(s) "
+      "from slicing so each path's counterexample values survive into the "
+      "report ({} contract object(s), {} contract-scope store(s), {} "
+      "environment); slicing stays enabled for everything else",
+      n_obj + n_store + n_env,
+      n_obj,
+      n_store,
+      n_env);
+  }
+
+  // A function is a UNIT iff it is a public/external entry. The frontend
+  // creates `<function-id>#_sol_save_this` for exactly those (public /
+  // external / receive / fallback) and for nothing else, so the symbol's
+  // existence is the test — no new frontend signal is needed.
+  auto is_external_entry = [&](const irep_idt &fid) {
+    return ns.lookup(irep_idt(fid.as_string() + "#_sol_save_this")) != nullptr;
+  };
+
+  // Is any of this body's instructions in the user source? c2goto library
+  // models and the synthetic harness carry non-user locations.
+  auto body_in_user_src = [&](const goto_programt &p) {
+    forall_goto_program_instructions (uit, p)
+      if (location_pool.count(
+            get_filename_from_path(uit->location.file().as_string())))
+        return true;
+    return false;
+  };
+
+  // Is this instruction an INTERNAL call that must be expanded into the
+  // caller's path identity?
+  //
+  // Everything a Solidity contract calls directly by symbol is internal in the
+  // goto model. Measured on a `this.f(a)` self-call: the frontend lowers it to
+  // the very same direct FUNCTION_CALL as a plain `f(a)` and models no
+  // success/failure edge for it, so at this layer an external SELF-call is
+  // indistinguishable from an internal one — and there is nothing to branch on
+  // even if it were distinguished. A genuine external call (`addr.call{...}`,
+  // an interface method on another address) does not appear as a direct call
+  // to a user function at all: it goes through the `_ESBMC_Nondet_Extcall_*`
+  // model, which this predicate excludes, so it is left unexpanded and its
+  // success/failure stays a decision, as the methodology requires.
+  auto expandable_callee =
+    [&](goto_programt::const_targett i) -> const goto_functiont * {
+    if (!i->is_function_call() || !is_code_function_call2t(i->code))
+      return nullptr;
+    const expr2tc &callee = to_code_function_call2t(i->code).function;
+    if (!is_symbol2t(callee))
+      return nullptr;
+    const irep_idt cid = to_symbol2t(callee).thename;
+    const std::string cids = cid.as_string();
+    // Harness plumbing: the dispatcher and the external-call model are the
+    // boundary of the unit, never part of it.
+    if (
+      cids.find("_ESBMC_Main") != std::string::npos ||
+      cids.find("_ESBMC_Nondet_Extcall") != std::string::npos)
+      return nullptr;
+    // A lowered `revert E()` is a STATEMENT, not a call: its whole body is
+    // ASSUME(false) and the enumerator detects it by name to place the path's
+    // assert upstream of that assume. Expanding it would destroy that marker.
+    const symbolt *csym = ns.lookup(cid);
+    if (csym != nullptr && !csym->type.get("#sol_error").as_string().empty())
+      return nullptr;
+    auto m_it = goto_functions.function_map.find(cid);
+    if (m_it == goto_functions.function_map.end())
+      return nullptr;
+    if (!m_it->second.body_available || m_it->second.body.hide)
+      return nullptr;
+    if (!body_in_user_src(m_it->second.body))
+      return nullptr;
+    return &m_it->second;
+  };
+
+  // Expand internal calls into every unit, so a callee's decisions become part
+  // of its caller's path identity. Bounded by path_cov_unwind passes: one pass
+  // expands exactly the calls present when it started, so pass count == call
+  // depth. Using the LOOP bound here is not a convenience — symex bounds
+  // recursion with the same --unwind, so any other value would enumerate paths
+  // the solver cannot reach (or miss ones it can).
+  optionst inline_opts;
+  sol_path_inlinet inliner(goto_functions, inline_opts, ns);
+  size_t inlined_calls = 0, residual_calls = 0;
+  std::set<std::string> residual_fns;
+  std::set<std::string> residual_unit_fns;
+  // Per unit: which UNIT callees it still calls unexpanded. This is not a
+  // reporting convenience — it is what the containment below is keyed on, so
+  // the marking reaches the right unit's paths instead of being a global count
+  // nobody acts on.
+  std::map<std::string, std::set<std::string>> residual_unit_callees_of;
+  // Measurement (§ "path distribution"): a snapshot of every unit's body BEFORE
+  // expansion, plus how many calls were expanded into it. Taken here because
+  // this is the last moment the pre-expansion shape exists.
+  std::map<std::string, goto_programt> pre_inline_body;
+  std::map<std::string, size_t> expanded_into_unit;
+  size_t degraded_units = 0, withdrawn_sites_total = 0;
+  size_t degradation_exhausted_units = 0;
+
+  // Identity of a CALL POINT for degradation: the callee plus the source
+  // location of the call expression. Deliberately not the goto instruction —
+  // after expansion the same source-level call exists as several physical
+  // copies (one per copy of the enclosing callee), and "withdraw this call"
+  // has to withdraw all of them or the unit's paths still multiply through the
+  // copies that were left behind. A synthesised call with no source location
+  // therefore folds together with its siblings, which errs towards withdrawing
+  // more: the safe direction, since withdrawing costs assertion strength while
+  // failing to withdraw costs the budget.
+  auto callee_id_of = [](goto_programt::const_targett i) {
+    const expr2tc &callee = to_code_function_call2t(i->code).function;
+    return to_symbol2t(callee).thename.as_string();
+  };
+  auto call_point_key = [&callee_id_of](goto_programt::const_targett i) {
+    return callee_id_of(i) + " at " + i->location.as_string();
+  };
+
+  // May this call point be withdrawn?
+  //
+  // NOT if the callee is itself a unit, and the reason is soundness rather than
+  // taste. Withdrawing means leaving a direct call to the callee's own body —
+  // and that body carries the synthesised ABI non-payable gate, which models an
+  // EXTERNAL entry. An internal call never runs that gate on-chain, so the model
+  // would admit "the callee reverted because the transaction carried value" in
+  // the middle of a caller that on-chain proceeds normally: a counterexample
+  // describing an execution that does not exist, i.e. a test that is red on the
+  // unmodified contract. Physical expansion is exactly what fixes that (the
+  // caller's copy is gate-free), so undoing it for a unit callee re-opens the
+  // hole. Internal/private helpers have no gate and are safe to withdraw.
+  auto withdrawable = [&](goto_programt::const_targett i) {
+    return !is_external_entry(irep_idt(callee_id_of(i)));
+  };
+
+  // Expand every expandable call into `b` EXCEPT those whose call-point key is
+  // in `withdrawn`. One pass expands exactly the calls that were present when
+  // it started, so the pass index is the call's depth from the unit entry; that
+  // is both what bounds recursion and what `sites` records alongside each key.
+  // Only withdrawable call points are offered as candidates in `sites`.
+  auto expand_into = [&](
+                       goto_programt &b,
+                       const std::set<std::string> &withdrawn,
+                       std::map<std::string, size_t> *sites) -> size_t {
+    size_t n = 0;
+    for (size_t round = 0; round < path_cov_unwind; ++round)
+    {
+      bool changed = false;
+      for (auto it = b.instructions.begin(); it != b.instructions.end();)
+      {
+        const goto_functiont *callee = expandable_callee(it);
+        if (callee == nullptr)
+        {
+          ++it;
+          continue;
+        }
+        if (withdrawn.count(call_point_key(it)) != 0)
+        {
+          // Left as a plain call: this IS the degradation. The DFS walks over a
+          // call as a straight-line instruction, so the callee contributes no
+          // decisions to this unit's path identity — while symex still executes
+          // it, so the model is unchanged and only the recording is coarser.
+          ++it;
+          continue;
+        }
+        if (sites != nullptr && withdrawable(it))
+          sites->emplace(call_point_key(it), round);
+        inliner.expand_here(b, it, *callee);
+        ++n;
+        changed = true;
+      }
+      if (!changed)
+        break;
+      remove_no_op(b);
+      b.update();
+    }
+    return n;
+  };
+
+  // Complete-path count of `b` under the same rules the DFS uses, capped so a
+  // runaway unit costs bounded work. Anything past the cap comes back as
+  // cap + 1, which is all a budget comparison needs.
+  auto count_paths_of = [&](const goto_programt &b, size_t cap) -> size_t {
+    bool hit = false;
+    const size_t n = count_paths_no_instrument(b, ns, path_cov_unwind, cap, hit);
+    return hit ? cap + 1 : n;
+  };
+
+  // The budget a unit's enumeration has to fit into. One goal is held back for
+  // the ABI non-payable gate, which is synthesised AFTER this point and adds
+  // exactly one path: without the reservation a unit could be brought to
+  // exactly the cap here and then handed straight to the truncation backstop by
+  // the gate, which is precisely the ordering this is meant to prevent.
+  const size_t unit_budget =
+    path_cov_max_goals > 1 ? path_cov_max_goals - 1 : 1;
+
+  // Why each unit ended up where it did. Recorded rather than re-derived,
+  // because the truncation backstop's report has to distinguish three different
+  // situations that all look identical at the cap: a policy that was not
+  // aggressive enough, a unit that had nothing left to give up, and the
+  // estimator disagreeing with the enumeration. Only the last is a defect.
+  enum class budget_statet
+  {
+    fits,          // the pre-enumeration count was already inside the budget
+    no_candidates, // over budget, with no withdrawable call point at all
+    degraded_fits, // withdrawals brought it inside the budget
+    degraded_over  // everything withdrawable is gone and it is still over
+  };
+  std::map<std::string, budget_statet> budget_state;
+  // The path count the budget decision was actually taken on, per unit. Kept so
+  // that when the cap fires anyway the report can print the pre-enumeration
+  // number NEXT TO the enumerated one: the two are produced by different code
+  // (a flat counter vs the enumerating DFS) and a gap between them is a
+  // COUNTING-UNIT mismatch to be reconciled, not automatically a bug. Printing
+  // one number and calling it a failure would send someone hunting for a defect
+  // that may not exist.
+  std::map<std::string, size_t> estimated_paths;
+
+  Forall_goto_functions (e_it, goto_functions)
+  {
+    if (!e_it->second.body_available || e_it->first == "__ESBMC_main")
+      continue;
+    goto_programt &b = e_it->second.body;
+    if (filter(e_it->first, b))
+      continue;
+    if (!is_external_entry(e_it->first))
+      continue;
+    if (
+      !scope_contract.empty() &&
+      contract_of(e_it->first.as_string()) != scope_contract)
+      continue;
+    if (!body_in_user_src(b))
+      continue;
+
+    const std::string uname = e_it->first.as_string();
+    pre_inline_body[uname].copy_from(b);
+
+    // Expand everything first and measure. Almost every unit fits, and for
+    // those this is the only expansion performed and `b` is already the body we
+    // want — the degradation machinery below costs nothing.
+    std::map<std::string, size_t> sites;
+    size_t expanded_here = expand_into(b, {}, &sites);
+    std::set<std::string> withdrawn;
+    std::vector<std::string> withdrawn_order;
+
+    const size_t full_paths = count_paths_of(b, unit_budget);
+    estimated_paths[uname] = full_paths;
+    if (full_paths <= unit_budget)
+      budget_state[uname] = budget_statet::fits;
+    else if (sites.empty())
+    {
+      // Over budget with nothing to give up: either the unit has no internal
+      // calls at all, or every call it has is to another UNIT and withdrawing
+      // those would re-open the ABI-gate hole (see `withdrawable`). Say so
+      // here, before the enumeration runs, so the truncation that follows reads
+      // as the declared consequence of a budget rather than as a surprise.
+      budget_state[uname] = budget_statet::no_candidates;
+      log_warning(
+        "--solidity-path-coverage: unit '{}' is over the per-unit budget ({}) "
+        "and degradation has NOTHING it may withdraw — the unit's own source "
+        "decisions already exceed the budget, or its only internal calls are to "
+        "public/external functions, which must stay expanded (their bodies "
+        "carry the ABI value gate, which an internal call does not run "
+        "on-chain). The goal cap will therefore truncate this unit; raise "
+        "--path-cov-max-goals to enumerate it",
+        uname,
+        path_cov_max_goals);
+    }
+    else
+    {
+      // ---- DEGRADATION (fires BEFORE the truncation backstop) ----
+      //
+      // Measured motivation: on a real benchmark one contract enumerated 120166
+      // paths across 39 units, 12 of which were over the cap on their own. At
+      // that size the choice is not "enumerate or not" but "give up resolution
+      // deliberately, or have it taken away by a cap". Those are not the same:
+      // the cap DROPS paths that exist in the model, so nothing downstream can
+      // subtract their inputs from a surviving path's certified region;
+      // withdrawing a call point instead makes the surviving classes coarser
+      // while they still cover the whole input space.
+      //
+      // Which call points: measured, not estimated. Each candidate is expanded
+      // once with itself withheld and the resulting path count recorded, so
+      // "cuts the most paths" is a number rather than a guess. Ties break
+      // towards the call FURTHEST from the entry, where the decisions are least
+      // directly controlled by the unit's own arguments and the assertion
+      // strength given up is worth least.
+      //
+      // The ranking is measured once and then applied greedily. Re-ranking
+      // after every withdrawal would be quadratic for no soundness benefit:
+      // soundness does not depend on the choice at all, only the strength of
+      // what survives does, and the result is reported per unit either way.
+      std::vector<std::tuple<size_t, size_t, std::string>> ranked;
+      ranked.reserve(sites.size());
+      for (const auto &[key, depth] : sites)
+      {
+        std::set<std::string> trial{key};
+        goto_programt probe;
+        probe.copy_from(pre_inline_body[uname]);
+        expand_into(probe, trial, nullptr);
+        // Sorting ascending on (paths left, SIZE_MAX - depth) puts the biggest
+        // cut first and, among equal cuts, the deepest call first.
+        ranked.emplace_back(
+          count_paths_of(probe, unit_budget), SIZE_MAX - depth, key);
+      }
+      std::sort(ranked.begin(), ranked.end());
+
+      bool fits = false;
+      for (const auto &r : ranked)
+      {
+        withdrawn.insert(std::get<2>(r));
+        withdrawn_order.push_back(std::get<2>(r));
+        b = pre_inline_body[uname];
+        expanded_here = expand_into(b, withdrawn, nullptr);
+        estimated_paths[uname] = count_paths_of(b, unit_budget);
+        if (estimated_paths[uname] <= unit_budget)
+        {
+          fits = true;
+          break;
+        }
+      }
+
+      budget_state[uname] =
+        fits ? budget_statet::degraded_fits : budget_statet::degraded_over;
+      ++degraded_units;
+      withdrawn_sites_total += withdrawn_order.size();
+      degraded_call_sites[uname] = withdrawn_order;
+      std::string names;
+      for (const auto &w : withdrawn_order)
+        names += (names.empty() ? "" : "; ") + w;
+      log_warning(
+        "--solidity-path-coverage: DEGRADED unit '{}' — fully expanded it "
+        "enumerates more paths than the per-unit budget ({}), so {} call "
+        "point(s) were WITHDRAWN from its path identity and are now treated as "
+        "black boxes: {}. The callees still EXECUTE (the call is still there), "
+        "they just stop contributing decisions, so the path classes get coarser "
+        "while still partitioning the input space — sound, with weaker "
+        "assertions, and weaker exactly at the call points named here. This is "
+        "tried BEFORE the goal cap on purpose: the cap would instead DROP paths "
+        "that exist in the model",
+        uname,
+        path_cov_max_goals,
+        withdrawn_order.size(),
+        names);
+      if (!fits)
+      {
+        ++degradation_exhausted_units;
+        log_warning(
+          "--solidity-path-coverage: unit '{}' is STILL over the budget ({}) "
+          "with every one of its {} call point(s) withdrawn — its own source "
+          "decisions alone exceed it. Degradation has nothing left to give up, "
+          "so the goal cap will act as the backstop and that unit's truncation "
+          "is expected rather than a policy failure",
+          uname,
+          path_cov_max_goals,
+          withdrawn_order.size());
+      }
+    }
+
+    // Anything still callable after the last pass is recursion deeper than the
+    // bound. Its decisions are NOT in this unit's path identity, so the paths
+    // through it are merged rather than enumerated. That is a silent loss of
+    // resolution unless it is reported, so report it. Call points withdrawn by
+    // degradation are excluded here: they are also unexpanded, but deliberately
+    // and with their own report, and merging the two would make a budget
+    // decision read as a depth-bound overflow.
+    forall_goto_program_instructions (it, b)
+    {
+      const goto_functiont *callee = expandable_callee(it);
+      if (callee == nullptr)
+        continue;
+      if (withdrawn.count(call_point_key(it)) != 0)
+        continue;
+      ++residual_calls;
+      const std::string cid = callee_id_of(it);
+      residual_fns.insert(cid);
+      // A residual call to a UNIT is not a loss of resolution — it is the SAME
+      // hole that degradation refuses to open, arrived at from the other side.
+      //
+      // A unit's body is DOUBLE-IDENTITY: the copy expanded into a caller models
+      // an internal call (no ABI value gate), while the unit's own body models an
+      // external entry (gated). That is precisely what physical expansion buys.
+      // Leaving a call to the unit's own body unexpanded makes an INTERNAL call
+      // use the EXTERNAL-entry body, so the model admits "the callee reverted
+      // because the transaction carried value" inside a caller that on-chain
+      // proceeds. That execution does not exist on chain, and a test built from a
+      // counterexample containing it is RED on the unmodified contract.
+      //
+      // So this is contained, not merely named. Naming it while letting the paths
+      // through to a downstream emitter would leave exactly the failure the whole
+      // obstacle mechanism exists to prevent.
+      if (is_external_entry(irep_idt(cid)))
+      {
+        residual_unit_fns.insert(cid);
+        residual_unit_callees_of[uname].insert(cid);
+      }
+    }
+    inlined_calls += expanded_here;
+    expanded_into_unit[uname] = expanded_here;
+  }
+  if (degraded_units > 0)
+    log_status(
+      "--solidity-path-coverage: degradation summary — {} unit(s) had {} call "
+      "point(s) withdrawn to fit the per-unit budget ({}); {} of those unit(s) "
+      "could not be made to fit even with every call point withdrawn. "
+      "Degradation and truncation are separate mechanisms with separate "
+      "reports: this one costs assertion strength at named places and keeps "
+      "the enumeration complete, the goal cap instead drops paths",
+      degraded_units,
+      withdrawn_sites_total,
+      path_cov_max_goals,
+      degradation_exhausted_units);
+  if (inlined_calls > 0)
+    log_status(
+      "--solidity-path-coverage: expanded {} internal call(s) into their "
+      "calling unit (call depth bound = {}), so a callee's decisions are part "
+      "of its caller's path identity",
+      inlined_calls,
+      path_cov_unwind);
+  if (residual_calls > 0)
+  {
+    std::string names;
+    for (const auto &n : residual_fns)
+      names += (names.empty() ? "" : ", ") + n;
+    log_warning(
+      "--solidity-path-coverage: {} call site(s) are deeper than the call "
+      "depth bound ({}) and were NOT expanded ({}); paths through them are "
+      "MERGED rather than enumerated. Raise --unwind to enumerate them",
+      residual_calls,
+      path_cov_unwind,
+      names);
+    if (!residual_unit_fns.empty())
+    {
+      std::string unames;
+      for (const auto &n : residual_unit_fns)
+        unames += (unames.empty() ? "" : ", ") + n;
+      log_warning(
+        "--solidity-path-coverage: {} of those unexpanded callee(s) are "
+        "themselves public/external UNITS ({}). That is not only coarser: their "
+        "bodies carry the synthesised ABI value gate, which models an EXTERNAL "
+        "entry, while the call reaching them here is INTERNAL and never runs "
+        "that gate on-chain. So the model can admit an execution in which the "
+        "callee reverts for carrying value inside a caller that on-chain "
+        "proceeds. Every path of every unit containing such a call is therefore "
+        "a NAMED OBSTACLE (same containment as a branch-free assume — same "
+        "failure, different route), not merely a coarser one. Raise --unwind so "
+        "these are expanded: an expanded copy is gate-free, which is exactly "
+        "what makes both entry kinds correct at once",
+        residual_unit_fns.size(),
+        unames);
     }
   }
 
@@ -972,6 +2126,34 @@ void goto_coveraget::solidity_path_coverage()
   size_t total_paths = 0;
   size_t dropped_paths = 0;
   size_t skipped_paths = 0;
+  // In-scope user functions that are NOT units (internal/private helpers).
+  size_t non_unit_functions = 0;
+  size_t units_enumerated = 0;
+  // Units disqualified wholesale: the model and the EVM disagree there, so no
+  // path of the unit may become a test. TWO causes reach this, counted apart
+  // because they are different defects needing the same containment — both are
+  // "the model admits an execution that does not exist on chain":
+  //   (a) a source decision lowered to a control-flow-free assume;
+  //   (b) an unexpanded call to a UNIT, which routes an internal call through
+  //       the external-entry body and its ABI value gate.
+  // Truncation used to be counted here too and no longer is — it weakens
+  // assertions without making them wrong (see `truncation_weakened`).
+  size_t obstacle_units = 0;
+  size_t obstacle_paths_assume = 0;
+  size_t obstacle_units_residual = 0;
+  size_t obstacle_paths_residual = 0;
+  // Paths whose certified region is narrowed by their unit hitting the cap.
+  size_t truncation_weakened_paths = 0;
+  // Path-count distribution (see the measurement note on
+  // count_paths_no_instrument). `pre_expansion_total` sums each unit's paths as
+  // its own body had them before internal calls were expanded, so the ratio
+  // against the real total is the measured cost of expansion. `units_at_cap`
+  // must be reported: a nonzero value means the TAIL of the distribution is
+  // truncated and the distribution must not be presented as complete.
+  size_t pre_expansion_total = 0;
+  size_t units_at_cap = 0;
+  size_t max_unit_paths = 0;
+  std::string max_unit_name;
 
   Forall_goto_functions (f_it, goto_functions)
   {
@@ -1016,6 +2198,142 @@ void goto_coveraget::solidity_path_coverage()
       const symbolt *fsym = ns.lookup(f_it->first);
       if (fsym && !fsym->type.get("#sol_error").as_string().empty())
         continue;
+    }
+
+    // The UNIT is a public/external function. An internal/private helper is not
+    // something an external caller can invoke, so it has no path set of its own
+    // — its decisions live in the units that call it, which the expansion above
+    // has already spliced in. Enumerating it separately would report a path set
+    // for an input space no test can address, and would double-count the same
+    // source in the total.
+    if (!is_external_entry(f_it->first))
+    {
+      ++non_unit_functions;
+      continue;
+    }
+    ++units_enumerated;
+    bool gate_inserted = false;
+
+    // Does this unit still CALL another unit's own (gated) body? See the
+    // residual scan above for why that is a model/EVM divergence rather than a
+    // loss of resolution. Containment is per unit, matching the assume case.
+    // Per-path containment would in fact be sound here — a path that never
+    // reaches the call site cannot execute the spurious value-reject edge — but
+    // the DFS no longer carries per-site state bits (they were removed when
+    // per-path containment was ruled out for the assume case), and marking too
+    // much costs tests while marking too little ships a red one.
+    const auto residual_units_here =
+      residual_unit_callees_of.find(f_it->first.as_string());
+    const bool unit_calls_gated_unit =
+      residual_units_here != residual_unit_callees_of.end();
+    std::string residual_unit_names;
+    if (unit_calls_gated_unit)
+    {
+      for (const auto &n : residual_units_here->second)
+        residual_unit_names += (residual_unit_names.empty() ? "" : ", ") + n;
+      ++obstacle_units_residual;
+    }
+
+    // ABI-layer decision: a non-payable public/external function REVERTS when
+    // it is called with value, before a single statement of its body runs. The
+    // frontend does not model this (measured: a payable and a non-payable
+    // function with identical bodies enumerate identically), which costs two
+    // different things:
+    //
+    //  * a missing path — every non-payable entry has a real, testable
+    //    "called with value -> revert" execution that was never enumerated;
+    //  * WRONG counterexamples — `msg.value` is re-havoc'd per transaction and
+    //    nothing constrained it to zero, so a reported path could carry a
+    //    nonzero msg.value that on-chain would revert at entry. That test
+    //    cannot replay, which is the one thing this pass must never emit.
+    //
+    // Synthesise the check here, at the front, so Phase 1 snapshots it and
+    // Phase 2 enumerates it like any other decision:
+    //
+    //     IF msg_value == 0 THEN GOTO <original first instruction>
+    //     _ESBMC_sol_mark_revert();      // makes exit_kind = revert
+    //     GOTO <END_FUNCTION>
+    //
+    // `#sol_payable` is already stamped on the function type
+    // (solidity_convert_modifier.cpp), so no frontend change is needed to know
+    // where the gate applies.
+    //
+    // Placing it in the body is correct here ONLY because of the expansion
+    // above. The gate lives in the external wrapper on-chain, not in the
+    // function body, and goto has one body per function — so before expansion,
+    // a `public` function that was also called internally had ONE body serving
+    // two entry kinds, and the gate invented a revert on the internal one
+    // (measured: `g() payable` internally calling `f() public` admitted an
+    // execution where `f` took the value-reject edge, which cannot happen
+    // on-chain). After expansion the internal caller holds its own gate-free
+    // COPY of the callee, and this body is reachable only through the
+    // dispatcher — the exact entry kind the gate models. Both entry kinds are
+    // now right, with no precondition to weaken.
+    {
+      const symbolt *fsym = ns.lookup(f_it->first);
+      const bool is_payable =
+        fsym != nullptr && fsym->type.get_bool("#sol_payable");
+      const symbolt *mv = ns.lookup(irep_idt("c:@msg_value"));
+      const symbolt *mark = ns.lookup(irep_idt("c:@F@_ESBMC_sol_mark_revert"));
+      if (
+        !is_payable && mv != nullptr && mark != nullptr &&
+        !goto_program.instructions.empty())
+      {
+        auto body_start = goto_program.instructions.begin();
+        auto end_fn = std::prev(goto_program.instructions.end());
+        if (end_fn->is_end_function())
+        {
+          const locationt loc = body_start->location;
+          const irep_idt fn = body_start->location.get_function();
+          expr2tc mv_expr = symbol2tc(migrate_type(mv->type), mv->id);
+          expr2tc zero = gen_zero(migrate_type(mv->type));
+
+          // Plain list insertion, NOT insert_swap. insert_swap moves the
+          // instruction's CONTENT, so the iterator that named the original
+          // first instruction ends up naming the newly inserted one — the
+          // branch below then targets itself and the function acquires a
+          // self-loop. (Measured before this was fixed: a two-path function
+          // enumerated 64 paths and reported a truncated loop.) std::list
+          // insert keeps `body_start` attached to the original instruction.
+          goto_programt::instructiont brk;
+          brk.type = GOTO;
+          brk.guard = equality2tc(mv_expr, zero);
+          brk.location = loc;
+          brk.function = fn;
+          auto it_brk = goto_program.instructions.insert(body_start, brk);
+
+          goto_programt::instructiont call;
+          call.type = FUNCTION_CALL;
+          call.code = code_function_call2tc(
+            expr2tc(),
+            symbol2tc(migrate_type(mark->type), mark->id),
+            std::vector<expr2tc>());
+          call.location = loc;
+          call.function = fn;
+          goto_program.instructions.insert(body_start, call);
+
+          goto_programt::instructiont jmp;
+          jmp.type = GOTO;
+          jmp.guard = gen_true_expr();
+          jmp.location = loc;
+          jmp.function = fn;
+          auto it_jmp = goto_program.instructions.insert(body_start, jmp);
+
+          // Targets set after insertion: `body_start` still names the original
+          // first instruction, `end_fn` the END_FUNCTION.
+          it_brk->targets.clear();
+          it_brk->targets.push_back(body_start);
+          it_jmp->targets.clear();
+          it_jmp->targets.push_back(end_fn);
+
+          goto_program.compute_target_numbers();
+          // Recorded for the expansion-ratio measurement: the gate contributes
+          // exactly ONE extra path (its reject edge terminates immediately), and
+          // it is absent from the pre-expansion snapshot, so it must be
+          // discounted before the two counts are compared.
+          gate_inserted = true;
+        }
+      }
     }
 
     // Loops are handled by the tr accumulator (survives unrolling) plus a
@@ -1086,6 +2404,30 @@ void goto_coveraget::solidity_path_coverage()
       --sit;
     };
 
+    // ---- `tr` COMPLETENESS: every decision the DFS branches on must be
+    // ---- accounted for in the runtime accumulator.
+    //
+    // This is the invariant the whole stage-3 certification query rests on.
+    // The query is `assume(L <= x <= U); assert(tr == pi)`, and it is sound
+    // ONLY because `tr` records the complete decision sequence of whatever
+    // execution actually happens — including executions of paths that were
+    // never enumerated (dropped at the goal cap). That property is what makes
+    // certification immune to truncation, and until now it was an ARGUMENT in a
+    // comment, not something the tool checked.
+    //
+    // The fatal direction is one-sided: a site the DFS fans out on but Phase 1
+    // did NOT snapshot. Then every real execution carries fewer accumulated
+    // decisions than the emitted path expects, `cnt != depth` holds always, and
+    // the path is permanently uncoverable — while being reported PASSED, i.e. a
+    // false proof. That is not hypothetical: it is exactly the short-circuit
+    // cap mismatch measured earlier (26 operands => `Reached : 0`, reported
+    // PASSED). This assertion would have caught it at instrumentation time.
+    //
+    // The other direction (snapshotted but never traversed) is benign — dead
+    // code — so it is not an error.
+    std::set<std::pair<std::string, unsigned>> phase1_decision_sites;
+    std::set<std::pair<std::string, unsigned>> dfs_decision_sites;
+
     // At each decision: snapshot its value into tr. Conditional GOTOs (guard)
     // AND folded short-circuit &&/|| / ternary operands in ASSIGN/RETURN — the
     // latter carry no GOTO, so branch_coverage collects them via
@@ -1094,7 +2436,10 @@ void goto_coveraget::solidity_path_coverage()
     Forall_goto_program_instructions (it, goto_program)
     {
       if (it->is_goto() && !is_true(it->guard))
+      {
+        phase1_decision_sites.emplace(it->location.as_string(), 0u);
         snapshot(it, it->guard);
+      }
       else if (
         (it->is_assign() || it->is_return()) &&
         it->location.property().as_string() != "skipped")
@@ -1113,8 +2458,11 @@ void goto_coveraget::solidity_path_coverage()
           ++sc_sites_over_cap;
           continue;
         }
-        for (const expr2tc &op : ops)
-          snapshot(it, op);
+        for (unsigned j = 0; j < ops.size(); ++j)
+        {
+          phase1_decision_sites.emplace(it->location.as_string(), j);
+          snapshot(it, ops[j]);
+        }
       }
     }
 
@@ -1176,17 +2524,111 @@ void goto_coveraget::solidity_path_coverage()
     // 5th field: has this partial path already walked over a rollback restore
     // (i.e. it is a require/revert("msg") reverting path)?
     using becntt = std::map<unsigned, unsigned>;
+    // Per-site occurrence counter for the content-addressed path id: how many
+    // times this partial path has already passed through each decision SITE.
+    // The count is part of the key, so a loop's 2nd traversal of a decision is a
+    // different element of the sequence than its 1st.
+    using occt = std::map<uint64_t, unsigned>;
     // 6th field: has this partial path walked through the function epilogue?
-    std::vector<std::
-                  tuple<goto_programt::targett, uint64_t, becntt, uint64_t, bool, bool>>
+    // 7th/8th: running content-addressed id, and its occurrence counters.
+    // 9th field: has this partial path walked over a source-level decision that
+    // the frontend lowered away (see is_lost_decision below)?
+    std::vector<std::tuple<
+      goto_programt::targett,
+      uint64_t,
+      becntt,
+      uint64_t,
+      bool,
+      bool,
+      uint64_t,
+      occt>>
       stack;
+    // Seed the id with the unit signature, so the finished hash IS the path id.
+    const uint64_t unit_seed = fnv1a("unit:" + id2string(f_it->first));
     stack.push_back(
       {goto_program.instructions.begin(),
        (uint64_t)1,
        becntt{},
        (uint64_t)0,
        false,
-       false});
+       false,
+       unit_seed,
+       occt{}});
+
+    // DECISION-SET CENSUS (symmetric to the exit census below, and aimed at a
+    // strictly worse failure).
+    //
+    // A source-level `require(c)` in an internal library or a free function is
+    // lowered to a bare `assume(c)` with NO control flow: the `!c` execution
+    // does not exist in the model at all, while on-chain it reverts. Measured:
+    // a contract whose only guard lives in an internal library enumerates two
+    // paths, neither of which is the revert.
+    //
+    // The consequence is not a wrong label, it is a wrong TEST. `!c` inputs
+    // belong to no enumerated path, so the stage-3 subtraction never removes
+    // them; the interval bound is a syntactic product of ranges and cannot
+    // carry `c`; and the stage-3 assertion query runs under the same
+    // `assume(c)`, so the verifier certifies a candidate over inputs it has
+    // never seen. The emitted test then reverts on the unmodified contract
+    // while carrying a certified label — the one outcome this pipeline must
+    // never produce.
+    //
+    // So a path walking such a site is a NAMED OBSTACLE, not an inaccuracy.
+    // An explicitly written `__ESBMC_assume` is indistinguishable from a
+    // lowered `require` here and is marked too: over-marking costs a test,
+    // under-marking ships a red one.
+    auto is_lost_decision = [&](goto_programt::const_targett i) -> bool {
+      if (!i->is_assume())
+        return false;
+      if (i->location.property().as_string() == "skipped")
+        return false;
+      return location_pool.count(
+               get_filename_from_path(i->location.file().as_string())) != 0;
+    };
+    // CONTAINMENT IS PER UNIT, NOT PER PATH, and the difference is soundness
+    // rather than caution. The missing revert is not a marked sibling — it is
+    // NOT A SIBLING AT ALL, so nothing subtracts it from anything. A path that
+    // never goes near the lowered site is still unsafe: its bound is a
+    // syntactic over-approximation that can cover the missing path's inputs,
+    // and the subtraction cannot remove what was never enumerated. Per-path
+    // containment is safe only when the missing path happens to be separated
+    // from the survivor on the very coordinate the split chose — luck that
+    // cannot be established case by case. So any user-source ASSUME anywhere in
+    // the unit disqualifies EVERY path of that unit.
+    std::set<std::string> lost_decision_locs;
+    forall_goto_program_instructions (li, goto_program)
+      if (is_lost_decision(li))
+        lost_decision_locs.insert(li->location.as_string());
+    const bool unit_has_lost_decision = !lost_decision_locs.empty();
+    if (unit_has_lost_decision)
+      ++obstacle_units;
+
+    // Fold one decision into the running id. `site` is the decision's SOURCE
+    // location and `sub` its operand index within that site (several folded
+    // short-circuit operands share one location), so the key is content
+    // addressed: it does not move when other decisions are added or when the
+    // enumeration order changes. Mutates `occ` — callers copy it first for the
+    // branch they push.
+    // Recording the DFS side HERE, rather than at the three fan-out sites, is
+    // deliberate: this lambda is the single place a decision enters a path's
+    // identity, so a future fan-out that forgets to register itself cannot
+    // exist — it would also have to bypass the id, which would break the
+    // cross-run key first and far more loudly.
+    auto step_id = [&dfs_decision_sites](
+                     uint64_t idh,
+                     occt &occ,
+                     const std::string &site,
+                     unsigned sub,
+                     bool polarity) {
+      dfs_decision_sites.emplace(site, sub);
+      const uint64_t sk = fnv1a(site + "#" + std::to_string(sub));
+      const unsigned n = occ[sk]++;
+      uint64_t h = fnv1a("|", idh);
+      h = fnv1a(hex64(sk), h);
+      h = fnv1a(polarity ? "T" : "F", h);
+      h = fnv1a(std::to_string(n), h);
+      return h;
+    };
 
     // Deferred exit asserts (insert after the walk so we don't mutate the
     // program mid-DFS). Each entry: (insertion pc, tr!=enc||cnt!=depth guard,
@@ -1196,10 +2638,18 @@ void goto_coveraget::solidity_path_coverage()
     // END_FUNCTION-placed assert vacuous -> path never covered) and gets
     // stamped `sol_revert_edge` so the Foundry generator renders
     // vm.expectRevert() (R0). Normal paths exit at END_FUNCTION, is_revert=false.
-    std::vector<
-      std::tuple<goto_programt::targett, expr2tc, std::string, bool>>
+    // 5th field: the content-addressed stable path id (cross-run key).
+    std::vector<std::
+                  tuple<goto_programt::targett, expr2tc, std::string, bool, std::string>>
       to_insert;
     bool capped = false;
+    // Set when a back-edge budget refused a continuation, i.e. this unit has a
+    // path that the loop bound cut short. The exit census below downgrades its
+    // hard failure to a bound obstacle when this is set, because an exit that
+    // is only reachable after more than `path_cov_unwind` iterations is
+    // legitimately absent from the enumeration.
+    bool loop_truncated = false;
+    const size_t dropped_before_unit = dropped_paths;
     // Indices into `to_insert` whose path exits via a rollback revert; resolved
     // to claim keys after the walk (the key needs the insertion location).
     std::set<size_t> rollback_exits;
@@ -1217,7 +2667,8 @@ void goto_coveraget::solidity_path_coverage()
                        goto_programt::targett loc,
                        uint64_t penc,
                        uint64_t pdepth,
-                       bool is_revert) -> bool {
+                       bool is_revert,
+                       uint64_t pidh) -> bool {
       if (to_insert.size() >= path_cov_max_goals)
       {
         capped = true;
@@ -1230,9 +2681,17 @@ void goto_coveraget::solidity_path_coverage()
       expr2tc g = or2tc(
         notequal2tc(tr, constant_int2tc(utype, BigInt(penc))),
         notequal2tc(cnt, constant_int2tc(utype, BigInt(pdepth))));
+      // The comment stays the readable run-local ordinal — it is what appears in
+      // the solver log and in every test.desc. The cross-run identity is the
+      // separate stable id below; the two are deliberately not the same string.
       std::string comment =
         id2string(f_it->first) + ":path:" + std::to_string(penc);
-      to_insert.emplace_back(loc, g, comment, is_revert);
+      // Mix the exit site in too. The decision sequence already determines the
+      // exit, so this adds nothing today; it costs nothing and means a future
+      // change that lets two decision sequences share an exit cannot collide.
+      const std::string stable =
+        hex64(fnv1a("exit:" + loc->location.as_string(), pidh));
+      to_insert.emplace_back(loc, g, comment, is_revert, stable);
       return true;
     };
 
@@ -1291,6 +2750,13 @@ void goto_coveraget::solidity_path_coverage()
     auto is_epilogue_restore = [&](goto_programt::const_targett i) -> bool {
       if (!i->is_assign() || !is_code_assign2t(i->code))
         return false;
+      // An expanded callee brings its OWN epilogue along, and it matches the
+      // same symbol name. Counting it would let a path that ran the callee's
+      // epilogue and then took the caller's bare revert edge look like an
+      // ordinary exit. Only THIS unit's epilogue is evidence about this unit's
+      // exit, so instructions flagged by the expansion are not evidence.
+      if (i->location.get_bool("sol_path_inlined"))
+        return false;
       const expr2tc &src = to_code_assign2t(i->code).source;
       return is_symbol2t(src) &&
              to_symbol2t(src).thename.as_string().find("_saved_encl_addr") !=
@@ -1318,9 +2784,98 @@ void goto_coveraget::solidity_path_coverage()
       return s && !s->type.get("#sol_error").as_string().empty();
     };
 
+    // "A rolled-back execution never reaches a RETURN" — MEASURED AND REFUTED.
+    //
+    // Had it held, reaching a RETURN would have been POSITIVE evidence of a
+    // normal exit, independent of the revert-observation gate and of which
+    // scopes that gate covers. It does not hold, and the reason is structural
+    // rather than a corner case: when the enclosing function returns a value,
+    // the frontend lowers a failing `require` to
+    //     { *this = _sol_save_this; return [nondet]; }
+    // so the reverting execution ends at a RETURN of the frontend's own making.
+    // Refuted on the simplest shape tried (compute a value, mutate state, then
+    // fail a require) and again on a modifier's require — the latter had been
+    // predicted to be a positive case, and is one only when the function
+    // returns nothing.
+    //
+    // Consequence, recorded so it is not quietly re-derived: the inference
+    // "ends at a RETURN, therefore normal" is NOT available. The counter below
+    // stays as an internal consistency check — such a path must always be
+    // classified as a rollback revert, never as normal — and is expected to be
+    // nonzero on ordinary contracts, so it logs at debug level rather than
+    // warning.
+    size_t rolled_back_return_exits = 0;
+    std::vector<std::string> rolled_back_return_locs;
+
+    // ---- WHY an exit came out `undetermined` ----
+    //
+    // `undetermined` means "no positive evidence of a normal exit was found".
+    // Since the frontend contract landed, every regression reports zero of them,
+    // so a nonzero count is now a hard signal rather than background noise — and
+    // a bare count says only THAT evidence is missing, never WHICH KIND. There
+    // are exactly three ways to get here, each missing a different witness, and
+    // they call for different fixes:
+    //
+    //   (1) the unit has NO epilogue at all, so the epilogue marker carries no
+    //       information for any of its paths (library / free-function scope);
+    //   (2) the unit HAS an epilogue and this path reached END_FUNCTION without
+    //       walking it — the bare-jump shape a pre-state-write `require` failure
+    //       and a plain early `return` share;
+    //   (3) the path ends at a RETURN carrying no `sol_source_return` marker and
+    //       walked no epilogue — either a return shape the frontend does not
+    //       stamp, or a RETURN the frontend synthesised for something else.
+    //
+    // Grouped per unit and by cause rather than listed per path: the lesson from
+    // chasing these one at a time is that two different defects can sit on the
+    // same function, and only a grouping shows which witness the whole group is
+    // missing.
+    size_t und_no_epilogue = 0;
+    size_t und_epilogue_skipped = 0;
+    size_t und_return_unmarked = 0;
+    std::set<std::string> und_locs_no_epilogue;
+    std::set<std::string> und_locs_epilogue_skipped;
+    std::set<std::string> und_locs_return_unmarked;
+
+    // Classify the exit just appended to `to_insert`. Shared by the
+    // END_FUNCTION arm and the RETURN arm so the two cannot drift apart.
+    //
+    // `src_return` is the frontend's POSITIVE marker (`sol_source_return`),
+    // stamped on RETURNs lowered from a source-level `return` and NOT on the
+    // one the frontend synthesises for a failing `require`
+    // (`{ *this = _sol_save_this; return [nondet]; }`). It is the second piece
+    // of positive evidence, alongside the epilogue: the epilogue cannot testify
+    // for a returning path because it is emitted after the RETURN, which is why
+    // every value-returning unit's normal exit used to be `undetermined`.
+    //
+    // The rollback test still runs FIRST and still wins. A source `return` can
+    // sit on a path that already walked a revert marker or a state restore, and
+    // on such a path the transaction reverts whatever the return statement says.
+    // Only a path with no rollback evidence AND an affirmative source-return
+    // marker is called normal — that is still a positive inference, not
+    // "nothing said revert, so it must be fine".
+    // (`se` can only be true when the function HAS an epilogue, since it is set
+    // by walking that very instruction — so the previous `!has_epilogue || !se`
+    // is exactly `!se`, and dropping the redundant term changes nothing.)
+    auto classify_exit = [&](
+                           size_t idx,
+                           bool rb,
+                           bool se,
+                           bool src_return,
+                           const std::string &site) {
+      if (rb)
+        rollback_exits.insert(idx);
+      else if (!se && !src_return)
+      {
+        undetermined_exits.insert(idx);
+        ++und_return_unmarked;
+        und_locs_return_unmarked.insert(site);
+      }
+    };
+
     while (!stack.empty())
     {
-      auto [pc, enc, becnt, depth, rolled_back, saw_epilogue] = stack.back();
+      auto [pc, enc, becnt, depth, rolled_back, saw_epilogue, idh, occ] =
+        stack.back();
       stack.pop_back();
 
       while (true)
@@ -1329,9 +2884,13 @@ void goto_coveraget::solidity_path_coverage()
         {
           if (pc != goto_program.instructions.end())
           {
-            if (!emit_exit(pc, enc, depth, false))
+            if (!emit_exit(pc, enc, depth, false, idh))
               break;
             const size_t idx = to_insert.size() - 1;
+            // An END_FUNCTION exit is never itself a source `return`: a bare
+            // `return;` lowers to a JUMP to END_FUNCTION, so the marker sits on
+            // the jump, not here. Such a path in a function WITH an epilogue
+            // already walks it and is normal on that evidence.
             if (rolled_back)
               // Positive evidence of a rollback revert.
               rollback_exits.insert(idx);
@@ -1347,7 +2906,25 @@ void goto_coveraget::solidity_path_coverage()
               // would claim a reverted transaction succeeded — measured on
               // a library whose function reverts, that is exactly what the
               // previous "no epilogue => normal" default did.
-              undetermined_exits.insert(idx);
+              //
+              // The two sub-cases are counted apart (see the declaration): "the
+              // unit has no epilogue at all" is a scope problem affecting every
+              // path of the unit, while "the epilogue exists and this path
+              // skipped it" is a per-path shape. Fixing one does nothing for the
+              // other.
+              {
+                undetermined_exits.insert(idx);
+                if (has_epilogue)
+                {
+                  ++und_epilogue_skipped;
+                  und_locs_epilogue_skipped.insert(pc->location.as_string());
+                }
+                else
+                {
+                  ++und_no_epilogue;
+                  und_locs_no_epilogue.insert(pc->location.as_string());
+                }
+              }
           }
           break;
         }
@@ -1361,7 +2938,7 @@ void goto_coveraget::solidity_path_coverage()
         // reachable) and stop; flag it for vm.expectRevert() (R0).
         if (is_error_call(pc))
         {
-          if (!emit_exit(pc, enc, depth, true))
+          if (!emit_exit(pc, enc, depth, true, idh))
             break;
           break;
         }
@@ -1376,7 +2953,10 @@ void goto_coveraget::solidity_path_coverage()
             {
               const unsigned key = pc->get_target()->target_number;
               if (becnt[key] >= path_cov_unwind)
+              {
+                loop_truncated = true;
                 break; // this loop's bound reached: path truncated
+              }
               ++becnt[key];
             }
             pc = pc->get_target();
@@ -1397,7 +2977,10 @@ void goto_coveraget::solidity_path_coverage()
           {
             const unsigned key = pc->get_target()->target_number;
             if (becnt_taken[key] >= path_cov_unwind)
+            {
               take = false;
+              loop_truncated = true;
+            }
             else
               ++becnt_taken[key];
           }
@@ -1405,6 +2988,7 @@ void goto_coveraget::solidity_path_coverage()
           // continues in-place. A reverting successor (custom-error revert) is
           // detected at the top of the loop when the DFS reaches the
           // `#sol_error` call instruction, so no per-edge revert test is needed.
+          const std::string dsite = pc->location.as_string();
           if (take)
           {
             if (++pushes > push_cap)
@@ -1413,31 +2997,127 @@ void goto_coveraget::solidity_path_coverage()
               ++dropped_paths;
               break;
             }
+            // Both arms consume the SAME occurrence of this site, so each starts
+            // from its own copy of the counters.
+            occt occ_taken = occ;
+            const uint64_t idh_taken =
+              step_id(idh, occ_taken, dsite, 0, /*polarity=*/true);
             stack.push_back(
               {pc->get_target(),
                enc * 2 + 1,
                becnt_taken,
                depth + 1,
                rolled_back,
-               saw_epilogue});
+               saw_epilogue,
+               idh_taken,
+               occ_taken});
           }
           // guard-false/fallthrough successor -> next (never a back-edge).
+          idh = step_id(idh, occ, dsite, 0, /*polarity=*/false);
           enc = enc * 2 + 0;
           ++depth;
           pc = std::next(pc);
           continue;
+        }
+        // A RETURN is a path EXIT, not a straight-line instruction.
+        //
+        // symex terminates the frame at RETURN — it does not fall through to
+        // END_FUNCTION — so an identity assert placed at END_FUNCTION sits
+        // downstream of the frame exit and can never execute. Measured on four
+        // variants that isolate the cause: a unit that writes state and returns
+        // nothing covers 3/3, while the SAME body with a return value covers
+        // 1/3, and the one path that stays coverable is exactly the ABI
+        // value-reject path — the only one that reaches END_FUNCTION by a plain
+        // GOTO instead of through the RETURN. Purity, and whether an explicit
+        // `return` statement is written at all (a named return variable behaves
+        // identically), make no difference.
+        //
+        // Effect before this: EVERY unit with a return value had all of its body
+        // paths reported U — a systematic, silent deflation of coverage on any
+        // real contract, since getters and view functions all return values.
+        //
+        // Emitting here places the assert immediately BEFORE the RETURN:
+        // downstream of this path's tr/cnt updates (Phase 1 inserted those
+        // before the RETURN earlier, so they end up further from it) and
+        // upstream of the frame exit.
+        if (pc->is_return() && is_code_return2t(pc->code))
+        {
+          const expr2tc &rsrc = to_code_return2t(pc->code).operand;
+          size_t RK = 0;
+          if (pc->location.property().as_string() != "skipped")
+            collect_short_circuit_decisions(
+              rsrc, [&](const expr2tc &) { ++RK; });
+          const std::string rsite = pc->location.as_string();
+          // The frontend's positive normal-exit marker (see classify_exit).
+          // Read from the RETURN instruction itself, so a synthesised
+          // rollback RETURN — which carries no marker — cannot borrow it.
+          const bool src_return = pc->location.get_bool("sol_source_return");
+          if (RK > 0 && RK <= SC_DECISION_MAX)
+          {
+            // Folded short-circuit operands in the returned expression are
+            // decisions like any other; each combination is its own exit.
+            for (uint64_t mask = 0; mask < (uint64_t(1) << RK); ++mask)
+            {
+              uint64_t e = enc, d = depth, h = idh;
+              occt o = occ;
+              bool overflowed = false;
+              for (size_t j = 0; j < RK; ++j)
+              {
+                if (e >= (uint64_t(1) << 62))
+                {
+                  overflowed = true;
+                  break;
+                }
+                const bool bit = ((mask >> j) & 1) != 0;
+                e = e * 2 + (bit ? 1 : 0);
+                h = step_id(h, o, rsite, (unsigned)j, bit);
+                ++d;
+              }
+              if (overflowed)
+              {
+                ++dropped_paths;
+                break;
+              }
+              if (!emit_exit(pc, e, d, false, h))
+                break;
+              classify_exit(
+                to_insert.size() - 1,
+                rolled_back,
+                saw_epilogue,
+                src_return,
+                rsite);
+              if (rolled_back)
+              {
+                ++rolled_back_return_exits;
+                rolled_back_return_locs.push_back(pc->location.as_string());
+              }
+            }
+          }
+          else if (emit_exit(pc, enc, depth, false, idh))
+          {
+            classify_exit(
+              to_insert.size() - 1,
+              rolled_back,
+              saw_epilogue,
+              src_return,
+              rsite);
+            if (rolled_back)
+            {
+              ++rolled_back_return_exits;
+              rolled_back_return_locs.push_back(pc->location.as_string());
+            }
+          }
+          break;
         }
         // Folded short-circuit/ternary operands (no control-flow branch):
         // each was snapshotted into tr in Phase 1. Fan the DFS out over the
         // 2^K operand-value combinations, appending K bits to enc/depth (in
         // collect order, matching tr) so each combination is a distinct path.
         if (
-          (pc->is_assign() || pc->is_return()) &&
+          pc->is_assign() &&
           pc->location.property().as_string() != "skipped")
         {
-          const expr2tc &src = pc->is_assign()
-                                 ? to_code_assign2t(pc->code).source
-                                 : to_code_return2t(pc->code).operand;
+          const expr2tc &src = to_code_assign2t(pc->code).source;
           size_t K = 0;
           collect_short_circuit_decisions(src, [&](const expr2tc &) { ++K; });
           // Cap MUST match Phase 1's (see SC_DECISION_MAX): a site Phase 1
@@ -1446,9 +3126,11 @@ void goto_coveraget::solidity_path_coverage()
           if (K > 0 && K <= SC_DECISION_MAX)
           {
             bool overflowed = false;
+            const std::string asite = pc->location.as_string();
             for (uint64_t mask = 0; mask < (uint64_t(1) << K); ++mask)
             {
-              uint64_t e = enc, d = depth;
+              uint64_t e = enc, d = depth, h = idh;
+              occt o = occ;
               for (size_t j = 0; j < K; ++j)
               {
                 if (e >= (uint64_t(1) << 62))
@@ -1456,7 +3138,9 @@ void goto_coveraget::solidity_path_coverage()
                   overflowed = true;
                   break;
                 }
-                e = e * 2 + ((mask >> j) & 1);
+                const bool bit = ((mask >> j) & 1) != 0;
+                e = e * 2 + (bit ? 1 : 0);
+                h = step_id(h, o, asite, (unsigned)j, bit);
                 ++d;
               }
               if (overflowed)
@@ -1471,7 +3155,7 @@ void goto_coveraget::solidity_path_coverage()
                 break;
               }
               stack.push_back(
-                {std::next(pc), e, becnt, d, rolled_back, saw_epilogue});
+                {std::next(pc), e, becnt, d, rolled_back, saw_epilogue, h, o});
             }
             break; // this path forked into the 2^K continuations
           }
@@ -1482,8 +3166,607 @@ void goto_coveraget::solidity_path_coverage()
         break;
     }
 
+    // Did this unit lose paths to the per-unit goal cap / length cap?
+    //
+    // Truncation WEAKENS the assertions this unit can support. It does NOT make
+    // them wrong, and the distinction is mechanical rather than a judgement
+    // call:
+    //
+    //   the certification query is `assume(L <= x <= U); assert(tr == pi)`.
+    //   The goal cap limits how many EXIT ASSERTS are emitted; it does not touch
+    //   the Phase-1 accounting, which still updates `tr`/`cnt` at every decision
+    //   of every path. So an input that walks a DROPPED path pi'' still carries
+    //   pi'''s number in `tr` at the exit, the query `tr == pi` fails on it, and
+    //   the candidate interval is rejected and shrunk. Certification therefore
+    //   never needs the dropped path to have been enumerated — it only needs the
+    //   accounting, which is intact.
+    //
+    // That is what separates this from a `require` lowered to a control-flow-free
+    // assume, which stays a named obstacle: there the reverting execution does
+    // not exist in the model AT ALL, so no query can see it and no interval can
+    // be shrunk away from it. Existing-but-unenumerated and non-existent are not
+    // the same failure, and only the second can ship a test that is red on the
+    // unmodified contract.
+    //
+    // For completeness, the other two ways paths go missing:
+    //   * a call left unexpanded (depth bound, or a withdrawal by degradation)
+    //     COARSENS the recorded decision sequence. The classes still partition
+    //     the input space, so this is sound and weaker.
+    //   * a loop cut at the unwind bound is cut IN BOTH PLACES — symex assumes
+    //     away the same over-bound iterations. Inside the declared bound the
+    //     domain is complete; outside it, the model and the real chain diverge
+    //     and the certification query cannot see that either. That is a declared
+    //     bound of the method rather than a defect, so it belongs in the
+    //     proposition's wording, not here.
+    //
+    // So this is reported as an absolute count and a strength annotation, and
+    // degradation exists precisely so it should not be reached at all.
+    const bool unit_truncated =
+      capped || dropped_paths > dropped_before_unit;
+
+    // ---- Path-count distribution measurement ----
+    {
+      const std::string uname = f_it->first.as_string();
+      const size_t after = to_insert.size();
+      if (after > max_unit_paths)
+      {
+        max_unit_paths = after;
+        max_unit_name = uname;
+      }
+      if (unit_truncated)
+      {
+        ++units_at_cap;
+        // ORDERING INVARIANT, reported rather than assumed: degradation runs
+        // first and is supposed to bring every unit inside the budget, so in
+        // the intended steady state the goal cap never fires. That it fired is
+        // therefore a result in its own right, and the two ways it can happen
+        // say different things — hence they are distinguished here instead of
+        // being lumped into one "capped" count.
+        auto bs = budget_state.find(uname);
+        const budget_statet st =
+          bs == budget_state.end() ? budget_statet::fits : bs->second;
+        switch (st)
+        {
+        case budget_statet::degraded_over:
+          log_warning(
+            "--solidity-path-coverage: unit '{}' hit the goal cap ({}) after "
+            "degradation withdrew every one of its {} withdrawable call "
+            "point(s) and it was STILL over budget. Expected, not a policy "
+            "failure: the unit's own source decisions exceed the budget, so "
+            "there was nothing left to give up",
+            uname,
+            path_cov_max_goals,
+            degraded_call_sites[uname].size());
+          break;
+        case budget_statet::no_candidates:
+          log_warning(
+            "--solidity-path-coverage: unit '{}' hit the goal cap ({}) with no "
+            "withdrawable call point to degrade (warned above). Expected, not "
+            "a policy failure",
+            uname,
+            path_cov_max_goals);
+          break;
+        case budget_statet::degraded_fits:
+          // NOT a defect, and deliberately not worded as one. Degradation
+          // stopped because the flat counter said the unit fits; the cap then
+          // fired on a count produced by the enumerating DFS. Two different
+          // computations of "how many paths" — that is the point of keeping
+          // them separate (a DFS bug cannot hide in both) and the price is that
+          // their COUNTING UNITS can differ. Both numbers are printed so the
+          // question "is this the same quantity?" can be answered by looking,
+          // rather than by opening an investigation into a bug that may not
+          // exist.
+          log_warning(
+            "--solidity-path-coverage: unit '{}' hit the goal cap ({}) after "
+            "degradation withdrew {} call point(s) and stopped, because the "
+            "pre-enumeration count then read {} (within budget). The "
+            "enumeration produced {}. These are two different computations, so "
+            "a gap here means their counting units disagree — reconcile the two "
+            "definitions; it is not by itself a defect. If they DO agree, the "
+            "degradation policy simply stopped one withdrawal too early",
+            uname,
+            path_cov_max_goals,
+            degraded_call_sites[uname].size(),
+            estimated_paths[uname],
+            after);
+          break;
+        case budget_statet::fits:
+          log_warning(
+            "--solidity-path-coverage: unit '{}' hit the goal cap ({}) but its "
+            "pre-enumeration count was {}, inside the budget, so degradation "
+            "was never offered the unit — while the enumeration produced {}. "
+            "This is the one case that IS a defect: the number the budget "
+            "decision was taken on is not the number the enumeration produces, "
+            "and nothing in the pipeline noticed",
+            uname,
+            path_cov_max_goals,
+            estimated_paths[uname],
+            after);
+          break;
+        }
+      }
+
+      size_t before = 0;
+      auto snap = pre_inline_body.find(uname);
+      if (snap != pre_inline_body.end())
+      {
+        bool snap_capped = false;
+        before = count_paths_no_instrument(
+          snap->second, ns, path_cov_unwind, path_cov_max_goals, snap_capped);
+        pre_expansion_total += before;
+
+        // The measurement is itself measured. When nothing was expanded into
+        // this unit, the counter and the real enumeration are looking at the
+        // same program and MUST agree — after discounting the ABI gate, which
+        // is inserted after the snapshot and contributes exactly one path. A
+        // mismatch means the two traversals have drifted, which would silently
+        // corrupt every ratio computed from them.
+        const size_t after_no_gate = after - (gate_inserted && after > 0 ? 1 : 0);
+        if (
+          expanded_into_unit[uname] == 0 && !capped && !snap_capped &&
+          !loop_truncated && before != after_no_gate)
+        {
+          log_error(
+            "--solidity-path-coverage: INTERNAL DEFECT: the path counter and "
+            "the path enumeration disagree on unit '{}' ({} vs {}) even though "
+            "nothing was expanded into it and no bound was hit. The two "
+            "traversals have drifted, so every expansion ratio derived from "
+            "them would be wrong.",
+            uname,
+            before,
+            after_no_gate);
+          abort();
+        }
+      }
+      log_debug(
+        "coverage",
+        "unit '{}': {} path(s) after expansion, {} before, {} call(s) expanded",
+        uname,
+        after,
+        before,
+        expanded_into_unit[uname]);
+    }
+
+    // ---- Report WHY this unit has undetermined exits (grouped by cause) ----
+    if (!undetermined_exits.empty())
+    {
+      // The three causes must account for every undetermined exit. This is a
+      // "two counts agree" property, independent of how any exit is classified,
+      // so it stays true whatever the frontend does next — unlike an assertion
+      // that forbids a particular outcome, which pins the symptom of whatever
+      // was broken when it was written.
+      const size_t summed =
+        und_no_epilogue + und_epilogue_skipped + und_return_unmarked;
+      if (summed != undetermined_exits.size())
+      {
+        log_error(
+          "--solidity-path-coverage: INTERNAL DEFECT in unit '{}': {} exit(s) "
+          "were classified undetermined but only {} of them were attributed to "
+          "a cause. An undetermined exit with no recorded cause means a fourth "
+          "route into the class exists and the breakdown below is silently "
+          "incomplete.",
+          id2string(f_it->first),
+          undetermined_exits.size(),
+          summed);
+        abort();
+      }
+      // An END_FUNCTION instruction carries no source location, so its set is
+      // legitimately empty. Say that, rather than printing `[]` — an empty
+      // bracket reads like "the locations were lost", which would send someone
+      // looking for a bug in the reporting instead of at the named unit.
+      auto join = [](const std::set<std::string> &s) {
+        std::string out;
+        for (const auto &e : s)
+          out += (out.empty() ? "" : "; ") + e;
+        return out.empty() ? std::string("no source location on the exit "
+                                         "instruction; see the unit named above")
+                           : out;
+      };
+      log_warning(
+        "--solidity-path-coverage: unit '{}' has {} exit(s) with NO positive "
+        "evidence of a normal exit, by cause: "
+        "(1) {} at END_FUNCTION in a unit with NO epilogue at all [{}]; "
+        "(2) {} at END_FUNCTION having SKIPPED this unit's epilogue [{}]; "
+        "(3) {} at a RETURN carrying no `sol_source_return` marker [{}]. "
+        "Each cause is missing a DIFFERENT witness and needs a different fix; "
+        "an undetermined exit cannot become an oracle, so these are the paths "
+        "R0 cannot serve",
+        id2string(f_it->first),
+        undetermined_exits.size(),
+        und_no_epilogue,
+        join(und_locs_no_epilogue),
+        und_epilogue_skipped,
+        join(und_locs_epilogue_skipped),
+        und_return_unmarked,
+        join(und_locs_return_unmarked));
+    }
+
+    if (rolled_back_return_exits > 0)
+    {
+      std::string where;
+      for (const auto &l : rolled_back_return_locs)
+        where += (where.empty() ? "" : "; ") + l;
+      // Every such path must have been classified as a rollback revert. If one
+      // ever escapes that classification it would be reported as an ordinary
+      // exit of a transaction that in fact reverted — the single wrong answer
+      // this classifier must never give.
+      //
+      // Stated as a COUNT, not as "no RETURN exit may be ordinary". The older
+      // form asserted the latter, which was equivalent only while a RETURN
+      // could never be classified normal at all: the epilogue that would have
+      // proved it is emitted after the RETURN. Now that the frontend marks its
+      // source-level returns, a RETURN exit CAN legitimately be normal, and the
+      // old form fired on the first correct classification — it was pinning an
+      // artefact of the missing evidence, not the property it names.
+      size_t rb_return_exits_classified = 0;
+      for (size_t i = 0; i < to_insert.size(); ++i)
+        if (std::get<0>(to_insert[i])->is_return() && rollback_exits.count(i))
+          ++rb_return_exits_classified;
+      if (rb_return_exits_classified != rolled_back_return_exits)
+      {
+        log_error(
+          "--solidity-path-coverage: INTERNAL DEFECT in unit '{}': {} path(s) "
+          "walked a rollback/revert marker and ended at a RETURN ({}), but "
+          "only {} of them were classified as reverting exits. The rest would "
+          "be reported as ordinary exits of transactions that in fact "
+          "reverted.",
+          id2string(f_it->first),
+          rolled_back_return_exits,
+          where,
+          rb_return_exits_classified);
+        abort();
+      }
+      log_debug(
+        "coverage",
+        "unit '{}': {} path(s) end at a RETURN after a rollback/revert marker "
+        "({}) — expected: the frontend lowers a failing require in a "
+        "value-returning function to a restore-and-return block",
+        id2string(f_it->first),
+        rolled_back_return_exits,
+        where);
+    }
+
+    // ---- `tr` completeness check (see the declaration above) ----
+    //
+    // Runs BEFORE the exit census so that, if both would fire, the reader sees
+    // the accumulator problem first: an unaccounted decision makes every path
+    // through it uncoverable, which then also shows up as a missing exit. Order
+    // the diagnosis from cause to symptom.
+    {
+      std::vector<std::string> unaccounted;
+      for (const auto &[site, sub] : dfs_decision_sites)
+        if (phase1_decision_sites.count({site, sub}) == 0)
+          unaccounted.push_back(site + " (operand " + std::to_string(sub) + ")");
+      if (!unaccounted.empty())
+      {
+        std::string where;
+        for (const auto &u : unaccounted)
+          where += (where.empty() ? "" : "; ") + u;
+        log_error(
+          "--solidity-path-coverage: INTERNAL DEFECT in unit '{}'. {} decision "
+          "site(s) are branched on by the path enumeration but are NOT "
+          "accumulated into `tr` at run time: {}. Every real execution then "
+          "carries fewer decisions than the emitted path expects, so "
+          "`cnt != depth` holds always and those paths are permanently "
+          "uncoverable — while being reported as PASSED, i.e. a false proof of "
+          "unreachability. This also breaks the stage-3 certification query "
+          "`assume(interval); assert(tr == pi)`, which is sound only because "
+          "`tr` records the complete decision sequence of whatever actually "
+          "executes.",
+          id2string(f_it->first),
+          unaccounted.size(),
+          where);
+        abort();
+      }
+      // The reverse direction is dead code, not a defect: a decision that was
+      // snapshotted but that no path ever reaches. Reported at debug level so
+      // it is available when a count looks odd, without adding noise.
+      size_t never_traversed = 0;
+      for (const auto &s : phase1_decision_sites)
+        if (dfs_decision_sites.count(s) == 0)
+          ++never_traversed;
+      log_debug(
+        "coverage",
+        "unit '{}': {} decision site(s) accumulated into tr, {} of them never "
+        "traversed by any enumerated path (unreachable code)",
+        id2string(f_it->first),
+        phase1_decision_sites.size(),
+        never_traversed);
+    }
+
+    // ---- Exit census: does the enumeration account for every exit? ----
+    //
+    // Motivation: the failure mode this guards against is a whole CLASS of exit
+    // being silently swallowed. That already happened once — asserts were placed
+    // at END_FUNCTION while a RETURN terminates the frame, so every path of every
+    // value-returning unit became uncoverable and was reported U. Nothing
+    // crashed and nothing warned; the coverage number simply read low, and "U"
+    // is indistinguishable from an honest solver timeout. A number that can
+    // absorb an implementation defect is worse than a number that is missing.
+    //
+    // The census is deliberately built from a DIFFERENT computation than the
+    // enumeration: a flat forward reachability scan keyed on INSTRUCTION KIND,
+    // sharing none of the DFS's path/enc/depth bookkeeping. A bug in the DFS
+    // therefore cannot hide in both.
+    //
+    // Known limitation, stated rather than papered over: this is a goto-level
+    // census, not an AST-level one. It cannot see a source-level exit that the
+    // frontend dropped before goto conversion — for that the census would have
+    // to count `return` / `revert` / `require` sites in the Solidity AST and be
+    // plumbed through from the frontend. This catches everything the goto
+    // program still contains, which is where every defect so far has lived.
+    {
+      // Terminators, from measurement: a RETURN ends the frame (symex does not
+      // fall through to END_FUNCTION), and a `#sol_error` callee is nothing but
+      // ASSUME(false).
+      auto is_exit_kind = [&](goto_programt::const_targett i) {
+        return i->is_return() || i->is_end_function() || is_error_call(i);
+      };
+
+      std::set<const goto_programt::instructiont *> reachable_exits;
+      std::set<const goto_programt::instructiont *> seen;
+      std::vector<goto_programt::targett> work;
+      if (!goto_program.instructions.empty())
+        work.push_back(goto_program.instructions.begin());
+      while (!work.empty())
+      {
+        auto i = work.back();
+        work.pop_back();
+        if (i == goto_program.instructions.end())
+          continue;
+        if (!seen.insert(&*i).second)
+          continue;
+        if (is_exit_kind(i))
+        {
+          reachable_exits.insert(&*i);
+          continue; // terminator: no successors
+        }
+        if (i->is_goto())
+        {
+          work.push_back(i->get_target());
+          if (!is_true(i->guard))
+            work.push_back(std::next(i));
+          continue;
+        }
+        work.push_back(std::next(i));
+      }
+
+      std::set<const goto_programt::instructiont *> enumerated_exits;
+      for (const auto &e : to_insert)
+        enumerated_exits.insert(&*std::get<0>(e));
+
+      // AST-level half of the census. The goto scan above can only see exits
+      // the goto program still contains; a source-level exit dropped before
+      // goto conversion leaves no trace there. The frontend records the number
+      // of `return` statements it actually saw in the source
+      // (`#sol_ast_return_sites`), which is the only independent witness that
+      // such an exit existed. If the source has returns and the enumeration
+      // ends no path at a RETURN, a whole class of exit has gone missing
+      // between the AST and here.
+      {
+        const symbolt *usym = ns.lookup(f_it->first);
+        const std::string ast_rets =
+          usym ? usym->type.get("#sol_ast_return_sites").as_string()
+               : std::string();
+        if (!ast_rets.empty() && std::stoul(ast_rets) > 0)
+        {
+          bool any_return_exit = false;
+          for (const auto &e : to_insert)
+            if (std::get<0>(e)->is_return())
+            {
+              any_return_exit = true;
+              break;
+            }
+          if (!any_return_exit && !loop_truncated && !capped)
+          {
+            log_error(
+              "--solidity-path-coverage: INTERNAL DEFECT in unit '{}'. The "
+              "source contains {} value-returning `return` statement(s), but "
+              "no enumerated path exits at a RETURN and no bound was hit. A "
+              "class of exit "
+              "has been lost between the AST and the enumeration, so coverage "
+              "and every U verdict for this unit would be wrong.",
+              id2string(f_it->first),
+              ast_rets);
+            abort();
+          }
+        }
+
+        // Named obstacle: `this.f(...)`. On a real EVM this re-enters through
+        // the ABI, so `msg.sender` inside the callee becomes the contract's own
+        // address; the frontend lowers it to a plain direct call, which keeps
+        // the original caller's msg.sender. The model can therefore admit a
+        // path that reverts on-chain (`require(msg.sender == owner)` being the
+        // canonical case). Declaring it here means a downstream emitter can
+        // refuse to emit a test for this unit and count the refusal, instead of
+        // emitting one that is labelled certified and fails when run.
+        const std::string tc =
+          usym ? usym->type.get("#sol_this_call_count").as_string()
+               : std::string();
+        if (!tc.empty())
+          log_warning(
+            "--solidity-path-coverage: unit '{}' contains {} `this.<f>(...)` "
+            "call site(s) [{}]. On-chain that is an EXTERNAL call and msg.sender "
+            "inside the callee is this contract's own address; the model lowers "
+            "it to a direct call and keeps the caller's msg.sender, so a path "
+            "through it may not exist on-chain. NAMED OBSTACLE: paths through "
+            "these sites must not be turned into tests",
+            id2string(f_it->first),
+            tc,
+            usym->type.get("#sol_this_call_names").as_string());
+      }
+
+      std::vector<std::string> unaccounted;
+      for (const auto *ex : reachable_exits)
+        if (enumerated_exits.count(ex) == 0)
+          unaccounted.push_back(ex->location.as_string());
+
+      if (!unaccounted.empty())
+      {
+        std::string where;
+        for (const auto &u : unaccounted)
+          where += (where.empty() ? "" : "; ") + u;
+        const bool bounded_out =
+          loop_truncated || capped || dropped_paths > dropped_before_unit;
+        if (bounded_out)
+          // A legitimate budget effect, not a defect: an exit that only becomes
+          // reachable past the loop bound or past a goal/length cap. Named, so
+          // it can never be mistaken for full accounting.
+          log_warning(
+            "--solidity-path-coverage: unit '{}' has {} reachable exit(s) that "
+            "no enumerated path ends at, because this unit hit a bound (loop "
+            "bound {} / goal cap {}). Reported as a bound obstacle, not as "
+            "coverage. Exits: {}",
+            id2string(f_it->first),
+            unaccounted.size(),
+            path_cov_unwind,
+            path_cov_max_goals,
+            where);
+        else
+        {
+          // No bound was hit, so every reachable exit MUST be the exit of some
+          // enumerated path. It is not: the enumeration is dropping a class of
+          // exit on the floor. Aborting is the point — the alternative is a
+          // coverage percentage that silently omits it.
+          log_error(
+            "--solidity-path-coverage: INTERNAL DEFECT in unit '{}'. {} exit(s) "
+            "are reachable in the goto program but no enumerated path ends at "
+            "them, and no bound was hit to explain it. The enumeration is "
+            "swallowing a class of exit, so the coverage denominator and every "
+            "U verdict derived from it would be wrong. Exits: {}",
+            id2string(f_it->first),
+            unaccounted.size(),
+            where);
+          abort();
+        }
+      }
+    }
+
+    // ---- STAGE 2: the certification query ----
+    //
+    // Reached only with --path-cov-certify. Everything above still ran —
+    // expansion, the ABI gate, Phase-1 `tr`/`cnt` accounting, the
+    // `tr`-completeness invariant, the exit census, the decision-set census —
+    // because they are the defences, and certifying against accounting that
+    // nothing checked would be certifying nothing. It also matters that the
+    // query below reads the SAME `tr` the enumeration writes: the argument that
+    // certification is immune to goal-cap truncation is exactly "the cap drops
+    // exit asserts, never the accounting", and two separate accumulators would
+    // break it.
+    if (certify_on)
+    {
+      const std::string uid = f_it->first.as_string();
+      const bool is_target =
+        uid == certify_unit ||
+        uid.find("@F@" + certify_unit + "#") != std::string::npos;
+      if (!is_target)
+        continue; // other units contribute nothing to this query
+
+      // 1. Assume the box at unit entry. Each bound names either a call
+      //    argument (resolved against this unit's own parameter list) or an EVM
+      //    environment value (`msg.value` etc.). An unresolvable name is FATAL:
+      //    silently dropping a bound would widen the box being certified beyond
+      //    what was asked for, and the run would still say SUCCESSFUL.
+      const symbolt *fsym = ns.lookup(f_it->first);
+      size_t bounds_emitted = 0;
+      for (const auto &b : certify_box)
+      {
+        const symbolt *bsym = nullptr;
+        if (
+          b.name.rfind("msg.", 0) == 0 || b.name.rfind("tx.", 0) == 0 ||
+          b.name.rfind("block.", 0) == 0)
+        {
+          std::string env = b.name;
+          for (auto &ch : env)
+            if (ch == '.')
+              ch = '_';
+          bsym = ns.lookup(irep_idt("c:@" + env));
+        }
+        else if (fsym != nullptr)
+        {
+          for (const auto &arg : to_code_type(fsym->type).arguments())
+            if (arg.get_base_name() == b.name)
+            {
+              bsym = ns.lookup(arg.get_identifier());
+              break;
+            }
+        }
+        if (bsym == nullptr)
+        {
+          log_error(
+            "--path-cov-certify: unit '{}' has no input named '{}'. Name a "
+            "parameter of this unit, or an environment value as `msg.value` / "
+            "`tx.origin` / `block.timestamp`. Dropping the bound instead would "
+            "certify a WIDER box than the one asked for.",
+            uid,
+            b.name);
+          abort();
+        }
+        const type2tc bt = migrate_type(bsym->type);
+        expr2tc bs = symbol2tc(bt, bsym->id);
+        goto_programt::instructiont asm_i;
+        asm_i.type = ASSUME;
+        asm_i.guard = and2tc(
+          greaterthanequal2tc(bs, constant_int2tc(bt, string2integer(b.lo))),
+          lessthanequal2tc(bs, constant_int2tc(bt, string2integer(b.hi))));
+        asm_i.location = goto_program.instructions.begin()->location;
+        // "skipped" keeps this out of the decision-set census, which flags a
+        // user-source ASSUME as a lowered-away branch. This one is ours.
+        asm_i.location.property("skipped");
+        asm_i.function = goto_program.instructions.begin()->location.get_function();
+        goto_program.instructions.insert(goto_program.instructions.begin(), asm_i);
+        ++bounds_emitted;
+      }
+
+      // 2. Assert the path identity at EVERY exit — see the header comment.
+      //    Collected first, then inserted: inserting while walking the same
+      //    list is how the ABI gate acquired a self-loop once already.
+      std::vector<goto_programt::targett> exits;
+      Forall_goto_program_instructions (xit, goto_program)
+        if (xit->is_return() || xit->is_end_function() || is_error_call(xit))
+          exits.push_back(xit);
+
+      const expr2tc cert_guard = and2tc(
+        equality2tc(tr, constant_int2tc(utype, BigInt(certify_enc))),
+        equality2tc(cnt, constant_int2tc(utype, BigInt(certify_depth))));
+      size_t exit_idx = 0;
+      for (auto xpc : exits)
+      {
+        // Comment shape MUST stay `<unit-id>:path:<enc>` — the unit id first,
+        // with nothing in front of it. MEASURED: a leading "certify:" made the
+        // report's `path_function` read `certify:sol:@C@Box@F@f#18`, the
+        // counterexample harvest builds the expected argument scope from that
+        // string, every nondet then failed the scope test and was filed as
+        // harness-internal (dropped 19 -> 25, `inputs` empty). The refutation
+        // still printed a verdict, so the loss was silent — and the witness
+        // VALUE is the entire point of a refutation: without it there is
+        // nothing to shrink the box with. The mode is announced by the banner
+        // above, not by decorating a key another component parses.
+        const std::string comment = id2string(f_it->first) +
+                                    ":path:" + std::to_string(certify_enc) +
+                                    "#exit" + std::to_string(exit_idx++);
+        all_claims.insert({comment, xpc->location.as_string()});
+        insert_assert(goto_program, xpc, cert_guard, comment);
+      }
+
+      log_status(
+        "--path-cov-certify: unit '{}' — assumed {} input bound(s) at entry "
+        "and asserted `tr == {} && cnt == {}` at ALL {} exit(s) of the unit. "
+        "Asserting at every exit is what makes the query non-vacuous: an input "
+        "inside the box that walks a DIFFERENT path leaves through a different "
+        "exit, and would never be checked if the assert sat only on this "
+        "path's own exit",
+        uid,
+        bounds_emitted,
+        certify_enc,
+        certify_depth,
+        exits.size());
+      total_paths += exits.size();
+      continue;
+    }
+
     size_t ins_idx = 0;
-    for (auto &[pc, g, comment, is_revert] : to_insert)
+    for (auto &[pc, g, comment, is_revert, stable_id] : to_insert)
     {
       const size_t this_idx = ins_idx++;
       // Claim key == the (comment, location) pair get_total_cond_assert() and
@@ -1505,7 +3788,51 @@ void goto_coveraget::solidity_path_coverage()
         rollback_revert_paths.insert(key);
       if (undetermined_exits.count(this_idx))
         undetermined_exit_paths.insert(key);
-      if (covered_set.count(key))
+      // Named obstacle, applied to EVERY path of the unit (see the census
+      // comment above for why per-path containment is unsound here). The paths
+      // stay in the denominator — they are real — but none of them may become a
+      // test or join the sibling set for the stage-3 subtraction.
+      if (unit_has_lost_decision)
+      {
+        ++obstacle_paths_assume;
+        named_obstacle_paths[key] =
+          "unit contains a source-level decision the frontend lowered to a "
+          "control-flow-free assume (internal library / free-function "
+          "require); the reverting execution does not exist in the model, so "
+          "it is absent from the sibling set of EVERY path of this unit";
+      }
+      if (unit_calls_gated_unit)
+      {
+        ++obstacle_paths_residual;
+        named_obstacle_paths[key] =
+          "unit still calls another UNIT's own body unexpanded (" +
+          residual_unit_names +
+          "); that body carries the ABI value gate, which models an EXTERNAL "
+          "entry, so the model admits the callee reverting for carrying value "
+          "inside an INTERNAL call that on-chain proceeds — an execution that "
+          "does not exist on chain";
+      }
+      if (unit_truncated)
+      {
+        // NOT an obstacle: a strength annotation. The dropped paths exist in the
+        // model and their Phase-1 accounting is still instrumented, so the
+        // certification query `assume(interval); assert(tr == pi)` still rejects
+        // any candidate interval that reaches them — the interval shrinks rather
+        // than being wrong. Recorded per path so a downstream consumer can say
+        // "this one's certified region is narrower than it would otherwise be",
+        // and deliberately kept OUT of named_obstacle_paths so it cannot be
+        // confused with the model/reality divergences that must not ship a test.
+        ++truncation_weakened_paths;
+        truncation_weakened[key] =
+          "unit lost paths to the per-unit goal/length cap; the dropped paths "
+          "exist in the model and are still accounted for in `tr`, so the "
+          "certification query still excludes their inputs — this narrows the "
+          "certified region rather than invalidating it";
+      }
+      // Remember this run's claim key -> stable id so the run-end write-back can
+      // persist exactly the paths that were witnessed.
+      path_stable_id[key] = stable_id;
+      if (path_covered_ids.count(stable_id))
       {
         ++skipped_paths; // already witnessed in an earlier round
         continue;
@@ -1543,10 +3870,98 @@ void goto_coveraget::solidity_path_coverage()
       path_cov_max_goals,
       dropped_paths);
   log_status(
-    "--solidity-path-coverage: instrumented {} complete path(s) "
-    "(loop bound = {} iterations)",
+    "--solidity-path-coverage: instrumented {} complete path(s) across {} "
+    "unit(s) (loop bound = {} iterations)",
     total_paths,
+    units_enumerated,
     path_cov_unwind);
+  if (!named_obstacle_paths.empty())
+    log_warning(
+      "--solidity-path-coverage: NAMED OBSTACLE — {} path(s) excluded, being "
+      "ALL paths of every affected unit. Both causes are the SAME failure — the "
+      "model and the chain disagree, so a counterexample can describe an "
+      "execution that does not exist and the test built from it is RED on the "
+      "UNMODIFIED contract — reached by two different routes, so they are "
+      "counted apart:\n"
+      "  (a) {} path(s) across {} unit(s): the unit contains a construct that "
+      "removes executions WITHOUT a branch — an explicitly written "
+      "`__ESBMC_assume`, or a `require` still lowered to a control-flow-free "
+      "assume (the library / free-function case; seeing that again means the "
+      "revert-observation widening regressed). Those executions do not exist in "
+      "the model at all, so no certification query can even see them.\n"
+      "  (b) {} path(s) across {} unit(s): the unit still calls another UNIT's "
+      "own body unexpanded (depth bound), routing an INTERNAL call through the "
+      "EXTERNAL-entry body and its ABI value gate. Raise --unwind to expand "
+      "them; an expanded copy is gate-free.\n"
+      "Exclusion is per UNIT, not per path. Reported as an absolute count and "
+      "NOT folded into the coverage percentage — an obstacle is not partial "
+      "credit",
+      named_obstacle_paths.size(),
+      obstacle_paths_assume,
+      obstacle_units,
+      obstacle_paths_residual,
+      obstacle_units_residual);
+  if (truncation_weakened_paths > 0)
+    log_warning(
+      "--solidity-path-coverage: ASSERTION STRENGTH — {} path(s) across {} "
+      "unit(s) have a NARROWER certified region than they otherwise would, "
+      "because their unit lost paths to the goal cap ({}). This is a strength "
+      "annotation, NOT an obstacle: the dropped paths exist in the model and "
+      "their decision accounting is still instrumented, so an input reaching "
+      "one still carries its path number in `tr` and the certification query "
+      "`assume(interval); assert(tr == pi)` rejects it — the interval shrinks "
+      "rather than being wrong. Degradation runs first precisely so this should "
+      "not be reached; each unit above says why it was",
+      truncation_weakened_paths,
+      units_at_cap,
+      path_cov_max_goals);
+  if (units_enumerated > 0)
+  {
+    // One line carrying everything the distribution question needs, so it never
+    // has to be re-run to answer a follow-up.
+    //
+    // The total here is the ENUMERATED count (all_claims), NOT the count
+    // instrumented this round. The distribution is a structural property of the
+    // contract, so mixing in a per-round number would make it change between
+    // rounds of the same escalation: measured on a resumed run, 7 of 8 paths
+    // were carried over from the covered set and this line read "1 path(s)
+    // total ... 0.33x" for a contract whose real figures are 8 and 2.67x. `max`
+    // and the pre-expansion total were already structural, so the mix was
+    // silent — the kind of number that gets quoted.
+    const size_t enumerated_total = all_claims.size();
+    const double ratio =
+      pre_expansion_total > 0
+        ? (double)enumerated_total / (double)pre_expansion_total
+        : 0.0;
+    log_status(
+      "--solidity-path-coverage: path distribution — {} unit(s), {} path(s) "
+      "total, max {} in '{}', mean {:.1f}; before internal-call expansion the "
+      "same units had {} path(s), so expansion multiplied them by {:.2f}x",
+      units_enumerated,
+      enumerated_total,
+      max_unit_paths,
+      max_unit_name,
+      (double)enumerated_total / (double)units_enumerated,
+      pre_expansion_total,
+      ratio);
+    if (units_at_cap > 0)
+      log_warning(
+        "--solidity-path-coverage: {} of {} unit(s) hit the per-unit goal cap "
+        "({}), so the totals reported above are LOWER BOUNDS for those units "
+        "and the tail of this distribution must not be presented as complete. "
+        "Their paths keep a valid — but narrower — certified region (see the "
+        "assertion-strength report); what is lost is resolution, not "
+        "correctness",
+        units_at_cap,
+        units_enumerated,
+        path_cov_max_goals);
+  }
+  if (non_unit_functions > 0)
+    log_status(
+      "--solidity-path-coverage: {} in-scope function(s) are internal/private "
+      "and are therefore not units; they have no path set of their own and "
+      "appear inside the paths of the units that call them",
+      non_unit_functions);
   if (sc_sites_over_cap > 0)
     log_warning(
       "--solidity-path-coverage: {} folded short-circuit/ternary site(s) have "

@@ -175,12 +175,35 @@ bool solidity_convertert::get_function_definition(
      SolidityGrammar::is_sol_library_function(ast_node["id"].get<int>()));
   bool is_free_function = ast_node.contains("kind") &&
                           ast_node["kind"].get<std::string>() == "freeFunction";
-  // Revert observation: a contract function / internal helper (NOT a
-  // constructor / library / event / error / free function) is an *observable*
-  // scope — its no-snapshot revert may be lowered to `mark + return` instead
-  // of legacy path-pruning.  See build_revert_rollback_block.
-  current_function_revert_observable =
-    !is_event_err_lib && !is_free_function && !is_ctor;
+  // Revert observation: an *observable* scope lowers a no-snapshot revert to
+  // `mark + return` (a real branch) instead of legacy path-pruning.  See
+  // build_revert_rollback_block.
+  //
+  // Libraries and free functions used to be excluded, and that exclusion was
+  // measured to be the worst defect in the path-coverage pipeline. Their
+  // `require(c)` was lowered to a bare `assume(c)` with NO control flow, so the
+  // `!c` execution did not exist in the model at all while on-chain it reverts.
+  // The damage does not stop at an incomplete decision set: the `!c` inputs
+  // belong to no enumerated path, so the downstream subtraction can never
+  // remove them, the interval bound is a syntactic product that cannot carry
+  // `c`, and the certifying query itself runs under the same `assume(c)` — so a
+  // candidate gets certified over inputs the verifier never saw, and the
+  // emitted test reverts on the UNMODIFIED contract while claiming to be
+  // certified. `require` inside a library is the standard shape (OpenZeppelin
+  // SafeERC20, every SafeMath variant), so this was not a corner case.
+  //
+  // Still excluded, for reasons that are about semantics rather than scope:
+  //   * EventDefinition / ErrorDefinition — not real functions; their bodies
+  //     are synthesised (an error body is exactly `ASSUME(false)`, which IS the
+  //     revert, not a guard inside one).
+  //   * constructors — a revert anywhere in `constructor -> _mint -> require`
+  //     must prune, because the EVM aborts contract creation. Making it
+  //     observable would let construction continue with a half-initialised
+  //     contract.
+  const bool is_event_or_err =
+    ast_node.contains("nodeType") && (ast_node["nodeType"] == "EventDefinition" ||
+                                      ast_node["nodeType"] == "ErrorDefinition");
+  current_function_revert_observable = !is_event_or_err && !is_ctor;
   if (!is_event_err_lib && !is_free_function)
     get_function_this_pointer_param(
       c_name, id, debug_modulename, location_begin, type);
