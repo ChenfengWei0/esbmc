@@ -133,6 +133,20 @@ def claim_unit(c):
     return cond.split(":", 1)[0] if ":" in cond else ""
 
 
+ENV_PREFIXES = ("msg.", "tx.", "block.")
+
+
+def is_env(name):
+    """Is this coordinate an EVM environment quantity rather than an input?
+
+    Same namespace rule the tool uses to resolve coordinate names. It matters
+    for POLICY, not just naming: environment quantities are never made free
+    coordinates here, because the ladder cost is multiplicative in the number of
+    coordinates and there are fifteen of them.
+    """
+    return name.startswith(ENV_PREFIXES)
+
+
 def coord_values(c):
     """This claim's counterexample as {coordinate: int}, plus what was refused.
 
@@ -152,6 +166,27 @@ def coord_values(c):
     into one that reads as a statement about the whole input space.
     """
     ce, refused = {}, []
+    for n, v in (c.get("env") or {}).items():
+        # EVM environment (msg.*/tx.*/block.*). The tool resolves these names as
+        # coordinates already -- what was missing is that the driver never read
+        # them out of the report, and that omission is a systematic yield
+        # killer rather than a detail: a NON-payable function carries an
+        # ABI-level decision on msg.value, so a box that leaves msg.value
+        # unconstrained always contains an input that reverts at the gate and
+        # certification is refused however far the box is shrunk. Measured by
+        # intervention on one contract and one path: box unchanged on
+        # (a, state.s), certification FAILED with "no single-coordinate
+        # shrink"; add `msg.value` pinned to 0 and the SAME query returns
+        # VERIFICATION SUCCESSFUL. Non-payable is most real code, so this is
+        # most paths.
+        #
+        # The name goes in UNPREFIXED: the tool resolves `msg.value`, not
+        # `env.msg.value`, and these already carry their own namespace, so no
+        # parameter can collide with them (a Solidity identifier has no dot).
+        try:
+            ce[n] = parse_int(v)
+        except ValueError:
+            refused.append(n)
     for n, v in (c.get("inputs") or {}).items():
         try:
             ce[n] = parse_int(v)
@@ -368,6 +403,42 @@ def verdict(log):
     return seen
 
 
+def empty_coords(box):
+    """Coordinates whose interval is EMPTY (lo > hi).
+
+    An empty box certifies VACUOUSLY: `assume(lo <= x <= hi)` with lo > hi is
+    `assume(false)`, so `assert(tr == pi)` holds for want of any execution and
+    the query answers SUCCESSFUL. The tool's own non-vacuity argument -- put the
+    assert on EVERY exit -- addresses a different vacuity and does not cover an
+    unsatisfiable assumption.
+
+    Not hypothetical: with the environment pinned, the ABI-gate revert path's
+    domain is empty, the sibling subtraction duly produced lo > hi, and the run
+    reported it as a certified region. The pin had excluded the path; the honest
+    statement is that, not a certificate.
+    """
+    return sorted(n for n, (lo, hi) in box.items() if lo > hi)
+
+
+def shrink_target(log, pins):
+    """The cut a refutation suggests, as (coord, lo, hi), or None.
+
+    A cut on a PINNED coordinate is refused. The pin is what the region is a
+    statement ABOUT, so narrowing it silently swaps the slice the caller asked
+    for. Measured: with the environment pinned, a refutation suggested a cut on
+    block.number, and the loop merged it into the box beside the pin fixing
+    block.number to a single value -- two contradictory constraints on one
+    coordinate.
+    """
+    m = SHRINK_RE.search(log)
+    if not m:
+        return None
+    coord = m.group(1)
+    if coord in pins:
+        return None
+    return coord, int(m.group(2)), int(m.group(3))
+
+
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g"):
     """Step 5. Returns (verdict, suggested_box_or_None)."""
@@ -388,11 +459,12 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
         # SUCCESSFUL: certified. UNKNOWN: no verdict at all -- the caller must
         # not shrink on it, so no box is suggested either.
         return v, None
-    m = SHRINK_RE.search(log)
-    if not m:
+    cut = shrink_target(log, pins)
+    if cut is None:
         return v, None
+    coord, lo, hi = cut
     nb = dict(box)
-    nb[m.group(1)] = (int(m.group(2)), int(m.group(3)))
+    nb[coord] = (lo, hi)
     return v, nb
 
 
@@ -425,6 +497,15 @@ def main():
                          "caller computed for the machine; this used to be "
                          "hardcoded, so a caller's limit was a line nobody "
                          "read.")
+    ap.add_argument("--pin-env", action="store_true",
+                    help="pin each msg./tx./block. quantity on which every "
+                         "witnessed path agrees, at that value. Off by default "
+                         "because it changes what every region MEANS -- each "
+                         "becomes a statement about that environment slice, "
+                         "which is printed with it. Measured effect: without "
+                         "it a non-payable function certifies nothing, because "
+                         "its ABI gate is a decision on an unconstrained "
+                         "msg.value.")
     ap.add_argument("--path-function", default=None,
                     help="disambiguate overloads: the exact mangled "
                          "path_function to generalise.")
@@ -467,7 +548,46 @@ def main():
               f"the slice through whatever values they took in the "
               f"counterexample, and does NOT generalise over them.")
 
-    coords = sorted({k for _, _, ce in paths for k in ce} - set(pins))
+    # ---- EVM environment: pin where every path agrees, never probe ----
+    #
+    # Environment quantities are never made FREE coordinates: the ladder cost is
+    # multiplicative in the coordinate count and there are fifteen of them, and
+    # the bracket round is already the binding cost on real input.
+    #
+    # They are pinned only where EVERY witnessed path's counterexample agrees on
+    # the value. A pin that contradicts some path's own counterexample would
+    # place that path's known domain member OUTSIDE the box, and "keep a known
+    # member" is the invariant that stops the subtraction cut from carving away
+    # the real region. Where the paths disagree the quantity is left
+    # unconstrained -- which is the status quo, and is reported rather than
+    # passed over, because an unconstrained gate is exactly what refuses
+    # certification.
+    env_names = sorted({k for _, _, ce in paths for k in ce if is_env(k)})
+    if args.pin_env and env_names:
+        agreed, disagreed = {}, []
+        for n in env_names:
+            vals = {ce.get(n) for _, _, ce in paths}
+            if len(vals) == 1 and None not in vals:
+                agreed[n] = vals.pop()
+            else:
+                disagreed.append(n)
+        for n, v in agreed.items():
+            pins.setdefault(n, v)          # an explicit --pin always wins
+        if agreed:
+            print(f"[env] pinned (all {len(paths)} paths agree): "
+                  + ", ".join(f"{n}={v}" for n, v in sorted(agreed.items())))
+        if disagreed:
+            print(f"[env] NOT pinned, paths disagree on the witnessed value: "
+                  f"{', '.join(disagreed)}. Left unconstrained, so a path "
+                  f"guarded by one of these cannot certify.")
+    elif env_names:
+        print(f"[env] {len(env_names)} environment quantity(s) left "
+              f"unconstrained (--pin-env is off). A non-payable function has an "
+              f"ABI-level decision on msg.value, so its paths cannot certify "
+              f"while it is unconstrained.")
+
+    coords = sorted({k for _, _, ce in paths for k in ce}
+                    - set(pins) - set(env_names))
     if not coords:
         print("[coords] no generalisable coordinate: "
               + ("every coordinate is pinned" if pins else
@@ -521,6 +641,13 @@ def main():
                            "measured for this path (a BUDGET outcome, not a "
                            "property of the path)" if any_timeout else
                            "no fully bounded region was measured")
+            continue
+        empty = empty_coords(box)
+        if empty:
+            failed[enc] = (
+                f"region is EMPTY on {', '.join(empty)} (lo > hi) under the "
+                f"current pins, so this path has no domain in this slice; "
+                f"certifying it would hold vacuously")
             continue
         if enc in warned:
             # Not fatal: certification is the arbiter. But say it, because a

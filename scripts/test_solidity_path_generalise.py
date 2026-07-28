@@ -26,7 +26,8 @@ import sys
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
-from solidity_path_generalise import verdict, claim_unit, coord_values  # noqa
+from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
+                                      empty_coords, shrink_target, is_env)
 
 FAILURES = []
 
@@ -140,6 +141,51 @@ check("refusals-are-reported", sorted(refused),
 ce2, refused2 = coord_values({"inputs": {"a": "0xFF"}, "entry_storage": {}})
 check("hex-param-kept", ce2.get("a"), 255)
 check("hex-not-refused", refused2, [])
+
+
+
+# --- an empty box certifies vacuously and must never be certified ---
+# The values are the ones a real run produced: with the environment pinned, the
+# ABI-gate revert path's subtraction yielded lo > hi and the run reported it as
+# a certified region.
+BIG = 115792089237316195423570985008687907853269984665640564039457584007913129639935
+check("empty-box-detected",
+      empty_coords({"a": (23158417847463239084714197001737581570653996933128112807891516801582625927987, 0),
+                    "state.s": (BIG, BIG)}),
+      ["a"])
+check("point-interval-is-not-empty", empty_coords({"a": (5, 5)}), [])
+check("normal-interval-is-not-empty", empty_coords({"a": (0, 5)}), [])
+check("every-empty-coord-named",
+      empty_coords({"a": (7, 3), "b": (0, 1), "c": (9, 8)}), ["a", "c"])
+
+
+# --- a refutation may not cut a pinned coordinate ---
+# NOTE: unlike the verdict fixtures above, this line is RECONSTRUCTED from
+# SHRINK_RE rather than captured verbatim -- a real refutation was observed
+# cutting `a` from [0,5] to [0,3], and a real refutation was observed suggesting
+# block.number while it was pinned, but the exact line text of the latter was
+# not kept. What is pinned here is the pinned-coordinate REFUSAL, which does not
+# depend on the surrounding prose.
+SHRINK_LOG = ("--path-cov-certify: refuted; retry with block.number in "
+              "[1, 115792089237316195423570985008687907853269984665640564039457584007913129639935]")
+check("cut-taken-when-free",
+      shrink_target(SHRINK_LOG, {}), ("block.number", 1, BIG))
+check("cut-refused-when-pinned",
+      shrink_target(SHRINK_LOG, {"block.number": BIG}), None)
+check("no-cut-in-log", shrink_target("nothing here", {}), None)
+
+
+# --- environment namespace ---
+check("msg-is-env", is_env("msg.value"), True)
+check("block-is-env", is_env("block.timestamp"), True)
+check("tx-is-env", is_env("tx.origin"), True)
+check("state-is-not-env", is_env("state.s"), False)
+check("param-is-not-env", is_env("a"), False)
+
+# env values are harvested unprefixed, because that is the name the tool resolves
+ce3, _ = coord_values({"env": {"msg.value": "0", "block.number": "1"},
+                       "inputs": {}, "entry_storage": {}})
+check("env-harvested-unprefixed", sorted(ce3), ["block.number", "msg.value"])
 
 
 if FAILURES:
