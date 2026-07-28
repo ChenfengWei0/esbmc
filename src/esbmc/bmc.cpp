@@ -1527,6 +1527,16 @@ void report_coverage(
           claim_entry["path_id"] = claim_msg.substr(pos + 6);
           claim_entry["path_function"] = claim_msg.substr(0, pos);
         }
+        // The decision depth, i.e. the `cnt` half of the path's identity. A
+        // stage-2 query is `tr == enc && cnt == depth`, so a consumer that only
+        // had `path_id` could not build one; it had to be told the depth out of
+        // band, which is the opposite of an interface.
+        {
+          auto dp =
+            goto_coveraget::path_decision_depth.find({claim_msg, claim_loc});
+          if (dp != goto_coveraget::path_decision_depth.end())
+            claim_entry["path_depth"] = dp->second;
+        }
 
         // CE payload: the concrete values behind an F. Absent for I/U (there
         // is no counterexample to report).

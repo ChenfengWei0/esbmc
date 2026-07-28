@@ -48,6 +48,8 @@ std::map<std::pair<std::string, std::string>, std::string>
 std::map<std::string, std::vector<std::string>>
   goto_coveraget::degraded_call_sites;
 std::map<std::string, goto_coveraget::path_ce_t> goto_coveraget::path_ce;
+std::map<std::pair<std::string, std::string>, uint64_t>
+  goto_coveraget::path_decision_depth;
 std::string goto_coveraget::covered_set_outpath;
 std::set<std::string> goto_coveraget::path_covered_ids;
 std::map<std::pair<std::string, std::string>, std::string>
@@ -447,6 +449,21 @@ void goto_coveraget::report_outer_boxes()
   {
     bool have_u = false, have_l = false;
     BigInt u, l;
+    // The TIGHTEST REFUTED probe on each side. `assert(temp_c <= v)` refuted
+    // means some input of this path has c > v, so the true bound lies strictly
+    // above v; together with the smallest holding probe it BRACKETS the bound.
+    //
+    // Reported because it is what makes the loop converge geometrically. A batch
+    // of K probes gives resolution span/(K+1) in one round; refining the next
+    // round's span to this bracket divides the resolution by (K+1) again, so the
+    // precision is logarithmic in ROUNDS while each round stays one run. Without
+    // the bracket a driver has no principled next span — and the recorded rule
+    // it would otherwise use (take the span from the nearest sibling
+    // counterexample) was measured NOT to work: a solver counterexample can sit
+    // arbitrarily far from the boundary, and on the first contract tried it sat
+    // at 2^256-1.
+    bool have_ur = false, have_lr = false;
+    BigInt ur, lr;
   };
   std::map<std::pair<uint64_t, std::string>, bound_infot> bounds;
   // Seed with the free bound: the coordinate's own type range (see the header).
@@ -470,10 +487,29 @@ void goto_coveraget::report_outer_boxes()
         continue;
       }
       ++decided;
-      if (it->second != 'P')
-        continue; // refuted (or unknown): this bound does not hold
       const BigInt v = string2integer(p.value);
       bound_infot &b = bounds[{p.enc, p.coord}];
+      if (it->second == 'F')
+      {
+        // Refuted: keep the TIGHTEST one on each side, so the true bound is
+        // bracketed rather than merely upper-bounded.
+        if (p.upper)
+        {
+          if (!b.have_ur || v > b.ur)
+          {
+            b.ur = v;
+            b.have_ur = true;
+          }
+        }
+        else if (!b.have_lr || v < b.lr)
+        {
+          b.lr = v;
+          b.have_lr = true;
+        }
+        continue;
+      }
+      if (it->second != 'P')
+        continue; // unknown: establishes neither side
       if (p.upper)
       {
         if (!b.have_u || v < b.u)
@@ -537,12 +573,39 @@ void goto_coveraget::report_outer_boxes()
   };
 
   for (const auto &[enc, depth] : path_cov_outer_box_paths)
+  {
     log_status(
       "--path-cov-outer-box: path enc={} depth={} OUTER box (D_path is CONTAINED "
       "in it): {}",
       enc,
       depth,
       show(enc));
+    // The bracket: where the true bound still is. This is the next round's span,
+    // and refining to it divides the resolution by (probes+1) again — which is
+    // how a batch method reaches logarithmic precision without ever becoming an
+    // adaptive query-per-step search.
+    std::string br;
+    for (const auto &c : coords)
+    {
+      auto it = bounds.find({enc, c});
+      if (it == bounds.end())
+        continue;
+      if (it->second.have_ur && it->second.have_u)
+        br += (br.empty() ? "" : ", ") + c + " upper in (" +
+              integer2string(it->second.ur) + ", " +
+              integer2string(it->second.u) + "]";
+      if (it->second.have_lr && it->second.have_l)
+        br += (br.empty() ? "" : ", ") + c + " lower in [" +
+              integer2string(it->second.l) + ", " +
+              integer2string(it->second.lr) + ")";
+    }
+    if (!br.empty())
+      log_status(
+        "--path-cov-outer-box: path enc={} BRACKET (refine the next batch's span "
+        "to this): {}",
+        enc,
+        br);
+  }
 
   // ---- 2. Subtract the siblings, greedily, one cut per sibling ----
   //
@@ -1931,6 +1994,7 @@ void goto_coveraget::solidity_path_coverage()
   undetermined_exit_paths.clear();
   named_obstacle_paths.clear();
   truncation_weakened.clear();
+  path_decision_depth.clear();
   degraded_call_sites.clear();
   {
     std::lock_guard lock(claim_outcome_mutex);
@@ -2046,6 +2110,14 @@ void goto_coveraget::solidity_path_coverage()
   struct outer_coordt
   {
     std::string name, lo, hi;
+    // Explicit probe values, when the driver wants to choose them itself. The
+    // first round on a 256-bit input cannot use a linear ladder — any span wide
+    // enough to contain the boundary makes the resolution useless — so the
+    // driver bootstraps with a GEOMETRIC ladder (0, 1, 2, 4, ... 2^k), gets a
+    // bracket within a factor of two whatever the magnitude, and only then
+    // switches to linear inside it. Which ladder to use is a policy decision and
+    // therefore the driver's; the tool just measures the values it is given.
+    std::vector<std::string> values;
   };
   bool outer_on = false;
   std::string outer_unit;
@@ -2087,10 +2159,19 @@ void goto_coveraget::solidity_path_coverage()
         outer_pins.emplace_back(
           p.at("name").get<std::string>(), p.at("value").get<std::string>());
       for (const auto &c : j.at("coords"))
-        outer_coords.push_back(
-          {c.at("name").get<std::string>(),
-           c.at("lo").get<std::string>(),
-           c.at("hi").get<std::string>()});
+      {
+        outer_coordt oc;
+        oc.name = c.at("name").get<std::string>();
+        if (c.contains("values"))
+          for (const auto &v : c.at("values"))
+            oc.values.push_back(v.get<std::string>());
+        else
+        {
+          oc.lo = c.at("lo").get<std::string>();
+          oc.hi = c.at("hi").get<std::string>();
+        }
+        outer_coords.push_back(oc);
+      }
       for (const auto &p : j.at("paths"))
       {
         const uint64_t e = p.at("enc").get<uint64_t>();
@@ -3348,6 +3429,10 @@ void goto_coveraget::solidity_path_coverage()
       // change that lets two decision sequences share an exit cannot collide.
       const std::string stable =
         hex64(fnv1a("exit:" + loc->location.as_string(), pidh));
+      // Recorded here rather than derived later: this is the only place that
+      // knows the path's decision depth, and the stage-2 queries need it to
+      // identify the path at all.
+      path_decision_depth[{comment, loc->location.as_string()}] = pdepth;
       to_insert.emplace_back(loc, g, comment, is_revert, stable);
       return true;
     };
@@ -4333,7 +4418,7 @@ void goto_coveraget::solidity_path_coverage()
           if (c.name == pname)
             present = true;
         if (!present)
-          snap_targets.push_back({pname, "0", "0"});
+          snap_targets.push_back({pname, "0", "0", {}});
       }
       for (const auto &c : snap_targets)
       {
@@ -4437,19 +4522,32 @@ void goto_coveraget::solidity_path_coverage()
         }
         for (const auto &c : outer_coords)
         {
-          const BigInt lo = string2integer(c.lo), hi = string2integer(c.hi);
-          if (hi < lo)
-          {
-            log_error(
-              "--path-cov-outer-box: coordinate '{}' has hi < lo", c.name);
-            abort();
-          }
           const type2tc ct = snap[c.name]->type;
-          const BigInt span = hi - lo;
-          for (size_t k = 0; k <= outer_probes + 1; ++k)
+          // Either the driver's explicit values, or a uniform subdivision of
+          // [lo, hi]. Both end up as the same kind of probe; only the choice of
+          // where to put them differs, and that choice is policy.
+          std::vector<BigInt> probe_vals;
+          if (!c.values.empty())
+            for (const auto &v : c.values)
+              probe_vals.push_back(string2integer(v));
+          else
           {
-            const BigInt v =
-              lo + (span * BigInt((int64_t)k)) / BigInt((int64_t)(outer_probes + 1));
+            const BigInt lo = string2integer(c.lo), hi = string2integer(c.hi);
+            if (hi < lo)
+            {
+              log_error(
+                "--path-cov-outer-box: coordinate '{}' has hi < lo", c.name);
+              abort();
+            }
+            const BigInt span = hi - lo;
+            for (size_t k = 0; k <= outer_probes + 1; ++k)
+              probe_vals.push_back(
+                lo +
+                (span * BigInt((int64_t)k)) /
+                  BigInt((int64_t)(outer_probes + 1)));
+          }
+          for (const BigInt &v : probe_vals)
+          {
             for (int dir = 0; dir < 2; ++dir)
             {
               const bool upper = dir == 0;

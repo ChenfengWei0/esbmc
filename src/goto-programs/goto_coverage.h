@@ -511,6 +511,17 @@ public:
   };
   static std::map<std::string, path_ce_t> path_ce;
 
+  // Each enumerated path's DECISION DEPTH, keyed like all_claims.
+  //
+  // Reported because the next stage cannot be driven without it: every stage-2
+  // query identifies a path by `tr == enc && cnt == depth`, and `enc` alone does
+  // not identify it — the `cnt` conjunct is what stops a longer path whose
+  // 64-bit `tr` wrapped from firing a shorter path's claim. A driver reading
+  // only the report had to be told the depth by hand, which is exactly the kind
+  // of out-of-band knowledge that makes an interface not one.
+  static std::map<std::pair<std::string, std::string>, uint64_t>
+    path_decision_depth;
+
   // Item 2e: serialize covered_set to covered_set_outpath crash-safely
   // (write a .tmp then atomic rename). Called both incrementally as
   // each edge is witnessed P_SATISFIABLE (bmc.cpp) and once at run end,
