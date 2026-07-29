@@ -2006,9 +2006,44 @@ public:
 static bool
 coord_expressible(const type2tc &t, std::string &why)
 {
-  if (is_unsignedbv_type(t) || is_signedbv_type(t))
+  if (is_unsignedbv_type(t))
     return true;
-  if (is_array_type(t))
+  // SIGNED IS REFUSED, and it was NOT before. Letting it in was my own hole and
+  // it is a live false certificate, reproduced on a must-flip pair that differs
+  // in one token:
+  //
+  //   uint256 a, box a in [0, 2^256-1]  ->  VERIFICATION FAILED   (correct: the
+  //                                        box is the whole type and holds
+  //                                        inputs of both paths)
+  //   int256  a, the SAME decimal box   ->  VERIFICATION SUCCESSFUL
+  //
+  // Because the bound is built with constant_int2tc on the coordinate's own
+  // type and the comparison is signedness-aware: on a signed 256-bit type the
+  // decimal 2^256-1 is all ones, i.e. -1 under bvsle, so `a >= 0 && a <= -1` is
+  // UNSATISFIABLE and every exit assert holds for want of an execution.
+  //
+  // Note what this defeats: the empty-box guard added hours earlier compares the
+  // spec's DECIMAL lo and hi, and 0 <= 2^256-1 decimally, so it never fires. The
+  // box is empty in the SOLVER and non-empty in the SPEC -- exactly the gap
+  // between the two readings that the guard was written without considering.
+  //
+  // Refusing is the fail-closed direction and costs nothing measured: every
+  // coordinate any real contract has produced so far is uint256, address or
+  // bytesN, all unsigned. Supporting signed properly is not a whitelist entry,
+  // it is bound VALIDATION -- the spec's decimal bounds have to be checked
+  // against the coordinate's own signed range ([-2^255, 2^255-1] for int256)
+  // and refused when out of it. That is a separate change with its own criteria;
+  // it must not be smuggled in by widening this test back.
+  if (is_signedbv_type(t))
+    why = "it resolves to a SIGNED bit-vector. A bound is built as a constant "
+          "of the coordinate's own type and compared with a signedness-aware "
+          "predicate, so a decimal bound above the signed maximum wraps to a "
+          "negative value and can make the assumption UNSATISFIABLE -- which "
+          "certifies vacuously while the printed box still looks non-empty "
+          "(reproduced: the same box that is refuted on uint256 is 'certified' "
+          "on int256). Supporting this needs the bounds validated against the "
+          "signed range, not a wider type test";
+  else if (is_array_type(t))
     why = "it resolves to an ARRAY — the frontend lowers strings, bytes, "
           "mappings and dynamic arrays to arrays, and a scalar interval is not "
           "expressible on one";
