@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <fstream>
 #include <functional>
@@ -71,6 +72,7 @@ std::map<std::string, std::pair<std::string, std::string>>
   goto_coveraget::path_cov_outer_box_type_range;
 std::vector<std::pair<std::string, std::string>>
   goto_coveraget::path_cov_outer_box_pins;
+std::map<std::string, std::string> goto_coveraget::path_cov_refused_coords;
 std::string goto_coveraget::path_cov_fingerprint;
 std::atomic<bool> goto_coveraget::branch_cov_active{false};
 std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
@@ -524,6 +526,25 @@ void goto_coveraget::report_outer_boxes()
         b.have_l = true;
       }
     }
+  }
+
+  // Refused coordinates, named BEFORE any box is printed. A refused coordinate
+  // emits no probe, so it appears in no box below — and an absence reads as
+  // "not asked about", while the truth is "asked about and refused". Those are
+  // different facts and only one of them is a gap in the coordinate set.
+  if (!path_cov_refused_coords.empty())
+  {
+    std::string refused;
+    for (const auto &[cn, why] : path_cov_refused_coords)
+      refused += (refused.empty() ? "" : "; ") + cn + " (" + why + ")";
+    log_warning(
+      "--path-cov-outer-box: {} coordinate(s) were REFUSED and appear in NO box "
+      "below: {}. Their absence is a refusal, not a measurement — reading it as "
+      "\"bounded by the whole type\" would attribute a measured bound to a "
+      "coordinate nothing was measured on, and would widen every region that "
+      "quoted it",
+      path_cov_refused_coords.size(),
+      refused);
   }
 
   std::string pin_note;
@@ -1920,6 +1941,57 @@ public:
   }
 };
 
+// ---- Can a box bound be EXPRESSED on this coordinate? ----
+//
+// A WHITELIST, deliberately, and the direction is the whole point. Resolving a
+// coordinate name succeeds for plenty of things this stage cannot bound: a
+// `string` state variable, a contract/interface handle, a struct. Every bound
+// is built as `coord <= constant` / `coord >= constant` with the constant
+// carrying the coordinate's own type, so a non-integer coordinate produces a
+// malformed comparison that the SMT layer then dies on — measured as
+// "Projecting from non-tuple based AST" and as a "Tuple AST mismatch"
+// assertion, both SIGABRT. An abort turns a recordable refusal into a core
+// dump, which unattended is the difference between a datum and a lost run.
+//
+// So the test is "is it one of the kinds we can bound?" and NOT "is it one of
+// the kinds we know to be broken". Unrecognised types are unbounded in number:
+// three projects fell over on three DIFFERENT ones (mapping, string, calldata
+// struct) with the identical failure shape, and a blacklist would have caught
+// at most the one that was written down. A new bounded type is one line here;
+// a new unbounded type costs a named refusal, not a crash.
+//
+// Bit-vectors only. Address, bytesN and every Solidity integer lower to one, so
+// this covers the coordinates that have ever been measured. `bool` is left OUT
+// on purpose rather than by oversight: a two-point domain has no interval to
+// measure, and the honest shape for it is an equality coordinate, which this
+// stage does not have. Refusing it names it instead of bounding it wrongly.
+static bool
+coord_expressible(const type2tc &t, std::string &why)
+{
+  if (is_unsignedbv_type(t) || is_signedbv_type(t))
+    return true;
+  if (is_array_type(t))
+    why = "it resolves to an ARRAY — the frontend lowers strings, bytes, "
+          "mappings and dynamic arrays to arrays, and a scalar interval is not "
+          "expressible on one";
+  else if (is_struct_type(t) || is_union_type(t))
+    why = "it resolves to an AGGREGATE (struct / contract instance) — bounding "
+          "it would need a coordinate per field, which is a different "
+          "coordinate kind, not a wider interval";
+  else if (is_pointer_type(t))
+    why = "it resolves to a POINTER (a contract or interface handle) — the "
+          "value is an address in the model's own allocator, not an input a "
+          "test can set";
+  else if (is_bool_type(t))
+    why = "it resolves to a BOOLEAN — a two-point domain has no interval to "
+          "measure; the honest shape is an equality coordinate, which this "
+          "stage does not have";
+  else
+    why = "it does not resolve to a bit-vector, which is the only kind this "
+          "stage can put a bound on";
+  return false;
+}
+
 /*
 Solidity complete-path coverage (entry->exit path coverage for test gen).
 
@@ -2140,6 +2212,7 @@ void goto_coveraget::solidity_path_coverage()
   path_cov_outer_box_ce.clear();
   path_cov_outer_box_type_range.clear();
   path_cov_outer_box_pins.clear();
+  path_cov_refused_coords.clear();
   if (!path_cov_outer_box_path.empty())
   {
     std::ifstream oin(path_cov_outer_box_path);
@@ -4435,17 +4508,42 @@ void goto_coveraget::solidity_path_coverage()
       for (const auto &c : snap_targets)
       {
         expr2tc cexpr;
+        std::string why;
         if (!resolve_coord(fsym, c.name, cexpr))
-        {
-          log_error(
-            "--path-cov-outer-box: unit '{}' has no input named '{}'. Name a "
+          why =
+            "the name does not resolve to an input of this unit. Name a "
             "parameter, an environment value (`msg.value` ...), or a state "
-            "variable at entry (`state.<field>`). Dropping it would silently "
-            "produce a box with one fewer constraint, i.e. a WIDER region than "
-            "the one measured.",
+            "variable at entry (`state.<field>`); note that `state.<field>` "
+            "reaches the contract object's own components only, so a mapping "
+            "or a dynamic array does not resolve, and a field access such as "
+            "`immutables.taker` is not a coordinate shape at all";
+        else
+          coord_expressible(cexpr->type, why);
+        if (!why.empty())
+        {
+          // REFUSE THE COORDINATE, KEEP THE ROUND. This used to abort, which
+          // cost the whole batch — measured on three separate projects, where
+          // one unusable state coordinate meant nothing at all was measured for
+          // any unit. The other coordinates are independent containment
+          // statements and are still worth having.
+          //
+          // What must NOT happen is treating it as a measured `[0, TYPE_MAX]`:
+          // that widens THIS path's own region, and "only ever narrower" is the
+          // invariant the whole subtraction rests on. Emitting no probe leaves
+          // it out of `bounds` entirely, so no bound is ever attributed to it —
+          // and it is recorded by name so the omission is visible instead of
+          // reading as "measured, and it came out as the whole type".
+          path_cov_refused_coords[c.name] = why;
+          log_warning(
+            "--path-cov-outer-box: unit '{}' — REFUSING coordinate '{}': {}. No "
+            "probe is emitted for it and no bound is attributed to it; the "
+            "remaining coordinates are measured as usual. This is a refusal, "
+            "NOT a measurement of the full type range: those two are the same "
+            "constraint to the solver and opposite claims to a reader",
             uid,
-            c.name);
-          abort();
+            c.name,
+            why);
+          continue;
         }
         const type2tc ct = cexpr->type;
         symbolt ssym;
@@ -4483,6 +4581,28 @@ void goto_coveraget::solidity_path_coverage()
           path_cov_outer_box_type_range[c.name] = {"0", integer2string(hi - 1)};
         }
       }
+
+      // A pin whose coordinate was refused cannot be established, so it must
+      // stop being CLAIMED. The pins are what every measured and every
+      // subtracted region below is labelled with ("measured under bal == 0"),
+      // and an unapplied pin left in that label describes a slice nothing was
+      // restricted to. Dropping it from the antecedent instead makes the run
+      // measure a LARGER slice — less informative, and honestly labelled.
+      std::vector<std::pair<std::string, std::string>> pins_applied;
+      for (const auto &p : outer_pins)
+        if (snap.count(p.first) != 0)
+          pins_applied.push_back(p);
+      if (pins_applied.size() != outer_pins.size())
+        log_warning(
+          "--path-cov-outer-box: unit '{}' — {} of {} requested pin(s) name a "
+          "REFUSED coordinate and were NOT applied. Every region below is "
+          "therefore a statement about a WIDER slice than the one requested, "
+          "and is labelled with the pins that were actually applied — never "
+          "with the ones that were asked for",
+          uid,
+          outer_pins.size() - pins_applied.size(),
+          outer_pins.size());
+      path_cov_outer_box_pins = pins_applied;
 
       // Each path's ladder goes at THAT path's own exit. Putting every probe at
       // every exit would multiply the claim count by the number of exits for no
@@ -4524,7 +4644,7 @@ void goto_coveraget::solidity_path_coverage()
         expr2tc not_this_path = or2tc(
           notequal2tc(tr, constant_int2tc(utype, BigInt(penc))),
           notequal2tc(cnt, constant_int2tc(utype, BigInt(pdepth))));
-        for (const auto &[pname, pval] : outer_pins)
+        for (const auto &[pname, pval] : pins_applied)
         {
           const expr2tc &pexpr = snap.at(pname);
           not_this_path = or2tc(
@@ -4534,6 +4654,11 @@ void goto_coveraget::solidity_path_coverage()
         }
         for (const auto &c : outer_coords)
         {
+          // Refused above: no snapshot exists, so no probe can be built. Note
+          // `snap[c.name]` would CREATE a null entry here rather than tell us
+          // that — the lookup has to come first.
+          if (snap.count(c.name) == 0)
+            continue;
           const type2tc ct = snap[c.name]->type;
           // Either the driver's explicit values, or a uniform subdivision of
           // [lo, hi]. Both end up as the same kind of probe; only the choice of
@@ -4622,17 +4747,44 @@ void goto_coveraget::solidity_path_coverage()
       for (const auto &b : certify_box)
       {
         expr2tc bs;
+        std::string why;
         if (!resolve_coord(fsym, b.name, bs))
-        {
-          log_error(
-            "--path-cov-certify: unit '{}' has no input named '{}'. Name a "
+          why =
+            "the name does not resolve to an input of this unit. Name a "
             "parameter of this unit, an environment value as `msg.value` / "
             "`tx.origin` / `block.timestamp`, or a state variable at entry as "
-            "`state.<field>`. Dropping the bound instead would certify a WIDER "
-            "box than the one asked for.",
+            "`state.<field>` (which reaches the contract object's own "
+            "components only — a mapping or a dynamic array does not resolve)";
+        else
+          coord_expressible(bs->type, why);
+        if (!why.empty())
+        {
+          // REFUSE THE QUERY, not just the coordinate — the opposite of the
+          // outer box, and deliberately so. There, one missing coordinate costs
+          // information; here it would change the ANSWER: certification asks
+          // "does every input in THIS box walk this path", and a box missing one
+          // of its requested bounds is a strictly WIDER box. The run could then
+          // answer SUCCESSFUL about a region nobody asked about, which is the
+          // single outcome this query exists to prevent.
+          //
+          // Exiting rather than aborting is the actual fix. The verdict is the
+          // same refusal it always was; what changes is that it is now a clean
+          // non-zero exit with a readable reason instead of SIGABRT, so an
+          // unattended driver records a named failure instead of a core dump.
+          // Note that no verdict line is printed either, so a caller reading
+          // SUCCESSFUL/FAILED as whole lines sees its explicit third state.
+          path_cov_refused_coords[b.name] = why;
+          log_error(
+            "--path-cov-certify: unit '{}' — REFUSING THE QUERY because "
+            "coordinate '{}' cannot be expressed: {}. Certification is not "
+            "attempted: dropping the bound would certify a WIDER box than the "
+            "one asked for, and answering about a different box is worse than "
+            "not answering. Re-run with a box this stage can express, or read "
+            "this as the path being out of reach of the current coordinate set",
             uid,
-            b.name);
-          abort();
+            b.name,
+            why);
+          exit(1);
         }
         const type2tc bt = bs->type;
         goto_programt::instructiont asm_i;

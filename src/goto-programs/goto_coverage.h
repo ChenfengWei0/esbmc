@@ -740,8 +740,43 @@ public:
   // region is a statement about the SLICE through these values, so they are
   // printed with the region — a region measured under `bal == 0` and rendered
   // without it would be a claim about inputs that were never examined.
+  //
+  // Holds the pins that were ACTUALLY APPLIED. A pin naming a coordinate the
+  // tool cannot express is dropped from here (and recorded below) rather than
+  // left in, because this list is what the region is LABELLED with: keeping an
+  // unapplied pin would print "measured under state.s == 0" for a measurement
+  // in which nothing constrained `state.s`.
   static std::vector<std::pair<std::string, std::string>>
     path_cov_outer_box_pins;
+
+  // ---- Coordinates the tool REFUSED to express, and why ----
+  //
+  // Two things can make a coordinate unusable, and they used to be one thing:
+  // an ABORT. The name may not resolve (a mapping, a field access like
+  // `immutables.taker`), or it may resolve to a value this stage cannot bound
+  // (a string, a contract/interface handle, an aggregate — the SMT layer then
+  // dies with "Projecting from non-tuple based AST" or a "Tuple AST mismatch"
+  // assertion, i.e. a core dump instead of a recorded failure). Measured five
+  // times across three projects and three different types; unrecognised types
+  // are unbounded in number, so the rule is REFUSE BY DEFAULT with a whitelist
+  // of what can be bounded, not accept-by-default with a crash on the unknown.
+  //
+  // Recorded rather than silently omitted. In the query, "the box omits c" and
+  // "c is unconstrained" are the SAME constraint — so a refused coordinate that
+  // simply vanished from the report would read as "measured, and it came out as
+  // the whole type", which is a claim about a measurement that never happened.
+  //
+  // The refusal is NOT symmetric between the two stages, and the asymmetry is
+  // the point:
+  //   * OUTER BOX — refuse the coordinate, keep measuring the others. The box
+  //     is a containment statement per coordinate; one missing coordinate costs
+  //     information, not correctness. It must never be treated as a measured
+  //     `[0, TYPE_MAX]` bound for THIS path, which would widen this path's own
+  //     region and break the only-ever-narrower invariant.
+  //   * CERTIFY — refuse the QUERY. Dropping a requested bound and answering
+  //     SUCCESSFUL would certify a WIDER box than the one asked for, which is
+  //     the single outcome that query exists to prevent.
+  static std::map<std::string, std::string> path_cov_refused_coords;
 
   // Read the probe verdicts, print each path's outer box, then subtract the
   // siblings' boxes and print the certified region. Called after solving.
