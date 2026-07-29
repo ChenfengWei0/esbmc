@@ -344,11 +344,18 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     # A timed-out round measures nothing, and "measured nothing" is reported
     # downstream as "no fully bounded region was measured" -- which reads as a
     # property of the path. Say which it was, here, where it is known.
-    timed_out = "[run] TIMEOUT after" in log
-    if timed_out:
-        print(f"[outer-box] ROUND TIMED OUT — no probe verdicts from it. "
-              f"Every region below is missing because the round did not "
-              f"finish, NOT because the path has no bounded region.")
+    # A COORDINATE THE TOOL CANNOT RESOLVE. The counterexample harvest and the
+    # coordinate resolver disagree: mappings and dynamic arrays are lowered to
+    # contract-scope globals rather than fields of the contract object, so
+    # `state._DOCKED` IS reported in entry_storage and is NOT resolvable as a
+    # coordinate. The driver believed the report, and the tool refused -- rightly,
+    # since dropping the bound would widen THIS path's own box and hence its
+    # region. What the driver must not do is what it did: come back with no
+    # regions and report them downstream as "no fully bounded region was
+    # measured", which reads as a property of the path.
+    failure = round_failure_reason(log)
+    if failure:
+        print(f"[outer-box] ROUND MEASURED NOTHING — {failure}")
     boxes, brackets, regions, warned = {}, {}, {}, set()
     for line in log.splitlines():
         m = BOX_RE.search(line)
@@ -362,7 +369,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             regions[int(m.group(1))] = parse_intervals(m.group(2))
             if m.group(3):
                 warned.add(int(m.group(1)))
-    return boxes, brackets, regions, warned, timed_out
+    return boxes, brackets, regions, warned, failure
 
 
 def verdict(log):
@@ -401,6 +408,37 @@ def verdict(log):
         elif s == "VERIFICATION FAILED":
             seen = "FAILED"
     return seen
+
+
+def round_failure_reason(log):
+    """Why an outer-box round measured NOTHING, or None if it ran.
+
+    "No regions" is reported downstream as "no fully bounded region was
+    measured", which reads as a property of the path. It is usually a property
+    of the run, and the two causes seen on real input need different words:
+
+      * a coordinate the tool cannot RESOLVE. The counterexample harvest and the
+        coordinate resolver disagree -- mappings and dynamic arrays are lowered
+        to contract-scope globals rather than fields of the contract object, so
+        `state._DOCKED` is reported in entry_storage and is not accepted as a
+        coordinate. The tool is right to refuse (dropping the bound would widen
+        this path's own box, hence its region); the driver was wrong to have no
+        way of saying so.
+      * a BUDGET outcome: the round was killed.
+
+    Collapsing either into "no region for this path" is the failure-as-result
+    pattern this file keeps running into.
+    """
+    unresolved = sorted(set(re.findall(r"has no input named '([^']+)'", log)))
+    if unresolved:
+        return ("the outer-box round rejected coordinate(s) "
+                + ", ".join(unresolved)
+                + " as unresolvable, so nothing was measured (a "
+                  "COORDINATE-SUPPORT gap, not a property of the path)")
+    if "[run] TIMEOUT after" in log:
+        return ("no outer-box round finished, so nothing was measured for "
+                "this path (a BUDGET outcome, not a property of the path)")
+    return None
 
 
 def empty_coords(box):
@@ -630,12 +668,12 @@ def main():
 
     # Round 1: geometric bracket.
     if args.skip_bracket:
-        brackets, regions, warned, timed_out = {}, {}, set(), False
+        brackets, regions, warned, round_failure = {}, {}, set(), None
         print("[bracket] SKIPPED (--skip-bracket): refining from each "
               "coordinate's full type range, which is the same fallback the "
               "code takes when the bracket measures nothing")
     else:
-        _, brackets, regions, warned, timed_out = outer_round(
+        _, brackets, regions, warned, round_failure = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
             ast=args.ast, focus=focus, memlimit=args.memlimit)
@@ -651,17 +689,17 @@ def main():
     # bracket ladder is a METHOD decision -- it trades away the
     # "magnitude-independent in ONE run" property -- so it is an open item, not
     # something to invent here.
-    any_timeout = timed_out
+    last_failure = round_failure
 
     # Rounds 2..N: linear inside the union of the brackets, per coordinate.
     spans = {c: (brackets_for(c, brackets) or (0, UINT256_MAX))
              for c in coords}
     for r in range(args.refine_rounds):
-        _, brackets, regions, warned, timed_out = outer_round(
+        _, brackets, regions, warned, round_failure = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
             ast=args.ast, focus=focus, memlimit=args.memlimit)
-        any_timeout = any_timeout or timed_out
+        last_failure = round_failure or last_failure
         print(f"[refine {r+1}] spans={spans} regions={regions}"
               + (f" UNSEPARATED={sorted(warned)}" if warned else ""))
         new = {c: (brackets_for(c, brackets) or spans[c]) for c in coords}
@@ -674,9 +712,7 @@ def main():
     for enc, depth, ce in paths:
         box = regions.get(enc)
         if box is None:
-            failed[enc] = ("no outer-box round finished, so nothing was "
-                           "measured for this path (a BUDGET outcome, not a "
-                           "property of the path)" if any_timeout else
+            failed[enc] = (last_failure or
                            "no fully bounded region was measured")
             continue
         empty = empty_coords(box)

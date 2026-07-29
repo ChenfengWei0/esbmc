@@ -27,7 +27,8 @@ import sys
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
-                                      empty_coords, shrink_target, is_env)
+                                      empty_coords, shrink_target, is_env,
+                                      round_failure_reason)
 
 FAILURES = []
 
@@ -186,6 +187,37 @@ check("param-is-not-env", is_env("a"), False)
 ce3, _ = coord_values({"env": {"msg.value": "0", "block.number": "1"},
                        "inputs": {}, "entry_storage": {}})
 check("env-harvested-unprefixed", sorted(ce3), ["block.number", "msg.value"])
+
+
+
+# --- a round that measured nothing must say WHY, in the right words ---
+# Verbatim from a real aqua run: the harvest reports state._DOCKED in
+# entry_storage, the coordinate resolver does not accept it, and the tool
+# refuses rather than silently widening the box.
+UNRESOLVED = (
+    "--path-cov-outer-box: OUTER-BOX BATCH for unit 'pull' ...\n"
+    "ERROR: --path-cov-outer-box: unit 'sol:@C@Aqua@F@pull#3153' has no input "
+    "named 'state._DOCKED'. Name a parameter, an environment value "
+    "(`msg.value` ...), or a state variable at entry (`state.<field>`). "
+    "Dropping it would silently produce a box with one fewer constraint, i.e. "
+    "a WIDER region than the one measured.\n"
+)
+r = round_failure_reason(UNRESOLVED)
+check("unresolved-names-the-coordinate", "state._DOCKED" in (r or ""), True)
+check("unresolved-is-not-called-budget", "BUDGET" in (r or ""), False)
+check("unresolved-says-support-gap", "COORDINATE-SUPPORT" in (r or ""), True)
+
+TIMED = "Starting Bounded Model Checking\n[run] TIMEOUT after 100s: esbmc ...\n"
+t = round_failure_reason(TIMED)
+check("timeout-is-called-budget", "BUDGET" in (t or ""), True)
+check("timeout-is-not-support-gap", "COORDINATE-SUPPORT" in (t or ""), False)
+
+# A round that RAN and simply separated nothing must not be given either
+# excuse -- that is the case where "no region" really is about the path.
+OK_ROUND = ("--path-cov-outer-box: 12 of 12 ladder probe(s) reached the solver\n"
+            "--path-cov-outer-box: path enc=7 depth=2 OUTER box "
+            "(D_path is CONTAINED in it): a in [0, 5]\n")
+check("clean-round-has-no-excuse", round_failure_reason(OK_ROUND), None)
 
 
 if FAILURES:
