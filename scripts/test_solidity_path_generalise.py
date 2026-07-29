@@ -29,7 +29,8 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       empty_coords, shrink_target, is_env,
                                       round_failure_reason, boxes_intersect,
-                                      certified_overlap, divergence_text)
+                                      certified_overlap, divergence_text,
+                                      extraction_caveats)
 
 FAILURES = []
 
@@ -342,6 +343,39 @@ d3 = divergence_text({"a": 4}, {}, {"a"})
 check("missing-payload-is-not-no-difference",
       "NOT a finding of 'no difference'" in d3, True)
 check("missing-payload-differs-from-agreement", d3 == d2, False)
+
+# (4) The empty-difference case must be NARROWED by what the report already
+# said. `ce_extraction` names each family the harvest could not render, with the
+# mechanism -- it has been in every report this driver ever read, and the driver
+# never looked. Verbatim from an aqua run.
+EXTRACTION = {
+    "ce_extraction": {
+        "compact_trace": False,
+        "extcall_returns_unavailable_reason":
+            "not implemented yet. The value an external call returns to the "
+            "contract reaches the user's variable through a tuple-field "
+            "extraction, which get_nondet_symbol does not traverse, so that "
+            "trace step is skipped before classification.",
+    }
+}
+cav = extraction_caveats([EXTRACTION])
+check("caveat-family-extracted", sorted(cav), ["extcall_returns"])
+check("caveat-keeps-the-mechanism", "tuple-field extraction" in
+      cav["extcall_returns"], True)
+check("caveat-ignores-non-reason-keys", "compact_trace" in cav, False)
+
+d4 = divergence_text({"a": 4}, {"a": 4}, {"a"}, cav)
+check("empty-diff-quotes-the-caveat", "extcall_returns" in d4, True)
+check("empty-diff-keeps-the-unknown-bucket",
+      "explicit unknown bucket" in d4, True)
+# Quoting a named candidate is NOT concluding it is the answer, and the wording
+# has to keep saying so -- that distinction is the whole reason this file exists.
+check("named-candidate-is-not-a-conclusion",
+      "NAMED candidate, not a conclusion" in d4, True)
+# With no caveats the message must be exactly the un-narrowed one, so a missing
+# ce_extraction cannot quietly look like a narrowed answer.
+check("no-caveats-leaves-message-unnarrowed",
+      divergence_text({"a": 4}, {"a": 4}, {"a"}, {}) == d2, True)
 
 
 if FAILURES:

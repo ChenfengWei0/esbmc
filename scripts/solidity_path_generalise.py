@@ -276,7 +276,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
             continue
         seen.add(enc)
         uniq.append((enc, depth, ce))
-    return uniq, sorted(refused)
+    return uniq, sorted(refused), extraction_caveats(witnessed)
 
 
 def geometric_values(limit):
@@ -565,7 +565,34 @@ def witness_values(cwd, unit):
     return {}
 
 
-def divergence_text(path_ce, wit_ce, bounded):
+def extraction_caveats(claims):
+    """What the report SAYS it could not harvest, in its own words.
+
+    `ce_extraction` carries a per-claim note naming each family of value the
+    counterexample harvest could not render, with the mechanism. It has been in
+    every report this driver has ever read and the driver has never looked at it.
+
+    That matters exactly where the reach gate lands. "The witness agrees on every
+    scalar in the payload" leaves three candidates for what actually separates
+    the paths -- an unnamed intermediate, an external-call return, a non-scalar --
+    and the report already narrows that: on aqua it says external-call returns
+    are not harvested at all, because the returned value reaches the user's
+    variable through a tuple-field extraction that `get_nondet_symbol` does not
+    traverse, so the trace step is dropped before classification.
+
+    Quoting it is not the same as concluding the discriminating quantity IS an
+    external-call return -- it is one named candidate with a mechanism instead of
+    three unnamed ones. The wording below keeps that distinction.
+    """
+    out = {}
+    for c in claims:
+        for k, v in (c.get("ce_extraction") or {}).items():
+            if k.endswith("_unavailable_reason") and v:
+                out.setdefault(k[: -len("_unavailable_reason")], v)
+    return out
+
+
+def divergence_text(path_ce, wit_ce, bounded, caveats=None):
     """Name the quantity the refuting witness differs on. The point of this file.
 
     "Refuted with no single-coordinate cut available" is the reach gate, and it
@@ -599,11 +626,21 @@ def divergence_text(path_ce, wit_ce, bounded):
             for n in sorted(set(path_ce) & set(wit_ce))
             if path_ce[n] != wit_ce[n]]
     if not diff:
-        return ("; and the witness agrees with this path's counterexample on "
-                "EVERY scalar quantity in the payload as well, so whatever "
-                "separates the two is not in the payload at all -- an unnamed "
-                "intermediate, an external-call return, or a non-scalar. This "
-                "is the explicit unknown bucket, not an empty result")
+        msg = ("; and the witness agrees with this path's counterexample on "
+               "EVERY scalar quantity in the payload as well, so whatever "
+               "separates the two is not in the payload at all -- an unnamed "
+               "intermediate, an external-call return, or a non-scalar. This "
+               "is the explicit unknown bucket, not an empty result")
+        # NARROW IT with what the report already said. These notes name families
+        # the harvest could not render AND why; quoting one is not the same as
+        # concluding it is the discriminating quantity, and the wording says so.
+        for fam, why in sorted((caveats or {}).items()):
+            msg += (f". The report additionally states that '{fam}' is NOT "
+                    f"harvested at all, so it could not have shown up in the "
+                    f"comparison above even if it were the discriminating "
+                    f"quantity -- that makes it a NAMED candidate, not a "
+                    f"conclusion. Its stated reason: {why}")
+        return msg
     return ("; the witness differs from this path's counterexample on: "
             + ", ".join(
                 f"{n} (path={pv}, witness={wv})"
@@ -748,7 +785,7 @@ def main():
     print(f"[workdir] {cwd}")
 
     focus = args.unit if args.focus else None
-    paths, refused = enumerate_paths(
+    paths, refused, caveats = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
         args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
         path_function=args.path_function)
@@ -906,14 +943,14 @@ def main():
             if nb is None or nb == box:
                 failed[enc] = (
                     "refuted with no single-coordinate cut available"
-                    + divergence_text(ce, last_wit, set(box) | set(pins)))
+                    + divergence_text(ce, last_wit, set(box) | set(pins), caveats))
                 break
             print(f"[shrink enc={enc}] {box} -> {nb}")
             box = nb
         else:
             failed[enc] = (
                 "shrink round budget exhausted"
-                + divergence_text(ce, last_wit, set(box) | set(pins)))
+                + divergence_text(ce, last_wit, set(box) | set(pins), caveats))
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean
     # an input would have to walk two different paths. Reporting them and
