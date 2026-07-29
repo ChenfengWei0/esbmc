@@ -60,6 +60,20 @@ private:
     std::vector<sol_arg> args;
     bool supported = true; // false if any arg type could not be formatted
     bool reverts = false;  // covered edge reverts -> wrap in vm.expectRevert()
+    // The covered path's exit is CONFIRMED normal, so the call is emitted bare
+    // -- no try/catch. That bareness IS the assertion: a revert at run time
+    // fails the test. Distinct from `!reverts`, which until now meant only
+    // "not confirmed to revert" and was emitted revert-tolerantly, i.e. with no
+    // assertion at all.
+    //
+    // The three states must stay three. Collapsing "confirmed normal" into
+    // "not confirmed to revert" is what made every generated test
+    // assertion-free, and collapsing "not confirmed" into "normal" would assert
+    // that a reverting transaction succeeded. Only complete-path coverage
+    // supplies the distinction (goto_coveraget's revert / rollback_revert /
+    // undetermined_exit sets); branch coverage has no third state and leaves
+    // this false, keeping its output byte-identical.
+    bool normal_confirmed = false;
     // ③A0 environment pinning: the msg.value the solver picked for this call's
     // transaction (recovered from the per-tx `_sol_per_tx_reseed`). Emitted as
     // `{value: N}` ONLY when `payable` — sending value to a non-payable method

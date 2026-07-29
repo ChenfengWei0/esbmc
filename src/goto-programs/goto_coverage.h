@@ -365,6 +365,22 @@ public:
   // reverted transaction succeeded.
   static std::set<std::pair<std::string, std::string>> undetermined_exit_paths;
 
+  // Complete paths POSITIVELY confirmed to exit normally. The three sets above
+  // say what went wrong; this one says nothing did, and it exists so that no
+  // consumer has to infer normality from absence.
+  //
+  // That inference is not merely inelegant, it is wrong across coverage modes:
+  // a branch-coverage claim appears in none of these sets either, so "in
+  // all_claims and in no failure set" calls every branch claim normal. Measured
+  // — it turned three branch-coverage regressions red on the first attempt.
+  //
+  // Only complete-path coverage fills this. Its consumer is the Foundry
+  // emitter, which drops the revert-tolerant try/catch and emits the call bare
+  // when the exit is confirmed normal, so a revert at run time fails the test.
+  // That makes this set the single fact authorising a generated test to assert
+  // anything at all, which is why it is recorded rather than derived.
+  static std::set<std::pair<std::string, std::string>> normal_exit_paths;
+
   // Paths along which the MODEL AND THE EVM DISAGREE, keyed like all_claims,
   // with the value naming the obstacle.
   //

@@ -1,5 +1,9 @@
 #include <goto-symex/foundry.h>
 #include <goto-symex/slice.h>
+// The exit census (revert / rollback-revert / undetermined path sets) is what
+// lets a generated call carry an assertion instead of a try/catch. It is filled
+// at instrumentation time and costs no query.
+#include <goto-programs/goto_coverage.h>
 #include <ac_config.h>
 #include <util/prefix.h>
 #include <util/mp_arith.h>
@@ -1390,6 +1394,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
     std::string contract, method;
     std::map<std::string, sol_arg> args;
     bool reverts = false;
+    bool normal_confirmed = false;
     expr2tc msg_value;       // ③A0: solver-picked msg.value for this tx
     expr2tc block_timestamp; // ③A0: solver-picked block.timestamp for this tx
     bool reads_timestamp = false; // ③A0: this tx's body reads block.timestamp
@@ -1527,6 +1532,57 @@ foundry_generator::test_case foundry_generator::reconstruct(
       step.is_assert() && !segs.empty() &&
       step.source.pc->location.get_bool("sol_revert_edge"))
       segs.back().reverts = true;
+
+    // Complete-path coverage classifies every exit at INSTRUMENTATION time,
+    // with zero solver queries, into revert / normal / undetermined -- and it
+    // catches what `sol_revert_edge` above cannot, namely a failing
+    // `require(cond, ...)`, which lowers to a rollback restore rather than to a
+    // detectable terminator. Read that classification here, keyed the same way
+    // the census stores it, so a path-coverage run emits an assertion instead
+    // of a revert-tolerant try/catch.
+    //
+    // Why this is worth having: before it, EVERY generated test was
+    // assertion-free by construction, which is precisely the baseline this work
+    // exists to beat. The information to do better was already computed, in the
+    // same process, and simply never reached the emitter.
+    //
+    // Undetermined is deliberately left as neither: it keeps the try/catch. An
+    // undetermined exit is one where a failing `require` before any state write
+    // and a plain early `return` compile to the same shape, so calling it
+    // normal would assert that a reverted transaction succeeded.
+    // ONLY the normal direction is taken from the census. The reverting
+    // direction is deliberately NOT fed into `reverts`, and that restraint was
+    // measured rather than assumed:
+    //
+    //   Emitting `vm.expectRevert()` for census-classified revert paths made a
+    //   generated test go RED on an unmodified contract. The path was the ABI
+    //   non-payable gate, which reverts only when msg.value != 0 -- and the
+    //   emitter calls without value, so nothing reverted. Asserting a revert
+    //   the emitted call cannot cause is a WRONG assertion, which is worse than
+    //   the missing one it replaces.
+    //
+    // Rendering that path needs a low-level `call{value: N}` plus a failure
+    // check (a non-payable method cannot legally be given value through a typed
+    // call -- it will not even compile), which is real work and not done here.
+    // Until it is, revert paths keep the pre-existing try/catch: honest, and
+    // unchanged from before. Custom-error revert edges detected by
+    // `sol_revert_edge` above are untouched -- that path has 44 regressions
+    // behind it.
+    //
+    // Read the POSITIVE set, never absence from the failure sets. The first
+    // attempt here did the latter -- "in all_claims and in none of the three
+    // failure sets" -- and it turned three branch-coverage regressions red,
+    // because a branch claim is in no failure set either and was therefore
+    // called normal. Absence is not evidence; that is the rule this whole
+    // census exists to enforce, and it is embarrassing to have broken it in the
+    // consumer.
+    if (step.is_assert() && !segs.empty())
+    {
+      const std::pair<std::string, std::string> key{
+        step.comment, step.source.pc->location.as_string()};
+      if (goto_coveraget::normal_exit_paths.count(key))
+        segs.back().normal_confirmed = true;
+    }
 
     // The covered coverage claim (a guard-true assert) is AUTHORITATIVE for the
     // active transaction's method: its source location names the function whose
@@ -1951,6 +2007,7 @@ foundry_generator::test_case foundry_generator::reconstruct(
     {
       sol_call c = build_call(s.contract, s.method, s.args);
       c.reverts = s.reverts;
+      c.normal_confirmed = s.normal_confirmed;
       c.msg_value = s.msg_value; // ③A0: env pin (emitted only when c.payable)
       c.block_timestamp = s.block_timestamp;
       c.warp = s.reads_timestamp; // ③A0: warp only when the body reads time
@@ -2600,6 +2657,17 @@ size_t foundry_generator::write_foundry_file(
           f << "    " << recv << "." << call.method << value_brace << "("
             << join_args(call) << ");\n";
         }
+        else if (call.normal_confirmed)
+        {
+          // The exit census confirmed this path returns normally, so the call
+          // is emitted BARE. The absence of the try/catch is the assertion: if
+          // the call reverts at run time, the test fails, which is exactly the
+          // divergence worth hearing about.
+          f << deal_line;
+          f << "    // [asserted] path exits normally; a revert fails the test\n";
+          f << "    " << recv << "." << call.method << value_brace << "("
+            << join_args(call) << ");\n";
+        }
         else
         {
           // Outcome not confirmed: wrap in try/catch so an undetected revert
@@ -2731,6 +2799,21 @@ void foundry_generator::generate() const
       log_status(
         "Foundry: {} call(s) wrapped in vm.expectRevert (detected revert edge)",
         revert_cases);
+    // Calls emitted BARE because the exit census confirmed a normal exit. This
+    // is the count that matters: it is how many calls carry an assertion at
+    // all. Reported next to the try/catch count on purpose -- the two move in
+    // opposite directions, so a change that only relabels is visible as one
+    // count rising without the other falling.
+    size_t asserted_normal = 0;
+    for (const auto &tc : cs)
+      for (const auto &call : tc)
+        if (call.normal_confirmed && !call.reverts)
+          ++asserted_normal;
+    if (asserted_normal)
+      log_status(
+        "Foundry: {} call(s) emitted bare (exit census confirmed normal; a "
+        "revert fails the test)",
+        asserted_normal);
     if (revert_tolerant)
       log_status(
         "Foundry: {} call(s) wrapped in revert-tolerant try/catch "

@@ -1,0 +1,8 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract R0 --solidity-max-tx 1 --generate-foundry-testcase
+^Path Exits: normal 4, revert 4, undetermined 0$
+^Generated Foundry coverage test with 7 case\(s\): R0.cov.t.sol$
+^Foundry: 4 call\(s\) emitted bare \(exit census confirmed normal; a revert fails the test\)$
+^Foundry: 3 call\(s\) wrapped in revert-tolerant try/catch \(outcome not confirmed\)$
+^VERIFICATION FAILED$

@@ -42,6 +42,7 @@ std::set<std::pair<std::string, std::string>>
   goto_coveraget::rollback_revert_paths;
 std::set<std::pair<std::string, std::string>>
   goto_coveraget::undetermined_exit_paths;
+std::set<std::pair<std::string, std::string>> goto_coveraget::normal_exit_paths;
 std::map<std::pair<std::string, std::string>, std::string>
   goto_coveraget::named_obstacle_paths;
 std::map<std::pair<std::string, std::string>, std::string>
@@ -2137,6 +2138,7 @@ void goto_coveraget::solidity_path_coverage()
   revert_paths.clear();
   rollback_revert_paths.clear();
   undetermined_exit_paths.clear();
+  normal_exit_paths.clear();
   named_obstacle_paths.clear();
   truncation_weakened.clear();
   path_decision_depth.clear();
@@ -5077,6 +5079,20 @@ void goto_coveraget::solidity_path_coverage()
         rollback_revert_paths.insert(key);
       if (undetermined_exits.count(this_idx))
         undetermined_exit_paths.insert(key);
+      // POSITIVE record of a normal exit. The other three sets already name
+      // what went wrong; without this one, "normal" could only be inferred from
+      // absence — and a consumer that infers it would also call every claim
+      // from a DIFFERENT coverage mode normal, since those appear in no set at
+      // all. Measured, not hypothetical: reading normality as absence broke
+      // three branch-coverage regressions on the first run.
+      //
+      // Recorded here rather than derived, for the same reason the census
+      // demands positive evidence in the first place: this is the one judgement
+      // that authorises a generated test to assert something.
+      if (
+        !is_revert && !rollback_exits.count(this_idx) &&
+        !undetermined_exits.count(this_idx))
+        normal_exit_paths.insert(key);
       // Named obstacle, applied to EVERY path of the unit (see the census
       // comment above for why per-path containment is unsound here). The paths
       // stay in the denominator — they are real — but none of them may become a
