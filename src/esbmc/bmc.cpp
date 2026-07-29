@@ -1567,16 +1567,50 @@ void report_coverage(
           claim_entry["extcall_returns"] = ext;
           if (ce.extcall_returns.empty())
             // NOT "there were no external calls": say what is actually known.
+            //
+            // This list is ALWAYS empty: nothing anywhere writes to
+            // ce.extcall_returns. Below is what stands between the value and
+            // this field, measured on a four-unit contract whose units differ
+            // ONLY in the syntactic shape the call's result arrives in. There
+            // are THREE distinct reasons, not one, and a fix for any single one
+            // leaves the field empty in the other shapes -- which looks exactly
+            // like no fix at all.
+            //
+            //   (a) result bound to a named local (`bool ok = c.f();`) and the
+            //       assembly form (`success` assigned inside an approximated
+            //       block): the step DOES reach the harvest and
+            //       get_nondet_symbol DOES resolve it. It is then dropped
+            //       because the classification below has exactly three
+            //       outcomes -- parameter -> inputs, environment -> env,
+            //       otherwise -> dropped_internal -- and a call's return is a
+            //       LOCAL, so it lands in the third. There is no bucket for it.
+            //   (b) low-level `(bool ok, ) = a.call("")`: get_nondet_symbol
+            //       returns nil, so the step is skipped BEFORE classification.
+            //       (This is the mechanism an earlier version of this comment
+            //       named -- correctly, but for this shape only.)
+            //   (c) used inline (`if (c.f())`): no named local is ever
+            //       assigned, so no step carries the value at all.
+            //
+            // The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the
+            // re-entry model's method-choice bits, not the returned value
+            // (measured: identical on two paths that disagree about it), so
+            // they are deliberately not reported here.
             claim_entry["ce_extraction"]["extcall_returns_unavailable_reason"] =
-              "not implemented yet. The value an external call returns to the "
-              "contract reaches the user's variable through a tuple-field "
-              "extraction, which get_nondet_symbol does not traverse, so that "
-              "trace step is skipped before classification. The "
-              "_ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the "
-              "re-entry model's method-choice bits, not the returned value "
-              "(measured: identical on two paths that disagree about it), so "
-              "they are deliberately not reported here. An empty list means "
-              "UNKNOWN, not 'this path performs no external call'";
+              "not implemented yet, and for three different reasons depending "
+              "on the syntactic shape the call's result arrives in; this field "
+              "does NOT say which one applies to this claim. (a) bound to a "
+              "named local, or assigned inside an approximated assembly block: "
+              "the value IS harvested and resolved, then dropped because the "
+              "classification has buckets only for parameters and environment "
+              "values and a call's return is a local. (b) low-level "
+              "`(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so "
+              "the step is skipped before classification. (c) used inline, "
+              "`if (c.f())`: no named local is assigned, so no trace step "
+              "carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the "
+              "trace are the re-entry model's method-choice bits, not the "
+              "returned value (measured: identical on two paths that disagree "
+              "about it), so they are deliberately not reported here. An empty "
+              "list means UNKNOWN, not 'this path performs no external call'";
           // Contract state this path STARTED from. Without it a path guarded by
           // state an earlier transaction established cannot be replayed from
           // the inputs alone.
@@ -3237,8 +3271,17 @@ smt_convt::resultt bmct::multi_property_check(
                 const symbolt *psym = ns.lookup(irep_idt(sym_id));
                 is_param = psym && psym->is_parameter;
               }
-              // (External-call returns were already taken above, before the
-              // contract-scope-store branch could discard them.)
+              // ⚠ This used to read "external-call returns were already taken
+              // above, before the contract-scope-store branch could discard
+              // them". No such code exists anywhere -- ce.extcall_returns has a
+              // declaration, three readers and ZERO writers -- so the comment
+              // asserted a step that had never been written. It cost a session:
+              // the empty field was read as "the harvest cannot see the value",
+              // when in fact the value arrives here resolved and falls off the
+              // end of the classification below for want of a bucket.
+              // A comment claiming a step that does not exist is worse than no
+              // comment, because it redirects the next reader away from the
+              // line that actually drops the value.
               const bool is_env = name.rfind("msg_", 0) == 0 ||
                                   name.rfind("tx_", 0) == 0 ||
                                   name.rfind("block_", 0) == 0;
