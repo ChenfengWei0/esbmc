@@ -106,6 +106,21 @@ def units_of(bench):
 PATHS_RE = re.compile(
     r"instrumented (\d+) complete path\(s\) across (\d+) unit\(s\)")
 
+# THE TOOL'S OWN GUARD, WHICH THIS SCRIPT ORIGINALLY IGNORED.
+# On st1inch, --focus-function enters no unit at all: 0 of 243 instrumented
+# claims reach the solver, and ESBMC says so in as many words --
+#   "INTERNAL DEFECT -- NOT ONE of the N instrumented path claim(s) reached the
+#    solver. The harness never entered any unit, so this run establishes nothing
+#    whatsoever ... This is a tool failure, not a result."
+# The first version of this script counted those runs as COMPLETED, because its
+# completion test was "the instrumented line is present and we did not time
+# out", and that line IS present. Twenty-two rows of dashes were therefore
+# recorded as successful measurements of a unit with no paths. That is failure
+# disguised as a result, in the collector rather than in the tool -- and the
+# tool had already refused to make the same mistake.
+INTERNAL_DEFECT = re.compile(r"INTERNAL DEFECT")
+REACHED_RE = re.compile(r"(\d+) of (\d+) instrumented path claim\(s\) reached")
+
 
 def unit_rows(report_path, function):
     """This unit's own path claims, grouped out of the report.
@@ -169,9 +184,14 @@ def run_unit(u, cap):
     m = PATHS_RE.search(log)
     r["contract_wide"] = int(m.group(1)) if m else None
     r["unit"] = unit_rows(os.path.join(cwd, "cov-report.json"), u["function"])
-    # COMPLETED means the enumeration itself finished, which is exactly what
-    # this table is about -- not that every claim got a verdict.
-    r["completed"] = (not timed_out) and (r["contract_wide"] is not None)
+    m = REACHED_RE.search(log)
+    r["tool_failure"] = bool(INTERNAL_DEFECT.search(log)) or (
+        m is not None and m.group(1) == "0" and m.group(2) != "0")
+    # COMPLETED means the enumeration itself finished AND the harness actually
+    # entered a unit. Dropping the second half is what let a run the tool itself
+    # calls an internal defect be recorded as a successful measurement.
+    r["completed"] = ((not timed_out) and (r["contract_wide"] is not None)
+                      and not r["tool_failure"])
     return r, log
 
 
@@ -264,7 +284,7 @@ def main():
                     f"{ur['I'] if ur else '-'} | "
                     f"{ur['U'] if ur else '-'} | "
                     f"{r['wall']} | {r['cap']} | "
-                    f"{'yes' if r['completed'] else ('TIMEOUT' if r['timeout'] else 'no')} | "
+                    f"{'yes' if r['completed'] else ('TIMEOUT' if r['timeout'] else ('TOOL-FAILURE' if r['tool_failure'] else 'no'))} | "
                     f"{r['contract_wide'] if r['contract_wide'] is not None else '-'} |\n")
             f.flush()
             os.fsync(f.fileno())

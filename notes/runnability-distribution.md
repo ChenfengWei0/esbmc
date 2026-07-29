@@ -100,6 +100,41 @@ column and produced six identical 2846s that looked like data.
 had room, the remaining slice time otherwise. A row that did not finish says so
 against the cap it actually got.
 
+**Two whole projects contribute no measurement, for two DIFFERENT reasons, and
+neither of them is "we ran out of time".**
+
+* **`limit_order_protocol`: zero units.** Every one of its 14 collector entries
+  is a `MakerTraitsLib` function, and every run reports *"1 in-scope function(s)
+  are internal/private and are therefore not units"*, instrumenting 0 paths in
+  0.3 s. A pure library has no public entry, so under the unit definition
+  (a public/external function) the project has nothing to enumerate. That is the
+  definition working, and it is a structural fact about the corpus rather than a
+  gap: the branch-coverage dataset counts these entries and the path-coverage
+  one cannot.
+* **`st1inch`: `TOOL-FAILURE` on all 22 units.** Every run finishes in ~15 s and
+  ESBMC itself refuses the result:
+  *"INTERNAL DEFECT — NOT ONE of the 243 instrumented path claim(s) reached the
+  solver. The harness never entered any unit, so this run establishes nothing
+  whatsoever; every path would otherwise be reported 'U', which reads exactly
+  like an honest solver timeout. This is a tool failure, not a result."*
+  ⚠ **The first version of this collector recorded those 22 rows as
+  `completed=yes`**, because its completion test was "the instrumented line is
+  present and we did not time out" — and that line is present. Twenty-two rows
+  of dashes were filed as successful measurements of units with no paths. The
+  tool had already declined to make that mistake and the collector made it
+  anyway; the rows now read `TOOL-FAILURE` and the script checks the guard.
+  ⚠ NOT diagnosed here: WHY the harness never enters. The locked dataset's own
+  notes record a different st1inch problem (the constructor's `_votingPowerAt`
+  invariant narrowing the state space until downstream bodies are proven
+  unreachable), which is a candidate and not a conclusion.
+
+Also visible on st1inch, and worth reading even though the run establishes
+nothing: the **degradation** mechanism fires there and reports itself precisely —
+12 units had 12 call points withdrawn to fit the per-unit budget of 10000, with
+each withdrawn call point named by source line, and the message distinguishes
+itself from truncation ("this one costs assertion strength at named places and
+keeps the enumeration complete, the goal cap instead drops paths").
+
 DEVIATION FROM THE PLAN'S 600s PER-UNIT CAP, STATED RATHER THAN ABSORBED: the
 agent's foreground command window is 590s and esbmc must never be detached, so a
 unit given 600s can only ever be CUT OFF by the window -- producing no row at
@@ -169,3 +204,47 @@ between 540s and 600s; they appear here as not finishing.
 | `farming` | `FarmingPool` | `farmInfo` | 2 | 2 | 0 | 0 | 7.3 | 100 | yes | 9536 |
 | `farming` | `FarmingPool` | `farmed` | 4 | 4 | 0 | 0 | 9.5 | 93 | yes | 9536 |
 | `farming` | `FarmingPool` | `rescueFunds` | - | - | - | - | 85.3 | 84 | TIMEOUT | 9536 |
+| `farming` | `FarmingPool` | `startFarming` | 50 | 26 | 0 | 24 | 31.0 | 539 | yes | 9536 |
+| `farming` | `FarmingPool` | `stopFarming` | 20 | 5 | 0 | 15 | 13.5 | 508 | yes | 9536 |
+| `farming` | `FarmingPool` | `withdraw` | 103 | 7 | 0 | 96 | 38.3 | 495 | yes | 9536 |
+| `farming` | `UserAccounting` | `eraseFarmed` | 0 | 0 | 0 | 0 | 6.4 | 457 | yes | 0 |
+| `farming` | `UserAccounting` | `farmed` | - | - | - | - | 5.0 | 450 | no | - |
+| `farming` | `UserAccounting` | `farmedPerToken` | 0 | 0 | 0 | 0 | 5.3 | 445 | yes | 0 |
+| `farming` | `UserAccounting` | `updateBalances` | - | - | - | - | 4.9 | 440 | no | - |
+| `farming` | `UserAccounting` | `updateFarmedPerToken` | 0 | 0 | 0 | 0 | 5.2 | 435 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `allowMultipleFills` | 0 | 0 | 0 | 0 | 0.3 | 430 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `allowPartialFills` | 0 | 0 | 0 | 0 | 0.3 | 430 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `getExpirationTime` | 0 | 0 | 0 | 0 | 0.3 | 429 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `hasExtension` | 0 | 0 | 0 | 0 | 0.3 | 429 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `isAllowedSender` | 0 | 0 | 0 | 0 | 0.3 | 429 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `isExpired` | 0 | 0 | 0 | 0 | 0.3 | 428 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `needCheckEpochManager` | 0 | 0 | 0 | 0 | 0.3 | 428 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `needPostInteractionCall` | 0 | 0 | 0 | 0 | 0.3 | 428 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `needPreInteractionCall` | 0 | 0 | 0 | 0 | 0.3 | 427 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `nonceOrEpoch` | 0 | 0 | 0 | 0 | 0.3 | 427 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `series` | 0 | 0 | 0 | 0 | 0.3 | 427 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `unwrapWeth` | 0 | 0 | 0 | 0 | 0.3 | 427 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `useBitInvalidator` | 0 | 0 | 0 | 0 | 0.3 | 426 | yes | 0 |
+| `limit_order_protocol` | `MakerTraitsLib` | `usePermit2` | 0 | 0 | 0 | 0 | 0.3 | 426 | yes | 0 |
+| `st1inch_St1inch` | `St1inch` | `approve` | - | - | - | - | 15.4 | 426 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `deposit` | - | - | - | - | 14.4 | 410 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `depositFor` | - | - | - | - | 15.5 | 396 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `depositForWithPermit` | - | - | - | - | 14.4 | 380 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `depositWithPermit` | - | - | - | - | 15.4 | 366 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `earlyWithdraw` | - | - | - | - | 14.7 | 351 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `earlyWithdrawLoss` | - | - | - | - | 14.6 | 336 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `earlyWithdrawTo` | - | - | - | - | 15.3 | 321 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `rescueFunds` | - | - | - | - | 14.8 | 306 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `setDefaultFarm` | - | - | - | - | 15.4 | 291 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `setEmergencyExit` | - | - | - | - | 14.4 | 276 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `setFeeReceiver` | - | - | - | - | 15.6 | 261 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `setMaxLossRatio` | - | - | - | - | 14.6 | 246 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `setMinLockPeriodRatio` | - | - | - | - | 15.4 | 231 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `transfer` | - | - | - | - | 14.8 | 216 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `transferFrom` | - | - | - | - | 14.2 | 201 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `votingPower` | - | - | - | - | 15.4 | 187 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `votingPowerAt` | - | - | - | - | 14.4 | 171 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `votingPowerOf` | - | - | - | - | 15.3 | 157 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `votingPowerOfAt` | - | - | - | - | 14.3 | 141 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `withdraw` | - | - | - | - | 15.6 | 127 | TOOL-FAILURE | 243 |
+| `st1inch_St1inch` | `St1inch` | `withdrawTo` | - | - | - | - | 14.5 | 112 | TOOL-FAILURE | 243 |

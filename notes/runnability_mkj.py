@@ -23,16 +23,26 @@ with open(OUT) as f:
             continue
         parts = [p.strip() for p in line.split("|")]
         bench = parts[1].strip("` ")
-        d = rows.setdefault(bench, {"K": 0, "J": 0})
+        d = rows.setdefault(bench, {"K": 0, "J": 0, "T": 0, "N": 0})
         d["K"] += 1
         if "TIMEOUT" in line:
             d["J"] += 1
+        # TOOL-FAILURE and "no" are NOT timeouts and must not be folded into J.
+        # A run the tool itself calls an internal defect, and a run that could
+        # not be started because the entry name is ambiguous, are two further
+        # outcomes; collapsing any of them into "timed out" would report a
+        # budget problem where there is a tool problem or a definition one.
+        if "TOOL-FAILURE" in line:
+            d["T"] += 1
+        elif "| no |" in line:
+            d["N"] += 1
 
 for b in BENCHES:
     p = os.path.join(DATA, f"esbmc_{b}.json")
     with open(p) as f:
         rep = json.load(f)
     m = len(rep["per_function"]["functions"])
-    r = rows.get(b, {"K": 0, "J": 0})
-    print(f"{b}: M={m} K={r['K']} J={r['J']}"
+    r = rows.get(b, {"K": 0, "J": 0, "T": 0, "N": 0})
+    print(f"{b}: M={m} K={r['K']} timeout={r['J']} "
+          f"tool-failure={r['T']} not-a-unit-or-unstartable={r['N']}"
           + ("   (not started)" if r["K"] == 0 else ""))
