@@ -395,6 +395,25 @@ bool solidity_convertert::get_function_definition(
         code_returnt implicit_ret;
         implicit_ret.return_value() = named_ret_syms[0];
         implicit_ret.location() = location_begin;
+        // Falling off the end of a function with a named return IS a normal
+        // exit -- solc returns the named variable -- so this synthesised RETURN
+        // carries the same positive marker a written `return r;` would.
+        //
+        // Without it the path-coverage exit census has no witness at all here:
+        // symex ends the frame AT a RETURN and never reaches END_FUNCTION, so
+        // `saw_epilogue` is always false at a RETURN exit and the marker is the
+        // ONLY evidence such an exit can ever have. Measured before the fix:
+        // aqua's `Aqua.ship` -- named `returns(bytes32 strategyHash)` with no
+        // `return` statement anywhere -- produced 62 undetermined exits, all
+        // attributed to this location, and R0 can emit nothing on an
+        // undetermined exit.
+        //
+        // Safe against the case the census exists to prevent (calling a
+        // reverted run "normal"): classify_exit tests rollback FIRST, so a path
+        // that reverted before reaching here is still a rollback exit. The
+        // fixture pair for that is a named fall-off unit with a `require` on
+        // one path -- one path must stay revert while the other becomes normal.
+        implicit_ret.location().set("sol_source_return", true);
         new_body.copy_to_operands(implicit_ret);
       }
       else if (

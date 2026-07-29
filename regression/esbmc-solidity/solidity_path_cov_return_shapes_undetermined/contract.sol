@@ -38,6 +38,35 @@
 // AFTER THE FIX this line must read `normal 4, revert 4, undetermined 0` with
 // the path count unchanged at 8. A fix that changes the path count has changed
 // which decisions exist, not just which evidence is available, and is wrong.
+//
+// ── 2026-07-29: cause (3) IS FIXED. CAUSE (2) IS NOT. ────────────────────────
+//
+// The tripwire did its job and went red. `f` is now `normal`: the frontend
+// stamps its synthesised RETURN with `sol_source_return`, because falling off
+// the end of a named-return function is a normal exit. `h` and `g` are
+// UNCHANGED and still undetermined, so the pinned line is now
+// `normal 2, revert 4, undetermined 2` -- an INTERMEDIATE state, deliberately
+// pinned so this file keeps working as a tripwire for what is left.
+//
+// The end state above is still the end state. Do not read the improvement as
+// completion: on aqua this same change took `Aqua.ship` from 62 undetermined
+// exits to 0 and the contract total from 68 to 6, which looks like the job is
+// done and is not. `rawBalances` (2) and `safeBalances` (4) are untouched.
+//
+// What is left is ONE entry condition in the code, not two, even though it
+// shows up as two shapes here. `h` (explicit tuple return) and `g` (named
+// multi-return, no return statement) both end as a VALUELESS `code_returnt`,
+// and goto conversion erases that -- either merging it into a preceding branch
+// or dropping it as a fall-through -- so no instruction survives to carry a
+// marker. Marking a RETURN cannot fix them because there is no RETURN left.
+// The same erasure hits a plain `return;` in a void function, which is why the
+// return-shape matrix regression carries that cell too.
+//
+// Note for whoever fixes it: the epilogue is NOT a witness that can be relied
+// on here. It is the enclosing-contract save/restore, reused as evidence, and
+// the frontend documents in solidity_convert_modifier.cpp that early returns
+// deliberately skip the trailing restore because the stale value is harmless.
+// A witness that the code is documented as free to skip is not a witness.
 pragma solidity ^0.8.0;
 
 contract RetShapes {
