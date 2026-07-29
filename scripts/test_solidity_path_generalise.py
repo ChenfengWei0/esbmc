@@ -29,7 +29,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       empty_coords, shrink_target, is_env,
                                       round_failure_reason, boxes_intersect,
-                                      certified_overlap)
+                                      certified_overlap, divergence_text)
 
 FAILURES = []
 
@@ -292,6 +292,56 @@ check("absent-coord-does-not-separate",
 check("three-way-overlap-lists-all-pairs",
       certified_overlap({1: {"a": (0, 9)}, 2: {"a": (0, 9)}, 3: {"a": (0, 9)}}),
       [(1, 2), (1, 3), (2, 3)])
+
+
+# --- the reach gate must NAME the quantity, and its three outcomes must differ ---
+#
+# "Refuted with no single-coordinate cut available" is the number the evaluation
+# leans on, and on its own it says only that the witness agrees on every BOUNDED
+# coordinate. Reading the missing coordinate CLASS off it is an inference from
+# having seen nothing else -- the inference this project has got wrong five
+# times. All three outcomes below have to stay distinguishable, and the middle
+# one is the one that would otherwise read as "nothing to report".
+
+# (1) A named difference, with the bounded/unbounded split. This is the shape the
+# evaluation's coordinate table needs in order to explain the reach-gate bucket
+# by measurement rather than by argument.
+d1 = divergence_text({"a": 4, "state._DOCKED": 255, "block.timestamp": 1},
+                     {"a": 4, "state._DOCKED": 0, "block.timestamp": 1},
+                     {"a"})
+check("divergence-names-the-quantity", "state._DOCKED" in d1, True)
+check("divergence-gives-both-values",
+      "path=255" in d1 and "witness=0" in d1, True)
+check("divergence-flags-unbounded", "NOT a bounded coordinate" in d1, True)
+check("divergence-omits-agreeing-quantities", "block.timestamp" in d1, False)
+check("divergence-omits-agreeing-bounded", "a (" in d1, False)
+
+# A difference ON a bounded coordinate is reported WITHOUT the unbounded flag --
+# it should not normally happen (a bounded difference yields a cut), so if it
+# ever appears it must be visible as the anomaly it is rather than mislabelled.
+d1b = divergence_text({"a": 4}, {"a": 9}, {"a"})
+check("bounded-difference-not-flagged-unbounded",
+      "NOT a bounded coordinate" in d1b, False)
+check("bounded-difference-still-named", "a (path=4, witness=9)" in d1b, True)
+
+# (2) MEASURED on aqua: the witness agreed with the path's counterexample on
+# every scalar in the payload -- all four coordinates and all fifteen environment
+# quantities. The discriminating quantity is not in the payload at all. This is
+# a finding, and it must not render as an empty list.
+d2 = divergence_text({"a": 4, "state._DOCKED": 255},
+                     {"a": 4, "state._DOCKED": 255}, {"a"})
+check("no-difference-is-stated-explicitly", "not in the payload at all" in d2,
+      True)
+check("no-difference-is-called-unknown-bucket",
+      "explicit unknown bucket" in d2, True)
+
+# (3) NO payload at all. Distinct from (2): one says "we looked and they agree",
+# the other says "we could not look". Collapsing them is this file's recurring
+# failure-as-result bug.
+d3 = divergence_text({"a": 4}, {}, {"a"})
+check("missing-payload-is-not-no-difference",
+      "NOT a finding of 'no difference'" in d3, True)
+check("missing-payload-differs-from-agreement", d3 == d2, False)
 
 
 if FAILURES:

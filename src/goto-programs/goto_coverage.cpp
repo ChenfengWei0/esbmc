@@ -588,6 +588,11 @@ void goto_coveraget::report_outer_boxes()
         s += it->second.have_u ? integer2string(it->second.u)
                                : std::string(">span hi");
         s += "]";
+        // An inverted interval is EMPTY, and printed bare it reads as a measured
+        // range. Say so at the interval itself, not only in a trailing note: the
+        // number pair is what gets quoted.
+        if (it->second.have_l && it->second.have_u && it->second.l > it->second.u)
+          s += " (EMPTY: lo > hi)";
       }
     }
     return s;
@@ -758,9 +763,41 @@ void goto_coveraget::report_outer_boxes()
     }
 
     std::string s;
+    std::string empty_on;
     for (const auto &[c, r] : box)
+    {
       s += (s.empty() ? "" : ", ") + c + " in [" + integer2string(r.first) +
            ", " + integer2string(r.second) + "]";
+      if (r.first > r.second)
+        empty_on += (empty_on.empty() ? "" : ", ") + c;
+    }
+
+    // AN EMPTY REGION IS NOT A REGION, and the heading is the dangerous part.
+    // The subtraction can invert an interval — measured: with the environment
+    // pinned, the ABI-gate revert path's domain is empty in that slice and the
+    // cut duly produced lo > hi. Printed under "CERTIFIED region" with no
+    // further comment, that reads to any reader as a region that was certified.
+    // Nothing here certifies anything (this whole stage is zero-query), and an
+    // empty box additionally certifies VACUOUSLY if it reaches the query.
+    //
+    // The driver already refuses these, which is exactly why the line KEEPS its
+    // parseable shape instead of being replaced: the driver finds the region by
+    // this prefix, and suppressing the line would drop it into its generic "no
+    // fully bounded region was measured" branch — trading a precise diagnosis
+    // for a vaguer one in the name of safety. Two defences, not one moved.
+    //
+    // What changes is that the emptiness travels WITH the numbers rather than
+    // after them. A caveat at the end of the line is read after the interval has
+    // already been read.
+    std::string empty_note;
+    if (!empty_on.empty())
+      empty_note =
+        " — EMPTY, NOT CERTIFIED: lo > hi on " + empty_on +
+        ", so this box contains no input at all. The subtraction removed "
+        "everything, which under a pin usually means the pin excluded this path "
+        "from the slice; the honest statement is that exclusion. Do NOT hand "
+        "this box to the certification query: an unsatisfiable assumption "
+        "answers SUCCESSFUL for want of any execution";
     std::string caveat;
     if (degenerate > 0)
       caveat =
@@ -771,9 +808,10 @@ void goto_coveraget::report_outer_boxes()
         "concrete counterexample test)";
     log_status(
       "--path-cov-outer-box: path enc={} CERTIFIED region after subtracting "
-      "sibling outer boxes (zero queries): {}{}",
+      "sibling outer boxes (zero queries): {}{}{}",
       enc,
       s,
+      empty_note,
       caveat);
   }
 

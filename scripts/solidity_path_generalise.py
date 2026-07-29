@@ -536,6 +536,81 @@ def empty_coords(box):
     return sorted(n for n, (lo, hi) in box.items() if lo > hi)
 
 
+def witness_values(cwd, unit):
+    """The REFUTING input's payload, harvested from the certification run.
+
+    The certification query already runs with --cov-report-json, so this costs
+    nothing: the refutation's counterexample is on disk by the time the verdict
+    is read.
+
+    Filtered to THIS unit rather than taking the first refutation in the file.
+    Other units' path claims are instrumented in the same run, and while under
+    --focus they come back undecided rather than refuted, "they happen not to be
+    F right now" is a property of the current configuration, not of the report.
+    Reading a foreign unit's counterexample here would produce a difference list
+    about the wrong function -- confidently, and with no way to notice.
+    """
+    report = os.path.join(cwd, "cov-report.json")
+    if not os.path.exists(report):
+        return {}
+    try:
+        with open(report) as f:
+            rep = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    for c in rep.get("claims", []):
+        if c.get("status") == "F" and claim_unit(c) == unit:
+            ce, _ = coord_values(c)
+            return ce
+    return {}
+
+
+def divergence_text(path_ce, wit_ce, bounded):
+    """Name the quantity the refuting witness differs on. The point of this file.
+
+    "Refuted with no single-coordinate cut available" is the reach gate, and it
+    is the number the evaluation leans on -- but on its own it says only that the
+    witness agrees with the path's counterexample on every BOUNDED coordinate.
+    It never says WHICH quantity they actually differ on, so reading the missing
+    coordinate CLASS off it is an inference: one looks at what was refused and
+    assumes that must have been the discriminating thing. That is "saw nothing
+    else, therefore it is this", which is the inference this project has got
+    wrong five times.
+
+    The information was there the whole time. Both counterexamples are on disk;
+    the difference is arithmetic. With it, the evaluation's coordinate-availability
+    table explains the reach-gate bucket by MEASUREMENT instead of by argument,
+    which is the link those two tables are supposed to have.
+
+    Three outcomes, kept apart on purpose:
+      * a non-empty diff -- named, with which side is bounded;
+      * an EMPTY diff -- the witness agrees on every scalar in the payload too,
+        so whatever separates them is not in the payload at all. Said out loud,
+        because an empty list is exactly the shape that reads as "nothing to
+        report";
+      * NO payload -- the harvest failed. Not the same as "no difference", and
+        collapsing the two would be this file's recurring failure-as-result bug.
+    """
+    if not wit_ce:
+        return ("; the refutation carried NO payload, so the differing quantity "
+                "could not be read at all -- that is a missing harvest, NOT a "
+                "finding of 'no difference'")
+    diff = [(n, path_ce[n], wit_ce[n])
+            for n in sorted(set(path_ce) & set(wit_ce))
+            if path_ce[n] != wit_ce[n]]
+    if not diff:
+        return ("; and the witness agrees with this path's counterexample on "
+                "EVERY scalar quantity in the payload as well, so whatever "
+                "separates the two is not in the payload at all -- an unnamed "
+                "intermediate, an external-call return, or a non-scalar. This "
+                "is the explicit unknown bucket, not an empty result")
+    return ("; the witness differs from this path's counterexample on: "
+            + ", ".join(
+                f"{n} (path={pv}, witness={wv})"
+                + ("" if n in bounded else " [NOT a bounded coordinate]")
+                for n, pv, wv in diff))
+
+
 def shrink_target(log, pins):
     """The cut a refutation suggests, as (coord, lo, hi), or None.
 
@@ -574,14 +649,18 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     if v != "FAILED":
         # SUCCESSFUL: certified. UNKNOWN: no verdict at all -- the caller must
         # not shrink on it, so no box is suggested either.
-        return v, None
+        return v, None, {}
+    # Harvested on every refutation, not only when the shrink fails: the caller
+    # needs it in the budget-exhausted branch too, and by then this run's report
+    # has been overwritten by the next one.
+    wit = witness_values(cwd, unit)
     cut = shrink_target(log, pins)
     if cut is None:
-        return v, None
+        return v, None, wit
     coord, lo, hi = cut
     nb = dict(box)
     nb[coord] = (lo, hi)
-    return v, nb
+    return v, nb, wit
 
 
 def main():
@@ -805,11 +884,14 @@ def main():
             # region that a cut could not separate is EXPECTED to be refuted.
             print(f"[certify enc={enc}] region overlaps an unseparated sibling; "
                   f"certifying anyway, the query is what decides")
+        last_wit = {}
         for _ in range(args.shrink_rounds):
-            v, nb = certify(args.esbmc, args.sol, args.contract, args.unit,
-                            enc, depth, box, ce, pins, args.max_tx,
-                            args.timeout, cwd, ast=args.ast, focus=focus,
-                            memlimit=args.memlimit)
+            v, nb, wit = certify(args.esbmc, args.sol, args.contract, args.unit,
+                                 enc, depth, box, ce, pins, args.max_tx,
+                                 args.timeout, cwd, ast=args.ast, focus=focus,
+                                 memlimit=args.memlimit)
+            if wit:
+                last_wit = wit
             if v == "SUCCESSFUL":
                 ok[enc] = box
                 break
@@ -822,12 +904,16 @@ def main():
                                "(ESBMC printed neither SUCCESSFUL nor FAILED)")
                 break
             if nb is None or nb == box:
-                failed[enc] = "refuted with no single-coordinate cut available"
+                failed[enc] = (
+                    "refuted with no single-coordinate cut available"
+                    + divergence_text(ce, last_wit, set(box) | set(pins)))
                 break
             print(f"[shrink enc={enc}] {box} -> {nb}")
             box = nb
         else:
-            failed[enc] = "shrink round budget exhausted"
+            failed[enc] = (
+                "shrink round budget exhausted"
+                + divergence_text(ce, last_wit, set(box) | set(pins)))
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean
     # an input would have to walk two different paths. Reporting them and
