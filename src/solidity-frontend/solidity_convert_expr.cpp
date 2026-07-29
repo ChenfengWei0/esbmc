@@ -4503,76 +4503,77 @@ bool solidity_convertert::get_index_access_expr(
   // the runtime `_ESBMC_array_length(a)` header for dynamic ones. State-var
   // dyn-arrays and the byte/string/calldata approximations are handled on their
   // own paths above; this only augments the plain pointer fall-through below.
-  auto emit_pointer_array_bounds_check =
-    [&](const exprt &array_expr, const typet &base_type) {
-      if (
-        !config.options.get_bool_option("bounds-check") ||
-        config.options.get_bool_option("no-bounds-check"))
+  auto emit_pointer_array_bounds_check = [&](
+                                           const exprt &array_expr,
+                                           const typet &base_type) {
+    if (
+      !config.options.get_bool_option("bounds-check") ||
+      config.options.get_bool_option("no-bounds-check"))
+      return;
+    if (!array_expr.type().is_pointer())
+      return;
+
+    SolidityGrammar::SolType base_sol = get_sol_type(base_type);
+    if (
+      base_sol != SolidityGrammar::SolType::DYNARRAY &&
+      base_sol != SolidityGrammar::SolType::ARRAY &&
+      base_sol != SolidityGrammar::SolType::ARRAY_LITERAL)
+      return;
+
+    // Locate the length. Fixed arrays carry it as `#sol_array_size` metadata
+    // (on the pointer type, the base type, or its element subtype); dynamic
+    // arrays keep it in the runtime allocation header.
+    exprt len_expr;
+    std::string fixed_size;
+    if (!array_expr.type().get("#sol_array_size").empty())
+      fixed_size = array_expr.type().get("#sol_array_size").as_string();
+    else if (!base_type.get("#sol_array_size").empty())
+      fixed_size = base_type.get("#sol_array_size").as_string();
+    else if (
+      base_type.has_subtype() &&
+      !base_type.subtype().get("#sol_array_size").empty())
+      fixed_size = base_type.subtype().get("#sol_array_size").as_string();
+
+    if (!fixed_size.empty())
+      len_expr = from_integer(std::stoul(fixed_size), unsignedbv_typet(256));
+    else if (base_sol == SolidityGrammar::SolType::DYNARRAY)
+    {
+      // The dynamic length is read with `_ESBMC_array_length(array)`, which
+      // embeds `array` a second time (the access itself still indexes it). If
+      // the base is not a plain symbol (e.g. `make()[i]`), evaluating it twice
+      // would duplicate its side effects, so only emit the check for a stable
+      // symbol base; otherwise degrade to no check.
+      if (!array_expr.is_symbol())
         return;
-      if (!array_expr.type().is_pointer())
+      // No length header symbol → cannot bound; degrade to no check.
+      if (context.find_symbol("c:@F@_ESBMC_array_length") == nullptr)
         return;
+      side_effect_expr_function_callt length_call;
+      get_library_function_call_no_args(
+        "_ESBMC_array_length",
+        "c:@F@_ESBMC_array_length",
+        uint_type(),
+        location,
+        length_call);
+      length_call.arguments().push_back(array_expr);
+      // _ESBMC_array_length returns uint32; widen to uint256 for the compare.
+      solidity_gen_typecast(ns, length_call, unsignedbv_typet(256));
+      len_expr = length_call;
+    }
+    else
+      return;
 
-      SolidityGrammar::SolType base_sol = get_sol_type(base_type);
-      if (
-        base_sol != SolidityGrammar::SolType::DYNARRAY &&
-        base_sol != SolidityGrammar::SolType::ARRAY &&
-        base_sol != SolidityGrammar::SolType::ARRAY_LITERAL)
-        return;
+    exprt bounds_pos = pos;
+    solidity_gen_typecast(ns, bounds_pos, len_expr.type());
+    exprt in_bounds = binary_relation_exprt(bounds_pos, "<", len_expr);
 
-      // Locate the length. Fixed arrays carry it as `#sol_array_size` metadata
-      // (on the pointer type, the base type, or its element subtype); dynamic
-      // arrays keep it in the runtime allocation header.
-      exprt len_expr;
-      std::string fixed_size;
-      if (!array_expr.type().get("#sol_array_size").empty())
-        fixed_size = array_expr.type().get("#sol_array_size").as_string();
-      else if (!base_type.get("#sol_array_size").empty())
-        fixed_size = base_type.get("#sol_array_size").as_string();
-      else if (
-        base_type.has_subtype() &&
-        !base_type.subtype().get("#sol_array_size").empty())
-        fixed_size = base_type.subtype().get("#sol_array_size").as_string();
-
-      if (!fixed_size.empty())
-        len_expr = from_integer(std::stoul(fixed_size), unsignedbv_typet(256));
-      else if (base_sol == SolidityGrammar::SolType::DYNARRAY)
-      {
-        // The dynamic length is read with `_ESBMC_array_length(array)`, which
-        // embeds `array` a second time (the access itself still indexes it). If
-        // the base is not a plain symbol (e.g. `make()[i]`), evaluating it twice
-        // would duplicate its side effects, so only emit the check for a stable
-        // symbol base; otherwise degrade to no check.
-        if (!array_expr.is_symbol())
-          return;
-        // No length header symbol → cannot bound; degrade to no check.
-        if (context.find_symbol("c:@F@_ESBMC_array_length") == nullptr)
-          return;
-        side_effect_expr_function_callt length_call;
-        get_library_function_call_no_args(
-          "_ESBMC_array_length",
-          "c:@F@_ESBMC_array_length",
-          uint_type(),
-          location,
-          length_call);
-        length_call.arguments().push_back(array_expr);
-        // _ESBMC_array_length returns uint32; widen to uint256 for the compare.
-        solidity_gen_typecast(ns, length_call, unsignedbv_typet(256));
-        len_expr = length_call;
-      }
-      else
-        return;
-
-      exprt bounds_pos = pos;
-      solidity_gen_typecast(ns, bounds_pos, len_expr.type());
-      exprt in_bounds = binary_relation_exprt(bounds_pos, "<", len_expr);
-
-      code_assertt bounds_assert(in_bounds);
-      bounds_assert.location() = location;
-      bounds_assert.location().comment(
-        "dereference failure: array bounds violated");
-      bounds_assert.location().property("array bounds");
-      move_to_front_block(bounds_assert);
-    };
+    code_assertt bounds_assert(in_bounds);
+    bounds_assert.location() = location;
+    bounds_assert.location().comment(
+      "dereference failure: array bounds violated");
+    bounds_assert.location().property("array bounds");
+    move_to_front_block(bounds_assert);
+  };
 
   emit_pointer_array_bounds_check(array, base_t);
 
