@@ -377,6 +377,31 @@ check("named-candidate-is-not-a-conclusion",
 check("no-caveats-leaves-message-unnarrowed",
       divergence_text({"a": 4}, {"a": 4}, {"a"}, {}) == d2, True)
 
+# (5) ASYMMETRIC PAYLOADS. Comparing only the shared keys and then saying the
+# witness "agrees on EVERY scalar quantity" is false as soon as one side carries
+# a key the other does not -- the intersection drops it and the sentence still
+# claims total agreement. Overclaiming is the one thing this function must not
+# do, since saying precisely what was compared is its whole job.
+d5 = divergence_text({"a": 4}, {"a": 4, "b": 7}, {"a", "b"})
+check("asymmetric-does-not-claim-every-scalar",
+      "EVERY scalar quantity in the payload" in d5, False)
+check("asymmetric-says-only-the-shared-ones",
+      "only the shared ones" in d5, True)
+check("asymmetric-names-the-extra-key", "only in the witness's: b" in d5, True)
+# ...and it is NOT the unknown-bucket message either: "they agree on everything"
+# and "they agree on everything comparable" are different findings.
+check("asymmetric-is-not-the-unknown-bucket",
+      "not in the payload at all" in d5, False)
+
+# The other direction, and a difference PLUS an asymmetry: the named difference
+# must still be reported, with the coverage caveat appended rather than either
+# one silently replacing the other.
+d6 = divergence_text({"a": 4, "c": 1}, {"a": 9}, {"a"})
+check("asym-with-diff-still-names-the-difference",
+      "a (path=4, witness=9)" in d6, True)
+check("asym-with-diff-still-flags-coverage",
+      "only in this path's: c" in d6, True)
+
 
 if FAILURES:
     print("FAILED:")

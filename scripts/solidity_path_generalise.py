@@ -622,9 +622,30 @@ def divergence_text(path_ce, wit_ce, bounded, caveats=None):
         return ("; the refutation carried NO payload, so the differing quantity "
                 "could not be read at all -- that is a missing harvest, NOT a "
                 "finding of 'no difference'")
+    # SYMMETRIC. Comparing only the shared keys and then reporting that the
+    # witness "agrees on EVERY scalar quantity" is false the moment one payload
+    # carries a key the other does not: an extra scalar on the witness side would
+    # be dropped by the intersection and the message would still claim total
+    # agreement. Overclaiming is the one thing this function must not do -- its
+    # entire purpose is to say precisely what was and was not compared.
+    only_path = sorted(set(path_ce) - set(wit_ce))
+    only_wit = sorted(set(wit_ce) - set(path_ce))
+    asym = ""
+    if only_path or only_wit:
+        asym = ("; NOTE: the two payloads do not carry the same keys, so the "
+                "comparison above covers only the shared ones"
+                + (f" -- only in this path's: {', '.join(only_path)}"
+                   if only_path else "")
+                + (f" -- only in the witness's: {', '.join(only_wit)}"
+                   if only_wit else ""))
     diff = [(n, path_ce[n], wit_ce[n])
             for n in sorted(set(path_ce) & set(wit_ce))
             if path_ce[n] != wit_ce[n]]
+    if not diff and asym:
+        # Not "they agree on everything": they agree on everything COMPARABLE,
+        # and something was not comparable. Those are different findings.
+        return ("; the witness agrees with this path's counterexample on every "
+                "scalar the two payloads have in common" + asym)
     if not diff:
         msg = ("; and the witness agrees with this path's counterexample on "
                "EVERY scalar quantity in the payload as well, so whatever "
@@ -645,7 +666,8 @@ def divergence_text(path_ce, wit_ce, bounded, caveats=None):
             + ", ".join(
                 f"{n} (path={pv}, witness={wv})"
                 + ("" if n in bounded else " [NOT a bounded coordinate]")
-                for n, pv, wv in diff))
+                for n, pv, wv in diff)
+            + asym)
 
 
 def shrink_target(log, pins):
@@ -679,6 +701,15 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     path = os.path.join(cwd, "cert.json")
     with open(path, "w") as f:
         json.dump(spec, f)
+    # FRESHNESS, enforced by removal rather than by a timestamp. This run may
+    # produce no report at all -- it can be refused at instrumentation time, or
+    # killed -- and the previous shrink round left one right here. Reading that
+    # would attribute an OLDER refutation's payload to this box, confidently and
+    # with nothing to notice it by. Deleting first makes "no report" mean exactly
+    # that, which the caller already distinguishes as the no-payload branch.
+    stale = os.path.join(cwd, "cov-report.json")
+    if os.path.exists(stale):
+        os.remove(stale)
     log = run(esbmc, sol, contract,
               ["--path-cov-certify", path, "--cov-report-json"],
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)

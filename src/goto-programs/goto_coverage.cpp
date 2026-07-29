@@ -4903,7 +4903,12 @@ void goto_coveraget::solidity_path_coverage()
           // unattended driver records a named failure instead of a core dump.
           // Note that no verdict line is printed either, so a caller reading
           // SUCCESSFUL/FAILED as whole lines sees its explicit third state.
-          path_cov_refused_coords[b.name] = why;
+          // Deliberately NOT recorded in path_cov_refused_coords. The only
+          // reader of that map is report_outer_boxes, which is unreachable from
+          // here -- this branch exits the process. A write nothing can observe
+          // is not defence in depth, it is a line that reads like one, and the
+          // next person to add a consumer would have to discover for themselves
+          // that this entry never arrives.
           log_error(
             "--path-cov-certify: unit '{}' — REFUSING THE QUERY because "
             "coordinate '{}' cannot be expressed: {}. Certification is not "
