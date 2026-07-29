@@ -107,7 +107,18 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
             return b.decode(errors="replace") if isinstance(b, bytes) else b
         out = _txt(e.stdout) + _txt(e.stderr)
         return out + f"\n[run] TIMEOUT after {timeout}s: {' '.join(cmd)}\n"
-    return p.stdout + p.stderr
+    # RECORD THE EXIT CODE, and let callers judge on it rather than on message
+    # text. ESBMC uses 0 for SUCCESSFUL and 1 for FAILED; anything else means it
+    # did not finish -- 6 for a conversion error, 134 for an abort, and so on.
+    #
+    # This replaces a whitelist of two known failure messages, which was wrong
+    # in the way this file keeps being wrong: a THIRD cause (an abort on a
+    # string-typed state coordinate, `Projecting from non-tuple based AST`)
+    # matched neither pattern, so the round came back with no regions and was
+    # reported downstream as "no fully bounded region was measured" -- a
+    # property of the path, for what was a crash. A whitelist of failures is
+    # open at the bottom; an exit code is not.
+    return p.stdout + p.stderr + f"\n[run] EXIT {p.returncode}\n"
 
 
 def parse_int(s):
@@ -484,6 +495,27 @@ def round_failure_reason(log):
     if "[run] TIMEOUT after" in log:
         return ("no outer-box round finished, so nothing was measured for "
                 "this path (a BUDGET outcome, not a property of the path)")
+    # Fail-closed on the exit code. 0 = SUCCESSFUL, 1 = FAILED; anything else
+    # means ESBMC did not finish, whatever it printed on the way. Checked LAST
+    # so the two named causes keep their specific wording, and checked AT ALL
+    # because the named causes are a whitelist and a whitelist of failures is
+    # open at the bottom.
+    m = re.search(r"\[run\] EXIT (-?\d+)", log)
+    if m and m.group(1) not in ("0", "1"):
+        code = m.group(1)
+        # subprocess reports a signal-killed child as a NEGATIVE number, not as
+        # 128+n; both forms are mapped so the message names the real cause
+        # rather than falling through to "did not complete". Measured: the
+        # string-typed-coordinate abort arrives as -6, not 134.
+        why = {"6": "conversion error",
+               "124": "killed on timeout", "-15": "killed (SIGTERM)",
+               "-9": "killed (SIGKILL)",
+               "134": "ABORTED (SIGABRT)", "-6": "ABORTED (SIGABRT)",
+               "139": "crashed (SIGSEGV)", "-11": "crashed (SIGSEGV)",
+               }.get(code, "did not complete")
+        return (f"ESBMC exited {code} ({why}), so the round measured nothing "
+                f"(a TOOL outcome, not a property of the path). The last "
+                f"ERROR line in its output names the cause")
     return None
 
 

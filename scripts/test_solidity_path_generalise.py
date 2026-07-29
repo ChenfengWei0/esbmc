@@ -218,7 +218,44 @@ check("timeout-is-not-support-gap", "COORDINATE-SUPPORT" in (t or ""), False)
 OK_ROUND = ("--path-cov-outer-box: 12 of 12 ladder probe(s) reached the solver\n"
             "--path-cov-outer-box: path enc=7 depth=2 OUTER box "
             "(D_path is CONTAINED in it): a in [0, 5]\n")
-check("clean-round-has-no-excuse", round_failure_reason(OK_ROUND), None)
+check("clean-round-has-no-excuse",
+      round_failure_reason(OK_ROUND + "\n[run] EXIT 1\n"), None)
+check("successful-round-has-no-excuse",
+      round_failure_reason(OK_ROUND + "\n[run] EXIT 0\n"), None)
+
+# THE THIRD CAUSE, which the message whitelist missed. Verbatim from a
+# FarmingPool run: a string-typed state coordinate (state._name) aborts the
+# solver, the round returns nothing, and before this it was reported as "no
+# fully bounded region was measured" -- a property of the path, for a crash.
+# The exit code decides, so a FOURTH cause needs no new pattern.
+ABORTED = ("Solving claim 'deposit:path:3623#ub_state._name_0 at' ...\n"
+           "ERROR: Projecting from non-tuple based AST\n"
+           "[run] EXIT 134\n")
+a = round_failure_reason(ABORTED)
+check("abort-is-detected", "134" in (a or ""), True)
+check("abort-says-aborted", "ABORTED" in (a or ""), True)
+check("abort-is-not-called-budget", "BUDGET" in (a or ""), False)
+check("abort-is-not-called-support-gap", "COORDINATE-SUPPORT" in (a or ""),
+      False)
+# subprocess reports a signal-killed child as NEGATIVE, and that is the form the
+# live run actually produced -- -6, not 134. Both must name SIGABRT rather than
+# falling through to the generic wording.
+neg = round_failure_reason("ERROR: Projecting from non-tuple based AST\n"
+                           "[run] EXIT -6\n")
+check("negative-signal-detected", "-6" in (neg or ""), True)
+check("negative-signal-named-sigabrt", "SIGABRT" in (neg or ""), True)
+# An exit code nobody has seen yet must still be caught, which is the whole
+# point of not enumerating causes.
+u = round_failure_reason("something new\n[run] EXIT 42\n")
+check("unknown-exit-code-still-caught", "42" in (u or ""), True)
+# The two NAMED causes keep their specific wording even though a bad exit code
+# accompanies them -- more specific beats more general.
+check("timeout-wording-survives-exit-code",
+      "BUDGET" in (round_failure_reason(TIMED + "\n[run] EXIT 124\n") or ""),
+      True)
+check("unresolved-wording-survives-exit-code",
+      "COORDINATE-SUPPORT" in
+      (round_failure_reason(UNRESOLVED + "\n[run] EXIT 134\n") or ""), True)
 
 
 
