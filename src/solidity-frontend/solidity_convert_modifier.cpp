@@ -629,10 +629,47 @@ bool solidity_convertert::get_function_definition(
         wrapped.copy_to_operands(st_decl);
         wrapped.copy_to_operands(assign_set_addr);
         wrapped.copy_to_operands(assign_set_this);
-        for (auto &op : body_exprt.operands())
-          wrapped.copy_to_operands(op);
+
+        // A body ending in a VALUELESS `return;` makes the restores below
+        // unreachable, so goto conversion deletes them -- and with them the only
+        // positive evidence that the path exited normally. Measured: a named
+        // multi-return that falls off the end (aqua's `safeBalances`, and a
+        // tuple `return (a, b);` which lowers to member binds plus a valueless
+        // return) produced a body with NO restore instruction at all, and its
+        // exits were reported `undetermined`, which is a path R0 cannot serve.
+        //
+        // Put the restores BEFORE that trailing return rather than deleting it.
+        // Deleting would be wrong in general -- a valueless return elsewhere in
+        // the body is a jump and load-bearing -- and this ordering is a no-op
+        // semantically, since a valueless return carries nothing that could
+        // depend on it. Straight-line statements only: no decision is added or
+        // removed, so the path count cannot move.
+        // "Valueless" is `op0().is_nil()`, NOT `operands().empty()`:
+        // `code_returnt()` resizes to one operand and makes it nil, so the
+        // empty test never fires. Checked against the class rather than
+        // assumed -- the first version of this predicate assumed, and silently
+        // did nothing, which the measurement caught only because it was taken.
+        const auto is_valueless_return = [](const exprt &e) {
+          if (!e.is_code() || e.statement() != "return")
+            return false;
+          return e.operands().empty() ||
+                 (e.operands().size() == 1 && e.operands()[0].is_nil());
+        };
+        const bool trailing_valueless_return =
+          !body_exprt.operands().empty() &&
+          is_valueless_return(body_exprt.operands().back());
+
+        const size_t body_n = body_exprt.operands().size();
+        for (size_t bi = 0; bi < body_n; ++bi)
+        {
+          if (trailing_valueless_return && bi + 1 == body_n)
+            break;
+          wrapped.copy_to_operands(body_exprt.operands()[bi]);
+        }
         wrapped.copy_to_operands(assign_rst_addr);
         wrapped.copy_to_operands(assign_rst_this);
+        if (trailing_valueless_return)
+          wrapped.copy_to_operands(body_exprt.operands().back());
 
         body_exprt = wrapped;
       }

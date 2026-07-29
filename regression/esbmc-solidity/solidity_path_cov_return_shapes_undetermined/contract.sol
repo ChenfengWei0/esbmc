@@ -39,7 +39,35 @@
 // the path count unchanged at 8. A fix that changes the path count has changed
 // which decisions exist, not just which evidence is available, and is wrong.
 //
-// ── 2026-07-29: cause (3) IS FIXED. CAUSE (2) IS NOT. ────────────────────────
+// ── 2026-07-29 (later): BOTH CAUSES FIXED. The declared end state was hit. ──
+//
+// This file is no longer a tripwire. It now pins the state its own header
+// predicted, and it landed on the predicted numbers exactly:
+//
+//     Path Exits: normal 4, revert 4, undetermined 0     with Complete Paths 8
+//
+// Both of its own guards held. The path count is unchanged at 8, so what
+// changed is which evidence exists, not which decisions do -- the distinction
+// this file was written to enforce. And `revert 4` never moved across either
+// fix, so nothing was reclassified out of the reverting bucket to make the
+// normal count rise.
+//
+// Cause (3), `f`: the frontend now stamps the synthesised RETURN of a
+// named-return function with `sol_source_return`, since running to the closing
+// brace is a normal exit.
+//
+// Cause (2), `h` and `g`: a body ending in a VALUELESS `return;` made the
+// enclosing-contract restores unreachable, so goto conversion deleted them --
+// and with them the only positive evidence of a normal exit. The restores are
+// now emitted BEFORE that trailing return instead. Not by deleting the return:
+// a valueless return elsewhere in a body is a jump and load-bearing. Straight-
+// line reordering only, which is why the path count could not move.
+//
+// Keeping the record below rather than deleting it: the intermediate state was
+// real, and the reason the item was split across two rounds is worth more than
+// the tidiness of a single entry.
+//
+// ── 2026-07-29 (earlier): cause (3) IS FIXED. CAUSE (2) IS NOT. ─────────────
 //
 // The tripwire did its job and went red. `f` is now `normal`: the frontend
 // stamps its synthesised RETURN with `sol_source_return`, because falling off

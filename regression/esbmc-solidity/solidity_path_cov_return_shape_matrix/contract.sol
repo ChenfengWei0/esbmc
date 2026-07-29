@@ -26,6 +26,19 @@
 // reaches END_FUNCTION, so `saw_epilogue` is false there by construction and
 // the frontend's source-return marker is the whole case. `e_named_fall` is the
 // shape that made aqua's `Aqua.ship` report 62 undetermined exits.
+//
+// Status 2026-07-29: two of the three entry conditions are fixed, and the third
+// is named rather than hidden. `undetermined 2` here is the ONE shape left --
+// a void unit whose `return;` goto conversion folded into the branch, so no
+// instruction survives to carry the marker. `d_void_bare_return` and
+// `j_void_require_bare_return` are those two, and nothing else in this grid
+// reports undetermined.
+//
+// The two counts to watch are `normal` and `undetermined`; `revert` must not
+// move, in either direction, under any repair here. A repair that raises normal
+// by lowering revert has reclassified a reverting transaction as a successful
+// one, which is the failure this census exists to prevent. Across both fixes so
+// far it stayed at 14, and on aqua at 2739.
 pragma solidity ^0.8.0;
 
 contract Ret {

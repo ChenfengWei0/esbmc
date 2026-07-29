@@ -3,9 +3,7 @@ contract.sol
 --solidity-path-coverage --contract Ret --solidity-max-tx 1
 ^--solidity-path-coverage: instrumented 42 complete path\(s\) across 11 unit\(s\)
 ^WARNING: --solidity-path-coverage: unit 'sol:@C@Ret@F@d_void_bare_return#77' has 1 exit\(s\) with NO positive evidence of a normal exit, by cause: \(1\) 0 .*\(2\) 1 at END_FUNCTION having SKIPPED this unit's epilogue .*\(3\) 0
-^WARNING: --solidity-path-coverage: unit 'sol:@C@Ret@F@g_tuple_fall#142' has 2 exit\(s\) with NO positive evidence of a normal exit, by cause: \(1\) 0 .*\(2\) 2 at END_FUNCTION having SKIPPED this unit's epilogue .*\(3\) 0
 ^WARNING: --solidity-path-coverage: unit 'sol:@C@Ret@F@j_void_require_bare_return#219' has 1 exit\(s\) with NO positive evidence of a normal exit, by cause: \(1\) 0 .*\(2\) 1 at END_FUNCTION having SKIPPED this unit's epilogue .*\(3\) 0
-^WARNING: --solidity-path-coverage: unit 'sol:@C@Ret@F@k_tuple_fall_with_revert#240' has 1 exit\(s\) with NO positive evidence of a normal exit, by cause: \(1\) 0 .*\(2\) 1 at END_FUNCTION having SKIPPED this unit's epilogue .*\(3\) 0
 ^Complete Paths : 42$
-^Path Exits: normal 23, revert 14, undetermined 5$
+^Path Exits: normal 26, revert 14, undetermined 2$
 ^VERIFICATION FAILED$
