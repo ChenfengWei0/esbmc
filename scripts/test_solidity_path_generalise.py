@@ -28,7 +28,8 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       empty_coords, shrink_target, is_env,
-                                      round_failure_reason)
+                                      round_failure_reason, boxes_intersect,
+                                      certified_overlap)
 
 FAILURES = []
 
@@ -218,6 +219,42 @@ OK_ROUND = ("--path-cov-outer-box: 12 of 12 ladder probe(s) reached the solver\n
             "--path-cov-outer-box: path enc=7 depth=2 OUTER box "
             "(D_path is CONTAINED in it): a in [0, 5]\n")
 check("clean-round-has-no-excuse", round_failure_reason(OK_ROUND), None)
+
+
+
+# --- two certified regions may never intersect ---
+# The positive fixture is the ACTUAL output that exposed the always-green gate:
+# enc=2 and enc=7 were both reported certified over a in [0, 5]. A human noticed
+# the contradiction; this is the code noticing it instead.
+GREEN_GATE_OUTPUT = {
+    2: {"a": (0, 5), "state.s": (0, BIG)},
+    7: {"a": (0, 5), "state.s": (0, BIG)},
+}
+check("the-bug-that-happened-is-caught",
+      certified_overlap(GREEN_GATE_OUTPUT), [(2, 7)])
+
+# The negative control is the real certified output from the payable contract:
+# disjoint on `a`, and together the whole type. It must NOT fire.
+REAL_PARTITION = {
+    2: {"a": (6, BIG), "state.s": (0, BIG)},
+    3: {"a": (0, 5), "state.s": (0, BIG)},
+}
+check("a-real-partition-does-not-fire", certified_overlap(REAL_PARTITION), [])
+
+# One disjoint coordinate separates two boxes even when every other overlaps --
+# a box is a conjunction.
+check("one-disjoint-coord-separates",
+      boxes_intersect({"a": (0, 5), "b": (0, BIG)},
+                      {"a": (6, BIG), "b": (0, BIG)}), False)
+check("touching-at-one-point-intersects",
+      boxes_intersect({"a": (0, 5)}, {"a": (5, 9)}), True)
+# A coordinate constrained in one box and absent from the other is
+# unconstrained there, so it cannot separate them.
+check("absent-coord-does-not-separate",
+      boxes_intersect({"a": (0, 5), "b": (7, 9)}, {"a": (0, 5)}), True)
+check("three-way-overlap-lists-all-pairs",
+      certified_overlap({1: {"a": (0, 9)}, 2: {"a": (0, 9)}, 3: {"a": (0, 9)}}),
+      [(1, 2), (1, 3), (2, 3)])
 
 
 if FAILURES:

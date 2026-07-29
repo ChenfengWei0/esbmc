@@ -410,6 +410,52 @@ def verdict(log):
     return seen
 
 
+def boxes_intersect(a, b):
+    """Do two boxes share at least one point?
+
+    Two boxes intersect iff they overlap on EVERY coordinate: a box is a
+    conjunction, so one disjoint coordinate separates them entirely. A
+    coordinate present in one box and absent from the other is unconstrained
+    there, hence overlapping on it.
+    """
+    for n, (lo, hi) in a.items():
+        if n not in b:
+            continue
+        blo, bhi = b[n]
+        if hi < blo or bhi < lo:
+            return False
+    return True
+
+
+def certified_overlap(ok):
+    """Pairs of CERTIFIED regions that intersect. Must always be empty.
+
+    Path domains partition the input space, so two distinct paths cannot both
+    be certified over boxes sharing a point: an input in the intersection would
+    have to walk both. A non-empty result is therefore not "imprecision", it is
+    proof that something upstream is wrong.
+
+    This exists because that is exactly how the unconditionally-green gate was
+    caught, and it was caught BY EYE. The first output after the wiring was
+    fixed listed enc=2 and enc=7 with the same box `a in [0, 5]`, which
+    contradicts the partition proposition on its face; re-running each
+    certification query by hand then returned FAILED for both. A human noticed a
+    contradiction that the code could have noticed itself.
+
+    The general lesson, worth more than this function: the propositions this
+    method rests on -- domains are disjoint, a region only ever narrows, F+I+U
+    equals the path count -- are not only paper material. They are executable
+    consistency checks, and the cheap ones belong in the loop.
+    """
+    bad = []
+    encs = sorted(ok)
+    for i, e1 in enumerate(encs):
+        for e2 in encs[i + 1:]:
+            if boxes_intersect(ok[e1], ok[e2]):
+                bad.append((e1, e2))
+    return bad
+
+
 def round_failure_reason(log):
     """Why an outer-box round measured NOTHING, or None if it ran.
 
@@ -750,6 +796,23 @@ def main():
             box = nb
         else:
             failed[enc] = "shrink round budget exhausted"
+
+    # HARD CHECK, not a warning. Two certified regions that share a point mean
+    # an input would have to walk two different paths. Reporting them and
+    # carrying on would be shipping a contradiction.
+    overlap = certified_overlap(ok)
+    if overlap:
+        print("\n=== INVARIANT VIOLATED: certified regions intersect ===")
+        for e1, e2 in overlap:
+            print(f"  enc={e1} and enc={e2} share at least one point:")
+            print(f"    enc={e1}: {ok[e1]}")
+            print(f"    enc={e2}: {ok[e2]}")
+        print("Path domains partition the input space, so this cannot be true "
+              "of any correct output. Refusing to report these as certified. "
+              "This is the check that would have caught the certification gate "
+              "returning true on every input -- that was spotted by eye, from "
+              "exactly this symptom.")
+        return 1
 
     print("\n=== CERTIFIED REGIONS ===")
     for enc, box in sorted(ok.items()):
