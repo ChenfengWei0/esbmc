@@ -289,6 +289,71 @@ def geometric_values(limit):
     return sorted(set(vals))
 
 
+def level0_candidates(paths, coords):
+    """LEVEL 0. Per coordinate, the values its siblings' counterexamples take.
+
+    The five-level descent is single point -> small set -> interval, and this
+    driver started at the interval. On a coordinate whose real constraint is an
+    EQUALITY that is not a cheap start, it is the wrong shape: measured, the
+    witness cut on `state.FACTORY` degenerated into round-after-round halving
+    (292300...595 -> 429496731 -> 214748363 -> 107374179 -> 53687087 ->
+    26843535 -> 13421759), and reaching a point that way needs about 160 rounds
+    on 2^160.
+
+    The candidate costs NOTHING to obtain, which is proposition 9: take the
+    value the SIBLING'S OWN counterexample has on that coordinate. No extra
+    query, no catalogue of constants -- and no catalogue matters, because a
+    catalogue would be the third red line (values invented rather than derived
+    from the model).
+
+    Nor does it need a new query. The outer-box batch already emits one probe
+    per DIRECTION, so a candidate list holding just v asks `c <= v` and
+    `c >= v`, whose conjunction is `c == v`. Measured on a two-path unit whose
+    revert sibling's projection is a single point: both probes hold for that
+    path and the upper probe is refuted for the other, in one batch.
+
+    SCOPE. This is `coordinate == constant` only. `coordinate A == coordinate B`
+    is a cross-coordinate relation; it changes definition 6 (a region is a
+    PRODUCT of per-coordinate sets) and lands on proposition 11, so it is an
+    open method-layer item and is deliberately not attempted here.
+    """
+    out = {}
+    for c in coords:
+        vals = sorted({ce[c] for _, _, ce in paths if c in ce})
+        if vals:
+            out[c] = vals
+    return out
+
+
+def single_point_coords(box):
+    """Coordinates this path's box has collapsed to one value."""
+    return sorted(n for n, (lo, hi) in box.items() if lo == hi)
+
+
+def equality_coords(boxes, coords, expected_paths):
+    """Coordinates that came back a single point for EVERY witnessed path.
+
+    Only these may skip the geometric ladder. The condition is deliberately the
+    strong one: the batch lays one candidate list per coordinate for all paths
+    at once, so a coordinate still needing a range for even one path still needs
+    the ladder. A coordinate whose sibling is a point but whose own domain is
+    everything-but-that-point is NOT equality-type -- that path needs a range,
+    and what it actually needs is a punched interval, which this representation
+    does not have.
+
+    A path that produced no box at all is NOT evidence of anything; requiring
+    every expected path to be present keeps "we did not measure it" from
+    reading as "it is a point". Same rule as everywhere else in this file.
+    """
+    if len(boxes) < expected_paths or not boxes:
+        return []
+    out = []
+    for c in coords:
+        if all(c in b and b[c][0] == b[c][1] for b in boxes.values()):
+            out.append(c)
+    return sorted(out)
+
+
 BOX_RE = re.compile(
     r"path enc=(\d+) depth=\d+ OUTER box \(D_path is CONTAINED in it\): (.*)")
 BRACKET_RE = re.compile(r"path enc=(\d+) BRACKET \(refine[^)]*\): (.*)")
@@ -331,11 +396,24 @@ def brackets_for(coord, brackets):
 
 def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
                 max_tx, timeout, cwd, spans=None, geometric=False,
-                ast=None, focus=None, memlimit="8g"):
-    """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned)."""
+                ast=None, focus=None, memlimit="8g", values_by_coord=None):
+    """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned).
+
+    `values_by_coord` overrides the ladder for the coordinates it names, which
+    is how level 0 is expressed: an equality-type coordinate gets the handful of
+    sibling counterexample values instead of 258 powers of two. Everything else
+    about the round -- the fixed per-path assumption, the batch, the
+    subtraction, the region computation -- is untouched, which is the point.
+    The five-level descent says level 2 keeps its mechanism verbatim.
+    """
+    values_by_coord = values_by_coord or {}
     spec_coords = []
     for c in coords:
-        if geometric:
+        if c in values_by_coord:
+            spec_coords.append(
+                {"name": c,
+                 "values": [str(v) for v in values_by_coord[c]]})
+        elif geometric:
             spec_coords.append(
                 {"name": c, "values": [str(v)
                                        for v in geometric_values(UINT256_MAX)]})
@@ -774,6 +852,21 @@ def main():
                          "construction) and dropping it leaves the guard "
                          "unconstrained, which refuses certification. Such a "
                          "coordinate has to be probed.")
+    ap.add_argument("--level0", action="store_true",
+                    help="try LEVEL 0 first: one batch whose candidate list "
+                         "per coordinate is the set of values the siblings' "
+                         "own counterexamples take there (proposition 9 -- no "
+                         "extra query, no catalogue of constants). A "
+                         "coordinate that comes back a single point for EVERY "
+                         "witnessed path is equality-type and skips the "
+                         "geometric ladder; everything else descends to level "
+                         "2 with its mechanism unchanged.\n"
+                         "Off by default, so every existing number is "
+                         "reproduced verbatim without it.\n"
+                         "SCOPE: `coordinate == constant` only. `coordinate A "
+                         "== coordinate B` is a cross-coordinate relation, "
+                         "changes definition 6, and is an open method-layer "
+                         "item -- it is not attempted here.")
     ap.add_argument("--skip-bracket", action="store_true",
                     help="skip round 1 and start refining from each "
                          "coordinate's full type range. This is NOT a new "
@@ -891,6 +984,44 @@ def main():
     print(f"[coords] {', '.join(coords)}"
           + (f"   [pinned: {pins}]" if pins else ""))
 
+    # ---- LEVEL 0: is the real constraint an EQUALITY? ----
+    #
+    # Runs BEFORE the geometric bracket because the descent is single point ->
+    # small set -> interval, and starting at the interval is a skipped level,
+    # not a cheap start. Costs one batch whose candidate list is at most one
+    # value per path per coordinate (proposition 9: the candidate is the
+    # sibling's own counterexample value), against 258 per coordinate for the
+    # bracket.
+    eq_values = {}
+    if args.level0:
+        cand = level0_candidates(paths, coords)
+        l0_boxes, _, _, _, l0_failure = outer_round(
+            args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
+            args.probes, args.max_tx, args.timeout, cwd, values_by_coord=cand,
+            ast=args.ast, focus=focus, memlimit=args.memlimit)
+        if l0_failure:
+            # Not "no equality coordinates". Say which it was, here, where it is
+            # known -- the same rule the rest of this file follows.
+            print(f"[level0] round measured NOTHING — {l0_failure}; "
+                  f"descending to the geometric ladder for every coordinate")
+        else:
+            eq = equality_coords(l0_boxes, coords, len(paths))
+            for enc, b in sorted(l0_boxes.items()):
+                pts = single_point_coords(b)
+                print(f"[level0] enc={enc} single-point on: "
+                      + (", ".join(f"{n}=={b[n][0]}" for n in pts)
+                         if pts else "(none)"))
+            if eq:
+                eq_values = {c: cand[c] for c in eq if c in cand}
+                print(f"[level0] EQUALITY-TYPE (a single point for all "
+                      f"{len(paths)} path(s)), so these skip the geometric "
+                      f"ladder: {', '.join(eq)}")
+            else:
+                print("[level0] no coordinate was a single point for every "
+                      "path; every coordinate descends to level 2. Note this "
+                      "is NOT the same as 'no path has a point projection' -- "
+                      "the per-path results are printed above")
+
     # Round 1: geometric bracket.
     if args.skip_bracket:
         brackets, regions, warned, round_failure = {}, {}, set(), None
@@ -901,7 +1032,8 @@ def main():
         _, brackets, regions, warned, round_failure = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
-            ast=args.ast, focus=focus, memlimit=args.memlimit)
+            ast=args.ast, focus=focus, memlimit=args.memlimit,
+            values_by_coord=eq_values)
         print(f"[bracket] {brackets}")
     # MEASURED, and it is the binding cost on real input: the geometric round
     # ignores --probes entirely (see geometric_values) and lays down one probe
@@ -923,7 +1055,8 @@ def main():
         _, brackets, regions, warned, round_failure = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
-            ast=args.ast, focus=focus, memlimit=args.memlimit)
+            ast=args.ast, focus=focus, memlimit=args.memlimit,
+            values_by_coord=eq_values)
         last_failure = round_failure or last_failure
         print(f"[refine {r+1}] spans={spans} regions={regions}"
               + (f" UNSEPARATED={sorted(warned)}" if warned else ""))

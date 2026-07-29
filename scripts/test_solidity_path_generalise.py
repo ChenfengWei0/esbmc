@@ -30,7 +30,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       empty_coords, shrink_target, is_env,
                                       round_failure_reason, boxes_intersect,
                                       certified_overlap, divergence_text,
-                                      extraction_caveats)
+                                      extraction_caveats, level0_candidates,
+                                      single_point_coords, equality_coords)
 
 FAILURES = []
 
@@ -401,6 +402,82 @@ check("asym-with-diff-still-names-the-difference",
       "a (path=4, witness=9)" in d6, True)
 check("asym-with-diff-still-flags-coverage",
       "only in this path's: c" in d6, True)
+
+
+# --- LEVEL 0: the candidate comes from the sibling, and "point" must be able
+#     to come back false ---
+#
+# The descent is single point -> small set -> interval and this driver started
+# at the interval, which on an equality-constrained coordinate means bisecting
+# toward a point: measured on state.FACTORY, round after round of halving
+# (2923...595 -> 429496731 -> 214748363 -> 107374179 -> 53687087 -> 26843535 ->
+# 13421759), about 160 rounds away from the answer on 2^160.
+
+ADDR_MAX = (1 << 160) - 1
+
+# (1) PROVENANCE. The candidate must be the SIBLING'S OWN counterexample value
+# (proposition 9), never a constant this file knows about. The observation that
+# can flip: change the counterexample, and the candidate has to change with it.
+# Without this check a hardcoded {0, 1, MAX} table would pass every other test
+# here, and that table is the third red line.
+P_A = [(2, 1, {"to": 0, "amt": 7}), (3, 1, {"to": ADDR_MAX, "amt": 7})]
+P_B = [(2, 1, {"to": 255, "amt": 7}), (3, 1, {"to": ADDR_MAX, "amt": 7})]
+check("candidates-come-from-the-counterexamples",
+      level0_candidates(P_A, ["to", "amt"]),
+      {"to": [0, ADDR_MAX], "amt": [7]})
+check("candidates-follow-a-changed-counterexample",
+      level0_candidates(P_B, ["to", "amt"])["to"], [255, ADDR_MAX])
+check("candidates-are-deduplicated", level0_candidates(P_A, ["amt"]),
+      {"amt": [7]})
+# A coordinate absent from every payload yields no candidate list at all rather
+# than an empty one, so it falls through to the ladder instead of being probed
+# with nothing.
+check("absent-coordinate-gets-no-candidate-list",
+      "nope" in level0_candidates(P_A, ["to", "nope"]), False)
+
+# (2) POSITIVE. A box that came back [v, v] is the single-point case.
+check("point-box-is-single-point",
+      single_point_coords({"to": (255, 255), "amt": (0, 99)}), ["to"])
+check("range-box-is-not-single-point",
+      single_point_coords({"amt": (0, 99)}), [])
+
+# (3) MUST FLIP -- the projection is NOT a single point.
+#     enc=3's domain is every address except one, so its box on `to` is the
+#     whole type. `to` is therefore NOT equality-type and must still go through
+#     the ladder. Building only the positive case would give a rule that files
+#     anything into the hole, which is the failure this pair exists to prevent.
+BOXES_MIXED = {2: {"to": (255, 255), "amt": (0, 99)},
+               3: {"to": (0, ADDR_MAX), "amt": (0, 99)}}
+check("mixed-projection-is-not-equality-type",
+      equality_coords(BOXES_MIXED, ["to", "amt"], 2), [])
+
+# ...and the positive control on the same shape: when EVERY path pins it,
+# it is equality-type. This is the state.FACTORY case -- a validation check that
+# forces one address on every path.
+BOXES_ALL_POINTS = {2: {"to": (255, 255), "amt": (0, 99)},
+                    3: {"to": (255, 255), "amt": (0, 99)}}
+check("all-paths-pinned-is-equality-type",
+      equality_coords(BOXES_ALL_POINTS, ["to", "amt"], 2), ["to"])
+# Two paths pinned to DIFFERENT points is still equality-type: each path's own
+# projection is a point, which is exactly what the batch needs in order to lay
+# candidates instead of a ladder.
+check("different-points-per-path-still-equality-type",
+      equality_coords({2: {"to": (1, 1)}, 3: {"to": (2, 2)}}, ["to"], 2),
+      ["to"])
+
+# (4) MUST FLIP -- missing measurements are not evidence.
+#     If a path produced no box, "every path is a point" is a statement about
+#     the paths that happened to report. Treating that as equality-type would
+#     skip the ladder on the strength of a measurement that was never made --
+#     the "saw nothing, therefore not X" inference this project has got wrong
+#     five times.
+check("a-missing-path-blocks-the-conclusion",
+      equality_coords({2: {"to": (255, 255)}}, ["to"], 2), [])
+check("no-boxes-at-all-is-not-equality-type",
+      equality_coords({}, ["to"], 2), [])
+# A coordinate missing from one path's box is unconstrained there, not a point.
+check("coordinate-absent-from-one-box-blocks-it",
+      equality_coords({2: {"to": (5, 5)}, 3: {"amt": (0, 9)}}, ["to"], 2), [])
 
 
 if FAILURES:
