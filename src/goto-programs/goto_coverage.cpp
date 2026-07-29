@@ -4744,6 +4744,63 @@ void goto_coveraget::solidity_path_coverage()
       //    what was asked for, and the run would still say SUCCESSFUL.
       const symbolt *fsym = ns.lookup(f_it->first);
       size_t bounds_emitted = 0;
+
+      // ---- AN EMPTY BOX IS NOT A CERTIFICATE ----
+      //
+      // `lo > hi` makes the entry assumption `lo <= c <= hi` UNSATISFIABLE. Then
+      // nothing executes, every exit assert holds because it is never reached,
+      // and the query answers VERIFICATION SUCCESSFUL. Measured on this very
+      // fixture before this check existed: `a in [100, 11]` certified cleanly,
+      // exit 0, with the box printed beside it.
+      //
+      // That is the SECOND route to a false certificate found in one night — the
+      // first was a driver reading the verdict as a substring of an ESBMC
+      // warning — and it is the worse-looking one, because the output is not
+      // merely green: it is a certificate naming a region that contains no
+      // inputs at all. The driver already refuses these, but the only
+      // reliability gate this method has should not depend on its caller
+      // guarding it, and that caller's own gate has already failed once.
+      //
+      // The refusal belongs BEFORE the query is emitted, not where its answer is
+      // read. An unsatisfiable assumption does not make the question hard, it
+      // makes the question meaningless; there is nothing to interpret afterwards.
+      {
+        std::set<std::string> box_names;
+        for (const auto &b : certify_box)
+        {
+          std::string bad;
+          if (string2integer(b.hi) < string2integer(b.lo))
+            bad = "the box is EMPTY on this coordinate (lo=" + b.lo +
+                  " > hi=" + b.hi +
+                  "), so the entry assumption is unsatisfiable and every exit "
+                  "assert would hold for want of an execution";
+          // Closes the obvious hole in the check above: bounding one name twice
+          // can intersect to nothing while each bound is individually fine, and
+          // a per-bound test would wave both through. Duplicates carry no
+          // meaning in this spec anyway, so refusing them costs nothing and
+          // leaves no case where "not empty by this test" and "not empty" come
+          // apart.
+          else if (!box_names.insert(b.name).second)
+            bad = "the coordinate is bounded TWICE in this spec; two bounds on "
+                  "one name can intersect to an empty box while each is "
+                  "individually well-formed, which the emptiness test above "
+                  "would not see";
+          if (!bad.empty())
+          {
+            log_error(
+              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on coordinate "
+              "'{}': {}. An unsatisfiable assumption certifies VACUOUSLY: the "
+              "run would print VERIFICATION SUCCESSFUL next to a box holding no "
+              "inputs, which is a false certificate rather than a weak one. "
+              "Certification is not attempted",
+              uid,
+              b.name,
+              bad);
+            exit(1);
+          }
+        }
+      }
+
       for (const auto &b : certify_box)
       {
         expr2tc bs;
