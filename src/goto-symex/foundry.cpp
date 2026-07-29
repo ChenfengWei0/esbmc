@@ -2814,6 +2814,54 @@ void foundry_generator::generate() const
         "Foundry: {} call(s) emitted bare (exit census confirmed normal; a "
         "revert fails the test)",
         asserted_normal);
+    // Calls carrying an argument whose CONTENT the reconstruction cannot
+    // recover. REPORTED ONLY -- nothing is refused on this basis yet, because
+    // the size of the population is what decides whether recovering it is on
+    // the critical path.
+    //
+    // Two classes, kept apart because they fail differently:
+    //   T[]     no recovery at all. `default_sol_literal` renders
+    //           `new T[](4)` with zero elements, and the justification written
+    //           beside it covers LENGTH-dependent branches only. Measured on
+    //           1inch aqua: `ship` took four zero addresses, which alias to one
+    //           storage slot, so the emitted call reverts on a path the census
+    //           called normal -- the emitted input was simply not the
+    //           counterexample's input.
+    //   bytes / string   length is reconstructed, content is filler. Fine for a
+    //           length-dependent branch, not for a content-dependent one.
+    //
+    // The distinction that matters for the eventual rule is NOT this flag: a
+    // defaulted argument that the path never reads is perfectly faithful, and
+    // the reconstruction cannot presently tell "sliced because irrelevant" from
+    // "relevant but unrecoverable". So the rule will have to hang on whether
+    // the TYPE has a recovery path, which is what is counted here.
+    size_t calls_unrecoverable_arg = 0, calls_filler_arg = 0;
+    for (const auto &tc : cs)
+      for (const auto &call : tc)
+      {
+        bool unrec = false, filler = false;
+        for (const auto &a : call.args)
+        {
+          if (has_prefix(a.sol_type, "ARRAY:"))
+            unrec = true;
+          else if (a.sol_type == "BYTES_DYN" || a.sol_type == "STRING")
+            filler = true;
+        }
+        if (unrec)
+          ++calls_unrecoverable_arg;
+        if (filler)
+          ++calls_filler_arg;
+      }
+    if (calls_unrecoverable_arg)
+      log_status(
+        "Foundry: {} call(s) carry an array argument whose ELEMENTS are not "
+        "recovered (rendered as a zero-filled `new T[](N)`)",
+        calls_unrecoverable_arg);
+    if (calls_filler_arg)
+      log_status(
+        "Foundry: {} call(s) carry a bytes/string argument whose CONTENT is "
+        "filler (length reconstructed, bytes are not)",
+        calls_filler_arg);
     if (revert_tolerant)
       log_status(
         "Foundry: {} call(s) wrapped in revert-tolerant try/catch "
