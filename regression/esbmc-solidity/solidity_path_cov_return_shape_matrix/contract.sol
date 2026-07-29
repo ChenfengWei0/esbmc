@@ -109,4 +109,34 @@ contract Ret {
         }
         r = 9;
     }
+
+    // (a)(ii)+(v) -- a void unit with BOTH a reverting path and a path that
+    // leaves through an erased bare `return;`.
+    //
+    // This cell exists to be refutable. The remaining entry condition is exits
+    // that arrive at END_FUNCTION with no witness, and the cheapest repair --
+    // "a unit that has an epilogue and did not roll back may be called normal"
+    // -- is exactly the lazy default the criteria forbid taking on reasoning
+    // alone: it would push R0 assertions onto reverting paths, emitting a WRONG
+    // assertion rather than one fewer. So the repair is only admissible if THIS
+    // unit still reports its `require` path as revert afterwards. One cell, two
+    // outcomes, and the wrong repair is visible rather than plausible.
+    function j_void_require_bare_return(uint256 x) external {
+        require(x > 0, "zero");
+        s = 1;
+        if (x > 1) {
+            return;
+        }
+        s = 2;
+    }
+
+    // (d)(iii)+(v) -- the same question for the tuple shape: a revert path
+    // beside a fall-off path that has no RETURN instruction at all.
+    function k_tuple_fall_with_revert(uint256 x)
+        external
+        returns (uint256 r, bool)
+    {
+        require(x > 0, "zero");
+        r = 1;
+    }
 }
