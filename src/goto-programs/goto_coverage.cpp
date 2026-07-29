@@ -3419,6 +3419,34 @@ void goto_coveraget::solidity_path_coverage()
     // symex unwinds each loop independently). codex #3.
     // 5th field: has this partial path already walked over a rollback restore
     // (i.e. it is a require/revert("msg") reverting path)?
+    // ---- WHERE TWO PATHS ACTUALLY DIVERGE ----
+    //
+    // The reach gate reports "the witness agrees with this path's counterexample
+    // on every scalar in the payload", and the question that leaves open is
+    // WHICH quantity separates them. It is not in the payload, so no comparison
+    // of payloads can name it. The decision SITE can: the guard at the site
+    // where two sibling paths diverge is where the quantity is written in
+    // source.
+    //
+    // No new query and no change to the DFS state. `enc` already IS the prefix
+    // identity -- it starts at 1 and each decision appends a bit -- so recording
+    // "the enc value this decision produced -> the site that produced it" is
+    // enough to walk any path's ordered sequence afterwards: its decisions sit
+    // at enc>>(depth-1), enc>>(depth-2), ..., enc. Two paths sharing a prefix
+    // share those keys by construction, so the map cannot be ambiguous.
+    //
+    // Local to the unit, because enc values collide across units.
+    //
+    // Gated, and the gate is the reason this is affordable: only the unit an
+    // outer-box batch is actually targeting records anything. A whole-contract
+    // run would otherwise pay for units like `ship`, which enumerates 2733
+    // paths and is never the one being asked about.
+    std::map<uint64_t, std::string> decision_site;
+    const bool trace_decisions =
+      outer_on && (f_it->first.as_string() == outer_unit ||
+                   f_it->first.as_string().find("@F@" + outer_unit + "#") !=
+                     std::string::npos);
+
     using becntt = std::map<unsigned, unsigned>;
     // Per-site occurrence counter for the content-addressed path id: how many
     // times this partial path has already passed through each decision SITE.
@@ -3902,6 +3930,8 @@ void goto_coveraget::solidity_path_coverage()
             occt occ_taken = occ;
             const uint64_t idh_taken =
               step_id(idh, occ_taken, dsite, 0, /*polarity=*/true);
+            if (trace_decisions)
+              decision_site[enc * 2 + 1] = dsite + " [guard TRUE]";
             stack.push_back(
               {pc->get_target(),
                enc * 2 + 1,
@@ -3914,6 +3944,8 @@ void goto_coveraget::solidity_path_coverage()
           }
           // guard-false/fallthrough successor -> next (never a back-edge).
           idh = step_id(idh, occ, dsite, 0, /*polarity=*/false);
+          if (trace_decisions)
+            decision_site[enc * 2 + 0] = dsite + " [guard FALSE]";
           enc = enc * 2 + 0;
           ++depth;
           pc = std::next(pc);
@@ -3971,6 +4003,10 @@ void goto_coveraget::solidity_path_coverage()
                 const bool bit = ((mask >> j) & 1) != 0;
                 e = e * 2 + (bit ? 1 : 0);
                 h = step_id(h, o, rsite, (unsigned)j, bit);
+                if (trace_decisions)
+                  decision_site[e] = rsite + " (RETURN operand " +
+                                     std::to_string(j) + ") [" +
+                                     (bit ? "TRUE" : "FALSE") + "]";
                 ++d;
               }
               if (overflowed)
@@ -4041,6 +4077,10 @@ void goto_coveraget::solidity_path_coverage()
                 const bool bit = ((mask >> j) & 1) != 0;
                 e = e * 2 + (bit ? 1 : 0);
                 h = step_id(h, o, asite, (unsigned)j, bit);
+                if (trace_decisions)
+                  decision_site[e] = asite + " (short-circuit operand " +
+                                     std::to_string(j) + ") [" +
+                                     (bit ? "TRUE" : "FALSE") + "]";
                 ++d;
               }
               if (overflowed)
@@ -4710,6 +4750,37 @@ void goto_coveraget::solidity_path_coverage()
             penc);
           continue;
         }
+        // The ordered decision sequence, walked out of `enc`. Printed per path
+        // so that two paths the payload cannot separate can be compared HERE:
+        // their sequences agree up to the decision that splits them, and the
+        // guard at that source line is where the separating quantity is written.
+        // That is the one place it can be named when it is absent from the
+        // counterexample — which, measured, is every reach-gate path so far.
+        if (trace_decisions && pdepth > 0)
+        {
+          std::string seq;
+          for (uint64_t k = 0; k < pdepth; ++k)
+          {
+            const uint64_t key = penc >> (pdepth - 1 - k);
+            auto dit = decision_site.find(key);
+            seq += "\n    #" + std::to_string(k + 1) + " ";
+            // A missing key is reported, not skipped. Silence here would read
+            // as "this path has fewer decisions", which is a claim about the
+            // path rather than about the recording.
+            seq += dit == decision_site.end()
+                     ? "<not recorded — enc key " + std::to_string(key) + ">"
+                     : dit->second;
+          }
+          log_status(
+            "--path-cov-outer-box: path enc={} depth={} DECISION SEQUENCE (in "
+            "order; two paths diverge at the first index where these differ, "
+            "and the guard on that line names the quantity that separates "
+            "them):{}",
+            penc,
+            pdepth,
+            seq);
+        }
+
         // `tr != enc || cnt != depth || !pins || <bound>` — the implication,
         // written out. The pins join the ANTECEDENT: the bound is then asserted
         // only about the slice through them, which is exactly what makes a
