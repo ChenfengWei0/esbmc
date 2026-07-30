@@ -1618,6 +1618,39 @@ def main():
                 print(f"[level0] enc={enc} single-point on: "
                       + (", ".join(f"{n}=={b[n][0]}" for n in pts)
                          if pts else "(none)"))
+                # ⚠ A ONE-VALUE LADDER CANNOT TELL A POINT DOMAIN FROM AN
+                # EMPTY ONE, and that is a false-certification route, not a
+                # presentation issue.
+                #
+                # Level 0 lays ONE candidate v per coordinate and asks `c <= v`
+                # and `c >= v`. Both hold when the domain really is {v} -- and
+                # both ALSO hold, for EVERY v, when the antecedent
+                # `tr == enc && cnt == depth && pins` is UNSATISFIABLE, because
+                # then every probe holds vacuously. From one value the two are
+                # indistinguishable, and the vacuous case renders as a tight,
+                # confident-looking point box.
+                #
+                # MEASURED on EscrowSrc.cancel with the environment pinned:
+                # enc=2 passes BOTH directions at v=5 (box `[5, 5]`) while its
+                # reachable sibling enc=6 is refuted on both at the same value.
+                # enc=2 is excluded from the slice by the pins; the "point" was
+                # never a measurement of anything.
+                #
+                # The geometric/linear ladders catch it for free -- with two
+                # values v1 < v2 both holding, u <= v1 < v2 <= l inverts the
+                # interval and the empty-region guard fires. Only a one-value
+                # ladder is blind, so the caution is raised exactly here.
+                if pts and len(pts) == len(coords):
+                    print(f"[level0] ⚠ enc={enc} is a single point on EVERY "
+                          f"coordinate. From a ONE-VALUE ladder that is "
+                          f"indistinguishable from this path having NO inputs "
+                          f"at all under the current pins: an unsatisfiable "
+                          f"antecedent makes every probe hold vacuously, in "
+                          f"both directions, at any value. Do NOT read it as a "
+                          f"measured point domain until a second probe value "
+                          f"has been tried -- if both directions still hold "
+                          f"there, the interval inverts and the path is "
+                          f"excluded from this slice")
             if eq:
                 eq_values = {c: cand[c] for c in eq if c in cand}
                 print(f"[level0] EQUALITY-TYPE (a single point for all "
