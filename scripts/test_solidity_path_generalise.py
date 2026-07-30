@@ -924,6 +924,30 @@ check("the-same-bracket-is-informative-on-a-wider-type",
       brackets_for("a", {14: f"a upper in (0, {ADDR_MAX_}]"}, (0, BIG)),
       (0, ADDR_MAX_))
 
+# --- upper and lower brackets: WHY THEY ARE NOT SEPARATED ---
+#
+# A design note kept where the code is, because separating them was tried, is
+# WRONG, and the reasoning is easy to re-derive incorrectly.
+#
+#   `upper in (a, b]`  the true UPPER bound lies in (a, b]
+#   `lower in [c, d)`  the true LOWER bound lies in [c, d)
+#
+# It looks as though an upper bracket should constrain only `hi` and a lower one
+# only `lo`. That is right if the question is WHAT THE DOMAIN IS. It is wrong
+# here, because the refine round asks WHERE TO PROBE NEXT: the boundary sits
+# INSIDE the bracket, so the next ladder must be laid across it. The union of the
+# two intervals is the region containing both boundaries, which is exactly what a
+# span is for.
+#
+# Implemented, tested, and reverted: separating them made an upper-only bracket
+# return (type_lo, b), a span that no longer covers where the upper boundary
+# actually is -- so the next round would probe everywhere except the interesting
+# part. The must-flip pair that exposed this is the one that made the separated
+# version's own tests pass while the production span got worse.
+#
+# The real cause of the observed (0, 2^256-1) span is the DEGENERATE
+# contribution filtered just above, not the folding.
+
 
 if FAILURES:
     print("FAILED:")
