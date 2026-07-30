@@ -950,6 +950,31 @@ public:
   static bool path_cov_assert_mode;
   static std::vector<assert_candidatet> path_cov_assert_candidates;
 
+  // ---- THE NON-VACUITY WITNESS, and why the ladder is worthless without it --
+  //
+  // The region is ASSUMED at unit entry. Every structural gate on it is
+  // SYNTACTIC -- lo > hi, a name bounded twice, holes that empty the interval,
+  // a decimal outside the coordinate's type. None of them can see that the
+  // region is unsatisfiable SEMANTICALLY, and that is the common case rather
+  // than an exotic one: contract state is not havoc'd at `--solidity-max-tx 1`,
+  // so `state.x in [0,0]` against a constructor that assigns 7 is well-formed,
+  // in-type, non-empty, and admits no execution at all. An unsatisfiable
+  // assumption makes EVERY candidate hold for want of an execution, and the
+  // ladder then prints a full set of certified post-state assertions about a
+  // region that contains nothing.
+  //
+  // So one extra claim is emitted at pi's OWN exit carrying only the antecedent,
+  // `tr != enc || cnt != depth`. It is REFUTED exactly when some execution
+  // admitted by the region walks THIS path -- which is the property the whole
+  // ladder is conditioned on. Placing it at ENTRY instead would only witness
+  // that the unit is reachable, which is a strictly weaker statement and would
+  // pass on a region that reaches the unit but never this path.
+  //
+  // Kept out of `path_cov_assert_candidates` on purpose: it is a precondition
+  // of the table, not a row of it, and counting it would make every ladder
+  // summary read one REFUTED too many.
+  static std::pair<std::string, std::string> path_cov_assert_nonvacuous_key;
+
   // Print the per-candidate verdict table. Called after solving, INSTEAD of the
   // [Coverage] block: in this mode a claim that HOLDS is the wanted outcome, so
   // the coverage counters would report a completely successful ladder as 0%.

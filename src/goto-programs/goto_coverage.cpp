@@ -83,6 +83,8 @@ std::map<std::string, std::string> goto_coveraget::path_cov_refused_coords;
 bool goto_coveraget::path_cov_assert_mode = false;
 std::vector<goto_coveraget::assert_candidatet>
   goto_coveraget::path_cov_assert_candidates;
+std::pair<std::string, std::string>
+  goto_coveraget::path_cov_assert_nonvacuous_key;
 std::string goto_coveraget::path_cov_fingerprint;
 std::atomic<bool> goto_coveraget::branch_cov_active{false};
 std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
@@ -1308,6 +1310,56 @@ void goto_coveraget::report_path_cov_assertions()
       "asserted on",
       path_cov_refused_coords.size(),
       refused);
+  }
+
+  // ---- NON-VACUITY FIRST, and it is a HARD FAILURE ----
+  //
+  // Read before any candidate is printed, because if it did not hold there is
+  // no table -- every row below would be a statement about a region that admits
+  // no execution, and each row would read exactly like a certified one.
+  {
+    const std::string nv =
+      path_cov_assert_nonvacuous_key.first.empty()
+        ? std::string()
+        : path_cov_assert_nonvacuous_key.first + "\t" +
+            path_cov_assert_nonvacuous_key.second;
+    char nvv = '?';
+    if (!nv.empty())
+    {
+      std::lock_guard<std::mutex> lock(claim_outcome_mutex);
+      auto it = claim_outcome.find(nv);
+      if (it != claim_outcome.end())
+        nvv = it->second;
+    }
+    if (nvv != 'F')
+    {
+      log_error(
+        "--path-cov-assert: THE REGION IS VACUOUS -- no execution it admits "
+        "walks path enc={} of this unit ({}). Every candidate below would hold "
+        "FOR WANT OF AN EXECUTION, and the table would be indistinguishable "
+        "from a fully certified ladder. The four structural gates on the region "
+        "are SYNTACTIC (lo>hi, a name bounded twice, holes emptying the "
+        "interval, a decimal outside the type) and none of them can see this: "
+        "contract state is NOT havoc'd at this transaction bound, so a region "
+        "naming an entry state the constructor never produces is well-formed, "
+        "in-type, non-empty and admits nothing. No verdict table is printed",
+        path_cov_assert_candidates.empty()
+          ? 0
+          : path_cov_assert_candidates.front().enc,
+        nvv == 'P' ? "the antecedent held on every execution, i.e. no admitted "
+                     "input reaches this path"
+                   : (nvv == '?' ? "the witness claim never reached the solver"
+                                 : "the solver returned unknown for the witness "
+                                   "claim"));
+      exit(1);
+    }
+    log_status(
+      "--path-cov-assert: region NON-VACUITY witnessed -- at least one input "
+      "the region admits does walk path enc={}, so the verdicts below are "
+      "statements about executions rather than about an empty region",
+      path_cov_assert_candidates.empty()
+        ? 0
+        : path_cov_assert_candidates.front().enc);
   }
 
   log_status(
@@ -6431,6 +6483,23 @@ void goto_coveraget::solidity_path_coverage()
       const expr2tc not_this_path = or2tc(
         notequal2tc(tr, constant_int2tc(utype, BigInt(assert_enc))),
         notequal2tc(cnt, constant_int2tc(utype, BigInt(assert_depth))));
+
+      // ---- THE NON-VACUITY WITNESS, emitted BEFORE any candidate ----
+      //
+      // Only the antecedent, at pi's own exit. REFUTED means some execution
+      // admitted by the region walks THIS path, which is the property every
+      // candidate below is conditioned on. Anything else means the region is
+      // semantically empty and the whole ladder holds for want of an execution.
+      // See the header for why the syntactic gates cannot see this.
+      {
+        const std::string nv_comment = id2string(f_it->first) +
+                                       ":path:" + std::to_string(assert_enc) +
+                                       "#nonvacuous";
+        const std::string nv_loc = exit_pc->location.as_string();
+        all_claims.insert({nv_comment, nv_loc});
+        path_cov_assert_nonvacuous_key = {nv_comment, nv_loc};
+        insert_assert(goto_program, exit_pc, not_this_path, nv_comment);
+      }
 
       size_t emitted = 0, vars_emitted = 0;
       auto emit_rung = [&](
