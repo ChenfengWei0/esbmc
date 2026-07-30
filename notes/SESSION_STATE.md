@@ -233,3 +233,31 @@ anything.
   or `_results/lcov.info`. The scope input that depended on them is now pinned
   in `notes/coverage/inputs/own_contracts.json`; the native column is carried
   forward and labelled.
+
+## Stage 3 fixtures: 11 written, 1 DECLINED (not missing)
+
+`ctest -R solidity_path_cov_assert` runs 11, all green:
+
+    r1_pair_written / r1_pair_unchanged        the must-flip pair, six rungs, opposite
+    delta_fits / delta_tight / delta_wrapped   the delta rung, three states
+    depth_mismatch_refused                     N3
+    enc_absent_refused                         N2
+    empty_vars_refused                         N1, entry condition (a)
+    zero_candidates_refused                    N1, entry condition (b)
+    refuses_mapping                            the second scan, refusal BY NAME
+    vacuous_region_refused                     the non-vacuity witness
+
+The plan lists a twelfth, `sign_ladder`. IT IS DECLINED, not outstanding.
+
+Its stated purpose is to pin the batch property -- the `ladder summary -- 6
+candidate(s)` line -- which the plan says the must-flip pair does not cover.
+That is not true of the pair as written: `r1_pair_written/test.desc` pins all
+six rungs individually AND pins the summary line with its count. A twelfth
+fixture would therefore assert nothing the eleven do not already assert.
+
+Adding it to reach 12/12 would be the exact thing this session refused in the
+emitter a few commits earlier: a green test that tests nothing, counted as
+emitted and counted as passing, distinguishable from a real one only by reading
+it. The count is not the goal; the coverage of distinct properties is.
+
+Recorded here so a reader finds a DECISION rather than a gap.
