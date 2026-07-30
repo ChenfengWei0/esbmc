@@ -38,7 +38,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       round_accounting,
                                       state_mutability,
                                       unsettable_coords,
-                                      struct_fields)
+                                      struct_fields,
+                                      declared_struct_fields,
+                                      lowering_artifacts)
 
 FAILURES = []
 
@@ -783,6 +785,43 @@ check("empty-mutability-map-excludes-nothing",
 # accidental.
 check("missing-ast-yields-no-mutability", state_mutability("/no/such/ast"), {})
 check("none-ast-yields-no-mutability", state_mutability(None), {})
+
+
+# --- a struct member the SOURCE never declared is not an input ---
+#
+# The struct lowering adds padding members. MEASURED on EscrowSrc's `Immutables`:
+# `immutables.anon_pad$2` was offered as a coordinate alongside the seven real
+# fields. No generated test can set a padding word, so this is the same defect as
+# offering an immutable -- the coordinate list containing something unsettable.
+#
+# Read, not pattern-matched: the check is membership in the set of field names
+# the AST declares, not a guess about `$` or `pad` in the name.
+DECLARED = {"taker", "maker", "amount", "token", "timelocks", "safetyDeposit",
+            "orderHash"}
+COORDS = ["immutables.taker", "immutables.anon_pad$2", "immutables.amount",
+          "state.balance", "msg.sender", "amt"]
+check("undeclared-struct-member-is-an-artifact",
+      sorted(lowering_artifacts(COORDS, DECLARED)), ["immutables.anon_pad$2"])
+# THE MUST-FLIP: real fields survive. Without it the rule could drop every struct
+# coordinate and still look right -- which would undo the change that gave
+# EscrowSrc its coordinates in the first place.
+check("declared-struct-member-survives",
+      "immutables.taker" in lowering_artifacts(COORDS, DECLARED), False)
+# Non-struct coordinates are not even considered: `state.`, the environment
+# namespaces and a bare parameter are settable by construction, and a state
+# variable whose name is absent from every struct must not be dropped by this.
+check("state-coordinate-not-touched",
+      "state.balance" in lowering_artifacts(COORDS, DECLARED), False)
+check("env-coordinate-not-touched",
+      "msg.sender" in lowering_artifacts(COORDS, DECLARED), False)
+check("bare-parameter-not-touched",
+      "amt" in lowering_artifacts(COORDS, DECLARED), False)
+# With NOTHING declared there is nothing to compare against, so everything must
+# survive -- otherwise an unreadable AST would silently empty the coordinate list
+# for a reason unrelated to the contract.
+check("empty-declared-set-drops-nothing", lowering_artifacts(COORDS, set()), {})
+check("missing-ast-declares-nothing",
+      declared_struct_fields("/no/such/ast"), set())
 
 
 if FAILURES:

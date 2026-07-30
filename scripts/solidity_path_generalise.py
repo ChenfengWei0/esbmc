@@ -404,6 +404,70 @@ def state_mutability(ast_path):
     return out
 
 
+def declared_struct_fields(ast_path):
+    """Every field name declared on any struct in the source.
+
+    Same discipline as `state_mutability`: read the fact, do not pattern-match a
+    name. The struct lowering introduces members the source never declared --
+    `anon_pad$2` is one, measured on EscrowSrc's `Immutables` -- and those are
+    not inputs: no generated test can set a padding word, and offering one as a
+    coordinate is the same defect as offering an immutable.
+
+    A NAME-level check, and that limit is stated rather than hidden: a lowering
+    artifact whose name happened to coincide with a real field declared on some
+    OTHER struct would survive. `anon_pad$2` does not, and the alternative --
+    resolving each parameter's struct type through the AST -- is a great deal
+    more machinery for a case nothing has produced.
+
+    Empty when the AST is unreadable, which keeps every coordinate. That is the
+    wrong direction on the merits and is accepted only because it matches the
+    prior behaviour; the exclusion is reported loudly so its absence shows.
+    """
+    if not ast_path or not os.path.exists(ast_path):
+        return set()
+    try:
+        txt = open(ast_path).read()
+        ast = json.loads(txt[txt.index("{"):])
+    except (OSError, ValueError):
+        return set()
+    out = set()
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("nodeType") == "StructDefinition":
+                for m in n.get("members", []) or []:
+                    if isinstance(m, dict) and m.get("name"):
+                        out.add(m["name"])
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(ast)
+    return out
+
+
+def lowering_artifacts(coords, declared):
+    """Struct-field coordinates the SOURCE never declared.
+
+    Only `base.field` coordinates are considered, and only when the declared set
+    is non-empty -- with nothing to compare against, everything would look
+    undeclared and the whole coordinate list would vanish for a reason that has
+    nothing to do with the contract.
+    """
+    if not declared:
+        return {}
+    out = {}
+    for c in coords:
+        if "." not in c or c.startswith(("state.", "msg.", "tx.", "block.")):
+            continue
+        field = c.rsplit(".", 1)[1]
+        if field not in declared:
+            out[c] = "not declared on any struct in the source"
+    return out
+
+
 def unsettable_coords(coords, mutability):
     """Coordinates NO generated test can set, with the reason.
 
@@ -1444,6 +1508,20 @@ def main():
     # keeps every region a statement about a reachable configuration -- whereas
     # dropping them would leave the quantity unconstrained, which is the same
     # constraint as never having mentioned it.
+    # Lowering artifacts first: a struct member the SOURCE never declared is not
+    # an input at all (padding), so it is DROPPED rather than pinned -- pinning
+    # would print it beside the region as though it were part of the slice the
+    # caller asked about, and it is not a quantity anything can ask about.
+    artifacts = lowering_artifacts(coords, declared_struct_fields(args.ast))
+    if artifacts:
+        coords = [c for c in coords if c not in artifacts]
+        print("[coords] DROPPED as struct-lowering artifact(s), not source "
+              "fields: " + ", ".join(f"{c} ({w})"
+                                     for c, w in sorted(artifacts.items()))
+              + ". The struct lowering introduces padding members the source "
+                "never declared; no generated test can set one, so offering it "
+                "as a coordinate is the same defect as offering an immutable")
+
     unsettable = unsettable_coords(coords, state_mutability(args.ast))
     if unsettable:
         for c in sorted(unsettable):
