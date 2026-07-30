@@ -538,6 +538,84 @@ public:
   static std::map<std::pair<std::string, std::string>, uint64_t>
     path_decision_depth;
 
+  // ---- THE ORDERED DECISION SEQUENCE BEHIND A PATH ----
+  //
+  // `path_id` is `enc`, and `enc` is a pure bit accumulator: the k-th decision's
+  // ARM is `(enc >> (depth-k)) & 1` arithmetically, but nothing about the source
+  // location is mixed into it. Which SITE each bit came from is path-dependent
+  // (bit 3 of one path and bit 3 of a sibling come from different instructions
+  // once their prefixes diverge), so no external consumer can recover it from
+  // the report. The information exists only here, during enumeration.
+  //
+  // It is needed for the one comparison this pass has never been able to make:
+  // projecting the witnessed (F) path set onto the DECISIONS those paths walk,
+  // which is the only common denominator with --branch-coverage. Without it the
+  // two metrics cannot be put on one scale at all.
+  //
+  // THE STORAGE IS INTERNED, and that is what makes it affordable. A unit can
+  // enumerate 120166 paths; storing a location string per path per decision is
+  // the reason the pre-existing (log-only) recorder is gated off by default.
+  // Here the DESCRIPTORS live in a per-unit table whose size is the number of
+  // distinct decision sites (tens), and the per-prefix map holds a 32-bit index.
+  //
+  // Keyed by the PREFIX `enc` value the decision produced, so a path's sequence
+  // is read off by walking `enc >> (depth-1)`, `enc >> (depth-2)`, ..., `enc`.
+  // Two paths sharing a prefix share those keys by construction, so one entry
+  // serves every path through it and the map cannot be ambiguous. Polarity is
+  // not stored: it is the key's own low bit.
+  struct path_decisiont
+  {
+    // `location.as_string()`, i.e. exactly the string bmc.cpp's
+    // parse_claim_location() already splits into file/line/column/function.
+    // Deliberately not pre-split here: a second parser is a second thing that
+    // can disagree with the first.
+    std::string loc;
+    // Each arm's claim text, built with the same from_expr/gen_not_expr the
+    // branch metric uses.
+    //
+    // Both arms are published because the mapping is INVERTED and inverting it
+    // in the consumer is a silent, plausible-looking error: a probe assert(P)
+    // fails when P is false, so `assert(guard)` covers the FALL-THROUGH edge and
+    // `assert(!guard)` the GOTO-TAKEN edge. Path polarity TRUE (taken) therefore
+    // corresponds to the claim keyed on the NEGATED guard. Getting it backwards
+    // still produces a number.
+    //
+    // ⚠ IT IS DIAGNOSTIC, NOT A JOIN KEY AGAINST --branch-coverage. MEASURED on
+    // regression/esbmc-solidity/solidity_path_cov_exit_kinds, same contract,
+    // same source line, the two modes report DIFFERENT text for the SAME
+    // decision:
+    //
+    //     branch coverage       "!(a != 0)"   /  "a != 0"
+    //     path coverage       "!(!(a != 0))"  /  "!(a != 0)"
+    //
+    // The guards are one `not` apart because --solidity-path-coverage turns on
+    // the revert-observation gate, which lowers `require` to a different goto
+    // shape. A plain `if` agrees exactly (verified on the same run: `v > 1` and
+    // `!(v > 1)` match both sides verbatim), so a text join would work on part
+    // of the corpus and quietly drop every `require` decision on the rest —
+    // producing a lower number with no error.
+    //
+    // A projection onto branch coverage must therefore join on LOCATION, which
+    // is also what the comparison's own metric is defined in terms of (unique
+    // source lines reached, capped at the file's decision count).
+    std::string cond_arm_true;  // polarity 1 (taken)  -> this branch claim
+    std::string cond_arm_false; // polarity 0 (fall-through)
+    // Operand index within the site, for several folded short-circuit operands
+    // sharing one location.
+    unsigned sub = 0;
+    // The synthesised ABI non-payable gate (`msg_value == 0`). It is a decision
+    // of the PATH metric with NO branch-coverage counterpart, and its location
+    // is COPIED from the unit's first body instruction — so a consumer matching
+    // on location alone would credit itself with a real decision sitting on that
+    // line. Flagged at the source rather than left for the consumer to guess
+    // from the condition text.
+    bool synthetic_abi_gate = false;
+  };
+  // unit id -> that unit's interned decision descriptors.
+  static std::map<std::string, std::vector<path_decisiont>> path_decision_table;
+  // unit id -> (prefix enc -> index into the table above).
+  static std::map<std::string, std::map<uint64_t, uint32_t>> path_decision_index;
+
   // Item 2e: serialize covered_set to covered_set_outpath crash-safely
   // (write a .tmp then atomic rename). Called both incrementally as
   // each edge is witnessed P_SATISFIABLE (bmc.cpp) and once at run end,
@@ -623,6 +701,13 @@ public:
   // the c2goto crypto/ABI tables and the rest of the harness plumbing are
   // still removed from the formula.
   bool protect_ce_symbols = false;
+
+  // Record the per-path decision sequence (see path_decision_table). Its own
+  // flag rather than a reuse of protect_ce_symbols: both happen to be set by
+  // --cov-report-json today, but they are different obligations, and keying a
+  // recorder off an unrelated flag's value is how a mechanism ends up silently
+  // disabled by a change to that other flag.
+  bool emit_decision_sites = false;
 
   // ---- STAGE 2: THE CERTIFICATION QUERY (--path-cov-certify <json>) ----
   //

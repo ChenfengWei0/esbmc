@@ -4170,7 +4170,14 @@ bool esbmc_parseoptionst::process_goto_program(
       // instead of switching slicing off wholesale: the latter also keeps every
       // c2goto crypto/ABI table in the formula, for no benefit to the report.
       if (cmdline.isset("cov-report-json"))
+      {
         tmp.protect_ce_symbols = true;
+        // The report is also the only place the per-path DECISION SEQUENCE can
+        // be published, and it is what puts path coverage and branch coverage
+        // on one denominator (the decisions walked). Recorded only for a run
+        // that asks for the report, because the memory is per path PREFIX.
+        tmp.emit_decision_sites = true;
+      }
       // Per-unit path budget. Read BEFORE solidity_path_coverage() because the
       // pass uses it twice and in a fixed order: first as the target that
       // degradation withdraws call points to reach, then as the goal cap that

@@ -52,6 +52,10 @@ std::map<std::string, std::vector<std::string>>
 std::map<std::string, goto_coveraget::path_ce_t> goto_coveraget::path_ce;
 std::map<std::pair<std::string, std::string>, uint64_t>
   goto_coveraget::path_decision_depth;
+std::map<std::string, std::vector<goto_coveraget::path_decisiont>>
+  goto_coveraget::path_decision_table;
+std::map<std::string, std::map<uint64_t, uint32_t>>
+  goto_coveraget::path_decision_index;
 std::string goto_coveraget::covered_set_outpath;
 std::set<std::string> goto_coveraget::path_covered_ids;
 std::map<std::pair<std::string, std::string>, std::string>
@@ -3536,6 +3540,15 @@ void goto_coveraget::solidity_path_coverage()
           brk.type = GOTO;
           brk.guard = equality2tc(mv_expr, zero);
           brk.location = loc;
+          // MARK IT AS SYNTHETIC AT THE SOURCE. This decision exists in the
+          // path metric and in NO other metric, and its location is the one
+          // copied from the unit's first body instruction just above — so any
+          // consumer that projects walked decisions onto source lines would
+          // credit itself with whatever real decision sits on that line. The
+          // alternative (recognising it downstream by its condition text) is a
+          // string match on a lowering detail, i.e. a check that stops firing
+          // silently the day `msg_value` is renamed.
+          brk.location.set("sol_abi_value_gate", true);
           brk.function = fn;
           auto it_brk = goto_program.instructions.insert(body_start, brk);
 
@@ -3782,11 +3795,48 @@ void goto_coveraget::solidity_path_coverage()
     // outer-box batch is actually targeting records anything. A whole-contract
     // run would otherwise pay for units like `ship`, which enumerates 2733
     // paths and is never the one being asked about.
-    std::map<uint64_t, std::string> decision_site;
+    // Interned: the DESCRIPTOR table is per distinct decision site (tens), and
+    // only the prefix->index map is per path prefix. That is the difference
+    // between this being affordable on a 120166-path unit and not: the
+    // log-only recorder this replaces stored a fresh string per prefix, which
+    // is why it had to be gated behind a single-unit spec.
+    std::vector<path_decisiont> dec_table;
+    std::map<std::string, uint32_t> dec_intern;
+    std::map<uint64_t, uint32_t> dec_index;
     const bool trace_decisions =
       outer_on && (f_it->first.as_string() == outer_unit ||
                    f_it->first.as_string().find("@F@" + outer_unit + "#") !=
                      std::string::npos);
+    // Recording for the REPORT is not gated on the outer-box spec: the
+    // projection needs every unit's sequences, and the outer-box gate names one.
+    const bool record_decisions = trace_decisions || emit_decision_sites;
+    // Register the decision that produced prefix value `key_enc`. `cond` is the
+    // decision's own expression, so both branch-claim arm texts are built HERE,
+    // with the same from_expr/gen_not_expr the branch metric uses — a consumer
+    // reconstructing them would be reimplementing the expression printer.
+    auto note_decision = [&](
+                           uint64_t key_enc,
+                           const locationt &l,
+                           const expr2tc &cond,
+                           unsigned sub) {
+      if (!record_decisions)
+        return;
+      const std::string loc = l.as_string();
+      const std::string ikey = loc + "\t" + std::to_string(sub) + "\t" +
+                               from_expr(ns, "", cond);
+      auto ins = dec_intern.emplace(ikey, (uint32_t)dec_table.size());
+      if (ins.second)
+      {
+        path_decisiont d;
+        d.loc = loc;
+        d.cond_arm_false = from_expr(ns, "", cond);
+        d.cond_arm_true = from_expr(ns, "", gen_not_expr(cond));
+        d.sub = sub;
+        d.synthetic_abi_gate = l.get_bool("sol_abi_value_gate");
+        dec_table.push_back(d);
+      }
+      dec_index[key_enc] = ins.first->second;
+    };
 
     using becntt = std::map<unsigned, unsigned>;
     // Per-site occurrence counter for the content-addressed path id: how many
@@ -4271,8 +4321,7 @@ void goto_coveraget::solidity_path_coverage()
             occt occ_taken = occ;
             const uint64_t idh_taken =
               step_id(idh, occ_taken, dsite, 0, /*polarity=*/true);
-            if (trace_decisions)
-              decision_site[enc * 2 + 1] = dsite + " [guard TRUE]";
+            note_decision(enc * 2 + 1, pc->location, pc->guard, 0);
             stack.push_back(
               {pc->get_target(),
                enc * 2 + 1,
@@ -4285,8 +4334,7 @@ void goto_coveraget::solidity_path_coverage()
           }
           // guard-false/fallthrough successor -> next (never a back-edge).
           idh = step_id(idh, occ, dsite, 0, /*polarity=*/false);
-          if (trace_decisions)
-            decision_site[enc * 2 + 0] = dsite + " [guard FALSE]";
+          note_decision(enc * 2 + 0, pc->location, pc->guard, 0);
           enc = enc * 2 + 0;
           ++depth;
           pc = std::next(pc);
@@ -4316,10 +4364,14 @@ void goto_coveraget::solidity_path_coverage()
         if (pc->is_return() && is_code_return2t(pc->code))
         {
           const expr2tc &rsrc = to_code_return2t(pc->code).operand;
-          size_t RK = 0;
+          // Collected, not merely counted: the operand EXPRESSION is what the
+          // branch metric keys its claim on, so recording the decision needs the
+          // operand itself. Collect order is the bit order (see the DFS below).
+          std::vector<expr2tc> rops;
           if (pc->location.property().as_string() != "skipped")
             collect_short_circuit_decisions(
-              rsrc, [&](const expr2tc &) { ++RK; });
+              rsrc, [&](const expr2tc &e) { rops.push_back(e); });
+          const size_t RK = rops.size();
           const std::string rsite = pc->location.as_string();
           // The frontend's positive normal-exit marker (see classify_exit).
           // Read from the RETURN instruction itself, so a synthesised
@@ -4344,10 +4396,7 @@ void goto_coveraget::solidity_path_coverage()
                 const bool bit = ((mask >> j) & 1) != 0;
                 e = e * 2 + (bit ? 1 : 0);
                 h = step_id(h, o, rsite, (unsigned)j, bit);
-                if (trace_decisions)
-                  decision_site[e] = rsite + " (RETURN operand " +
-                                     std::to_string(j) + ") [" +
-                                     (bit ? "TRUE" : "FALSE") + "]";
+                note_decision(e, pc->location, rops[j], (unsigned)j);
                 ++d;
               }
               if (overflowed)
@@ -4395,8 +4444,12 @@ void goto_coveraget::solidity_path_coverage()
           pc->location.property().as_string() != "skipped")
         {
           const expr2tc &src = to_code_assign2t(pc->code).source;
-          size_t K = 0;
-          collect_short_circuit_decisions(src, [&](const expr2tc &) { ++K; });
+          // Collected rather than counted, for the same reason as the RETURN
+          // arm above: the recorder needs the operand expression.
+          std::vector<expr2tc> aops;
+          collect_short_circuit_decisions(
+            src, [&](const expr2tc &e) { aops.push_back(e); });
+          const size_t K = aops.size();
           // Cap MUST match Phase 1's (see SC_DECISION_MAX): a site Phase 1
           // skipped contributes nothing to tr/cnt, so the DFS must not add bits
           // for it either — and vice versa.
@@ -4418,10 +4471,7 @@ void goto_coveraget::solidity_path_coverage()
                 const bool bit = ((mask >> j) & 1) != 0;
                 e = e * 2 + (bit ? 1 : 0);
                 h = step_id(h, o, asite, (unsigned)j, bit);
-                if (trace_decisions)
-                  decision_site[e] = asite + " (short-circuit operand " +
-                                     std::to_string(j) + ") [" +
-                                     (bit ? "TRUE" : "FALSE") + "]";
+                note_decision(e, pc->location, aops[j], (unsigned)j);
                 ++d;
               }
               if (overflowed)
@@ -4923,6 +4973,24 @@ void goto_coveraget::solidity_path_coverage()
       }
     }
 
+    // ---- PUBLISH THE DECISION SEQUENCES ----
+    //
+    // Placed HERE, before the outer-box and certify branches, because both of
+    // those `continue` out of the loop body — publishing after either one would
+    // leave the tables empty in exactly the modes that ask for them, with no
+    // symptom other than a report field quietly missing.
+    //
+    // Keyed by unit id because `enc` values COLLIDE ACROSS UNITS (enc is a
+    // per-unit accumulator seeded at 1). A single flat map would silently serve
+    // one unit's decision for another unit's path — a wrong site, not a missing
+    // one, and therefore invisible.
+    if (record_decisions)
+    {
+      const std::string uid_pub = f_it->first.as_string();
+      path_decision_table[uid_pub] = std::move(dec_table);
+      path_decision_index[uid_pub] = std::move(dec_index);
+    }
+
     // ---- STAGE 2, step 1: the outer-box batch ----
     //
     // Runs in the same place, and for the same reason, as the certification
@@ -5115,18 +5183,30 @@ void goto_coveraget::solidity_path_coverage()
         // counterexample — which, measured, is every reach-gate path so far.
         if (trace_decisions && pdepth > 0)
         {
+          // Reads the PUBLISHED tables, not a second private copy: the log line
+          // and the report field are then the same data, so a defect in the
+          // recording cannot show up in one and not the other.
+          const auto &tbl = path_decision_table[uid];
+          const auto &idx = path_decision_index[uid];
           std::string seq;
           for (uint64_t k = 0; k < pdepth; ++k)
           {
             const uint64_t key = penc >> (pdepth - 1 - k);
-            auto dit = decision_site.find(key);
+            auto dit = idx.find(key);
             seq += "\n    #" + std::to_string(k + 1) + " ";
             // A missing key is reported, not skipped. Silence here would read
             // as "this path has fewer decisions", which is a claim about the
             // path rather than about the recording.
-            seq += dit == decision_site.end()
-                     ? "<not recorded — enc key " + std::to_string(key) + ">"
-                     : dit->second;
+            if (dit == idx.end() || dit->second >= tbl.size())
+              seq += "<not recorded — enc key " + std::to_string(key) + ">";
+            else
+            {
+              const auto &d = tbl[dit->second];
+              seq += d.loc + " (operand " + std::to_string(d.sub) + ") [guard " +
+                     ((key & 1) ? "TRUE" : "FALSE") + "]" +
+                     (d.synthetic_abi_gate ? " [synthesised ABI value gate]"
+                                           : "");
+            }
           }
           log_status(
             "--path-cov-outer-box: path enc={} depth={} DECISION SEQUENCE (in "

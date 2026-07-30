@@ -1536,6 +1536,88 @@ void report_coverage(
             goto_coveraget::path_decision_depth.find({claim_msg, claim_loc});
           if (dp != goto_coveraget::path_decision_depth.end())
             claim_entry["path_depth"] = dp->second;
+
+          // ---- THE ORDERED DECISION SEQUENCE, for F claims only ----
+          //
+          // This is what makes path coverage comparable with branch coverage at
+          // all: the two metrics share no denominator until the witnessed paths
+          // are projected onto the DECISIONS they walk. `path_id` cannot be
+          // projected — `enc` records the arms and nothing about the sites, so
+          // only the enumerator knows which instruction each bit came from.
+          //
+          // RESTRICTED TO F on purpose, and it is not merely a saving. F is the
+          // only status the projection can use (an uncovered path witnesses no
+          // decision), and F is rare — single digits per unit — while a unit can
+          // enumerate 120166 paths. Emitting for every claim would put the
+          // report's size in the same order as the path count for no gain.
+          if (tri == "F" && pos != std::string::npos)
+          {
+            const std::string unit = claim_msg.substr(0, pos);
+            const uint64_t penc =
+              strtoull(claim_msg.substr(pos + 6).c_str(), nullptr, 10);
+            auto ti = goto_coveraget::path_decision_table.find(unit);
+            auto xi = goto_coveraget::path_decision_index.find(unit);
+            if (
+              ti != goto_coveraget::path_decision_table.end() &&
+              xi != goto_coveraget::path_decision_index.end() &&
+              dp != goto_coveraget::path_decision_depth.end() &&
+              dp->second > 0)
+            {
+              const uint64_t pdepth = dp->second;
+              json seq = json::array();
+              size_t missing = 0;
+              for (uint64_t k = 0; k < pdepth; ++k)
+              {
+                const uint64_t key = penc >> (pdepth - 1 - k);
+                auto di = xi->second.find(key);
+                if (di == xi->second.end() || di->second >= ti->second.size())
+                {
+                  // Reported as a hole, never skipped. A shorter array would
+                  // read as "this path walks fewer decisions" — a claim about
+                  // the path, when the truth is a claim about the recording.
+                  json h;
+                  h["index"] = k + 1;
+                  h["unrecorded_prefix_enc"] = std::to_string(key);
+                  seq.push_back(h);
+                  ++missing;
+                  continue;
+                }
+                const auto &d = ti->second[di->second];
+                const bool arm_taken = (key & 1) != 0;
+                json e;
+                e["index"] = k + 1;
+                json dloc = parse_claim_location(d.loc);
+                e["file"] = dloc["file"];
+                e["line"] = dloc["line"];
+                e["column"] = dloc["column"];
+                e["function"] = dloc["function"];
+                e["operand"] = d.sub;
+                e["arm"] = arm_taken ? "taken" : "fall-through";
+                // This arm's claim text, already inverted (assert(P) fails when
+                // P is false, so assert(guard) covers the FALL-THROUGH edge).
+                // Published rather than left to the consumer: inverting it
+                // there is a silent error that still produces a number.
+                //
+                // DIAGNOSTIC ONLY — do not join on it. Measured: a `require`
+                // lowers to a guard one `not` deeper under path coverage than
+                // under branch coverage (the revert-observation gate), so the
+                // texts differ for the same decision while a plain `if` agrees
+                // verbatim. See path_decisiont in goto_coverage.h. Join on
+                // file+line, which is the comparison metric's own unit.
+                e["branch_claim"] = prettify_solidity_expr(
+                  arm_taken ? d.cond_arm_true : d.cond_arm_false);
+                if (d.synthetic_abi_gate)
+                  // No branch-coverage counterpart AND a location copied from
+                  // the unit's first body instruction, so a consumer matching on
+                  // location alone would credit a real decision on that line.
+                  e["synthetic_abi_gate"] = true;
+                seq.push_back(e);
+              }
+              claim_entry["decisions"] = seq;
+              if (missing > 0)
+                claim_entry["decisions_unrecorded"] = missing;
+            }
+          }
         }
 
         // CE payload: the concrete values behind an F. Absent for I/U (there
@@ -1777,6 +1859,58 @@ void report_coverage(
       report["summary"]["I_proven_unreachable"] = nI;
       report["summary"]["U_undecided"] = nU;
       report["summary"]["U_of_which_bounded_holds"] = nBH;
+
+      // ---- THE DECISION-SEQUENCE PUBLICATION, COUNTED ON STDOUT ----
+      //
+      // A mechanism whose only evidence is a field inside a file nobody reads
+      // has no evidence at all: this pass has already shipped one recorder that
+      // ran on every path and was consumed by nothing. Counting it here, from
+      // `claims_json` (i.e. from what was ACTUALLY emitted, not from what the
+      // producer believes it emitted), makes "it fired" and "it fired on N
+      // things" the same statement.
+      //
+      // `without` is printed even when it is zero, and it is the number that
+      // matters: an F carrying no sequence cannot be projected onto decisions,
+      // so it is a silent hole in any comparison built on this field.
+      {
+        size_t with = 0, without = 0, steps = 0, holes = 0, synth = 0;
+        for (const auto &c : claims_json)
+        {
+          if (c.value("status", "") != "F")
+            continue;
+          if (!c.contains("decisions"))
+          {
+            ++without;
+            continue;
+          }
+          ++with;
+          for (const auto &d : c["decisions"])
+          {
+            ++steps;
+            if (d.contains("unrecorded_prefix_enc"))
+              ++holes;
+            if (d.value("synthetic_abi_gate", false))
+              ++synth;
+          }
+        }
+        report["summary"]["decision_sequences"]["paths_with"] = with;
+        report["summary"]["decision_sequences"]["paths_without"] = without;
+        report["summary"]["decision_sequences"]["decision_steps"] = steps;
+        report["summary"]["decision_sequences"]["unrecorded_steps"] = holes;
+        report["summary"]["decision_sequences"]["synthetic_abi_gate_steps"] =
+          synth;
+        log_status(
+          "--solidity-path-coverage: DECISION SEQUENCES published for {} of {} "
+          "witnessed path(s) ({} step(s), {} unrecorded, {} synthesised ABI "
+          "value gate). A path with no sequence cannot be projected onto "
+          "decisions, and the synthesised gate has no branch-coverage "
+          "counterpart, so both are named rather than folded in",
+          with,
+          nF,
+          steps,
+          holes,
+          synth);
+      }
       // Every U's reason, with all slots present including the zeros — the
       // summary must never let a category vanish by simply not appearing.
       {
