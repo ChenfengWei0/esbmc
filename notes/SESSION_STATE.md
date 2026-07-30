@@ -11,6 +11,10 @@ Written to survive a context compaction. Read this, then
 | `1f890fb4dd` | external invocation scripts (`notes/coverage/scripts/pathcov_*`) + first three reproducers |
 | `5ee20ea2e9` | **frontend fix**: a local declared with an initialiser inside an INHERITED function was zeroed |
 | `4bd98cd328` | **collector fix**: the baseline collector silently rewrote its own scope when its source trees disappeared |
+| `8fb9162cd1` | **gate fix**: a bar of 0 passed anything; stale `reports/` inflated the numerator; `N/A: 0 units` asserted a cause it never checked |
+| `1a2eeea2de` | `t2_runnability.py` capped a unit at the SLICE REMAINDER and filed the artifact as a measured TIMEOUT |
+| `3efdda1b18` | `reports/` reconciled with the journal; empty exclude list refused; `REFUSE` no longer the default verdict |
+| `7c2440da67` | **the re-collected baseline** |
 
 ## The question that is still open
 
@@ -22,27 +26,44 @@ additionally dated 2026-05-20 while the binary has taken two months of commits.
 
 Sequence to answer it:
 
-1. Re-baseline (branch coverage) — `notes/coverage/scripts/collect.py esbmc <bench>`
-   for all six. aqua_Aqua done; the other five were running when this was
-   written. Results land in `notes/coverage/data/esbmc_*.json` (UNCOMMITTED
-   until all six are in — a half-collected baseline is worse than none).
-2. Re-collect the product side — `notes/coverage/scripts/pathcov_all.sh`.
-   The pre-fix journals are archived as
-   `notes/coverage/pathcov/<bench>/runs.prefix-buggy-frontend.jsonl`, so the
-   collector will start from zero rather than resuming onto stale rows.
+1. Re-baseline (branch coverage) — **DONE**, committed `7c2440da67`.
+2. Re-collect the product side — `notes/coverage/scripts/pathcov_all.sh 180`.
+   The pre-fix journals AND the pre-fix `reports/` trees are archived as
+   `notes/coverage/pathcov/<bench>/{runs,index}.prefix-buggy-frontend.*` and
+   `reports.prefix-buggy-frontend/`, so the collector starts from zero. 180s per
+   run is twice the baseline's 90s outer budget per focused run, and that ratio
+   is the justification — not a number picked to make something fit.
 3. `python3 notes/branch_gate.py` for the gate table.
 
-### What the first re-baselined benchmark already shows
+### The re-baseline result
 
-aqua_Aqua, same inputs, same commands, today's binary vs the locked 2026-05-20
-numbers: whole-contract pass 10.8s → 666.86s (hits the 600s budget, exit 1),
-`dock` 1.67s → 60.04s (hits its 60s budget), reach `dock` 8→2, `pull` 8→7,
-`push` 9→8.
+Same inputs, same commands, today's binary against the dataset locked
+2026-05-20:
 
-**No cause is claimed.** Two months of commits separate the two runs. The
-direction is unfavourable to us — a lower branch-coverage baseline flatters the
-path-coverage comparison for a reason unrelated to path coverage — which is why
-it is recorded rather than left to be noticed later.
+| benchmark | denom | locked | re-collected |
+|---|---|---|---|
+| aqua_Aqua | 8 | 7 | 7 |
+| cross_chain_swap_EscrowDst | 18 | 18 | 18 |
+| cross_chain_swap_EscrowSrc | 16 | 16 | 16 |
+| farming | 26 | 26 | 26 |
+| limit_order_protocol | 3 | 3 | 3 |
+| **st1inch_St1inch** | 86 | **83** | **72** |
+
+`branchesTotal` unchanged everywhere (METHODOLOGY 8.2), checked rather than
+asserted.
+
+Five reproducing to the unit is what makes the sixth attributable: the
+intervening two months of commits are inert for this measurement, and the only
+benchmark that moved is the only one carrying the shape the inherited-local
+fix addresses. Direction as expected — removing manufactured coverage lowers the
+bar.
+
+**A correction worth keeping:** an earlier reading of this same diff reported
+"the baseline is dropping" from the per-function `rawReached` fields (8→2, 8→7,
+9→8 on aqua). Those are single focused runs' raw branch-arm counts. The gate
+uses `total.esbmcReached`, the union over all runs intersected with the
+canonical decision lines, and that did not move at all. Report the field the
+conclusion depends on, not the field that changed.
 
 ## Subgoal status
 
@@ -52,10 +73,25 @@ it is recorded rather than left to be noticed later.
    to be quoted: `ImmutablesLib` 0/8 on both Escrows, `FarmingPool` 4/12, and 15
    runs that produced no report.
 3. **interval inputs** — not started.
-4. **R0/R1/R2 assertions** — not started as code. The file-and-line
-   implementation plan is `notes/path-cov-assert-plan.md`; its one UNVERIFIED
-   premise is whether the post-state read of `state.<field>` at a path's exit
-   observes the unit's writes, and fixture group 1 in that plan settles it.
+4. **R0/R1/R2 assertions** — not started as code, but the design is no longer
+   speculative. `notes/path-cov-assert-plan.md` carries the file-and-line plan,
+   and its appendix records that the one load-bearing premise is **CONFIRMED**:
+   an exit read of `member(sol:@_ESBMC_Object_<C>, field)` does observe the
+   unit's writes. The frontend routes the write through a `this` POINTER, but
+   symex dereferences before recording, `symex_assign_member` rewrites
+   `a.c = e` into `a = with(a, c, e)`, and `slice.cpp:90` asserts every SSA lhs
+   is a bare symbol — which `goto_coverage.cpp:2769-2782` already states, from
+   measurement, is the object symbol.
+
+   Six conditions came with it. The one that would otherwise be a silent hole:
+   `resolve_coord` picks the contract object by SUBSTRING match on
+   `scope_contract`, so `--contract Escrow` matches `_ESBMC_Object_EscrowSrc`
+   and an empty `scope_contract` matches anything. Reading the wrong object
+   makes `post == pre` hold vacuously with no error — on exactly the
+   EscrowSrc/EscrowDst shape. The mode must match the unit's own contract
+   exactly (`contract_of`, `goto_coverage.cpp:6601-6615`). Also:
+   `coord_expressible` is the wrong gate for R1, since `==`/`!=` is expressible
+   on the `bool` it refuses.
 
 ## Open, deliberately not guessed
 
