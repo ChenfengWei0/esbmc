@@ -199,3 +199,39 @@ candidates come from the siblings' counterexamples, which for `immutables.amount
 are now available where before there was no coordinate at all.
 
 That is the next experiment, and it is a cheap one.
+
+### Level 0 says NO on the struct fields, so the halving is not what it looked like
+
+Ran on the same `withdraw`:
+
+    [level0] enc=6  single-point on: (none)
+    [level0] enc=14 single-point on: (none)
+    [level0] enc=30 single-point on: (none)
+    [level0] enc=31 single-point on: (none)
+
+(`enc=2`'s four "points" are the vacuous case, correctly flagged by the
+one-value-candidate warning.)
+
+So on every live path the constraint on `immutables.amount` is a genuine
+inequality, not an equality — **level 0 does not apply, and neither does the
+punched interval**: the excluded set is a half-space, not a few points. The two
+mechanisms the previous entry pointed at are both ruled out, by measurement,
+before any effort went into them.
+
+What remains is simpler and was self-inflicted. Every run on this unit used
+`--skip-bracket`, which starts each coordinate at its FULL type range. The shrink
+then cuts at the witness, the witness lands near the middle, and the result is
+bisection — with nothing having bracketed the boundary first. That is exactly the
+job the geometric bracket exists to do (locate the boundary within a factor of
+two, in one batch), and it was skipped for budget reasons.
+
+So the honest reading of `withdraw` is a TRADE BETWEEN TWO BUDGETS, not a method
+gap: pay for the bracket round and the shrink should not have to bisect; skip it
+and the shrink bisects from the full type. Both halves have now been measured
+separately (the bracket at 258 values per coordinate did not finish in 110s; the
+shrink without it halves), and neither has been measured TOGETHER at a budget
+that lets both run.
+
+That is the next experiment, it is well-defined, and it is the one that decides
+whether this unit's remaining failure is a cost statement or a method statement.
+Nothing above should be quoted as either until it is run.
