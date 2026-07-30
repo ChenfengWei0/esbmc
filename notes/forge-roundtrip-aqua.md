@@ -125,3 +125,42 @@ Concretely, in the order their cost is now measured:
 with the SAME two operations `collect.py` applies to both of its columns —
 `{BRDA lines with a non-zero arm} ∩ {canonical decision lines}`, capped per file
 — so the three columns above are commensurable by construction.
+
+---
+
+# The emission loss, named
+
+`notes/coverage/scripts/emission_loss.py aqua_Aqua`:
+
+    src/Aqua.sol   canon 8   enumerated 4   emitted 2   LOST IN EMISSION 2
+    lost lines : [2258, 2260]
+
+Both are in `dock`:
+
+    2258 |     for (uint256 i = 0; i < tokens.length; i++) {
+    2260 |         require(balance.tokensCount == tokens.length, DockingShouldCloseAllTokens(app, strategyHash));
+
+and `dock` is one of the two units whose emitted test had an EMPTY BODY. The
+chain closes: the enumeration witnessed paths through `dock` that walk both
+lines; the emitter reconstructed only a constructor segment for it, so the case
+carried no call at all; the empty-bodied test was then refused. Those two
+decisions are lost because the CALL was never reconstructed -- its arguments
+were never the question.
+
+`dock(address app, bytes32 strategyHash, address[] calldata tokens)` takes a
+DYNAMIC ARRAY, and `_foundry_roundtrip/RESULTS.md`'s own blocker matrix already
+says so: "aqua `Aqua` ... `ship`/`dock` also take `bytes`/`address[]`" ->
+UNSUPPORTED. What is new is that the gap now has a coverage number attached to
+it instead of being a known limitation in a table.
+
+So the aqua shortfall decomposes with no residue:
+
+| loss | size | cause |
+|---|---|---|
+| bar -> enumerated | 3 | search / bound: the witnessed paths never walk them |
+| enumerated -> emitted | 2 | `dock`'s call is not reconstructed (dynamic-array argument) |
+| never enumerated at all | 4 | branches behind a `require` on state a prior transaction must establish |
+
+None of the three is the emitter defect two changes were spent hypothesising
+about. Both hypotheses -- argument aliasing, and the transaction bound -- were
+refuted by measurement, and are recorded as refuted rather than quietly dropped.
