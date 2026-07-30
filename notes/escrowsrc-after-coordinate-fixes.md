@@ -169,3 +169,33 @@ The genuinely multi-coordinate cases (enc=14, enc=31 — `block.timestamp` plus
 several struct fields) are still multi-coordinate, but every attribution on this
 contract was collected under the same defect and must be RE-MEASURED before it is
 trusted, not reinterpreted.
+
+### Re-measured after the fix: the loop now SHRINKS, and lands in the budget cell honestly
+
+`withdraw`, 6 coordinates, 5 paths, 3 shrink rounds:
+
+| path | before the fix | after |
+|---|---|---|
+| `enc=2` | region EMPTY under pins | unchanged — correctly refused |
+| `enc=6` | "no single-coordinate cut available", **0 shrinks** | **3 shrinks**, then budget |
+| `enc=14` | "no single-coordinate cut available", 0 shrinks | **3 shrinks**, then budget |
+| `enc=30` | "no single-coordinate cut available", 0 shrinks | **3 shrinks**, then budget |
+| `enc=31` | "no single-coordinate cut available", 0 shrinks | **3 shrinks**, then budget |
+
+Every non-vacuous path now makes real progress each round where it previously
+made none. The failure is "shrink round budget exhausted" — a budget statement,
+and this time a true one, with the per-round boxes printed to show it.
+
+⚠ But the shape of that progress is the one already on record as degenerate: the
+cut HALVES `immutables.amount` round after round
+(2^256-1 → 2^255-1 → ...), which is the same bisection that
+`state.FACTORY` showed before punched intervals existed. Halving reaches a point
+in ~256 rounds, so "raise the shrink budget" is not the answer here either.
+
+What it points at is the same two mechanisms already built: level 0 (is the real
+constraint an equality?) and the punched interval (is the excluded set a few
+points?). Neither has been tried on a struct-field coordinate — the level-0
+candidates come from the siblings' counterexamples, which for `immutables.amount`
+are now available where before there was no coordinate at all.
+
+That is the next experiment, and it is a cheap one.
