@@ -63,6 +63,29 @@ CASES = [
     ("no bounds at all", [], "FAILED"),
 ]
 
+# ---- ASSUMPTION SIDE ----
+#
+# The eleven above all vary the REGION. The four false-certification routes
+# known when this script was written were region-side too, and the audit came
+# back clean -- which is exactly why the assumption side had to be added: a
+# vacuous ASSUMPTION makes every exit assert hold no matter how well-formed the
+# region is, and the first run of these found the FIFTH route.
+#
+# Each entry overrides the whole spec, not just the box.
+ASSUMPTION_CASES = [
+    ("enc no path has", {"enc": 9999, "depth": 1}, "FAILED"),
+    ("depth no path has", {"enc": 2, "depth": 99}, "FAILED"),
+    ("enc=0, impossible since tr starts at 1", {"enc": 0, "depth": 0},
+     "FAILED"),
+    ("box disjoint from the path", {"enc": 2, "depth": 1,
+                                    "box": [{"name": "to", "lo": "0",
+                                             "hi": "5"}]}, "FAILED"),
+    # THE FIFTH ROUTE. A unit name nothing matches skips every unit, so no
+    # assume and no assert are emitted at all and the run printed SUCCESSFUL
+    # with exit 0 -- a certificate for a query never asked.
+    ("unit name matches nothing", {"unit": "nosuchfn"}, "REFUSE"),
+]
+
 
 def main():
     esbmc = sys.argv[1] if len(sys.argv) > 1 else (
@@ -80,9 +103,12 @@ def main():
     bad = []
     print("| case | expected | exit | verdict |")
     print("|---|---|---|---|")
-    for name, box, want in CASES:
+    allcases = [(n, {"box": b}, w) for n, b, w in CASES] + ASSUMPTION_CASES
+    for name, over, want in allcases:
         spec = {"unit": "send", "enc": 2, "depth": 1,
-                "ce": {"to": "255"}, "box": box}
+                "ce": {"to": "255"},
+                "box": [{"name": "to", "lo": "255", "hi": "255"}]}
+        spec.update(over)
         with open(os.path.join(cwd, "c.json"), "w") as f:
             json.dump(spec, f)
         p = subprocess.run(

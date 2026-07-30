@@ -2662,6 +2662,10 @@ void goto_coveraget::solidity_path_coverage()
   }
 
   bool certify_on = false;
+  // Did the certification query ever find its unit? See the check after the
+  // enumeration loop -- a query matching NO unit emits no assume and no assert,
+  // so everything holds vacuously and the run prints SUCCESSFUL.
+  size_t certify_units_matched = 0;
   path_cov_certify_mode = false;
   path_cov_certify_box_names.clear();
   path_cov_certify_box.clear();
@@ -5565,6 +5569,7 @@ void goto_coveraget::solidity_path_coverage()
         insert_assert(goto_program, xpc, cert_guard, comment);
       }
 
+      ++certify_units_matched;
       log_status(
         "--path-cov-certify: unit '{}' — assumed {} input bound(s) ({} hole(s) "
         "punched) at entry "
@@ -5688,6 +5693,35 @@ void goto_coveraget::solidity_path_coverage()
       ++total_paths;
     }
 
+  }
+
+  // ---- A CERTIFICATION QUERY THAT MATCHED NO UNIT IS NOT A CERTIFICATE ----
+  //
+  // The FIFTH false-certification route, found by enumerating the assumption
+  // side of the gate rather than by colliding with it. `--path-cov-certify` with
+  // a unit name nothing matches -- a typo, a renamed function, a driver reading
+  // the wrong field -- skips every unit, so NO assume and NO assert are ever
+  // emitted. The run then has nothing to check, everything holds for want of an
+  // obligation, and it prints VERIFICATION SUCCESSFUL with exit 0.
+  //
+  // Measured: {"unit": "nosuchfn", ...} on a contract with one unit returned
+  // SUCCESSFUL, exit 0, indistinguishable from a real certificate.
+  //
+  // Same shape as the other four (an inverted interval, a signed coordinate, a
+  // punched-empty box, a one-value ladder): the query answers SUCCESSFUL for a
+  // question it never asked. Exiting non-zero with a named reason puts it in the
+  // third state, where a caller reading whole verdict lines can see it.
+  if (certify_on && certify_units_matched == 0)
+  {
+    log_error(
+      "--path-cov-certify: unit '{}' matched NO enumerated unit, so not one "
+      "assume and not one assert was emitted -- the run would otherwise print "
+      "VERIFICATION SUCCESSFUL for a query it never asked. Check the name "
+      "against the report's `path_function` (mangled form "
+      "sol:@C@<contract>@F@<name>#<id>). This is a false certificate, not a "
+      "weak result",
+      certify_unit);
+    exit(1);
   }
 
   // all_claims is the no-skip static universe built in the loop above (one
