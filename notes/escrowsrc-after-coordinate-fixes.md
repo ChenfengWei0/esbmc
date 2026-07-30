@@ -110,3 +110,40 @@ a `param.field` name that may not round-trip; or the witness value used by the
 report and the one used by the cut search come from different lookups; or the box
 on that coordinate no longer contains the path's counterexample by the time the
 last round runs. Each is a two-run experiment.
+
+### Diagnosed: the `param.field` name does not round-trip into the cut search
+
+Candidate 1 of the three above, confirmed by a single run rather than reasoned
+about. A certification query on `withdraw` enc=6 with the box and the
+counterexample BOTH naming `immutables.taker`:
+
+    VERIFICATION FAILED
+    (no `SHRINK SUGGESTION`, and no `no single-coordinate shrink` either)
+
+The absence of BOTH messages is what pins it. `audit_certify_witness` prints one
+or the other whenever `any_named` is true, and `any_named` is set for every
+bounded coordinate on which the witness could be looked up. Neither message means
+the lookup failed on every coordinate — and the run cannot have failed earlier,
+because a refutation with an EMPTY `inputs` aborts with the witnessless-refutation
+error, which did not fire.
+
+The mechanism is in `witness_of`: it searches `ce.inputs` by the coordinate's own
+name and by a `state.`-stripped variant, and the harvest keys `inputs` by the
+PARAMETER'S BASE NAME. A struct parameter is stored once, under `immutables`, as
+a pretty-printed aggregate. So `immutables.taker` matches nothing, in any of the
+three maps.
+
+That is the whole of it: struct fields became bound-able coordinates, and the
+cut search was never taught the same name shape. The divergence report sees one
+differing coordinate because the DRIVER decomposes the aggregate; the tool's cut
+search does not, so it sees none.
+
+Fix shape, not implemented here: `witness_of` must resolve a dotted coordinate
+against the aggregate rendering stored under its base name — the same
+decomposition the driver already performs, which argues for the harvest keying
+struct inputs by field in the first place so that neither side has to parse a
+rendering. That is the better fix and the larger one.
+
+Until then the honest reading of "no single-coordinate cut available" on a
+STRUCT-FIELD coordinate is: **the cut search could not see the witness**, not
+that no cut exists. The two paths above are wrongly attributed to proposition 11.
