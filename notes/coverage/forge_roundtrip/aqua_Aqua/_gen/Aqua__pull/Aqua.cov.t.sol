@@ -8,19 +8,15 @@
 pragma solidity >=0.8.0;
 
 import {Test} from "forge-std/Test.sol";
-import {Aqua} from "../src/aqua__Aqua.flat.sol";
+import {Aqua} from "./aqua__Aqua.flat.sol";
 
-contract AquaCovTest_Aqua_pull is Test {
+contract AquaCovTest is Test {
   Aqua c0;
   function setUp() public {
     c0 = new Aqua();
   }
   // claim: sol:@C@Aqua@F@pull#3153:path:63, sol:@C@Aqua@F@pull#3153:path:62, sol:@C@Aqua@F@pull#3153:path:2
-  // DISABLED: RED on the unmodified contract, so its
-  // coverage is not ours to claim. Kept, renamed out of
-  // forge's `test*` prefix, so the artefact still shows
-  // what was generated.
-  function disabled_test_cov_0() public {
+  function test_cov_0() public {
     // [asserted] path exits normally; a revert fails the test
     c0.pull(address(0), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(0), 0, address(0));
   }

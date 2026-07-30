@@ -73,6 +73,29 @@ zero addresses, which alias to one storage slot, so the emitted call reverts on
 a path the census called normal"). This is that prediction confirmed end to end,
 with a coverage number attached.
 
+## Status of the three, after the first two were addressed
+
+| defect | state | effect on the number |
+|---|---|---|
+| 1. empty test body | **FIXED** in the emitter (`collect()` refuses a case whose every call is a constructor, and counts it) | emitted files 6 -> 4, coverage UNCHANGED at 2/8 -- which is the proof that those two tests contributed nothing |
+| 2. asserted-normal test that reverts | **GUARDED** at the pipeline level, not the emitter | 1 RED test found and disabled; coverage UNCHANGED at 2/8 |
+| 3. every recovered argument is zero | **OPEN** | this is what the remaining 6 of 8 rests on |
+
+Defect 2 could not be fixed in the emitter and the reason is worth stating: the
+exit census is not wrong about the MODEL. The model gives an external call a
+nondet return and may choose success where the chain fails -- `pull`'s case
+calls `safeTransferFrom` on `address(0)`. No amount of reading the census closes
+that, so the check has to be empirical: `forge_roundtrip.py` now runs every
+emitted test on the unmodified contract, DISABLES the red ones (renamed out of
+forge's `test*` prefix, so the artefact still shows what was generated and why
+it was not counted), counts them, and measures coverage over the suite that
+actually passes.
+
+Both changes moved the coverage number by ZERO, and that is the useful part: the
+two empty tests and the one red test were contributing nothing, so removing them
+costs nothing and makes the 2/8 an honest 2/8 rather than a 2/8 propped up by
+three artefacts.
+
 ## What this changes
 
 The bottleneck for the paper's claim is **stage 4, not stage 1**. Path

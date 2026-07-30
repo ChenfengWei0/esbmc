@@ -147,6 +147,33 @@ private:
   /// warning already uses -- an obstacle is not partial credit.
   size_t suppressed_obstacle = 0;
 
+  /// Counterexamples REFUSED because every call they reconstructed is a
+  /// CONSTRUCTOR, so the test function they would produce has an EMPTY BODY.
+  ///
+  /// MEASURED end to end on aqua: `dock` and `ship` each emitted
+  ///
+  ///     // claim: sol:@C@Aqua@F@dock#3088:path:12, ...:path:2
+  ///     function test_cov_0() public {
+  ///     }
+  ///
+  /// naming two witnessed paths and executing neither, and `forge test`
+  /// reported `[PASS] test_cov_0() (gas: 188)` -- it passes BECAUSE it does
+  /// nothing. That is worse than a missing test: it is counted as emitted,
+  /// counted as passing, and the only thing distinguishing it from a real test
+  /// is reading the body. Two of the six files the aqua round-trip produced
+  /// were of this shape.
+  ///
+  /// The cause is structural rather than exotic: the emission loop skips a call
+  /// whose method IS its contract (`continue; // constructor -> setUp()`), so a
+  /// case that reconstructed only a constructor segment leaves nothing behind.
+  ///
+  /// Refused in collect(), beside the obstacle refusal and for the same stated
+  /// reason: the case must never enter `test_cases`, or dedup can collapse it
+  /// onto a legitimate case by fingerprint and ship one under the other's
+  /// provenance. Counted, and reported by generate() -- a silent refusal is
+  /// indistinguishable from a path that was never witnessed.
+  size_t suppressed_empty_body = 0;
+
   /// Contracts Solidity forbids `new` on (abstract / interface / library),
   /// detected from the `#sol_no_new` flag stamped on their constructor symbol.
   /// The generator degrades their instantiation to UNSUPPORTED so the emitted

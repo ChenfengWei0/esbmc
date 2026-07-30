@@ -102,6 +102,14 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal):
         # are not interchangeable.
         if "is ambiguous" in out:
             rec["ambiguousEntryName"] = True
+        m = re.search(r"Foundry: (\d+) counterexample\(s\) REFUSED -- every "
+                      r"call they reconstructed is a CONSTRUCTOR", out)
+        if m:
+            rec["refusedEmptyBody"] = int(m.group(1))
+        m = re.search(r"Foundry: (\d+) counterexample\(s\) REFUSED -- their "
+                      r"path is a NAMED OBSTACLE", out)
+        if m:
+            rec["refusedObstacle"] = int(m.group(1))
         if "No verification targets" in out:
             rec["noVerificationTargets"] = True
         if "are internal/private and are therefore not units" in out:
@@ -197,6 +205,69 @@ def main():
     if rc != 0:
         sys.exit(f"forge build failed (rc={rc}); see {proj/'build.log'}")
 
+    # ---- SELF-CHECK GATE: run every emitted test on the UNMODIFIED contract --
+    #
+    # A test that is RED on the contract it was generated from is not a
+    # deliverable, and its coverage is not ours to claim. The generator cannot
+    # always know: MEASURED on aqua, `pull`'s first case carries
+    # `// [asserted] path exits normally` -- the exit census confirmed a normal
+    # exit -- and forge reports `[FAIL: SafeTransferFromFailed()]`. The census is
+    # not wrong about the MODEL; the model gives an external call a nondet return
+    # and may choose success where the chain fails. No amount of census reading
+    # closes that, so the check has to be empirical.
+    #
+    # Red tests are DISABLED rather than deleted (renamed out of forge's `test*`
+    # prefix) so the artefact still shows what was generated and why it was not
+    # counted, and the count goes to stdout. Coverage is then measured over the
+    # tests that actually pass, which is the only suite we could hand anyone.
+    print("=== forge test (self-check) ===", flush=True)
+    rc, out, _ = run(["forge", "test"], 1800, cwd=str(proj))
+    (proj / "test.log").write_text(out)
+    # DEDUPED, because forge prints each failure TWICE -- once under its suite
+    # and once in the closing "Failing tests:" block. The first version of this
+    # parser reported `RED, disabled: 2` for one failing test, which is the
+    # same class of defect it exists to catch: a count that is not the thing it
+    # names. Keyed on (file, contract, function), which is what identifies a
+    # test uniquely.
+    reds = []
+    seen_red = set()
+    cur_file = cur_contract = None
+    for line in out.splitlines():
+        m = re.match(r"Ran \d+ tests? for (\S+):(\S+)", line)
+        if m:
+            cur_file, cur_contract = m.group(1), m.group(2)
+            continue
+        m = re.match(r"\[FAIL[^\]]*\]\s+(\w+)\(", line)
+        if m and cur_file:
+            key = (cur_file, cur_contract, m.group(1))
+            if key not in seen_red:
+                seen_red.add(key)
+                reds.append(key)
+    if reds:
+        print(f"=== {len(reds)} RED test(s) on the unmodified contract ===",
+              flush=True)
+        by_file = defaultdict(list)
+        for f, c, fn in reds:
+            by_file[f].append(fn)
+            print(f"    RED  {f}:{c}.{fn}", flush=True)
+        for f, fns in by_file.items():
+            p = proj / f
+            txt = p.read_text()
+            for fn in fns:
+                # forge runs a function iff its name starts with `test`.
+                txt = txt.replace(
+                    f"  function {fn}() public {{",
+                    f"  // DISABLED: RED on the unmodified contract, so its\n"
+                    f"  // coverage is not ours to claim. Kept, renamed out of\n"
+                    f"  // forge's `test*` prefix, so the artefact still shows\n"
+                    f"  // what was generated.\n"
+                    f"  function disabled_{fn}() public {{")
+            p.write_text(txt)
+        rc, out, _ = run(["forge", "build"], 900, cwd=str(proj))
+        (proj / "build2.log").write_text(out)
+        if rc != 0:
+            sys.exit(f"forge build failed after disabling red tests (rc={rc})")
+
     print("=== forge coverage ===", flush=True)
     rc, out, _ = run(["forge", "coverage", "--report", "lcov",
                       "--report-file", "lcov.info"], 3600, cwd=str(proj))
@@ -245,6 +316,13 @@ def main():
     print(f"  killed by timeout  : {sum(1 for r in recs if r['killed'])}")
     print(f"  ambiguous name     : "
           f"{sum(1 for r in recs if r.get('ambiguousEntryName'))}")
+    # Every count printed every time, zeros included: a category that stops
+    # occurring is noticed, one that silently disappears from the output is not.
+    print(f"  refused, empty body: "
+          f"{sum(r.get('refusedEmptyBody', 0) for r in recs)}")
+    print(f"  refused, obstacle  : "
+          f"{sum(r.get('refusedObstacle', 0) for r in recs)}")
+    print(f"  RED, disabled      : {len(reds)}")
     print(f"  project            : {proj}")
 
 

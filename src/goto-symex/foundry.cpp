@@ -2358,6 +2358,33 @@ void foundry_generator::collect(
       ++suppressed_obstacle;
       return;
     }
+  // ---- REFUSE a case that would emit an EMPTY TEST BODY ----
+  //
+  // The emission loop skips any call whose method IS its contract
+  // (`continue; // constructor -> setUp()`), so a case that reconstructed only
+  // a constructor segment produces `function test_cov_N() public { }` -- a test
+  // that names witnessed paths in its comment and executes none of them, and
+  // that PASSES because it does nothing. MEASURED on aqua: two of the six
+  // emitted files were of exactly this shape, both green at 188 gas.
+  //
+  // Refused here rather than filtered at emission for the reason stated above
+  // the obstacle refusal: the case must never enter `test_cases`, or a
+  // fingerprint collision can collapse it onto a legitimate case and ship one
+  // under the other's provenance.
+  {
+    bool any_call = false;
+    for (const auto &c : tc)
+      if (c.method != c.contract)
+      {
+        any_call = true;
+        break;
+      }
+    if (!any_call)
+    {
+      ++suppressed_empty_body;
+      return;
+    }
+  }
   if (source_file.empty())
     source_file = config.options.get_option("input-file");
   // Provenance, keyed by the same fingerprint dedup uses. Several
@@ -2917,6 +2944,20 @@ void foundry_generator::generate() const
       "coverage denominator (they are real); what is refused is turning them "
       "into tests. See the NAMED OBSTACLE report above for which units and why",
       suppressed_obstacle);
+
+  // Same placement and the same reason: printed BEFORE the empty check, as an
+  // absolute number. A run that refused N empty-bodied cases and a run that
+  // witnessed nothing would otherwise print the identical line.
+  if (suppressed_empty_body)
+    log_warning(
+      "Foundry: {} counterexample(s) REFUSED -- every call they reconstructed "
+      "is a CONSTRUCTOR, so the test function would have an EMPTY BODY: it "
+      "would name witnessed paths in its comment, execute none of them, and "
+      "PASS because it does nothing. A green test that calls nothing is worse "
+      "than a missing one -- it is counted as emitted and counted as passing, "
+      "and only reading the body tells them apart. The paths remain witnessed; "
+      "what is refused is shipping a test that does not exercise them",
+      suppressed_empty_body);
 
   if (test_cases.empty())
   {

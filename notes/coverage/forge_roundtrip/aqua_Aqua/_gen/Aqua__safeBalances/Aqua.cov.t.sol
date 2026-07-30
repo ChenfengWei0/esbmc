@@ -8,14 +8,16 @@
 pragma solidity >=0.8.0;
 
 import {Test} from "forge-std/Test.sol";
-import {Aqua} from "../src/aqua__Aqua.flat.sol";
+import {Aqua} from "./aqua__Aqua.flat.sol";
 
-contract AquaCovTest_Aqua_dock is Test {
+contract AquaCovTest is Test {
   Aqua c0;
   function setUp() public {
     c0 = new Aqua();
   }
-  // claim: sol:@C@Aqua@F@dock#3088:path:12, sol:@C@Aqua@F@dock#3088:path:2
+  // claim: sol:@C@Aqua@F@safeBalances#2909:path:14, sol:@C@Aqua@F@safeBalances#2909:path:2
   function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c0.safeBalances(address(uint160(0)), address(uint160(0)), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(uint160(0)), address(uint160(0))) {} catch {}
   }
 }
