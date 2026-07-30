@@ -378,3 +378,35 @@ pair — a bracket `(0, typemax]` must still be discarded, a bracket
 
 This is the first time the two rounds have both completed, so it is also the
 first time this could be seen at all.
+
+### ★ RESOLVED: the full-type span is correct, and one ladder cannot serve two far-apart boundaries
+
+Printed every path's raw bracket for the coordinate instead of theorising a
+fifth time. Identical on all four paths:
+
+    immutables.amount  upper in (5.14e61 .. 2^256-1)
+    immutables.amount  lower in (0       .. 1.13e15)
+
+Neither is degenerate; the union is `(0, 2^256-1)`; **and that is right**. The
+lower boundary lies below 1.13e15 and the upper above 5.14e61, so any SINGLE
+ladder covering both must span the whole type.
+
+Four theories preceded this and all were wrong — the type-max guard, a degenerate
+contribution, upper/lower folding, and per-path spans. The answer was in a line
+the tool had been printing the whole time.
+
+**The finding is method-level, not a bug: the two boundaries are 46 orders of
+magnitude apart, so a uniform ladder across their union spends every probe in the
+empty middle.** The refine round therefore never narrows anything and the shrink
+is left to bisect. The ladder is laid correctly and lands nowhere useful.
+
+What follows is **one ladder per BRACKET** rather than per coordinate — a short
+ladder inside `(0, 1.13e15]` and another inside `(5.14e61, 2^256-1]`. The cost is
+at most 2x the values, against a uniform ladder needing ~2^150 probes for the
+same resolution; it is per-SIDE, bounded by two, and plausibly CHEAPER than the
+present ladder because each short one can be shorter than the long one. It is
+explicitly NOT the per-path multiplication rejected on cost grounds earlier.
+
+Predicted observable, so the next attempt is falsifiable: the refine span should
+become two intervals, and enc=14's `immutables.amount` upper bound should move
+off the type maximum on the first round.
