@@ -20,4 +20,11 @@ contract AquaCovTest_Aqua_safeBalances is Test {
     // [revert-tolerant] outcome not asserted
     try c0.safeBalances(address(uint160(0)), address(uint160(0)), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(uint160(0)), address(uint160(0))) {} catch {}
   }
+  // claim: sol:@C@Aqua@F@safeBalances#2909:path:14, sol:@C@Aqua@F@safeBalances#2909:path:2
+  function test_cov_1() public {
+    // [revert-tolerant] outcome not asserted
+    try c0.safeBalances(address(uint160(43733)), address(uint160(41623)), bytes32(0x000000000000000000000000000000000000000000000000000000000000c415), address(uint160(7955)), address(uint160(8614))) {} catch {}
+    // [revert-tolerant] outcome not asserted
+    try c0.safeBalances(address(uint160(0)), address(uint160(0)), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(uint160(0)), address(uint160(0))) {} catch {}
+  }
 }

@@ -16,7 +16,18 @@ contract AquaCovTest_Aqua_push is Test {
     c0 = new Aqua();
   }
   // claim: sol:@C@Aqua@F@push#3233:path:14, sol:@C@Aqua@F@push#3233:path:2
-  function test_cov_0() public {
+  // DISABLED: RED on the unmodified contract, so its
+  // coverage is not ours to claim. Kept, renamed out of
+  // forge's `test*` prefix, so the artefact still shows
+  // what was generated.
+  function disabled_test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c0.push(address(uint160(0)), address(uint160(0)), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(uint160(0)), 0) {} catch {}
+  }
+  // claim: sol:@C@Aqua@F@push#3233:path:14, sol:@C@Aqua@F@push#3233:path:2
+  function test_cov_1() public {
+    // [revert-tolerant] outcome not asserted
+    try c0.push(address(uint160(43733)), address(uint160(41623)), bytes32(0x000000000000000000000000000000000000000000000000000000000000c415), address(uint160(32429)), 0) {} catch {}
     // [revert-tolerant] outcome not asserted
     try c0.push(address(uint160(0)), address(uint160(0)), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(uint160(0)), 0) {} catch {}
   }
