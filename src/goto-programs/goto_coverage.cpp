@@ -80,6 +80,9 @@ std::map<std::string, std::pair<std::string, std::string>>
 std::vector<std::pair<std::string, std::string>>
   goto_coveraget::path_cov_outer_box_pins;
 std::map<std::string, std::string> goto_coveraget::path_cov_refused_coords;
+bool goto_coveraget::path_cov_assert_mode = false;
+std::vector<goto_coveraget::assert_candidatet>
+  goto_coveraget::path_cov_assert_candidates;
 std::string goto_coveraget::path_cov_fingerprint;
 std::atomic<bool> goto_coveraget::branch_cov_active{false};
 std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
@@ -529,6 +532,185 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
     witnessless.size(),
     names);
   abort();
+}
+
+// ---- ONE bound record and ONE parser for every stage-2/3 region spec ----
+//
+// NOTE, so it is not mistaken for done: --path-cov-certify still carries its own
+// inline copy of this parse and of the three structural gates below. Unifying
+// them is a separate change, deliberately not folded in here, because it is a
+// span replacement inside a branch that three regressions pin by MESSAGE and a
+// blind edit there would look like a fix and read as a regression. Until it
+// happens, a fix to one copy does not reach the other -- and FOUR of the five
+// documented false-certificate routes live in exactly this code.
+struct path_cov_boundt
+{
+  std::string name, lo, hi;
+  std::vector<std::string> holes;
+};
+
+// Read `j[key]` (an array of {name, lo, hi, holes?}) into `out`. The key is a
+// parameter so certify can keep "box" and stage 3 use "region" without a second
+// parser existing.
+//
+// `lo`/`hi`/`holes` are decimal STRINGS, never JSON numbers: Solidity inputs are
+// up to 256 bits and a JSON number would be silently truncated to a double on
+// the way in -- a region quietly covering the wrong values is the one outcome
+// these queries exist to prevent. A missing field throws (`.at`), which the
+// caller turns into a fatal, named parse failure; defaulting it would produce a
+// plausible full report answering a different question.
+static void parse_bounds(
+  const nlohmann::json &j,
+  const char *key,
+  std::vector<path_cov_boundt> &out)
+{
+  for (const auto &b : j.value(key, nlohmann::json::array()))
+  {
+    path_cov_boundt cb;
+    cb.name = b.at("name").get<std::string>();
+    cb.lo = b.at("lo").get<std::string>();
+    cb.hi = b.at("hi").get<std::string>();
+    for (const auto &h : b.value("holes", nlohmann::json::array()))
+      cb.holes.push_back(h.get<std::string>());
+    out.push_back(cb);
+  }
+}
+
+// ---- Routes 1-3: the THREE ways a region is empty before any type is known --
+//
+// Returns the reason, or "" when this bound is structurally fine. `seen_names`
+// carries across the whole spec and is mutated, which is what makes route 2 (the
+// same coordinate bounded twice) visible at all.
+//
+// Why a refusal and not a warning: an unsatisfiable entry assumption means
+// nothing executes, so every assertion downstream of it holds FOR WANT OF AN
+// EXECUTION. The run then prints a certificate next to a region that contains no
+// input. That is a false certificate, not a weak one, and there is nothing to
+// reinterpret afterwards -- which is why the gate sits before the query is
+// formed rather than where its answer is read.
+static std::string path_cov_structural_refusal(
+  const path_cov_boundt &b,
+  std::set<std::string> &seen_names)
+{
+  if (string2integer(b.hi) < string2integer(b.lo))
+    return "the box is EMPTY on this coordinate (lo=" + b.lo + " > hi=" + b.hi +
+           "), so the entry assumption is unsatisfiable and every exit assert "
+           "would hold for want of an execution";
+  // Closes the obvious hole in the test above: bounding one name twice can
+  // intersect to nothing while each bound is individually fine, and a per-bound
+  // test would wave both through.
+  if (!seen_names.insert(b.name).second)
+    return "the coordinate is bounded TWICE in this spec; two bounds on one "
+           "name can intersect to an empty box while each is individually "
+           "well-formed, which the emptiness test above would not see";
+  if (!b.holes.empty())
+  {
+    // A PUNCHED interval has a SECOND way of being empty and `lo <= hi` cannot
+    // see it: `[5,5] \ {5}` passes that test and admits no input at all.
+    // Counting only the DISTINCT holes INSIDE [lo, hi] is what makes this exact
+    // -- a hole outside the interval removes nothing.
+    const BigInt lo = string2integer(b.lo), hi = string2integer(b.hi);
+    std::set<std::string> inside;
+    for (const auto &h : b.holes)
+    {
+      const BigInt hv = string2integer(h);
+      if (hv >= lo && hv <= hi)
+        inside.insert(integer2string(hv));
+    }
+    if (BigInt((int64_t)inside.size()) >= (hi - lo + 1))
+      return "the PUNCHED box is EMPTY on this coordinate: [" + b.lo + ", " +
+             b.hi + "] holds " + integer2string(hi - lo + 1) +
+             " value(s) and the holes remove all of them, so the entry "
+             "assumption is unsatisfiable. `lo <= hi` does NOT catch this -- "
+             "the interval is well-formed and the punching is what empties it";
+  }
+  return std::string();
+}
+
+// Does a decimal from a spec fit an unsigned bit-vector coordinate?
+//
+// Every constant in these queries is built with constant_int2tc ON THE
+// COORDINATE'S OWN TYPE, so a decimal above the type's maximum WRAPS and the
+// query is emitted about a different number than the one written down.
+static bool path_cov_fits_type(
+  const type2tc &t,
+  const std::string &dec,
+  std::string &tmax_out)
+{
+  BigInt tmax = 1;
+  for (unsigned w = 0; w < t->get_width(); ++w)
+    tmax *= 2;
+  tmax -= 1;
+  tmax_out = integer2string(tmax);
+  const BigInt v = string2integer(dec);
+  return v >= 0 && v <= tmax;
+}
+
+// ---- Route 4: every lo / hi / hole must fit the coordinate's own type ----
+static std::string
+path_cov_out_of_type_refusal(const path_cov_boundt &b, const type2tc &bt)
+{
+  std::vector<std::pair<std::string, std::string>> vals = {
+    {"lo", b.lo}, {"hi", b.hi}};
+  for (const auto &h : b.holes)
+    vals.push_back({"hole", h});
+  for (const auto &wv : vals)
+  {
+    std::string tmax;
+    if (path_cov_fits_type(bt, wv.second, tmax))
+      continue;
+    return "the " + wv.first + " value " + wv.second +
+           " does not fit the coordinate's own type (admissible range [0, " +
+           tmax + "])";
+  }
+  return std::string();
+}
+
+// ---- The contract instance object of ONE named contract, by EXACT id ----
+//
+// resolve_coord picks the object by SUBSTRING (`id.find(scope_contract)`), and
+// that test is wrong here in two ways that are both completely silent. With no
+// --contract (or with --coverage-whole-unit) `scope_contract` is EMPTY and the
+// test degenerates to "any contract object in the program"; and with
+// `--contract Escrow` the substring matches `sol:@_ESBMC_Object_EscrowSrc#`,
+// which is exactly the shape of the EscrowSrc/EscrowDst benchmarks.
+//
+// For a post-state assertion, reading the wrong object is the worst available
+// outcome. The instrumented unit writes object X, the exit read looks at object
+// Y that nothing touched, so `post == pre` HOLDS vacuously and `post != pre` is
+// REFUTED -- a full, plausible, entirely green ladder about a contract that was
+// never measured, with no error anywhere.
+//
+// Exact equality is available because the frontend builds the id as
+// `"sol:@" + "_ESBMC_Object_" + <C> + "#"`
+// (solidity_convert_contract.cpp, get_static_contract_instance_name) -- trailing
+// '#', nothing after it.
+static const symbolt *
+path_cov_contract_object(contextt &ctx, const std::string &contract)
+{
+  if (contract.empty())
+    return nullptr;
+  const std::string want = "sol:@_ESBMC_Object_" + contract + "#";
+  const symbolt *obj = nullptr;
+  ctx.foreach_operand([&obj, &want](const symbolt &s) {
+    if (obj == nullptr && s.id.as_string() == want)
+      obj = &s;
+  });
+  return obj;
+}
+
+// Is this component of the contract object a USER state variable?
+//
+// The object carries ESBMC's own fields ($address, $balance, $code, $codehash,
+// $mutex_<C>, _ESBMC_bind_cname, $dynamic_pool, padding). Same four-way filter
+// bmc.cpp applies when it restores the whole object, deliberately reusing the
+// stricter of the two forms in that file, so a candidate can never be emitted
+// about `$balance`.
+static bool path_cov_user_state_name(const std::string &n)
+{
+  return !(
+    n.empty() || n[0] == '$' || n.rfind("_ESBMC", 0) == 0 ||
+    n.rfind("anon_pad", 0) == 0);
 }
 
 // Walk a dotted field path (`taker`, `timelocks.deployedAt`) down from `e`.
@@ -1099,6 +1281,118 @@ void goto_coveraget::report_outer_boxes()
     "subtraction is sound only if path enumeration is complete for this unit; "
     "run --path-cov-certify on each region to confirm it, which is the same "
     "confirmation the method already prescribes when any path is undecided");
+}
+
+void goto_coveraget::report_path_cov_assertions()
+{
+  if (!path_cov_assert_mode)
+    return;
+
+  // ---- Refused variables FIRST, before any verdict ----
+  //
+  // A refused variable emits no candidate, so it appears in no row below -- and
+  // an absence reads as "not asked about" while the truth is "asked about and
+  // refused". In THIS mode the misreading is worse than in the outer box: a
+  // state variable with no row reads as one that needed no assertion, i.e. as
+  // one that does not change.
+  if (!path_cov_refused_coords.empty())
+  {
+    std::string refused;
+    for (const auto &rc : path_cov_refused_coords)
+      refused +=
+        (refused.empty() ? "" : "; ") + rc.first + " (" + rc.second + ")";
+    log_warning(
+      "--path-cov-assert: {} state variable(s) carry NO candidate and appear "
+      "in NO row below: {}. Their absence is a REFUSAL, not a measurement -- "
+      "read as \"unchanged\" it would be a claim about a variable nothing was "
+      "asserted on",
+      path_cov_refused_coords.size(),
+      refused);
+  }
+
+  log_status(
+    "--path-cov-assert: the run's VERIFICATION SUCCESSFUL / FAILED line is NOT "
+    "the result of this mode. A REFUTED candidate is the ladder WORKING: it "
+    "means there is an input in the region walking this path whose post-state "
+    "violates the candidate, and that input is the counterexample. The result "
+    "of this run is the per-candidate table below");
+
+  size_t holds = 0, refuted = 0, nv_unknown = 0, nv_unreached = 0;
+  {
+    std::lock_guard<std::mutex> lock(claim_outcome_mutex);
+    // Emission order, never completion order: under --parallel-solving the
+    // claims finish in an arbitrary order, and a table whose ROW ORDER depended
+    // on that would make every pinned line flaky for a reason unrelated to what
+    // it pins.
+    for (const auto &c : path_cov_assert_candidates)
+    {
+      const std::string sig = c.key.first + "\t" + c.key.second;
+      auto it = claim_outcome.find(sig);
+      std::string verdict;
+      // The third state is EXPLICIT and has two named causes. Collapsing them
+      // would hide the difference between "the solver could not answer" and
+      // "the claim never reached the solver", which are opposite problems.
+      if (it == claim_outcome.end())
+      {
+        ++nv_unreached;
+        verdict = "NO VERDICT (never reached the solver)";
+      }
+      else if (it->second == 'P')
+      {
+        // Never "proven": path_cov_can_prove_unreachable() is false for every
+        // coverage configuration, so this is bounded-holds.
+        ++holds;
+        verdict = "HOLDS";
+      }
+      else if (it->second == 'F')
+      {
+        ++refuted;
+        verdict = "REFUTED";
+      }
+      else
+      {
+        ++nv_unknown;
+        verdict = "NO VERDICT (solver unknown)";
+      }
+
+      // The witness is REPORTED, never demanded. audit_certify_witness makes a
+      // witness-less refutation a hard failure and that rule does not transfer:
+      // there a refutation is a defect-shaped event whose witness shrinks the
+      // box, here it is an expected outcome and there is no box to shrink.
+      std::string witness;
+      if (it != claim_outcome.end() && it->second == 'F')
+      {
+        auto ce = path_ce.find(sig);
+        if (ce != path_ce.end() && !ce->second.inputs.empty())
+        {
+          std::string vals;
+          for (const auto &iv : ce->second.inputs)
+            vals += (vals.empty() ? "" : ", ") + iv.first + "=" + iv.second;
+          witness = "  [witness: " + vals + "]";
+        }
+        else
+          witness =
+            "  [no witness input recorded -- pass --cov-report-json if the "
+            "refuting input is wanted; the verdict itself is unaffected]";
+      }
+      log_status(
+        "--path-cov-assert: {}: {}  {}{}", c.var, c.text, verdict, witness);
+    }
+  }
+
+  // All four counts, every time, zeros included: a category that stops
+  // occurring is noticed, a category that silently disappears is not.
+  log_status(
+    "--path-cov-assert: ladder summary -- {} candidate(s): {} HOLDS, {} "
+    "REFUTED, {} no verdict (solver unknown), {} no verdict (never reached the "
+    "solver). HOLDS is BOUNDED-holds: true for every input of the region under "
+    "THIS exploration (tx/unwind bound, post-constructor entry state), never "
+    "\"proven\"",
+    path_cov_assert_candidates.size(),
+    holds,
+    refuted,
+    nv_unknown,
+    nv_unreached);
 }
 
 void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
@@ -2759,6 +3053,140 @@ void goto_coveraget::solidity_path_coverage()
       certify_box.size());
   }
 
+  // ---- STAGE 3: post-state assertion synthesis spec (--path-cov-assert) ----
+  //
+  // {"unit": ..., "enc": N, "depth": D,
+  //  "region": [{"name","lo","hi","holes"?}, ...],
+  //  "vars":   [{"name","abs_lo"?,"abs_hi"?,
+  //              "delta_dir"?,"delta_lo"?,"delta_hi"?}, ...]}
+  //
+  // `region` is byte for byte the shape certify parses under "box" and goes
+  // through the SAME parser. `vars` is optional; omitting it emits the equality
+  // and sign rungs for every eligible state variable, which is the default.
+  struct assert_vart
+  {
+    std::string name;
+    bool has_abs = false;
+    std::string abs_lo, abs_hi;
+    bool has_delta = false;
+    std::string delta_dir, delta_lo, delta_hi;
+  };
+  bool assert_on = false;
+  // Route 5, mirrored from certify: a spec matching NO unit emits no assume and
+  // no assert, so nothing is checked and the run prints VERIFICATION SUCCESSFUL
+  // with exit 0.
+  size_t assert_units_matched = 0;
+  std::string assert_unit;
+  uint64_t assert_enc = 0, assert_depth = 0;
+  std::vector<path_cov_boundt> assert_region;
+  std::vector<assert_vart> assert_vars;
+  // "vars was written down" is NOT "vars named something". Two entry conditions
+  // into one symptom (an empty ladder); they need two messages.
+  bool assert_vars_present = false;
+  path_cov_assert_mode = false;
+  path_cov_assert_candidates.clear();
+  if (!path_cov_assert_path.empty())
+  {
+    std::ifstream ain(path_cov_assert_path);
+    if (!ain)
+    {
+      log_error("--path-cov-assert: cannot open '{}'", path_cov_assert_path);
+      abort();
+    }
+    try
+    {
+      nlohmann::json j;
+      ain >> j;
+      assert_unit = j.at("unit").get<std::string>();
+      assert_enc = j.at("enc").get<uint64_t>();
+      assert_depth = j.at("depth").get<uint64_t>();
+      parse_bounds(j, "region", assert_region);
+      assert_vars_present = j.contains("vars");
+      for (const auto &v : j.value("vars", nlohmann::json::array()))
+      {
+        assert_vart av;
+        av.name = v.at("name").get<std::string>();
+        if (v.contains("abs_lo") || v.contains("abs_hi"))
+        {
+          // Half an interval is not an interval. Refused rather than completed
+          // with a type bound, because the spec would then be answered about
+          // something it did not say.
+          av.abs_lo = v.at("abs_lo").get<std::string>();
+          av.abs_hi = v.at("abs_hi").get<std::string>();
+          av.has_abs = true;
+        }
+        if (
+          v.contains("delta_lo") || v.contains("delta_hi") ||
+          v.contains("delta_dir"))
+        {
+          // A DIRECTION IS MANDATORY, and defaulting it is a false-certificate
+          // route. Candidate variables are unsigned, so `post - pre` WRAPS on a
+          // decrease: a spec meaning "decreases by 1..10" defaulted to `inc`
+          // would be answered about the wrapped difference.
+          av.delta_dir = v.at("delta_dir").get<std::string>();
+          av.delta_lo = v.at("delta_lo").get<std::string>();
+          av.delta_hi = v.at("delta_hi").get<std::string>();
+          if (av.delta_dir != "inc" && av.delta_dir != "dec")
+            throw std::runtime_error(
+              "variable '" + av.name +
+              "': delta_dir must be \"inc\" or \"dec\"");
+          av.has_delta = true;
+        }
+        assert_vars.push_back(av);
+      }
+    }
+    catch (const std::exception &ex)
+    {
+      // Fatal rather than "ignore and fall back to enumeration": a malformed
+      // spec that silently produced an ordinary coverage run would print a
+      // full, plausible report answering a different question.
+      log_error(
+        "--path-cov-assert: cannot parse '{}' ({}). Expected "
+        "{{\"unit\":..., \"enc\":N, \"depth\":D, "
+        "\"region\":[{{\"name\":...,\"lo\":\"..\",\"hi\":\"..\"}}], "
+        "\"vars\":[{{\"name\":...,\"abs_lo\":\"..\",\"abs_hi\":\"..\","
+        "\"delta_dir\":\"inc|dec\",\"delta_lo\":\"..\",\"delta_hi\":\"..\"}}]}}",
+        path_cov_assert_path,
+        ex.what());
+      abort();
+    }
+    // ---- N1, entry condition (a): `vars` is present and names NOTHING ----
+    //
+    // Zero candidates emitted, nothing checked, VERIFICATION SUCCESSFUL with
+    // exit 0 -- indistinguishable from a ladder that passed. Refused here
+    // because it is knowable here; entry condition (b) has its own gate after
+    // the unit loop and its own message. Closing one would produce a run that
+    // looks exactly like a fix.
+    if (assert_vars_present && assert_vars.empty())
+    {
+      log_error(
+        "--path-cov-assert: the spec contains an EMPTY \"vars\" array, so not "
+        "one candidate assertion would be emitted and the run would print "
+        "VERIFICATION SUCCESSFUL for a ladder it never built. Omit \"vars\" "
+        "entirely to get the default ladder over every eligible state "
+        "variable, or name the variables to assert about");
+      exit(1);
+    }
+    assert_on = true;
+    path_cov_assert_mode = true;
+    log_status(
+      "--path-cov-assert: POST-STATE ASSERTION LADDER for unit '{}' path "
+      "enc={} depth={} over {} region bound(s) and {} explicit variable "
+      "spec(s). The region is ASSUMED at entry -- it is exactly the `require` a "
+      "generated test would carry -- and each candidate is asserted at THIS "
+      "path's own exit under `tr != enc || cnt != depth`, so it is vacuous on "
+      "every other path. One fixed assumption, a whole ladder of assertions, "
+      "ONE run. NO [Coverage] block is printed and the run's VERIFICATION "
+      "SUCCESSFUL/FAILED line is NOT the result: a REFUTED candidate is the "
+      "ladder working. The result is the per-candidate table printed after "
+      "solving",
+      assert_unit,
+      assert_enc,
+      assert_depth,
+      assert_region.size(),
+      assert_vars.size());
+  }
+
   // Keep the counterexample payload alive through slicing, WITHOUT switching
   // slicing off. The symex slicer works backwards from the claim, and a path
   // claim's guard is `tr != enc || cnt != depth` — it mentions nothing but the
@@ -3803,10 +4231,18 @@ void goto_coveraget::solidity_path_coverage()
     std::vector<path_decisiont> dec_table;
     std::map<std::string, uint32_t> dec_intern;
     std::map<uint64_t, uint32_t> dec_index;
+    // The gate names ONE unit per mode, and the `outer_on` / `assert_on` guard
+    // in front of each name is not decoration: with the mode off the spec name
+    // is empty and `find("@F@" + "" + "#")` matches every unit in the program --
+    // precisely the whole-contract cost this gate exists to avoid.
+    auto spec_names_this_unit = [&f_it](const std::string &spec) {
+      return f_it->first.as_string() == spec ||
+             f_it->first.as_string().find("@F@" + spec + "#") !=
+               std::string::npos;
+    };
     const bool trace_decisions =
-      outer_on && (f_it->first.as_string() == outer_unit ||
-                   f_it->first.as_string().find("@F@" + outer_unit + "#") !=
-                     std::string::npos);
+      (outer_on && spec_names_this_unit(outer_unit)) ||
+      (assert_on && spec_names_this_unit(assert_unit));
     // Recording for the REPORT is not gated on the outer-box spec: the
     // projection needs every unit's sequences, and the outer-box gate names one.
     const bool record_decisions = trace_decisions || emit_decision_sites;
@@ -5668,6 +6104,570 @@ void goto_coveraget::solidity_path_coverage()
       continue;
     }
 
+    // ---- STAGE 3: POST-STATE ASSERTION SYNTHESIS (--path-cov-assert) ----
+    //
+    // Third branch in the same place and for the same reason as the two above:
+    // expansion, the ABI gate, Phase-1 `tr`/`cnt` accounting, the
+    // `tr`-completeness invariant, the exit census and the decision-set census
+    // have all already run, and the antecedent asserted here -- `tr != enc ||
+    // cnt != depth` -- IS that accounting.
+    if (assert_on)
+    {
+      const std::string uid = f_it->first.as_string();
+      if (
+        uid != assert_unit &&
+        uid.find("@F@" + assert_unit + "#") == std::string::npos)
+        continue; // other units contribute nothing to this ladder
+      ++assert_units_matched;
+
+      auto entry = goto_program.instructions.begin();
+
+      // ---- N4: A NAMED OBSTACLE UNIT MAY NOT BE GIVEN AN ORACLE ----
+      //
+      // On an obstructed unit the model admits executions the chain does not
+      // have, so a HOLDS verdict authorises an `assertEq` that can be RED on
+      // the unmodified contract -- the single outcome this pipeline must never
+      // produce.
+      if (unit_has_lost_decision || unit_calls_gated_unit)
+      {
+        log_error(
+          "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: this unit is a "
+          "NAMED OBSTACLE. A post-state assertion is what a generated test "
+          "turns into an assertEq, and on an obstructed unit the model admits "
+          "an execution the chain does not have -- so a candidate that HOLDS "
+          "here can still be RED on the unmodified contract. No candidate is "
+          "emitted: an assertion that cannot be trusted is worse than none "
+          "(lost decision: {}; calls a gated unit: {})",
+          uid,
+          unit_has_lost_decision ? "yes" : "no",
+          unit_calls_gated_unit ? "yes" : "no");
+        exit(1);
+      }
+
+      // ---- Routes 1-3: the region's structure, before any type is known ----
+      {
+        std::set<std::string> region_names;
+        for (const auto &b : assert_region)
+        {
+          const std::string bad =
+            path_cov_structural_refusal(b, region_names);
+          if (!bad.empty())
+          {
+            log_error(
+              "--path-cov-assert: unit '{}' -- REFUSING THE LADDER on region "
+              "coordinate '{}': {}. An unsatisfiable entry assumption is worse "
+              "here than in certification: nothing executes, so EVERY candidate "
+              "on the ladder holds for want of an execution and the report "
+              "reads as a whole set of certified post-state assertions",
+              uid,
+              b.name,
+              bad);
+            exit(1);
+          }
+        }
+      }
+
+      // ---- Resolve, type-check and ASSUME the region at unit entry ----
+      const symbolt *fsym = ns.lookup(f_it->first);
+      size_t bounds_emitted = 0;
+      // Counted at the EMISSION, inside the conjunction, never from
+      // `b.holes.size()`: a counter that reads the SPEC cannot witness whether
+      // the spec reached the formula.
+      size_t holes_emitted = 0;
+      for (const auto &b : assert_region)
+      {
+        expr2tc bs;
+        std::string why;
+        if (!resolve_coord(fsym, b.name, bs))
+          why =
+            "the name does not resolve to an input of this unit. Name a "
+            "parameter, an environment value as `msg.value` / `tx.origin` / "
+            "`block.timestamp`, or a state variable at entry as `state.<field>` "
+            "(which reaches the contract object's own components only -- a "
+            "mapping or a dynamic array does not resolve)";
+        else
+          coord_expressible(bs->type, why);
+        if (!why.empty())
+        {
+          // REFUSE THE LADDER, not just the coordinate -- the certify
+          // disposition. Dropping a requested bound would assume a WIDER region
+          // and certify every candidate over inputs nobody asked about.
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER because region "
+            "coordinate '{}' cannot be expressed: {}",
+            uid,
+            b.name,
+            why);
+          exit(1);
+        }
+        const type2tc bt = bs->type;
+        {
+          const std::string bad = path_cov_out_of_type_refusal(b, bt);
+          if (!bad.empty())
+          {
+            log_error(
+              "--path-cov-assert: unit '{}' -- REFUSING THE LADDER on region "
+              "coordinate '{}': {}. The bound is built as a constant of that "
+              "type, so an out-of-range decimal WRAPS and the region assumed "
+              "would not be the region written here",
+              uid,
+              b.name,
+              bad);
+            exit(1);
+          }
+        }
+        expr2tc bguard = and2tc(
+          greaterthanequal2tc(bs, constant_int2tc(bt, string2integer(b.lo))),
+          lessthanequal2tc(bs, constant_int2tc(bt, string2integer(b.hi))));
+        for (const auto &h : b.holes)
+        {
+          bguard = and2tc(
+            bguard, notequal2tc(bs, constant_int2tc(bt, string2integer(h))));
+          ++holes_emitted;
+        }
+        goto_programt::instructiont asm_i;
+        asm_i.type = ASSUME;
+        asm_i.guard = bguard;
+        asm_i.location = entry->location;
+        // "skipped" keeps this out of the decision-set census, which flags a
+        // user-source ASSUME as a lowered-away branch. This one is ours.
+        asm_i.location.property("skipped");
+        asm_i.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, asm_i);
+        ++bounds_emitted;
+      }
+
+      // ---- Find pi's OWN exit, and refuse three ways it can be wrong ----
+      goto_programt::targett exit_pc;
+      size_t exit_idx = 0;
+      bool found = false;
+      for (size_t i = 0; i < to_insert.size(); ++i)
+      {
+        const std::string &cm = std::get<2>(to_insert[i]);
+        const size_t q = cm.rfind(":path:");
+        if (q == std::string::npos)
+          continue;
+        if (strtoull(cm.substr(q + 6).c_str(), nullptr, 10) == assert_enc)
+        {
+          exit_pc = std::get<0>(to_insert[i]);
+          exit_idx = i;
+          found = true;
+          break;
+        }
+      }
+      // ---- N2: the path's `enc` does not exist for this unit ----
+      //
+      // The outer-box branch only WARNS here, correctly: there a missing path
+      // costs one measurement. Here it means the ladder was emitted nowhere and
+      // the run prints VERIFICATION SUCCESSFUL with exit 0.
+      if (!found)
+      {
+        log_error(
+          "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: path enc={} is "
+          "not among this unit's {} enumerated path(s), so not one assertion "
+          "would be emitted and the run would print VERIFICATION SUCCESSFUL "
+          "for a ladder it never built",
+          uid,
+          assert_enc,
+          to_insert.size());
+        exit(1);
+      }
+      // ---- N3: `depth` disagrees with the enumerated depth ----
+      //
+      // The most dangerous of the new routes because today it produces NO
+      // diagnostic at all: a wrong `depth` makes `tr != enc || cnt != depth`
+      // TRUE on every execution, so every candidate holds VACUOUSLY and the
+      // report is indistinguishable from a completely successful certification.
+      {
+        auto dit = path_decision_depth.find(
+          {std::get<2>(to_insert[exit_idx]), exit_pc->location.as_string()});
+        if (dit == path_decision_depth.end() || dit->second != assert_depth)
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the spec says "
+            "path enc={} has depth={}, the enumeration says {}. The antecedent "
+            "is `tr != enc || cnt != depth`, so a wrong depth is TRUE on every "
+            "execution: every candidate would hold vacuously and the report "
+            "would be indistinguishable from a completely successful "
+            "certification. Refused rather than warned about precisely because "
+            "the wrong answer looks exactly like the right one",
+            uid,
+            assert_enc,
+            assert_depth,
+            dit == path_decision_depth.end()
+              ? std::string("<no depth recorded for this exit>")
+              : std::to_string(dit->second));
+          exit(1);
+        }
+      }
+      // ---- N5: what KIND of exit is it? ----
+      //
+      // THE TRAP: revert_paths / rollback_revert_paths / undetermined_exit_paths
+      // are filled by the insertion loop BELOW, which this branch `continue`s
+      // past -- so in this mode they are EMPTY and reading them would classify
+      // every exit as normal. The classification comes from the locals.
+      {
+        const bool is_error_revert = std::get<3>(to_insert[exit_idx]);
+        const bool is_rollback = rollback_exits.count(exit_idx) != 0;
+        const bool is_undetermined = undetermined_exits.count(exit_idx) != 0;
+        if (is_error_revert)
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: path enc={} "
+            "exits through a CUSTOM-ERROR revert, which the frontend lowers "
+            "with no state rollback. The state readable there is the state at "
+            "the revert point, not the EVM post-state -- on chain every write "
+            "of that transaction is undone. A post-state assertion there "
+            "describes a state that does not exist",
+            uid,
+            assert_enc);
+          exit(1);
+        }
+        if (is_undetermined)
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: path enc={} "
+            "has an UNDETERMINED exit -- no positive evidence separates a "
+            "reverting execution from a normal one there, and an undetermined "
+            "exit cannot become an oracle",
+            uid,
+            assert_enc);
+          exit(1);
+        }
+        if (is_rollback)
+          // ALLOWED and LABELLED. Here the rollback IS modelled, so the exit
+          // read is the correctly restored state -- but `post == pre` holding
+          // means the rollback worked, NOT that the function leaves state
+          // alone. Same numbers, opposite claims.
+          log_warning(
+            "--path-cov-assert: unit '{}' path enc={} exits through a ROLLBACK "
+            "revert. The rollback IS modelled, so the values below are the "
+            "correctly RESTORED state and the ladder is emitted -- but read "
+            "every verdict as a statement about a REVERTING transaction. In "
+            "particular `post == pre` holding here means the rollback worked, "
+            "NOT that the function leaves state alone",
+            uid,
+            assert_enc);
+      }
+
+      // ---- Enumerate the candidate state variables ----
+      //
+      // (A): by EXACT contract match, never by the substring test resolve_coord
+      // uses. See path_cov_contract_object for what reading the wrong object
+      // does to this mode specifically.
+      const std::string own_contract = contract_of(uid);
+      const symbolt *obj =
+        path_cov_contract_object(*cov_context, own_contract);
+      if (obj == nullptr)
+      {
+        log_error(
+          "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: no contract "
+          "instance object 'sol:@_ESBMC_Object_{}#' exists for this unit's own "
+          "contract. The object is resolved by EXACT name on purpose: a "
+          "substring match would happily pick a DIFFERENT contract's object, "
+          "and the exit read would then observe an object nothing wrote -- "
+          "`post == pre` would hold vacuously and the whole ladder would come "
+          "back green for a contract that was never measured",
+          uid,
+          own_contract);
+        exit(1);
+      }
+      const typet ostruct = ns.follow(obj->type);
+      if (ostruct.id() != "struct")
+      {
+        log_error(
+          "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the contract "
+          "instance object does not follow to a struct",
+          uid);
+        exit(1);
+      }
+
+      std::vector<std::string> comp_names;
+      for (const auto &comp : to_struct_type(ostruct).components())
+      {
+        std::string vn = comp.get("#base_name").as_string();
+        if (vn.empty())
+          vn = comp.get_name().as_string();
+        if (path_cov_user_state_name(vn))
+          comp_names.push_back(vn);
+      }
+
+      // ---- SECOND SCAN: the state variables that are NOT components ----
+      //
+      // A mapping or dynamic array is not a field of the contract object -- the
+      // frontend lowers those to contract-scope globals -- so iterating
+      // components alone would let them VANISH from the report. In this mode an
+      // absent variable reads as "no assertion was needed", i.e. as
+      // "unchanged".
+      {
+        const std::string cpfx = "sol:@C@" + own_contract + "@";
+        cov_context->foreach_operand([&](const symbolt &s) {
+          const std::string id = s.id.as_string();
+          if (id.rfind(cpfx, 0) != 0 || id.find("@F@") != std::string::npos)
+            return;
+          std::string nm = id.substr(cpfx.size());
+          const size_t hash = nm.find('#');
+          if (hash != std::string::npos)
+            nm = nm.substr(0, hash);
+          if (!path_cov_user_state_name(nm))
+            return;
+          if (
+            std::find(comp_names.begin(), comp_names.end(), nm) !=
+            comp_names.end())
+            return;
+          path_cov_refused_coords[nm] =
+            "a mapping or dynamic array: the frontend lowers it to a "
+            "contract-scope global, not a component of the contract object, so "
+            "no scalar post-state candidate can be formed for it. Its absence "
+            "from the table is a REFUSAL, not a measurement";
+        });
+      }
+
+      std::set<std::string> named_wanted, named_seen;
+      for (const auto &v : assert_vars)
+        named_wanted.insert(v.name);
+
+      // ---- The antecedent, and the ladder ----
+      const expr2tc not_this_path = or2tc(
+        notequal2tc(tr, constant_int2tc(utype, BigInt(assert_enc))),
+        notequal2tc(cnt, constant_int2tc(utype, BigInt(assert_depth))));
+
+      size_t emitted = 0, vars_emitted = 0;
+      auto emit_rung = [&](
+                         const std::string &var,
+                         const std::string &rung,
+                         const std::string &text,
+                         const expr2tc &cand) {
+        // THE COMMENT SHAPE IS A HARD CONSTRAINT: `<unit-id>:path:<enc>` with
+        // the unit id FIRST and nothing in front of it, the candidate id a
+        // SUFFIX. MEASURED on the certify side: a leading prefix made the
+        // report's `path_function` unparseable, the counterexample harvest then
+        // filed every nondet as harness-internal, `inputs` came back empty, and
+        // the verdict still printed correctly -- an entirely silent loss.
+        const std::string comment = id2string(f_it->first) +
+                                    ":path:" + std::to_string(assert_enc) +
+                                    "#" + rung + "_" + var;
+        const std::string loc = exit_pc->location.as_string();
+        // all_claims FIRST, before the insert -- the ordering every other branch
+        // uses, and what makes the claim visible to audit_entry_liveness.
+        if (!all_claims.insert({comment, loc}).second)
+        {
+          log_error(
+            "--path-cov-assert: INTERNAL DEFECT -- duplicate claim key '{}' at "
+            "{}. Claim keys are a set, so one of the two candidates would be "
+            "silently dropped and would read in the table as a candidate "
+            "nobody asked for",
+            comment,
+            loc);
+          abort();
+        }
+        path_cov_assert_candidates.push_back(
+          {assert_enc, var, rung, text, {comment, loc}});
+        insert_assert(
+          goto_program, exit_pc, or2tc(not_this_path, cand), comment);
+        ++emitted;
+      };
+
+      for (const auto &comp : to_struct_type(ostruct).components())
+      {
+        std::string vname = comp.get("#base_name").as_string();
+        if (vname.empty())
+          vname = comp.get_name().as_string();
+        if (!path_cov_user_state_name(vname))
+          continue;
+        const assert_vart *spec = nullptr;
+        for (const auto &v : assert_vars)
+          if (v.name == vname)
+            spec = &v;
+        if (!assert_vars.empty() && spec == nullptr)
+          continue; // an explicit `vars` list is a whitelist
+        if (spec != nullptr)
+          named_seen.insert(vname);
+
+        expr2tc live = symbol2tc(migrate_type(ostruct), obj->id);
+        if (!walk_fields(ns, live, vname))
+        {
+          path_cov_refused_coords[vname] =
+            "the component does not resolve through the contract object's "
+            "field walk, so no post-state expression can be built for it";
+          continue;
+        }
+        const type2tc vt = live->type;
+
+        // ---- (F): coord_expressible is the WRONG gate for the equality rungs
+        //
+        // It refuses `bool` because a two-point domain has no interval. That is
+        // right for the interval and delta rungs and wrong for `post == pre` /
+        // `post != pre`, which are perfectly expressible on a bool -- reusing it
+        // as written would silently drop every boolean state variable, which is
+        // exactly the class a flag-setting function is about.
+        std::string why;
+        const bool interval_ok = coord_expressible(vt, why);
+        const bool equality_ok = interval_ok || is_bool_type(vt);
+        if (!equality_ok)
+        {
+          path_cov_refused_coords[vname] = why;
+          continue;
+        }
+        if (!interval_ok)
+          path_cov_refused_coords[vname + " [ordering/interval rungs]"] =
+            why +
+            ". The equality rungs (post == pre / post != pre) ARE emitted for "
+            "it -- only the ordering, interval and delta rungs are not";
+
+        // ---- pre_v: the entry snapshot ----
+        //
+        // From the SAME member expression the exit read uses. Without it the
+        // assertion at the exit would compare the post-state with itself.
+        // `.location.property("skipped")` is load bearing. Plain list insert,
+        // never insert_swap: insert_swap moves the instruction's CONTENT, so
+        // the iterator naming the original first instruction ends up naming the
+        // new one and the function acquires a self-loop (measured, ABI gate).
+        symbolt ssym;
+        ssym.type = migrate_type_back(vt);
+        ssym.name = "__ESBMC_pre$" + i2string(ghost_counter++);
+        ssym.id = "path_cov::" + id2string(ssym.name);
+        ssym.lvalue = true;
+        ssym.static_lifetime = false;
+        ssym.is_extern = false;
+        symbolt *psn;
+        cov_context->move(ssym, psn);
+        expr2tc pre_v = symbol2tc(migrate_type(psn->type), psn->id);
+        goto_programt::instructiont dcl;
+        dcl.type = DECL;
+        dcl.code = code_decl2tc(vt, psn->id);
+        dcl.location = entry->location;
+        dcl.location.property("skipped");
+        dcl.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, dcl);
+        goto_programt::instructiont asg;
+        asg.type = ASSIGN;
+        asg.code = code_assign2tc(pre_v, live);
+        asg.location = entry->location;
+        asg.location.property("skipped");
+        asg.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, asg);
+        ++vars_emitted;
+
+        // R1 -- the equality rungs. Emitted as a PAIR, always, and that is the
+        // one thing this mode can testify to on its own: the two are
+        // necessarily opposite, so a run in which both HOLD is a run in which
+        // the exit read is not observing the unit's writes, and a run in which
+        // both are REFUTED is one in which the antecedent never matched.
+        emit_rung(vname, "eq", "post == pre", equality2tc(live, pre_v));
+        emit_rung(vname, "ne", "post != pre", notequal2tc(live, pre_v));
+
+        if (!interval_ok)
+          continue;
+
+        emit_rung(
+          vname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
+        emit_rung(vname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
+        emit_rung(vname, "gt", "post > pre", greaterthan2tc(live, pre_v));
+        emit_rung(vname, "lt", "post < pre", lessthan2tc(live, pre_v));
+
+        auto require_fits = [&](const char *what, const std::string &dec) {
+          std::string tmax;
+          if (path_cov_fits_type(vt, dec, tmax))
+            return;
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: variable "
+            "'{}' {} value {} does not fit its own type (admissible range [0, "
+            "{}]). The bound is built as a constant of that type, so an "
+            "out-of-range decimal WRAPS and the candidate asserted would not be "
+            "the candidate written here",
+            uid,
+            vname,
+            what,
+            dec,
+            tmax);
+          exit(1);
+        };
+
+        if (spec != nullptr && spec->has_abs)
+        {
+          require_fits("abs_lo", spec->abs_lo);
+          require_fits("abs_hi", spec->abs_hi);
+          emit_rung(
+            vname,
+            "abs",
+            "post in [" + spec->abs_lo + ", " + spec->abs_hi + "]",
+            and2tc(
+              greaterthanequal2tc(
+                live, constant_int2tc(vt, string2integer(spec->abs_lo))),
+              lessthanequal2tc(
+                live, constant_int2tc(vt, string2integer(spec->abs_hi)))));
+        }
+        if (spec != nullptr && spec->has_delta)
+        {
+          require_fits("delta_lo", spec->delta_lo);
+          require_fits("delta_hi", spec->delta_hi);
+          // ---- THE DIRECTION CONJUNCT IS NOT DECORATION ----
+          //
+          // Candidate variables are unsigned, so `post - pre` WRAPS when the
+          // value decreased: a decrease of d shows up as 2^w - d. A naive
+          // `lo <= post - pre <= hi` therefore HOLDS on a decreasing path
+          // whenever the wrapped difference lands in the window -- and for the
+          // wide window a driver writes first, on EVERY decreasing path.
+          const expr2tc d = spec->delta_dir == "inc"
+                              ? sub2tc(vt, live, pre_v)
+                              : sub2tc(vt, pre_v, live);
+          const expr2tc dir = spec->delta_dir == "inc"
+                                ? greaterthanequal2tc(live, pre_v)
+                                : greaterthanequal2tc(pre_v, live);
+          emit_rung(
+            vname,
+            "delta",
+            (spec->delta_dir == "inc" ? std::string("post - pre in [")
+                                      : std::string("pre - post in [")) +
+              spec->delta_lo + ", " + spec->delta_hi + "] with " +
+              (spec->delta_dir == "inc" ? "post >= pre" : "pre >= post"),
+            and2tc(
+              dir,
+              and2tc(
+                greaterthanequal2tc(
+                  d, constant_int2tc(vt, string2integer(spec->delta_lo))),
+                lessthanequal2tc(
+                  d, constant_int2tc(vt, string2integer(spec->delta_hi))))));
+        }
+      }
+
+      // A named variable that matched nothing: the ladder is short and nothing
+      // would say so.
+      for (const auto &w : named_wanted)
+        if (named_seen.count(w) == 0)
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: \"vars\" "
+            "names '{}', which is not a scalar component of this contract's "
+            "instance object. Either it does not exist, or it is a mapping / "
+            "dynamic array. Emitting a SHORTER ladder would answer a different "
+            "question than the one the spec asked",
+            uid,
+            w);
+          exit(1);
+        }
+
+      log_status(
+        "--path-cov-assert: unit '{}' -- assumed {} region bound(s) ({} hole(s) "
+        "punched) at entry and emitted {} candidate assertion(s) over {} state "
+        "variable(s) at path enc={} depth={}'s OWN exit. Every candidate "
+        "carries the antecedent `tr != {} || cnt != {}`, so at any other exit "
+        "and on any other execution it is vacuous -- which is what lets the "
+        "whole ladder be judged in ONE run instead of one query per candidate",
+        uid,
+        bounds_emitted,
+        holes_emitted,
+        emitted,
+        vars_emitted,
+        assert_enc,
+        assert_depth,
+        assert_enc,
+        assert_depth);
+      total_paths += emitted;
+      continue;
+    }
+
     size_t ins_idx = 0;
     for (auto &[pc, g, comment, is_revert, stable_id] : to_insert)
     {
@@ -5821,6 +6821,57 @@ void goto_coveraget::solidity_path_coverage()
       "sol:@C@<contract>@F@<name>#<id>). This is a false certificate, not a "
       "weak result",
       certify_unit);
+    exit(1);
+  }
+
+  // ---- ROUTE 5 FOR STAGE 3: a ladder that matched no unit ----
+  //
+  // Tested BEFORE the empty-ladder gate below: "nothing matched" and
+  // "everything was refused" both produce zero candidates, and answering the
+  // first with the second's message sends the reader to look at the contract's
+  // state variables when the real problem is a typo in the unit name.
+  if (assert_on && assert_units_matched == 0)
+  {
+    log_error(
+      "--path-cov-assert: unit '{}' matched NO enumerated unit, so not one "
+      "assumption and not one candidate assertion was emitted -- the run would "
+      "otherwise print VERIFICATION SUCCESSFUL for a ladder it never built. "
+      "Check the name against the enumeration run's `path_function` (mangled "
+      "form sol:@C@<contract>@F@<name>#<id>)",
+      assert_unit);
+    exit(1);
+  }
+  // A spec identifying ONE path may not be answered by two units: the two have
+  // different bodies, so the two ladders are different claims printed under one
+  // heading.
+  if (assert_on && assert_units_matched > 1)
+  {
+    log_error(
+      "--path-cov-assert: unit '{}' matched {} enumerated units. A post-state "
+      "ladder identifies ONE path of ONE unit; two matches would print two "
+      "different sets of claims under one heading. Name the unit in its full "
+      "mangled form (sol:@C@<contract>@F@<name>#<id>)",
+      assert_unit,
+      assert_units_matched);
+    exit(1);
+  }
+  // ---- N1, entry condition (b): every eligible variable was REFUSED ----
+  if (assert_on && path_cov_assert_candidates.empty())
+  {
+    std::string refused;
+    for (const auto &rc : path_cov_refused_coords)
+      refused += (refused.empty() ? "" : "; ") + rc.first;
+    log_error(
+      "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: NOT ONE candidate "
+      "assertion could be formed. Every state variable of this contract was "
+      "refused{}{}. Zero assertions means nothing is checked, and the run would "
+      "print VERIFICATION SUCCESSFUL with exit 0 -- the same output a fully "
+      "successful ladder produces. A contract whose state is entirely mappings "
+      "or dynamic arrays is the common case: those are lowered to "
+      "contract-scope globals, not components of the contract object",
+      assert_unit,
+      refused.empty() ? "" : ": ",
+      refused);
     exit(1);
   }
 

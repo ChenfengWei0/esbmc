@@ -1166,6 +1166,15 @@ void report_coverage(
         "result of this run is the VERIFICATION SUCCESSFUL / FAILED verdict "
         "below, and on FAILED the counterexample input inside the box");
     }
+    else if (goto_coveraget::path_cov_assert_mode)
+    {
+      // Same reason as the two arms above, and the sharpest case of it: in this
+      // mode a claim that HOLDS is the WANTED outcome, so the coverage counters
+      // would print "Path Coverage: 0%" for a completely successful ladder.
+      // audit_entry_liveness above still runs and is the precondition that
+      // stops a never-entered unit from making every candidate hold vacuously.
+      goto_coveraget::report_path_cov_assertions();
+    }
     else
     {
 

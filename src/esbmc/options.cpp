@@ -920,6 +920,21 @@ const struct group_opt_templ all_cmd_options[] = {
       "known member of the path's domain. Resolution is (hi-lo)/(probes+1): a "
       "non-adaptive batch cannot give logarithmic precision, so refine with a "
       "second batch on a narrower span"},
+     {"path-cov-assert",
+      boost::program_options::value<std::string>()->value_name("file"),
+      "Synthesise and CERTIFY post-state assertions for ONE enumerated path "
+      "over an input REGION. JSON: {unit, enc, depth, "
+      "region:[{name,lo,hi,holes}], "
+      "vars:[{name,abs_lo,abs_hi,delta_dir,delta_lo,delta_hi}]}. The region is "
+      "ASSUMED at entry (exactly the require/bound a generated Foundry test "
+      "would carry) and each candidate is asserted at THAT path's own exit "
+      "under the path-identity antecedent `tr != enc || cnt != depth`, so it is "
+      "vacuous on every other path. The assumption is fixed and only the "
+      "assertions vary, so the whole ladder is judged in ONE run. A REFUTED "
+      "candidate is the ladder working, not a failure; the run's verdict line "
+      "is therefore NOT the result — the per-candidate HOLDS / REFUTED / "
+      "no-verdict table is. Mutually exclusive with --path-cov-certify and "
+      "--path-cov-outer-box"},
      {"solidity-path-coverage",
       NULL,
       "Solidity complete-path coverage (entry->exit path coverage for test "

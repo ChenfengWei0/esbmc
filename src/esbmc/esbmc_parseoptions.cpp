@@ -4201,6 +4201,70 @@ bool esbmc_parseoptionst::process_goto_program(
         tmp.path_cov_certify_path = cmdline.getval("path-cov-certify");
       if (cmdline.isset("path-cov-outer-box"))
         tmp.path_cov_outer_box_path = cmdline.getval("path-cov-outer-box");
+      // Stage-3 post-state assertion synthesis. Read beside the other two so
+      // the pass keeps having no command-line dependency of its own.
+      if (cmdline.isset("path-cov-assert"))
+      {
+        tmp.path_cov_assert_path = cmdline.getval("path-cov-assert");
+        // FORCED, for the same reason --unwind 4 is forced above: a candidate
+        // that is TRUE gets discharged during simplification and never enters
+        // the verdict ledger, which only records claims the solve loop filed.
+        // The reporter then has nothing to read for it and prints "NO VERDICT
+        // (never reached the solver)" -- turning the mode's WANTED outcome into
+        // a non-answer, silently.
+        //
+        // MEASURED on the R1 must-flip pair. Without it:
+        //   0 HOLDS, 3 REFUTED, 3 no verdict (never reached the solver)
+        // With it:
+        //   3 HOLDS, 3 REFUTED, 0 no verdict
+        // Same program, same region, same six candidates. A mode whose entire
+        // output is a HOLDS / REFUTED table cannot let HOLDS become no-verdict
+        // as a side effect of an optimisation.
+        options.set_option("no-simplify", true);
+      }
+
+      // ---- THE THREE STAGE-2/3 MODES ARE MUTUALLY EXCLUSIVE ----
+      //
+      // They are branches at the end of solidity_path_coverage() and each one
+      // `continue`s out of the per-unit loop, so the FIRST one tested wins and
+      // the others never fire. That precedence is silent and it already has a
+      // measured consequence: `--path-cov-outer-box` together with
+      // `--path-cov-certify` runs the outer-box branch, certify emits not one
+      // assume and not one assert, `certify_units_matched` stays 0, and the run
+      // then dies at the route-5 gate with a message blaming the UNIT NAME --
+      // pointing the reader at a spelling mistake that does not exist.
+      //
+      // Rejected here rather than ordered here, because "which one wins" is not
+      // a question with a right answer: the three modes ask three different
+      // questions and a caller that passed two of them does not know which one
+      // it got. Adding a third branch without this gate would have turned one
+      // silent precedence into three.
+      {
+        std::vector<std::string> stage2;
+        if (cmdline.isset("path-cov-outer-box"))
+          stage2.push_back("--path-cov-outer-box");
+        if (cmdline.isset("path-cov-certify"))
+          stage2.push_back("--path-cov-certify");
+        if (cmdline.isset("path-cov-assert"))
+          stage2.push_back("--path-cov-assert");
+        if (stage2.size() > 1)
+        {
+          std::string names;
+          for (const auto &n : stage2)
+            names += (names.empty() ? "" : ", ") + n;
+          log_error(
+            "--solidity-path-coverage: {} were given together ({}). These are "
+            "three mutually exclusive stage-2/3 modes implemented as three "
+            "branches at the end of one pass, and each one leaves the unit loop "
+            "as soon as it fires -- so passing two does not run two, it runs "
+            "the first and silently discards the rest. Historically that "
+            "discarded run then failed with a message about the unit NAME, "
+            "which is not what was wrong. Pass exactly one.",
+            stage2.size(),
+            names);
+          return true;
+        }
+      }
       tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
       // Align the offline enumeration bound with the symex unwind bound. The
       // two MUST agree, or "this path is feasible" as enumerated and "this path

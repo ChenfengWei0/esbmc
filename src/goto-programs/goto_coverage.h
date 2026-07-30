@@ -741,6 +741,26 @@ public:
   // Spec for the outer-box batch (see report_outer_boxes). Empty => disabled.
   std::string path_cov_outer_box_path = "";
 
+  // ---- STAGE 3: POST-STATE ASSERTION SYNTHESIS (--path-cov-assert <json>) ----
+  //
+  // The certification query says WHICH inputs walk a path. It says nothing
+  // about what that path DOES, and a generated test needs both: the region
+  // becomes the test's `require`, and the post-state assertion becomes its
+  // `assertEq`. This mode synthesises the second half and certifies it under
+  // the first: assume the region at unit entry, then assert each candidate at
+  // THAT path's own exit under the path-identity antecedent
+  // `tr != enc || cnt != depth`, so every candidate is vacuous on every other
+  // path and the whole ladder is judged in one run.
+  //
+  // Only SIGNS and BOUNDS are ever emitted (post == pre, post != pre,
+  // post >= pre, ..., an interval on post, a bounded delta). There is
+  // deliberately no `post == <model value>` rung: a model value is a fact about
+  // one counterexample, and asserting it would produce a test that is red on
+  // any input the region admits but the solver did not pick.
+  //
+  // Empty => disabled, and the pass behaves exactly as before.
+  std::string path_cov_assert_path = "";
+
   // Set by solidity_path_coverage() when a certification query was emitted, so
   // the reporting side can behave differently WITHOUT re-reading the CLI.
   static bool path_cov_certify_mode;
@@ -905,6 +925,39 @@ public:
   // Read the probe verdicts, print each path's outer box, then subtract the
   // siblings' boxes and print the certified region. Called after solving.
   static void report_outer_boxes();
+
+  // ---- STAGE 3: the candidate ladder and how its verdicts are read back ----
+  //
+  // One record per emitted assertion. `key` is the (comment, location) pair
+  // that multi_property_check files the verdict under, so the reporter reads
+  // exactly the claims this mode created and nothing else.
+  //
+  // `rung` and `var` together are unique BY CONSTRUCTION, and that is load
+  // bearing rather than tidy: `all_claims` is a std::set of (comment,
+  // location), so two candidates sharing a comment at one location silently
+  // collapse into one claim -- which reads downstream as a candidate that was
+  // never asked about, not as one that was lost. The emitter asserts the
+  // uniqueness instead of relying on it (same lesson as the outer box's probe
+  // de-duplication).
+  struct assert_candidatet
+  {
+    uint64_t enc = 0;
+    std::string var;  // state variable base name
+    std::string rung; // "eq"|"ne"|"ge"|"le"|"gt"|"lt"|"abs"|"delta"
+    std::string text; // human-readable candidate, e.g. "post >= pre"
+    std::pair<std::string, std::string> key; // claim key, to read the verdict
+  };
+  static bool path_cov_assert_mode;
+  static std::vector<assert_candidatet> path_cov_assert_candidates;
+
+  // Print the per-candidate verdict table. Called after solving, INSTEAD of the
+  // [Coverage] block: in this mode a claim that HOLDS is the wanted outcome, so
+  // the coverage counters would report a completely successful ladder as 0%.
+  //
+  // Order is the emission order (state variables in the contract object's own
+  // component order, rungs in a fixed order), never completion order, so the
+  // printed table is identical under --parallel-solving.
+  static void report_path_cov_assertions();
 
   // Path to the cross-run covered-set JSON (--coverage-covered-set).
   // Empty => disabled (no load, no skip, no write-back; behaviour
