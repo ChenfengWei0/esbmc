@@ -82,6 +82,7 @@ def baseline(bench):
         rep = json.load(f)
 
     out = {"bench": bench, "flat": rep["flatInput"],
+           "project": rep.get("project"),
            "primary": rep["primary"]["name"], "kind": rep["primary"]["kind"]}
 
     for key in ("per_function", "no_function"):
@@ -136,133 +137,223 @@ def recomputed_denominator(flat_path, in_scope=None):
 
 
 # --------------------------------------------------------------------------
-# THE PRODUCT SIDE -- NOT YET IMPLEMENTABLE, AND DELIBERATELY LEFT TO FAIL LOUD
+# THE PRODUCT SIDE
 # --------------------------------------------------------------------------
-def pathcov_reached_flat_lines(cov_report_path):
-    """Flat line numbers of the canonical decisions traversed by FEASIBLE paths.
+def pathcov_reached_flat_lines(report_paths):
+    """Flat line numbers of the decisions traversed by WITNESSED (F) paths.
 
-    STILL BLOCKED, but no longer unknown. Resolved by notes/probe-enc-decode.md:
+    Reads the `decisions` array that --cov-report-json now publishes per F
+    claim. Before that field existed this was impossible from outside the tool:
+    `path_id` is `enc`, a pure bit accumulator, and no source location is mixed
+    into it, so the bit->site mapping cannot be recovered from the report.
 
-      * `enc` is `enc_0 = 1`, `enc_{k+1} = 2*enc_k + bit`, so the ARMS decode
-        arithmetically: bit k is `(enc >> (depth-1-k)) & 1`.
-      * The decision SITES are not a function of `enc` -- no location is mixed
-        in -- so they can only be recovered by replaying the enumeration DFS
-        driven by those bits. That replay is deterministic, and the tool
-        already does it: `decision_site` (goto_coverage.cpp:3785) plus the
-        decode loop at :5116-5139. But it is gated on --path-cov-outer-box,
-        is a loop-body local, and is only ever printed as a log line.
-      * cov-report.json carries `path_id` (enc, as a decimal string) and
-        `path_depth` -- and NOT the decision sequence, the per-decision
-        locations, or the occurrence indices.
+    Returns (set_of_flat_lines, stats). The stats are not decoration -- each
+    one names a way this numerator could be quietly wrong, and they are printed
+    with the result:
 
-    So this cannot be written against the current report. The fix is in the
-    producer, and it is small: emit the decoded decision list into the claim
-    entry, FOR STATUS-F CLAIMS ONLY. F is what the projection consumes and F is
-    tiny (single digits per unit), which sidesteps the memory ceiling that the
-    existing gate exists to respect (the comment at goto_coverage.cpp:3781-3784
-    cites a 2733-path unit; one measured benchmark had 120166 paths, so an
-    all-paths decision list is O(paths x depth) and not affordable).
+      * `f_without_sequence` -- an F carrying no `decisions` array. It witnesses
+        decisions that this projection cannot see, so it depresses our number.
+        Must be 0.
+      * `unrecorded_steps` -- a decision whose prefix key was missing from the
+        recorder. Same effect, finer grain.
+      * `synthetic_dropped` -- the synthesised ABI non-payable gate. Path
+        coverage HAS this decision and branch coverage does not, and its
+        location is COPIED from the unit's first body instruction, so counting
+        it would credit us with whatever real decision sits on that line. It is
+        dropped on the producer's own flag (`synthetic_abi_gate`), not by
+        matching its condition text.
+      * `killed_runs` -- a path-coverage run killed by a timeout emits NOTHING
+        (the partial-result rescue is gated on branch coverage), so a killed run
+        contributes zero and that zero must not read as a measurement.
 
-    FIVE HAZARDS THAT MUST BE HANDLED WHEN THIS IS FILLED IN. Each of them
-    silently biases the numerator rather than failing, which is the dangerous
-    kind:
+    TWO HAZARDS THAT ARE HANDLED ELSEWHERE, recorded so they are not re-derived:
 
-      1. POLARITY IS INVERTED relative to branch-coverage claim keys.
-         goto_coverage.cpp:1677-1689: `assert(guard)` covers the FALL-THROUGH
-         edge and `assert(!guard)` the TAKEN edge. So a path bit of TRUE maps to
-         branch key `(not cond, loc)` and FALSE to `(cond, loc)`. Getting this
-         backwards still produces a number.
-      2. PATH COVERAGE HAS A DECISION BRANCH COVERAGE DOES NOT: the synthesised
-         ABI non-payable gate `msg_value == 0` (:3535-3564), whose location is
-         COPIED from the unit's first body instruction (:3523). Since the
-         canonical denominator is keyed by flat line, counting it would make us
-         "reach" whatever real decision sits on that line. Match on
-         `(cond, loc)`, never on `loc` alone, and drop this gate explicitly.
-      3. INTERNAL CALLS ARE PHYSICALLY INLINED before enumeration (:2209-2254),
-         so one callee decision appears in many units' path sets -- the mapping
-         to canonical decisions is many-to-one. Locations survive inlining, so
-         they do match; just deduplicate.
-      4. DEGRADATION AND THE CALL-DEPTH BOUND WITHDRAW CALL POINTS
-         (:3069-3155, :3158-3195), removing those decisions from every path of
-         the unit while branch coverage still counts them in the denominator.
-         `degraded_call_sites` names them; a gate result must state how many
-         decisions were unreachable for this reason, or the comparison is unfair
-         in our favour on the denominator and against us on the numerator.
-      5. THE TWO SIDES DO NOT SCOPE ALIKE. `branch_coverage()` filters each
-         decision through `location_pool`, `scope_contract` and
-         `exclude_contracts` (:1568-1619). The path DFS filters at UNIT level
-         only (:3409-3426) and then branches on every conditional GOTO in the
-         expanded body. The locked runs carry a long
-         `--coverage-exclude-contract` list (BalanceLib, IAqua, SafeERC20, ...),
-         so OUR side must apply the same exclusion before counting or we will
-         count decisions the baseline deliberately dropped from both its
-         numerator and its denominator.
+      * POLARITY. `assert(guard)` covers the FALL-THROUGH edge and
+        `assert(!guard)` the TAKEN edge, so a path bit of TRUE maps to the claim
+        keyed on the NEGATED guard. The producer already emits both arm texts
+        pre-inverted. It does not matter here, because this projection is by
+        LINE -- and it must not be done by text at all: measured, a `require`
+        lowers to a guard one `not` deeper under path coverage than under branch
+        coverage (the revert-observation gate), so a text join would silently
+        drop every `require` decision while working fine on `if`s.
+      * SCOPE. `branch_coverage()` filters per decision through `location_pool`
+        / `scope_contract` / `exclude_contracts`; the path DFS filters at UNIT
+        level only. The two are reconciled NOT by replicating the filters but by
+        intersecting with the canonical project-own decision lines in
+        `per_file_capped` below -- which is exactly what collect.py does to the
+        baseline's numerator (`union_lines & c_lines`), so both sides are
+        narrowed by the same operation.
+
+    STILL NOT HANDLED, and it biases in OUR FAVOUR on the denominator: internal
+    calls withdrawn by degradation or the call-depth bound remove those
+    decisions from every path of the unit while branch coverage still counts
+    them. `degraded_call_sites` names them in the log; the count is reported
+    beside the gate rather than folded into it.
     """
-    raise NotImplementedError(
-        "cov-report.json does not carry the decision sequence (only `path_id` "
-        "and `path_depth`); see notes/probe-enc-decode.md. The producer change "
-        "is ~20 lines in emit_exit, F-claims only. Refusing to return an empty "
-        "set that would print as a measurement.")
+    lines = set()
+    stats = {"reports": 0, "f_claims": 0, "f_without_sequence": 0,
+             "decision_steps": 0, "unrecorded_steps": 0,
+             "synthetic_dropped": 0, "missing_reports": []}
+    for p in report_paths:
+        p = Path(p)
+        if not p.exists():
+            stats["missing_reports"].append(str(p))
+            continue
+        d = json.loads(p.read_text())
+        stats["reports"] += 1
+        for c in d.get("claims", []):
+            if c.get("status") != "F":
+                continue
+            stats["f_claims"] += 1
+            seq = c.get("decisions")
+            if seq is None:
+                stats["f_without_sequence"] += 1
+                continue
+            for e in seq:
+                stats["decision_steps"] += 1
+                if "unrecorded_prefix_enc" in e:
+                    stats["unrecorded_steps"] += 1
+                    continue
+                if e.get("synthetic_abi_gate"):
+                    stats["synthetic_dropped"] += 1
+                    continue
+                ln = e.get("line")
+                if isinstance(ln, int) and ln > 0:
+                    lines.add(ln)
+    return lines, stats
 
 
-def per_file_capped(reached_flat_lines, denom_by_file, blocks):
-    """Apply METHODOLOGY 4/5 to our side, identically to how it was applied to
-    the baseline: bucket reached flat lines by original file, count unique ones
-    per file, cap at that file's canonical decision count, then sum."""
-    by_file = defaultdict(set)
-    for ln in reached_flat_lines:
-        by_file[ast_decisions.file_at_flat_line(blocks, ln)].add(ln)
+def per_file_capped(reached_flat_lines, canon_by_file, blocks):
+    """Apply METHODOLOGY 4/5 to our side, IDENTICALLY to how collect.py applied
+    it to the baseline.
+
+    `canon_by_file` maps an in-scope original file to the SET of canonical
+    decision flat lines in it -- not to a count. The set is load-bearing: the
+    baseline's numerator is `union_lines & c_lines`, an intersection, and
+    bucketing our lines by file without intersecting would count decisions the
+    baseline never had in either column. That is also what makes the two sides'
+    different scoping mechanisms irrelevant (see above).
+    """
     out = {}
-    for f, d in denom_by_file.items():
-        out[f] = min(len(by_file.get(f, ())), d)
+    for f, c_lines in canon_by_file.items():
+        out[f] = min(len(reached_flat_lines & c_lines), len(c_lines))
     return out
 
 
+def canonical_in_scope(flat_path, project):
+    """The canonical decision flat-lines per PROJECT-OWN file, plus the flat's
+    file blocks. Same scope rule as collect.py, imported from it rather than
+    restated, so the denominator here cannot drift from the locked one."""
+    import collect as _c
+    by_file, blocks = ast_decisions.canonical_decisions(Path(flat_path))
+    own = sorted({m for _, _, m in blocks
+                  if _c.is_project_own_marker(m, project)})
+    return ({m: by_file.get(m, set()) for m in own
+             if len(by_file.get(m, set())) > 0}, blocks)
+
+
+PATHCOV = HERE / "coverage" / "pathcov"
+
+
+def pathcov_reports_for(bench):
+    """Every cov-report.json the path-coverage collector produced for `bench`,
+    plus its index. A missing index is reported, never treated as zero reach."""
+    idx = PATHCOV / bench / "index.json"
+    if not idx.exists():
+        return None, []
+    meta = json.loads(idx.read_text())
+    rdir = Path(meta.get("reportsDir", PATHCOV / bench / "reports"))
+    return meta, sorted(rdir.glob("*.json"))
+
+
 def main():
-    reports = sys.argv[1:]
     print("# Branch-coverage gate\n")
     print("Unit: canonical decision (METHODOLOGY 2), identified by flat line.")
-    print("Bar:  the locked dataset's own `esbmcReached`, not `nativeReached`.\n")
+    print("Bar:  the locked dataset's own `esbmcReached`, not `nativeReached`.")
+    print("Ours: flat lines of the decisions walked by WITNESSED (F) paths, "
+          "intersected with the canonical in-scope decision lines and capped "
+          "per file -- the same two operations collect.py applies to the "
+          "baseline numerator.\n")
 
-    header = ("| bench | denom | baseline esbmc | baseline native | "
-              "ours | gate |")
+    header = ("| bench | denom | baseline P1 | baseline P2 | native | "
+              "ours | gate vs P2 |")
     print(header)
-    print("|" + "---|" * 6)
+    print("|" + "---|" * 7)
 
-    rows = []
+    notes = []
     for b in BENCHES:
         try:
             base = baseline(b)
         except (OSError, ValueError, KeyError) as e:
-            print(f"| `{b}` | - | - | - | - | READ FAILED: {e} |")
+            print(f"| `{b}` | - | - | - | - | - | READ FAILED: {e} |")
             continue
 
-        sec = base.get("no_function") or base.get("per_function") or {}
-        denom, esb, nat = sec.get("denom"), sec.get("esbmc"), sec.get("native")
+        p1 = base.get("no_function", {})
+        p2 = base.get("per_function", {})
+        denom = p2.get("denom") or p1.get("denom")
+        bar = p2.get("esbmc")
+        nat = p2.get("native")
 
-        ours = "-"
-        verdict = "not measured"
-        if reports:
-            try:
-                lines = set()
-                for r in reports:
-                    lines |= pathcov_reached_flat_lines(r)
-                dn, err = recomputed_denominator(base["flat"])
-                if err:
-                    ours, verdict = "-", f"denominator: {err}"
-                else:
-                    _b2l = None
-                    blocks = ast_decisions.parse_flat_file_blocks(
-                        Path(base["flat"]))
-                    capped = per_file_capped(lines, dn, blocks)
-                    ours = sum(capped.values())
-                    verdict = "PASS" if (esb is not None and ours >= esb) \
-                        else "FAIL"
-            except NotImplementedError as e:
-                ours, verdict = "-", f"BLOCKED: {e}"
+        meta, reports = pathcov_reports_for(b)
+        if meta is None:
+            print(f"| `{b}` | {denom} | {p1.get('esbmc')} | {bar} | {nat} | - "
+                  f"| not collected |")
+            continue
 
-        rows.append((b, denom, esb, nat, ours, verdict))
-        print(f"| `{b}` | {denom} | {esb} | {nat} | {ours} | {verdict} |")
+        lines, st = pathcov_reached_flat_lines(reports)
+        canon, blocks = canonical_in_scope(base["flat"], base["project"])
+        capped = per_file_capped(lines, canon, blocks)
+        ours = sum(capped.values())
+
+        killed = sum(1 for r in meta["runs"] if r.get("killedByOuterTimeout"))
+        noreport = sum(1 for r in meta["runs"] if not r.get("reportPresent"))
+        units = sum(r.get("unitsEnumerated", 0) for r in meta["runs"])
+
+        if units == 0:
+            # NOT A MEASURED ZERO, and printing FAIL here would be a false
+            # result rather than a weak one. A UNIT is an externally-callable
+            # function; a benchmark whose in-scope code is a pure `internal`
+            # library has an EMPTY unit set, so complete-path coverage has
+            # nothing to enumerate and says so ("in-scope function(s) are
+            # internal/private and are therefore not units; ... they appear
+            # inside the paths of the units that call them"). Branch coverage
+            # has no such notion and instruments the library directly, which is
+            # why it reports 3/3 on the same file.
+            #
+            # That is a SCOPE difference between the two metrics, not a reach
+            # difference, and it is the honest thing to report. It also has a
+            # real consequence for the paper: this method cannot serve a
+            # library-only compilation unit at all.
+            verdict = "N/A: 0 units (in-scope code is internal-only)"
+            ours = "-"
+        else:
+            verdict = "PASS" if (bar is not None and ours >= bar) else "FAIL"
+            # A run that produced nothing is NOT a measured zero either. Saying
+            # so in the verdict cell is the difference between a result and a
+            # lower bound dressed up as one.
+            if killed or noreport or st["f_without_sequence"] or \
+                    st["unrecorded_steps"]:
+                verdict += " (partial)"
+
+        print(f"| `{b}` | {denom} | {p1.get('esbmc')} | {bar} | {nat} | "
+              f"{ours} | {verdict} |")
+        notes.append((b, st, meta, killed, noreport, capped, canon))
+
+    print("\n## What the product side actually saw\n")
+    print("| bench | runs | no report | killed | F claims | F w/o sequence | "
+          "steps | unrecorded | ABI-gate dropped |")
+    print("|" + "---|" * 9)
+    for b, st, meta, killed, noreport, _c, _k in notes:
+        print(f"| `{b}` | {len(meta['runs'])} | {noreport} | {killed} | "
+              f"{st['f_claims']} | {st['f_without_sequence']} | "
+              f"{st['decision_steps']} | {st['unrecorded_steps']} | "
+              f"{st['synthetic_dropped']} |")
+
+    print("\n## Per-file, ours (capped) vs that file's canonical decisions\n")
+    for b, _st, _m, _k, _n, capped, canon in notes:
+        print(f"- `{b}`:")
+        for f in sorted(canon):
+            print(f"    {capped.get(f, 0):>4} / {len(canon[f]):<4}  {f}")
 
     print("\n## Pair 1 (whole contract) vs Pair 2 (union of per-method runs)\n")
     print("| bench | P1 denom | P1 esbmc | P2 denom | P2 esbmc |")
