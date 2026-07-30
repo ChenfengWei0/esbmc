@@ -66,3 +66,47 @@ contract is:
   (`--env-coord`, untried here);
 * the vacuous-path case, which is correctly refused and is a statement about the
   pins rather than about the path.
+
+## Addendum: `block.timestamp` promoted to a coordinate (`--env-coord`)
+
+The paths of a timelocked function disagree on `block.timestamp` by
+construction, so it can be neither pinned (that would contradict some path's own
+counterexample) nor dropped (an unconstrained guard refuses certification). It
+has to be probed. `--env-coord` existed for exactly this and had never been used
+on real input.
+
+Measured on `withdraw`, 7 coordinates, 5 paths:
+
+    [round] linear-refine: 107.2s wall
+    [round] accounting: 270 of 340 probe(s) reached the solver;
+            per-query wall: n=1080 max=0.089s median=0.050s total=50.7s
+
+It works: `block.timestamp` now appears in the divergence WITHOUT the
+`[NOT a bounded coordinate]` tag it carried before, so the coordinate is doing
+its job, and the round still finishes.
+
+### ⚠ THE SHARPEST REMAINING LEAD, and it is new
+
+Two paths now have a divergence on exactly ONE coordinate and still report that
+no cut is available:
+
+    enc=6:  the witness differs on: immutables.taker
+            (path=730750818665451459101842416358141509832261238783, witness=0)
+    enc=30: the witness differs on: immutables.taker
+            (path=4294967295, witness=1)
+
+A single differing coordinate is the case the shrink was built for, and both cuts
+look legal on their face — keeping `[1, hi]` retains a path counterexample far
+above the witness. Yet no `SHRINK SUGGESTION` was produced.
+
+That is a well-specified discrepancy between the divergence report (which sees
+one coordinate) and the tool's cut search (which finds none), and the two read
+the SAME witness. It is the first time those two have disagreed on real input,
+and it is a much narrower target than "the region does not converge".
+
+NOT diagnosed here. The candidates, in the order worth testing: the cut search
+requires the coordinate in `path_cov_certify_ce`, which the driver supplies under
+a `param.field` name that may not round-trip; or the witness value used by the
+report and the one used by the cut search come from different lookups; or the box
+on that coordinate no longer contains the path's counterexample by the time the
+last round runs. Each is a two-run experiment.
