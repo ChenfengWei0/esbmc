@@ -265,3 +265,41 @@ Consequences:
 
 That last point inverts an assumption this work carried for weeks, and it is now
 measured rather than assumed.
+
+### The rate, isolated at last: ~0.26 s per CLAIM, and it is neither instrumentation nor solving
+
+Claim count varied on one coordinate and one path, everything else fixed:
+
+| claims emitted | GOTO creation | symex | total wall |
+|---|---|---|---|
+| 4 | 1.19 s | 0.11 s | 1.9 s |
+| 16 | 1.17 s | 0.10 s | 4.5 s |
+| 64 | 1.17 s | 0.10 s | **16.6 s** |
+
+**GOTO creation and symex are CONSTANT.** So the cost is not the instrumentation
+that emits the claims either — which is what "emission-bound" was taken to mean
+one entry ago. Total wall grows with claim count while both upstream phases do
+not move at all.
+
+The remainder is the **per-claim work inside the multi-property loop**: each
+claim is sliced and encoded separately before it is solved. At 64 claims,
+16.6 s total against ~3.2 s of solving leaves ~0.21 s per claim of slice and
+encode.
+
+    ~0.26 s per claim total, of which ~0.05 s is the solver.
+
+That reconciles every earlier figure. The 6-coordinate bracket lays
+1548 x 6 x 2 x 5 ≈ 92,880 claims; at 0.26 s each that is about **6.7 hours**, so
+"did not finish in 300 s" was never close, and the 148 queries that did reach the
+solver are about what 300 s buys at this rate.
+
+**And it supplies the number that was missing for `--claim-budget`.** A round
+with a wall budget of T seconds affords roughly `T / 0.26` claims — about 1150
+for a 300 s round. That is a measurement rather than a guess, and it is
+per-machine, so it belongs in the flag's help rather than hard-coded as policy.
+
+⚠ Correction to the entry above: "the round is EMISSION-bound" was right that the
+cost scales with the number of claims and wrong about WHERE. Instrumentation is
+flat; the per-claim slice-and-encode inside multi-property is what grows. The
+practical conclusion — bound the number of claims — is unchanged, which is why
+the previous entry's control is still the right one.
