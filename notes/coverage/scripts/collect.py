@@ -226,6 +226,7 @@ def collect_esbmc(bench_key):
     nf_log = log_dir / "no_function.log"
     if pkind == "library":
         cmd = ["<routed-via-multi-function-because-primary-is-library>"]
+        all_cmds_recorded = list(cmd)
         rc, out, wall = 0, "", 0.0
         nf_log.write_text("(library primary; Pair 1 reuses Pair 2 union.)\n")
     else:
@@ -272,6 +273,7 @@ def collect_esbmc(bench_key):
             (log_dir / f"p1_focus_{cname}_{fname}.log").write_text(out_f)
             wall += t_f
         cmd = all_cmds[0]  # for backward-compat JSON field; full cmd list below
+        all_cmds_recorded = all_cmds
 
     union_lines = parse_union_json(union_json)
 
@@ -387,7 +389,20 @@ def collect_esbmc(bench_key):
             f"than recomputed as 0."),
         "per_function": pair2,
         "no_function": {
-            "commandUsed": " ".join(cmd),
+            # `" ".join(cmd)` when `cmd` is a STRING joins its CHARACTERS, which
+            # is what this field held for every benchmark up to and including
+            # the 2026-07-30 re-baseline: "/ h o m e / s a m s o n / ...".
+            # It is not cosmetic. The documented way to recover the project-own
+            # contract set (notes/coverage/inputs/own_contracts.json) is to
+            # subtract the --coverage-exclude-contract names from the flat's
+            # contracts; a reader who reaches for THIS field -- the natural one
+            # for the Pair-1 scope -- finds ZERO such tokens, because every one
+            # is spelled a character at a time. That yields own = ALL contracts,
+            # the maximal scope: the same defect just fixed, with its sign
+            # flipped. Only the per_function commands were ever usable.
+            "commandUsed": cmd if isinstance(cmd, str) else " ".join(cmd),
+            # The per-method Pair-1 commands were executed and recorded nowhere.
+            "allCommandsUsed": all_cmds_recorded,
             "wallSeconds": round(wall, 2),
             "exitCode": rc,
             "ownFilesInScope": [p["file"] for p in per_file],

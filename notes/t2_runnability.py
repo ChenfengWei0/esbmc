@@ -51,8 +51,12 @@ import time
 ESBMC = "/home/samson/workspace/esbmc/build/src/esbmc/esbmc"
 DATA = "/home/samson/workspace/esbmc/notes/coverage/data"
 OUT = "/home/samson/workspace/esbmc/notes/runnability-distribution.md"
-LOGDIR = ("/tmp/claude-1000/-home-samson-workspace-paper-review/"
-          "e0047351-2714-4000-919d-058ca8af97c5/scratchpad/t2logs")
+# The evidence behind every recorded row used to be written into a
+# session-scoped scratchpad belonging to a different project, which
+# os.makedirs(exist_ok=True) happily recreated after that session was gone. The
+# audit trail for a hundred published rows lived somewhere unrecoverable and
+# nothing said so. It belongs beside the table it supports.
+LOGDIR = os.path.join(os.path.dirname(OUT), "t2logs")
 
 # DEVIATION FROM THE PLAN'S 600s, STATED RATHER THAN ABSORBED.
 # The plan sets a 600s per-unit cap. The agent's foreground command window is
@@ -190,8 +194,14 @@ def run_unit(u, cap):
     # COMPLETED means the enumeration itself finished AND the harness actually
     # entered a unit. Dropping the second half is what let a run the tool itself
     # calls an internal defect be recorded as a successful measurement.
+    # `r["unit"] is not None` is the third half, and leaving it out reopened
+    # the same hole the paragraph above closed: unit_rows() returns None when
+    # cov-report.json is missing, and a run that finished, printed the
+    # instrumented line and tripped no INTERNAL DEFECT would then be written as
+    # a row of dashes marked `yes` -- exactly the shape that was already
+    # diagnosed once and fixed only for the one cause then known.
     r["completed"] = ((not timed_out) and (r["contract_wide"] is not None)
-                      and not r["tool_failure"])
+                      and not r["tool_failure"] and r["unit"] is not None)
     return r, log
 
 
@@ -205,19 +215,45 @@ def already_done():
     That already happened once: EscrowDst had two recorded timeouts and the
     next slice carried straight on through its library units.
     """
-    done, touts = set(), {}
+    done, touts, short = set(), {}, []
     if not os.path.exists(OUT):
         return done, touts
     with open(OUT) as f:
         for line in f:
-            if line.startswith("| `"):
-                parts = [p.strip() for p in line.split("|")]
-                if len(parts) > 3:
-                    bench = parts[1].strip("` ")
-                    done.add((bench, parts[2].strip("` "),
-                              parts[3].strip("` ")))
-                    if "TIMEOUT" in line:
-                        touts[bench] = touts.get(bench, 0) + 1
+            if not line.startswith("| `"):
+                continue
+            parts = [p.strip() for p in line.split("|")]
+            # | '' | bench | contract | function | paths | F | I | U | wall |
+            #   cap | completed | ctr | ''
+            if len(parts) < 12:
+                continue
+            bench = parts[1].strip("` ")
+            done.add((bench, parts[2].strip("` "), parts[3].strip("` ")))
+            # BY COLUMN, NOT BY SUBSTRING. `"TIMEOUT" in line` also matches a
+            # function or contract named *timeout*, and it cannot see the cap
+            # the row was actually given.
+            if parts[10] != "TIMEOUT":
+                continue
+            try:
+                cap = int(parts[9])
+            except ValueError:
+                cap = -1
+            if cap == UNIT_CAP:
+                touts[bench] = touts.get(bench, 0) + 1
+            else:
+                # A timeout against a partial cap is not a measurement, so it
+                # must not count toward the rule that ends a project -- and it
+                # must not be silently kept either, because the unit is in
+                # `done` and would never be retried.
+                short.append((bench, parts[2].strip("` "),
+                              parts[3].strip("` "), cap))
+    if short:
+        rows = "; ".join(f"{b}/{c}.{fn} (cap {cp}s)" for b, c, fn, cp in short)
+        sys.exit(
+            f"{OUT} contains {len(short)} TIMEOUT row(s) recorded against a "
+            f"cap smaller than {UNIT_CAP}s: {rows}. Those are slice artifacts, "
+            f"not measurements (see the cap fix in main()). Delete those rows "
+            f"and re-run so the units are measured at the full cap.")
     return done, touts
 
 
@@ -230,15 +266,17 @@ HEADER = (
     "is one of the measured values.\n\n"
     "`unit paths` is THIS unit's own complete paths, grouped out of "
     "`cov-report.json` on `path_function`.\n"
-    "`ctr` is the contract-wide instrumented count and is CONTEXT ONLY -- it is "
-    "identical for every unit of a contract\n"
-    "because `--focus-function` does not change enumeration (T2.0), so it "
-    "carries no distribution information.\n\n"
-    "`cap(s)` is the timeout this particular run was given. It is "
-    f"{UNIT_CAP}s whenever the slice had room, and the remaining slice time "
-    "otherwise;\n"
-    "a row that did not finish says so against the cap it actually got, "
-    "which is weaker than a full-cap timeout but is never a missing row.\n\n"
+    "`ctr` is the contract-wide instrumented count and is CONTEXT ONLY. It was "
+    "ASSERTED here to be identical for every unit of a contract\n"
+    "because `--focus-function` does not change enumeration (T2.0). THAT "
+    "ASSERTION IS REFUTED BY THIS TABLE: FarmingPool.exit reports 1004 where "
+    "every other\n"
+    "FarmingPool row reports 9536. The column is kept as context and no "
+    "distribution claim is made from it.\n\n"
+    f"`cap(s)` is the timeout this run was given, and it is always {UNIT_CAP}s: "
+    "a slice with less room than that stops rather than\n"
+    "recording a short-cap timeout, because such a row is indistinguishable "
+    "from a measured one and is not a measurement.\n\n"
     "| bench | contract | function | unit paths | F | I | U | wall(s) | "
     "cap(s) | completed | ctr |\n"
     "|---|---|---|---|---|---|---|---|---|---|---|\n")
@@ -264,12 +302,27 @@ def main():
             if touts >= TIMEOUTS_PER_PROJECT:
                 print(f"[{bench}] {touts} timeouts on disk -> next project")
                 break
+            # A UNIT IS EITHER GIVEN THE FULL CAP OR NOT STARTED.
+            # This used to be `cap = int(min(UNIT_CAP, left - 15))`, i.e. the
+            # SLICE REMAINDER, floored only by `left < 30`. A unit could
+            # therefore be given 15s where its honest budget is 540s, and the
+            # row it produced said `TIMEOUT` in the same cell a real 540s
+            # timeout uses. It happened: farming/FarmingPool/rescueFunds is on
+            # record at wall 85.3s against cap 84 -- a unit that plausibly
+            # finishes at ~86s, filed permanently as "did not finish", and
+            # never retried because already_done() keys on the unit alone.
+            # Worse, two such rows trip TIMEOUTS_PER_PROJECT and silently
+            # truncate the rest of the project.
+            # A short slice now ends the slice instead of producing a datum
+            # that cannot be told apart from a measured one.
             left = deadline - time.time()
-            if left < 30:
-                print("[slice] out of time; stopping cleanly")
+            if left - 15 < UNIT_CAP:
+                print(f"[slice] {int(left)}s left, less than a full {UNIT_CAP}s "
+                      f"cap plus overhead; stopping cleanly rather than "
+                      f"recording a short-cap timeout")
                 f.close()
                 return 0
-            cap = int(min(UNIT_CAP, left - 15))
+            cap = UNIT_CAP
             print(f"[run] {bench} {u['contract']}.{u['function']} cap={cap}s",
                   flush=True)
             r, log = run_unit(u, cap)

@@ -5,7 +5,7 @@ summarize.py -- print the LOCKED comparison from data/esbmc_*.json.
 Both columns share the SAME denominator (METHODOLOGY §2 canonical AST
 decision count).  This is the headline invariant.
 """
-import argparse, json
+import argparse, json, sys
 from pathlib import Path
 
 DATA = Path("/home/samson/workspace/esbmc/notes/coverage/data")
@@ -28,7 +28,13 @@ def main():
     rows = []
     for b in BENCHES:
         p = DATA / f"esbmc_{b}.json"
-        if not p.exists(): continue
+        # A MISSING BENCHMARK USED TO `continue`. It then left BOTH the
+        # numerator and the denominator of the AGGREGATE row, so a four-
+        # benchmark aggregate printed in exactly the same shape as a six-
+        # benchmark one, with no count anywhere to tell them apart.
+        if not p.exists():
+            sys.exit(f"missing {p}: this is an aggregate over all "
+                     f"{len(BENCHES)} benchmarks or it is not an aggregate")
         d = json.loads(p.read_text())
         t = d["no_function"]["total"]
         rows.append((b, d, t))
@@ -56,6 +62,25 @@ def main():
     e_pct = round(100*s_esbmc/s_denom, 2) if s_denom else 0
     n_pct = round(100*s_native/s_denom, 2) if s_denom else 0
     print(f'  {"AGGREGATE":<32} {s_denom:>14}  {s_esbmc:>4}/{s_denom:<4} ({e_pct:>5.1f}%)  {s_native:>4}/{s_denom:<4} ({n_pct:>5.1f}%)')
+
+    # PROVENANCE, printed unconditionally. These rows are not automatically
+    # commensurable: they are separate files written by separate runs, and a
+    # re-collection touches them one at a time. A table mixing two binaries'
+    # output looks exactly like a table from one. `nativeSource` exists so a
+    # carried-forward native column announces itself, and it was read by
+    # nothing until now.
+    print("-" * 100)
+    print("  provenance")
+    import datetime
+    for b, d, _t in rows:
+        p = DATA / f"esbmc_{b}.json"
+        when = datetime.datetime.fromtimestamp(
+            p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        ns = d.get("nativeSource", "(not recorded)")
+        kind = "native CARRIED FORWARD" if ns.startswith("CARRIED") else \
+               ("native from lcov" if ns.startswith("lcov")
+                else "native provenance NOT RECORDED")
+        print(f'  {b:<32} collected {when}   {kind}')
 
     if args.per_file:
         print()
