@@ -257,13 +257,36 @@ PATHCOV = HERE / "coverage" / "pathcov"
 
 def pathcov_reports_for(bench):
     """Every cov-report.json the path-coverage collector produced for `bench`,
-    plus its index. A missing index is reported, never treated as zero reach."""
+    plus its index. A missing index is reported, never treated as zero reach.
+
+    THE GLOB IS CROSS-CHECKED AGAINST THE INDEX, and that check is the point.
+    `pathcov_collect.py` cleans its `work/` directory per run but NEVER empties
+    `reports/`, so reports from an earlier collection survive into the next one.
+    The numerator here is a union over whatever `reports/*.json` contains, so a
+    stale file silently inflates it -- and the result is a well-formed PASS row
+    with nothing anywhere marking it. Measured occasion: a pre-fix collection's
+    reports were left in place when its `index.json` and `runs.jsonl` were
+    quarantined, which would have credited the fixed build with the buggy
+    build's witnessed paths.
+
+    A file count that disagrees with the index is not a warning, because a
+    numerator that includes runs the index never recorded is not a measurement.
+    """
     idx = PATHCOV / bench / "index.json"
     if not idx.exists():
         return None, []
     meta = json.loads(idx.read_text())
     rdir = Path(meta.get("reportsDir", PATHCOV / bench / "reports"))
-    return meta, sorted(rdir.glob("*.json"))
+    files = sorted(rdir.glob("*.json"))
+    expected = sum(1 for r in meta.get("runs", []) if r.get("reportPresent"))
+    if len(files) != expected:
+        sys.exit(
+            f"{bench}: {rdir} holds {len(files)} report(s) but index.json "
+            f"records {expected} run(s) with a report. A report the index does "
+            f"not know about is almost certainly left over from an earlier "
+            f"collection; including it would inflate the numerator invisibly. "
+            f"Empty (or quarantine) {rdir} and re-collect.")
+    return meta, files
 
 
 def main():
@@ -290,9 +313,24 @@ def main():
 
         p1 = base.get("no_function", {})
         p2 = base.get("per_function", {})
-        denom = p2.get("denom") or p1.get("denom")
+        # `or` on a denominator would let a P2 denominator of 0 silently show
+        # P1's, so the fallback is on ABSENCE, not on falsiness.
+        denom = p2.get("denom") if p2.get("denom") is not None else p1.get("denom")
         bar = p2.get("esbmc")
         nat = p2.get("native")
+
+        # A BAR OF ZERO IS NOT A BAR. `ours >= 0` is a tautology, so a baseline
+        # that measured nothing would be cleared by anything, and the row would
+        # look exactly like a real PASS. This is the completed loop of the
+        # collect.py defect fixed in 4bd98cd328: that bug could write
+        # `esbmcReached: 0` while `branchesTotal` stayed correct (the
+        # denominator comes from an AST walk the bug never touched), so the
+        # JSON looked fully populated. Refuse rather than pass.
+        if bar is not None and bar == 0 and denom:
+            sys.exit(
+                f"{b}: baseline esbmcReached is 0 against a denominator of "
+                f"{denom}. A zero bar is cleared by anything, so this is not a "
+                f"gate. Re-collect the baseline before using it.")
 
         meta, reports = pathcov_reports_for(b)
         if meta is None:
@@ -309,7 +347,21 @@ def main():
         noreport = sum(1 for r in meta["runs"] if not r.get("reportPresent"))
         units = sum(r.get("unitsEnumerated", 0) for r in meta["runs"])
 
-        if units == 0:
+        if units == 0 and (killed or noreport or not meta["runs"]):
+            # `unitsEnumerated` is set only when the collector's regex matched
+            # the run's "instrumented N complete path(s) across M unit(s)" line
+            # (pathcov_collect.py), and it defaults to 0. So 0 means EITHER
+            # "there are no units" OR "no run got far enough to say". Claiming
+            # the first when the second happened dresses a total collection
+            # failure as a methodological scope exemption -- and the row is
+            # byte-identical to the legitimate library-only one. Near-miss on
+            # record: st1inch's pre-fix index has 22 runs, every one exit -6
+            # (SIGABRT) with no report, and it escaped this only because ESBMC
+            # happened to print the instrumentation line before aborting.
+            verdict = (f"NO MEASUREMENT: {killed} killed, {noreport} without a "
+                       f"report, {len(meta['runs'])} run(s)")
+            ours = "-"
+        elif units == 0:
             # NOT A MEASURED ZERO, and printing FAIL here would be a false
             # result rather than a weak one. A UNIT is an externally-callable
             # function; a benchmark whose in-scope code is a pure `internal`
@@ -340,12 +392,16 @@ def main():
         notes.append((b, st, meta, killed, noreport, capped, canon))
 
     print("\n## What the product side actually saw\n")
-    print("| bench | runs | no report | killed | F claims | F w/o sequence | "
-          "steps | unrecorded | ABI-gate dropped |")
-    print("|" + "---|" * 9)
+    # `reports` is printed because it is the size of the numerator's input set.
+    # It was computed and discarded before, which is how a reports/ directory
+    # holding files from an earlier collection could inflate the numerator with
+    # nothing in the output to show for it.
+    print("| bench | runs | reports read | no report | killed | F claims | "
+          "F w/o sequence | steps | unrecorded | ABI-gate dropped |")
+    print("|" + "---|" * 10)
     for b, st, meta, killed, noreport, _c, _k in notes:
-        print(f"| `{b}` | {len(meta['runs'])} | {noreport} | {killed} | "
-              f"{st['f_claims']} | {st['f_without_sequence']} | "
+        print(f"| `{b}` | {len(meta['runs'])} | {st['reports']} | {noreport} | "
+              f"{killed} | {st['f_claims']} | {st['f_without_sequence']} | "
               f"{st['decision_steps']} | {st['unrecorded_steps']} | "
               f"{st['synthetic_dropped']} |")
 

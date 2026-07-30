@@ -7,7 +7,12 @@
 #
 # Each bench writes a single JSON; reruns OVERWRITE the section that ran
 # (no append, no history accretion).
-set -u
+# set -e is load bearing. collect.py now sys.exit()s rather than substituting a
+# default when a scope input is missing (commit 4bd98cd328); without -e this
+# loop swallowed that exit, left the PREVIOUS esbmc_<bench>.json in place, and
+# finished with a completion bell -- reintroducing on the driver exactly the
+# silence the collector had just been taught not to produce.
+set -eu
 HERE=$(dirname "$(readlink -f "$0")")
 PY=$HERE/collect.py
 MODE=${1:-all}
