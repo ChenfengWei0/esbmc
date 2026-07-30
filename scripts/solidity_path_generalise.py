@@ -697,9 +697,28 @@ def brackets_for(coord, brackets):
                 re.escape(coord) + r" (upper|lower) in [\[(](\d+), (\d+)[\])]",
                 txt):
             a, b = int(m.group(2)), int(m.group(3))
-            if m.group(1) == "upper" and b >= UINT256_MAX:
+            # THE TEST IS WHETHER THE BRACKET CONSTRAINS ANYTHING, not whether
+            # its far end reaches the type limit.
+            #
+            # An upper bracket `(a, b]` says the true bound lies above a and at
+            # most b. Dropping it because b == typemax throws away `a`, which is
+            # a real constraint -- and on a uint256 coordinate whose domain
+            # reaches the top, b == typemax is the COMMON case, not the
+            # exceptional one.
+            #
+            # MEASURED, the first run in which the bracket and a refine round
+            # both completed: the bracket said
+            #     immutables.amount upper in (5.14e61, 2^256-1]
+            # and the refine round's span came back (0, 2^256-1) -- the whole
+            # type. The shrink then had nothing to work from and halved, which
+            # is the degenerate bisection that had been blamed on the method.
+            #
+            # What the old rule was RIGHT about is kept: a bracket spanning the
+            # coordinate's entire range constrains nothing and must still be
+            # dropped, or the loop "refines" towards a span it already had.
+            if m.group(1) == "upper" and a <= 0 and b >= UINT256_MAX:
                 continue
-            if m.group(1) == "lower" and a <= 0:
+            if m.group(1) == "lower" and a <= 0 and b >= UINT256_MAX:
                 continue
             lo = a if lo is None else min(lo, a)
             hi = b if hi is None else max(hi, b)

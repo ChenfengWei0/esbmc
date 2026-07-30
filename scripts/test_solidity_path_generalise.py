@@ -42,7 +42,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       declared_struct_fields,
                                       lowering_artifacts,
                                       thin_to,
-                                      budget_probe_values)
+                                      budget_probe_values,
+                                      brackets_for)
 
 FAILURES = []
 
@@ -865,6 +866,34 @@ check("budget-never-goes-below-two",
 out, note = budget_probe_values({"a": [1, 2]}, 1, 10000)
 check("satisfied-budget-is-silent", note, None)
 check("satisfied-budget-keeps-values", out, {"a": [1, 2]})
+
+
+# --- a bracket is kept unless it constrains NOTHING ---
+#
+# The old rule dropped an upper bracket whose far end reached the type limit.
+# MEASURED, on the first run where the bracket and a refine round both finished:
+# the bracket said `immutables.amount upper in (5.14e61, 2^256-1]` and the refine
+# span came back (0, 2^256-1) -- the whole type. The shrink then had nothing to
+# work from and halved, which had been blamed on the method.
+BR_USEFUL = {14: ("immutables.amount upper in "
+                  "(51422017416287688817342786954917203280710495801049370729644032, "
+                  f"{BIG}]")}
+got = brackets_for("immutables.amount", BR_USEFUL)
+check("a-bracket-touching-the-type-max-is-still-kept", got is not None, True)
+check("and-its-lower-end-is-the-information",
+      got[0], 51422017416287688817342786954917203280710495801049370729644032)
+
+# THE MUST-FLIP the old rule was right about: a bracket spanning the coordinate's
+# whole range constrains nothing, and refining towards it would hand back the
+# span the loop already had.
+BR_VACUOUS = {14: f"a upper in (0, {BIG}]"}
+check("a-bracket-over-the-whole-type-is-still-dropped",
+      brackets_for("a", BR_VACUOUS), None)
+# ...and the same on the lower side.
+check("a-lower-bracket-over-the-whole-type-is-dropped",
+      brackets_for("a", {14: f"a lower in [0, {BIG})"}), None)
+check("a-lower-bracket-that-constrains-is-kept",
+      brackets_for("a", {14: "a lower in [500, 900)"}) is not None, True)
 
 
 if FAILURES:
