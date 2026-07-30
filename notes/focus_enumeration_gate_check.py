@@ -35,7 +35,24 @@ for fn in rep["per_function"]["functions"]:
         toks = fn["commandUsed"].split()
         ex = [toks[i + 1] for i, t in enumerate(toks)
               if t == "--coverage-exclude-contract"]
+# AN EMPTY EXCLUDE LIST IS THE WIDEST SCOPE, NOT THE RECORDED ONE.
+# `ex` stays [] whenever esbmc_farming.json has no per_function entry for
+# FarmingPool.claim -- a rename, an attribution change, or a re-collection whose
+# Pair-2 enumeration differs. Every run below would then be launched with ZERO
+# --coverage-exclude-contract flags, putting the whole flat including the entire
+# OpenZeppelin tree in scope, and the instrumented counts this script exists to
+# COMPARE would come from a different configuration than the one it claims. The
+# `0` was printed, but framed as informational.
+if not ex:
+    sys.exit("no exclude list recovered for FarmingPool.claim from "
+             "esbmc_farming.json -- an empty list is the WIDEST scope, not the "
+             "recorded one, and the comparison below would be against a "
+             "different configuration than the one it names")
 print(f"[excludes] {len(ex)} (taken from FarmingPool.claim's recorded command)")
+# The unwind configuration changes the numbers this script prints and was
+# recorded nowhere, so two runs were distinguishable only by whoever remembered
+# which environment variable was set.
+print(f"[unwind]   {UNWIND or '(unset; no --unwind passed)'}")
 
 INSTR = re.compile(r"instrumented (\d+) complete path\(s\) across (\d+) unit")
 DIST = re.compile(r"path distribution — .*")

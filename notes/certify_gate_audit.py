@@ -117,13 +117,28 @@ def main():
              "--result-only", "--memlimit", "8g",
              "--path-cov-certify", "c.json"],
             cwd=cwd, capture_output=True, text=True, timeout=180)
-        got = "REFUSE"
+        # REFUSE IS NOT THE DEFAULT ANY MORE.
+        # This used to start at "REFUSE" and only move if a verdict line
+        # appeared, so ANY run that printed no verdict scored as a refusal --
+        # and seven of the sixteen cases expect exactly that. A memlimit hit, a
+        # crash before the verdict, or --path-cov-certify silently becoming a
+        # no-op would have turned seven rows green. That is the mirror image of
+        # the fifth route this file was written to catch (SUCCESSFUL with exit 0
+        # for a query never asked); here it would be a pass for a query that
+        # produced nothing at all.
+        #
+        # The contract at the top of this file defines the third state as "a
+        # NON-ZERO exit with a named reason, no verdict line", so both halves
+        # are now required.
+        got = None
         for ln in (p.stdout + p.stderr).splitlines():
             t = ln.strip()
             if t == "VERIFICATION SUCCESSFUL":
                 got = "SUCCESSFUL"
             elif t == "VERIFICATION FAILED":
                 got = "FAILED"
+        if got is None:
+            got = "REFUSE" if p.returncode != 0 else "SILENT-EXIT-0"
         ok = got == want
         if not ok:
             bad.append((name, want, got))

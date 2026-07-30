@@ -205,6 +205,29 @@ def collect(bench_key, whole, timeout, goals):
                 r = json.loads(line)
                 done[r["tag"]] = r
 
+    # THE REPORTS DIRECTORY IS RECONCILED WITH THE JOURNAL, and this is not
+    # housekeeping. `work/` is emptied per run (one_run), but `reports/` never
+    # was, so a report written by an EARLIER collection survived into the next
+    # one -- and branch_gate.py builds the product-side numerator by globbing
+    # this directory. A stale file therefore credits the current build with an
+    # earlier build's witnessed paths, in a row that looks exactly like a clean
+    # result. It came within one command of happening: quarantining a pre-fix
+    # collection renamed index.json and runs.jsonl and left ~54 MB of pre-fix
+    # cov-report.json in place.
+    #
+    # The journal is the authority on what this collection has actually run, so
+    # anything in `reports/` that the journal does not name is removed, and the
+    # removal is COUNTED ON STDOUT -- a silent cleanup would hide the fact that
+    # a previous collection's output was here at all.
+    orphans = [p for p in sorted(reports_dir.glob("*.json"))
+               if p.stem not in done]
+    for p in orphans:
+        p.unlink()
+    if orphans:
+        print(f"  [reports] removed {len(orphans)} report(s) not named by "
+              f"{journal.name}: " + ", ".join(p.stem for p in orphans[:8])
+              + (" ..." if len(orphans) > 8 else ""), flush=True)
+
     pkind = base.primary_contract_kind(flat, primary)
     runs = []
 
