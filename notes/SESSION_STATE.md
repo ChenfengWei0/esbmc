@@ -65,6 +65,54 @@ uses `total.esbmcReached`, the union over all runs intersected with the
 canonical decision lines, and that did not move at all. Report the field the
 conclusion depends on, not the field that changed.
 
+## The three audits, and what they changed
+
+`notes/commensurability-audit.md`, `notes/interval-input-scope-and-plan.md` and
+`notes/path-cov-assert-patch.md` were produced by three independent readers and
+are the substance of this session. What they settled:
+
+**The two sides are not commensurable in six ways, but we are not the ones
+being flattered.** Two suspected flatterers were measured and are ZERO:
+`notes/coverage/scripts/flatterers.py` finds no canonical decision owned by a
+contract the baseline excluded (all six benchmarks), and every one of the 545
+decision steps collected so far carries the flat itself as its `file`. More
+decisively, `notes/coverage/scripts/setcmp.py` compares the two sides as SETS
+rather than counts — which the gate structurally cannot do, since the numerator
+is capped and the test is `ours >= bar` — and finds `only-product = 0` on every
+file of every benchmark collected. Our reached set is a strict SUBSET of the
+baseline's. The shortfall is real reach.
+
+Four asymmetries remain and are now written into `branch_gate.py` rather than
+left implicit: the solver budget (bar 60s inner / 90s outer per method, product
+no inner timeout and 180s outer — favours us, and the bar is demonstrably cut
+off mid-solve), the loop bound (bar k-induction unbounded, product forced
+`--unwind 4` with `no-unwinding-assertions` unconditional — favours the bar),
+the `require` lowering (guards one `not` apart, which the line-join makes
+unobservable rather than absent), and the harness shape.
+
+A false statement was removed from `branch_gate.py`'s own docstring: it claimed
+degradation was "reported beside the gate". It is not — `degraded_call_sites`
+only ever reached a `log_warning`.
+
+**Interval inputs are sound where they are omitted and unsound where they are
+vacuous.** An unbounded coordinate is universally quantified, so a certificate
+over fewer coordinates is STRONGER, not wider — that direction is fine. But an
+entry assumption that is semantically unsatisfiable makes every exit assertion
+hold for want of an execution, and the four gates that exist are all SYNTACTIC
+(`lo > hi`, duplicate name, punched empty, out of type). State variables are not
+havoc'd, so `state.x in [0,0]` against a constructor that sets 7 is well-formed,
+in-type, non-empty, and certifies vacuously with exit 0. There is no defence
+today. Also worth a paper sentence: of 143 declared state variables across the
+six inputs, only 24 are mutable, and three of the six are at 0%.
+
+**Stage 3's premise is confirmed and its patch is written.** An exit read of
+`member(sol:@_ESBMC_Object_<C>, field)` does observe the unit's writes, and the
+object id is exactly `sol:@_ESBMC_Object_<C>#` — so the substring hazard is
+closable by string equality. The patch also caught a defect in the plan's own
+fixtures: the verdict-suppression regex it quoted does not exist in the tree,
+and the weaker form would have let six refusal fixtures pass without refusing
+anything.
+
 ## Subgoal status
 
 1. **external invocation scripts** — done (`1f890fb4dd`).
