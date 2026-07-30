@@ -197,6 +197,17 @@ def collect_esbmc(bench_key):
     decisions_by_file, blocks = canonical_decisions(flat)
     # Restrict to project-own markers
     own_markers = sorted({m for _, _, m in blocks if is_project_own_marker(m, project)})
+    # A DENOMINATOR OF ZERO IS NOT A COVERAGE OF ZERO. If neither flattener's
+    # `// File` marker regex matches (a third flattener, or a format change),
+    # ast_decisions makes the whole file one `<preamble>` block, which
+    # is_project_own_marker rejects by name -- so own_markers is empty, the
+    # per-file loop never runs, branchesTotal is 0, and pct() renders 0/0 as
+    # `0.0` coverage with exit 0. branch_gate.py would then read a bar of 0 and
+    # clear it with anything.
+    if not own_markers:
+        sys.exit(f"{flat}: no project-own `// File` markers were found, so the "
+                 f"denominator would be 0. That is not a measurement -- check "
+                 f"the flattener's marker format against ast_decisions.py")
     # `decisions_by_file[marker]` is a set of flat line numbers (one entry
     # per decision point, multiple on same line collapse — METHODOLOGY §2).
     canon_flat_lines = {m: decisions_by_file.get(m, set()) for m in own_markers}
