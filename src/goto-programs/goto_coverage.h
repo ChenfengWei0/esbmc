@@ -672,6 +672,29 @@ public:
   static std::vector<std::array<std::string, 3>> path_cov_certify_box;
   static std::map<std::string, std::string> path_cov_certify_ce;
 
+  // ---- PUNCHED INTERVALS (Definition 5): R_c = [L, U] \ H ----
+  //
+  // The values REMOVED from each coordinate's interval. A closed interval alone
+  // cannot express `everything except v`, and that is not a cosmetic loss — it
+  // makes the YIELD depend on an arbitrary solver choice. MEASURED, same
+  // contract, same coordinate, same probes, changing only WHICH counterexample
+  // the sibling happened to return (both legal members of its domain):
+  //
+  //     sibling CE = 2^160-1  ->  region `to in [256, 2^160-1]`  (~1.46e48)
+  //     sibling CE = 0        ->  region `to in [0, 254]`        (255)
+  //
+  // Both are correct — each is a subset of the true domain
+  // `[0,254] U [256, 2^160-1]` — and they differ by a factor of 5.7e45. The
+  // subtraction can only keep the side that contains its own counterexample,
+  // so the side it keeps is decided by a value nobody chose. With a hole, BOTH
+  // cases produce `[0, 2^160-1] \ {255}` and the counterexample stops mattering.
+  //
+  // A hole is legal under exactly the rule the side cuts already obey: it must
+  // keep a KNOWN member of this path's domain (its own counterexample), and it
+  // only ever makes the region SMALLER. What changes is the cost — removing one
+  // value instead of a whole side.
+  static std::map<std::string, std::vector<std::string>> path_cov_certify_holes;
+
   // A REFUTATION WITHOUT A WITNESS IS WORTHLESS — hard-fail on one.
   //
   // The verdict and the witness fail INDEPENDENTLY, which is what makes this

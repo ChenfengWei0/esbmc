@@ -62,6 +62,8 @@ bool goto_coveraget::path_cov_certify_mode = false;
 std::vector<std::string> goto_coveraget::path_cov_certify_box_names;
 std::vector<std::array<std::string, 3>> goto_coveraget::path_cov_certify_box;
 std::map<std::string, std::string> goto_coveraget::path_cov_certify_ce;
+std::map<std::string, std::vector<std::string>>
+  goto_coveraget::path_cov_certify_holes;
 bool goto_coveraget::path_cov_outer_box_mode = false;
 std::vector<goto_coveraget::outer_box_probet>
   goto_coveraget::path_cov_outer_box_probes;
@@ -347,6 +349,12 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
       std::string best_coord, best_lo, best_hi;
       BigInt best_width;
       bool best = false, any_named = false;
+      // Coordinates on which the witness could be PUNCHED OUT instead of cut
+      // around (Definition 5). Collected alongside the side cuts rather than
+      // instead of them: the two are different policies with different costs and
+      // different termination behaviour, and choosing between them is the
+      // driver's job — the tool measures and reports both.
+      std::vector<std::string> punchable;
       for (const auto &b : path_cov_certify_box)
       {
         auto cit = path_cov_certify_ce.find(b[0]);
@@ -364,6 +372,13 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
         const BigInt lo = string2integer(b[1]), hi = string2integer(b[2]);
         if (w == c)
           continue; // the witness agrees here: this coordinate cannot separate
+        // The witness is inside the box and outside the path; the path's own
+        // counterexample is inside the box and inside the path and differs here.
+        // So removing the single value `c == w` excludes the witness while
+        // keeping a known member of the domain — the same legality rule the side
+        // cuts obey, at a cost of ONE value instead of a side.
+        if (w >= lo && w <= hi)
+          punchable.push_back(b[0] + " != " + integer2string(w));
         if (w > c)
         {
           const BigInt nhi = w - 1;
@@ -389,6 +404,24 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
           }
         }
       }
+      if (!punchable.empty())
+      {
+        std::string names;
+        for (const auto &p : punchable)
+          names += (names.empty() ? "" : "; ") + p;
+        log_status(
+          "--path-cov-certify: PUNCH SUGGESTION for '{}' — instead of cutting "
+          "the interval, remove the witness itself: add {} to the box's `holes` "
+          "(Definition 5). Legal by the same rule as a side cut (this path's own "
+          "counterexample differs there and survives), and it costs ONE value "
+          "rather than a whole side — the difference between the two was "
+          "measured at 5.7e45 on an address coordinate. It is NOT strictly "
+          "better: punching converges only where the excluded set is a few "
+          "points, while a side cut is what makes progress when the boundary is "
+          "an interval. Which to use is the driver's policy; both are reported",
+          key.first,
+          names);
+      }
       if (best)
         log_status(
           "--path-cov-certify: SHRINK SUGGESTION for '{}' — the witness lies "
@@ -402,13 +435,13 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
           best_coord,
           best_lo,
           best_hi);
-      else if (any_named)
+      else if (any_named && punchable.empty())
         log_status(
           "--path-cov-certify: no single-coordinate shrink for '{}' — on every "
           "bounded coordinate the witness agrees with the path's own "
-          "counterexample, so no cut separates them while keeping a known "
-          "member of the domain. The region has to be split, or the path falls "
-          "back to its concrete counterexample test",
+          "counterexample, so neither a cut NOR a hole separates them while "
+          "keeping a known member of the domain. The region has to be split, or "
+          "the path falls back to its concrete counterexample test",
           key.first);
     }
   }
@@ -429,6 +462,30 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
     witnessless.size(),
     names);
   abort();
+}
+
+// |R_c| for a punched interval (Definition 5): how many values of [lo, hi]
+// survive once this coordinate's holes are removed.
+//
+// Shared by the two places that must not disagree — the choice between a hole
+// and a side cut, and the test for whether the result is empty. If they used
+// separate arithmetic, a region could be chosen as the widest option and then
+// printed as non-empty while holding nothing.
+static BigInt path_cov_kept_in(
+  const std::map<std::string, std::set<BigInt>> &holes,
+  const std::string &c,
+  const BigInt &lo,
+  const BigInt &hi)
+{
+  if (hi < lo)
+    return BigInt(0);
+  BigInt n = hi - lo + 1;
+  auto h = holes.find(c);
+  if (h != holes.end())
+    for (const BigInt &v : h->second)
+      if (v >= lo && v <= hi)
+        n -= 1;
+  return n;
 }
 
 void goto_coveraget::report_outer_boxes()
@@ -649,10 +706,34 @@ void goto_coveraget::report_outer_boxes()
   // the coordinate it cuts. Shrinking only ever makes the region SMALLER, so the
   // heuristic cannot break correctness — it only decides how much is kept, which
   // is why it is a free parameter and is reported rather than argued for.
+  //
+  // ---- WHY A THIRD KIND OF CUT: THE HOLE (Definition 5) ----
+  //
+  // The two side cuts cannot express "everything except v", and the cost of that
+  // is not resolution, it is DETERMINISM. When a sibling occupies a single value
+  // v strictly inside this box, both side cuts are legal and the one that gets
+  // taken is decided by which side this path's own counterexample happens to sit
+  // on — a value the solver chose. MEASURED on one address coordinate: supplying
+  // 2^160-1 as the sibling counterexample yields `[256, 2^160-1]`, supplying 0
+  // yields `[0, 254]`. Both are correct subsets of the true domain
+  // `[0,254] U [256, 2^160-1]`; they differ by a factor of 5.7e45.
+  //
+  // Punching v out instead gives `[0, 2^160-1] \ {v}` in BOTH cases. Same
+  // legality rule (this path's CE must survive, so CE != v), same only-ever-
+  // narrower invariant, and the answer stops depending on a value nobody chose.
+  //
+  // Restricted, deliberately, to a sibling whose outer box on the coordinate is
+  // a SINGLE POINT. A sibling spanning several values could be punched out value
+  // by value, and Definition 5 allows it — but how many points are worth
+  // punching before a side cut is better is a policy knob with a yield question
+  // behind it, and nothing has measured it. A multi-point sibling therefore
+  // still gets a side cut, and that is a stated limit rather than an oversight.
   for (const auto &[enc, depth] : path_cov_outer_box_paths)
   {
     // Materialise this path's box; skip a coordinate with no bound at all.
     std::map<std::string, std::pair<BigInt, BigInt>> box;
+    // Definition 5's H, per coordinate: the values removed from [lo, hi].
+    std::map<std::string, std::set<BigInt>> holes;
     for (const auto &c : coords)
     {
       auto it = bounds.find({enc, c});
@@ -712,11 +793,20 @@ void goto_coveraget::report_outer_boxes()
         continue;
       }
 
-      // Best legal cut across coordinates.
+      // Best legal cut across coordinates. Candidates are scored by how many
+      // values SURVIVE on the coordinate they touch — not by raw width — because
+      // a hole and a side cut are no longer comparable by width alone: a hole
+      // keeps the full interval minus one point.
       bool best = false;
       std::string best_c;
       std::pair<BigInt, BigInt> best_range;
-      BigInt best_width;
+      bool best_is_hole = false;
+      BigInt best_hole;
+      BigInt best_kept;
+      auto kept_in = [&](const std::string &c, const BigInt &lo,
+                         const BigInt &hi) {
+        return path_cov_kept_in(holes, c, lo, hi);
+      };
       for (const auto &[c, sr] : sbox)
       {
         auto ob = box.find(c);
@@ -725,29 +815,50 @@ void goto_coveraget::report_outer_boxes()
         BigInt ce;
         if (!ce_of(enc, c, ce))
           continue; // no CE for this coordinate: cannot check legality
+        // THE HOLE, tried first so it wins ties: the sibling occupies exactly
+        // one value here, that value is inside our interval, and our own
+        // counterexample is not it. Removing it excludes the whole sibling while
+        // keeping a known member of the domain.
+        if (
+          sr.first == sr.second && sr.first >= ob->second.first &&
+          sr.first <= ob->second.second && ce != sr.first)
+        {
+          const BigInt k =
+            kept_in(c, ob->second.first, ob->second.second) - 1;
+          if (!best || k > best_kept)
+          {
+            best = true;
+            best_is_hole = true;
+            best_c = c;
+            best_hole = sr.first;
+            best_kept = k;
+          }
+        }
         // Keep the part strictly below the sibling, or strictly above it.
         if (sr.first > ob->second.first && ce < sr.first)
         {
           std::pair<BigInt, BigInt> r{ob->second.first, sr.first - 1};
-          BigInt w = r.second - r.first;
-          if (!best || w > best_width)
+          BigInt k = kept_in(c, r.first, r.second);
+          if (!best || k > best_kept)
           {
             best = true;
+            best_is_hole = false;
             best_c = c;
             best_range = r;
-            best_width = w;
+            best_kept = k;
           }
         }
         if (sr.second < ob->second.second && ce > sr.second)
         {
           std::pair<BigInt, BigInt> r{sr.second + 1, ob->second.second};
-          BigInt w = r.second - r.first;
-          if (!best || w > best_width)
+          BigInt k = kept_in(c, r.first, r.second);
+          if (!best || k > best_kept)
           {
             best = true;
+            best_is_hole = false;
             best_c = c;
             best_range = r;
-            best_width = w;
+            best_kept = k;
           }
         }
       }
@@ -760,16 +871,52 @@ void goto_coveraget::report_outer_boxes()
         ++degenerate;
         continue;
       }
-      box[best_c] = best_range;
+      if (best_is_hole)
+        holes[best_c].insert(best_hole);
+      else
+      {
+        box[best_c] = best_range;
+        // A hole outside the surviving interval removes nothing and would print
+        // as a constraint on values the region no longer contains — a reader
+        // would take it as evidence about the domain when it is evidence about
+        // an interval that has been cut away since.
+        auto h = holes.find(best_c);
+        if (h != holes.end())
+        {
+          std::set<BigInt> keep;
+          for (const BigInt &v : h->second)
+            if (v >= best_range.first && v <= best_range.second)
+              keep.insert(v);
+          h->second.swap(keep);
+        }
+      }
     }
 
     std::string s;
     std::string empty_on;
+    size_t holes_punched = 0;
     for (const auto &[c, r] : box)
     {
       s += (s.empty() ? "" : ", ") + c + " in [" + integer2string(r.first) +
            ", " + integer2string(r.second) + "]";
-      if (r.first > r.second)
+      // Definition 5's punched interval, printed WITH the interval rather than
+      // in a trailing note: `[0, 2^160-1]` and `[0, 2^160-1] \ {255}` are
+      // different regions and the numbers are what gets quoted.
+      auto h = holes.find(c);
+      if (h != holes.end() && !h->second.empty())
+      {
+        std::string hs;
+        for (const BigInt &v : h->second)
+          hs += (hs.empty() ? "" : ", ") + integer2string(v);
+        s += " \\ {" + hs + "}";
+        holes_punched += h->second.size();
+      }
+      // EMPTY has a second route once the interval can be punched: a
+      // well-formed [lo, hi] whose every value has been removed. Both routes
+      // land in the same note, because both mean the region holds no input.
+      if (
+        r.first > r.second ||
+        path_cov_kept_in(holes, c, r.first, r.second) <= 0)
         empty_on += (empty_on.empty() ? "" : ", ") + c;
     }
 
@@ -793,7 +940,9 @@ void goto_coveraget::report_outer_boxes()
     std::string empty_note;
     if (!empty_on.empty())
       empty_note =
-        " — EMPTY, NOT CERTIFIED: lo > hi on " + empty_on +
+        " — EMPTY, NOT CERTIFIED: no value survives on " + empty_on +
+        " (either lo > hi, or the holes remove every value the interval holds — "
+        "a punched interval can be empty while its endpoints look well-formed)"
         ", so this box contains no input at all. The subtraction removed "
         "everything, which under a pin usually means the pin excluded this path "
         "from the slice; the honest statement is that exclusion. Do NOT hand "
@@ -814,6 +963,21 @@ void goto_coveraget::report_outer_boxes()
       s,
       empty_note,
       caveat);
+    // Printed as its own line, and printed as a COUNT, because the property a
+    // regression has to pin is "the subtraction punched rather than took a
+    // side" — which is invisible in the region text of a path that happened to
+    // need no hole, and which is exactly the property that stops the answer
+    // depending on which counterexample the solver returned.
+    if (holes_punched > 0)
+      log_status(
+        "--path-cov-outer-box: path enc={} — {} of the cut(s) above are HOLES "
+        "(Definition 5), not side cuts: a sibling occupying a single value was "
+        "removed by excluding that value. This is the part of the region that "
+        "does NOT depend on which counterexample the solver returned for the "
+        "sibling; a side cut there would have kept only the side holding this "
+        "path's own counterexample",
+        enc,
+        holes_punched);
   }
 
   log_status(
@@ -2243,15 +2407,21 @@ void goto_coveraget::solidity_path_coverage()
   // ---- Stage-2 certification query spec (--path-cov-certify) ----
   //
   // {"unit": "<fn name or full unit id>", "enc": N, "depth": D,
-  //  "box": [{"name": "a", "lo": "0", "hi": "10"}, ...]}
+  //  "box": [{"name": "a", "lo": "0", "hi": "10", "holes": ["4"]}, ...]}
   //
-  // `lo`/`hi` are decimal STRINGS, not JSON numbers: Solidity inputs are up to
-  // 256 bits and a JSON number would be silently truncated to a double on the
-  // way in — a certified box quietly covering the wrong region is the one
+  // `lo`/`hi`/`holes` are decimal STRINGS, not JSON numbers: Solidity inputs are
+  // up to 256 bits and a JSON number would be silently truncated to a double on
+  // the way in — a certified box quietly covering the wrong region is the one
   // outcome this query exists to prevent.
+  //
+  // `holes` is Definition 5's punched interval, and it is optional: absent means
+  // the plain closed interval, byte for byte the query that was emitted before
+  // it existed. See path_cov_certify_holes in the header for why a closed
+  // interval alone makes the yield depend on an arbitrary solver choice.
   struct certify_boundt
   {
     std::string name, lo, hi;
+    std::vector<std::string> holes;
   };
   // ---- Stage-2 outer-box batch spec (--path-cov-outer-box) ----
   struct outer_coordt
@@ -2366,6 +2536,7 @@ void goto_coveraget::solidity_path_coverage()
   path_cov_certify_box_names.clear();
   path_cov_certify_box.clear();
   path_cov_certify_ce.clear();
+  path_cov_certify_holes.clear();
   std::string certify_unit;
   uint64_t certify_enc = 0, certify_depth = 0;
   std::vector<certify_boundt> certify_box;
@@ -2386,10 +2557,15 @@ void goto_coveraget::solidity_path_coverage()
       certify_enc = j.at("enc").get<uint64_t>();
       certify_depth = j.at("depth").get<uint64_t>();
       for (const auto &b : j.value("box", nlohmann::json::array()))
-        certify_box.push_back(
-          {b.at("name").get<std::string>(),
-           b.at("lo").get<std::string>(),
-           b.at("hi").get<std::string>()});
+      {
+        certify_boundt cb;
+        cb.name = b.at("name").get<std::string>();
+        cb.lo = b.at("lo").get<std::string>();
+        cb.hi = b.at("hi").get<std::string>();
+        for (const auto &h : b.value("holes", nlohmann::json::array()))
+          cb.holes.push_back(h.get<std::string>());
+        certify_box.push_back(cb);
+      }
       const nlohmann::json cce = j.value("ce", nlohmann::json::object());
       for (auto it = cce.begin(); it != cce.end(); ++it)
         path_cov_certify_ce[it.key()] = it.value().get<std::string>();
@@ -2409,11 +2585,28 @@ void goto_coveraget::solidity_path_coverage()
     }
     certify_on = true;
     path_cov_certify_mode = true;
+    size_t certify_holes_total = 0;
     for (const auto &b : certify_box)
     {
       path_cov_certify_box_names.push_back(b.name);
       path_cov_certify_box.push_back({b.name, b.lo, b.hi});
+      if (!b.holes.empty())
+      {
+        path_cov_certify_holes[b.name] = b.holes;
+        certify_holes_total += b.holes.size();
+      }
     }
+    if (certify_holes_total > 0)
+      log_status(
+        "--path-cov-certify: the box is a PUNCHED interval (Definition 5) — {} "
+        "value(s) are removed across {} coordinate(s), so the assumption is "
+        "`lo <= c <= hi && c != h ...`. A hole says the region omits exactly "
+        "those points, which a closed interval cannot say: without it the "
+        "subtraction has to keep whichever SIDE of an excluded value happens to "
+        "hold its own counterexample, and that side is chosen by the solver, not "
+        "by the method",
+        certify_holes_total,
+        path_cov_certify_holes.size());
     log_status(
       "--path-cov-certify: CERTIFICATION QUERY for unit '{}' path enc={} "
       "depth={} over {} bounded input(s). The per-path identity asserts are NOT "
@@ -4890,6 +5083,11 @@ void goto_coveraget::solidity_path_coverage()
       //    what was asked for, and the run would still say SUCCESSFUL.
       const symbolt *fsym = ns.lookup(f_it->first);
       size_t bounds_emitted = 0;
+      // Counted at the EMISSION, not at the parse. A hole that was read out of
+      // the spec and then never reached the assumption would leave the query
+      // certifying a WIDER region than the one reported — and the parse-time
+      // line would still say the holes were there.
+      size_t holes_emitted = 0;
 
       // ---- AN EMPTY BOX IS NOT A CERTIFICATE ----
       //
@@ -4931,6 +5129,34 @@ void goto_coveraget::solidity_path_coverage()
                   "one name can intersect to an empty box while each is "
                   "individually well-formed, which the emptiness test above "
                   "would not see";
+          else if (!b.holes.empty())
+          {
+            // A PUNCHED interval has a SECOND way of being empty, and it is the
+            // one a `lo <= hi` test cannot see: `a in [5,5] \ {5}` passes that
+            // test and still admits no input at all. Same consequence as the
+            // inverted interval — an unsatisfiable assumption certifies
+            // VACUOUSLY — so it gets the same refusal rather than a warning.
+            //
+            // Counting distinct holes INSIDE [lo, hi] is what makes this exact:
+            // a hole outside the interval removes nothing, and counting it would
+            // refuse a perfectly good box. The count is bounded by the spec's
+            // own size, so comparing it against a 256-bit span is safe.
+            const BigInt lo = string2integer(b.lo), hi = string2integer(b.hi);
+            std::set<std::string> inside;
+            for (const auto &h : b.holes)
+            {
+              const BigInt hv = string2integer(h);
+              if (hv >= lo && hv <= hi)
+                inside.insert(integer2string(hv));
+            }
+            if (BigInt((int64_t)inside.size()) >= (hi - lo + 1))
+              bad = "the PUNCHED box is EMPTY on this coordinate: [" + b.lo +
+                    ", " + b.hi + "] holds " + integer2string(hi - lo + 1) +
+                    " value(s) and the holes remove all of them, so the entry "
+                    "assumption is unsatisfiable. `lo <= hi` does NOT catch "
+                    "this — the interval is well-formed and the punching is "
+                    "what empties it";
+          }
           if (!bad.empty())
           {
             log_error(
@@ -4995,11 +5221,77 @@ void goto_coveraget::solidity_path_coverage()
           exit(1);
         }
         const type2tc bt = bs->type;
-        goto_programt::instructiont asm_i;
-        asm_i.type = ASSUME;
-        asm_i.guard = and2tc(
+
+        // ---- The spec's decimals must FIT the coordinate's own type ----
+        //
+        // Every bound is built with constant_int2tc ON THE COORDINATE'S TYPE, so
+        // a decimal above the type's maximum WRAPS silently and the query is
+        // emitted about a different value than the one written down. The verdict
+        // then describes a box nobody asked for, and if it comes back
+        // SUCCESSFUL it is a false certificate — the same shape as the signed
+        // hole documented in coord_expressible, arrived at through the value
+        // rather than through the type.
+        //
+        // Checked here rather than in the structural block above because this is
+        // the first point where the coordinate's TYPE is known; the block above
+        // can only compare decimals with each other. coord_expressible has
+        // already restricted `bt` to an unsigned bit-vector, so the admissible
+        // range is exactly [0, 2^width - 1].
+        {
+          BigInt tmax = 1;
+          for (unsigned w = 0; w < bt->get_width(); ++w)
+            tmax *= 2;
+          tmax -= 1;
+          std::vector<std::pair<std::string, std::string>> vals = {
+            {"lo", b.lo}, {"hi", b.hi}};
+          for (const auto &h : b.holes)
+            vals.push_back({"hole", h});
+          for (const auto &[what, txt] : vals)
+          {
+            const BigInt v = string2integer(txt);
+            if (v >= 0 && v <= tmax)
+              continue;
+            log_error(
+              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on coordinate "
+              "'{}': the {} value {} does not fit the coordinate's own type "
+              "(admissible range [0, {}]). The bound is built as a constant of "
+              "that type, so an out-of-range decimal WRAPS and the query would "
+              "be emitted about a different value than the one written here — "
+              "answering SUCCESSFUL about a box nobody asked for. Certification "
+              "is not attempted",
+              uid,
+              b.name,
+              what,
+              txt,
+              integer2string(tmax));
+            exit(1);
+          }
+        }
+
+        // `lo <= c <= hi`, then one `c != h` per hole (Definition 5). With no
+        // holes this is byte for byte the assumption emitted before punched
+        // intervals existed, so every existing spec is unaffected.
+        expr2tc bguard = and2tc(
           greaterthanequal2tc(bs, constant_int2tc(bt, string2integer(b.lo))),
           lessthanequal2tc(bs, constant_int2tc(bt, string2integer(b.hi))));
+        for (const auto &h : b.holes)
+        {
+          bguard = and2tc(
+            bguard,
+            notequal2tc(bs, constant_int2tc(bt, string2integer(h))));
+          // Incremented HERE, inside the conjunction, and not from
+          // `b.holes.size()` next to the insert. MEASURED on the fault injection
+          // for this very change: with the conjunction disabled the query
+          // correctly flipped to FAILED while the line above still reported
+          // "1 hole(s) punched" — a counter that reads the SPEC cannot witness
+          // whether the spec reached the formula, which is the only thing it was
+          // added to witness.
+          ++holes_emitted;
+        }
+
+        goto_programt::instructiont asm_i;
+        asm_i.type = ASSUME;
+        asm_i.guard = bguard;
         asm_i.location = goto_program.instructions.begin()->location;
         // "skipped" keeps this out of the decision-set census, which flags a
         // user-source ASSUME as a lowered-away branch. This one is ours.
@@ -5041,7 +5333,8 @@ void goto_coveraget::solidity_path_coverage()
       }
 
       log_status(
-        "--path-cov-certify: unit '{}' — assumed {} input bound(s) at entry "
+        "--path-cov-certify: unit '{}' — assumed {} input bound(s) ({} hole(s) "
+        "punched) at entry "
         "and asserted `tr == {} && cnt == {}` at ALL {} exit(s) of the unit. "
         "Asserting at every exit is what makes the query non-vacuous: an input "
         "inside the box that walks a DIFFERENT path leaves through a different "
@@ -5049,6 +5342,7 @@ void goto_coveraget::solidity_path_coverage()
         "path's own exit",
         uid,
         bounds_emitted,
+        holes_emitted,
         certify_enc,
         certify_depth,
         exits.size());

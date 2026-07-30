@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract Gate2 --path-cov-certify certify.json --solidity-max-tx 1
+^VERIFICATION SUCCESSFUL$
+^--path-cov-certify: the box is a PUNCHED interval \(Definition 5\) — 1 value\(s\) are removed across 1 coordinate\(s\)
+assumed 1 input bound\(s\) \(1 hole\(s\) punched\) at entry
