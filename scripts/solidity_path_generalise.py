@@ -682,7 +682,7 @@ def parse_holes(text):
     return out
 
 
-def brackets_for(coord, brackets):
+def brackets_for(coord, brackets, type_range=None):
     """Where the SEPARATION boundary still is, per the bracket report.
 
     A bracket that runs into the type limit (upper ending at 2^256-1, or lower
@@ -692,6 +692,7 @@ def brackets_for(coord, brackets):
     exactly what it did before this was excluded.
     """
     lo, hi = None, None
+    type_lo, type_hi = type_range or (0, UINT256_MAX)
     for txt in brackets.values():
         for m in re.finditer(
                 re.escape(coord) + r" (upper|lower) in [\[(](\d+), (\d+)[\])]",
@@ -719,6 +720,23 @@ def brackets_for(coord, brackets):
             if m.group(1) == "upper" and a <= 0 and b >= UINT256_MAX:
                 continue
             if m.group(1) == "lower" and a <= 0 and b >= UINT256_MAX:
+                continue
+            # ---- A DEGENERATE PATH MUST NOT POLLUTE THE UNION ----
+            #
+            # The span is the union over ALL paths, so one path whose bracket
+            # spans the coordinate's whole range drags the shared span back to
+            # everything -- and with five paths that is close to certain.
+            # MEASURED: the bracket said `immutables.amount upper in (5.14e61,
+            # 2^256-1]` and the refine span still came back (0, 2^256-1).
+            #
+            # Such a bracket contributes ZERO information to the union by
+            # definition, so dropping it is not a policy choice and costs
+            # nothing. This is deliberately NOT per-path spans: those would
+            # multiply the claim count by the path count, and the claim count is
+            # what the round's cost tracks. Removing a contribution that says
+            # nothing is free; paying a path multiplier on coordinates whose
+            # union is already tight is not.
+            if a <= type_lo and b >= type_hi:
                 continue
             lo = a if lo is None else min(lo, a)
             hi = b if hi is None else max(hi, b)
@@ -1835,7 +1853,8 @@ def main():
         # upper end is above the type maximum is a span the type cannot hold, so
         # every probe the tool lays inside it above that point is dropped -- and
         # what is left is the ladder crowded into the wrong place.
-        lo, hi = brackets_for(c, brackets) or (0, UINT256_MAX)
+        lo, hi = (brackets_for(c, brackets, type_ranges.get(c))
+                  or (0, UINT256_MAX))
         tlo, thi = type_ranges.get(c, (0, UINT256_MAX))
         return (max(lo, tlo), min(hi, thi))
     spans = {c: _span(c) for c in coords}
@@ -1853,7 +1872,8 @@ def main():
               + (f" holes={ {k: v for k, v in region_holes.items() if v} }"
                  if any(region_holes.values()) else "")
               + (f" UNSEPARATED={sorted(warned)}" if warned else ""))
-        new = {c: (brackets_for(c, brackets) or spans[c]) for c in coords}
+        new = {c: (brackets_for(c, brackets, type_ranges.get(c))
+                   or spans[c]) for c in coords}
         if new == spans:
             break
         spans = new

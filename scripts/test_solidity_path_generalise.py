@@ -895,6 +895,35 @@ check("a-lower-bracket-over-the-whole-type-is-dropped",
 check("a-lower-bracket-that-constrains-is-kept",
       brackets_for("a", {14: "a lower in [500, 900)"}) is not None, True)
 
+# --- one degenerate path must not drag the shared span back to everything ---
+#
+# The span is the union over ALL paths. MEASURED: the bracket said
+# `immutables.amount upper in (5.14e61, 2^256-1]` and the refine span still came
+# back (0, 2^256-1), because another path contributed a bracket over the whole
+# type and min()/max() swallowed the narrowing.
+#
+# A bracket spanning the coordinate's entire range contributes ZERO information
+# by definition, so dropping it is not a policy choice. This is deliberately NOT
+# per-path spans, which would multiply the claim count -- the quantity the
+# round's cost tracks -- by the path count.
+MIXED = {14: "a upper in (500, 900]",          # informative
+         30: f"a upper in (0, {BIG}]"}          # says nothing
+check("a-degenerate-path-does-not-widen-the-union",
+      brackets_for("a", MIXED, (0, BIG)), (500, 900))
+# ...and with no informative bracket at all the answer is still None, not a
+# fabricated span.
+check("all-degenerate-still-yields-nothing",
+      brackets_for("a", {30: f"a upper in (0, {BIG}]"}, (0, BIG)), None)
+# A narrower TYPE makes a bracket degenerate that would not be on uint256 -- the
+# test is against the coordinate's own range, which is why it is passed in.
+ADDR_MAX_ = (1 << 160) - 1
+check("degenerate-is-judged-against-the-coordinate-type",
+      brackets_for("a", {14: f"a upper in (0, {ADDR_MAX_}]"}, (0, ADDR_MAX_)),
+      None)
+check("the-same-bracket-is-informative-on-a-wider-type",
+      brackets_for("a", {14: f"a upper in (0, {ADDR_MAX_}]"}, (0, BIG)),
+      (0, ADDR_MAX_))
+
 
 if FAILURES:
     print("FAILED:")
