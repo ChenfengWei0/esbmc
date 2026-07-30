@@ -31,7 +31,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       round_failure_reason, boxes_intersect,
                                       certified_overlap, divergence_text,
                                       extraction_caveats, level0_candidates,
-                                      single_point_coords, equality_coords)
+                                      single_point_coords, equality_coords,
+                                      assumed_ranges, outside_assumed)
 
 FAILURES = []
 
@@ -478,6 +479,72 @@ check("no-boxes-at-all-is-not-equality-type",
 # A coordinate missing from one path's box is unconstrained there, not a point.
 check("coordinate-absent-from-one-box-blocks-it",
       equality_coords({2: {"to": (5, 5)}, 3: {"amt": (0, 9)}}, ["to"], 2), [])
+
+
+# --- a witness value that contradicts the query's OWN assumption is not a
+#     divergence, and must not be reported as one ---
+#
+# This is here because a diagnosis was drawn from exactly that. EscrowSrc.cancel
+# was read as "the divergence lives in an unpinned msg.sender", and that reading
+# got its own failure cell -- while the sender WAS pinned and the reported value
+# simply was not the entry-time one. Measured afterwards on three fixtures: the
+# bound does bind (same path, pin [255,255] SUCCESSFUL vs [0,0] FAILED); the
+# report matches the pin when the path reads the quantity and makes no nested
+# call; and it can contradict the pin when the path never reads it, or when a
+# call wrapper has overwritten msg.sender with the callee's identity.
+#
+# The check needs none of those mechanisms. It compares what was reported against
+# what was assumed -- a proposition the pipeline already relies on, made into a
+# runtime check.
+
+check("assumed-ranges-fold-pins-in",
+      assumed_ranges({"a": (0, 5)}, {"msg.sender": 7}),
+      {"a": (0, 5), "msg.sender": (7, 7)})
+check("inside-the-assumption-is-trusted",
+      outside_assumed("a", 3, {"a": (0, 5)}), False)
+check("outside-the-assumption-is-not",
+      outside_assumed("a", 9, {"a": (0, 5)}), True)
+check("unbounded-coordinate-is-trusted",
+      outside_assumed("b", 9, {"a": (0, 5)}), False)
+check("no-ranges-at-all-is-trusted", outside_assumed("a", 9, None), False)
+
+# (1) POSITIVE. A difference whose witness value is INSIDE the assumed box is a
+#     genuine divergence and stays reported.
+t1 = divergence_text({"a": 4, "s": 1}, {"a": 4, "s": 3}, {"a", "s"}, None,
+                     {"a": (0, 5), "s": (0, 9)})
+check("in-range-difference-still-reported", "s (path=1, witness=3)" in t1, True)
+check("in-range-difference-not-flagged-untrusted",
+      "OUTSIDE the bound" in t1, False)
+
+# (2) MUST FLIP. The same difference, with the witness value outside the bound
+#     the query assumed, is excluded from the divergence and named as untrusted.
+t2 = divergence_text({"a": 4, "s": 1}, {"a": 9, "s": 3}, {"a", "s"}, None,
+                     {"a": (0, 5), "s": (0, 9)})
+check("out-of-range-difference-excluded", "a (path=4, witness=9)" in t2, False)
+check("out-of-range-difference-named", "OUTSIDE the bound" in t2, True)
+check("out-of-range-note-gives-the-assumption", "assumed in [0, 5]" in t2, True)
+check("other-difference-survives", "s (path=1, witness=3)" in t2, True)
+
+# (3) THE ANTI-COLLAPSE CHECK, and the reason this is not just a filter. When
+#     EVERY observed difference is untrusted, the result must NOT fall through
+#     to "the witness agrees on every scalar" -- that message is the explicit
+#     empty-divergence bucket the reach-gate number is built from, and reaching
+#     it from a measurement problem would manufacture a reach-gate hit.
+t3 = divergence_text({"a": 4}, {"a": 9}, {"a"}, None, {"a": (0, 5)})
+check("all-untrusted-is-not-the-empty-divergence-case",
+      "not in the payload at all" in t3, False)
+check("all-untrusted-says-it-could-not-be-compared",
+      "could not be compared" in t3, True)
+check("all-untrusted-still-names-the-quantity", "OUTSIDE the bound" in t3, True)
+
+# (4) CLOSED BY DEFAULT. With no ranges supplied the wording is byte-identical
+#     to before, so every existing caller and fixture is unaffected.
+check("no-ranges-leaves-wording-unchanged",
+      divergence_text({"a": 4}, {"a": 9}, {"a"}),
+      divergence_text({"a": 4}, {"a": 9}, {"a"}, None, None))
+check("no-ranges-reports-the-difference",
+      "a (path=4, witness=9)" in divergence_text({"a": 4}, {"a": 9}, {"a"}),
+      True)
 
 
 if FAILURES:

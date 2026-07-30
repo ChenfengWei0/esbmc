@@ -670,7 +670,54 @@ def extraction_caveats(claims):
     return out
 
 
-def divergence_text(path_ce, wit_ce, bounded, caveats=None):
+def assumed_ranges(box, pins):
+    """What the certification query ACTUALLY assumed, per coordinate.
+
+    Built the same way `certify` builds the spec it sends -- box intervals plus
+    each pin as a degenerate one -- so the check downstream compares the report
+    against the query that was really issued, not against a reconstruction of it.
+    """
+    r = dict(box)
+    for n, v in pins.items():
+        r[n] = (v, v)
+    return r
+
+
+def outside_assumed(name, value, ranges):
+    """Is this witness value OUTSIDE the bound the query itself assumed?
+
+    A refuting witness is supposed to be an input FROM the assumed box. When the
+    reported value for a coordinate falls outside that box, the report and the
+    query disagree, and the report is the one that cannot be trusted: the query's
+    assumption is what the solver actually worked under.
+
+    Measured, on three fixtures, without needing to know which mechanism applies:
+
+      * bound binds. Same revert path, same query, only the `msg.sender` bound
+        differing: [255,255] (the banned sender) is SUCCESSFUL, [0,0] is FAILED.
+        So an assumed bound does constrain the quantity the guard reads.
+      * harvest faithful when the path READS the quantity and makes no nested
+        call: the same query reports `msg.sender: 0`, matching its pin.
+      * harvest can contradict the bound otherwise: on a path that never reads
+        the quantity the reported value is an unconstrained symbol (pin 5,
+        reported 0), and on a unit that makes nested calls the reported value can
+        be a post-wrapper one (pin 0, reported 32509824) -- call wrappers
+        overwrite `msg_sender` with the callee's identity, which the emitter
+        documents.
+
+    This check needs none of that. It compares what was reported against what was
+    assumed, which is a proposition the pipeline already relies on, made into a
+    runtime check -- the rule that the certification gate was caught by in the
+    first place.
+    """
+    r = ranges.get(name) if ranges else None
+    if not r:
+        return False
+    lo, hi = r
+    return value < lo or value > hi
+
+
+def divergence_text(path_ce, wit_ce, bounded, caveats=None, ranges=None):
     """Name the quantity the refuting witness differs on. The point of this file.
 
     "Refuted with no single-coordinate cut available" is the reach gate, and it
@@ -716,14 +763,49 @@ def divergence_text(path_ce, wit_ce, bounded, caveats=None):
                    if only_path else "")
                 + (f" -- only in the witness's: {', '.join(only_wit)}"
                    if only_wit else ""))
-    diff = [(n, path_ce[n], wit_ce[n])
-            for n in sorted(set(path_ce) & set(wit_ce))
-            if path_ce[n] != wit_ce[n]]
+    diff_all = [(n, path_ce[n], wit_ce[n])
+                for n in sorted(set(path_ce) & set(wit_ce))
+                if path_ce[n] != wit_ce[n]]
+    # SPLIT OFF the differences whose witness value contradicts the bound this
+    # very query assumed. Reporting those as "the witness differs on X" is how a
+    # diagnosis went wrong: EscrowSrc.cancel was read as "the divergence lives in
+    # an unpinned msg.sender", giving that its own failure cell, when the sender
+    # WAS pinned and the reported value simply was not the entry-time one.
+    # They are not dropped -- an unexplained contradiction between the report and
+    # the query is worth saying out loud -- but they must not be offered as the
+    # discriminating quantity.
+    untrusted = [t for t in diff_all if outside_assumed(t[0], t[2], ranges)]
+    diff = [t for t in diff_all if t not in untrusted]
+    untrusted_note = ""
+    if untrusted:
+        untrusted_note = (
+            "; NOTE: the witness value reported for "
+            + ", ".join(f"{n} (={wv}, assumed in [{ranges[n][0]}, "
+                        f"{ranges[n][1]}])" for n, _, wv in untrusted)
+            + " lies OUTSIDE the bound this query assumed, so it is NOT the "
+              "entry-time value and is excluded from the difference above. A "
+              "path that never reads the quantity leaves it unconstrained, and "
+              "a nested call overwrites msg.sender with the callee's identity; "
+              "either way the reported value says nothing about what separates "
+              "these paths")
+    # ALL observed differences were untrusted. This must NOT fall through to the
+    # "agrees on every scalar" branch below: "there was no difference" and "every
+    # difference we saw contradicts our own assumption" are different findings,
+    # and collapsing them is the failure-as-result pattern this file keeps
+    # running into -- here it would manufacture an empty-divergence reading (the
+    # reach-gate bucket) out of a measurement problem.
+    if not diff and untrusted:
+        return ("; every difference between the witness and this path's "
+                "counterexample was on a quantity whose reported value "
+                "contradicts the bound this query assumed, so NONE of them is "
+                "usable. This is NOT the empty-divergence case: it is a payload "
+                "that could not be compared" + asym + untrusted_note)
     if not diff and asym:
         # Not "they agree on everything": they agree on everything COMPARABLE,
         # and something was not comparable. Those are different findings.
         return ("; the witness agrees with this path's counterexample on every "
-                "scalar the two payloads have in common" + asym)
+                "scalar the two payloads have in common" + asym
+                + untrusted_note)
     if not diff:
         msg = ("; and the witness agrees with this path's counterexample on "
                "EVERY scalar quantity in the payload as well, so whatever "
@@ -739,13 +821,13 @@ def divergence_text(path_ce, wit_ce, bounded, caveats=None):
                     f"comparison above even if it were the discriminating "
                     f"quantity -- that makes it a NAMED candidate, not a "
                     f"conclusion. Its stated reason: {why}")
-        return msg
+        return msg + untrusted_note
     return ("; the witness differs from this path's counterexample on: "
             + ", ".join(
                 f"{n} (path={pv}, witness={wv})"
                 + ("" if n in bounded else " [NOT a bounded coordinate]")
                 for n, pv, wv in diff)
-            + asym)
+            + asym + untrusted_note)
 
 
 def shrink_target(log, pins):
@@ -1107,14 +1189,16 @@ def main():
             if nb is None or nb == box:
                 failed[enc] = (
                     "refuted with no single-coordinate cut available"
-                    + divergence_text(ce, last_wit, set(box) | set(pins), caveats))
+                    + divergence_text(ce, last_wit, set(box) | set(pins),
+                                      caveats, assumed_ranges(box, pins)))
                 break
             print(f"[shrink enc={enc}] {box} -> {nb}")
             box = nb
         else:
             failed[enc] = (
                 "shrink round budget exhausted"
-                + divergence_text(ce, last_wit, set(box) | set(pins), caveats))
+                + divergence_text(ce, last_wit, set(box) | set(pins), caveats,
+                                  assumed_ranges(box, pins)))
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean
     # an input would have to walk two different paths. Reporting them and
