@@ -71,7 +71,8 @@ def run(cmd, timeout, cwd=None):
         return -1, dec(e.stdout) + dec(e.stderr), time.time() - t0
 
 
-def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal):
+def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
+               max_tx):
     """One esbmc run per callable, each in its own CWD (the emitted filename is
     hardcoded), each renamed so the suite can hold all of them at once."""
     callables = base.enumerate_own_callable_functions(flat, project)
@@ -83,7 +84,7 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal):
         for stale in cwd.glob("*"):
             stale.unlink()
         cmd = [str(ESBMC), str(solast), "--sol", str(flat),
-               "--solidity-path-coverage", "--solidity-max-tx", "1",
+               "--solidity-path-coverage", "--solidity-max-tx", str(max_tx),
                "--generate-foundry-testcase", "--memlimit", "8g",
                "--result-only"]
         if ckind == "library":
@@ -164,6 +165,13 @@ def main():
     ap.add_argument("bench")
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--keep", action="store_true")
+    # The transaction bound is a PARAMETER of the result, not a constant of the
+    # pipeline. Aqua's uncovered branches sit behind a `require` on a mapping a
+    # fresh deploy leaves empty, so they need state an EARLIER transaction
+    # establishes -- at 1 neither the model nor the test can reach them, and no
+    # emitter change moves that. Raising it is the measurement that separates
+    # "our tests are weak" from "one transaction cannot get there".
+    ap.add_argument("--max-tx", type=int, default=1)
     a = ap.parse_args()
     if a.bench not in base.BENCHES:
         sys.exit(f"unknown bench: {a.bench}")
@@ -193,7 +201,7 @@ def main():
         journal.unlink()
     print(f"=== {a.bench}: emitting tests ===", flush=True)
     tests, recs = emit_tests(a.bench, flat, solast, primary, project, proj,
-                             a.timeout, journal)
+                             a.timeout, journal, a.max_tx)
     emitted = len(tests)
     print(f"=== emitted {emitted} test file(s) from {len(recs)} run(s) ===",
           flush=True)

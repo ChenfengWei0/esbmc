@@ -65,6 +65,34 @@ uses `total.esbmcReached`, the union over all runs intersected with the
 canonical decision lines, and that did not move at all. Report the field the
 conclusion depends on, not the field that changed.
 
+## THE MEASUREMENT CHANGED (read this before quoting any coverage number)
+
+The gate in `branch_gate.py` measures which canonical decisions the VERIFIER's
+exploration touched. That is a PROXY. The deliverable is a Foundry suite, and
+the number that supports the claim is what THAT SUITE covers, measured by the
+same tool the projects' own suites are measured with:
+`notes/coverage/scripts/forge_roundtrip.py` (committed, self-contained -- it
+needs no repository restoration, because the sources are in the flat and the
+projects' own coverage is already in the locked JSON).
+
+aqua_Aqua, 8 canonical decisions: **bar 7, native 6, OURS 2** -- while the proxy
+said 4. Every reach number this project reported about itself before this is the
+proxy kind.
+
+Three defects found end to end, and what happened to each:
+
+| defect | state | effect on the number |
+|---|---|---|
+| empty test body (names two witnessed paths, executes neither, PASSES because it does nothing) | FIXED in `collect()`, counted | files 6 -> 4, coverage unchanged -- proof they were worth nothing |
+| a test the emitter ASSERTED exits normally that REVERTS | GUARDED at pipeline level (run every test, disable + count the red ones) | 1 red disabled, coverage unchanged |
+| every recovered argument zero, and zeros alias to one mapping slot | de-aliased (distinct identities per parameter name) | **coverage UNCHANGED -- the aliasing hypothesis is REFUTED** |
+
+The remaining gap on aqua is NOT an emitter defect: the uncovered branches sit
+behind `require(balance.tokensCount == tokens.length)` on a mapping a fresh
+deploy leaves empty, so they need state an EARLIER TRANSACTION establishes, and
+everything runs at `--solidity-max-tx 1` from the post-constructor state with no
+havoc. `forge_roundtrip.py --max-tx N` exists to test exactly that.
+
 ## The three audits, and what they changed
 
 `notes/commensurability-audit.md`, `notes/interval-input-scope-and-plan.md` and
