@@ -280,6 +280,89 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     return uniq, sorted(refused), extraction_caveats(witnessed)
 
 
+def state_mutability(ast_path):
+    """Each state variable's Solidity mutability, read from the solc AST.
+
+    NOT a heuristic, and that distinction is the whole reason this reads the AST
+    rather than guessing from the counterexamples. "The value is the same on
+    every path" is TRUE of an immutable and also true of ordinary storage that
+    happens not to vary, so inferring it would be the "saw nothing else,
+    therefore it is this" move this project has got wrong repeatedly. solc states
+    it outright: every VariableDeclaration carries `mutability` as one of
+    "mutable" / "immutable" / "constant".
+
+    Returns {name: mutability}. An unreadable or absent AST returns {}, which
+    leaves every coordinate in place -- the previous behaviour exactly. That is
+    failing OPEN, and it is the wrong direction on the merits (keeping a
+    non-settable coordinate is the defect this addresses); it is accepted only
+    because it is the status quo and because the alternative -- dropping
+    coordinates when we could not read the AST -- would silently narrow what is
+    generalised for a reason that has nothing to do with the contract. The
+    exclusion is reported loudly instead, so its absence is visible.
+    """
+    if not ast_path or not os.path.exists(ast_path):
+        return {}
+    try:
+        txt = open(ast_path).read()
+        # solc's --ast-compact-json output carries a banner before the object.
+        i = txt.index("{")
+        ast = json.loads(txt[i:])
+    except (OSError, ValueError):
+        return {}
+    out = {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            if (n.get("nodeType") == "VariableDeclaration"
+                    and n.get("stateVariable")):
+                nm, mu = n.get("name"), n.get("mutability")
+                if nm and mu:
+                    # A name declared twice with different mutability cannot be
+                    # resolved from the name alone, so the SETTABLE reading wins:
+                    # keeping a coordinate costs yield, dropping one that is
+                    # really settable costs a region nobody asked to lose.
+                    if out.get(nm) in (None, mu) or mu == "mutable":
+                        out[nm] = mu
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(ast)
+    return out
+
+
+def unsettable_coords(coords, mutability):
+    """Coordinates NO generated test can set, with the reason.
+
+    An `immutable` is fixed at construction and an `constant` is baked into the
+    code; neither is an input, and `vm.store` cannot reach either. Offering one
+    as a free coordinate hands the verifier an input space WIDER than reality, so
+    certification over it cannot succeed -- the witness simply moves the
+    quantity, round after round, and the shrink budget runs out. That is not a
+    search-power problem and no ladder fixes it.
+
+    MEASURED, EscrowSrc: `cancel`'s only two free coordinates are `state.FACTORY`
+    and `state.RESCUE_DELAY`, and BOTH are immutable -- the contract has no
+    mutable state variable at all. Its 0-of-4 certification result was therefore
+    never about the search; the loop was generalising over quantities that do not
+    vary.
+
+    Only `state.` coordinates are considered: parameters and environment
+    quantities are settable by construction, and a name collision between a
+    parameter and a state variable must not silently disqualify the parameter.
+    """
+    out = {}
+    for c in coords:
+        if not c.startswith("state."):
+            continue
+        mu = mutability.get(c[6:])
+        if mu in ("immutable", "constant"):
+            out[c] = mu
+    return out
+
+
 def geometric_values(limit):
     """Round-1 ladder: magnitude-independent, one run."""
     vals, v = [0], 1
@@ -1275,11 +1358,72 @@ def main():
 
     coords = sorted({k for _, _, ce in paths for k in ce}
                     - set(pins) - set(env_names))
+
+    # ---- Drop coordinates NO generated test can set ----
+    #
+    # An `immutable` is fixed at construction, a `constant` is in the code; the
+    # counterexample harvest reports both under entry_storage because the model
+    # makes them members of the contract object, and the driver was turning them
+    # into FREE coordinates. That gives the verifier a wider input space than
+    # reality, so certification over such a coordinate cannot succeed: the
+    # witness just moves it every round until the shrink budget is gone.
+    #
+    # They are PINNED, not deleted. The path's own counterexample value is the
+    # value the deployed contract has, so pinning states the slice truthfully and
+    # keeps every region a statement about a reachable configuration -- whereas
+    # dropping them would leave the quantity unconstrained, which is the same
+    # constraint as never having mentioned it.
+    unsettable = unsettable_coords(coords, state_mutability(args.ast))
+    if unsettable:
+        for c in sorted(unsettable):
+            v = next((ce[c] for _, _, ce in paths if c in ce), None)
+            if v is not None:
+                pins.setdefault(c, v)
+        coords = [c for c in coords if c not in unsettable]
+        print("[coords] NOT SETTABLE by any generated test, pinned at the "
+              "counterexample value instead of generalised: "
+              + ", ".join(f"{c} ({unsettable[c]}, =={pins[c]})"
+                          for c in sorted(unsettable))
+              + ". An immutable is fixed at construction and a constant is in "
+                "the code; neither is an input, so generalising over one asks "
+                "the verifier about inputs no test can produce")
+    elif args.ast:
+        print("[coords] every state coordinate is a MUTABLE state variable "
+              "(checked against the AST), so none was excluded")
+    else:
+        print("[coords] no --ast given, so state-variable mutability could NOT "
+              "be checked: an immutable or constant coordinate would be "
+              "generalised over as if a test could set it. Pass --ast to have "
+              "them pinned instead")
+
     if not coords:
-        print("[coords] no generalisable coordinate: "
-              + ("every coordinate is pinned" if pins else
-                 "every coordinate was refused as UNSUPPORTED")
-              + "; nothing to generalise")
+        # NAME BOTH HALVES. "Every coordinate is pinned" is true and useless:
+        # the question a reader has is whether this unit is hard to generalise
+        # or simply not addressable by the current coordinate KINDS, and those
+        # call for opposite work. MEASURED on EscrowSrc.cancel, which is exactly
+        # this case: its two scalar coordinates are both `immutable`, and its one
+        # real argument is a struct the coordinate layer refuses -- so there was
+        # never anything to generalise, and the 0-of-4 it used to report as
+        # "shrink round budget exhausted" was never a search-power result.
+        why = []
+        if unsettable:
+            why.append(
+                f"{len(unsettable)} coordinate(s) are fixed at deployment "
+                f"(immutable/constant) and no test can set them: "
+                + ", ".join(sorted(unsettable)))
+        if refused:
+            why.append(
+                f"{len(refused)} name(s) were refused as UNSUPPORTED because "
+                f"the coordinate kinds cannot express them (struct, mapping, "
+                f"non-scalar): " + ", ".join(refused))
+        if pins and not why:
+            why.append("every coordinate was pinned by request")
+        print("[coords] NO GENERALISABLE COORDINATE — "
+              + "; ".join(why)
+              + ". This is a COORDINATE-KIND result, not a search result: the "
+                "paths were witnessed and their region is a point, so each "
+                "falls back to its concrete counterexample test. Widening the "
+                "ladder or the shrink budget cannot change it")
         return 1
     print(f"[coords] {', '.join(coords)}"
           + (f"   [pinned: {pins}]" if pins else ""))

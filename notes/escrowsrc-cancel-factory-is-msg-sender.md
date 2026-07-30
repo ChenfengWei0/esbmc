@@ -92,15 +92,70 @@ subtraction inverted both coordinates
 handing an unsatisfiable assumption to the query, which would have answered
 SUCCESSFUL for want of any execution.
 
+## ⚠ SUPERSEDED IN PART — the operative cause is smaller than the above
+
+Everything above is still true as measured, but it is not the top of the causal
+chain, and reading it as such would send someone to build the wrong thing.
+
+`FACTORY` is `immutable`. So is `RESCUE_DELAY`. Read straight off the solc AST,
+which states `mutability` on every `VariableDeclaration` — not inferred from the
+counterexamples, where "constant on every path" is equally true of ordinary
+storage that happens not to vary:
+
+| state variable | mutability |
+|---|---|
+| `FACTORY` | immutable |
+| `RESCUE_DELAY` | immutable |
+| `_ACCESS_TOKEN`, `PROXY_BYTECODE_HASH` | immutable |
+| the other eight | constant |
+
+**EscrowSrc declares twelve state variables and not one of them is mutable.** The
+two the driver was generalising over are both fixed at construction, so no
+generated test can set either. Offering them as free coordinates hands the
+verifier an input space wider than reality, and certification over such a
+coordinate cannot succeed — the witness just moves the quantity every round until
+the shrink budget is gone. That is the "shrink round budget exhausted" this unit
+reported, and it was never a search-power result.
+
+With unsettable coordinates pinned at their counterexample value instead of
+generalised, the honest output is:
+
+    [coords] NO GENERALISABLE COORDINATE — 2 coordinate(s) are fixed at
+    deployment (immutable/constant) and no test can set them: state.FACTORY,
+    state.RESCUE_DELAY; 3 name(s) were refused as UNSUPPORTED because the
+    coordinate kinds cannot express them: immutables,
+    state.PROXY_BYTECODE_HASH, state._ACCESS_TOKEN.
+
+`cancel(Immutables calldata immutables)` has exactly one real argument and it is
+a struct the coordinate layer cannot express. So this unit has nothing to
+generalise over at all, and its four paths correctly fall back to concrete
+counterexample tests. **A COORDINATE-KIND result, not a search result.**
+
+The `FACTORY == msg.sender` aliasing above remains a genuine finding about the
+model and about the harvest, and the two-coordinate-equality gap is still real
+and still open — it simply does not arise on THIS unit once `FACTORY` stops being
+a coordinate.
+
 ## What would actually move this unit
 
-Not a wider ladder. Either
+Not a wider ladder, and — now that the immutables are out of the coordinate set —
+not an equality coordinate either. What `cancel` needs is a coordinate kind for
+its actual argument: a **struct**, bounded field by field. Definition 6 already
+makes a region a product of per-coordinate sets, so a struct decomposed into its
+scalar fields fits it without any method change; what is missing is the
+resolution (`immutables.taker` is refused today as "not a coordinate shape at
+all").
 
-* a coordinate kind that can express `c1 == c2` (proposition 11 / definition 6),
-  which is a method-layer change; or
-* recognising `immutable` initialisers so `FACTORY` is not offered as a free
-  coordinate at all — it is not an input a generated test can set independently,
-  it is fixed at deployment. That is the same class as the already-recorded
-  observation that a `constant` (`BANNED`) showed up in `entry_storage`.
+Still open, and NOT on this unit's critical path:
 
-The second is the cheaper one and is well-defined; neither is a ladder problem.
+* a coordinate kind for `c1 == c2` (proposition 11 / definition 6) — real, and
+  the `FACTORY`/`msg.sender` aliasing is a genuine instance of it, but it stops
+  arising here once `FACTORY` is not a coordinate;
+* why the harvest reports the CONSTRUCTOR's `msg.sender` under `env.msg.sender`.
+  Named, measured, unfixed.
+
+The census that produced this is worth repeating elsewhere: **the coordinate list
+had non-settable quantities in it, and on this contract that was 100% of it.**
+The same check should be run on every benchmark before any yield number is
+quoted, because a coordinate no test can set makes certification fail for a
+reason that has nothing to do with the method.

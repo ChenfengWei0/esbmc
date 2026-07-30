@@ -35,7 +35,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       assumed_ranges, outside_assumed,
                                       parse_intervals, parse_holes,
                                       assumed_holes,
-                                      round_accounting)
+                                      round_accounting,
+                                      state_mutability,
+                                      unsettable_coords)
 
 FAILURES = []
 
@@ -704,6 +706,52 @@ check("no-decision-time-is-not-zero",
       "NO query reported a decision time" in empty, True)
 check("no-decision-time-still-reports-the-ratio",
       "0 of 420" in empty, True)
+
+
+# --- a coordinate no generated test can set must not be generalised over ---
+#
+# MEASURED on EscrowSrc: `cancel`'s only two free coordinates are
+# `state.FACTORY` and `state.RESCUE_DELAY`, and BOTH are `immutable` -- the
+# contract declares twelve state variables and not one of them is mutable. The
+# loop was ranging over quantities fixed at deployment, which hands the verifier
+# an input space wider than reality, so its 0-of-4 certification result was never
+# a search-power problem and no ladder would have fixed it.
+#
+# The fact is READ, not inferred. "Constant across every counterexample" is true
+# of an immutable and equally true of ordinary storage that happens not to vary,
+# so a heuristic here would be the exact inference this project keeps getting
+# wrong. solc states `mutability` outright on every VariableDeclaration.
+MUT = {"FACTORY": "immutable", "RESCUE_DELAY": "immutable",
+       "balance": "mutable", "_LOW_160_BIT_MASK": "constant"}
+check("immutable-state-coordinate-is-unsettable",
+      unsettable_coords(["state.FACTORY"], MUT), {"state.FACTORY": "immutable"})
+check("constant-state-coordinate-is-unsettable",
+      unsettable_coords(["state._LOW_160_BIT_MASK"], MUT),
+      {"state._LOW_160_BIT_MASK": "constant"})
+# THE MUST-FLIP: a mutable state variable is settable and must survive. Without
+# this the rule could disqualify every state coordinate and still look right.
+check("mutable-state-coordinate-survives",
+      unsettable_coords(["state.balance"], MUT), {})
+# Parameters and environment quantities are settable by construction and are not
+# even considered -- a parameter that happens to share a name with an immutable
+# must not be disqualified by it.
+check("parameter-sharing-a-name-is-not-disqualified",
+      unsettable_coords(["FACTORY"], MUT), {})
+check("env-coordinate-is-not-disqualified",
+      unsettable_coords(["msg.sender"], MUT), {})
+# A state variable the AST says nothing about stays in: silence is not evidence
+# of immutability, and dropping on absence would narrow the generalisation for a
+# reason that has nothing to do with the contract.
+check("unknown-state-coordinate-stays",
+      unsettable_coords(["state.mystery"], MUT), {})
+check("empty-mutability-map-excludes-nothing",
+      unsettable_coords(["state.FACTORY", "state.balance"], {}), {})
+
+# The AST reader itself: a missing or unreadable file yields {}, which leaves
+# every coordinate in place -- the pre-existing behaviour, stated rather than
+# accidental.
+check("missing-ast-yields-no-mutability", state_mutability("/no/such/ast"), {})
+check("none-ast-yields-no-mutability", state_mutability(None), {})
 
 
 if FAILURES:
