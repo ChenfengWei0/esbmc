@@ -32,6 +32,16 @@ INPUTS = REPO / "notes/coverage/inputs"
 NATIVE_BASE = REPO / "notes/coverage-comparison"
 DATA = REPO / "notes/coverage/data"
 
+# The project-own contract set used to be derived by scanning a checked-out copy
+# of each 1inch repo under notes/coverage-comparison/<project>/<src root>, keyed
+# on FILE STEMS.  Those trees are gone.  With the scan returning an empty set the
+# collector excluded EVERY contract in the flat -- the primary included -- and
+# still exited 0, reporting 0% for a run that verified nothing.  A scope input
+# whose absence silently rewrites the scope is not an input this pipeline may
+# depend on, so it is PINNED in the repository instead.
+# See notes/coverage/inputs/own_contracts.json for the set and its provenance.
+OWN_CONTRACTS = INPUTS / "own_contracts.json"
+
 PROJECT_SRC = {
     "aqua":                 ("aqua",                 "src/src"),
     "cross_chain_swap":     ("cross-chain-swap",     "src/contracts"),
@@ -196,11 +206,14 @@ def collect_esbmc(bench_key):
     if union_json.exists(): union_json.unlink()
 
     # Need to exclude every contract in the flat that is NOT project-own.
-    own_contract_names = project_own_contract_names(project)
+    own_names = own_contract_names(bench_key)
     flat_contract_names = parse_flat_top_contract_names(flat)
     excludes = []
-    for name in flat_contract_names:
-        if name not in own_contract_names:
+    # sorted(): the exclude list used to be built by iterating a set, so two
+    # runs on identical inputs produced commands differing only in argument
+    # order -- noise in every diff of the stored JSON.
+    for name in sorted(flat_contract_names):
+        if name not in own_names:
             excludes += ["--coverage-exclude-contract", name]
 
     # Methodology routing: pure-library entry has no dispatcher harness,
@@ -246,7 +259,7 @@ def collect_esbmc(bench_key):
         # the flat that aren't excluded; the `--contract <Primary>` part
         # of the command still anchors the dispatcher to Primary, so
         # `--focus-function <fn>` resolves to the inherited copy.
-        own_now = project_own_contract_names(project)
+        own_now = own_names
         per_method = [(c, fn, k) for c, fn, k in callables
                       if k != "library" and c in own_now]
         for cname, fname, ckind in per_method:
@@ -271,9 +284,26 @@ def collect_esbmc(bench_key):
     sc_lines = parse_show_claims(sc_out)
 
     # ---------- native lcov reaches ----------
+    # The native column comes from forge/lcov and CANNOT be changed by anything
+    # on the ESBMC side, so when the lcov file is absent the honest thing is to
+    # carry the previously recorded numbers forward and SAY SO -- not to
+    # recompute them as 0, which reads as "native covered nothing".
     sub, _ = PROJECT_SRC[project.replace("-", "_")]
     lcov_path = NATIVE_BASE / sub / "_results" / "lcov.info"
     by_file = parse_lcov(lcov_path) if lcov_path.exists() else {}
+    prev_blob = load_existing(DATA / f"esbmc_{bench_key}.json")
+    native_carried = not lcov_path.exists()
+    prev_native = {}
+    if native_carried:
+        for section in ("no_function", "per_function"):
+            for prec in prev_blob.get(section, {}).get("perFile", []):
+                n = prec.get("native", {})
+                if "reached" in n:
+                    prev_native.setdefault(prec["file"], n)
+        if not prev_native:
+            sys.exit(f"{lcov_path} is missing and {DATA}/esbmc_{bench_key}.json "
+                     f"carries no previous native numbers to fall back on -- "
+                     f"refusing to report native reach as 0")
 
     # ---------- per-file aggregation ----------
     per_file = []
@@ -302,6 +332,10 @@ def collect_esbmc(bench_key):
             n_instr = lcov_instrumented_lines(rec)
             native_reach = min(len(n_reach), denom)
             native_instr = len(n_instr)
+        elif native_carried and marker in prev_native:
+            native_reach = prev_native[marker].get("reached", 0)
+            native_instr = prev_native[marker].get("instrumented", 0)
+            sf_key = prev_native[marker].get("lcovSourceFile")
         else:
             native_reach = 0
             native_instr = 0
@@ -326,7 +360,8 @@ def collect_esbmc(bench_key):
         total_native += native_reach
 
     # ---------- Pair 2: per-function multi-run ----------
-    pair2 = collect_pair2(bench_key, flat, solast, project, log_dir, canon_flat_lines, own_markers, blocks, by_file)
+    pair2 = collect_pair2(bench_key, flat, solast, project, log_dir, canon_flat_lines,
+                          own_markers, blocks, by_file, prev_native, native_carried)
 
     # For library primaries, copy Pair 2's reach as Pair 1 (libraries have
     # no dispatcher harness; their natural Pair 1 == Pair 2).  See
@@ -343,6 +378,13 @@ def collect_esbmc(bench_key):
         "primary": {"name": primary, "kind": "contract"},
         "flatInput": str(flat),
         "methodology": "see notes/coverage/METHODOLOGY.md (LOCKED 2026-05-20)",
+        "ownContractsPinnedFrom": str(OWN_CONTRACTS),
+        "nativeSource": (
+            f"lcov: {lcov_path}" if not native_carried else
+            f"CARRIED FORWARD from the previous {DATA}/esbmc_{bench_key}.json -- "
+            f"{lcov_path} is absent.  The native column comes from forge/lcov and "
+            f"cannot be changed by an ESBMC-side change, so it is reproduced rather "
+            f"than recomputed as 0."),
         "per_function": pair2,
         "no_function": {
             "commandUsed": " ".join(cmd),
@@ -368,7 +410,8 @@ def collect_esbmc(bench_key):
     }
     return blob
 
-def collect_pair2(bench_key, flat, solast, project, log_dir, canon_flat_lines, own_markers, blocks, by_file):
+def collect_pair2(bench_key, flat, solast, project, log_dir, canon_flat_lines, own_markers,
+                  blocks, by_file, prev_native=None, native_carried=False):
     """Pair 2: multi-`--function` ESBMC collection.  Reach is unioned via
     `--coverage-covered-set <shared_union>` so all per-fn runs accumulate
     into one set.  Compared against the SAME AST canonical denominator
@@ -383,7 +426,7 @@ def collect_pair2(bench_key, flat, solast, project, log_dir, canon_flat_lines, o
     # scope (project-own).  Wider scope = more probes ESBMC must reason
     # about per fn, with no payoff (excluded probes never enter the
     # canonical-decision intersection anyway).
-    own = project_own_contract_names(project)
+    own = own_contract_names(bench_key)
     flat_names = parse_flat_top_contract_names(flat)
     p1_excludes = []
     for n in sorted(flat_names):
@@ -435,6 +478,8 @@ def collect_pair2(bench_key, flat, solast, project, log_dir, canon_flat_lines, o
         sf_key, rec = lcov_match_file(by_file, marker)
         if rec is not None:
             n_reach = min(len(lcov_reached_lines(rec)), denom)
+        elif native_carried and prev_native and marker in prev_native:
+            n_reach = prev_native[marker].get("reached", 0)
         else:
             n_reach = 0
         per_file.append({
@@ -473,17 +518,21 @@ def primary_contract_kind(flat_path, primary_name):
             return n.get("contractKind", "contract")
     return "contract"
 
-def project_own_contract_names(project):
-    key = project.replace("-", "_")
-    sub, src_root = PROJECT_SRC[key]
-    root = NATIVE_BASE / sub / src_root
-    if not root.exists(): return set()
-    names = set()
-    for p in root.rglob("*.sol"):
-        sp = str(p).lower()
-        if any(b in sp for b in PROD_BLOCKS): continue
-        names.add(p.stem)
-    return names
+def own_contract_names(bench_key):
+    """The project-own contract set for a benchmark, read from the pinned file.
+
+    Hard-fails rather than returning an empty set: an empty set is not "no
+    scope restriction", it excludes every contract in the flat including the
+    primary, which produces a 0% report from a run that verified nothing.
+    """
+    if not OWN_CONTRACTS.exists():
+        sys.exit(f"missing {OWN_CONTRACTS}: the project-own contract set is "
+                 f"pinned there and has no fallback")
+    d = json.loads(OWN_CONTRACTS.read_text())
+    entry = d.get("benchmarks", {}).get(bench_key)
+    if not entry or not entry.get("ownContracts"):
+        sys.exit(f"{OWN_CONTRACTS} has no non-empty ownContracts for {bench_key}")
+    return set(entry["ownContracts"])
 
 def parse_flat_top_contract_names(flat_path):
     """Names of every contract/library/interface declared at top level in the flat."""
