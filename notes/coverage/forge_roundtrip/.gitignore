@@ -1,0 +1,4 @@
+notes/coverage/forge_roundtrip/*/out/
+notes/coverage/forge_roundtrip/*/cache/
+notes/coverage/forge_roundtrip/*/_gen/
+notes/coverage/forge_roundtrip/*/lib/
