@@ -159,6 +159,63 @@ def is_env(name):
     return name.startswith(ENV_PREFIXES)
 
 
+def struct_fields(text):
+    """Top-level scalar fields of a rendered struct, as {field: int}.
+
+    The report renders an aggregate as one string:
+
+        { .orderHash={ .data=nil }, .taker=0, .amount=0 }
+
+    Until the tool could resolve `immutables.taker` there was nothing to do with
+    that but refuse the whole parameter -- and refusing it meant a unit whose
+    ONLY argument is a struct had nothing generalisable at all. Measured across
+    all five EscrowSrc units: every one reported zero coordinates, 23 witnessed
+    paths between them, none of it a search failure.
+
+    CONSERVATIVE ON PURPOSE, and it is a parse of a real format rather than a
+    guess about one. Only DEPTH-1 fields whose value is a plain integer are
+    returned:
+
+      * a nested aggregate (`.orderHash={...}`) is skipped -- its own fields are
+        reachable as `immutables.orderHash.data` once something asks for them,
+        but flattening it here would invent coordinate names the caller did not
+        request;
+      * `nil` and any other non-integer is skipped, for the same reason
+        coord_values refuses a symbolic slot: a coordinate must have a concrete
+        value to be a known member of the domain.
+
+    Skipping is silent HERE and reported by the caller, which already has the
+    refusal channel for exactly this.
+    """
+    out = {}
+    if not text.startswith("{"):
+        return out
+    depth, i, n = 0, 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif ch == "." and depth == 1:
+            j = text.find("=", i)
+            if j < 0:
+                break
+            name = text[i + 1:j].strip()
+            k = j + 1
+            while k < n and text[k] not in ",}":
+                k += 1
+            val = text[j + 1:k].strip()
+            if name and val and not val.startswith("{"):
+                try:
+                    out[name] = parse_int(val)
+                except ValueError:
+                    pass
+            i = j
+        i += 1
+    return out
+
+
 def coord_values(c):
     """This claim's counterexample as {coordinate: int}, plus what was refused.
 
@@ -203,7 +260,21 @@ def coord_values(c):
         try:
             ce[n] = parse_int(v)
         except ValueError:
-            refused.append(n)
+            # A STRUCT is not unusable, it is unusable AS ONE COORDINATE. Its
+            # scalar fields each are one, and the tool resolves `param.field`
+            # now, so decompose rather than refuse the whole argument -- that
+            # refusal is what left every EscrowSrc unit with nothing to
+            # generalise. The parameter itself is still refused (an aggregate
+            # has no interval); only its fields are added.
+            fields = struct_fields(v)
+            for fn, fv in fields.items():
+                ce[f"{n}.{fn}"] = fv
+            if fields:
+                refused.append(
+                    f"{n} (aggregate; {len(fields)} scalar field(s) used "
+                    f"instead: " + ", ".join(sorted(fields)) + ")")
+            else:
+                refused.append(n)
     for n, v in (c.get("entry_storage") or {}).items():
         try:
             ce["state." + n] = parse_int(v)

@@ -464,6 +464,53 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
   abort();
 }
 
+// Walk a dotted field path (`taker`, `timelocks.deployedAt`) down from `e`.
+//
+// This is what makes a STRUCT ARGUMENT generalisable at all. An aggregate has no
+// interval, so coord_expressible refuses it -- correctly -- and a unit whose
+// only real argument is a struct therefore had NOTHING to generalise over.
+// Measured across all five EscrowSrc units: every one reported zero
+// coordinates, with its actual argument sitting right there as a struct.
+//
+// It is NOT a new coordinate KIND and does not touch definition 6. A region is a
+// product of per-coordinate sets, and a struct's scalar fields are exactly such
+// coordinates; what was missing was the RESOLUTION, not the representation.
+//
+// A segment that names no component fails the whole resolution. Returning the
+// parent aggregate instead would hand the caller a coordinate it did not ask
+// for, and on the certify side that is a bound on the wrong quantity -- the one
+// outcome that query exists to prevent.
+static bool
+walk_fields(const namespacet &ns, expr2tc &e, const std::string &path)
+{
+  size_t p = 0;
+  while (p <= path.size())
+  {
+    const size_t q = path.find('.', p);
+    const std::string field =
+      path.substr(p, q == std::string::npos ? q : q - p);
+    if (field.empty())
+      return false;
+    const typet st = ns.follow(migrate_type_back(e->type));
+    if (st.id() != "struct")
+      return false;
+    bool hit = false;
+    for (const auto &comp : to_struct_type(st).components())
+      if (comp.get_name() == field || comp.get("#base_name") == field)
+      {
+        e = member2tc(migrate_type(comp.type()), e, comp.get_name());
+        hit = true;
+        break;
+      }
+    if (!hit)
+      return false;
+    if (q == std::string::npos)
+      return true;
+    p = q + 1;
+  }
+  return false;
+}
+
 // |R_c| for a punched interval (Definition 5): how many values of [lo, hi]
 // survive once this coordinate's holes are removed.
 //
@@ -3241,27 +3288,39 @@ void goto_coveraget::solidity_path_coverage()
       const typet ostruct = ns.follow(obj->type);
       if (ostruct.id() != "struct")
         return false;
-      for (const auto &comp : to_struct_type(ostruct).components())
-        if (comp.get_name() == field || comp.get("#base_name") == field)
-        {
-          out = member2tc(
-            migrate_type(comp.type()),
-            symbol2tc(migrate_type(ostruct), obj->id),
-            comp.get_name());
-          return true;
-        }
-      return false;
+      // Same field walk as for struct parameters below, so a struct-typed state
+      // variable is reachable field by field too (`state.cfg.limit`). The first
+      // segment is the state variable itself.
+      out = symbol2tc(migrate_type(ostruct), obj->id);
+      return walk_fields(ns, out, field);
     }
     if (fsym == nullptr)
       return false;
+    // ---- STRUCT PARAMETERS, BY FIELD ----
+    //
+    // `immutables.taker` rather than `immutables`. An aggregate has no interval
+    // (coord_expressible refuses it, correctly), so a unit whose only argument
+    // is a struct had NOTHING generalisable -- measured across all five
+    // EscrowSrc units, every one of which reported zero coordinates while its
+    // real argument sat right there as a struct.
+    //
+    // This is NOT a new coordinate KIND and does not touch definition 6: a
+    // region is a product of per-coordinate sets, and the fields of a struct are
+    // exactly such coordinates. What was missing was the resolution, not the
+    // representation. Nested access works by the same walk, so
+    // `immutables.timelocks.deployedAt` costs nothing extra.
+    const size_t dot = name.find('.');
+    const std::string base = name.substr(0, dot);
     for (const auto &arg : to_code_type(fsym->type).arguments())
-      if (arg.get_base_name() == name)
+      if (arg.get_base_name() == base)
       {
         const symbolt *s = ns.lookup(arg.get_identifier());
         if (s == nullptr)
           return false;
         out = symbol2tc(migrate_type(s->type), s->id);
-        return true;
+        if (dot == std::string::npos)
+          return true;
+        return walk_fields(ns, out, name.substr(dot + 1));
       }
     return false;
   };

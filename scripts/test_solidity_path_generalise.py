@@ -37,7 +37,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       assumed_holes,
                                       round_accounting,
                                       state_mutability,
-                                      unsettable_coords)
+                                      unsettable_coords,
+                                      struct_fields)
 
 FAILURES = []
 
@@ -142,10 +143,40 @@ ce, refused = coord_values({
 })
 check("scalar-param-kept", ce.get("a"), 4)
 check("scalar-slot-kept", ce.get("state.s"), 0)
-check("struct-param-refused", "immutables" in ce, False)
+check("struct-param-itself-refused", "immutables" in ce, False)
 check("symbolic-slot-refused", "state.PROXY_BYTECODE_HASH" in ce, False)
-check("refusals-are-reported", sorted(refused),
-      ["immutables", "state.PROXY_BYTECODE_HASH"])
+# ...but its SCALAR FIELDS are coordinates now that the tool resolves
+# `param.field`. Refusing the whole aggregate is what left every EscrowSrc unit
+# with nothing to generalise: 23 witnessed paths across five units, zero
+# coordinates, and not one of them a search failure.
+check("struct-scalar-field-becomes-a-coordinate", ce.get("immutables.taker"), 0)
+check("struct-second-field-too", ce.get("immutables.amount"), 0)
+# The nested aggregate is NOT flattened here -- `immutables.orderHash.data` is
+# reachable if something asks for it, but inventing the name unasked would put a
+# coordinate in the list that nobody requested.
+check("nested-aggregate-not-flattened",
+      any(k.startswith("immutables.orderHash") for k in ce), False)
+check("refusal-names-the-fields-used-instead",
+      any(r.startswith("immutables (aggregate; 2 scalar field(s)")
+          for r in refused), True)
+check("symbolic-slot-still-plainly-refused",
+      "state.PROXY_BYTECODE_HASH" in refused, True)
+
+# The parser on its own, against the VERBATIM report rendering.
+check("struct-fields-verbatim",
+      struct_fields("{ .orderHash={ .data=nil }, .taker=0, .amount=0 }"),
+      {"taker": 0, "amount": 0})
+check("struct-fields-hex-value",
+      struct_fields("{ .a=0xFF, .b=3 }"), {"a": 255, "b": 3})
+# `nil` is not a value a test can produce, so it is skipped for the same reason a
+# symbolic storage slot is refused.
+check("struct-fields-skip-nil", struct_fields("{ .a=nil, .b=1 }"), {"b": 1})
+# Depth matters: a field of a NESTED struct must not be lifted to the top level,
+# or `orderHash.data` would silently become the coordinate `data`.
+check("struct-fields-do-not-lift-nested",
+      struct_fields("{ .outer={ .inner=7 }, .x=1 }"), {"x": 1})
+check("struct-fields-non-struct-text", struct_fields("0"), {})
+check("struct-fields-empty", struct_fields("{ }"), {})
 
 # Hex is a value form the report really uses (block.number, large parameters).
 ce2, refused2 = coord_values({"inputs": {"a": "0xFF"}, "entry_storage": {}})
