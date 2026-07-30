@@ -233,10 +233,38 @@ private:
     std::set<std::string> &out_imports);
 
   /// Reconstruct the ordered call sequence of one counterexample from its SSA.
+  ///
+  /// `out_claims` returns the VERIFICATION OBLIGATION(S) this case was
+  /// reconstructed from — the guard-true coverage claims' identities, e.g.
+  /// `pull:path:63`. Empty when none could be read.
   test_case reconstruct(
     const symex_target_equationt &target,
     smt_convt &smt_conv,
-    const namespacet &ns) const;
+    const namespacet &ns,
+    std::string &out_claims) const;
+
+  /// Originating claim identity per reconstructed case, keyed by the case's
+  /// dedup fingerprint.
+  ///
+  /// WHY THIS EXISTS. Until it did, a generated test could not say which
+  /// verification obligation produced it: every case was a bare `test_cov_N`
+  /// with a call and a comment. Measured consequence on aqua: the
+  /// whole-contract run witnesses 15 counterexamples across 6 units and emits 4
+  /// cases naming 3, with `pull` — witnessed under exactly the same path ids as
+  /// the focused run — absent entirely. Whether its counterexamples were
+  /// DROPPED or RENAMED as another method could not be decided from the
+  /// artifact, because the artifact carries no link back to the report.
+  ///
+  /// The link is worth having beyond that bug. Every acceptance criterion in
+  /// this project compares "what was measured" against "what was shipped", and
+  /// a test that cannot name its obligation cannot be audited against the
+  /// report it came from. "Verifier-derived" is a claim about provenance; this
+  /// is what makes it checkable rather than asserted.
+  ///
+  /// Keyed by fingerprint because dedup already keys on it, so several
+  /// counterexamples collapsing onto one emitted case are visible as several
+  /// claims on that case rather than silently losing all but the first.
+  std::map<std::string, std::string> claims_by_fingerprint;
 
   /// Deduplication fingerprint for a reconstructed test case.
   static std::string fingerprint(const test_case &tc);

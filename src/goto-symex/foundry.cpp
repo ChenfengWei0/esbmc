@@ -1113,8 +1113,28 @@ step_location_method(const symex_target_equationt::SSA_stept &step)
 foundry_generator::test_case foundry_generator::reconstruct(
   const symex_target_equationt &target,
   smt_convt &smt_conv,
-  const namespacet &ns) const
+  const namespacet &ns,
+  std::string &out_claims) const
 {
+  // PROVENANCE: which verification obligation this case comes from.
+  //
+  // The claim identity is the assert's `comment` (`<unit>:path:<id>`) — the same
+  // field the exit census is keyed on below, so no new plumbing and no new
+  // query. What needs care is WHICH assert.
+  //
+  // "Guard-true" is NOT enough, and the first version of this got it wrong. An
+  // equation contains every path claim of the whole contract, and on any given
+  // model a great many of them are guard-true: the ones that HOLD there are
+  // guard-true too. Recording all of them produced a case labelled with six
+  // claims across three different units, which says nothing about where the case
+  // came from.
+  //
+  // The obligation this counterexample REFUTES is the guard-true assert whose
+  // condition is FALSE under the model — that is what "reached" means for a
+  // coverage goal. Holding claims are collected separately and deliberately not
+  // emitted; they are context, not provenance.
+  std::set<std::string> claim_ids;   // refuted here: the actual provenance
+  std::set<std::string> claim_holds; // guard-true but satisfied: not provenance
   // Length of a nondet `string` argument recovered from the model (see
   // recover_nondet_string_length); used by build_call to render a string
   // literal that reproduces a `bytes(s).length` branch. A single value per
@@ -1584,18 +1604,82 @@ foundry_generator::test_case foundry_generator::reconstruct(
         segs.back().normal_confirmed = true;
     }
 
+    // Provenance (see out_claims above). Recorded for EVERY guard-true
+    // path-claim assert, not only ones inside a segment, because the fallback
+    // reconstruction paths below build a case from an assert with no segment at
+    // all — and those are exactly the cases whose origin is hardest to check by
+    // eye.
+    // A coverage goal is `assert(tr != pi)`: REACHING the goal refutes it, so
+    // the model makes its condition false. This one predicate answers both
+    // "which obligation is this case's provenance" and "which method does the
+    // case call" — see the override below.
+    bool assert_refuted = false;
+    if (step.is_assert())
+    {
+      const expr2tc v = smt_conv.get(step.cond);
+      assert_refuted =
+        v && is_constant_bool2t(v) && !to_constant_bool2t(v).value;
+      if (step.comment.find(":path:") != std::string::npos)
+        (assert_refuted ? claim_ids : claim_holds).insert(step.comment);
+    }
+
     // The covered coverage claim (a guard-true assert) is AUTHORITATIVE for the
     // active transaction's method: its source location names the function whose
     // branch is covered. In a multi-function whole-unit dispatcher the segment's
     // method is otherwise guessed from the first recovered param / executed body
     // and can latch onto the WRONG function (e.g. a dock claim mis-attributed to
     // ship), so override the guess with the covered method here.
-    if (step.is_assert() && !segs.empty())
+    //
+    // THE REFUTED CLAIM NAMES THE METHOD, and it does so in its own identity
+    // rather than through its source location. This was a measured
+    // mis-attribution, and the first fix aimed at the wrong mechanism.
+    //
+    // Measured on 1inch aqua, whole-contract mode: 15 refuted obligations
+    // produced 4 cases, and 9 of them — all five of `pull`, both of `dock`,
+    // both of `push` — came out as `ship(...)` calls. A test standing for one
+    // method's obligation while naming another makes every coverage statement
+    // derived from the suite wrong, which is worse than emitting nothing.
+    //
+    // What the attribution trace showed, after a fix based on an inferred cause
+    // changed nothing: each counterexample refutes exactly ONE claim, `pull` IS
+    // dispatcher-callable, and yet the segment's method was already `ship`. The
+    // reason is that these complete-path claims carry NO source location — the
+    // solver line reads `'pull:path:63 at'` with nothing after `at` — so
+    // step_location_method returns empty, this override never fired, and the
+    // method stayed whatever the "first callable body that executed in this
+    // segment" fallback had set, which in a dispatcher is whichever body comes
+    // first.
+    //
+    // The claim's own identity does not depend on a location:
+    // `sol:@C@<C>@F@<m>#<id>:path:<n>` names the unit outright. Use it, and fall
+    // back to the location only when the identity does not parse.
+    if (step.is_assert() && assert_refuted && !segs.empty())
     {
-      const std::string cm = resolve_dispatcher_method(
-        segs.back().contract, step_location_method(step));
-      if (!cm.empty())
-        segs.back().method = cm;
+      std::string named; // method named by the claim identity itself
+      const std::string &cmt = step.comment;
+      const size_t pp = cmt.find(":path:");
+      if (pp != std::string::npos && has_prefix(cmt, "sol:@C@"))
+      {
+        const std::string fid = cmt.substr(0, pp); // sol:@C@<C>@F@<m>#<id>
+        const size_t f = fid.find("@F@");
+        if (f != std::string::npos)
+        {
+          const std::string c = fid.substr(7, f - 7);
+          std::string m = fid.substr(f + 3);
+          const size_t h = m.find('#');
+          if (h != std::string::npos)
+            m = m.substr(0, h);
+          // Only accept a claim about the segment's own contract; a claim from
+          // another contract says nothing about which method THIS segment ran.
+          if (c == segs.back().contract && !m.empty())
+            named = resolve_dispatcher_method(c, m);
+        }
+      }
+      if (named.empty())
+        named =
+          resolve_dispatcher_method(segs.back().contract, step_location_method(step));
+      if (!named.empty())
+        segs.back().method = named;
     }
 
     const bool assign_sym =
@@ -2150,6 +2234,28 @@ foundry_generator::test_case foundry_generator::reconstruct(
   std::stable_partition(calls.begin(), calls.end(), [](const sol_call &c) {
     return c.method == c.contract;
   });
+
+  out_claims.clear();
+  for (const auto &id : claim_ids)
+    out_claims += (out_claims.empty() ? "" : ", ") + id;
+
+  // Attribution trace. Exists because a measured mis-attribution (aqua: `pull`
+  // obligations emitted as `ship` calls) survived a fix aimed at the mechanism
+  // that looked responsible, which means the mechanism had been INFERRED rather
+  // than seen. Printing the decision is how the next one gets seen instead.
+  {
+    std::string dbg = "foundry attribution: refuted={" + out_claims + "} segs=[";
+    for (const auto &s : segs)
+      dbg += s.contract + "." + (s.method.empty() ? "<none>" : s.method) + " ";
+    dbg += "] callable={";
+    for (const auto &kv : dispatcher_callable(ns, ctor_ts_contract))
+      dbg += kv.first + " ";
+    dbg += "} emitted=[";
+    for (const auto &c : calls)
+      dbg += c.contract + "." + c.method + " ";
+    dbg += "]";
+    log_debug("solidity", "{}", dbg);
+  }
   return calls;
 }
 
@@ -2165,6 +2271,7 @@ void foundry_generator::clear()
   non_instantiable.clear();
   libraries.clear();
   mock_specs.clear();
+  claims_by_fingerprint.clear();
 }
 
 void foundry_generator::collect(
@@ -2172,13 +2279,23 @@ void foundry_generator::collect(
   smt_convt &smt_conv,
   const namespacet &ns)
 {
-  test_case tc = reconstruct(target, smt_conv, ns);
+  std::string claims;
+  test_case tc = reconstruct(target, smt_conv, ns, claims);
   if (tc.empty())
     return;
 
   std::lock_guard<std::mutex> lock(data_mutex);
   if (source_file.empty())
     source_file = config.options.get_option("input-file");
+  // Provenance, keyed by the same fingerprint dedup uses. Several
+  // counterexamples that collapse onto one emitted case ACCUMULATE their claim
+  // ids here rather than the first winning: that collapse is information (it is
+  // how many obligations one shipped test actually stands for), and dropping it
+  // would make a case look like it came from one claim when it came from four.
+  const std::string fp = fingerprint(tc);
+  std::string &slot = claims_by_fingerprint[fp];
+  if (!claims.empty() && slot.find(claims) == std::string::npos)
+    slot += (slot.empty() ? "" : ", ") + claims;
   test_cases.push_back(std::move(tc));
 }
 
@@ -2581,6 +2698,19 @@ size_t foundry_generator::write_foundry_file(
 
     for (const auto *tcp : grp)
     {
+      // PROVENANCE LINE. Names the verification obligation(s) this case was
+      // reconstructed from, so the emitted suite can be checked against the
+      // report instead of taken on trust. When several claims share one case,
+      // all of them are listed -- the collapse is what the case actually stands
+      // for. "not recorded" is printed rather than nothing, because a case with
+      // no obligation and a case whose obligation was not read are different
+      // facts and must not look the same.
+      {
+        auto pit = claims_by_fingerprint.find(fingerprint(*tcp));
+        const bool known =
+          pit != claims_by_fingerprint.end() && !pit->second.empty();
+        f << "  // claim: " << (known ? pit->second : "not recorded") << "\n";
+      }
       f << "  function test_cov_" << fn++ << "() public {\n";
       for (const auto &call : *tcp)
       {
@@ -2728,6 +2858,32 @@ void foundry_generator::generate() const
     size_t revert_tolerant = write_foundry_file(path, p, cs);
     log_status(
       "Generated Foundry coverage test with {} case(s): {}", cs.size(), path);
+    // PROVENANCE COVERAGE. How many emitted cases can name the verification
+    // obligation they were reconstructed from, and how many obligations they
+    // stand for in total.
+    //
+    // Reported rather than left to the file because a property only visible
+    // inside the artifact cannot be pinned by a regression, and this one has to
+    // be: a suite that stops carrying its provenance stops being auditable
+    // against the report, silently. The two numbers move independently on
+    // purpose -- cases falling while obligations hold means dedup is collapsing
+    // more counterexamples onto one test, which is information about the
+    // product, not noise.
+    size_t cases_with_claim = 0, obligations = 0;
+    for (const auto &tc : cs)
+    {
+      auto it = claims_by_fingerprint.find(fingerprint(tc));
+      if (it == claims_by_fingerprint.end() || it->second.empty())
+        continue;
+      ++cases_with_claim;
+      obligations += 1 + std::count(it->second.begin(), it->second.end(), ',');
+    }
+    log_status(
+      "Foundry: {} of {} case(s) name the obligation they were reconstructed "
+      "from, standing for {} refuted path claim(s)",
+      cases_with_claim,
+      cs.size(),
+      obligations);
     // Interface-arg mock synthesis: report the distinct interfaces for which an
     // `ESBMCMock_*` was emitted (their calls return fixed defaults — [approx]).
     std::set<std::string> mifaces;
@@ -2921,13 +3077,16 @@ void foundry_generator::generate_single(
   if (source_file.empty())
     source_file = config.options.get_option("input-file");
 
-  test_case tc = reconstruct(target, smt_conv, ns);
+  std::string claims;
+  test_case tc = reconstruct(target, smt_conv, ns, claims);
   if (tc.empty())
   {
     log_warning(
       "No reconstructable transaction found. No Foundry test generated.");
     return;
   }
+  if (!claims.empty())
+    claims_by_fingerprint[fingerprint(tc)] = claims;
 
   std::string p = primary_contract(tc);
   if (p.empty())
