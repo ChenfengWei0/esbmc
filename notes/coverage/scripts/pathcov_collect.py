@@ -163,6 +163,21 @@ def one_run(tag, cmd, timeout, workdir):
         rec["nonUnitFunctionsPresent"] = True
     if "No verification targets" in out:
         rec["noVerificationTargets"] = True
+    # A FOURTH ZERO, and it is not any of the three above.
+    # The library route passes `--function <name>` with no contract
+    # qualification, so a name declared by more than one contract of the flat
+    # ends the run before anything is instrumented:
+    #     ERROR: main symbol `claim' is ambiguous
+    #     ERROR: CONVERSION ERROR
+    # MEASURED on farming: 10 of 28 runs, all of them names that recur across
+    # FarmAccounting / FarmingLib / FarmingPool (claim, startFarming,
+    # stopFarming, farmed, updateBalances), plus TimelocksLib.get on both
+    # Escrows. Without this field the record shows only `exitCode: 6` and no
+    # instrumentation line, which reads as "the run reached nothing" -- a tool
+    # failure disguised as a measurement of zero. collect.py records the same
+    # condition on the baseline side as `status: "ambiguous"`.
+    if "is ambiguous" in out:
+        rec["ambiguousEntryName"] = True
     if report.exists():
         try:
             d = json.loads(report.read_text())

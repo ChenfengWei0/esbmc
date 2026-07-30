@@ -184,11 +184,43 @@ def pathcov_reached_flat_lines(report_paths):
         baseline's numerator (`union_lines & c_lines`), so both sides are
         narrowed by the same operation.
 
-    STILL NOT HANDLED, and it biases in OUR FAVOUR on the denominator: internal
-    calls withdrawn by degradation or the call-depth bound remove those
-    decisions from every path of the unit while branch coverage still counts
-    them. `degraded_call_sites` names them in the log; the count is reported
-    beside the gate rather than folded into it.
+    STILL NOT HANDLED. Four mechanisms move our numerator and none of them is
+    visible in this script's output. Three DEFLATE it, one INFLATES it:
+
+      * internal calls withdrawn by degradation or by the call-depth bound
+        remove those decisions from every path of the unit while branch
+        coverage still counts them (`degraded_call_sites`, goto_coverage.cpp);
+      * a short-circuit site above `SC_DECISION_MAX = 12` operands is dropped
+        entirely (`sc_sites_over_cap`);
+      * a residual unexpanded unit callee marks every path of its unit a named
+        obstacle;
+      * and in the other direction, `bmc.cpp` emits the obstacle detail ONLY
+        under `tri == "U"`, so an F claim inside an obstructed unit carries a
+        full `decisions` array and no marker at all -- this projection counts it
+        like any other, although the tool's own rule is that such a path "must
+        not be turned into a test".
+
+    THE PREVIOUS VERSION OF THIS PARAGRAPH CLAIMED THE FIRST ONE WAS "reported
+    beside the gate rather than folded into it". That was false. Traced end to
+    end: `degraded_call_sites` is surfaced only by `log_warning`, never reaches
+    the `summary` block of cov-report.json, is not captured by
+    `pathcov_collect.one_run`, and is read nowhere here. The same holds for
+    `sc_sites_over_cap` and for `named_obstacle_paths`. A disclosure that is
+    promised in a docstring and not implemented is worse than an
+    acknowledged gap, because it reads as handled.
+
+    Making it real needs a producer-side change (either add the four counters
+    to the report's `summary`, or have `pathcov_collect.one_run` capture the
+    three existing warning lines into `runs.jsonl`), after which they belong in
+    the "What the product side actually saw" table below.
+
+    MEASURED, so that the size of the remaining doubt is known rather than
+    argued: on the three benchmarks collected so far, a per-file SET comparison
+    of `lines(union_pair2.json) & canon` against `lines(F decisions) & canon`
+    gives `only-product = 0` on EVERY file -- our reached set is a strict subset
+    of the baseline's. The inflating mechanism above therefore contributed
+    nothing on this corpus, and the count comparison this gate performs is not
+    hiding an over-count behind the cap. The deflating three remain unquantified.
     """
     lines = set()
     stats = {"reports": 0, "f_claims": 0, "f_without_sequence": 0,
