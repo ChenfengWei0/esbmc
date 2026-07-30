@@ -2435,6 +2435,10 @@ void goto_coveraget::solidity_path_coverage()
     // switches to linear inside it. Which ladder to use is a policy decision and
     // therefore the driver's; the tool just measures the values it is given.
     std::vector<std::string> values;
+    // Also lay the uniform ladder over [lo, hi]. Set when the spec supplies
+    // both forms: the explicit values keep an exactly-known point, the ladder
+    // still measures the range, and the probe set is their union.
+    bool subdivide = false;
   };
   bool outer_on = false;
   std::string outer_unit;
@@ -2480,14 +2484,30 @@ void goto_coveraget::solidity_path_coverage()
       {
         outer_coordt oc;
         oc.name = c.at("name").get<std::string>();
+        // `values` and `lo`/`hi` are no longer exclusive, and the union is the
+        // point. A ladder subdividing a span measures a bound only to its own
+        // resolution, so a sibling whose real projection is a SINGLE POINT comes
+        // back as an interval -- and the punched cut, which needs that point
+        // exactly, then never fires. Measured end to end: level 0 resolved the
+        // sibling to `to == 255`, the refine round reported `[230, 256]` for the
+        // same path, and the region fell back to a side cut. Carrying the exact
+        // candidates alongside the ladder costs two probes and keeps the point.
         if (c.contains("values"))
           for (const auto &v : c.at("values"))
             oc.values.push_back(v.get<std::string>());
-        else
+        if (c.contains("lo") && c.contains("hi"))
         {
           oc.lo = c.at("lo").get<std::string>();
           oc.hi = c.at("hi").get<std::string>();
+          oc.subdivide = true;
         }
+        else if (oc.values.empty())
+          // Neither form given: say so here rather than emitting a coordinate
+          // with no probe at all, which reads downstream as "measured, and
+          // nothing bounded it".
+          throw std::runtime_error(
+            "coordinate '" + oc.name +
+            "' has neither \"values\" nor \"lo\"/\"hi\"");
         outer_coords.push_back(oc);
       }
       for (const auto &p : j.at("paths"))
@@ -5003,17 +5023,28 @@ void goto_coveraget::solidity_path_coverage()
           // [lo, hi]. Both end up as the same kind of probe; only the choice of
           // where to put them differs, and that choice is policy.
           std::vector<BigInt> probe_vals;
-          if (!c.values.empty())
-            for (const auto &v : c.values)
-              probe_vals.push_back(string2integer(v));
-          else
+          for (const auto &v : c.values)
+            probe_vals.push_back(string2integer(v));
+          if (c.subdivide)
           {
             const BigInt lo = string2integer(c.lo), hi = string2integer(c.hi);
             if (hi < lo)
             {
+              // exit, NOT abort. This is a malformed SPEC -- the caller handed
+              // in an inverted span -- and it is reachable from an ordinary
+              // driver bug: a bracket computed across a coordinate's wrapped
+              // probes produces exactly this. A SIGABRT turns a recordable
+              // refusal into a core dump, which unattended is the difference
+              // between a datum and a lost run; measured, that is how it
+              // surfaced.
               log_error(
-                "--path-cov-outer-box: coordinate '{}' has hi < lo", c.name);
-              abort();
+                "--path-cov-outer-box: REFUSING coordinate '{}': hi < lo "
+                "(lo={}, hi={}), so the span contains no probe value. This is a "
+                "malformed span in the SPEC, not a property of the path",
+                c.name,
+                c.lo,
+                c.hi);
+              exit(1);
             }
             const BigInt span = hi - lo;
             for (size_t k = 0; k <= outer_probes + 1; ++k)
@@ -5022,6 +5053,12 @@ void goto_coveraget::solidity_path_coverage()
                 (span * BigInt((int64_t)k)) /
                   BigInt((int64_t)(outer_probes + 1)));
           }
+          // The two sources can overlap; a duplicated probe is a duplicated
+          // claim name, which collides in `all_claims` and silently drops one.
+          std::sort(probe_vals.begin(), probe_vals.end());
+          probe_vals.erase(
+            std::unique(probe_vals.begin(), probe_vals.end()),
+            probe_vals.end());
           for (const BigInt &v : probe_vals)
           {
             for (int dir = 0; dir < 2; ++dir)

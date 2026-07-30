@@ -363,11 +363,36 @@ REGION_RE = re.compile(
 SHRINK_RE = re.compile(r"retry with (\S+) in \[(\d+), (\d+)\]")
 
 
+# `name in [lo, hi]`, optionally followed by Definition 5's punched set
+# `\ {v, w}`. One regex for both so the hole can never be read as belonging to
+# the NEXT coordinate: they are captured in the same match as their interval.
+INTERVAL_RE = re.compile(
+    r"(\S+) in \[(\d+), (\d+)\](?: \\ \{([0-9, ]+)\})?")
+
+
 def parse_intervals(text):
     # Scanned, not split: an interval contains ", " itself, so splitting on it
     # cuts every interval in half and silently yields nothing.
     return {m.group(1): (int(m.group(2)), int(m.group(3)))
-            for m in re.finditer(r"(\S+) in \[(\d+), (\d+)\]", text)}
+            for m in INTERVAL_RE.finditer(text)}
+
+
+def parse_holes(text):
+    """The values REMOVED from each coordinate's interval (Definition 5).
+
+    Returned SEPARATELY from the intervals rather than folded into the box,
+    because every existing consumer of a box expects `(lo, hi)` and a silently
+    richer value would be read as a plain interval by whichever one was not
+    updated -- which is the failure this project keeps hitting from the other
+    side. A missing `\\ {...}` yields no entry at all, so a region measured
+    before punched intervals existed parses exactly as it always did.
+    """
+    out = {}
+    for m in INTERVAL_RE.finditer(text):
+        if m.group(4):
+            out[m.group(1)] = sorted(
+                {int(v) for v in m.group(4).split(",") if v.strip()})
+    return out
 
 
 def brackets_for(coord, brackets):
@@ -396,7 +421,8 @@ def brackets_for(coord, brackets):
 
 def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
                 max_tx, timeout, cwd, spans=None, geometric=False,
-                ast=None, focus=None, memlimit="8g", values_by_coord=None):
+                ast=None, focus=None, memlimit="8g", values_by_coord=None,
+                extra_values=None):
     """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned).
 
     `values_by_coord` overrides the ladder for the coordinates it names, which
@@ -407,19 +433,39 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     The five-level descent says level 2 keeps its mechanism verbatim.
     """
     values_by_coord = values_by_coord or {}
+    extra_values = extra_values or {}
     spec_coords = []
     for c in coords:
         if c in values_by_coord:
             spec_coords.append(
                 {"name": c,
                  "values": [str(v) for v in values_by_coord[c]]})
-        elif geometric:
-            spec_coords.append(
-                {"name": c, "values": [str(v)
-                                       for v in geometric_values(UINT256_MAX)]})
+            continue
+        # KEEP THE EXACTLY-KNOWN POINTS ALONGSIDE THE LADDER.
+        #
+        # A ladder measures a bound only to its own resolution, so a sibling
+        # whose real projection is a single point comes back as an INTERVAL --
+        # and the punched cut, which needs that point exactly, then cannot fire.
+        # Measured end to end on a two-path unit: level 0 resolved the sibling to
+        # `to == 255`, the refine round reported `[230, 256]` for the same path,
+        # and the region fell back to the side cut punching was built to replace.
+        #
+        # These are the same zero-cost candidates level 0 already derived
+        # (proposition 9: the sibling's own counterexample value), so keeping
+        # them costs two probes per coordinate and no query of their own. They
+        # are added rather than substituted: the ladder still has to measure the
+        # paths whose projection really is a range.
+        extra = [str(v) for v in sorted(extra_values.get(c, ()))]
+        if geometric:
+            vals = [str(v) for v in geometric_values(UINT256_MAX)]
+            spec_coords.append({"name": c, "values": sorted(set(vals + extra),
+                                                            key=int)})
         else:
             lo, hi = spans[c]
-            spec_coords.append({"name": c, "lo": str(lo), "hi": str(hi)})
+            spec = {"name": c, "lo": str(lo), "hi": str(hi)}
+            if extra:
+                spec["values"] = extra
+            spec_coords.append(spec)
     spec = {"unit": unit, "probes": probes, "coords": spec_coords,
             "pin": [{"name": n, "value": str(v)} for n, v in pins.items()],
             "paths": [{"enc": e, "depth": d,
@@ -446,6 +492,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     if failure:
         print(f"[outer-box] ROUND MEASURED NOTHING — {failure}")
     boxes, brackets, regions, warned = {}, {}, {}, set()
+    region_holes = {}
     for line in log.splitlines():
         m = BOX_RE.search(line)
         if m:
@@ -456,9 +503,13 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
         m = REGION_RE.search(line)
         if m:
             regions[int(m.group(1))] = parse_intervals(m.group(2))
+            # An OUTER box never carries holes -- it is a containment statement,
+            # and punching is a subtraction step. Only the region is read for
+            # them, so a hole cannot arrive from a line that cannot produce one.
+            region_holes[int(m.group(1))] = parse_holes(m.group(2))
             if m.group(3):
                 warned.add(int(m.group(1)))
-    return boxes, brackets, regions, warned, failure
+    return boxes, brackets, regions, warned, failure, region_holes
 
 
 def verdict(log):
@@ -499,24 +550,45 @@ def verdict(log):
     return seen
 
 
-def boxes_intersect(a, b):
+def boxes_intersect(a, b, a_holes=None, b_holes=None):
     """Do two boxes share at least one point?
 
     Two boxes intersect iff they overlap on EVERY coordinate: a box is a
     conjunction, so one disjoint coordinate separates them entirely. A
     coordinate present in one box and absent from the other is unconstrained
     there, hence overlapping on it.
+
+    HOLES MUST BE READ HERE, and this is not a refinement -- ignoring them is a
+    live FALSE ALARM. The caller treats an intersection as a hard invariant
+    violation and exits, so a pair of perfectly correct regions would kill the
+    run. The exact shape occurs on the first contract punched intervals were
+    measured on: enc=2 certifies `to in [255, 255]` and enc=3 certifies
+    `to in [0, 2^160-1] \\ {255}`. Read without the hole those share the point
+    255; read with it they are disjoint, which is what the partition
+    proposition requires and what the two certification queries independently
+    confirmed.
+
+    A coordinate separates the two when every value in the OVERLAP has been
+    punched out by one side or the other -- either side is enough, since a hole
+    removes the value from that region and the point must lie in both.
     """
+    a_holes = a_holes or {}
+    b_holes = b_holes or {}
     for n, (lo, hi) in a.items():
         if n not in b:
             continue
         blo, bhi = b[n]
         if hi < blo or bhi < lo:
             return False
+        olo, ohi = max(lo, blo), min(hi, bhi)
+        punched = {v for v in set(a_holes.get(n, ())) | set(b_holes.get(n, ()))
+                   if olo <= v <= ohi}
+        if len(punched) >= ohi - olo + 1:
+            return False
     return True
 
 
-def certified_overlap(ok):
+def certified_overlap(ok, holes=None):
     """Pairs of CERTIFIED regions that intersect. Must always be empty.
 
     Path domains partition the input space, so two distinct paths cannot both
@@ -537,10 +609,12 @@ def certified_overlap(ok):
     consistency checks, and the cheap ones belong in the loop.
     """
     bad = []
+    holes = holes or {}
     encs = sorted(ok)
     for i, e1 in enumerate(encs):
         for e2 in encs[i + 1:]:
-            if boxes_intersect(ok[e1], ok[e2]):
+            if boxes_intersect(ok[e1], ok[e2],
+                               holes.get(e1), holes.get(e2)):
                 bad.append((e1, e2))
     return bad
 
@@ -597,8 +671,8 @@ def round_failure_reason(log):
     return None
 
 
-def empty_coords(box):
-    """Coordinates whose interval is EMPTY (lo > hi).
+def empty_coords(box, holes=None):
+    """Coordinates whose region is EMPTY -- no value survives.
 
     An empty box certifies VACUOUSLY: `assume(lo <= x <= hi)` with lo > hi is
     `assume(false)`, so `assert(tr == pi)` holds for want of any execution and
@@ -610,8 +684,24 @@ def empty_coords(box):
     domain is empty, the sibling subtraction duly produced lo > hi, and the run
     reported it as a certified region. The pin had excluded the path; the honest
     statement is that, not a certificate.
+
+    A PUNCHED interval has a SECOND way of being empty and `lo > hi` cannot see
+    it: `[5, 5] \\ {5}` is a well-formed interval that admits no value. Same
+    consequence -- an unsatisfiable assumption certifies vacuously -- so it is
+    the same check, not a new one. The tool refuses such a box too; both sides
+    check it because a gate the caller is expected to provide is a gate that has
+    already failed once here.
     """
-    return sorted(n for n, (lo, hi) in box.items() if lo > hi)
+    holes = holes or {}
+    out = []
+    for n, (lo, hi) in box.items():
+        if lo > hi:
+            out.append(n)
+            continue
+        punched = {v for v in holes.get(n, ()) if lo <= v <= hi}
+        if len(punched) >= hi - lo + 1:
+            out.append(n)
+    return sorted(out)
 
 
 def witness_values(cwd, unit):
@@ -670,6 +760,18 @@ def extraction_caveats(claims):
     return out
 
 
+def assumed_holes(holes, pins):
+    """Which values the query assumed were EXCLUDED, per coordinate.
+
+    A pin adds none: it is already a single value. Kept beside assumed_ranges
+    for the same reason -- the trust check has to compare the report against the
+    query that was really issued, and after punched intervals the query is an
+    interval MINUS a set.
+    """
+    out = {n: list(v) for n, v in (holes or {}).items() if n not in pins}
+    return out
+
+
 def assumed_ranges(box, pins):
     """What the certification query ACTUALLY assumed, per coordinate.
 
@@ -683,8 +785,8 @@ def assumed_ranges(box, pins):
     return r
 
 
-def outside_assumed(name, value, ranges):
-    """Is this witness value OUTSIDE the bound the query itself assumed?
+def outside_assumed(name, value, ranges, holes=None):
+    """Is this witness value OUTSIDE the set the query itself assumed?
 
     A refuting witness is supposed to be an input FROM the assumed box. When the
     reported value for a coordinate falls outside that box, the report and the
@@ -709,15 +811,24 @@ def outside_assumed(name, value, ranges):
     assumed, which is a proposition the pipeline already relies on, made into a
     runtime check -- the rule that the certification gate was caught by in the
     first place.
+
+    A PUNCHED value counts as outside. `assume(lo <= c <= hi && c != h)` says the
+    solver never had `c == h` available, so a report claiming it is the same
+    contradiction as one outside the interval, and it must not be offered as the
+    discriminating quantity either. Reading only the interval would have let the
+    one value the query most explicitly excluded through.
     """
     r = ranges.get(name) if ranges else None
     if not r:
         return False
     lo, hi = r
-    return value < lo or value > hi
+    if value < lo or value > hi:
+        return True
+    return value in set((holes or {}).get(name, ()))
 
 
-def divergence_text(path_ce, wit_ce, bounded, caveats=None, ranges=None):
+def divergence_text(path_ce, wit_ce, bounded, caveats=None, ranges=None,
+                    holes=None):
     """Name the quantity the refuting witness differs on. The point of this file.
 
     "Refuted with no single-coordinate cut available" is the reach gate, and it
@@ -774,14 +885,20 @@ def divergence_text(path_ce, wit_ce, bounded, caveats=None, ranges=None):
     # They are not dropped -- an unexplained contradiction between the report and
     # the query is worth saying out loud -- but they must not be offered as the
     # discriminating quantity.
-    untrusted = [t for t in diff_all if outside_assumed(t[0], t[2], ranges)]
+    untrusted = [t for t in diff_all
+                 if outside_assumed(t[0], t[2], ranges, holes)]
     diff = [t for t in diff_all if t not in untrusted]
     untrusted_note = ""
     if untrusted:
+        def _assumed(n):
+            txt = f"[{ranges[n][0]}, {ranges[n][1]}]"
+            hs = sorted((holes or {}).get(n, ()))
+            return txt + (" \\ {" + ", ".join(str(h) for h in hs) + "}"
+                          if hs else "")
         untrusted_note = (
             "; NOTE: the witness value reported for "
-            + ", ".join(f"{n} (={wv}, assumed in [{ranges[n][0]}, "
-                        f"{ranges[n][1]}])" for n, _, wv in untrusted)
+            + ", ".join(f"{n} (={wv}, assumed in {_assumed(n)})"
+                        for n, _, wv in untrusted)
             + " lies OUTSIDE the bound this query assumed, so it is NOT the "
               "entry-time value and is excluded from the difference above. A "
               "path that never reads the quantity leaves it unconstrained, and "
@@ -850,12 +967,30 @@ def shrink_target(log, pins):
 
 
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
-            max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g"):
-    """Step 5. Returns (verdict, suggested_box_or_None)."""
+            max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g",
+            holes=None):
+    """Step 5. Returns (verdict, suggested_box_or_None, witness).
+
+    `holes` is Definition 5's punched set, and it must reach the query or the
+    box certified is WIDER than the region reported. The subtraction now
+    produces `[0, 2^160-1] \\ {255}` where it used to produce one side of 255;
+    sending only the interval would ask about a region containing the sibling's
+    own point, which is refutable by construction -- so the loop would shrink a
+    region that was already correct, and the yield the hole bought would be
+    given straight back.
+    """
+    holes = holes or {}
+
+    def bound(n, lo, hi):
+        b = {"name": n, "lo": str(lo), "hi": str(hi)}
+        hs = sorted(holes.get(n, ()))
+        if hs:
+            b["holes"] = [str(h) for h in hs]
+        return b
+
     spec = {"unit": unit, "enc": enc, "depth": depth,
             "ce": {k: str(v) for k, v in ce.items()},
-            "box": [{"name": n, "lo": str(lo), "hi": str(hi)}
-                    for n, (lo, hi) in box.items()] +
+            "box": [bound(n, lo, hi) for n, (lo, hi) in box.items()] +
                    [{"name": n, "lo": str(v), "hi": str(v)}
                     for n, v in pins.items()]}
     path = os.path.join(cwd, "cert.json")
@@ -1074,10 +1209,15 @@ def main():
     # value per path per coordinate (proposition 9: the candidate is the
     # sibling's own counterexample value), against 258 per coordinate for the
     # bracket.
-    eq_values = {}
+    # Both stay EMPTY when --level0 is off, so the ladder is laid exactly as it
+    # was before level 0 existed. `cand` is read by the bracket and refine calls
+    # below whether or not level 0 ran, so it has to exist either way -- without
+    # this it is a NameError on every default run, i.e. the flag would become
+    # mandatory by accident.
+    eq_values, cand = {}, {}
     if args.level0:
         cand = level0_candidates(paths, coords)
-        l0_boxes, _, _, _, l0_failure = outer_round(
+        l0_boxes, _, _, _, l0_failure, _ = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, values_by_coord=cand,
             ast=args.ast, focus=focus, memlimit=args.memlimit)
@@ -1107,15 +1247,16 @@ def main():
     # Round 1: geometric bracket.
     if args.skip_bracket:
         brackets, regions, warned, round_failure = {}, {}, set(), None
+        region_holes = {}
         print("[bracket] SKIPPED (--skip-bracket): refining from each "
               "coordinate's full type range, which is the same fallback the "
               "code takes when the bracket measures nothing")
     else:
-        _, brackets, regions, warned, round_failure = outer_round(
+        _, brackets, regions, warned, round_failure, region_holes = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
-            values_by_coord=eq_values)
+            values_by_coord=eq_values, extra_values=cand)
         print(f"[bracket] {brackets}")
     # MEASURED, and it is the binding cost on real input: the geometric round
     # ignores --probes entirely (see geometric_values) and lays down one probe
@@ -1134,13 +1275,15 @@ def main():
     spans = {c: (brackets_for(c, brackets) or (0, UINT256_MAX))
              for c in coords}
     for r in range(args.refine_rounds):
-        _, brackets, regions, warned, round_failure = outer_round(
+        _, brackets, regions, warned, round_failure, region_holes = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
-            values_by_coord=eq_values)
+            values_by_coord=eq_values, extra_values=cand)
         last_failure = round_failure or last_failure
         print(f"[refine {r+1}] spans={spans} regions={regions}"
+              + (f" holes={ {k: v for k, v in region_holes.items() if v} }"
+                 if any(region_holes.values()) else "")
               + (f" UNSEPARATED={sorted(warned)}" if warned else ""))
         new = {c: (brackets_for(c, brackets) or spans[c]) for c in coords}
         if new == spans:
@@ -1148,14 +1291,20 @@ def main():
         spans = new
 
     # Certify every candidate, shrinking on the witness when refuted.
-    ok, failed = {}, {}
+    ok, failed, ok_holes = {}, {}, {}
     for enc, depth, ce in paths:
         box = regions.get(enc)
         if box is None:
             failed[enc] = (last_failure or
                            "no fully bounded region was measured")
             continue
-        empty = empty_coords(box)
+        # The punched set travels WITH the box through the whole shrink loop.
+        # A side cut applied below narrows the interval, and a hole outside the
+        # narrowed interval removes nothing -- but it is also harmless to keep,
+        # and dropping it here would need its own justification, so it stays and
+        # the tool's own emptiness check is the arbiter.
+        holes = dict(region_holes.get(enc) or {})
+        empty = empty_coords(box, holes)
         if empty:
             failed[enc] = (
                 f"region is EMPTY on {', '.join(empty)} (lo > hi) under the "
@@ -1172,11 +1321,12 @@ def main():
             v, nb, wit = certify(args.esbmc, args.sol, args.contract, args.unit,
                                  enc, depth, box, ce, pins, args.max_tx,
                                  args.timeout, cwd, ast=args.ast, focus=focus,
-                                 memlimit=args.memlimit)
+                                 memlimit=args.memlimit, holes=holes)
             if wit:
                 last_wit = wit
             if v == "SUCCESSFUL":
                 ok[enc] = box
+                ok_holes[enc] = holes
                 break
             if v == "UNKNOWN":
                 # No verdict at all -- ESBMC crashed, was killed, or produced
@@ -1190,7 +1340,8 @@ def main():
                 failed[enc] = (
                     "refuted with no single-coordinate cut available"
                     + divergence_text(ce, last_wit, set(box) | set(pins),
-                                      caveats, assumed_ranges(box, pins)))
+                                      caveats, assumed_ranges(box, pins),
+                                      assumed_holes(holes, pins)))
                 break
             print(f"[shrink enc={enc}] {box} -> {nb}")
             box = nb
@@ -1198,12 +1349,13 @@ def main():
             failed[enc] = (
                 "shrink round budget exhausted"
                 + divergence_text(ce, last_wit, set(box) | set(pins), caveats,
-                                  assumed_ranges(box, pins)))
+                                  assumed_ranges(box, pins),
+                                  assumed_holes(holes, pins)))
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean
     # an input would have to walk two different paths. Reporting them and
     # carrying on would be shipping a contradiction.
-    overlap = certified_overlap(ok)
+    overlap = certified_overlap(ok, ok_holes)
     if overlap:
         print("\n=== INVARIANT VIOLATED: certified regions intersect ===")
         for e1, e2 in overlap:
@@ -1220,8 +1372,19 @@ def main():
     print("\n=== CERTIFIED REGIONS ===")
     for enc, box in sorted(ok.items()):
         pin_txt = "".join(f", {n} == {v}" for n, v in pins.items())
+        hs = ok_holes.get(enc) or {}
+
+        def _one(n, lo, hi, hs=hs):
+            # The punched set is printed WITH its interval, never as a footnote:
+            # `[0, 2^160-1]` and `[0, 2^160-1] \ {255}` are different regions,
+            # and the second is the one that was certified. A reader who quotes
+            # the interval alone would be quoting a region the query refuted.
+            v = sorted(hs.get(n, ()))
+            return (f"{n} in [{lo}, {hi}]"
+                    + (" \\ {" + ", ".join(str(x) for x in v) + "}" if v
+                       else ""))
         print(f"  enc={enc}: "
-              + ", ".join(f"{n} in [{lo}, {hi}]" for n, (lo, hi) in box.items())
+              + ", ".join(_one(n, lo, hi) for n, (lo, hi) in box.items())
               + pin_txt)
     for enc, why in sorted(failed.items()):
         print(f"  enc={enc}: NOT CERTIFIED — {why}; this path falls back to its "

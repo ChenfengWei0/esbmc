@@ -32,7 +32,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       certified_overlap, divergence_text,
                                       extraction_caveats, level0_candidates,
                                       single_point_coords, equality_coords,
-                                      assumed_ranges, outside_assumed)
+                                      assumed_ranges, outside_assumed,
+                                      parse_intervals, parse_holes,
+                                      assumed_holes)
 
 FAILURES = []
 
@@ -545,6 +547,97 @@ check("no-ranges-leaves-wording-unchanged",
 check("no-ranges-reports-the-difference",
       "a (path=4, witness=9)" in divergence_text({"a": 4}, {"a": 9}, {"a"}),
       True)
+
+
+# --- PUNCHED INTERVALS (Definition 5): `[lo, hi] \ {v}` ---
+#
+# The subtraction now removes a single-point sibling by excluding that value
+# instead of keeping one SIDE of it. Measured on one address coordinate: the old
+# behaviour answered `[256, 2^160-1]` or `[0, 254]` depending only on which
+# counterexample the solver happened to return for the sibling -- both correct,
+# 5.7e45 apart. The hole makes both cases answer `[0, 2^160-1] \ {255}`.
+#
+# The driver has to read, carry and re-send the hole. Dropping it anywhere means
+# certifying a WIDER region than the one reported, which the query then refutes,
+# which hands the entire gain straight back.
+
+REGION_LINE = ("--path-cov-outer-box: path enc=3 CERTIFIED region after "
+               "subtracting sibling outer boxes (zero queries): "
+               "to in [0, 1461501637330902918203684832716283019655932542975] "
+               "\\ {255}, amt in [0, 99]")
+check("region-intervals-still-parse",
+      parse_intervals(REGION_LINE),
+      {"to": (0, ADDR_MAX), "amt": (0, 99)})
+check("region-holes-parsed", parse_holes(REGION_LINE), {"to": [255]})
+# A coordinate WITHOUT a punched set must get no entry at all -- an empty list
+# and "no holes" would be indistinguishable to a consumer that tests truthiness,
+# and the interval that follows must not inherit the previous one's holes.
+check("unpunched-coordinate-has-no-hole-entry",
+      "amt" in parse_holes(REGION_LINE), False)
+check("no-holes-anywhere-parses-empty",
+      parse_holes("to in [0, 5], amt in [0, 99]"), {})
+check("several-holes-on-one-coordinate",
+      parse_holes("a in [0, 9] \\ {3, 5, 7}"), {"a": [3, 5, 7]})
+
+# THE FALSE ALARM. This is not a refinement of the overlap check, it is a live
+# bug without it: the partition check EXITS on an intersection, so reading these
+# two correct regions without the hole would kill a correct run. Both were
+# independently certified by the query on the fixture this pair comes from.
+PUNCHED_PARTITION = {2: {"to": (255, 255)}, 3: {"to": (0, ADDR_MAX)}}
+PUNCHED_HOLES = {2: {}, 3: {"to": [255]}}
+check("without-holes-the-partition-check-false-alarms",
+      certified_overlap(PUNCHED_PARTITION), [(2, 3)])
+check("with-holes-the-same-regions-are-disjoint",
+      certified_overlap(PUNCHED_PARTITION, PUNCHED_HOLES), [])
+# ...and the hole must only separate where it actually covers the overlap. A
+# hole somewhere else in the interval leaves the two genuinely intersecting, so
+# the check must still fire -- otherwise it would have been traded for silence.
+check("a-hole-outside-the-overlap-does-not-separate",
+      boxes_intersect({"a": (0, 9)}, {"a": (4, 6)}, {"a": [1]}, None), True)
+check("a-hole-covering-the-whole-overlap-separates",
+      boxes_intersect({"a": (0, 9)}, {"a": (5, 5)}, {"a": [5]}, None), False)
+check("a-hole-covering-part-of-the-overlap-does-not",
+      boxes_intersect({"a": (0, 9)}, {"a": (5, 6)}, {"a": [5]}, None), True)
+
+# EMPTINESS has a second route once the interval can be punched, and `lo > hi`
+# cannot see it. Same consequence as an inverted interval: an unsatisfiable
+# assumption certifies vacuously.
+check("punched-out-point-is-empty", empty_coords({"a": (5, 5)}, {"a": [5]}),
+      ["a"])
+check("partly-punched-interval-is-not-empty",
+      empty_coords({"a": (0, 9)}, {"a": [5]}), [])
+check("hole-outside-the-interval-does-not-empty-it",
+      empty_coords({"a": (0, 9)}, {"a": [50]}), [])
+check("empty-coords-unchanged-without-holes",
+      empty_coords({"a": (5, 5)}), [])
+
+# The trust check must treat a PUNCHED value as outside the assumption too. The
+# query said `c != h`, so a report claiming `c == h` contradicts it exactly as a
+# value beyond the endpoints does -- and reading only the endpoints would let
+# through the one value the query most explicitly excluded.
+check("punched-value-is-outside-the-assumption",
+      outside_assumed("a", 5, {"a": (0, 9)}, {"a": [5]}), True)
+check("unpunched-value-inside-is-still-trusted",
+      outside_assumed("a", 4, {"a": (0, 9)}, {"a": [5]}), False)
+check("holes-omitted-behaves-as-before",
+      outside_assumed("a", 5, {"a": (0, 9)}), False)
+check("assumed-holes-drops-pinned-coordinates",
+      assumed_holes({"a": [1], "msg.sender": [2]}, {"msg.sender": 7}),
+      {"a": [1]})
+
+# ...and end to end through divergence_text: a witness value equal to a punched
+# point is excluded from the divergence and named, with the punched set shown in
+# the assumption it contradicts.
+tp = divergence_text({"a": 4, "s": 1}, {"a": 5, "s": 3}, {"a", "s"}, None,
+                     {"a": (0, 9), "s": (0, 9)}, {"a": [5]})
+check("punched-witness-value-excluded", "a (path=4, witness=5)" in tp, False)
+check("punched-witness-value-named", "OUTSIDE the bound" in tp, True)
+check("punched-note-shows-the-punched-set", "[0, 9] \\ {5}" in tp, True)
+check("other-difference-survives-punching", "s (path=1, witness=3)" in tp, True)
+# CLOSED BY DEFAULT: with no holes the wording is byte-identical to before.
+check("no-holes-leaves-divergence-wording-unchanged",
+      divergence_text({"a": 4}, {"a": 9}, {"a"}, None, {"a": (0, 5)}),
+      divergence_text({"a": 4}, {"a": 9}, {"a"}, None, {"a": (0, 5)}, None))
 
 
 if FAILURES:
