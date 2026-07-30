@@ -235,3 +235,33 @@ that lets both run.
 That is the next experiment, it is well-defined, and it is the one that decides
 whether this unit's remaining failure is a cost statement or a method statement.
 Nothing above should be quoted as either until it is run.
+
+### ★ THE COST ANSWER: the bracket is EMISSION-bound, not solve-bound
+
+The experiment named above — bracket and shrink together, at a budget that lets
+both work:
+
+    [round] geometric-bracket: 300.1s wall, 6 coordinate(s),
+            ~1548 candidate value(s) per direction, 5 path(s)
+    [round] accounting: per-query wall: n=148 max=0.074s median=0.048s total=6.9s
+
+**148 queries reached the solver in five minutes, and 6.9 of those 300 seconds
+were spent solving.** The other ~293 went to instrumenting and encoding roughly
+ninety thousand claims (1548 values x 6 coordinates x 2 directions x 5 paths).
+
+So the bracket's cost is **claim emission**, not solving — the opposite of what
+every reading of a bare wall clock suggested. "The round did not finish" was
+taken to mean the ladder was too long FOR THE SOLVER; the solver never saw more
+than 148 of them.
+
+Consequences:
+
+* "bound the geometric ladder" is a **driver policy** change whose target is the
+  number of claims EMITTED, not the number solved;
+* the earlier "did not finish in 110s on 2 coordinates" and this "300s on 6" are
+  the same phenomenon scaled by coordinate count;
+* **no round measured in this whole session was solve-bound.** Every per-query
+  figure collected — max 0.03–0.18s, median ~0.05s — was far from the constraint.
+
+That last point inverts an assumption this work carried for weeks, and it is now
+measured rather than assumed.
