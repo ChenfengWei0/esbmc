@@ -659,10 +659,30 @@ bool solidity_convertert::get_var_decl(
   // For state var decl, we look for "value".
   // For local var decl, we look for "initialValue"
   bool has_init = (ast_node.contains("value") || !initialValue.empty());
-  // For inherited ones, the initial value will be set in "move_inheritance_to_ctor()"
-  // e.g. D.x = B.x
-  // Therefore, even if the copied json nodes contain init_value (has_init = true), we still skip such settings.
-  bool set_init = has_init && !is_inherited && !is_storage_ref_alias;
+  // For inherited STATE variables the initial value is set in
+  // "move_inheritance_to_ctor()" (D.x = B.x), so the copied json node's own
+  // init is deliberately skipped here.
+  //
+  // `&& is_state_var` IS LOAD BEARING, and its absence was a silent
+  // miscompile of every inherited function body. This same routine serves
+  // "rule variable-declaration-statement" (see the header comment above), i.e.
+  // LOCALS — and `add_inherit_label` stamps `is_inherited` on EVERY sub-node
+  // carrying an `id`, which includes every local declaration inside an
+  // inherited function. Without the state-var guard, `uint256 y = x + 1;` in a
+  // base function became `y = 0` in the derived contract's copy, and the
+  // derived copy is the one the dispatcher calls. There is no
+  // move_inheritance_to_ctor step for a local to be deferred to, so the value
+  // was not moved — it was lost.
+  //
+  // MEASURED, 20 lines of Solidity (notes/repro/immutable_clamp_*.sol and the
+  // st1inch benchmark): `sol:@C@B4@F@f#17` has `ASSIGN y = x + 1` while
+  // `sol:@C@D4@F@f#17` had `ASSIGN y = 0`. On st1inch this zeroed
+  // `t = timestamp - ORIGIN` inside the inherited `_votingPowerAt`, which made
+  // all thirty `if (t & bit)` guards constant-false, made the constructor's own
+  // sanity check revert unconditionally, and left the whole contract
+  // unreachable: `Generated 0 VCC(s)` with every path reported undecided.
+  bool set_init =
+    has_init && !(is_inherited && is_state_var) && !is_storage_ref_alias;
   const nlohmann::json init_value =
     ast_node.contains("value") ? ast_node["value"] : initialValue;
   const nlohmann::json literal_type = ast_node["typeDescriptions"];
