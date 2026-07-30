@@ -5621,9 +5621,29 @@ void goto_coveraget::solidity_path_coverage()
       // Recorded here rather than derived, for the same reason the census
       // demands positive evidence in the first place: this is the one judgement
       // that authorises a generated test to assert something.
+      //
+      // ...AND the unit is not disqualified. An obstacle means the model admits
+      // an execution the chain does not have, so this path's counterexample can
+      // describe something that cannot happen -- precisely the case in which a
+      // test must NOT be authorised to assert. The two flags are per-unit and
+      // already computed above, so the guard is free.
+      //
+      // WITHOUT IT the two records contradicted each other: the same key went
+      // into `named_obstacle_paths` ("must not be turned into a test", per the
+      // header) three lines below, and into this set ("the one judgement that
+      // authorises a generated test to assert something") right here. The
+      // emitter reads this set and never read that map, so the authorisation
+      // won -- an obstructed path was emitted BARE, with a comment saying the
+      // path exits normally and a revert would fail the test.
+      //
+      // The emitter now refuses obstructed cases outright (foundry.cpp), which
+      // is the primary fix; this is the same rule stated where the
+      // authorisation is granted, so a future consumer of this set inherits it
+      // without having to know about the other one.
       if (
         !is_revert && !rollback_exits.count(this_idx) &&
-        !undetermined_exits.count(this_idx))
+        !undetermined_exits.count(this_idx) && !unit_has_lost_decision &&
+        !unit_calls_gated_unit)
         normal_exit_paths.insert(key);
       // Named obstacle, applied to EVERY path of the unit (see the census
       // comment above for why per-path containment is unsound here). The paths

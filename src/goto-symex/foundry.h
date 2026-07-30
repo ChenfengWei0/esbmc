@@ -74,6 +74,26 @@ private:
     // undetermined_exit sets); branch coverage has no third state and leaves
     // this false, keeping its output byte-identical.
     bool normal_confirmed = false;
+    // This call's covered path is a NAMED OBSTACLE: the model admits an
+    // execution the chain does not have, so the counterexample behind it may
+    // describe something that cannot happen and a test built from it is RED on
+    // the UNMODIFIED contract.
+    //
+    // goto_coverage.h states the rule outright -- "a marked path ... must not be
+    // turned into a test. Marking without excluding would be worthless" -- and
+    // the marking half was the only half implemented. MEASURED:
+    // named_obstacle_paths has exactly three readers and all three sit under
+    // `if (tri == "U")` in bmc.cpp, so a REFUTED path never reaches any of them.
+    // Refuted is the only kind that ever becomes a test. The regression
+    // solidity_path_cov_residual_unit_call_obstacle pins 5 obstacle paths of
+    // which just ONE shows as `named-obstacle` in the report -- the other four
+    // are F, and flowed straight through to this generator.
+    //
+    // Set from the SAME (comment, location) key the census stores, alongside the
+    // normal_exit_paths lookup, rather than by matching the prettified claim text
+    // later: a detector keyed on a string that does not round-trip is a detector
+    // that never fires, which is the failure this is fixing, one layer down.
+    bool named_obstacle = false;
     // ③A0 environment pinning: the msg.value the solver picked for this call's
     // transaction (recovered from the per-tx `_sol_per_tx_reseed`). Emitted as
     // `{value: N}` ONLY when `payable` — sending value to a non-payable method
@@ -117,6 +137,15 @@ private:
   std::vector<test_case> test_cases;
   std::string source_file;
   mutable std::mutex data_mutex;
+
+  /// Counterexamples REFUSED because their path is a named obstacle (see
+  /// sol_call::named_obstacle). Counted rather than silently dropped: a
+  /// suppression that leaves no trace is indistinguishable from a path that was
+  /// never witnessed, and the whole point of the obstacle machinery is that an
+  /// excluded path is excluded VISIBLY. Reported by generate() next to the
+  /// bare/try-catch counts, in the same absolute-number style the obstacle
+  /// warning already uses -- an obstacle is not partial credit.
+  size_t suppressed_obstacle = 0;
 
   /// Contracts Solidity forbids `new` on (abstract / interface / library),
   /// detected from the `#sol_no_new` flag stamped on their constructor symbol.

@@ -1432,6 +1432,12 @@ foundry_generator::test_case foundry_generator::reconstruct(
     bool sender_dirty = false;
   };
   std::vector<segment> segs;
+  // This counterexample refutes a path claim that is a NAMED OBSTACLE, so the
+  // case reconstructed from it must not be shipped (see sol_call::named_obstacle
+  // and collect()). Kept per-reconstruction rather than per-segment: the flag has
+  // to survive every route by which `calls` can be built, including the fallback
+  // that has no segment.
+  bool path_named_obstacle = false;
 
   // ③A0 environment pinning. `_sol_per_tx_reseed` assigns the globals
   // `msg_value` / `block_timestamp` in the dispatcher prologue JUST BEFORE the
@@ -1602,6 +1608,28 @@ foundry_generator::test_case foundry_generator::reconstruct(
         step.comment, step.source.pc->location.as_string()};
       if (goto_coveraget::normal_exit_paths.count(key))
         segs.back().normal_confirmed = true;
+      // ---- NAMED OBSTACLE: this path must not become a test at all ----
+      //
+      // Read with the SAME key, in the same place, for the same reason the
+      // normal/revert classification is read here: the census keys by
+      // (comment, location) and any other way of naming a path from this side
+      // has to reconstruct that name, which is where a silent mismatch lives.
+      //
+      // This is not "one more oracle we could add". goto_coverage.h makes it a
+      // rule -- a marked path "must not be turned into a test" -- and until now
+      // nothing in this file so much as mentioned the map. The two consumers
+      // that did read it (bmc.cpp's report) are both gated on the claim being
+      // UNDECIDED, so the refuted paths, which are exactly the ones that reach
+      // this generator, were never checked against it.
+      //
+      // Only the NORMAL CONFIRMATION is withdrawn here. The decision to refuse
+      // the case is taken at the refuted-claim site below instead, because THIS
+      // block is guarded on `!segs.empty()` and there is a whole second
+      // reconstruction route (the coverage-claim fallback, further down) that
+      // builds a call with no segment at all. A detector that only fires on one
+      // of two routes is a detector that reports zero on the other.
+      if (goto_coveraget::named_obstacle_paths.count(key))
+        segs.back().normal_confirmed = false;
     }
 
     // Provenance (see out_claims above). Recorded for EVERY guard-true
@@ -1621,6 +1649,21 @@ foundry_generator::test_case foundry_generator::reconstruct(
         v && is_constant_bool2t(v) && !to_constant_bool2t(v).value;
       if (step.comment.find(":path:") != std::string::npos)
         (assert_refuted ? claim_ids : claim_holds).insert(step.comment);
+      // ---- Is THIS case's provenance a NAMED OBSTACLE? ----
+      //
+      // Keyed off the REFUTED claim, which is exactly the obligation this case
+      // is reconstructed from (see out_claims), and read with the same
+      // (comment, location) pair the census stores. Placed here rather than on
+      // the segment because this site is reached on every reconstruction route:
+      // the segment route above is guarded on `!segs.empty()`, and the
+      // coverage-claim fallback below builds a call when there is no segment at
+      // all -- which is precisely the case a segment-attached flag would miss
+      // while still reporting a confident zero.
+      if (
+        assert_refuted &&
+        goto_coveraget::named_obstacle_paths.count(
+          {step.comment, step.source.pc->location.as_string()}))
+        path_named_obstacle = true;
     }
 
     // The covered coverage claim (a guard-true assert) is AUTHORITATIVE for the
@@ -2235,6 +2278,13 @@ foundry_generator::test_case foundry_generator::reconstruct(
     return c.method == c.contract;
   });
 
+  // Stamp the obstacle onto every call of the case, AFTER all reconstruction
+  // routes have finished, so the mark cannot depend on which of them produced
+  // the calls. collect() then refuses the whole case on any one of them.
+  if (path_named_obstacle)
+    for (auto &c : calls)
+      c.named_obstacle = true;
+
   out_claims.clear();
   for (const auto &id : claim_ids)
     out_claims += (out_claims.empty() ? "" : ", ") + id;
@@ -2272,6 +2322,7 @@ void foundry_generator::clear()
   libraries.clear();
   mock_specs.clear();
   claims_by_fingerprint.clear();
+  suppressed_obstacle = 0;
 }
 
 void foundry_generator::collect(
@@ -2285,6 +2336,28 @@ void foundry_generator::collect(
     return;
 
   std::lock_guard<std::mutex> lock(data_mutex);
+  // ---- REFUSE a counterexample whose path is a NAMED OBSTACLE ----
+  //
+  // The obstacle means the model admits an execution the chain does not have.
+  // The counterexample is therefore not necessarily a description of anything
+  // that can happen, and a test replaying it is RED on the unmodified contract
+  // -- the single outcome this pipeline exists to never produce.
+  //
+  // Refused here rather than filtered at emission so the case never enters
+  // `test_cases` and so cannot be dedup'd together with a legitimate one: two
+  // counterexamples collapse onto one emitted case by fingerprint, and a
+  // fingerprint does not carry the obstacle. A clean case absorbing an
+  // obstructed one would then ship it under a clean provenance.
+  //
+  // Counted, and reported by generate(). A silent refusal is indistinguishable
+  // from a path that was never witnessed, and "we excluded N of them and here is
+  // why" is the entire value of the obstacle machinery over a shrug.
+  for (const auto &c : tc)
+    if (c.named_obstacle)
+    {
+      ++suppressed_obstacle;
+      return;
+    }
   if (source_file.empty())
     source_file = config.options.get_option("input-file");
   // Provenance, keyed by the same fingerprint dedup uses. Several
@@ -2825,6 +2898,26 @@ size_t foundry_generator::write_foundry_file(
 void foundry_generator::generate() const
 {
   std::lock_guard<std::mutex> lock(data_mutex);
+
+  // REPORTED BEFORE THE EMPTY CHECK, deliberately. If every witnessed path of a
+  // run is a named obstacle then `test_cases` is empty and the early return
+  // below fires -- and a run that refused N counterexamples would print the same
+  // "no test cases collected" line as a run that witnessed nothing at all. Those
+  // are opposite situations: one found counterexamples and threw them away on
+  // purpose, the other found none. Collapsing them is the shape of failure this
+  // whole change exists to remove, so the count goes out first.
+  //
+  // An absolute number, never a ratio, matching how the obstacle warning itself
+  // is reported in goto_coverage.cpp: an obstacle is not partial credit.
+  if (suppressed_obstacle)
+    log_warning(
+      "Foundry: {} counterexample(s) REFUSED -- their path is a NAMED OBSTACLE, "
+      "i.e. the model admits an execution the chain does not have, so a test "
+      "replaying one is RED on the UNMODIFIED contract. The paths remain in the "
+      "coverage denominator (they are real); what is refused is turning them "
+      "into tests. See the NAMED OBSTACLE report above for which units and why",
+      suppressed_obstacle);
+
   if (test_cases.empty())
   {
     log_warning("No Foundry test cases collected. No *.t.sol generated.");
