@@ -4907,6 +4907,22 @@ void goto_coveraget::solidity_path_coverage()
           for (unsigned b = 0; b < ct->get_width(); ++b)
             hi *= 2;
           path_cov_outer_box_type_range[c.name] = {"0", integer2string(hi - 1)};
+          // PUBLISHED, not just used internally. The driver chooses the ladder
+          // and cannot choose it correctly without knowing how wide the
+          // coordinate is -- measured: the geometric ladder lays probes up to
+          // 2^255 whatever the type is, so on a 160-bit `address` the
+          // out-of-type values WRAP, the bracket comes back claiming a holding
+          // lower bound of 2^255 on a type that stops at 2^160-1, and the
+          // driver's next span is inverted. The tool had this number the whole
+          // time and kept it to itself.
+          log_status(
+            "--path-cov-outer-box: coordinate '{}' has TYPE RANGE [0, {}] "
+            "({}-bit unsigned). Probe values outside it are meaningless: a "
+            "bound is built as a constant of this type, so an out-of-range "
+            "value wraps and the probe asks about a different number",
+            c.name,
+            integer2string(hi - 1),
+            ct->get_width());
         }
       }
 
@@ -5053,12 +5069,70 @@ void goto_coveraget::solidity_path_coverage()
                 (span * BigInt((int64_t)k)) /
                   BigInt((int64_t)(outer_probes + 1)));
           }
+          // ---- DROP probe values the coordinate's type cannot hold ----
+          //
+          // The bound is `constant_int2tc(ct, v)`, so a value above the type's
+          // maximum WRAPS and the probe asks about a different number than the
+          // one the driver wrote down. That is not a weaker measurement, it is a
+          // wrong one: measured on a 160-bit `address`, the geometric ladder's
+          // 2^255 probe came back HOLDING as a lower bound -- on a type whose
+          // largest value is 2^160-1 -- and the driver's next span was inverted,
+          // which killed the whole loop.
+          //
+          // Dropped rather than clamped. Clamping invents a probe nobody asked
+          // for; dropping removes one that could not mean anything, and the
+          // type maximum is already seeded as the free bound, so nothing is
+          // lost. Counted and reported, because a silently shorter ladder is a
+          // silently coarser measurement.
+          size_t out_of_type = 0;
+          if (is_unsignedbv_type(ct))
+          {
+            BigInt tmax = 1;
+            for (unsigned b = 0; b < ct->get_width(); ++b)
+              tmax *= 2;
+            tmax -= 1;
+            std::vector<BigInt> kept;
+            kept.reserve(probe_vals.size());
+            for (const BigInt &v : probe_vals)
+            {
+              if (v >= 0 && v <= tmax)
+                kept.push_back(v);
+              else
+                ++out_of_type;
+            }
+            probe_vals.swap(kept);
+          }
           // The two sources can overlap; a duplicated probe is a duplicated
           // claim name, which collides in `all_claims` and silently drops one.
           std::sort(probe_vals.begin(), probe_vals.end());
           probe_vals.erase(
             std::unique(probe_vals.begin(), probe_vals.end()),
             probe_vals.end());
+          if (out_of_type > 0)
+            log_warning(
+              "--path-cov-outer-box: coordinate '{}' — DROPPED {} probe "
+              "value(s) that do not fit its type; {} probe value(s) remain. "
+              "Those values would have been built as constants of this type and "
+              "WRAPPED, so each would have measured a different number than the "
+              "one requested. The ladder is correspondingly coarser here, which "
+              "is a resolution loss, not a wrong bound",
+              c.name,
+              out_of_type,
+              probe_vals.size());
+          if (probe_vals.empty())
+          {
+            log_warning(
+              "--path-cov-outer-box: coordinate '{}' — NO probe value survives "
+              "the type check, so NOTHING is measured on it and it appears in "
+              "no box below. Its absence is a refusal, not a measurement of the "
+              "full type range",
+              c.name);
+            path_cov_refused_coords[c.name] =
+              "every requested probe value lies outside the coordinate's own "
+              "type range, so every probe would have wrapped and measured a "
+              "different number";
+            continue;
+          }
           for (const BigInt &v : probe_vals)
           {
             for (int dir = 0; dir < 2; ++dir)

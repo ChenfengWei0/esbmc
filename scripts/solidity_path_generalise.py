@@ -361,6 +361,14 @@ REGION_RE = re.compile(
     r"path enc=(\d+) CERTIFIED region after subtracting sibling outer boxes "
     r"\(zero queries\): ([^—]*)(— WARNING.*)?")
 SHRINK_RE = re.compile(r"retry with (\S+) in \[(\d+), (\d+)\]")
+# The tool publishes each coordinate's own type range. The driver chooses the
+# ladder and cannot choose it correctly without this: laying probes over the
+# whole 256-bit range on a 160-bit `address` puts most of them OUTSIDE the type,
+# where they wrap and measure a different number. Measured -- that is how an
+# impossible-looking bracket (`lower in [2^255, 1)`) arose, and the inverted
+# span it produced killed the loop.
+TYPE_RANGE_RE = re.compile(
+    r"coordinate '([^']+)' has TYPE RANGE \[(\d+), (\d+)\]")
 
 
 # `name in [lo, hi]`, optionally followed by Definition 5's punched set
@@ -422,7 +430,7 @@ def brackets_for(coord, brackets):
 def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
                 max_tx, timeout, cwd, spans=None, geometric=False,
                 ast=None, focus=None, memlimit="8g", values_by_coord=None,
-                extra_values=None):
+                extra_values=None, type_ranges=None):
     """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned).
 
     `values_by_coord` overrides the ladder for the coordinates it names, which
@@ -457,7 +465,17 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
         # paths whose projection really is a range.
         extra = [str(v) for v in sorted(extra_values.get(c, ()))]
         if geometric:
-            vals = [str(v) for v in geometric_values(UINT256_MAX)]
+            # Bound the ladder by the coordinate's OWN type where it is known.
+            # A probe above the type maximum is built as a constant of that type
+            # and wraps, so it measures a different number; the tool now drops
+            # such values and says so, but laying them at all wastes the ladder
+            # and leaves the bracket describing a range the type cannot hold.
+            # `UINT256_MAX` stays the default for a coordinate whose range has
+            # not been published yet -- the previous behaviour exactly, which is
+            # what the FIRST round has to fall back on since nothing has been
+            # measured before it.
+            limit = (type_ranges or {}).get(c, (0, UINT256_MAX))[1]
+            vals = [str(v) for v in geometric_values(limit)]
             spec_coords.append({"name": c, "values": sorted(set(vals + extra),
                                                             key=int)})
         else:
@@ -492,8 +510,11 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     if failure:
         print(f"[outer-box] ROUND MEASURED NOTHING — {failure}")
     boxes, brackets, regions, warned = {}, {}, {}, set()
-    region_holes = {}
+    region_holes, type_ranges = {}, {}
     for line in log.splitlines():
+        m = TYPE_RANGE_RE.search(line)
+        if m:
+            type_ranges[m.group(1)] = (int(m.group(2)), int(m.group(3)))
         m = BOX_RE.search(line)
         if m:
             boxes[int(m.group(1))] = parse_intervals(m.group(2))
@@ -509,7 +530,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             region_holes[int(m.group(1))] = parse_holes(m.group(2))
             if m.group(3):
                 warned.add(int(m.group(1)))
-    return boxes, brackets, regions, warned, failure, region_holes
+    return boxes, brackets, regions, warned, failure, region_holes, type_ranges
 
 
 def verdict(log):
@@ -1215,12 +1236,21 @@ def main():
     # this it is a NameError on every default run, i.e. the flag would become
     # mandatory by accident.
     eq_values, cand = {}, {}
+    # Learned from the tool, round by round, and never guessed. Empty until a
+    # round has published one, so the FIRST ladder falls back to the full 256-bit
+    # range exactly as before -- there is nothing to know it from yet.
+    type_ranges = {}
     if args.level0:
         cand = level0_candidates(paths, coords)
-        l0_boxes, _, _, _, l0_failure, _ = outer_round(
+        l0_boxes, _, _, _, l0_failure, _, tr_new = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, values_by_coord=cand,
             ast=args.ast, focus=focus, memlimit=args.memlimit)
+        # Level 0 lays no ladder, but it DOES publish every coordinate's type
+        # range -- so the geometric bracket that follows can be bounded by the
+        # type instead of by 2^256. That ordering is why the fix costs no extra
+        # run: the information is already on the way past.
+        type_ranges.update(tr_new)
         if l0_failure:
             # Not "no equality coordinates". Say which it was, here, where it is
             # known -- the same rule the rest of this file follows.
@@ -1252,11 +1282,14 @@ def main():
               "coordinate's full type range, which is the same fallback the "
               "code takes when the bracket measures nothing")
     else:
-        _, brackets, regions, warned, round_failure, region_holes = outer_round(
+        (_, brackets, regions, warned, round_failure, region_holes,
+         tr_new) = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
-            values_by_coord=eq_values, extra_values=cand)
+            values_by_coord=eq_values, extra_values=cand,
+            type_ranges=type_ranges)
+        type_ranges.update(tr_new)
         print(f"[bracket] {brackets}")
     # MEASURED, and it is the binding cost on real input: the geometric round
     # ignores --probes entirely (see geometric_values) and lays down one probe
@@ -1272,14 +1305,24 @@ def main():
     last_failure = round_failure
 
     # Rounds 2..N: linear inside the union of the brackets, per coordinate.
-    spans = {c: (brackets_for(c, brackets) or (0, UINT256_MAX))
-             for c in coords}
+    def _span(c):
+        # Clamped to the coordinate's own type where it is known. A span whose
+        # upper end is above the type maximum is a span the type cannot hold, so
+        # every probe the tool lays inside it above that point is dropped -- and
+        # what is left is the ladder crowded into the wrong place.
+        lo, hi = brackets_for(c, brackets) or (0, UINT256_MAX)
+        tlo, thi = type_ranges.get(c, (0, UINT256_MAX))
+        return (max(lo, tlo), min(hi, thi))
+    spans = {c: _span(c) for c in coords}
     for r in range(args.refine_rounds):
-        _, brackets, regions, warned, round_failure, region_holes = outer_round(
+        (_, brackets, regions, warned, round_failure, region_holes,
+         tr_new) = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
-            values_by_coord=eq_values, extra_values=cand)
+            values_by_coord=eq_values, extra_values=cand,
+            type_ranges=type_ranges)
+        type_ranges.update(tr_new)
         last_failure = round_failure or last_failure
         print(f"[refine {r+1}] spans={spans} regions={regions}"
               + (f" holes={ {k: v for k, v in region_holes.items() if v} }"
