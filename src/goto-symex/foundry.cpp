@@ -375,7 +375,42 @@ std::string foundry_generator::format_sol_value(
   return "";
 }
 
-std::string foundry_generator::default_sol_literal(const std::string &sol_type)
+// A small, STABLE disambiguator for a defaulted argument, derived from the
+// parameter's own name (FNV-1a, not std::hash, so the emitted literal is the
+// same on every machine and every run -- a generated test that changed value
+// between runs would be unreviewable).
+//
+// WHY A DEFAULT NEEDS DISAMBIGUATING AT ALL. A defaulted argument is one the
+// path did not constrain, so ANY value is faithful to the model. All-zero is
+// not one value among many, though: distinct parameters defaulted to the SAME
+// zero become the same key. MEASURED on aqua, whose storage is
+// `mapping(address => mapping(address => mapping(bytes32 => mapping(address =>
+// Balance))))`: all 28 defaulted arguments of the emitted suite are ADDRESS
+// (21) or BYTES32 (7) -- every one of them a mapping key -- and with all four
+// keys zero the call indexes ONE slot and trips the first `require`. The suite
+// covered 2 of 8 canonical decisions where the project's own tests cover 6.
+//
+// Distinct values do not make the value right; they remove an aliasing that the
+// model never implied. `defaulted` still marks the argument and the count is
+// still reported, because "we chose this value" remains true either way.
+static unsigned default_slot_of(const std::string &param)
+{
+  if (param.empty())
+    return 0;
+  uint32_t h = 2166136261u;
+  for (unsigned char c : param)
+  {
+    h ^= c;
+    h *= 16777619u;
+  }
+  // 1..65535: never 0 (which is the aliasing value this exists to avoid) and
+  // small enough to read in a diff.
+  return 1u + (h % 65535u);
+}
+
+std::string foundry_generator::default_sol_literal(
+  const std::string &sol_type,
+  unsigned nth)
 {
   if (has_prefix(sol_type, "UDVT:"))
   {
@@ -383,19 +418,28 @@ std::string foundry_generator::default_sol_literal(const std::string &sol_type)
     size_t sep = rest.find(':');
     if (sep == std::string::npos)
       return "";
-    const std::string inner = default_sol_literal(rest.substr(sep + 1));
+    const std::string inner = default_sol_literal(rest.substr(sep + 1), nth);
     return inner.empty() ? "" : rest.substr(0, sep) + ".wrap(" + inner + ")";
   }
   if (sol_type == "BOOL")
     return "false";
   if (has_prefix(sol_type, "UINT") || has_prefix(sol_type, "INT"))
+    // Left at 0 deliberately. A numeric default is not an identity, so two of
+    // them being equal aliases nothing; and a non-zero amount is far more likely
+    // to trip a balance/overflow guard than a zero one.
     return "0";
   if (sol_type == "ADDRESS" || sol_type == "ADDRESS_PAYABLE")
-    return "address(0)";
-  // Fixed-size bytesN not exercised on the path: the zero value is a valid,
-  // faithful default (a sliced/unread bytesN cannot change branch reachability).
+    return nth ? "address(uint160(" + std::to_string(nth) + "))"
+               : "address(0)";
+  // Fixed-size bytesN not exercised on the path: any value is faithful, and a
+  // DISTINCT one is preferred for the aliasing reason above.
   if (unsigned n = parse_fixed_bytes_width(sol_type))
-    return "bytes" + std::to_string(n) + "(0x" + std::string(2 * n, '0') + ")";
+  {
+    std::string hex(2 * n, '0');
+    for (unsigned i = 0, v = nth; i < 2 * n && v; ++i, v >>= 4)
+      hex[2 * n - 1 - i] = "0123456789abcdef"[v & 0xF];
+    return "bytes" + std::to_string(n) + "(0x" + hex + ")";
+  }
   // Dynamic array `T[]`: render a `new <T>[](N)` literal. N mirrors the
   // external-call harness's fixed dynamic-array length (kHarnessDynLen = 4 in
   // solidity_convert_call.cpp), so length-dependent branches (`arr.length`,
@@ -1349,7 +1393,10 @@ foundry_generator::test_case foundry_generator::reconstruct(
         a.literal = it->second.literal;
       const bool from_recovered = !a.literal.empty();
       if (a.literal.empty())
-        a.literal = default_sol_literal(decl.second);
+        // Keyed on the PARAMETER NAME, so two parameters of one call never
+        // default to the same identity -- see default_slot_of for the measured
+        // aliasing this removes.
+        a.literal = default_sol_literal(decl.second, default_slot_of(a.param));
       // A non-empty literal not sourced from a recovered value is a type default.
       a.defaulted = !a.literal.empty() && !from_recovered;
       if (a.literal.empty())
@@ -2958,6 +3005,69 @@ void foundry_generator::generate() const
       "and only reading the body tells them apart. The paths remain witnessed; "
       "what is refused is shipping a test that does not exercise them",
       suppressed_empty_body);
+
+  // ---- DEFAULTED ARGUMENTS: REPORTED, not yet refused ----
+  //
+  // `sol_arg::defaulted` marks a literal that is a TYPE DEFAULT (0, address(0),
+  // false, ...) because no value was recovered for that parameter. It is set in
+  // two places and read in exactly ONE (the base-remapped constructor route),
+  // so on the ordinary method-call route, the --function/library route and the
+  // coverage-claim fallback route a defaulted argument is emitted as though it
+  // were the counterexample's own value.
+  //
+  // MEASURED end to end on aqua: every argument of every emitted call is zero
+  // except one, and aqua's storage is a four-level mapping keyed on those
+  // addresses -- four zero keys index ONE slot and trip the first `require`.
+  // The generated suite covers 2 of 8 canonical decisions where the project's
+  // own tests cover 6. This is what that number rests on.
+  //
+  // REPORTED AND NOT REFUSED, deliberately, and the standing note at the foot
+  // of this file says why: the reconstruction cannot presently tell "sliced
+  // because irrelevant to this path" (a faithful default) from "relevant but
+  // unrecoverable" (a wrong test). Refusing every default would over-refuse and
+  // silently shrink the suite; refusing none is where we are. The population
+  // size is what decides which, so it is printed first -- with the per-type
+  // breakdown, because the answer differs by type: a defaulted ADDRESS that
+  // aliases other zero addresses is a different problem from a defaulted
+  // UINT256 that the path never reads.
+  {
+    size_t d_calls = 0, d_args = 0;
+    std::map<std::string, size_t> by_type;
+    for (const auto &tc : test_cases)
+      for (const auto &c : tc)
+      {
+        bool any = false;
+        for (const auto &a : c.args)
+          if (a.defaulted)
+          {
+            ++d_args;
+            ++by_type[a.sol_type];
+            any = true;
+          }
+        if (any)
+          ++d_calls;
+      }
+    if (d_args)
+    {
+      std::string breakdown;
+      for (const auto &bt : by_type)
+        breakdown +=
+          (breakdown.empty() ? "" : ", ") + bt.first + " x" +
+          std::to_string(bt.second);
+      log_warning(
+        "Foundry: {} call(s) carry {} DEFAULTED argument(s) ({}). A defaulted "
+        "argument is a TYPE DEFAULT substituted because no value was recovered "
+        "for that parameter -- the emitted call therefore exercises a DIFFERENT "
+        "input than the counterexample did, while reading exactly like a "
+        "faithful replay. Not refused: the reconstruction cannot yet tell "
+        "\"sliced because irrelevant\" (a faithful default) from \"relevant but "
+        "unrecoverable\" (a wrong test), and refusing every default would "
+        "silently shrink the suite. This count is what that decision needs",
+        d_calls,
+        d_args,
+        breakdown);
+    }
+  }
 
   if (test_cases.empty())
   {

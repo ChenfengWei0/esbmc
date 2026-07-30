@@ -1,8 +1,8 @@
 {"tag": "BalanceLib__load", "exitCode": 0, "wallSeconds": 1.21, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
-{"tag": "BalanceLib__store", "exitCode": 0, "wallSeconds": 1.21, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
-{"tag": "Aqua__rawBalances", "exitCode": 1, "wallSeconds": 1.4, "killed": false, "emitted": ["Aqua.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}
+{"tag": "BalanceLib__store", "exitCode": 0, "wallSeconds": 1.27, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "Aqua__rawBalances", "exitCode": 1, "wallSeconds": 1.45, "killed": false, "emitted": ["Aqua.cov.t.sol"], "defaultedCalls": 2, "defaultedArgs": 8, "defaultedByType": "ADDRESS x6, BYTES32 x2", "nonUnitFunctionsPresent": true, "cases": 1}
 {"tag": "Aqua__safeBalances", "exitCode": 1, "wallSeconds": 1.54, "killed": false, "emitted": ["Aqua.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}
-{"tag": "Aqua__ship", "exitCode": 1, "wallSeconds": 151.22, "killed": false, "emitted": [], "refusedEmptyBody": 2, "nonUnitFunctionsPresent": true}
-{"tag": "Aqua__dock", "exitCode": 1, "wallSeconds": 5.39, "killed": false, "emitted": [], "refusedEmptyBody": 2, "nonUnitFunctionsPresent": true}
-{"tag": "Aqua__pull", "exitCode": 1, "wallSeconds": 2.56, "killed": false, "emitted": ["Aqua.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 2}
-{"tag": "Aqua__push", "exitCode": 1, "wallSeconds": 1.71, "killed": false, "emitted": ["Aqua.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}
+{"tag": "Aqua__ship", "exitCode": 1, "wallSeconds": 150.67, "killed": false, "emitted": [], "refusedEmptyBody": 2, "nonUnitFunctionsPresent": true}
+{"tag": "Aqua__dock", "exitCode": 1, "wallSeconds": 5.37, "killed": false, "emitted": [], "refusedEmptyBody": 2, "nonUnitFunctionsPresent": true}
+{"tag": "Aqua__pull", "exitCode": 1, "wallSeconds": 2.56, "killed": false, "emitted": ["Aqua.cov.t.sol"], "defaultedCalls": 5, "defaultedArgs": 20, "defaultedByType": "ADDRESS x15, BYTES32 x5", "nonUnitFunctionsPresent": true, "cases": 2}
+{"tag": "Aqua__push", "exitCode": 1, "wallSeconds": 1.7, "killed": false, "emitted": ["Aqua.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}

@@ -22,11 +22,11 @@ contract AquaCovTest_Aqua_pull is Test {
   // what was generated.
   function disabled_test_cov_0() public {
     // [asserted] path exits normally; a revert fails the test
-    c0.pull(address(0), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(0), 0, address(0));
+    c0.pull(address(uint160(43733)), bytes32(0x000000000000000000000000000000000000000000000000000000000000c415), address(uint160(32429)), 0, address(uint160(35434)));
   }
   // claim: sol:@C@Aqua@F@pull#3153:path:59, sol:@C@Aqua@F@pull#3153:path:58
   function test_cov_1() public {
     // [revert-tolerant] outcome not asserted
-    try c0.pull(address(0), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(0), 452312848583266388373324160190187140051835877600158453279131187530910662656, address(0)) {} catch {}
+    try c0.pull(address(uint160(43733)), bytes32(0x000000000000000000000000000000000000000000000000000000000000c415), address(uint160(32429)), 452312848583266388373324160190187140051835877600158453279131187530910662656, address(uint160(35434))) {} catch {}
   }
 }

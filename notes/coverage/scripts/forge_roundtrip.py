@@ -110,6 +110,12 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal):
                       r"path is a NAMED OBSTACLE", out)
         if m:
             rec["refusedObstacle"] = int(m.group(1))
+        m = re.search(r"Foundry: (\d+) call\(s\) carry (\d+) DEFAULTED "
+                      r"argument\(s\) \(([^)]*)\)", out)
+        if m:
+            rec["defaultedCalls"] = int(m.group(1))
+            rec["defaultedArgs"] = int(m.group(2))
+            rec["defaultedByType"] = m.group(3)
         if "No verification targets" in out:
             rec["noVerificationTargets"] = True
         if "are internal/private and are therefore not units" in out:
@@ -323,6 +329,12 @@ def main():
     print(f"  refused, obstacle  : "
           f"{sum(r.get('refusedObstacle', 0) for r in recs)}")
     print(f"  RED, disabled      : {len(reds)}")
+    print(f"  defaulted args     : "
+          f"{sum(r.get('defaultedArgs', 0) for r in recs)} in "
+          f"{sum(r.get('defaultedCalls', 0) for r in recs)} call(s)")
+    types = [r["defaultedByType"] for r in recs if r.get("defaultedByType")]
+    if types:
+        print(f"  defaulted by type  : {'; '.join(sorted(set(types)))}")
     print(f"  project            : {proj}")
 
 

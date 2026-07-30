@@ -271,7 +271,15 @@ private:
   /// Default literal for a supported type (used for a declared parameter that
   /// was not exercised on the path, e.g. a short-circuited operand). Returns
   /// empty for an unsupported type.
-  static std::string default_sol_literal(const std::string &sol_type);
+  /// `nth` disambiguates: a defaulted argument is one the path did not
+  /// constrain, so any value is faithful -- but all-zero makes DISTINCT
+  /// parameters into the SAME mapping key, which is an aliasing the model never
+  /// implied. Non-zero `nth` shifts the identity-like types (address, bytesN)
+  /// apart; numeric and boolean defaults stay at their zero, where equality
+  /// aliases nothing. 0 keeps the old literal exactly, so every other call site
+  /// is unchanged.
+  static std::string
+  default_sol_literal(const std::string &sol_type, unsigned nth = 0);
 
   /// Render a recovered `constant_struct` value as a Solidity positional struct
   /// literal `<Qualified>(f0, f1, …)`. Field source types (UDVT / bytesN /
