@@ -303,3 +303,37 @@ cost scales with the number of claims and wrong about WHERE. Instrumentation is
 flat; the per-claim slice-and-encode inside multi-property is what grows. The
 practical conclusion — bound the number of claims — is unchanged, which is why
 the previous entry's control is still the right one.
+
+### ★ First completed geometric bracket on a real contract
+
+Budget computed from the measured rate: 6 coordinates x 5 paths x 2 directions =
+60 claims per ladder value, so a ~300 s round affords ~11 values per coordinate.
+Run with `--claim-budget 700`:
+
+    [round] LADDER THINNED: 6 coordinate(s) thinned to 11 value(s)
+            (~660 emitted claims after thinning)
+    [round] geometric-bracket: 282.5s wall
+    [round] accounting: 600 of 660 probe(s) reached the solver;
+            per-query wall: n=2400 max=0.090s median=0.055s total=123.0s
+    [bracket] {14: 'immutables.amount upper in (17254365866976409468586889655692
+              56363112777243042596638790631055949824, 2^256-1] ...'}
+
+**The round finished and produced a bracket.** Every previous attempt on a real
+contract ended `[bracket] {}` with "no outer-box round finished". 600 of 660
+probes decided. The prediction was the right order — 282.5 s actual against
+~172 s predicted at 0.26 s/claim, so this unit runs nearer 0.43 s/claim, having
+more coordinates and paths per claim than the isolating fixture did.
+
+This is the mechanism the design has rested on since the widening search was
+withdrawn — *"brackets the bound within a factor of two whatever its magnitude,
+in ONE run"* — working on real input for the first time.
+
+⚠ **What it did not fix**, said here because a first success is exactly where
+scope gets overstated: the shrink still exhausts at 3 rounds and still halves
+`immutables.amount`. The bracket's information never reached it — this run used
+`--refine-rounds 0`, and the bracket sets the SPAN for the refine rounds, so with
+none configured the shrink still started from the full type range.
+
+Running the bracket AND a refine round inside one budget is the next experiment.
+It is now budget arithmetic rather than an unknown: ~0.43 s/claim on this unit,
+660 claims for a bracket, and a refine round costs the same per value.
