@@ -509,6 +509,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             ("geometric-bracket" if geometric else "linear-refine"))
     print(f"[round] {kind}: {_wall:.1f}s wall, {len(spec_coords)} coordinate(s),"
           f" ~{n_probe} candidate value(s) per direction, {len(paths)} path(s)")
+    print("[round] " + round_accounting(log))
     # A timed-out round measures nothing, and "measured nothing" is reported
     # downstream as "no fully bounded region was measured" -- which reads as a
     # property of the path. Say which it was, here, where it is known.
@@ -653,6 +654,52 @@ def certified_overlap(ok, holes=None):
                                holes.get(e1), holes.get(e2)):
                 bad.append((e1, e2))
     return bad
+
+
+REACHED_RE = re.compile(r"(\d+) of (\d+) ladder probe\(s\) reached the solver")
+DECISION_RE = re.compile(r"Runtime decision procedure: ([0-9.]+)s")
+
+
+def round_accounting(log):
+    """The three numbers WITHOUT which a cost claim may not be made.
+
+    "The round did not finish" is not evidence of "the ladder is too long". It
+    is equally consistent with one query hanging, with the solver giving up, and
+    with an unsatisfiable assumption making the solver behave erratically. Those
+    are different defects and only one of them is about cost -- so a round that
+    reports only its wall clock cannot support any conclusion at all, and this
+    project has already had to retract one cost claim built exactly that way.
+
+    So every round reports:
+
+      * decided / total -- is it uniformly slow, or stuck on one query? 417 of
+        420 answered means one query hung; 3 of 420 means it never got going.
+      * the per-query wall clock distribution (max and median) -- 420 x 0.26s is
+        a ladder-length problem; 417 fast plus one enormous is not.
+      * the verdict mix -- a timeout is slow, an `unknown` is the solver giving
+        up, and a wall of UNSAT can mean the assumption itself is unsatisfiable
+        (measured on this very unit: the subtraction inverted an interval, and
+        an unsatisfiable assumption is exactly where solver behaviour stops
+        being a measurement of anything).
+
+    Read off ESBMC's own output rather than timed here, so the numbers describe
+    the solver's work and not the driver's bookkeeping around it.
+    """
+    m = REACHED_RE.search(log)
+    decided, total = (m.group(1), m.group(2)) if m else ("?", "?")
+    times = sorted(float(x) for x in DECISION_RE.findall(log))
+    npass = log.count("✓ PASSED:")
+    nfail = log.count("✗ FAILED:")
+    if times:
+        med = times[len(times) // 2]
+        dist = (f"per-query wall: n={len(times)} max={times[-1]:.3f}s "
+                f"median={med:.3f}s total={sum(times):.1f}s")
+    else:
+        # NOT "0 seconds": no query reported a time at all, which is itself the
+        # finding when a round comes back empty.
+        dist = "per-query wall: NO query reported a decision time"
+    return (f"accounting: {decided} of {total} probe(s) reached the solver; "
+            f"{dist}; verdicts PASSED={npass} FAILED={nfail}")
 
 
 def round_failure_reason(log):
@@ -1374,7 +1421,30 @@ def main():
             # region that a cut could not separate is EXPECTED to be refuted.
             print(f"[certify enc={enc}] region overlaps an unseparated sibling; "
                   f"certifying anyway, the query is what decides")
-        last_wit = {}
+        # THE WITNESS AND THE BOX IT WAS SOLVED UNDER TRAVEL TOGETHER.
+        #
+        # They must, and getting this wrong produced a FALSE POSITIVE on real
+        # input that I very nearly built a diagnosis on. `box` advances at the
+        # bottom of this loop; `last_wit` is the witness of the round BEFORE the
+        # advance. Comparing that witness against the final `box` is comparing it
+        # against an assumption it was never solved under -- and since each
+        # shrink cuts at the witness, the witness is reliably just OUTSIDE the
+        # next box. So the trust check reported "the witness value contradicts
+        # the bound this query assumed" on every budget-exhausted path, always,
+        # from arithmetic rather than from anything about the model.
+        #
+        # Measured: EscrowSrc.cancel, last shrink (0, 268214519) -> (0,
+        # 134127735), witness 134127736. Inside the box it was actually solved
+        # under; outside the box it was checked against. Four paths, four
+        # spurious contradictions, and the anti-collapse branch fired for a wrong
+        # reason -- which is worse than not firing, because its whole purpose is
+        # to say the payload could not be compared.
+        #
+        # The independent check that caught it: pinning FACTORY to a point
+        # reports that point, and bounding it to [0,100] reports 52. The bound
+        # binds and the harvest is faithful, so "reported outside the bound" had
+        # to be the checker's error, not the model's.
+        last_wit, last_wit_box = {}, dict(box)
         for _ in range(args.shrink_rounds):
             v, nb, wit = certify(args.esbmc, args.sol, args.contract, args.unit,
                                  enc, depth, box, ce, pins, args.max_tx,
@@ -1382,6 +1452,7 @@ def main():
                                  memlimit=args.memlimit, holes=holes)
             if wit:
                 last_wit = wit
+                last_wit_box = dict(box)
             if v == "SUCCESSFUL":
                 ok[enc] = box
                 ok_holes[enc] = holes
@@ -1397,8 +1468,10 @@ def main():
             if nb is None or nb == box:
                 failed[enc] = (
                     "refuted with no single-coordinate cut available"
-                    + divergence_text(ce, last_wit, set(box) | set(pins),
-                                      caveats, assumed_ranges(box, pins),
+                    + divergence_text(ce, last_wit,
+                                      set(last_wit_box) | set(pins),
+                                      caveats,
+                                      assumed_ranges(last_wit_box, pins),
                                       assumed_holes(holes, pins)))
                 break
             print(f"[shrink enc={enc}] {box} -> {nb}")
@@ -1406,8 +1479,9 @@ def main():
         else:
             failed[enc] = (
                 "shrink round budget exhausted"
-                + divergence_text(ce, last_wit, set(box) | set(pins), caveats,
-                                  assumed_ranges(box, pins),
+                + divergence_text(ce, last_wit, set(last_wit_box) | set(pins),
+                                  caveats,
+                                  assumed_ranges(last_wit_box, pins),
                                   assumed_holes(holes, pins)))
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean

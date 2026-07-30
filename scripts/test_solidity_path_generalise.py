@@ -34,7 +34,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       single_point_coords, equality_coords,
                                       assumed_ranges, outside_assumed,
                                       parse_intervals, parse_holes,
-                                      assumed_holes)
+                                      assumed_holes,
+                                      round_accounting)
 
 FAILURES = []
 
@@ -638,6 +639,71 @@ check("other-difference-survives-punching", "s (path=1, witness=3)" in tp, True)
 check("no-holes-leaves-divergence-wording-unchanged",
       divergence_text({"a": 4}, {"a": 9}, {"a"}, None, {"a": (0, 5)}),
       divergence_text({"a": 4}, {"a": 9}, {"a"}, None, {"a": (0, 5)}, None))
+
+
+# --- the witness must be judged against the box it was SOLVED under ---
+#
+# This pins a FALSE POSITIVE that reached real input. In the shrink loop the box
+# advances each round, and the cut is placed AT the witness -- so the witness of
+# round N is reliably just outside the box of round N+1. Checking it against the
+# final box therefore reported "the witness value contradicts the bound this
+# query assumed" on EVERY budget-exhausted path, from arithmetic alone, saying
+# nothing whatever about the model. Measured on EscrowSrc.cancel: last shrink
+# (0, 268214519) -> (0, 134127735) with witness 134127736 -- inside the box it
+# was solved under, outside the one it was compared against. Four paths, four
+# spurious contradictions, and the anti-collapse branch fired for a wrong reason,
+# which is worse than not firing at all: its entire job is to say the payload
+# could not be compared.
+WIT = {"state.FACTORY": 134127736}
+PATH_CE = {"state.FACTORY": 0}
+# The box the witness was actually solved under: 134127736 is INSIDE it, so this
+# is a genuine divergence and must be reported as one.
+right = divergence_text(PATH_CE, WIT, {"state.FACTORY"}, None,
+                        {"state.FACTORY": (0, 268214519)})
+check("witness-inside-its-own-box-is-a-real-divergence",
+      "state.FACTORY (path=0, witness=134127736)" in right, True)
+check("witness-inside-its-own-box-not-flagged-untrusted",
+      "OUTSIDE the bound" in right, False)
+# The NEXT box, which it was never solved under. Reported as untrusted -- which
+# is correct behaviour for this input and precisely why passing it was a bug.
+wrong = divergence_text(PATH_CE, WIT, {"state.FACTORY"}, None,
+                        {"state.FACTORY": (0, 134127735)})
+check("witness-against-the-next-box-looks-untrusted",
+      "OUTSIDE the bound" in wrong, True)
+check("the-two-differ", right == wrong, False)
+# ...and that mistake does not merely add a note, it CHANGES THE FINDING: with
+# the only difference untrusted, the result becomes the anti-collapse message
+# instead of a named divergence. That is the shape that made it dangerous.
+check("wrong-box-collapses-to-could-not-be-compared",
+      "could not be compared" in wrong, True)
+check("right-box-does-not", "could not be compared" in right, False)
+
+
+# --- a round may not report cost without reporting what was decided ---
+LADDER_LOG = "\n".join([
+    "--path-cov-outer-box: 417 of 420 ladder probe(s) reached the solver. ...",
+    "Runtime decision procedure: 0.002s",
+    "Runtime decision procedure: 0.001s",
+    "Runtime decision procedure: 88.400s",
+    "✓ PASSED: 'send:path:2#ub_a_0 at'",
+    "✗ FAILED: 'send:path:3#ub_a_0 at'",
+])
+acc = round_accounting(LADDER_LOG)
+check("accounting-reports-decided-over-total",
+      "417 of 420 probe(s) reached the solver" in acc, True)
+check("accounting-reports-the-max", "max=88.400s" in acc, True)
+check("accounting-reports-the-median", "median=" in acc, True)
+check("accounting-reports-the-verdict-mix",
+      "PASSED=1 FAILED=1" in acc, True)
+# A round that produced NO decision time at all must say so rather than report
+# zero -- "the solver answered nothing" and "the solver answered instantly" are
+# opposite findings and a 0.0 would read as the second.
+empty = round_accounting("--path-cov-outer-box: 0 of 420 ladder probe(s) "
+                         "reached the solver")
+check("no-decision-time-is-not-zero",
+      "NO query reported a decision time" in empty, True)
+check("no-decision-time-still-reports-the-ratio",
+      "0 of 420" in empty, True)
 
 
 if FAILURES:
