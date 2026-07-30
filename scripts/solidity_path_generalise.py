@@ -54,6 +54,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 UINT256_MAX = (1 << 256) - 1
 
@@ -492,8 +493,22 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     path = os.path.join(cwd, "outer.json")
     with open(path, "w") as f:
         json.dump(spec, f)
+    # WALL CLOCK PER ROUND, printed. The bracket round's cost is a number the
+    # evaluation needs and has never had: the only figures ever collected for it
+    # came from runs that were ALSO hitting the type-wrap defect, so "did not
+    # finish" could not be separated from "too slow". Those are different
+    # claims and only one of them is about the method. Timed here, at the single
+    # place a round is issued, so no caller can report a cost it did not
+    # measure. ("did not finish" above is deliberately not called "too slow".)
+    _t0 = time.time()
     log = run(esbmc, sol, contract, ["--path-cov-outer-box", path],
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
+    _wall = time.time() - _t0
+    n_probe = sum(len(c.get("values", [])) or (probes + 2) for c in spec_coords)
+    kind = ("level-0" if values_by_coord else
+            ("geometric-bracket" if geometric else "linear-refine"))
+    print(f"[round] {kind}: {_wall:.1f}s wall, {len(spec_coords)} coordinate(s),"
+          f" ~{n_probe} candidate value(s) per direction, {len(paths)} path(s)")
     # A timed-out round measures nothing, and "measured nothing" is reported
     # downstream as "no fully bounded region was measured" -- which reads as a
     # property of the path. Say which it was, here, where it is known.
