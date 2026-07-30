@@ -147,3 +147,25 @@ rendering. That is the better fix and the larger one.
 Until then the honest reading of "no single-coordinate cut available" on a
 STRUCT-FIELD coordinate is: **the cut search could not see the witness**, not
 that no cut exists. The two paths above are wrongly attributed to proposition 11.
+
+### ✅ FIXED, and it retracts the proposition-11 attribution above
+
+`witness_of` now resolves a dotted coordinate against the aggregate stored under
+its base name (depth-1 fields, exactly the driver's decomposition). Same query,
+before and after, `withdraw` enc=6:
+
+    before:  VERIFICATION FAILED, and no suggestion of any kind
+    after:   PUNCH SUGGESTION  ... add immutables.taker != 4294967295 to `holes`
+             SHRINK SUGGESTION ... retry with immutables.taker in [...]
+
+**There was a cut, on a single coordinate, all along.**
+
+⚠ **RETRACTED**: the two `withdraw` paths recorded above as instances of
+proposition 11 are NOT. They were a name that did not round-trip between the
+driver and the tool. A wrong attribution to a method-layer proposition is exactly
+the kind of claim that gets quoted, so this is a retraction and not a tidy-up.
+
+The genuinely multi-coordinate cases (enc=14, enc=31 — `block.timestamp` plus
+several struct fields) are still multi-coordinate, but every attribution on this
+contract was collected under the same defect and must be RE-MEASURED before it is
+trusted, not reinterpreted.

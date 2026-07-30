@@ -344,6 +344,69 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
             out = val;
             return true;
           }
+        // ---- STRUCT FIELDS: `immutables.taker` under the key `immutables` ----
+        //
+        // The harvest stores a struct parameter ONCE, under its base name, as a
+        // pretty-printed aggregate. So a `param.field` coordinate matched
+        // nothing above, `any_named` stayed false, and this function emitted
+        // NEITHER the shrink suggestion NOR the "no single-coordinate shrink"
+        // note -- which the driver then reported as "refuted with no
+        // single-coordinate cut available".
+        //
+        // That reading was WRONG in a way that matters: it attributed to
+        // proposition 11 (a genuinely multi-dimensional corner) what was only a
+        // name that did not round-trip. MEASURED on EscrowSrc.withdraw enc=6,
+        // whose witness differs on exactly ONE coordinate with an obviously
+        // legal cut: the run printed a bare VERIFICATION FAILED and no
+        // suggestion at all.
+        const size_t d = coord.find('.');
+        if (d != std::string::npos)
+        {
+          const std::string b0 = coord.substr(0, d), f0 = coord.substr(d + 1);
+          for (const auto &[n, val] : ce->second.inputs)
+          {
+            if (n != b0 || val.empty() || val[0] != '{')
+              continue;
+            // Depth-1 `.field=value` only, matching the driver's decomposition
+            // exactly: a nested aggregate's members belong to their own dotted
+            // name, and lifting one here would answer about a different
+            // quantity than the coordinate names.
+            int depth = 0;
+            for (size_t i = 0; i < val.size(); ++i)
+            {
+              if (val[i] == '{')
+                ++depth;
+              else if (val[i] == '}')
+                --depth;
+              else if (val[i] == '.' && depth == 1)
+              {
+                const size_t eq = val.find('=', i);
+                if (eq == std::string::npos)
+                  break;
+                if (val.substr(i + 1, eq - i - 1) == f0)
+                {
+                  size_t k = eq + 1;
+                  while (k < val.size() && val[k] != ',' && val[k] != '}')
+                    ++k;
+                  std::string v = val.substr(eq + 1, k - eq - 1);
+                  while (!v.empty() && v.front() == ' ')
+                    v.erase(v.begin());
+                  while (!v.empty() && v.back() == ' ')
+                    v.pop_back();
+                  // A nested aggregate or a non-value is not a witness value:
+                  // leaving it unmatched keeps the honest "could not look it
+                  // up" rather than inventing a number.
+                  if (!v.empty() && v[0] != '{' && v != "nil")
+                  {
+                    out = v;
+                    return true;
+                  }
+                }
+                i = eq;
+              }
+            }
+          }
+        }
         return false;
       };
       std::string best_coord, best_lo, best_hi;
