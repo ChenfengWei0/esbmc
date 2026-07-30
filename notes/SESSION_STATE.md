@@ -93,6 +93,40 @@ deploy leaves empty, so they need state an EARLIER TRANSACTION establishes, and
 everything runs at `--solidity-max-tx 1` from the post-constructor state with no
 havoc. `forge_roundtrip.py --max-tx N` exists to test exactly that.
 
+## THE NEXT STEP, precisely (do this first)
+
+`notes/coverage/scripts/emission_loss.py aqua_Aqua` names the whole
+enumeration-to-emission loss as two lines, 2258 and 2260, and both are in
+`dock` -- its loop header and the `require` inside it. `dock` is also one of the
+two units whose emitted test had an EMPTY BODY, so its CALL was never
+reconstructed; the arguments were never the question.
+
+The distinction that matters and is not yet settled: a call whose ARGUMENT
+cannot be rendered leaves a `// UNSUPPORTED: <C>.<m> has an argument type ESBMC
+cannot yet render` comment in the emitted file. `dock` left NO comment at all,
+which means the segment never reached that branch -- it was dropped earlier, in
+`reconstruct()`. Those are different defects with different fixes.
+
+To settle it:
+
+1. Read `notes/coverage/forge_roundtrip/aqua_Aqua/_gen/Aqua__dock/run.log`
+   (939 lines; it is the emission run's own output and may already name the
+   reason).
+2. If it does not, read `foundry_generator::reconstruct` in
+   `src/goto-symex/foundry.cpp` and find where a segment is dropped without a
+   comment -- the emitter audit calls this row 14, "segment with no method:
+   nothing emitted, nothing counted", at roughly `foundry.cpp:2133`.
+3. Whatever it is, it needs a COUNTER before it needs a fix, for the reason the
+   last two emitter changes demonstrated: two hypotheses (argument aliasing, the
+   transaction bound) were plausible, cheap to implement, and both refuted by
+   measurement.
+
+`dock(address app, bytes32 strategyHash, address[] calldata tokens)` takes a
+dynamic array, and `_foundry_roundtrip/RESULTS.md`'s blocker matrix already
+lists `ship`/`dock` as UNSUPPORTED for `bytes`/`address[]` -- so the dynamic
+array is the likely cause, but "likely" is exactly what step 1 exists to
+replace.
+
 ## The three audits, and what they changed
 
 `notes/commensurability-audit.md`, `notes/interval-input-scope-and-plan.md` and
