@@ -508,6 +508,66 @@ def geometric_values(limit):
     return sorted(set(vals))
 
 
+def thin_to(values, k):
+    """Keep at most k of `values`, evenly spaced, endpoints always kept.
+
+    Endpoints matter more than the interior: the type bounds are what make a
+    coordinate fully bounded at all, and a ladder that loses them leaves the
+    coordinate half-open, which blocks the subtraction entirely.
+    """
+    if k >= len(values) or k <= 0:
+        return list(values)
+    if k == 1:
+        return [values[0]]
+    n = len(values)
+    idx = sorted({0, n - 1} |
+                 {round(i * (n - 1) / (k - 1)) for i in range(k)})
+    return [values[i] for i in idx][:max(k, 2)]
+
+
+def budget_probe_values(values_by_coord, n_paths, budget):
+    """Thin every coordinate's ladder so the ROUND stays inside a claim budget.
+
+    The quantity being bounded is the number of claims EMITTED, and that is not
+    a guess about where the cost is -- it is measured. On EscrowSrc.withdraw the
+    geometric bracket laid ~1548 values per coordinate across 6 coordinates and
+    5 paths, and in 300 seconds:
+
+        n=148 queries reached the solver, total 6.9s of solving
+
+    148 queries. Six point nine seconds. The other ~293 seconds went to
+    instrumenting and encoding roughly ninety thousand claims. The round is
+    EMISSION-bound, not solve-bound, so a budget expressed in solver time or in
+    probes-answered would bound the wrong thing.
+
+    Claims per round = sum over coordinates of (values x paths x 2 directions),
+    so the per-coordinate allowance falls out directly. Never below 2: one value
+    cannot distinguish a point domain from a vacuous path (see the level-0
+    warning), and that is a soundness-adjacent property rather than a resolution
+    one.
+    """
+    if budget <= 0 or not values_by_coord:
+        return dict(values_by_coord), None
+    ncoord = len(values_by_coord)
+    per = budget // max(1, ncoord * max(1, n_paths) * 2)
+    per = max(2, per)
+    out, thinned = {}, 0
+    for c, vals in values_by_coord.items():
+        if len(vals) > per:
+            out[c] = thin_to(list(vals), per)
+            thinned += 1
+        else:
+            out[c] = list(vals)
+    if not thinned:
+        return out, None
+    total = sum(len(v) for v in out.values()) * max(1, n_paths) * 2
+    return out, (f"{thinned} coordinate(s) thinned to {per} value(s) to keep "
+                 f"the round inside {budget} emitted claim(s) (~{total} after "
+                 f"thinning). The round is EMISSION-bound -- measured: 1548 "
+                 f"values per coordinate put only 148 queries in front of the "
+                 f"solver in 300s, of which 6.9s was solving")
+
+
 def level0_candidates(paths, coords):
     """LEVEL 0. Per coordinate, the values its siblings' counterexamples take.
 
@@ -649,7 +709,8 @@ def brackets_for(coord, brackets):
 def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
                 max_tx, timeout, cwd, spans=None, geometric=False,
                 ast=None, focus=None, memlimit="8g", values_by_coord=None,
-                extra_values=None, type_ranges=None):
+                extra_values=None, type_ranges=None,
+                claim_budget=0):
     """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned).
 
     `values_by_coord` overrides the ladder for the coordinates it names, which
@@ -662,6 +723,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     values_by_coord = values_by_coord or {}
     extra_values = extra_values or {}
     spec_coords = []
+    geo = {}
     for c in coords:
         if c in values_by_coord:
             spec_coords.append(
@@ -695,8 +757,8 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             # measured before it.
             limit = (type_ranges or {}).get(c, (0, UINT256_MAX))[1]
             vals = [str(v) for v in geometric_values(limit)]
-            spec_coords.append({"name": c, "values": sorted(set(vals + extra),
-                                                            key=int)})
+            geo[c] = sorted(set(vals + extra), key=int)
+            spec_coords.append({"name": c, "values": None})
         else:
             lo, hi = spans[c]
             spec = {"name": c, "lo": str(lo), "hi": str(hi)}
@@ -708,6 +770,13 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             "paths": [{"enc": e, "depth": d,
                        "ce": {k: str(v) for k, v in ce.items() if k in coords}}
                       for e, d, ce in paths]}
+    if geo:
+        geo, note = budget_probe_values(geo, len(paths), claim_budget)
+        if note:
+            print(f"[round] LADDER THINNED: {note}")
+        for sc in spec_coords:
+            if sc.get("values") is None:
+                sc["values"] = geo[sc["name"]]
     path = os.path.join(cwd, "outer.json")
     with open(path, "w") as f:
         json.dump(spec, f)
@@ -1370,6 +1439,24 @@ def main():
                          "construction) and dropping it leaves the guard "
                          "unconstrained, which refuses certification. Such a "
                          "coordinate has to be probed.")
+    ap.add_argument("--claim-budget", type=int, default=0,
+                    help="cap the number of CLAIMS an outer-box round emits, "
+                         "thinning each coordinate's ladder evenly to fit. "
+                         "OFF by default (0), and deliberately so: the right "
+                         "value has to be MEASURED and has not been.\n"
+                         "What is measured is that the round is EMISSION-bound "
+                         "rather than solve-bound -- on EscrowSrc.withdraw a "
+                         "geometric bracket over 6 coordinates and 5 paths put "
+                         "only 148 queries in front of the solver in 300s, of "
+                         "which 6.9s was solving, while ~15000 claims were "
+                         "being instrumented. So a budget expressed in solver "
+                         "time or in probes-answered would bound the wrong "
+                         "quantity.\n"
+                         "What is NOT measured is the emission RATE, i.e. how "
+                         "many claims fit in a given wall clock. Picking a "
+                         "default without it would be inventing the number "
+                         "this whole mechanism exists to respect."
+                    )
     ap.add_argument("--level0", action="store_true",
                     help="try LEVEL 0 first: one batch whose candidate list "
                          "per coordinate is the set of values the siblings' "
@@ -1695,7 +1782,7 @@ def main():
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
             values_by_coord=eq_values, extra_values=cand,
-            type_ranges=type_ranges)
+            type_ranges=type_ranges, claim_budget=args.claim_budget)
         type_ranges.update(tr_new)
         print(f"[bracket] {brackets}")
     # MEASURED, and it is the binding cost on real input: the geometric round

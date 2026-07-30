@@ -40,7 +40,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       unsettable_coords,
                                       struct_fields,
                                       declared_struct_fields,
-                                      lowering_artifacts)
+                                      lowering_artifacts,
+                                      thin_to,
+                                      budget_probe_values)
 
 FAILURES = []
 
@@ -822,6 +824,47 @@ check("bare-parameter-not-touched",
 check("empty-declared-set-drops-nothing", lowering_artifacts(COORDS, set()), {})
 check("missing-ast-declares-nothing",
       declared_struct_fields("/no/such/ast"), set())
+
+
+# --- the ladder is thinned by CLAIMS EMITTED, the quantity that costs ---
+#
+# MEASURED, same unit and pins, only the ladder length varying:
+#   1548 values/coord -> 148 queries reached the solver, 6.9s solving / 300s
+#     60 values/coord -> 1713 queries reached the solver, 86.8s solving / 200s
+# A 26x thinner ladder put 11.6x more queries in front of the solver. The round
+# is emission-bound, so a budget in solver time or probes-answered would bound
+# the wrong quantity.
+check("thin-keeps-both-endpoints",
+      thin_to([0, 1, 2, 4, 8, 16, 32], 3)[0], 0)
+check("thin-keeps-the-last", thin_to([0, 1, 2, 4, 8, 16, 32], 3)[-1], 32)
+check("thin-respects-the-cap", len(thin_to(list(range(100)), 5)) <= 5, True)
+check("thin-is-a-noop-when-short", thin_to([1, 2, 3], 10), [1, 2, 3])
+
+# Budget off must change nothing at all -- the default, and the previous
+# behaviour.
+vals = {"a": list(range(300)), "b": list(range(300))}
+out, note = budget_probe_values(vals, 5, 0)
+check("budget-off-changes-nothing", out, vals)
+check("budget-off-says-nothing", note, None)
+
+# A budget that binds thins and SAYS SO: a silently shorter ladder is a silently
+# coarser measurement.
+out, note = budget_probe_values(vals, 5, 600)
+check("budget-thins-both", all(len(v) <= 30 for v in out.values()), True)
+check("budget-reports-the-thinning", "thinned" in (note or ""), True)
+check("budget-names-the-emission-finding", "EMISSION-bound" in (note or ""),
+      True)
+
+# NEVER below two values: one cannot distinguish a genuine point domain from a
+# vacuous path, which is a soundness-adjacent property rather than resolution.
+out, note = budget_probe_values(vals, 500, 4)
+check("budget-never-goes-below-two",
+      all(len(v) >= 2 for v in out.values()), True)
+
+# A budget that is already satisfied must not claim to have done anything.
+out, note = budget_probe_values({"a": [1, 2]}, 1, 10000)
+check("satisfied-budget-is-silent", note, None)
+check("satisfied-budget-keeps-values", out, {"a": [1, 2]})
 
 
 if FAILURES:
