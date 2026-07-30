@@ -56,18 +56,30 @@ def state_vars(ast_path):
 
 
 def main():
-    asts = sorted(f for f in os.listdir(INPUTS) if f.endswith(".solast"))
-    if not asts:
-        print("no .solast under", INPUTS)
-        return 1
-    print(f"| input | state vars | mutable | immutable | constant | "
+    # THE CORPUS IS NAMED, NOT DISCOVERED. Scanning the directory meant that a
+    # missing .solast simply reduced the census to whatever was present, and a
+    # `**total**` row over five corpora is typographically identical to one over
+    # six. The .solast files are also a SIDE EFFECT of collect.py's mtime check,
+    # so their presence depends on another script's run order. The benchmark
+    # table is imported from collect.py rather than restated, for the same
+    # reason branch_gate.py imports its scope rule from there.
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "coverage", "scripts"))
+    import collect as _c
+    asts = [flat_rel + ".solast" for flat_rel, _p, _s, _pr in _c.BENCHES.values()]
+    missing = [a for a in asts if not os.path.exists(os.path.join(INPUTS, a))]
+    if missing:
+        sys.exit(f"missing {len(missing)} of {len(asts)} AST(s) under {INPUTS}: "
+                 f"{missing}. A census over a subset of the corpus prints in "
+                 f"the same shape as one over all of it")
+    print(f"| input | state vars | mutable | immutable | constant | other | "
           f"settable % |")
-    print(f"|---|---|---|---|---|---|")
+    print(f"|---|---|---|---|---|---|---|")
     tot = {"mutable": 0, "immutable": 0, "constant": 0, "other": 0}
     for a in asts:
         sv = state_vars(os.path.join(INPUTS, a))
         if sv is None:
-            print(f"| `{a}` | UNREADABLE | - | - | - | - |")
+            print(f"| `{a}` | UNREADABLE | - | - | - | - | - |")
             continue
         c = {"mutable": 0, "immutable": 0, "constant": 0, "other": 0}
         for mu in sv.values():
@@ -76,12 +88,18 @@ def main():
         pct = f"{c['mutable'] * 100.0 / n:.0f}%" if n else "n/a"
         for k in c:
             tot[k] += c[k]
+        # `other` -- a VariableDeclaration whose mutability solc did not state --
+        # is in `n`, so it is in the settable-% denominator. It used to have no
+        # column, so the three visible ones did not sum to the printed total and
+        # the denominator silently included a bucket nobody could see.
         print(f"| `{a.replace('.flat.sol.solast', '')}` | {n} | "
-              f"{c['mutable']} | {c['immutable']} | {c['constant']} | {pct} |")
+              f"{c['mutable']} | {c['immutable']} | {c['constant']} | "
+              f"{c['other']} | {pct} |")
     n = sum(tot.values())
     pct = f"{tot['mutable'] * 100.0 / n:.0f}%" if n else "n/a"
     print(f"| **total** | **{n}** | **{tot['mutable']}** | "
-          f"**{tot['immutable']}** | **{tot['constant']}** | **{pct}** |")
+          f"**{tot['immutable']}** | **{tot['constant']}** | "
+          f"**{tot['other']}** | **{pct}** |")
     return 0
 
 
