@@ -337,3 +337,44 @@ none configured the shrink still started from the full type range.
 Running the bracket AND a refine round inside one budget is the next experiment.
 It is now budget arithmetic rather than an unknown: ~0.43 s/claim on this unit,
 660 claims for a bracket, and a refine round costs the same per value.
+
+### Bracket AND refine in one budget: both rounds finish, and the bracket is then thrown away
+
+    [round] geometric-bracket: 122.6s, 300 of 360 probes decided
+    [bracket] {14: 'immutables.amount upper in
+              (51422017416287688817342786954917203280710495801049370729644032,
+               2^256-1] ...'}
+    [round] linear-refine:     48.0s, 130 of 180 probes decided
+    [refine 1] spans={'immutables.amount': (0, 2^256-1), ...}
+
+Both rounds complete inside 220 s — the budget arithmetic works. But **the refine
+span is the FULL TYPE RANGE**, while the bracket had just said the boundary lies
+above 5.14e61. The bracket's answer never reached the refine round, so the shrink
+still starts from the whole type and still halves.
+
+The cause is in `brackets_for`, and it is a rule that is right for one reason and
+wrong for this case:
+
+    if m.group(1) == "upper" and b >= UINT256_MAX:
+        continue
+
+The intent is sound — an upper bracket that runs to the type limit means "no
+bound was found inside the type", and refining towards it would keep the span at
+full range. But the bracket here is `(a, b]` with **a = 5.14e61** and b = typemax.
+Discarding the whole bracket throws away `a`, which is a genuine constraint: the
+true upper bound is somewhere ABOVE 5.14e61, so the span to refine is
+`(5.14e61, typemax]` — vastly narrower than `[0, typemax]`.
+
+So the rule discards information exactly when the upper end happens to be the
+type maximum, which on a `uint256` coordinate whose domain reaches the top is the
+COMMON case rather than the exceptional one.
+
+⚠ NOT FIXED HERE, and the fix is not simply deleting the guard: the guard's own
+case (a bracket that constrains nothing, `(0, typemax]`) is real and must still
+be dropped. The distinction is whether `a` is above the coordinate's minimum, not
+whether `b` reaches its maximum. That is a small change with an obvious must-flip
+pair — a bracket `(0, typemax]` must still be discarded, a bracket
+`(5.14e61, typemax]` must be kept — and neither has been run.
+
+This is the first time the two rounds have both completed, so it is also the
+first time this could be seen at all.
