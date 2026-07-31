@@ -127,3 +127,30 @@ The mechanism inside the emission loss still differs everywhere: an
 unreconstructed call on aqua, RED tests on farming (14) and both Escrows (17,
 and EscrowDst's own), empty-body refusals only on aqua. Report mechanisms per
 benchmark; only the 40-56% band is a cross-benchmark statement.
+
+---
+
+# Why there is no fifth sample
+
+Four is not where the sampling stopped for want of effort; it is every benchmark
+in the corpus that can produce a retention ratio at all. The remaining two
+cannot, for two different structural reasons, and both are already measured:
+
+* **st1inch_St1inch** -- all 22 path-coverage runs were killed by the 180s outer
+  bound and produced ZERO reports (`index.json`: `0/22 run(s) produced a report,
+  22 killed`). The enumeration side is empty, so `enumerated / emitted` has no
+  denominator. Its gate row is `ours 0` against a bar of 72, and that 0 is a
+  budget artefact, not a reach measurement.
+* **limit_order_protocol** -- 14 of 14 runs produced reports and every one has
+  ZERO F claims across ZERO units. `MakerTraitsLib` is a pure `internal`
+  library, and a UNIT is a public/external function, so complete-path coverage
+  has nothing to enumerate. Numerator and denominator are both 0. The gate
+  reports this as `N/A: 0 units`, deliberately, rather than as a FAIL -- it is a
+  scope difference between the two metrics, not a reach difference.
+
+So the 40-56% band rests on four benchmarks because four is all the corpus
+offers. Adding a fifth needs either a larger per-run budget on st1inch (which is
+its own measurement -- see `notes/coverage/scripts/budget_probe.sh`) or a
+benchmark whose in-scope code is not a pure internal library.
+
+Stated here so the next reader does not spend a run discovering it.
