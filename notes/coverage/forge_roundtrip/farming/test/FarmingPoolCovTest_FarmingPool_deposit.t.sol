@@ -50,6 +50,7 @@ contract FarmingPoolCovTest_FarmingPool_deposit is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_0() public {
+    vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     vm.prank(address(uint160(1)));
     // [asserted] path exits normally; a revert fails the test
     c0.deposit(0);
@@ -60,18 +61,21 @@ contract FarmingPoolCovTest_FarmingPool_deposit is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_1() public {
+    vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     vm.prank(address(uint160(1)));
     // [asserted] path exits normally; a revert fails the test
     c0.deposit(115792089237316195423570985008687907853269984565640564039457584007913129639934);
   }
   // claim: sol:@C@FarmingPool@F@deposit#6613:path:27, sol:@C@FarmingPool@F@deposit#6613:path:26
   function test_cov_2() public {
+    vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
-    try c0.deposit(115792089237316195423570985008687907853269984565640564039457584007908834672639) {} catch {}
+    try c0.deposit(0) {} catch {}
   }
   // claim: sol:@C@FarmingPool@F@deposit#6613:path:2
   function test_cov_3() public {
+    vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     // [revert-tolerant] outcome not asserted
     try c0.deposit(0) {} catch {}
   }

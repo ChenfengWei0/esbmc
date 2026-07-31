@@ -50,15 +50,10 @@ contract FarmingPoolCovTest_FarmingPool_farmed is Test {
     // [asserted] path exits normally; a revert fails the test
     c0.farmed(address(uint160(61612)));
   }
-  // claim: sol:@C@FarmingPool@F@farmed#6579:path:13, sol:@C@FarmingPool@F@farmed#6579:path:12
+  // claim: sol:@C@FarmingPool@F@farmed#6579:path:13, sol:@C@FarmingPool@F@farmed#6579:path:12, sol:@C@FarmingPool@F@farmed#6579:path:2
   function test_cov_1() public {
     vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     // [asserted] path exits normally; a revert fails the test
     c0.farmed(address(uint160(61612)));
-  }
-  // claim: sol:@C@FarmingPool@F@farmed#6579:path:2
-  function test_cov_2() public {
-    // [revert-tolerant] outcome not asserted
-    try c0.farmed(address(uint160(61612))) {} catch {}
   }
 }

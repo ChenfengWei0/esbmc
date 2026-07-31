@@ -50,11 +50,13 @@ contract FarmingPoolCovTest_FarmingPool_withdraw is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_0() public {
+    vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     // [asserted] path exits normally; a revert fails the test
     c0.withdraw(0);
   }
   // claim: sol:@C@FarmingPool@F@withdraw#6633:path:1805, sol:@C@FarmingPool@F@withdraw#6633:path:1804
   function test_cov_1() public {
+    vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     // [revert-tolerant] outcome not asserted
     try c0.withdraw(115792089237316195423570985008687907853269984665640564039457584007913129639935) {} catch {}
   }

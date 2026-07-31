@@ -29,10 +29,16 @@ contract EscrowSrcCovTest_EscrowSrc_cancel is Test {
   EscrowSrc c0;
   function setUp() public {
     mk_IERC20_accessToken = new ESBMCMock_IERC20();
+    vm.startPrank(address(uint160(0)));
     c0 = new EscrowSrc(0, mk_IERC20_accessToken);
+    vm.stopPrank();
   }
   // claim: sol:@C@EscrowSrc@F@cancel#1966:path:14
-  function test_cov_0() public {
+  // DISABLED: RED on the unmodified contract, so its
+  // coverage is not ours to claim. Kept, renamed out of
+  // forge's `test*` prefix, so the artefact still shows
+  // what was generated.
+  function disabled_test_cov_0() public {
     vm.warp(1);
     vm.prank(address(uint160(4294967295)));
     // [revert-tolerant] outcome not asserted
@@ -86,7 +92,11 @@ contract EscrowSrcCovTest_EscrowSrc_cancel is Test {
     try c0.cancel(IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(4294967295), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639225743540224), hex"")) {} catch {}
   }
   // claim: sol:@C@EscrowSrc@F@cancel#1966:path:6
-  function test_cov_4() public {
+  // DISABLED: RED on the unmodified contract, so its
+  // coverage is not ours to claim. Kept, renamed out of
+  // forge's `test*` prefix, so the artefact still shows
+  // what was generated.
+  function disabled_test_cov_4() public {
     vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     vm.prank(address(uint160(4294967295)));
     // [revert-tolerant] outcome not asserted
@@ -130,7 +140,11 @@ contract EscrowSrcCovTest_EscrowSrc_cancel is Test {
     try c0.cancel(IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(730750818665451459101842416358141509832261238783), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
   }
   // claim: sol:@C@EscrowSrc@F@cancel#1966:path:15
-  function test_cov_8() public {
+  // DISABLED: RED on the unmodified contract, so its
+  // coverage is not ours to claim. Kept, renamed out of
+  // forge's `test*` prefix, so the artefact still shows
+  // what was generated.
+  function disabled_test_cov_8() public {
     vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     vm.prank(address(uint160(4294967295)));
     // [revert-tolerant] outcome not asserted

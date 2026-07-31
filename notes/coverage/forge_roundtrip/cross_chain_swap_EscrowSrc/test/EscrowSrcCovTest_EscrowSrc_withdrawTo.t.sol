@@ -29,7 +29,9 @@ contract EscrowSrcCovTest_EscrowSrc_withdrawTo is Test {
   EscrowSrc c0;
   function setUp() public {
     mk_IERC20_accessToken = new ESBMCMock_IERC20();
+    vm.startPrank(address(uint160(0)));
     c0 = new EscrowSrc(0, mk_IERC20_accessToken);
+    vm.stopPrank();
   }
   // claim: sol:@C@EscrowSrc@F@withdrawTo#1900:path:31
   // DISABLED: RED on the unmodified contract, so its

@@ -101,15 +101,22 @@ contract FarmingPoolCovTest_FarmingPool_startFarming is Test {
     // [revert-tolerant] outcome not asserted
     try c0.startFarming(91203994309389233109324554829824, 57896044618658097711785492504343953926634992332820282019728792003960859787263) {} catch {}
   }
-  // claim: sol:@C@FarmingPool@F@startFarming#6531:path:117, sol:@C@FarmingPool@F@startFarming#6531:path:116, sol:@C@FarmingPool@F@startFarming#6531:path:113, sol:@C@FarmingPool@F@startFarming#6531:path:112, sol:@C@FarmingPool@F@startFarming#6531:path:2
+  // claim: sol:@C@FarmingPool@F@startFarming#6531:path:117, sol:@C@FarmingPool@F@startFarming#6531:path:116
   function test_cov_7() public {
+    vm.warp(1);
+    vm.prank(address(uint160(0)));
+    // [revert-tolerant] outcome not asserted
+    try c0.startFarming(57896044618658097711785492504343953926634992424024276329118025113281119649792, 0) {} catch {}
+  }
+  // claim: sol:@C@FarmingPool@F@startFarming#6531:path:113, sol:@C@FarmingPool@F@startFarming#6531:path:112, sol:@C@FarmingPool@F@startFarming#6531:path:2
+  function test_cov_8() public {
     vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.startFarming(91203994309389233109324554829824, 0) {} catch {}
   }
   // claim: sol:@C@FarmingPool@F@startFarming#6531:path:6
-  function test_cov_8() public {
+  function test_cov_9() public {
     vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
     vm.prank(address(uint160(1)));
     // [revert-tolerant] outcome not asserted

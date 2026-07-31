@@ -45,7 +45,11 @@ contract FarmingPoolCovTest_Distributor_distributor is Test {
     c0 = new FarmingPool(mk_IERC20Metadata_stakingToken_, mk_IERC20_rewardsToken_, address(uint160(1)));
   }
   // claim: sol:@C@FarmingPool@F@distributor#5935:path:3, sol:@C@FarmingPool@F@distributor#5935:path:2
-  function test_cov_0() public {
+  // DISABLED: RED on the unmodified contract, so its
+  // coverage is not ours to claim. Kept, renamed out of
+  // forge's `test*` prefix, so the artefact still shows
+  // what was generated.
+  function disabled_test_cov_0() public {
     // [asserted] path exits normally; a revert fails the test
     c0.distributor();
   }

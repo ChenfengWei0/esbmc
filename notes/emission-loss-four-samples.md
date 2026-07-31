@@ -1,26 +1,31 @@
-> **READ THIS FIRST — the word "retains" below is WITHDRAWN.**
+> **READ THIS FIRST — the word "retains" was WITHDRAWN, and is now RESTORED by
+> measurement. 2026-07-31.**
 >
-> Every table in this file that says "emission retains X%" was produced with a
-> denominator from a DIFFERENT set of esbmc runs than the numerator.
-> `emission_loss.py` read `enumerated` from
+> **What was wrong.** Every table below that says "emission retains X%" was
+> produced with a denominator from a DIFFERENT set of esbmc runs than the
+> numerator. `emission_loss.py` read `enumerated` from
 > `notes/coverage/pathcov/<bench>/reports/` — the sweep's runs — while `emitted`
 > came from the forge lcov of tests produced by `forge_roundtrip.py`'s own esbmc
 > runs. The two shared a benchmark name and a 180s budget and nothing else, so a
-> difference BETWEEN THE RUNS is indistinguishable from a loss in the emitter.
-> A ratio across two runs cannot carry a causal word.
+> difference BETWEEN THE RUNS was indistinguishable from a loss in the emitter.
+> A ratio across two runs cannot carry a causal word. Found by an adversarial
+> audit; confirmed by reading `emission_loss.py:37` against `:56`.
 >
-> Found by an adversarial audit; confirmed by reading `emission_loss.py:37`
-> against `:56`. The numbers themselves are not withdrawn — what they are a
-> ratio OF is.
+> **What was done.** `forge_roundtrip.py` now passes `--cov-report-json`, so each
+> emit run writes its OWN report next to the tests it produced, and
+> `emission_loss.py` prefers those and PRINTS the provenance line before any
+> number. All four benchmarks have been re-run under it. Every one now reports:
 >
-> **Say instead:** "across four benchmarks the emitted suite's forge lcov covers
-> 40–56% of the canonical decisions the enumeration's F paths walk."
+>     denominator: SAME RUNS as the emitted tests (forge_roundtrip _gen/*/cov-report.json)
 >
-> FIXED FOR THE NEXT MEASUREMENT: `forge_roundtrip.py` now passes
-> `--cov-report-json` so each emit run writes its own report, and
-> `emission_loss.py` prefers those and PRINTS `same-run` vs `cross-run` before
-> any number. Re-running the four benchmarks is what turns this band into a
-> retention rate. Until then the tables below are `cross-run`.
+> **What the re-run found.** The numbers are IDENTICAL to the cross-run ones —
+> 4/2, 18/10, 6/3, 5/2 — so what was withdrawn was the WORDING and not the
+> arithmetic, and it is now licensed again. See "The four samples, re-measured
+> same-run" at the end of this file for the table and for what an identical
+> result does and does not prove.
+>
+> This banner is kept rather than deleted: a reader who finds only the corrected
+> number learns nothing about how the wrong one was produced.
 
 # The emission loss on two benchmarks, and what the second one narrows
 
@@ -350,3 +355,75 @@ sweep budget would have raised our numbers while widening that asymmetry to 13x.
 It did not finish, so the question does not arise; but the reasoning should be
 on record either way, because the temptation would have been to take the higher
 number first and disclose second.
+
+---
+
+# The four samples, re-measured SAME-RUN (2026-07-31)
+
+All four re-run under `--cov-report-json`, so `enumerated` and `emitted` come
+from the same esbmc runs. Every one printed the provenance line
+`denominator: SAME RUNS as the emitted tests`.
+
+| | aqua | farming | EscrowSrc | EscrowDst |
+|---|---|---|---|---|
+| bar (ESBMC universe) | 7/8 | 26/26 | 16/16 | 18/18 |
+| native (forge lcov) | 6/8 | 26/26 | 8/16 | 10/18 |
+| **ours (forge lcov)** | **2/8** | **10/26** | **3/16** | **2/18** |
+| forge universe | **6** | **30** | 16 | 18 |
+| enumerated | 4 | 18 | 6 | 5 |
+| emitted | 2 | 10 | 3 | 2 |
+| **emission retains** | **50%** | **56%** | **50%** | **40%** |
+
+**Every ratio is identical to the cross-run one.** So the band is unchanged at
+**40-56%**, and it may now be written with the causal word: the numerator and
+the denominator are the same runs' output.
+
+## What an identical result does and does not prove
+
+It proves the cross-run join was not distorting THESE four ratios. It does not
+prove a cross-run join is safe in general -- the two runs agreed because the
+enumeration is deterministic under a fixed budget on these inputs, which is a
+property of the inputs and the budget, not of the method. The provenance line is
+printed on every run precisely so the next reader does not have to know that.
+
+## What DID move, and it is not the ratio
+
+The per-benchmark MECHANISM counts are not stable across the two runs:
+
+| | archived (cross-run) | same-run |
+|---|---|---|
+| farming, RED disabled | 14 | **10** |
+| EscrowSrc, RED disabled | 17 | **22** |
+| EscrowDst, RED disabled | — | 8 |
+| farming, defaulted args | 174 | **4** |
+| EscrowSrc, defaulted args | — | 333 in 280 calls |
+
+So the mechanism numbers quoted in the sections above are cross-run figures and
+are SUPERSEDED by these; the retention ratios are not. Worth stating in exactly
+that order, because the reading that suggests itself -- "the numbers reproduced,
+therefore the tables reproduce" -- is false for half of each table. The two
+columns that survive re-measurement are the ones the claim rests on; the ones
+that describe HOW the loss happens moved by up to a factor of 40 (farming's
+defaulted-argument count), and any sentence resting on those has to be re-derived
+from this run rather than quoted from the old one.
+
+`ImmutablesLib 0/8` is confirmed again on both Escrows under the same-run
+denominator: `enumerated 0, emitted 0`. EscrowDst additionally re-confirms
+`EscrowDst.sol: enumerated 0`.
+
+## The per-line loss, same-run
+
+    aqua        Aqua.sol            lost [2258, 2260]
+    EscrowSrc   BaseEscrow.sol      lost [1487, 1492, 1518]
+    EscrowDst   BaseEscrow.sol      lost [1469, 1500, 1512]
+    farming     FarmingLib.sol      lost [4024]
+                FarmingPool.sol     lost [4159, 4170, 4181]
+                FarmAccounting.sol  lost [3757, 3771]
+                UserAccounting.sol  lost [3824, 3859]
+
+aqua's two lost lines are the two `for` headers forge does not instrument at
+all, so on aqua the emission loss and the instrument ceiling are the SAME two
+lines -- which is why aqua's `ours 2/8` is really 2 of 6. That coincidence has
+been checked by membership on aqua only; on the other three the lost lines have
+NOT been intersected with the forge BRDA set, so whether any of them is
+uninstrumentable is UNKNOWN rather than no.

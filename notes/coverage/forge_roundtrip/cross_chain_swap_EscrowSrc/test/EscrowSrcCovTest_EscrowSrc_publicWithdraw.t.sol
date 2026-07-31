@@ -29,7 +29,9 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   EscrowSrc c0;
   function setUp() public {
     mk_IERC20_accessToken = new ESBMCMock_IERC20();
+    vm.startPrank(address(uint160(0)));
     c0 = new EscrowSrc(0, mk_IERC20_accessToken);
+    vm.stopPrank();
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:31
   // DISABLED: RED on the unmodified contract, so its
@@ -37,6 +39,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_0() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -48,6 +51,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:30
   function test_cov_1() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -58,11 +62,8 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(18446744078004518912), hex"")) {} catch {}
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:14
-  // DISABLED: RED on the unmodified contract, so its
-  // coverage is not ours to claim. Kept, renamed out of
-  // forge's `test*` prefix, so the artefact still shows
-  // what was generated.
-  function disabled_test_cov_2() public {
+  function test_cov_2() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -74,6 +75,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:6
   function test_cov_3() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -88,6 +90,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_4() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -100,11 +103,8 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
     c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex""));
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:30
-  // DISABLED: RED on the unmodified contract, so its
-  // coverage is not ours to claim. Kept, renamed out of
-  // forge's `test*` prefix, so the artefact still shows
-  // what was generated.
-  function disabled_test_cov_5() public {
+  function test_cov_5() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -118,6 +118,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:14
   function test_cov_6() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -131,6 +132,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:6
   function test_cov_7() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -147,6 +149,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_8() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -156,6 +159,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:30
   function test_cov_9() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -165,6 +169,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:14
   function test_cov_10() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -174,6 +179,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:6
   function test_cov_11() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(0), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -186,6 +192,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_12() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -199,6 +206,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:30
   function test_cov_13() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -212,6 +220,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:14
   function test_cov_14() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -225,6 +234,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:6
   function test_cov_15() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -241,6 +251,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_16() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -256,6 +267,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:30
   function test_cov_17() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -271,6 +283,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:14
   function test_cov_18() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -286,6 +299,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:6
   function test_cov_19() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -304,6 +318,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_20() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -315,6 +330,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:30
   function test_cov_21() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -326,6 +342,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:14
   function test_cov_22() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -337,6 +354,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:6
   function test_cov_23() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -351,6 +369,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   // forge's `test*` prefix, so the artefact still shows
   // what was generated.
   function disabled_test_cov_24() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356872256639230038507520), hex"")) {} catch {}
     // [asserted] path exits normally; a revert fails the test
@@ -358,6 +377,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:30
   function test_cov_25() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(18446744078004518912), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -365,6 +385,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:14
   function test_cov_26() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(115792089183396302089269705419353877679230723318445503356890703383295158124544), hex"")) {} catch {}
     // [revert-tolerant] outcome not asserted
@@ -372,6 +393,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   }
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:6
   function test_cov_27() public {
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(18446744078004518912), hex"")) {} catch {}
     // UNSUPPORTED: EscrowSrc.publicWithdraw has an argument type ESBMC cannot yet render as a literal
@@ -379,6 +401,7 @@ contract EscrowSrcCovTest_EscrowSrc_publicWithdraw is Test {
   // claim: sol:@C@EscrowSrc@F@publicWithdraw#1939:path:2
   function test_cov_28() public {
     vm.warp(115792089237316195423570985008687907853269984665640564039457584007913129639934);
+    vm.prank(address(uint160(0)));
     // [revert-tolerant] outcome not asserted
     try c0.publicWithdraw(bytes32(0x000000000000000000000000000000000000000000000000000000000000cf8e), IBaseEscrow.Immutables(bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff), Address.wrap(0), Address.wrap(0), Address.wrap(0), 0, 0, Timelocks.wrap(18446744078004518912), hex"")) {} catch {}
   }
