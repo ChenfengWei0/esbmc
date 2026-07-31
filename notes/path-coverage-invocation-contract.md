@@ -608,3 +608,446 @@ Two aggravating details:
   SIGALRM/SIGTERM only (`:130-133`, `:182-219`) and is gated on
   `goto_coveraget::branch_cov_active`, which only `branch_coverage()` ever sets
   (`goto_coverage.cpp:2325`).
+
+## 11. The decision set is complete without the check flags — because the check flags cannot enter it at all
+
+Sources read in full for this section: `src/esbmc/options.cpp` (1012),
+`src/esbmc/esbmc_parseoptions.cpp` (5133),
+`src/goto-programs/goto_coverage.cpp` (8427),
+`src/goto-programs/goto_check.cpp` (1313),
+`src/goto-programs/goto_program.cpp` (517), `src/esbmc/bmc.cpp` (3723).
+Read from the top through the cited site: `src/goto-programs/goto_convert.cpp`
+(to `:988`), `src/goto-programs/builtin_functions.cpp` (to `:700`),
+`src/solidity-frontend/solidity_convert.cpp` (to `:240`),
+`src/solidity-frontend/solidity_convert_stmt.cpp` (to `:240`),
+`src/solidity-frontend/solidity_convert_modifier.cpp` (`:840-1100`).
+
+> **Line-number drift note:** `options.cpp` is now 1012 lines (§10 was written
+> at 991) and `esbmc_parseoptions.cpp` is now 5133 (§10: 5062). Every citation
+> below is from the current tree. §5's `:3445-3460 / :3503-3529 / :3469-3492`
+> are now `:3445-3460 / :3503-3529 / :3469-3492` unchanged, and §5's
+> `:3638-3650 / :3683-3704 / :3656-3677` are unchanged too; `options.cpp:840`
+> for `--coverage-covered-set` is now `:838-843`.
+
+### 11.1 The pass creates exactly ONE branch of its own, and it is not an arithmetic check
+
+`solidity_path_coverage()` (`goto_coverage.cpp:3001-7674`) fans the enumerating
+DFS out at exactly three kinds of site, and terminates at three:
+
+| DFS action | site | `goto_coverage.cpp` |
+|---|---|---|
+| **fan out 2-way** | `pc->is_goto() && !is_true(pc->guard)` | `:5030-5108` |
+| **fan out 2^K** | folded short-circuit / ternary operands in an `ASSIGN` rhs | `:5208-5259` |
+| **fan out 2^K** | the same, in a `RETURN` operand | `:5130-5203` |
+| terminate | `END_FUNCTION` | `:4968-5015` |
+| terminate | a `#sol_error` call (`revert CustomError()`) | `:5024-5029` |
+| terminate | `RETURN` | `:5130-5203` |
+| **straight-line, no fan-out** | *everything else* | `:5260` (`pc = std::next(pc); // straight-line`) |
+
+Phase 1 (the runtime `tr`/`cnt` accumulator) mirrors exactly the same three
+kinds and nothing else (`:4444-4475`), and the two are cross-checked at
+`:5532-5557` (a site the DFS branches on but Phase 1 does not accumulate is a
+hard `abort()`).
+
+**The only branch the pass synthesises is the ABI non-payable value gate**
+(`:4271-4345`): `IF msg_value == 0 THEN GOTO <body>` / `_ESBMC_sol_mark_revert();
+GOTO <END_FUNCTION>`, inserted only when `#sol_payable` is unset
+(`:4272-4278`), stamped `sol_abi_value_gate` (`:4309`) and contributing exactly
+one extra path (`:4338-4342`).
+
+> **There is no code anywhere in `goto_coverage.cpp` that creates a revert or
+> branch edge for checked arithmetic, division by zero, array bounds or
+> narrowing.** The whole pass's vocabulary for "a decision" is
+> `is_goto() && !is_true(guard)` plus `collect_short_circuit_decisions`
+> (`:2049-2071`), plus the one gate above.
+
+### 11.2 What the check flags actually produce: a single-successor ASSERT, invisible to the enumeration
+
+`goto_check` runs at `esbmc_parseoptions.cpp:3837`, i.e. **before** the
+path-coverage dispatch at `:4118`. So its output is present in the GOTO program
+when the pass walks it. It does not matter:
+
+- every check funnels through `goto_checkt::add_guarded_claim`
+  (`goto_check.cpp:1001-1029`), which does
+  `new_code.add_instruction(ASSERT)` and sets only `guard` / `location`
+  (`:1023-1027`). **`targets` is never touched.** This confirms the prior
+  finding verbatim.
+- `goto_programt::get_successors`' assert arm pushes only `next`
+  (`goto_program.cpp:301-308`). Confirmed verbatim. An ASSERT has one
+  successor.
+- the individual sites are all `add_guarded_claim` calls:
+  `div_by_zero_check` `goto_check.cpp:168-173`, `bounds_check` `:988` and
+  `:998`, `overflow_check` `:373-378`, `cast_overflow_check` `:319-320`,
+  `shift_check` `:662-667`, the Solidity narrowing-assignment arm `:1256-1261`.
+  The one exception is `input_overflow_check`, which adds a bare
+  `ASSERT false` (`:593-601`) — also single-successor.
+
+> **ANSWER TO THE SOUNDNESS QUESTION (§5, §9 item 2): NEITHER.** The pass does
+> not create those edges itself, and it does not rely on `goto_check` to create
+> them — because `goto_check` cannot create an edge at all, only an assertion.
+> Passing `--overflow-check`, `--unsigned-overflow-check`, `--div-by-zero-check`
+> or `--bounds-check` under `--solidity-path-coverage` **cannot change the
+> enumerated path set**: the extra instructions are ASSERTs, the DFS walks over
+> them at `goto_coverage.cpp:5260`, Phase 1 does not snapshot them, `enc`/`cnt`
+> are unchanged, and `all_claims` (built only from `to_insert`,
+> `goto_coverage.cpp:7357`) does not grow.
+>
+> So the *right* statement of §5's open item is not "the flags are required" and
+> not "the flags are unnecessary". It is: **an EVM revert on overflow is not in
+> the decision-point set of this method under any current flag combination, and
+> no option can put it there.** `Implementation_plan.md` §3.3's "C1" decision to
+> lower checked arithmetic into real two-exit branches is a *frontend* change
+> (it would have to emit the branch the way `require` already is, see §11.3);
+> it is not reachable from the option layer, and §8 correctly does not list it
+> as implemented.
+
+**Where the revert edges that DO exist come from.** Not `goto_check` — the
+frontend, via the revert-observation gate. `--solidity-path-coverage` publishes
+`solidity-path-coverage-enabled` as a real boolean before `config.options` is
+captured (`esbmc_parseoptions.cpp:866-867`), and that flag is read exactly once
+in the frontend, at `solidity_convert.cpp:224-230`, to set
+`uses_revert_observation`. `build_revert_rollback_block`
+(`solidity_convert_modifier.cpp:906-1100`) then emits, for `require(cond)`,
+a **real two-exit branch** — `codet("ifthenelse")` over `not_exprt(cond)` at
+`:1079-1082` — whose taken arm is
+`_ESBMC_sol_mark_revert(); [*this = _sol_save_this; ...] return nondet;`
+(`:1003-1011`, `:1012-1068`, `:1069`). Without the gate, a non-snapshot scope
+returns `true` at `:952-955` and the caller falls back to
+`__ESBMC_assume(cond)` — a control-flow-free prune, which is exactly what
+`is_lost_decision` (`goto_coverage.cpp:4661-4668`) then names as a per-unit
+NAMED OBSTACLE.
+
+**A real cost that the flags DO have.** Unlike every other coverage mode,
+`solidity_path_coverage()` never neutralises pre-existing asserts. Compare:
+`branch_coverage` rewrites them to `assert(true)` / `assume` at
+`goto_coverage.cpp:2254-2264`; `k_path_coverage` at `:2427-2437`;
+`branch_function_coverage` at `:1992-2001`. Path coverage has no such arm
+anywhere in `:3001-7674`. So a `goto_check` assertion survives into
+`multi_property_check` as its own job (`bmc.cpp:2712-2714`), gets its own
+`claim_slicer` and its own solve, is **not** in `all_claims` (so it never
+appears in the coverage numerator or denominator), and is **not**
+`is_cov_silent` (`bmc.cpp:2862-2863` tests
+`claim_property != "instrumented assertion"`; a goto_check claim's property is
+`"overflow"` / `"array bounds"` / `"division-by-zero"`), so it prints a full
+`[Counterexample]` block. **Passing a check flag under path coverage buys extra
+solver work and extra stdout noise and zero extra paths.**
+
+### 11.3 `--overflow-check` sets `disable-inductive-step`, and what that forbids
+
+Confirmed: `esbmc_parseoptions.cpp:663-665` —
+`if (cmdline.isset("overflow-check") || cmdline.isset("unsigned-overflow-check"))
+options.set_option("disable-inductive-step", true);`
+
+Read sites of `disable-inductive-step`: `is_inductive_step_violated` returns
+`TV_UNKNOWN` immediately (`:3093-3094`), `diagnose_unknown_properties` returns
+immediately (`:5093-5094`), and the parallel k-induction child breaks out of its
+loop (`:2587-2588`).
+
+> **The forbidden combination is `--overflow-check` (or
+> `--unsigned-overflow-check`) with `--k-induction` on Solidity, and it
+> degenerates to base-case-only.** `do_bmc_strategy`'s k-induction arm
+> (`:2757-2838`) then has: the inductive step disabled by the flag above, AND
+> the forward condition disabled by `disable-forward-condition`, which
+> `:1015-1018` sets for every Solidity run without `--function` (so
+> `does_forward_condition_hold` returns `TV_UNKNOWN` at `:3024-3025`). What is
+> left is `is_base_case_violated` looping to `max-k-step`. By §11.2 the flag
+> also adds nothing to the path set, so this is pure cost.
+
+### 11.4 `no-assertions` is set for BOTH modes, and it removes nothing from either decision set
+
+**Both modes, one block, one condition.** `esbmc_parseoptions.cpp:3469-3492`
+computes `any_branch_or_cond_cov` as a disjunction that contains **both**
+`branch-coverage` / `branch-coverage-claims` (`:3474-3475`) **and**
+`solidity-path-coverage` (`:3482`), then sets `no-assertions` at `:3484`. The
+`read_goto_binary` mirror at `:3656-3677` / `:3671` is identical.
+`assertion-coverage` is the only exempt mode (`:3471-3472`, `:3485`, and the
+comment at `:3462-3465` explains why: it would self-zero).
+
+So the two sides of the gate comparison are symmetric on this axis. But the
+question behind it — does branch coverage count decisions that path coverage has
+had removed? — needs the goto-level fact, not the flag:
+
+- **`assert(...)` is never a decision in either mode.** A Solidity `assert(c)`
+  resolves to the builtin `c:@F@assert` and is lowered by
+  `goto_convertt::do_function_call_symbol`: `is_assert` at
+  `builtin_functions.cpp:547`, and `:612` does
+  `t = dest.add_instruction(is_assume ? ASSUME : ASSERT)` — **one ASSERT
+  instruction**, `property("assertion")` at `:634`. (The `codet`-statement path
+  `goto_convert.cpp:966-988` produces the same single ASSERT at `:981`.)
+  Branch coverage's decision test is
+  `it->is_goto() && !is_true(it->guard)` plus the folded short-circuit collector
+  (`goto_coverage.cpp:2267`, `:2291-2297`); path coverage's is the same set
+  (`:5030`, `:5208`, `:5130`) plus the ABI gate. **An ASSERT matches neither.**
+- **`no-assertions` deletes the instruction outright**, before either
+  instrumenter sees it: `builtin_functions.cpp:571-574` returns early, and
+  `goto_convert.cpp:978-979` does the same for the `codet` form.
+
+> **PLAIN ANSWER: no, the two sides' decision sets do NOT differ because of
+> `no-assertions`.** The flag is set identically for branch coverage and for
+> path coverage by one shared condition (`:3469-3492`), and what it removes —
+> a single-successor ASSERT — was in neither mode's decision set to begin with.
+> The methodology's "`FunctionCall(assert)` is a canonical DECISION" is a
+> statement about the *source language*, and it is **not** realised at goto
+> level by either metric. If the gate comparison needs asserts to count as
+> decisions, that is a change to both instrumenters, not a flag.
+>
+> Asymmetry that DOES exist on this axis, for completeness: branch coverage
+> additionally rewrites any *surviving* assert to `assert(true)` (or `assume`
+> under `--cov-assume-asserts`) at `goto_coverage.cpp:2254-2264`; path coverage
+> does not (§11.2). That changes what is *solved*, not what is *counted*.
+
+### 11.5 `unchecked { }` — the conclusion holds, the stated reason is too narrow
+
+**`#sol_unchecked` is written in exactly one place** — the frontend's block
+walker, `solidity_convert_stmt.cpp:145-148` (set/save the
+`in_unchecked_block` flag on `nodeType == "UncheckedBlock"`), `:157-158`
+(`if (in_unchecked_block) cl.set("#sol_unchecked", "1")` on each contained
+statement's location), `:221` (restore). It is a *location attribute on
+top-level statements of the block*, nothing more.
+
+**It is read in exactly three places, all in `goto_check.cpp`:**
+
+| site | check | flag that must be ON for the read to be reachable |
+|---|---|---|
+| `:281-282` | `cast_overflow_check`, Solidity narrowing arm | `--narrowing-check` (the Solidity arm is gated on `disable_narrowing_check` at `:274-275`, and `no-narrowing-check` is set by the `no-standard-checks` expansion at `esbmc_parseoptions.cpp:3703`) |
+| `:338-341` | `overflow_check` | any of `--overflow-check` / `--unsigned-overflow-check` / `--ub-shift-check` (early return at `:328-331`) |
+| `:1233-1235` | the Solidity narrowing-**assignment** arm | `--overflow-check` or `--unsigned-overflow-check` |
+
+> **VERIFIED, with a correction.** The claim "`#sol_unchecked` is read only by
+> the overflow checks, which default off" is **too narrow**: `--narrowing-check`
+> (`options.cpp:217-220`) and `--ub-shift-check` (`options.cpp:686-688`) also
+> reach a read site, and neither is an overflow flag. All four are nevertheless
+> OFF by default for Solidity — the umbrella expansion at
+> `esbmc_parseoptions.cpp:3683-3704` sets `no-narrowing-check` (`:3703`), and
+> `--overflow-check` / `--unsigned-overflow-check` / `--ub-shift-check` are
+> separate opt-ins that no collector in this project has ever passed.
+>
+> **And the conclusion is stronger than "byte-identical by default".** By §11.2,
+> every one of those three sites ends in `add_guarded_claim` → a
+> single-successor ASSERT. So even with all four flags ON, `unchecked { }` and
+> a normal block differ only in how many ASSERT instructions exist between the
+> same two decisions. **The enumerated path set, every `enc`, every `cnt` and
+> every content-addressed path id are identical with and without the
+> `unchecked` keyword, under every flag combination this tool has.** There is no
+> Panic modelling anywhere in the tree — no site constructs a
+> `Panic(0x11)`/`Panic(0x12)` revert edge; the only synthesised revert edges are
+> `_ESBMC_sol_mark_revert` from `solidity_convert_modifier.cpp:1003-1011` (for
+> `require`/`revert`) and the ABI value gate at `goto_coverage.cpp:4271-4345`.
+
+## 12. `--all-witnesses` IS wired for path coverage, and the report throws all but the first away
+
+### 12.1 Read sites (do not trust the help text — it says nothing about coverage)
+
+Complete list over the files read in full:
+
+- `options.cpp:374-378` (declaration) and `:379-382` (`--max-witnesses`,
+  `default_value(16)`).
+- `esbmc_parseoptions.cpp:750-771` — validates `--max-witnesses >= 0`
+  (`:752-760`), logs and forces `multi-property` (`:762-766`), and forces
+  `base-case` unless the user picked `--forward-condition` / `--inductive-step`
+  (`:769-770`).
+- **`bmc.cpp:2987`** — `const bool enumerate =
+  options.get_bool_option("all-witnesses");`, inside `job_function`'s
+  `P_SATISFIABLE` arm in `multi_property_check`. `--max-witnesses` is read two
+  lines later (`:2991-2994`; `0` means `SIZE_MAX`).
+- `bmc.cpp:520-521` — `report_multi_property_trace` keeps the legacy
+  single-`[Counterexample]` shape only when
+  `witnesses.size() <= 1 && stop_reason == Disabled`.
+
+There is **no coverage-mode gate on any of them.** Path coverage forces
+`multi-property` and `base-case` (`esbmc_parseoptions.cpp:4139-4140`), which is
+exactly the condition `run_thread` uses to route into `multi_property_check`
+(`bmc.cpp:2535-2542`). Every path claim that comes back SAT therefore enters the
+enumeration loop at `bmc.cpp:3028`.
+
+> **So `--all-witnesses` is wired for `--solidity-path-coverage`, and this is a
+> third case distinct from both §4 and §10.4: here the help text is silent
+> (`options.cpp:374-378` says only "after a property fails"), the wiring is
+> real, and the effect is real — but it does not reach the artefact this
+> project reads.** See §12.2.
+
+### 12.2 Where the extra witnesses go — Foundry yes, `cov-report.json` no
+
+The per-witness body of the loop (`bmc.cpp:3028-3508`) emits, **once per
+witness**, keyed on `w.ce_index = ce_counter++` (`:3041`):
+
+| consumer | site | per witness? |
+|---|---|---|
+| `--cex-output` (`N-<name>` files) | `:3046-3050` | yes |
+| GraphML / YAML witness | `:3054-3062` | yes |
+| `--generate-testcase` XML | `:3063-3067` (metadata once, `:3020-3021`) | yes |
+| `--generate-html-report` / `--generate-json-report` | `:3068-3072` | yes |
+| pytest / ctest collectors | `:3073-3076` | yes |
+| **`--generate-foundry-testcase`** | **`:3077-3080`** (`foundry().collect(...)`) | **yes** |
+| stdout multi-witness block + `Summary:` footer | `:3595-3599` → `:531-611` | yes |
+| **the path-coverage CE payload (`cov-report.json`)** | **`:3087`** | **NO — `if (is_path_cov && witnesses.empty())`** |
+| `reached_claims` / covered-set write-back | `:3523-3535`, `:3552-3553` | no ("multiple witnesses are still one claim", `:3523`) |
+
+> **The single line that decides this is `bmc.cpp:3087`:
+> `if (is_path_cov && witnesses.empty())`.** The harvest that builds
+> `goto_coveraget::path_ce` — `inputs`, `env`, `entry_storage`, `final_state`,
+> the whole CE→generalisation interface the stage-2 ladder consumes — runs for
+> the FIRST witness only, by explicit design (`:3082-3086`: "Only the FIRST
+> witness of a claim is recorded: one CE per complete path is what the report
+> contracts for"). Witnesses 2..16 are built (`build_goto_trace` at `:3031`),
+> printed, and handed to the Foundry generator, and then discarded.
+>
+> **Consequence for stage 2 as planned:** `--all-witnesses` today gives the
+> refinement ladder nothing it can read from `cov-report.json`. It gives 16
+> extra *Foundry tests per path* (`:3077-3080` is unconditional on witness
+> index) and 16 extra stdout blocks. Turning it into the raw material the ladder
+> wants is a change at `bmc.cpp:3087` — make `path_ce` a vector, or record a
+> per-witness `inputs` map — not a change to the invocation.
+>
+> Note also `bmc.cpp:3039-3040`: `collect_nondet_values` runs **only** when
+> `enumerate` is true, and its own comment calls it "non-trivial on coverage
+> runs with many claims and large arrays". So the first witness's cost also
+> rises when the flag is on.
+
+### 12.3 Cost: extra `dec_solve()` on the same instance, no re-encoding
+
+`bmc.cpp:3490-3507`: on the first extra witness the loop does
+`solver_ptr->push_ctx()` once (`:3498-3502`), then per witness
+`assert_expr(make_blocking_expr(...))` (`:3505-3506`) and
+`enum_result = solver_ptr->dec_solve()` (`:3507`). A single matching
+`pop_ctx()` after the loop (`:3520-3521`).
+
+> **N witnesses cost N-1 extra `dec_solve()` calls and N-1 extra
+> `build_goto_trace` + `collect_nondet_values` passes, on ONE already-encoded
+> solver instance.** There is no second `generate_smt_from_equation`, no second
+> symex, and no second per-claim `symex_slicet` run. The comment at `:2984-2986`
+> states it: "No re-encoding: we only push extra assertions onto the live
+> solver." The stop reason is recorded explicitly (`Unsat` / `CapHit` /
+> `NoInputs` / `Error` / `Disabled`, `:2998-3000`, `:3477`, `:3486`,
+> `:3512-3516`) so "16 witnesses" and "exhausted" are distinguishable.
+
+### 12.4 Interaction with what path coverage already forces
+
+- **`--multi-property`:** already forced by the dispatch
+  (`esbmc_parseoptions.cpp:4140`), so `--all-witnesses` setting it again at
+  `:766` is a no-op — but the "auto-enabling `--multi-property`" status line at
+  `:764-765` **does** print, which is misleading rather than wrong.
+  `was_multi` (`:762-763`) reads `options.get_bool_option("multi-property")`
+  and `cmdline.isset("multi-property")`; `options` at that point holds only what
+  `options.cmdline(cmdline)` copied in at `:412`, i.e. the user's own flags, and
+  `get_command_line_options` runs at `:963` — long before
+  `process_goto_program`'s dispatch at `:4118`. So under
+  `--solidity-path-coverage --all-witnesses` the tool announces that it is
+  enabling something the mode had already forced.
+- **`base-case`:** `:769-770` sets it; the dispatch sets it too (`:4139`).
+  No conflict.
+- **`keep-verified-claims`:** path coverage forces it false (`:4141`).
+  `--all-witnesses` never touches it. The post-violation cleanup
+  (`bmc.cpp:3611-3615`) runs *after* the whole enumeration loop, so it cannot
+  truncate it.
+- **the per-claim job loop:** enumeration is entirely inside `job_function`,
+  so it is per claim. Under `--parallel-solving` each job owns its own solver
+  (`bmc.cpp:2851-2855`), and under `--smt-during-symex` they share
+  `runtime_solver` — which is precisely why the `push_ctx`/`pop_ctx` pair exists
+  (`:3490-3496` says so).
+- **`--multi-fail-fast`:** irrelevant — path coverage rejects it outright
+  (`esbmc_parseoptions.cpp:4126-4134`).
+- **the covered set:** written once per claim, not per witness
+  (`bmc.cpp:3552-3553`), so enumeration cannot inflate it.
+
+## 13. `--coverage-covered-set` across CONFIGURATIONS — the exact field list, and the one bound it gets wrong
+
+### 13.1 The fingerprint, field by field
+
+Computed once at `goto_coverage.cpp:3057-3094`, published as
+`path_cov_fingerprint` (`:3093`), written into the file at `:156`, and compared
+on load at `:3107-3121` with a **fail-closed** discard (no migration, `:3110-3113`).
+
+The complete input list, in order:
+
+| field | `goto_coverage.cpp` | value |
+|---|---|---|
+| seed `"path-cov-fingerprint"` | `:3060` | constant |
+| `schema=` | `:3061` | `PATH_ID_SCHEMA_VERSION` = 1 (`:3058`) |
+| `decisions=` | `:3062` | `DECISION_SET_VERSION` = 4 (`:3059`) |
+| `sc_max=` | `:3063` | `SC_DECISION_MAX` = 12 (`:2047`) |
+| `loop_bound=` | `:3067` | `path_cov_unwind` |
+| `call_depth=` | `:3068` | `path_cov_unwind` (same number) |
+| `reentry_depth=` | `:3069` | `path_cov_unwind` (same number) |
+| `goal_cap=` | `:3070` | `path_cov_max_goals` |
+| `contract=` | `:3071` | `scope_contract` |
+| `src:<basename>:<full file contents>` | `:3074-3092` | every input file, **sorted** (`:3078`), by CONTENT not mtime |
+
+**So `--path-cov-max-goals` is in it** (confirming §9 item 3's premise), **and so
+is the scope**: `scope_contract` is set only by
+`esbmc_parseoptions.cpp:4155-4156` — `--contract C` **and not**
+`--coverage-whole-unit`. Hence `--contract C`, `--contract C
+--coverage-whole-unit`, and a bare whole-unit run produce three different
+fingerprints, and their covered sets can never be unioned by accident.
+
+### 13.2 What is NOT in it
+
+- **`--focus-function`** — no read site anywhere in the fingerprint block. The
+  option is consumed by the frontend harness (`options.cpp:140-145`) and by
+  `audit_entry_liveness` (`goto_coverage.cpp:1694-1711`, called with
+  `options.get_option("focus-function")` at `bmc.cpp:1134`).
+- **the transaction bound `--solidity-max-tx`** — absent.
+- **`--coverage-multi-tx`** — absent (and by §10.4 it has no effect here anyway).
+- **the bounding strategy** (`--incremental-bmc` / `--k-induction` /
+  `--termination` / `--falsification`) — absent.
+- **the check flags** (`--overflow-check`, `--bounds-check`, …) — absent, which
+  by §11.2 is harmless: they cannot change a path.
+
+### 13.3 Is unioning across configurations sound?
+
+**The path IDs themselves are configuration-independent, and that is why the
+fingerprint gets away with it.** A stable id is
+`hex64(fnv1a("exit:" + <exit location>, idh))` (`goto_coverage.cpp:4773-4774`)
+where `idh` folds, per decision, `fnv1a(site + "#" + sub)`, the polarity, and
+the per-site occurrence count (`step_id`, `:4698-4712`), seeded with
+`fnv1a("unit:" + <unit id>)` (`:4628`). Every one of those inputs comes from the
+unit's own body. `--focus-function` and `--solidity-max-tx` change the
+`_ESBMC_Main_*` dispatcher, not any unit body, so **the same path has the same
+id under a per-method sweep and under a whole-contract run.** And only `'F'`
+(a real counterexample) is ever persisted (`:158-169`).
+
+So a union across those two axes is *type-correct*. It is nevertheless
+**not a measurement of any single configuration**, in three concrete ways:
+
+1. **The reported percentage is the union's, not the run's.** The numerator at
+   `bmc.cpp:1198-1202` counts `path_witnessed_earlier(k) ||
+   reached_claims.count(...)`, and the file stores a **flat array of ids**
+   (`goto_coverage.cpp:157-172`) with no per-id record of which configuration
+   witnessed it. So "Path Coverage: 82%" after a sweep + a whole-contract run is
+   a statement no single invocation can reproduce, and the file cannot be
+   decomposed back into the runs that produced it.
+2. **The artefacts do not travel with the id.** A skipped path emits no assert
+   (`goto_coverage.cpp:7446-7450` `continue`s before `insert_assert`), hence no
+   Foundry test and no CE payload in this run; the JSON says so explicitly
+   (`witnessed_in_earlier_round`, `bmc.cpp:1534`, and `payload_absent_reason`,
+   `:1793-1801`). If the run that witnessed a path was `--focus-function f`,
+   the only test for that path is the one that run emitted, under that harness.
+3. **`loop_bound` records a bound the run may not have used.** `path_cov_unwind`
+   is fixed at `esbmc_parseoptions.cpp:4288-4293` (explicit `--unwind`) or
+   `:4296` (the pass's own 4). Under `--incremental-bmc` / `--k-induction`,
+   `do_bmc_strategy` then **overwrites `unwind` with the current `k_step`** at
+   `:2975` / `:3039` / `:3104` — after instrumentation, so `path_cov_unwind` and
+   the fingerprint keep the pre-strategy number. Two runs that share `--unwind`
+   but explore different `k_step` therefore share a fingerprint and union
+   freely. This is §6/§10.4's disagreement showing up in the cache: the field is
+   named `loop_bound` and does not hold the loop bound the run ran at.
+
+> **VERDICT.** Unioning a covered set across a per-method sweep and a
+> whole-contract run is **not unsound in the id sense** — the ids match by
+> construction and only real witnesses are stored — but the resulting file is
+> **an unattributable union**, and the coverage number computed from it belongs
+> to no configuration. If the escalation ladder is going to use it that way, the
+> file needs a per-id provenance field (which configuration witnessed it), or
+> the sweep and the whole-contract run need separate covered-set paths and an
+> explicit merge step outside the tool. The one field that is *wrong* rather
+> than merely absent is `loop_bound` under any bounding strategy (item 3).
+>
+> One incidental: the incremental write-back at `bmc.cpp:3552-3553`
+> (`if (is_path_cov && !path_covered_outpath.empty())`) is **not** gated on the
+> stage-2/3 modes, while the final write-back at `:1325-1331` is (it sits inside
+> the non-certification `else` block opened at `:1183`). In
+> `--path-cov-certify` / `--path-cov-outer-box` / `--path-cov-assert` mode
+> `path_stable_id` is empty (those branches `continue` past the insertion loop
+> at `goto_coverage.cpp:7346`), so the rewrite reproduces the loaded id list
+> byte for byte — harmless, but it does rewrite a file those modes have no
+> business touching.
