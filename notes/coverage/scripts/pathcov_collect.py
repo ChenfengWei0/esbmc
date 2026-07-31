@@ -70,7 +70,7 @@ DEFAULT_OUTER_TIMEOUT = 300
 DEFAULT_MAX_GOALS = 10000
 
 
-def esbmc_cmd(solast, flat, primary, focus, goals, library=False):
+def esbmc_cmd(solast, flat, primary, focus, goals):
     cmd = [
         str(ESBMC), str(solast), "--sol", str(flat),
         "--solidity-path-coverage",
@@ -79,21 +79,6 @@ def esbmc_cmd(solast, flat, primary, focus, goals, library=False):
         "--path-cov-max-goals", str(goals),
         "--memlimit", MEMLIMIT,
     ]
-    if library:
-        # A pure library has no dispatcher harness, so `--contract <Lib>` errors
-        # with "No verification targets(contracts) were found" -- MEASURED on
-        # limit-order-protocol, 14/14 runs. collect.py routes libraries through
-        # `--function fn` for the same reason and this mirrors it.
-        #
-        # It does not rescue the benchmark. A UNIT is a public/external
-        # function, and this library's functions are all `internal`, so the run
-        # reports "0 complete path(s) across 0 unit(s)" and names them:
-        # "in-scope function(s) are internal/private and are therefore not
-        # units; they have no path set of their own and appear inside the paths
-        # of the units that call them". That is the method's definition working
-        # as intended on a flat that contains no caller -- it is NOT a reach of
-        # zero, and `unitsEnumerated` below is what keeps the two apart.
-        return cmd + ["--function", focus]
     if primary:
         # scope_contract. NOTE the asymmetry with the baseline, which passes
         # --coverage-whole-unit and then excludes contracts one by one: the
@@ -309,10 +294,58 @@ def collect(bench_key, whole, timeout, goals, out_suffix=""):
                 print(f"  [{i}/{len(todo)}] {tag}  (already done)", flush=True)
                 runs.append(done[tag])
                 continue
+            if ckind == "library":
+                # `--function` IS NOT AVAILABLE HERE, and the reason is
+                # soundness rather than tidiness.
+                #
+                # A pure library has no dispatcher harness, so `--contract
+                # <Lib>` errors with "No verification targets(contracts) were
+                # found" -- MEASURED on limit-order-protocol, 14/14 runs. The
+                # previous version of this file therefore routed libraries
+                # through `--function fn`, mirroring collect.py.
+                #
+                # `--function` verifies a function in ISOLATION from an
+                # ARBITRARY contract state. A counterexample it produces may
+                # rest on a state combination that no `constructor() -> tx
+                # sequence` can reach on chain. This project's deliverable is a
+                # test that must be GREEN on the unmodified contract, so such a
+                # counterexample becomes a RED test with nothing marking it --
+                # which is why `--function` is banned from the regressions.
+                #
+                # It never fired: every library-route run reported "0 complete
+                # path(s) across 0 unit(s)" because the functions reached were
+                # `internal` and internal functions are not units. But
+                # `ImmutablesLib.protocolFeeAmountCd` and three siblings are
+                # `external` -- units by visibility, sitting on this route. The
+                # channel was correct only because its inputs happened to be
+                # internal, which is not a property anything checks.
+                #
+                # So the run is REFUSED and recorded, not approximated. An
+                # internal library function loses nothing: its decisions are
+                # covered through the units that inline it. An external one
+                # becomes an explicitly reported gap, which is the honest form
+                # of "this configuration cannot measure it".
+                rec = {
+                    "tag": tag, "cmd": None, "wallSeconds": 0.0,
+                    "exitCode": None, "killedByOuterTimeout": False,
+                    "reportPresent": False,
+                    "skipped": "library-has-no-dispatcher",
+                    "skippedDetail":
+                        "a library has no dispatcher harness, so --contract "
+                        "<Lib> finds no verification targets; the only other "
+                        "route is --function, which verifies in isolation from "
+                        "an arbitrary state and can yield a counterexample no "
+                        "reachable state supports. Internal library functions "
+                        "are covered through their callers' paths; external "
+                        "ones are an unmeasured gap under this configuration",
+                    "contract": cname, "function": fname, "kind": ckind,
+                }
+                print(f"  [{i}/{len(todo)}] {tag}  (skipped: library)",
+                      flush=True)
+                record(rec)
+                continue
             print(f"  [{i}/{len(todo)}] {tag}", flush=True)
-            cmd = esbmc_cmd(solast, flat,
-                            None if ckind == "library" else primary,
-                            fname, goals, library=(ckind == "library"))
+            cmd = esbmc_cmd(solast, flat, primary, fname, goals)
             rec, d = one_run(tag, cmd, timeout, out_dir / "work" / tag)
             rec["contract"], rec["function"], rec["kind"] = cname, fname, ckind
             record(rec)

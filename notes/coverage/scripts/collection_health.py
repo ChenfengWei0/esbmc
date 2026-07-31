@@ -93,6 +93,16 @@ def main():
             killed = r.get("killedByOuterTimeout")
             wall = r.get("wallSeconds", "?")
             ue = r.get("unitsEnumerated", "?")
+            # A REFUSED run is a fourth outcome and must not fall through to
+            # `nonzero_exit`: it has no exit code because no process was
+            # started. Folding it into the abort bucket would put a deliberate
+            # soundness decision in the same column as a crash, and the abort
+            # table would print a `None` command line as if it were
+            # reproducible.
+            if r.get("skipped"):
+                grand["refused_" + r["skipped"]] += 1
+                print(f"| {r.get('contract')} | `{fn}` | REFUSED | - | - | - |")
+                continue
             if killed:
                 grand["killed"] += 1
             elif ex == 0:
