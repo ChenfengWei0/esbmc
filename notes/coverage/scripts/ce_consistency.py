@@ -140,6 +140,10 @@ def main():
         sys.exit(__doc__)
     total = agree = disagree = skipped = 0
     bad = []
+    skip_reasons = {}
+
+    def note_skip(reason):
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
     for p in sys.argv[1:]:
         rp = Path(p)
         if not rp.exists():
@@ -154,6 +158,7 @@ def main():
                 arm = dec.get("arm")
                 if pred is None or arm is None:
                     skipped += 1
+                    note_skip("the decision record has no branch_claim or arm")
                     continue
                 total += 1
                 # ---- THE CONVENTION, ESTABLISHED AGAINST SOURCE ----
@@ -187,6 +192,23 @@ def main():
                 got, why = evaluate(pred, c)
                 if got is None:
                     skipped += 1
+                    # Name the SHAPE, not the instance: bucketing on the raw
+                    # predicate text would give one bucket per contract and
+                    # defeat the point. The bytes helper call is called out by
+                    # name because they are a known open defect
+                    # (D11_Bytes32Equality) whose fix is judged on this count.
+                    if "_bytes_static_equal" in pred:
+                        note_skip("bytesN equality helper "
+                                  "(`_bytes_static_equal`) -- see "
+                                  "D11_Bytes32Equality.sol")
+                    elif "return_value$" in pred:
+                        note_skip("a call's return value, not a payload name")
+                    elif why and why.startswith("payload does not bind"):
+                        note_skip("payload does not bind a name the decision "
+                                  "reads")
+                    else:
+                        note_skip("predicate shape this checker cannot "
+                                  "evaluate")
                     continue
                 if got == want:
                     agree += 1
@@ -202,6 +224,22 @@ def main():
     print(f"  agree                {agree}")
     print(f"  DISAGREE             {disagree}")
     print(f"  skipped (unparsed / name not in payload)  {skipped}")
+    # ---- WHY EACH SKIP HAPPENED, GROUPED ----
+    #
+    # A skipped decision is the checker refusing to judge, and an anonymous
+    # refusal count cannot be used as an acceptance criterion. Grouping them by
+    # reason makes "did this fix move THOSE decisions out of skipped?" a
+    # question the output answers.
+    #
+    # It is not cosmetic here: the bytesN payload defect (D11_Bytes32Equality)
+    # is pinned two ways, and one of the two is "these decisions must leave
+    # `skipped` without producing a DISAGREE". Without the grouping, a fix that
+    # moved six unrelated predicates out and left the bytes ones in would look
+    # identical.
+    if skip_reasons:
+        print("\n  refusals by reason:")
+        for r, n in sorted(skip_reasons.items(), key=lambda kv: -kv[1]):
+            print(f"    {n:>4}  {r}")
     print("\n  A skipped decision is NOT a passing one. It is a predicate this "
           "checker refuses to judge, and it is counted so the agree figure "
           "cannot be read as coverage of the whole set.\n")
