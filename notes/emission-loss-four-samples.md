@@ -279,6 +279,35 @@ does is stop part of the shortfall being attributed to the generator when it
 belongs to the metric, and it re-scales the target: the reachable ceiling for
 our deliverable on aqua is 6, not 8.
 
+## NARROWED, ONE COMMIT LATER — this is an AQUA finding, not a corpus finding
+
+`notes/coverage/scripts/instrument_ceiling.py` reads `native.instrumented` out
+of every locked JSON. The picture is NOT "forge instruments less than the AST
+set":
+
+    benchmark                      AST  forge   bar  native
+    aqua_Aqua                        8      6     7       6
+    cross_chain_swap_EscrowDst      18     18    18      10
+    cross_chain_swap_EscrowSrc      16     16    16       8
+    farming                         26     30    26      26
+    limit_order_protocol             3      ?     3       2
+    st1inch_St1inch                 86     91    72      83
+
+On farming and st1inch forge instruments MORE branches than the AST decision
+count. So the two instruments disagree in BOTH directions, and the aqua shape
+(AST > forge) is one benchmark's, not the corpus's.
+
+**And a count difference is not a membership difference.** `forge >= AST` does
+NOT imply every AST line is instrumented — each set can hold lines the other
+lacks while the counts favour one. So `unreachable = AST - forge` is wrong
+arithmetic, it was in the first version of that script, and the only benchmark
+whose two SETS have actually been intersected is aqua, by reading every BRDA
+record of a real lcov. Everywhere else the ceiling is UNKNOWN, not zero.
+
+The script now prints both counts, refuses to subtract them, and names which
+benchmarks have been checked by membership. Establishing the others needs the
+same intersection per benchmark, which needs their lcov.
+
 UNRESOLVED, recorded rather than smoothed over: in the probe run, 2251 and 2260
 show as instrumented-but-never-taken even though the probe's `ship`/`dock`
 sequence executed both and its four tests passed. Either forge coverage did not

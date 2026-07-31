@@ -349,8 +349,14 @@ def main():
     # `bar` is ESBMC's column and ESBMC's universe IS 8, so comparing `ours/8`
     # against `bar/8` silently mixes two instruments' universes. Printed here so
     # the ceiling travels with the number instead of being rediscovered.
+    # `instrumented` is recorded ONLY in the whole-contract (`no_function`)
+    # entry. The per-method entry carries `reached` alone, and reading THAT
+    # returns None for every benchmark -- which prints as "no ceiling known"
+    # and is indistinguishable from a benchmark that genuinely has none. Caught
+    # by running it: the first version read `per_function` and reported `?`
+    # across all six.
     forge_universe = None
-    for pf in locked["per_function"].get("perFile", []):
+    for pf in locked.get("no_function", {}).get("perFile", []):
         nat = pf.get("native") or {}
         if isinstance(nat.get("instrumented"), int):
             forge_universe = (forge_universe or 0) + nat["instrumented"]
