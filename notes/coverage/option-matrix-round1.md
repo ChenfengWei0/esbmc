@@ -78,6 +78,133 @@ gets instrumented, so 2844 of the claims are `unit-not-entered`. That is why a
 per-method collection's per-report `paths_total` is a contract-level number and
 must never be read as "this unit has 2846 paths".
 
+## Round 2 — `Aqua.dock`, and the flag that silently deletes every witness
+
+`dock` was chosen because it is the opposite of `safeBalances`: 2 F against 61
+`bounded-holds` in the corpus, i.e. a unit whose paths are mostly state-guarded.
+If the transaction dimension ever mattered, it would matter here.
+
+**tx dimension, `dock`:** identical to `safeBalances`. tx1 / tx2 / tx0 /
+multi-tx+unwind / multi-tx+k-induction all give F = 2, and the 61 bounded-holds
+paths stay bounded-holds in every one of them. multi-tx+incremental-bmc died at
+357 s with `cvc5::internal::Minisat::OutOfMemoryException` at 8 g.
+
+⇒ Two units now agree: **with `--focus-function` on, no transaction setting buys
+a single extra witness.** The contract's §2 prediction is measured, not argued.
+
+**slice x simplify, `dock`, tx1:**
+
+| slice | simplify | exit | F | F w/ inputs | U | wall |
+|---|---|---|---|---|---|---|
+| default | default | 1 | **2** | 2/2 | 2844 | 9.5 s |
+| default | `--no-simplify` | **0** | **0** | 0/0 | **2846** | 11.2 s |
+| `--no-slice` | default | 1 | **2** | 2/2 | 2844 | 14.7 s |
+| `--no-slice` | `--no-simplify` | **0** | **0** | 0/0 | **2846** | 17.8 s |
+
+**`--no-slice` changes nothing.** Same F, same inputs, same U, in both
+simplification settings. The 183-symbol exemption list is adequate here, and the
+worry that counterexample INPUTS are silently sliced away is answered: 2/2 F
+claims carry inputs with slicing on. (One unit. `dock` takes two scalar
+coordinates; a unit with struct or dynamic-array parameters is a different
+question.)
+
+**`--no-simplify` deletes both witnesses.** F goes 2 -> 0, and it does so in the
+worst possible way: 11 seconds, **exit 0**, report written normally, U = 2846,
+no OOM, no timeout, no warning of any kind. The run reports calmly that all 2846
+paths hold. Nothing anywhere says a query was weakened.
+
+This is `no-verdict-is-not-no` in its most dangerous form — a run that looks like
+a completely successful verification and has witnessed nothing.
+
+### Why this is not a curiosity
+
+`--path-cov-assert` FORCES `--no-simplify`. `--path-cov-certify` does not.
+
+Independently of this matrix, the stage-4 wiring hit a contradiction on the SAME
+contract and the SAME unit: `Aqua.dock` enc=12, one region, two gates —
+
+* `--path-cov-certify` -> `RESULT: CERTIFIED`, its non-vacuity witness REFUTED
+  (an execution in the region does walk the path);
+* `--path-cov-assert` -> `THE REGION IS VACUOUS`, the same witness PASSED, and
+  all six mutually contradictory ladder rungs passing beside it.
+
+The 2x2 above supplies the mechanism: in the configuration `--path-cov-assert`
+forces, this tool cannot witness `dock`'s paths at all. A witness that cannot be
+refuted reads as "no execution walks this path", which is exactly the vacuity
+verdict — and every assertion rung then holds for want of an execution.
+
+⇒ **Every stage-3 assertion so far was proved under a configuration in which the
+path cannot be witnessed.** That is not assertion strength; that is vacuity. The
+isolation experiment (does the certify verdict flip when `--no-simplify` alone is
+added?) is running separately and is the thing that decides which side is wrong.
+
+⇒ It also means the direction of my earlier worry was backwards. I expected
+simplification to SWALLOW witnesses; measured, it is switching simplification
+OFF that loses them.
+
+### Round 3 — the effect is CONTRACT-SPECIFIC, and the mechanism is not the
+### obvious one
+
+Replicating the same 2x2 on two more units settles both the scope and the
+mechanism, and narrows an overclaim made from the `dock` table alone.
+
+| unit | slice x simplify | F in all four cells |
+|---|---|---|
+| `Aqua.safeBalances` | all four | **2** — no effect |
+| `FarmingPool.deposit` | all four | **7** — no effect |
+| `Aqua.dock` | `--no-simplify` cells | **0** vs 2 — the only unit that moves |
+
+So "`--no-simplify` deletes witnesses" is NOT a general property of the flag. It
+is a property of a path that runs through a library loop which simplification
+was previously folding away. Any statement of the form "stage 3's assertions are
+vacuous" is therefore **withdrawn**: what stands is that this flag changes the
+deliverable on some units and not others, which is exactly the kind of thing
+that can only be measured.
+
+**The mechanism, read out of the reports rather than guessed** (all three via
+`report_summary.py`, so the verdict comes off the artefact and not off an exit
+code):
+
+| config | F | bounded-holds | not-solved-this-run | decision steps |
+|---|---|---|---|---|
+| default | 2 | 61 | 0 | 4 |
+| `--no-simplify` | **0** | **63** | 0 | 0 |
+| `--no-simplify --partial-loops` | 2 | 61 | 0 | 4 |
+
+The two lost witnesses do NOT become "never asked". `not-solved-this-run` is 0
+in all three; the count that grows is `bounded-holds`, 61 -> 63. **The claim was
+asked, and the tool answered that the path does not hold — when it does.**
+
+That rules out the first explanation offered for this (that simplification folds
+a claim to `true` in `goto_symext::claim` and it never reaches `assertion()`).
+Those claims would surface as `not_solved_this_run`, and none did. The real
+chain, confirmed by `--partial-loops` restoring F=2 in one flag:
+
+* `--no-simplify` stops `do_simplify` folding loop guards
+  (`symex_goto.cpp:20`), so `__memset_impl` (`c2goto/library/string.c:298`) is
+  actually entered;
+* it is truncated at the coverage-forced `--unwind 4`;
+* `no-unwinding-assertions` is forced unconditionally
+  (`esbmc_parseoptions.cpp:4305`), so `loop_bound_exceeded` installs an
+  ASSUMPTION (`symex_goto.cpp:492-493`) that assumes away precisely the
+  executions that witness the path.
+
+`--unwindset 64:512` also restores F = 2, while `1:64`, `62:16` and `64:64` do
+not — so the loop's trip count is > 64 and <= 511.
+
+**Which side of the certify/assert contradiction is wrong: the assert side.**
+`--path-cov-assert` forces `no-simplify` at `esbmc_parseoptions.cpp:4223` and is
+the only one of the three path-cov sub-modes that does. Its `RESULT: VACUOUS` on
+`Aqua.dock` enc=12 is a false verdict, and the PUT that
+`solidity_path_put.py` refused on that signal is a lost deliverable, not a
+property of the region.
+
+**The generalisation that does hold, and it is the serious one:** forcing
+`no-simplify` inside a mode that also forces `no-unwinding-assertions` is unsafe
+in general. On this contract any `--solidity-path-coverage` run carrying
+`--no-simplify` reports `VERIFICATION SUCCESSFUL`, exit 0, 0% coverage, with
+nothing but the generic under-report warning to show for it.
+
 ## What round 1 does NOT answer
 
 * the same matrix on a state-guarded unit (`dock`, `deposit`, `withdraw`) —
