@@ -3334,9 +3334,42 @@ smt_convt::resultt bmct::multi_property_check(
     const bool budget_on = goto_coveraget::claim_budget_seconds > 0;
     const bool answered = solver_result == smt_convt::P_SATISFIABLE ||
                           solver_result == smt_convt::P_UNSATISFIABLE;
+    // ---- THE ELAPSED TIME IS ALREADY IN MILLISECONDS ----
+    //
+    // `current_time()` returns `tv.tv_usec / 1000 + tv.tv_sec * 1000`
+    // (util/time_stopping.cpp), i.e. MILLISECONDS. The old test multiplied that
+    // difference by 1000 before comparing it against `budget_seconds * 1000`,
+    // so it expanded to
+    //
+    //     ms * 1000 + 100 >= 120 * 1000      <=>      ms >= 119.9
+    //
+    // and fired at 120 MILLISECONDS instead of 120 seconds -- a factor of 1000.
+    // Every unanswered query slower than about a tenth of a second was filed
+    // `claim-budget-exceeded`, and the budget never actually gave a query the
+    // time it advertised.
+    //
+    // MEASURED on st1inch `--focus-function setFeeReceiver --z3
+    // --tuple-node-flattener`, whose own log contradicts itself on consecutive
+    // lines:
+    //
+    //     Runtime decision procedure: 5.021s
+    //     WARNING: claim budget exceeded (120s): ABANDONING
+    //              'setFeeReceiver:path:15 at' ...
+    //
+    // Five seconds reported as over a two-minute budget. The consequence is not
+    // only a wrong number: the five paths were filed under
+    // `claim-budget-exceeded` -- "we abandoned it, nothing is known" -- when the
+    // solver had ANSWERED, with `unknown`, in seconds. That is the
+    // `solver-unknown` cell, and the two call for different next actions
+    // (raise the budget vs change the encoding). The token that exists to stop
+    // a U from absorbing an unexplained remainder was itself absorbing one.
+    //
+    // The 100 ms slack keeps its stated meaning now that both sides are in the
+    // same unit: it covers clock granularity and the gap between the solver's
+    // own timer starting and this one.
     const bool over_budget =
       is_path_cov && budget_on && !answered &&
-      (solve_stop - solve_start) * 1000.0 + 100.0 >=
+      (double)(solve_stop - solve_start) + 100.0 >=
         (double)goto_coveraget::claim_budget_seconds * 1000.0;
     if (over_budget)
     {

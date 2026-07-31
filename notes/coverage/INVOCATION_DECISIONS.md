@@ -273,13 +273,55 @@ flag combination, because all `#sol_unchecked` readers end in
 
 Evidence: `notes/path-coverage-invocation-contract.md` §11.
 
-## 7. solver — auto-select
+## 7. solver — auto-select, WITH ONE MEASURED EXCEPTION
 
 Aqua auto-selects CVC5 with a stated reason ("detected >=3-level nested-mapping
 shape; Bitwuzla aborts on the CONST_ARRAY-initialised infinite mapping array").
-`--z3` was deliberately NOT tried: the fallback was contingent on CVC5 being
-what ran out of memory, and at 20 g it does not. Overriding an auto-selection
-that carries a soundness reason needs its own evidence.
+`--z3` was deliberately NOT tried there: the fallback was contingent on CVC5
+being what ran out of memory, and at 20 g it does not. Overriding an
+auto-selection that carries a soundness reason needs its own evidence.
+
+### st1inch: THE ENCODING, NOT THE SOLVER, AND IT UNBLOCKS THE BENCHMARK
+
+st1inch produced NOTHING for the whole corpus: all 22 focused runs died at the
+180 s outer timeout with no report. Narrowed with `--focus-function
+setFeeReceiver` -- a unit whose body is an owner check and one assignment -- the
+shape is stark: symex 0.095 s, 1526 assignments, 10 VCCs, and then ONE solver
+call that does not return. Three backends, three different failures:
+
+| configuration | result |
+|---|---|
+| `--bitwuzla` (auto-selected) | never returns (killed at 125 s, 118 s user) |
+| `--cvc5` | `std::bad_alloc` at 4 g, 0.000 s in the decision procedure |
+| `--z3` | `datatype is not well-founded`, then SIGABRT, at 16 s |
+| `--bitwuzla --tuple-sym-flattener` | still never returns |
+| `--bitwuzla --array-flattener` | SIGABRT at 16 s |
+| `--cvc5 --cvc5-native-tuples` | SIGABRT at 16 s |
+| **`--z3 --tuple-node-flattener`** | **rc 0, 43 s, complete report** |
+| **`--z3 --tuple-sym-flattener`** | **rc 0, 55 s, complete report** |
+
+z3's message names an ALGEBRAIC DATATYPE whose constructor mentions itself with
+no base case, and the hand-written control settles where it does not come from:
+`struct Node { Node[] kids; }` -- a genuinely self-referential Solidity struct --
+is accepted by all three backends (`notes/coverage/poc/D05_RecursiveStruct.sol`).
+So the recursion is built by ESBMC's own tuple encoding, not by the source, and
+either explicit flattener avoids it. Per-query times are 2-7 s, not unbounded.
+
+Two things follow, and only the first is a recommendation:
+
+* **For st1inch, pass `--z3 --tuple-node-flattener`.** It is the only
+  configuration measured to produce a report at all, and the benchmark has been
+  contributing zero to every corpus number until now.
+* **The default z3 tuple encoding building a non-well-founded datatype is a
+  DEFECT, not a preference.** The flattener is a workaround; `notes/coverage/
+  scripts/st_encoders.py` is the discriminating experiment, kept so the fix can
+  be checked against the same six cells.
+
+What that first report says is itself a result and not a success: 5 paths,
+`F 0, U 5`, every U now correctly `solver-unknown` (z3 ANSWERED "unknown" in
+2-7 s). Before the claim-budget unit fix in the same round they were filed
+`claim-budget-exceeded`, which would have sent the next reader to raise a
+timeout that was never the problem.
 
 ## 8. resources — size the limit, and expect to lose everything on death
 
