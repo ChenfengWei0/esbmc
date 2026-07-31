@@ -1000,6 +1000,43 @@ check("C3-a-real-cut-is-narrower",
 check("C3-a-widening-cut-is-detectable",
       region_size({"a": (0, 100)}) > region_size({"a": (5, 100)}), True)
 
+# --- the certify RESULT line, read from REAL log text ---
+#
+# These four strings are VERBATIM prefixes from real runs, `ERROR: ` included.
+# The first version of CERTIFY_RESULT_RE anchored on `^--path-cov-certify` and
+# so matched only the two outcomes that go through log_status -- CERTIFIED and
+# REFUTED -- while VACUOUS and UNDECIDED, which go through log_error and are
+# prefixed `ERROR: `, fell through to the old whole-line verdict and were
+# reported as "no verdict at all". A vacuous certification reading as UNKNOWN
+# loses the entire point of the gate.
+#
+# Caught by an end-to-end driver run, not by a unit test, because the first
+# tests were written from the FORMAT STRING rather than from a log. Hence these.
+_R_CERT = ("--path-cov-certify: RESULT: CERTIFIED — every input the box "
+           "admits walks path enc=2 (2 of 4 exit assert(s) discharged")
+_R_REF = ("--path-cov-certify: RESULT: REFUTED — 1 of 4 exit assert(s) were "
+          "refuted, so an input the box admits leaves this path")
+_R_VAC = ("ERROR: --path-cov-certify: RESULT: VACUOUS — the box admits NO "
+          "execution that walks path enc=3 of this unit")
+_R_UND = ("ERROR: --path-cov-certify: RESULT: UNDECIDED — no exit assert was "
+          "refuted, but 1 of 4 came back UNKNOWN from the solver")
+
+# A certified run prints VERIFICATION FAILED -- the witness is refuted on it --
+# so every case below pairs the RESULT line with the OPPOSITE verdict line, to
+# pin that the RESULT line wins.
+check("RESULT-CERTIFIED-beats-the-FAILED-verdict-line",
+      verdict(WARN + "\n" + _R_CERT + "\nVERIFICATION FAILED"), "SUCCESSFUL")
+check("RESULT-REFUTED-is-FAILED",
+      verdict(WARN + "\n" + _R_REF + "\nVERIFICATION FAILED"), "FAILED")
+check("RESULT-VACUOUS-survives-the-ERROR-prefix",
+      verdict(WARN + "\n" + _R_VAC), "VACUOUS")
+check("RESULT-UNDECIDED-survives-the-ERROR-prefix",
+      verdict(WARN + "\n" + _R_UND), "UNKNOWN")
+# And with no RESULT line at all the old whole-line verdict still decides, so an
+# older ESBMC keeps working.
+check("no-RESULT-line-falls-back-to-the-verdict-line",
+      verdict(WARN + "\nVERIFICATION SUCCESSFUL"), "SUCCESSFUL")
+
 # --- C5: coordinate accounting ---
 #
 # The must-flip is the whole point: the same payload against buckets that do and

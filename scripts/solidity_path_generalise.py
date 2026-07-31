@@ -873,8 +873,21 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     return boxes, brackets, regions, warned, failure, region_holes, type_ranges
 
 
+# The `ERROR: ` PREFIX IS NOT OPTIONAL DECORATION. VACUOUS and UNDECIDED are
+# emitted with log_error, which prepends `ERROR: `; CERTIFIED and REFUTED go
+# through log_status and do not. Anchoring on `^--path-cov-certify` therefore
+# matched exactly the two GOOD outcomes and missed both bad ones -- so a vacuous
+# certification read as "no verdict at all", which is the one reading that loses
+# the whole point of the gate.
+#
+# MEASURED end to end, not reasoned about: a real driver run shrank enc=3 to
+# `amt in [0,49]` under `state.bal == 50`, the tool correctly printed
+# `RESULT: VACUOUS` (amt <= 49 can never be > 50), and the driver reported
+# "ESBMC printed neither SUCCESSFUL nor FAILED". The pure-function tests could
+# not have caught it: they were written from the format string, not from a log.
 CERTIFY_RESULT_RE = re.compile(
-    r"^--path-cov-certify: RESULT: (CERTIFIED|REFUTED|VACUOUS|UNDECIDED)\b")
+    r"^(?:ERROR: )?--path-cov-certify: RESULT: "
+    r"(CERTIFIED|REFUTED|VACUOUS|UNDECIDED)\b")
 
 
 def verdict(log):
