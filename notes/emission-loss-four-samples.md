@@ -92,3 +92,38 @@ along. The fix is to pin NOTHING and let forge satisfy the flat's own pragma, so
 there is no second place for that mapping to drift. Two such near-misses in one
 evening, on the same output line, is why a build failure is now read before it
 is filed.
+
+---
+
+# Fourth sample: EscrowDst
+
+| | aqua | farming | EscrowSrc | EscrowDst |
+|---|---|---|---|---|
+| bar | 7/8 | 26/26 | 16/16 | 18/18 |
+| native | 6/8 | 26/26 | 8/16 | 10/18 |
+| **ours** | **2/8** | **10/26** | **3/16** | **2/18** |
+| enumerated | 4 | 18 | 6 | 5 |
+| emitted | 2 | 10 | 3 | 2 |
+| **emission retains** | 50% | 56% | 50% | **40%** |
+
+## The surviving claim, now with its range
+
+Emission retains **40-56%** of what the enumeration reaches, across four
+benchmarks. "About half" holds, and the fourth sample is what makes it a RANGE
+rather than a number that happened to look precise three times. Quote the range.
+
+## The `ImmutablesLib` finding now holds on both Escrows
+
+EscrowSrc reported `ImmutablesLib: enumerated 0, emitted 0`. EscrowDst reports
+the same, and additionally `EscrowDst.sol: enumerated 0`. So the eight
+`ImmutablesLib` decisions that appear as 0/8 in the gate table were NEVER
+ENUMERATED on either Escrow -- an enumeration-side gap that no emitter change
+can touch. That was a single-sample observation one commit ago and is now a
+two-sample one, which is the whole reason the fourth run was worth doing.
+
+## What stays per-benchmark
+
+The mechanism inside the emission loss still differs everywhere: an
+unreconstructed call on aqua, RED tests on farming (14) and both Escrows (17,
+and EscrowDst's own), empty-body refusals only on aqua. Report mechanisms per
+benchmark; only the 40-56% band is a cross-benchmark statement.
