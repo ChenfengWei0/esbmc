@@ -52,6 +52,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       punch_targets,
                                       cut_of,
                                       split_on_cut,
+                                      copy_holes,
                                       function_mutability,
                                       unexpressible_coords,
                                       unresolvable_coords,
@@ -1322,6 +1323,124 @@ check("the-outer-box-refusal-is-still-read-by-its-own-reader",
 # A clean log names nothing, so a successful run cannot drop a pin by accident.
 check("a-clean-log-refuses-nothing", unexpressible_coords(CERTIFIED), [])
 check("a-refuted-log-refuses-nothing", unexpressible_coords(REFUTED), [])
+
+# --- the punched set must be DEEP-copied, or S3 pieces share their parent's holes ---
+#
+# `holes` is {coord: [int,...]}, so `dict(holes)` shares the LIST objects and
+# the punch branch mutates them in place. A piece enqueued with a shallow copy
+# keeps growing holes its parent punches AFTER the split -- it is certified over
+# a region carrying a hole it never derived, and a stored region mutates after
+# the query that certified it. Needs --max-region-pieces > 1 AND --max-holes > 0,
+# which is the combination the S3 note names as the next thing to measure.
+_parent = {"x": [200]}
+_shallow = dict(_parent)
+_deep = copy_holes(_parent)
+_parent["x"].append(90)
+check("S3-a-shallow-copy-of-holes-aliases-the-lists", _shallow["x"], [200, 90])
+check("S3-copy_holes-does-not", _deep["x"], [200])
+# ...and the copy must be independent in the other direction too, or a piece's
+# own punch would reach back into its parent.
+_deep2 = copy_holes({"x": [1]})
+_deep2["x"].append(2)
+check("S3-mutating-the-copy-leaves-the-source-alone", copy_holes({"x": [1]}),
+      {"x": [1]})
+check("S3-copy_holes-tolerates-none", copy_holes(None), {})
+
+
+# --- S10's AST read must be scoped to the contract AND its bases ---
+#
+# Every benchmark input is FLATTENED: dozens of contracts in one file, routinely
+# repeating a function name. Walking the whole AST and keying by bare name lets
+# any of them collide, and because the tie-break is "payable wins" the collision
+# SKIPS the pin and prints "this unit is PAYABLE" -- a false claim about the
+# unit, on exactly the multi-contract inputs the corpus sweep uses.
+#
+# Inheritance is not optional either: `BaseEscrow.rescueFunds` is measured under
+# `--contract EscrowSrc`, so scoping to the named contract's own functions would
+# lose the pin on every inherited unit instead.
+_FLAT = {
+    "nodeType": "SourceUnit",
+    "nodes": [
+        {"nodeType": "ContractDefinition", "name": "IERC20", "id": 1,
+         "linearizedBaseContracts": [1],
+         "nodes": [{"nodeType": "FunctionDefinition", "name": "transfer",
+                    "stateMutability": "payable"}]},
+        {"nodeType": "ContractDefinition", "name": "BaseEscrow", "id": 2,
+         "linearizedBaseContracts": [2],
+         "nodes": [{"nodeType": "FunctionDefinition", "name": "rescueFunds",
+                    "stateMutability": "nonpayable"}]},
+        {"nodeType": "ContractDefinition", "name": "EscrowSrc", "id": 3,
+         "linearizedBaseContracts": [3, 2],
+         "nodes": [{"nodeType": "FunctionDefinition", "name": "transfer",
+                    "stateMutability": "nonpayable"},
+                   {"nodeType": "FunctionDefinition", "name": "withdraw",
+                    "stateMutability": "nonpayable"}]},
+    ],
+}
+_fd3, _p3 = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd3, "w") as _f3:
+    json.dump(_FLAT, _f3)
+
+# THE BUG, in the direction it actually happens: unscoped, IERC20's payable
+# `transfer` collides with EscrowSrc's nonpayable one and payable wins.
+check("S10-unscoped-a-foreign-payable-namesake-wins",
+      function_mutability(_p3).get("transfer"), "payable")
+# THE FIX: scoped to the contract under test, the right one is read.
+check("S10-scoped-reads-the-contract-under-test",
+      function_mutability(_p3, "EscrowSrc").get("transfer"), "nonpayable")
+# MUST FLIP: an INHERITED unit must still be found, or scoping trades one yield
+# loss for another.
+check("S10-scoped-still-finds-an-inherited-unit",
+      function_mutability(_p3, "EscrowSrc").get("rescueFunds"), "nonpayable")
+# A contract that does not inherit must NOT see its sibling's functions.
+check("S10-scoped-does-not-see-an-unrelated-contract",
+      "withdraw" in function_mutability(_p3, "IERC20"), False)
+# An unknown contract name falls back to the whole AST rather than returning
+# nothing: reading nothing would turn a lookup failure into "mutability unknown",
+# which reads as a property of the source.
+check("S10-an-unknown-contract-falls-back-to-the-whole-ast",
+      function_mutability(_p3, "NoSuchContract").get("rescueFunds"),
+      "nonpayable")
+os.unlink(_p3)
+
+
+# --- a suggested cut must lie INSIDE the interval it cuts ---
+#
+# split_on_cut CLAMPS, so the complement is computed from clamped bounds while
+# the loop advances to the UNCLAMPED suggestion. On box [10,100] with suggestion
+# [5,50] the complement is [51,100] and the kept side [5,50]: their union covers
+# [5,9], which was never in the measured region. |R| cannot catch it -- 46 < 91,
+# so the narrowing check passes, which is why the loop tests containment
+# directly.
+check("S3-an-out-of-range-cut-is-not-caught-by-size-alone",
+      region_size({"x": (5, 50)}) < region_size({"x": (10, 100)}), True)
+check("S3-the-complement-is-computed-from-the-clamped-bounds",
+      [r["x"] for r in split_on_cut({"x": (10, 100)}, "x", 5, 50)[1]],
+      [(51, 100)])
+check("S3-and-the-clamped-kept-side-is-inside",
+      split_on_cut({"x": (10, 100)}, "x", 5, 50)[0]["x"], (10, 50))
+
+
+# --- C2 against the PINS is a separate question from C2 against the box ---
+#
+# Pins never enter `box` -- certify folds them in only when building the spec --
+# so ce_in_region(box, ...) structurally cannot see a pin conflict. S10 made that
+# live: msg.value is pinned to 0 on every path of a non-payable unit, including
+# the ABI-gate path whose whole domain is msg.value != 0.
+#
+# The two must stay DISTINCT findings. A CE outside the BOX is a cut that carved
+# into the real domain (a defect). A CE outside a PIN is the path being excluded
+# from the slice (S10's stated cost). Merging them files that cost as a bug.
+_PINS_AS_BOX = {n: (v, v) for n, v in {"msg.value": 0}.items()}
+check("C2-pins-as-a-box-detects-the-abi-gate-path",
+      ce_in_region(_PINS_AS_BOX, {}, {"msg.value": 7, "x": 3}),
+      ["msg.value: CE 7 outside [0, 0]"])
+# MUST FLIP: a path whose CE agrees with the pin is not excluded.
+check("C2-pins-as-a-box-clears-an-agreeing-path",
+      ce_in_region(_PINS_AS_BOX, {}, {"msg.value": 0, "x": 3}), [])
+# ...and the box check alone sees NEITHER, which is the structural blindness.
+check("C2-the-box-check-alone-cannot-see-a-pin-conflict",
+      ce_in_region({"x": (0, 9)}, {}, {"msg.value": 7, "x": 3}), [])
 
 if FAILURES:
     print("FAILED:")

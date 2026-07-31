@@ -404,7 +404,7 @@ def state_mutability(ast_path):
     return out
 
 
-def function_mutability(ast_path):
+def function_mutability(ast_path, contract=None):
     """Each function's Solidity `stateMutability`, read from the solc AST.
 
     S10. `msg.value` is the single measured difference between a unit that
@@ -440,6 +440,28 @@ def function_mutability(ast_path):
     OVERLOADS: a name declared twice with different mutability cannot be
     resolved from the name alone, so the PAYABLE reading wins. That is the
     conservative direction: it declines to pin, i.e. it declines to act.
+    Deliberately the OPPOSITE tie-break to `state_mutability`'s -- there the
+    risky move is dropping a coordinate that really is settable, here it is
+    pinning a quantity that really can vary.
+
+    SCOPED TO ONE CONTRACT, and that is not a refinement. Every benchmark input
+    is a FLATTENED source: dozens of contracts, libraries and interfaces in one
+    file, routinely declaring the same function name several times -- an
+    `IERC20.transfer` beside the concrete `transfer`, a `deposit() payable` on
+    some other contract beside the target's nonpayable `deposit`. Walking the
+    whole AST and keying by bare name lets any of those collide, and because the
+    tie-break is "payable wins" the collision resolves to payable: the pin is
+    skipped and the driver prints "this unit is PAYABLE", which is an assertion
+    about the unit that is FALSE. That is the report-a-state-it-does-not-have
+    shape, on exactly the multi-contract inputs the corpus sweep uses, and the
+    safe tie-break saves soundness without saving either the message or the
+    yield.
+
+    With `contract` given, only that `ContractDefinition`'s own functions are
+    read. If no contract of that name is found the walk falls back to the whole
+    AST and the caller is told, because silently reading nothing would turn a
+    lookup failure into "this unit's mutability is unknown", which reads as a
+    property of the source.
     """
     if not ast_path or not os.path.exists(ast_path):
         return {}
@@ -448,23 +470,61 @@ def function_mutability(ast_path):
         ast = json.loads(txt[txt.index("{"):])
     except (OSError, ValueError):
         return {}
-    out = {}
 
-    def walk(n):
-        if isinstance(n, dict):
-            if n.get("nodeType") == "FunctionDefinition":
-                nm, mu = n.get("name"), n.get("stateMutability")
+    def collect(node, out):
+        if isinstance(node, dict):
+            if node.get("nodeType") == "FunctionDefinition":
+                nm, mu = node.get("name"), node.get("stateMutability")
                 if nm and mu:
                     if out.get(nm) in (None, mu) or mu == "payable":
                         out[nm] = mu
-            for v in n.values():
-                walk(v)
-        elif isinstance(n, list):
-            for v in n:
-                walk(v)
+            for v in node.values():
+                collect(v, out)
+        elif isinstance(node, list):
+            for v in node:
+                collect(v, out)
+        return out
 
-    walk(ast)
-    return out
+    if contract:
+        # Every ContractDefinition by AST id, so the linearisation can be
+        # followed. INHERITANCE IS NOT OPTIONAL HERE: a unit of the contract
+        # under test is routinely DECLARED on a base -- `BaseEscrow.rescueFunds`
+        # is measured under `--contract EscrowSrc`, and the round-trip's unit
+        # list names it that way. Reading only the named contract's own
+        # functions would report those units as "mutability could not be read"
+        # and lose the pin on them, which is the same yield loss by a different
+        # route.
+        by_id, target = {}, None
+
+        def index(node):
+            nonlocal target
+            if isinstance(node, dict):
+                if node.get("nodeType") == "ContractDefinition":
+                    if node.get("id") is not None:
+                        by_id[node["id"]] = node
+                    if node.get("name") == contract:
+                        target = node
+                for v in node.values():
+                    index(v)
+            elif isinstance(node, list):
+                for v in node:
+                    index(v)
+
+        index(ast)
+        if target is not None:
+            # `linearizedBaseContracts` is most-derived first, so walk it in
+            # REVERSE and let the most-derived declaration overwrite -- C3
+            # linearisation, which is what the compiler resolves an override to.
+            chain = target.get("linearizedBaseContracts") or [target.get("id")]
+            out = {}
+            for cid in reversed(chain):
+                node = by_id.get(cid)
+                if node is not None:
+                    collect(node, out)
+            if out:
+                return out
+        # Fall through to the whole-AST read; the caller reports that it did.
+    return collect(ast, {})
 
 
 def declared_struct_fields(ast_path):
@@ -1716,6 +1776,26 @@ def cut_of(box, nb):
     return d[0] if len(d) == 1 else None
 
 
+def copy_holes(holes):
+    """A DEEP copy of a punched set. `dict(holes)` is not one, and that matters.
+
+    `holes` is `{coord: [int, ...]}`, so `dict(holes)` shares the LIST objects
+    with the original -- and the punch branch mutates those lists in place
+    (`setdefault` then `append` then `sort`). With S3, a piece enqueued with
+    `dict(holes)` therefore keeps growing holes that its PARENT punches after
+    the split: the piece is certified over a region carrying a hole it never
+    derived, its printed region shows that hole, and the partition check uses it
+    to mask a genuine overlap. It runs backwards too -- a piece recorded in
+    `ok_holes` has its stored region mutated afterwards by a sibling's punch, so
+    the final report can print a punched set that was never part of the query
+    that certified it.
+
+    Needs both `--max-region-pieces > 1` and `--max-holes > 0`, which is exactly
+    the combination the S3 note names as the next thing to measure.
+    """
+    return {k: list(v) for k, v in (holes or {}).items()}
+
+
 def split_on_cut(box, coord, lo, hi):
     """S3 -- a refutation's cut, as the KEPT piece plus the pieces it discards.
 
@@ -2099,7 +2179,12 @@ def main():
     # is `msg.value != 0`. Its region goes empty and is reported as empty. That
     # is the cost, it is stated here, and it is why this prints rather than
     # happening quietly.
-    fn_mut = function_mutability(args.ast)
+    # SCOPED TO THE CONTRACT UNDER TEST AND ITS BASES. On a flattened input a
+    # bare function name collides across contracts, and because the tie-break is
+    # "payable wins" a collision silently skips the pin AND prints "this unit is
+    # PAYABLE" -- a false claim about the unit, on exactly the multi-contract
+    # inputs the corpus sweep uses.
+    fn_mut = function_mutability(args.ast, args.contract)
     mu = fn_mut.get(args.unit)
     if args.no_auto_pin_value:
         print("[env] --no-auto-pin-value: msg.value is NOT pinned even if this "
@@ -2457,17 +2542,31 @@ def main():
         spans = new
 
     if unresolvable:
-        # Reported, not acted on. These are names the OUTER-BOX rounds refused,
-        # and that branch drops the coordinate and keeps measuring, so no bound
-        # of theirs ever reaches a region. The certify branch has its OWN
-        # refusal with its own wording, handled where it happens.
+        # STATE ONLY WHAT IS TRUE AT THIS POINT. An earlier version of this line
+        # asserted "no region below carries a bound on them and each holds for
+        # ALL their values" -- which is false while the name is still sitting in
+        # `pins`, and a pinned one DOES reach the certify spec (pins are folded
+        # into the box there) and DOES refuse the query. The two branches
+        # disagree about these names, and that disagreement is the fact worth
+        # printing; the consequence is printed later, by the branch that
+        # actually acts.
+        pinned_too = sorted(n for n in unresolvable if n in pins)
         print("[coords] the outer-box rounds refused "
               + ", ".join(sorted(unresolvable))
-              + " as coordinate(s) of this unit, so no region below carries a "
-                "bound on them and each holds for ALL their values")
+              + " as coordinate(s) of this unit, so no OUTER BOX carries a "
+                "bound on them"
+              + (f". NOTE: {', '.join(pinned_too)} is/are still PINNED, and the "
+                 f"certification branch folds pins into the box, so the query "
+                 f"may be refused on them and the pin dropped below"
+                 if pinned_too else
+                 " and every region below holds for ALL their values"))
 
     # Certify every candidate, shrinking on the witness when refuted.
     ok, failed, ok_holes = {}, {}, {}
+    # Names the certify branch refused and the loop dropped. Accumulated across
+    # paths because `pins` is global, so the drop is announced once but affects
+    # every path after it.
+    dropped_by_certify = set()
     for enc, depth, ce in paths:
         box = regions.get(enc)
         if box is None:
@@ -2530,7 +2629,7 @@ def main():
         # -- which is a real guarantee (the query is refuted exactly when the
         # box admits an execution walking the path) but a different one, and the
         # report must not present the two as the same thing.
-        queue = [(dict(box), dict(holes), True)]
+        queue = [(dict(box), copy_holes(holes), True)]
         piece_no, piece_fail = 0, []
         while queue:
             box, holes, has_ce = queue.pop(0)
@@ -2567,11 +2666,39 @@ def main():
                     gone = [n for n in unexp
                             if n in pins or n in box or n in holes]
                     if not gone:
+                        # THE TOOL REFUSED AND THIS DRIVER CANNOT ACT ON IT --
+                        # a name under a spelling we do not hold. Falling
+                        # through here would carry the outstanding refusal into
+                        # the normal verdict handling: at best it lands on
+                        # UNKNOWN and reports "ESBMC printed neither SUCCESSFUL
+                        # nor FAILED", the exact true-and-useless sentence this
+                        # whole change exists to remove; at worst the run also
+                        # printed a whole-line VERIFICATION SUCCESSFUL and a
+                        # query the tool DECLINED TO ATTEMPT is recorded as a
+                        # certified region. Neither is acceptable, so this is a
+                        # hard stop with the names in it.
+                        reason = (
+                            "the certification query was REFUSED on "
+                            + ", ".join(unexp)
+                            + ", and this driver holds no pin, bound or hole "
+                              "under that spelling, so it could not drop them "
+                              "and re-query. NOTHING WAS MEASURED for this "
+                              "path -- this is a refusal of the query, not a "
+                              "property of the path")
                         break
                     for n in gone:
                         pins.pop(n, None)
                         box.pop(n, None)
                         holes.pop(n, None)
+                    # RECORDED, because `pins` is GLOBAL across paths: only the
+                    # first path that hits the refusal prints this line, and
+                    # every later path's region silently no longer carries the
+                    # pin with nothing per-path to say so. It also leaves C5's
+                    # coordinate accounting -- which ran once, before any query
+                    # -- no longer true: the name is now in no bucket at all.
+                    # Re-reported under the regions, where a reader of the final
+                    # block can see it.
+                    dropped_by_certify.update(gone)
                     print(f"[certify {tag}] DROPPED " + ", ".join(gone)
                           + " — the certification query cannot express "
                             "it (a mapping, a dynamic array or a `constant` is "
@@ -2588,6 +2715,11 @@ def main():
                         enc, depth, box, ce, pins, args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
                         memlimit=args.memlimit, holes=holes)
+                if reason is not None:
+                    # Set only by the un-droppable-refusal branch above. Leaving
+                    # the for-loop here is what keeps a refused query out of the
+                    # SUCCESSFUL / VACUOUS / UNKNOWN handling below.
+                    break
                 if wit:
                     last_wit = wit
                     last_wit_box = dict(box)
@@ -2604,6 +2736,43 @@ def main():
                     # replaces it is the tool's own non-vacuity witness, which
                     # this run has already passed to reach SUCCESSFUL.
                     if has_ce:
+                        # ---- THE PINS MUST BE IN THE PICTURE ----
+                        #
+                        # `ce_in_region(box, ...)` cannot see a pin: pins never
+                        # enter `box`, they are folded in only when `certify`
+                        # builds the spec. So the half of C2 its own docstring
+                        # claimed -- "a --pin the caller supplies can conflict
+                        # with the CE outright" -- was structurally dead.
+                        #
+                        # S10 made it live. `pins["msg.value"] = 0` is applied to
+                        # EVERY path of a non-payable unit, including the ABI
+                        # gate path whose entire domain is msg.value != 0, i.e.
+                        # the one path whose counterexample the pin is
+                        # GUARANTEED to exclude. Until now that was caught only
+                        # by something external -- the tool answering VACUOUS,
+                        # or the outer round inverting an interval.
+                        #
+                        # It is reported SEPARATELY from a C2 violation, and the
+                        # distinction is the whole point. A CE outside the BOX
+                        # means a cut carved into the real domain: a defect. A
+                        # CE outside a PIN means the path is excluded from the
+                        # slice the caller asked about: not a defect, and the
+                        # honest statement about it. Merging them would file
+                        # S10's stated cost as a bug in the subtraction.
+                        excluded = ce_in_region(
+                            {n: (v, v) for n, v in pins.items()}, {}, ce)
+                        if excluded:
+                            reason = (
+                                "this path is EXCLUDED FROM THE SLICE by the "
+                                "pins (" + "; ".join(excluded) + "). Its own "
+                                "counterexample does not satisfy them, so the "
+                                "region certified here is not about this path's "
+                                "domain. For the ABI-value gate path under a "
+                                "non-payable unit this is exactly what "
+                                "auto-pinning msg.value costs, and it is a "
+                                "statement about the slice, not a defect in the "
+                                "subtraction")
+                            break
                         missing = ce_in_region(box, holes, ce)
                         if missing:
                             reason = (
@@ -2623,7 +2792,11 @@ def main():
                               f"non-emptiness guarantee is the tool's "
                               f"non-vacuity witness alone")
                     ok[(enc, piece_no)] = box
-                    ok_holes[(enc, piece_no)] = holes
+                    # DEEP-COPIED ON STORE for the same reason it is deep-copied
+                    # on enqueue: `holes` keeps being mutated by later rounds of
+                    # sibling pieces, and a stored region that changes after it
+                    # was certified is a report about a query nobody issued.
+                    ok_holes[(enc, piece_no)] = copy_holes(holes)
                     break
                 if v == "VACUOUS":
                     # The box admits NO execution that walks this path. Neither
@@ -2732,6 +2905,27 @@ def main():
                 # on a piece that never held one there is nothing to keep, and
                 # `ce_in_region` answers it exactly.
                 coord = cut_of(box, nb)
+                # THE SUGGESTION MUST LIE INSIDE THE INTERVAL IT CUTS, and C3
+                # alone does not enforce it. `split_on_cut` CLAMPS, so `rest` is
+                # computed from the clamped bounds while `box` advances to the
+                # UNCLAMPED `nb`; on box [10,100] with a suggestion [5,50] the
+                # complement is [51,100] and the kept side is [5,50], whose
+                # union is [5,100] -- covering [5,9], which was never in the
+                # measured region. |R| does not catch it (46 < 91, so the
+                # narrowing check passes). Checked explicitly rather than
+                # inferred from the size.
+                if coord is not None and coord in box:
+                    olo, ohi = box[coord]
+                    nlo, nhi = nb[coord]
+                    if nlo < olo or nhi > ohi:
+                        reason = (
+                            f"INVARIANT VIOLATED: the suggested cut on {coord} "
+                            f"[{nlo}, {nhi}] reaches OUTSIDE the interval it "
+                            f"cuts [{olo}, {ohi}]. A cut may only narrow; a "
+                            f"union built from this would certify inputs the "
+                            f"region never contained, and |R| cannot see it "
+                            f"because the result is still smaller")
+                        break
                 if coord is not None and args.max_region_pieces > 1:
                     _, rest = split_on_cut(box, coord, *nb[coord])
                     for r in rest:
@@ -2742,7 +2936,7 @@ def main():
                                   f"is DISCARDED UNMEASURED -- it is not known "
                                   f"to be outside the domain, only unexamined")
                             continue
-                        queue.append((r, dict(holes),
+                        queue.append((r, copy_holes(holes),
                                       not ce_in_region(r, holes, ce)))
                         print(f"[split {tag}] keeping the discarded side "
                               f"{coord} in [{r[coord][0]}, {r[coord][1]}] as a "
@@ -2824,8 +3018,14 @@ def main():
                 return (f"{n} in [{lo}, {hi}]"
                         + (" \\ {" + ", ".join(str(x) for x in v) + "}" if v
                            else ""))
+            # THE REAL PIECE NUMBER, not a re-enumeration of the certified ones.
+            # `[split enc=6 piece 1]` and `[shrink enc=6 piece 3]` in the log
+            # have to be findable in this report; renumbering 1..N over the
+            # pieces that happened to certify makes cross-referencing a sweep
+            # log against its own report guesswork.
             label = (f"enc={enc}" if len(keys) == 1
-                     else f"enc={enc} piece {i}/{len(keys)}")
+                     else f"enc={enc} piece {key[1]} ({i} of {len(keys)} "
+                          f"certified)")
             print(f"  {label}: "
                   + ", ".join(_one(n, lo, hi) for n, (lo, hi) in box.items())
                   + pin_txt)
@@ -2837,6 +3037,20 @@ def main():
     for enc, why in sorted(failed.items()):
         print(f"  enc={enc}: NOT CERTIFIED — {why}; this path falls back to its "
               f"concrete counterexample test")
+    if dropped_by_certify:
+        # C5 ran ONCE, before any query, and every one of these names was in a
+        # bucket then. The drop removed them afterwards, so as the run ends they
+        # are in NO bucket -- exactly the "a name vanished between the
+        # counterexample and the region" condition C5 exists to catch. It is not
+        # an error (dropping widens the quantification, which is sound), but a
+        # name that leaves the accounting must not leave it silently.
+        print("\n  COORDINATE ACCOUNTING, amended: "
+              + ", ".join(sorted(dropped_by_certify))
+              + " left every bucket during certification — the query could not "
+                "express them, so the pins were dropped. Every region above is "
+                "therefore a statement holding for ALL their values, which is "
+                "STRONGER than the slice originally asked for. They appear in "
+                "no pin list above because the list is printed after the drop")
     return 0 if ok else 1
 
 
