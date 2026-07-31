@@ -9,5 +9,5 @@ contract.sol
 ^Complete Paths : 8$
 ^Reached : 3$
 ^Path Status: F 3, I 0, U 5$
-^U Reasons: named-obstacle 0, unit-not-entered 5, bounded-holds 0, solver-unknown 0, not-solved-this-run 0, run-died-before-solving 0$
+^U Reasons: named-obstacle 0, unit-not-entered 5, bounded-holds 0, solver-unknown 0, not-solved-this-run 0, run-died-before-solving 0, claim-budget-exceeded 0$
 ^VERIFICATION FAILED$

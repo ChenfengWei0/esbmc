@@ -1233,6 +1233,19 @@ void report_coverage(
         goto_coveraget::claims_total_atomic.load(std::memory_order_relaxed));
     else
       log_result("Report Completeness: COMPLETE");
+    // Printed on EVERY path-coverage run, including when the budget is off and
+    // when it never fired. "The cap was on" and "the cap fired N times" are
+    // separate statements, and a run whose numbers were shaped by an abandoned
+    // query must not look like one whose solver answered everything.
+    log_result(
+      "Claim Budget: {} — {} claim(s) abandoned over budget ({})",
+      goto_coveraget::claim_budget_seconds == 0
+        ? std::string("unlimited")
+        : std::to_string(goto_coveraget::claim_budget_seconds) + "s per claim",
+      goto_coveraget::claim_budget_exceeded.load(std::memory_order_relaxed),
+      goto_coveraget::claim_budget_mechanism.empty()
+        ? std::string("no enforcement")
+        : goto_coveraget::claim_budget_mechanism);
     if (total == 0)
       log_result("No complete path enumerated");
     else
@@ -1820,6 +1833,58 @@ void report_coverage(
               "contract state writes are sliced out of the counterexample. "
               "Ask for --cov-report-json (which exempts them) or re-run with "
               "--no-slice";
+
+          // ---- EVERY WITNESS, WHEN THERE IS MORE THAN ONE ----
+          //
+          // `witness_count` is emitted unconditionally, because "this path has
+          // one input tuple that reaches it" and "this path has sixteen and we
+          // reported one" are different statements and the report could not
+          // previously make either. The `witnesses` ARRAY is emitted only above
+          // 1: at count 1 it would duplicate the fields directly above it on
+          // every F claim of every run, and the report is already ~1.6 MB on a
+          // 2846-path contract.
+          //
+          // The extra witnesses are the raw material the stage-2 ladder wants
+          // -- sibling spans need more than one point in a path's domain, and
+          // one counterexample cannot bracket a boundary.
+          auto it_all = goto_coveraget::path_ce_all.find(claim_sig);
+          const size_t n_wit = it_all == goto_coveraget::path_ce_all.end()
+                                 ? 1
+                                 : it_all->second.size();
+          claim_entry["ce_extraction"]["witness_count"] = n_wit;
+          if (n_wit > 1)
+          {
+            json wits = json::array();
+            for (const auto &w : it_all->second)
+            {
+              json wj;
+              json wi = json::object();
+              for (const auto &[n, v] : w.inputs)
+                wi[prettify_solidity_expr(n)] = v;
+              json we = json::object();
+              for (const auto &[n, v] : w.env)
+                we[prettify_solidity_expr(n)] = v;
+              json wf = json::object();
+              for (const auto &[n, v] : w.final_state)
+                wf[prettify_solidity_expr(n)] = v;
+              json wen = json::object();
+              for (const auto &[n, v] : w.entry_storage)
+                wen[prettify_solidity_expr(n)] = v;
+              wj["inputs"] = wi;
+              wj["env"] = we;
+              wj["entry_storage"] = wen;
+              // Same rule as the single-witness block above: a revert without
+              // rollback modelling has no post-state, and publishing the
+              // values at the revert point under `final_state` would be a
+              // wrong value carrying a disclaimer.
+              if (w.revert_pre_rollback)
+                wj["state_at_revert_point"] = wf;
+              else
+                wj["final_state"] = wf;
+              wits.push_back(wj);
+            }
+            claim_entry["witnesses"] = wits;
+          }
         }
         else if (tri == "F")
         {
@@ -1991,6 +2056,42 @@ void report_coverage(
       report["summary"]["U_undecided"] = nU;
       report["summary"]["U_of_which_bounded_holds"] = nBH;
 
+      // ---- HOW MANY WITNESSES THE REPORT ACTUALLY CARRIES ----
+      //
+      // Counted from `claims_json`, i.e. from what was EMITTED, not from the
+      // producer's own map: this pass has already shipped one recorder that ran
+      // on every path and was consumed by nothing, and a census taken from the
+      // producer would have looked healthy throughout. Printed on stdout too,
+      // because the regression harness matches program output only, so a field
+      // that exists solely inside the file cannot be regression-locked.
+      {
+        size_t wtotal = 0, wmulti = 0;
+        for (const auto &c : claims_json)
+        {
+          if (c.value("status", "") != "F")
+            continue;
+          const size_t n =
+            c.contains("ce_extraction")
+              ? c["ce_extraction"].value("witness_count", (size_t)1)
+              : (size_t)1;
+          wtotal += n;
+          if (n > 1)
+            ++wmulti;
+        }
+        report["summary"]["witnesses_total"] = wtotal;
+        report["summary"]["F_with_multiple_witnesses"] = wmulti;
+        log_status(
+          "--solidity-path-coverage: CE PAYLOADS published for {} witness(es) "
+          "across {} witnessed path(s); {} path(s) carry more than one "
+          "(--all-witnesses is {}). Every witness of a path is a further point "
+          "in that path's input domain, which is what a sibling span needs and "
+          "what one counterexample cannot give",
+          wtotal,
+          nF,
+          wmulti,
+          options.get_bool_option("all-witnesses") ? "on" : "off");
+      }
+
       // ---- THE DECISION-SEQUENCE PUBLICATION, COUNTED ON STDOUT ----
       //
       // A mechanism whose only evidence is a field inside a file nobody reads
@@ -2064,6 +2165,19 @@ void report_coverage(
       report["summary"]["bound"]["kind"] =
         unbounded_run ? "unbounded" : "bounded";
       report["summary"]["bound"]["tx_exploration"] = tx_exploration;
+      // THE PER-CLAIM BUDGET IS PART OF THE BOUND, not a footnote. A capped
+      // run's U counts are not comparable with an uncapped run's: some of its
+      // U's mean "we stopped asking", and a reader diffing two reports without
+      // this field would read that as "no witness exists". Emitted in both
+      // directions (0 = unlimited) for the same reason `partial` is.
+      report["summary"]["bound"]["claim_timeout_s"] =
+        goto_coveraget::claim_budget_seconds;
+      report["summary"]["bound"]["claim_timeout_enforcement"] =
+        goto_coveraget::claim_budget_mechanism.empty()
+          ? std::string("unlimited: no per-claim budget was applied")
+          : goto_coveraget::claim_budget_mechanism;
+      report["summary"]["claims_abandoned_over_budget"] =
+        goto_coveraget::claim_budget_exceeded.load(std::memory_order_relaxed);
       if (!unbounded_run)
         report["summary"]["note"] =
           "no coverage configuration can establish unreachability, so I is "
@@ -3066,6 +3180,21 @@ smt_convt::resultt bmct::multi_property_check(
     std::call_once(summary.solver_name_flag, [&]() {
       summary.solver_name = solver_ptr->solver_text();
     });
+    // WHAT ACTUALLY ENFORCED THE BUDGET, recorded from the solver rather than
+    // assumed from the flag. A backend with no per-check limit records nothing,
+    // and the empty string is turned into an explicit refusal here instead of
+    // being left to read as "enforced": a report carrying `claim_timeout_s: 120`
+    // for a run nothing bounded is the exact shape of a guard that never fires
+    // while everything looks fine.
+    if (is_path_cov && goto_coveraget::claim_budget_seconds > 0)
+    {
+      const std::string mech = smt_timeout_mechanism();
+      goto_coveraget::claim_budget_mechanism =
+        mech.empty() ? ("NOT ENFORCED: backend '" + solver_ptr->solver_text() +
+                        "' has no per-query time limit, so the budget was "
+                        "requested and could not be applied")
+                     : mech;
+    }
     // In coverage mode, only report instrumented coverage claims
     bool is_cov_silent =
       is_goto_cov && claim.claim_property != "instrumented assertion";
@@ -3117,6 +3246,47 @@ smt_convt::resultt bmct::multi_property_check(
       }
     }
 
+    // ---- DID THIS CLAIM BLOW ITS BUDGET? ----
+    //
+    // The budget is enforced by the SOLVER (a native per-check-sat limit; see
+    // solvers/solve.h), and every backend folds "unknown" into P_ERROR --
+    // cvc5_conv.cpp maps isUnknown() straight onto it, and smt_convt::resultt
+    // has no P_UNKNOWN to fold into instead. So the result alone cannot tell an
+    // abandoned query from a genuine solver failure, and the wall clock is what
+    // separates them.
+    //
+    // THE TEST IS UNCONDITIONAL ON WHAT THE SOLVER SAID BEYOND THAT: a SAT or
+    // UNSAT answer is kept even if it arrived late, because the solver ANSWERED
+    // and an answer is not something to throw away over a stopwatch. Only a
+    // non-answer that took at least the budget is filed as abandoned.
+    //
+    // The 100 ms slack is for clock granularity and for the difference between
+    // when the solver's own timer starts and when this one does; without it a
+    // limit that fires at exactly the budget can measure as a hair under it and
+    // be mislabelled `solver-unknown`, which is the quieter and more misleading
+    // of the two errors.
+    const bool budget_on = goto_coveraget::claim_budget_seconds > 0;
+    const bool answered = solver_result == smt_convt::P_SATISFIABLE ||
+                          solver_result == smt_convt::P_UNSATISFIABLE;
+    const bool over_budget =
+      is_path_cov && budget_on && !answered &&
+      (solve_stop - solve_start) * 1000.0 + 100.0 >=
+        (double)goto_coveraget::claim_budget_seconds * 1000.0;
+    if (over_budget)
+    {
+      goto_coveraget::claim_budget_exceeded.fetch_add(
+        1, std::memory_order_relaxed);
+      log_warning(
+        "claim budget exceeded ({}s): ABANDONING '{}' and continuing to the "
+        "next claim. Nothing is known about this path -- it is reported U with "
+        "reason 'claim-budget-exceeded', which is NOT 'solver-unknown' (the "
+        "solver answering 'I do not know') and NOT 'bounded-holds' (it "
+        "answering 'no witness'). Raise --path-cov-claim-timeout to spend more "
+        "on it",
+        goto_coveraget::claim_budget_seconds,
+        prettify_solidity_expr(claim.claim_cstr));
+    }
+
     // Tri-state ledger for Solidity complete-path coverage: record THIS
     // claim's verdict so the report can tell "proven at this bound" apart
     // from "could not decide" (reached_claims records only the refuted
@@ -3126,7 +3296,13 @@ smt_convt::resultt bmct::multi_property_check(
     if (is_path_cov)
     {
       char verdict;
-      if (solver_result == smt_convt::P_SATISFIABLE)
+      if (over_budget)
+        // Its own verdict value, not a shade of 'U'. path_u_reason_token's
+        // `default` arm returns "" so the caller hard-fails on an unknown
+        // verdict, which is exactly why a new one gets its own `case` there
+        // rather than being folded into an existing letter.
+        verdict = 'B';
+      else if (solver_result == smt_convt::P_SATISFIABLE)
         verdict = is ? 'U' : 'F';
       else if (solver_result == smt_convt::P_UNSATISFIABLE)
         verdict = 'P';
@@ -3210,6 +3386,22 @@ smt_convt::resultt bmct::multi_property_check(
       }
 
       std::vector<witness_recordt> witnesses;
+      // ---- ONE CE PAYLOAD PER WITNESS, NOT ONE PER CLAIM ----
+      //
+      // `--all-witnesses` was fully wired for path coverage and reached every
+      // consumer EXCEPT the one this project reads. Per witness the loop below
+      // already emitted a `--cex-output` file, a GraphML/YAML witness, a
+      // testcase XML, an HTML/JSON report, a pytest/ctest case and a FOUNDRY
+      // case -- and then harvested the counterexample payload for the FIRST
+      // witness only, discarding the rest. So Foundry got N tests per path and
+      // cov-report.json got one set of inputs, which is exactly backwards for a
+      // stage-2 ladder that consumes the report.
+      //
+      // The extra witnesses are also nearly free: they cost N-1 further
+      // dec_solve() calls on ONE already-encoded solver instance (one push_ctx,
+      // a blocking clause per witness, one pop_ctx) -- no second encoding, no
+      // second symex, no second per-claim slice.
+      std::vector<goto_coveraget::path_ce_t> ce_all;
       enumeration_stop_reasont stop_reason =
         enumerate ? enumeration_stop_reasont::Unsat
                   : enumeration_stop_reasont::Disabled;
@@ -3296,10 +3488,16 @@ smt_convt::resultt bmct::multi_property_check(
 
         // Solidity complete-path coverage: harvest this path's CE payload
         // (concrete inputs + post-state) NOW, while this witness's solver
-        // model is live — after the next dec_solve() it is gone. Only the
-        // FIRST witness of a claim is recorded: one CE per complete path is
-        // what the report contracts for.
-        if (is_path_cov && witnesses.empty())
+        // model is live — after the next dec_solve() it is gone.
+        //
+        // EVERY witness, not just the first. The old guard was
+        // `is_path_cov && witnesses.empty()`, documented as "one CE per
+        // complete path is what the report contracts for" — but the contract
+        // was the limitation, not a reason for it: with --all-witnesses the
+        // model for witnesses 2..N is built, printed and handed to the Foundry
+        // generator, and only this harvest threw it away. Default behaviour is
+        // unchanged, because without --all-witnesses the loop breaks after one.
+        if (is_path_cov)
         {
           goto_coveraget::path_ce_t ce;
           ce.sliced = !options.get_bool_option("no-slice");
@@ -3679,8 +3877,11 @@ smt_convt::resultt bmct::multi_property_check(
           }
           for (const auto &[n, v] : entry_snapshot)
             ce.entry_storage.emplace_back(n, v);
-          std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
-          goto_coveraget::path_ce[claim_sig] = std::move(ce);
+          // Accumulated locally and published once after the loop: publishing
+          // per witness would leave the shared maps disagreeing about how many
+          // witnesses a claim has for the duration of the enumeration, and the
+          // CE journal is written from those maps by a hook on this same claim.
+          ce_all.push_back(std::move(ce));
         }
 
         witnesses.push_back(std::move(w));
@@ -3734,6 +3935,19 @@ smt_convt::resultt bmct::multi_property_check(
       // sees the solver in its pre-enumeration state.
       if (ctx_pushed)
         solver_ptr->pop_ctx();
+
+      // Publish the payloads. `path_ce` keeps the FIRST witness, unchanged, so
+      // every existing consumer (the Foundry emitter, audit_certify_witness,
+      // the CE journal, the covered set) reads exactly what it read before;
+      // `path_ce_all` carries the whole set. Two maps rather than one changed
+      // type, because a changed type is a change to four consumers at once and
+      // three of them want one witness.
+      if (is_path_cov && !ce_all.empty())
+      {
+        std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+        goto_coveraget::path_ce[claim_sig] = ce_all.front();
+        goto_coveraget::path_ce_all[claim_sig] = std::move(ce_all);
+      }
 
       // Store claim signature (once — multiple witnesses are still one claim)
       if (is_assert_cov)

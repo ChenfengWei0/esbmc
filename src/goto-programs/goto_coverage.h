@@ -564,6 +564,17 @@ public:
   // Loaded from the file at instrumentation time; written back as the UNION of
   // loaded and newly witnessed on every publish, so a round that does not
   // re-instrument a path does not drop that path's payload either.
+  // EVERY witness of an F claim, in enumeration order, with `path_ce`'s entry
+  // as element 0. Non-empty only for a claim that produced a payload; under
+  // `--all-witnesses` it holds up to `--max-witnesses` of them.
+  //
+  // A SECOND MAP RATHER THAN A CHANGED TYPE ON `path_ce`. Four consumers read
+  // `path_ce` -- the Foundry emitter, audit_certify_witness, the CE journal and
+  // the covered-set writer -- and three of them want exactly one witness.
+  // Widening the existing type would have been a change to all four at once,
+  // and the one that wanted the others is the report.
+  static std::map<std::string, std::vector<path_ce_t>> path_ce_all;
+
   static std::map<std::string, path_ce_t> path_covered_payload;
 
   // The payload an EARLIER round persisted for this claim's path, or nullptr.
@@ -652,6 +663,23 @@ public:
   // neither population) cannot occur: a claim absent from the equation was
   // never queued.
   static std::set<std::string> claims_in_solve_loop;
+
+  // ---- THE PER-CLAIM SOLVER BUDGET ----
+  //
+  // Seconds, 0 = unlimited (--path-cov-claim-timeout, default 120). Published
+  // in the report's `summary.bound` because a capped run's U counts are NOT
+  // comparable with an uncapped run's: some of its U's are "we stopped asking",
+  // and a reader comparing two reports without this number would treat that as
+  // "no witness exists". `claim_budget_exceeded` is how many claims were
+  // abandoned, so "the cap was on" and "the cap fired N times" are separate
+  // statements -- a cap that never fires costs nothing and changes no verdict.
+  static size_t claim_budget_seconds;
+  static std::atomic<size_t> claim_budget_exceeded;
+  // Which enforcement each backend got, in the tool's own words, so a reader
+  // never has to infer it: a native solver limit and a watchdog interrupt have
+  // different granularity and different failure modes, and a backend with
+  // NEITHER must say so rather than silently run unbounded.
+  static std::string claim_budget_mechanism;
 
   // Signal-safe snapshot for path coverage, mirroring branch coverage's
   // (branch_cov_active / total_branch_atomic / live_reached). Written at the

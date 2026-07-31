@@ -4288,6 +4288,40 @@ bool esbmc_parseoptionst::process_goto_program(
         }
         tmp.path_cov_max_goals = static_cast<size_t>(v);
       }
+      // ---- THE PER-CLAIM SOLVER BUDGET ----
+      //
+      // Read here with the other knobs, and published as a static so the solve
+      // loop and the report read the same number rather than each re-deriving
+      // it. Default 120 s, 0 = unlimited. Negative is refused rather than
+      // clamped: a negative budget has no reading that is not a mistake, and
+      // silently turning it into "unlimited" would give the caller the opposite
+      // of what they typed.
+      {
+        int t = 120;
+        if (cmdline.isset("path-cov-claim-timeout"))
+          t = atoi(cmdline.getval("path-cov-claim-timeout"));
+        if (t < 0)
+        {
+          log_error(
+            "--path-cov-claim-timeout requires a non-negative integer (got "
+            "{}); use 0 for unlimited",
+            t);
+          return true;
+        }
+        goto_coveraget::claim_budget_seconds = static_cast<size_t>(t);
+        goto_coveraget::claim_budget_exceeded.store(
+          0, std::memory_order_relaxed);
+        goto_coveraget::claim_budget_mechanism.clear();
+        // Published as MILLISECONDS into `options` so the solver backends can
+        // read it. It has to be republished rather than read from the CLI
+        // there: boost never pumps a DEFAULTED value into `optionst`
+        // (optionst::cmdline, util/options.cpp), so an untouched
+        // --path-cov-claim-timeout would read as empty in the backend and the
+        // 120 s default would silently never apply -- a budget that is not
+        // applied while the report says it was is worse than no budget.
+        options.set_option(
+          "path-cov-claim-timeout-ms", std::to_string((long long)t * 1000));
+      }
       // Stage-2 certification query. Read here, alongside the other knobs the
       // pass consumes, so the pass itself has no command-line dependency.
       if (cmdline.isset("path-cov-certify"))

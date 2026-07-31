@@ -893,6 +893,23 @@ const struct group_opt_templ all_cmd_options[] = {
       "the dropped paths are reported as an absolute count — never silently. "
       "Truncation is the last-resort backstop; it firing at all is reported as "
       "a signal that degradation was not aggressive enough"},
+     {"path-cov-claim-timeout",
+      boost::program_options::value<int>()->default_value(120)->value_name("N"),
+      "Per-CLAIM solver budget in seconds for --solidity-path-coverage "
+      "(default 120; 0 = unlimited). Path coverage decides one INDEPENDENT "
+      "claim per job, so without a per-claim bound a single pathological query "
+      "consumes the whole run and takes every already-decided result with it — "
+      "measured: one run decided 938 claims and refuted 5, then died and "
+      "produced nothing. A claim that exceeds the budget is ABANDONED, gets its "
+      "own verdict token `claim-budget-exceeded` (it is not `solver-unknown`, "
+      "which is the solver answering 'I do not know'; not `bounded-holds`, "
+      "which is it answering 'no witness'; and not `not-solved-this-run`, which "
+      "is never having asked), and the run CONTINUES to the next claim and "
+      "still writes its report. The budget is recorded in the report's "
+      "`summary.bound` because a capped run's U counts are not comparable with "
+      "an uncapped run's. This is a bound on cost, not a way around it: raising "
+      "--memlimit or the outer timeout routes AROUND a query that does not "
+      "finish, this one refuses to pay for it"},
      {"path-cov-certify",
       boost::program_options::value<std::string>()->value_name("file"),
       "Run the CERTIFICATION QUERY instead of path enumeration: given a JSON "

@@ -1,4 +1,5 @@
 #include <bitwuzla_conv.h>
+#include <solvers/solve.h>
 #include <cstring>
 #include <cstdio>
 
@@ -35,6 +36,17 @@ bitwuzla_convt::bitwuzla_convt(const namespacet &ns, const optionst &options)
   bitw_options = bitwuzla_options_new();
   bitw_term_manager = bitwuzla_term_manager_new();
   bitwuzla_set_option(bitw_options, BITWUZLA_OPT_PRODUCE_MODELS, 1);
+  // Per-query budget (--path-cov-claim-timeout). Set on bitw_options BEFORE
+  // bitwuzla_new, which is the only point at which options are consumed. The
+  // limit is per satisfiability check and 0 disables it, which matches the
+  // option's own "0 = unlimited" exactly, so no special case is needed.
+  if (const uint64_t ms = smt_per_query_timeout_ms(options))
+  {
+    bitwuzla_set_option(bitw_options, BITWUZLA_OPT_TIME_LIMIT_PER, ms);
+    smt_record_timeout_mechanism(
+      "bitwuzla: native BITWUZLA_OPT_TIME_LIMIT_PER (per satisfiability "
+      "check, milliseconds)");
+  }
   bitwuzla_set_abort_callback(bitwuzla_error_handler);
   bitw = bitwuzla_new(bitw_term_manager, bitw_options);
 }

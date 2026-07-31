@@ -1,5 +1,6 @@
 #include <iostream> /* std::cout */
 #include <z3_conv.h>
+#include <solvers/solve.h>
 
 #define new_ast new_solver_ast<z3_smt_ast>
 
@@ -58,6 +59,17 @@ z3_convt::z3_convt(const namespacet &_ns, const optionst &_options)
   p.set("relevancy", 0U);
   p.set("model", true);
   p.set("proof", false);
+  // Per-query budget (--path-cov-claim-timeout). z3's `timeout` solver
+  // parameter is per check() and in milliseconds; it applies to this
+  // tactic-derived solver as it does to a plain one. Left unset when the budget
+  // is 0 rather than set to 0, because z3 reads 0 as "no timeout" only by
+  // convention and not setting it is unambiguous.
+  if (const uint64_t ms = smt_per_query_timeout_ms(_options))
+  {
+    p.set("timeout", (unsigned)ms);
+    smt_record_timeout_mechanism(
+      "z3: native solver parameter `timeout` (per check-sat, milliseconds)");
+  }
   solver.set(p);
   Z3_set_ast_print_mode(z3_ctx, Z3_PRINT_SMTLIB2_COMPLIANT);
   Z3_set_error_handler(z3_ctx, error_handler);

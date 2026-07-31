@@ -51,6 +51,8 @@ std::map<std::pair<std::string, std::string>, std::string>
 std::map<std::string, std::vector<std::string>>
   goto_coveraget::degraded_call_sites;
 std::map<std::string, goto_coveraget::path_ce_t> goto_coveraget::path_ce;
+std::map<std::string, std::vector<goto_coveraget::path_ce_t>>
+  goto_coveraget::path_ce_all;
 std::map<std::string, goto_coveraget::path_ce_t>
   goto_coveraget::path_covered_payload;
 std::map<std::pair<std::string, std::string>, uint64_t>
@@ -103,6 +105,9 @@ std::atomic<size_t> goto_coveraget::live_decided{0};
 std::atomic<size_t> goto_coveraget::claims_total_atomic{0};
 std::string goto_coveraget::path_cov_partial_reason;
 std::set<std::string> goto_coveraget::claims_in_solve_loop;
+size_t goto_coveraget::claim_budget_seconds = 0;
+std::atomic<size_t> goto_coveraget::claim_budget_exceeded{0};
+std::string goto_coveraget::claim_budget_mechanism;
 std::atomic<bool> goto_coveraget::path_cov_active{false};
 std::atomic<size_t> goto_coveraget::total_paths_atomic{0};
 std::atomic<size_t> goto_coveraget::live_F{0};
@@ -280,6 +285,21 @@ void goto_coveraget::write_path_ce_journal_atomic(
       auto sid = path_stable_id.find({msg, loc});
       if (sid != path_stable_id.end())
         e["path_id_stable"] = sid->second;
+      // Under --all-witnesses a path has several payloads, and a journal that
+      // kept only the first would lose exactly what that flag was turned on to
+      // obtain -- on the run that most needs the journal, the one that dies.
+      // The count is emitted in both cases so "this path has one witness" and
+      // "this path had several and we kept one" can never look alike.
+      auto wa = path_ce_all.find(sig);
+      const size_t nw = wa == path_ce_all.end() ? 1 : wa->second.size();
+      e["witness_count"] = nw;
+      if (nw > 1)
+      {
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto &w : wa->second)
+          arr.push_back(path_ce_to_json(w, msg, loc));
+        e["witnesses"] = arr;
+      }
       out["witnesses"][sig] = e;
       ++written;
     }
@@ -509,7 +529,8 @@ const std::vector<std::string> &goto_coveraget::path_u_reason_tokens()
     "bounded-holds",
     "solver-unknown",
     "not-solved-this-run",
-    "run-died-before-solving"};
+    "run-died-before-solving",
+    "claim-budget-exceeded"};
   return tokens;
 }
 
@@ -551,6 +572,19 @@ std::string goto_coveraget::path_u_reason_token(
     return "bounded-holds";
   case 'U':
     return "solver-unknown";
+  case 'B':
+    // THE QUERY WAS ABANDONED, and this is deliberately not one of the three
+    // tokens it could plausibly be folded into. `solver-unknown` is the solver
+    // ANSWERING "I do not know" -- it looked and gave up, which is information.
+    // `bounded-holds` is it answering "no witness at this exploration".
+    // `not-solved-this-run` is never having asked. Here we asked, the solver was
+    // still working, and WE stopped it: nothing whatsoever is known about this
+    // path, and unlike the other three the fix is a bigger --path-cov-claim-
+    // timeout rather than a different bound, a different query or nothing at
+    // all. Same rule that gave the truncation case `UNDECIDED-TRUNCATED` its own
+    // word: a verdict that cannot be trusted has to be a distinct one a driver
+    // can branch on.
+    return "claim-budget-exceeded";
   case 0:
     // Instrumented, never decided -- and there are TWO ways to be in this state
     // that a reader must not have to guess between.
@@ -3555,6 +3589,7 @@ void goto_coveraget::solidity_path_coverage()
     std::lock_guard lock(claim_outcome_mutex);
     claim_outcome.clear();
     path_ce.clear();
+    path_ce_all.clear();
   }
 
   // Fingerprint of everything that can change what a path IS. The stable path
