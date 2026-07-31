@@ -1565,6 +1565,67 @@ def punch_targets(log, pins, box=None):
     return out
 
 
+def cut_of(box, nb):
+    """The single coordinate a suggested cut moved, or None.
+
+    Read by DIFFING rather than by threading the tool's suggestion through
+    `certify`'s return: the box the loop advances to is the only thing the rest
+    of the loop trusts, so deriving the cut from it cannot drift from what was
+    actually applied. None when the two differ on zero or several coordinates --
+    the caller has a no-progress branch for the first and must not guess at the
+    second.
+    """
+    d = [n for n in nb if box.get(n) != nb[n]]
+    return d[0] if len(d) == 1 else None
+
+
+def split_on_cut(box, coord, lo, hi):
+    """S3 -- a refutation's cut, as the KEPT piece plus the pieces it discards.
+
+    Today the loop replaces `box` with the tool's suggested cut and throws the
+    other side away. That side is not known to be outside the path's domain: the
+    cut excludes ONE refuting witness, and the rest of the discarded side may be
+    domain the path really has. Certification is a per-query judgement, so the
+    UNION of several separately certified boxes is itself certified -- the
+    representation is what cannot express a union, and a LIST of boxes can.
+
+    Returns `(kept, rest)`. `kept` is the box with the coordinate narrowed to the
+    suggestion; `rest` holds the at most two complement pieces, each a full box
+    differing from the original in that one coordinate. `rest` is empty when the
+    suggestion is not a proper sub-interval, which is the case the caller must
+    keep behaving exactly as it did before -- a "cut" that removes nothing is not
+    a split, it is a loop that failed to make progress, and the existing
+    `nb == box` branch is what reports that.
+
+    The suggestion is INTERSECTED with the current interval first. The tool
+    suggests against the box it was handed, and by the time this runs the
+    interval may already have been narrowed by an earlier round; a complement
+    computed from an unclamped suggestion would hand back a piece reaching
+    outside the region that was measured.
+    """
+    if coord not in box:
+        return dict(box), []
+    olo, ohi = box[coord]
+    lo, hi = max(lo, olo), min(hi, ohi)
+    if lo > hi:
+        # The suggestion does not meet the current interval at all. No kept
+        # piece is defensible, so report no split and let the caller's
+        # no-progress branch speak.
+        return dict(box), []
+    kept = dict(box)
+    kept[coord] = (lo, hi)
+    rest = []
+    if lo > olo:
+        b = dict(box)
+        b[coord] = (olo, lo - 1)
+        rest.append(b)
+    if hi < ohi:
+        b = dict(box)
+        b[coord] = (hi + 1, ohi)
+        rest.append(b)
+    return kept, rest
+
+
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g",
             holes=None):
@@ -1643,7 +1704,35 @@ def main():
     ap.add_argument("--max-tx", type=int, default=1)
     ap.add_argument("--probes", type=int, default=16)
     ap.add_argument("--refine-rounds", type=int, default=3)
-    ap.add_argument("--shrink-rounds", type=int, default=4)
+    ap.add_argument("--shrink-rounds", type=int, default=4,
+                    help="how many refutations one PIECE may absorb before it "
+                         "is given up. Per piece, not per path: with "
+                         "--max-region-pieces above 1 the first piece would "
+                         "otherwise spend the whole path's budget.")
+    ap.add_argument("--max-region-pieces", type=int, default=1,
+                    help="how many BOXES one path's region may be reported as. "
+                         "A refutation's cut splits the box into the side the "
+                         "tool suggests keeping and the side(s) it discards, "
+                         "and the discarded side is NOT known to be outside the "
+                         "path's domain -- the cut excludes one refuting "
+                         "witness, not everything beyond it. Certification is a "
+                         "per-query judgement, so the UNION of separately "
+                         "certified boxes is itself certified; it is the "
+                         "REPRESENTATION (Definition 6: a region is a product "
+                         "of per-coordinate sets) that cannot hold a union, and "
+                         "a list of boxes can.\n"
+                         "DEFAULT 1, i.e. OFF -- the discarded side is thrown "
+                         "away exactly as before, so every existing number is "
+                         "reproduced verbatim. Same house rule as --level0 and "
+                         "--max-holes, and for the same reason: keeping both "
+                         "sides changes what a default run reports, and it "
+                         "costs queries -- worst case pieces x shrink-rounds "
+                         "certification runs for one path.\n"
+                         "A piece that does NOT contain the path's own "
+                         "counterexample is certified on the strength of the "
+                         "tool's non-vacuity witness alone (the C2 membership "
+                         "check has no known member to use there), and every "
+                         "such piece says so on its own line.")
     ap.add_argument("--max-holes", type=int, default=0,
                     help="per coordinate, how many values the loop may PUNCH "
                          "OUT (Definition 5) before it falls back to a side "
@@ -2183,139 +2272,246 @@ def main():
         # reports that point, and bounding it to [0,100] reports 52. The bound
         # binds and the harvest is faithful, so "reported outside the bound" had
         # to be the checker's error, not the model's.
-        last_wit, last_wit_box = {}, dict(box)
-        # C3: |R| may only ever get NARROWER across shrink rounds. Seeded with
-        # the region as measured, then compared after every accepted cut.
-        prev_size = region_size(box, holes)
-        for _ in range(args.shrink_rounds):
-            v, nb, wit, punches = certify(
-                args.esbmc, args.sol, args.contract, args.unit,
-                enc, depth, box, ce, pins, args.max_tx,
-                args.timeout, cwd, ast=args.ast, focus=focus,
-                memlimit=args.memlimit, holes=holes)
-            if wit:
-                last_wit = wit
-                last_wit_box = dict(box)
-            if v == "SUCCESSFUL":
-                # C2, BEFORE the region is recorded as certified. A region that
-                # excludes this path's own counterexample is certified about a
-                # set the path does not have, and the CE is the one member of
-                # the domain we know for certain.
-                missing = ce_in_region(box, holes, ce)
-                if missing:
-                    failed[enc] = (
-                        "CERTIFIED region does NOT contain this path's own "
-                        "counterexample (" + "; ".join(missing) + "). The CE is "
-                        "a known member of the domain -- the enumeration "
-                        "witnessed the path with it -- so the region has been "
-                        "cut into the real domain and the certificate is about "
-                        "a different set. Refusing to report it as certified")
+        # ---- S3: a path's region is a LIST of boxes, not one box ----
+        #
+        # The queue holds pieces still to certify. It starts as the single
+        # measured region and only ever grows when a refutation's cut discards a
+        # side AND the piece budget allows that side to be pursued. At
+        # --max-region-pieces 1 nothing is ever enqueued, so this is the old
+        # single-box loop with the same prints and the same reasons.
+        #
+        # `has_ce` travels with each piece because it decides which guarantee
+        # applies. The piece holding the path's own counterexample is checked by
+        # C2 (a known member must survive). A piece that does not hold it has NO
+        # known member, so its guarantee is the tool's non-vacuity witness alone
+        # -- which is a real guarantee (the query is refuted exactly when the
+        # box admits an execution walking the path) but a different one, and the
+        # report must not present the two as the same thing.
+        queue = [(dict(box), dict(holes), True)]
+        piece_no, piece_fail = 0, []
+        while queue:
+            box, holes, has_ce = queue.pop(0)
+            piece_no += 1
+            tag = (f"enc={enc}" if args.max_region_pieces <= 1
+                   else f"enc={enc} piece {piece_no}")
+            last_wit, last_wit_box = {}, dict(box)
+            # C3: |R| may only ever get NARROWER across shrink rounds. Seeded
+            # with the piece as measured, then compared after every accepted
+            # cut. Per piece: a sibling piece is a different set and comparing
+            # sizes across them would compare two regions that were never in a
+            # narrowing relation at all.
+            prev_size = region_size(box, holes)
+            reason = None
+            for _ in range(args.shrink_rounds):
+                v, nb, wit, punches = certify(
+                    args.esbmc, args.sol, args.contract, args.unit,
+                    enc, depth, box, ce, pins, args.max_tx,
+                    args.timeout, cwd, ast=args.ast, focus=focus,
+                    memlimit=args.memlimit, holes=holes)
+                if wit:
+                    last_wit = wit
+                    last_wit_box = dict(box)
+                if v == "SUCCESSFUL":
+                    # C2, BEFORE the region is recorded as certified. A region
+                    # that excludes this path's own counterexample is certified
+                    # about a set the path does not have, and the CE is the one
+                    # member of the domain we know for certain.
+                    #
+                    # APPLIED ONLY TO THE PIECE THAT HOLDS THE CE. On any other
+                    # piece the CE is outside BY CONSTRUCTION -- that is what
+                    # made it a separate piece -- so running C2 there would
+                    # reject every piece S3 exists to keep. The guarantee that
+                    # replaces it is the tool's own non-vacuity witness, which
+                    # this run has already passed to reach SUCCESSFUL.
+                    if has_ce:
+                        missing = ce_in_region(box, holes, ce)
+                        if missing:
+                            reason = (
+                                "CERTIFIED region does NOT contain this path's "
+                                "own counterexample (" + "; ".join(missing)
+                                + "). The CE is a known member of the domain -- "
+                                "the enumeration witnessed the path with it -- "
+                                "so the region has been cut into the real "
+                                "domain and the certificate is about a "
+                                "different set. Refusing to report it as "
+                                "certified")
+                            break
+                    else:
+                        print(f"[certify {tag}] certified WITHOUT a known "
+                              f"member: this piece does not contain the path's "
+                              f"counterexample, so C2 does not apply and the "
+                              f"non-emptiness guarantee is the tool's "
+                              f"non-vacuity witness alone")
+                    ok[(enc, piece_no)] = box
+                    ok_holes[(enc, piece_no)] = holes
                     break
-                ok[enc] = box
-                ok_holes[enc] = holes
-                break
-            if v == "VACUOUS":
-                # The box admits NO execution that walks this path. Neither
-                # accepting nor shrinking is defensible: accepting certifies a
-                # region containing no input, and shrinking responds to an empty
-                # box by making it emptier. Recorded as its own reason, because
-                # the cause is upstream -- the region came from a subtraction or
-                # a pin that excluded this path from the slice entirely -- and
-                # naming it as a refutation would send the reader looking at the
-                # solver instead.
-                failed[enc] = (
-                    "region is VACUOUS: the certification query witnessed NO "
-                    "execution admitted by it that walks this path, so every "
-                    "exit assert held for want of an execution. Before the "
-                    "non-vacuity witness existed this printed as a certificate")
-                break
-            if v == "UNKNOWN":
-                # No verdict at all -- ESBMC crashed, was killed, or produced
-                # neither line. Shrinking here would treat "we never found out"
-                # as "refuted" and would quietly hand back a NARROWER box that
-                # nothing ever checked.
-                failed[enc] = ("no verdict from the certification query "
-                               "(ESBMC printed neither SUCCESSFUL nor FAILED)")
-                break
-            # ---- S4: PREFER THE PUNCH, under a stated budget ----
-            #
-            # A hole removes ONE value; a side cut removes a whole side chosen
-            # by whichever counterexample the solver returned. So where a punch
-            # is available it is both the larger surviving region and the one
-            # that does not depend on a value nobody picked.
-            #
-            # BUDGETED, because it is not strictly better: punching converges
-            # only when the excluded set is a few points, and against a boundary
-            # that is an interval it would punch forever, one value per round,
-            # while a side cut crosses it at once. `--max-holes` is that policy,
-            # it is stated rather than inferred, and when it is exhausted the
-            # loop falls back to the side cut it always used.
-            #
-            # Applied ONLY when the tool actually suggested one, so a log
-            # carrying only a SHRINK line drives exactly the path it did before
-            # this existed -- which is what the must-flip test pins.
-            usable = [(c, val) for c, val in punches
-                      if len(holes.get(c, ())) < args.max_holes]
-            if usable:
-                for c, val in usable:
-                    holes.setdefault(c, [])
-                    if val not in holes[c]:
-                        holes[c].append(val)
-                        holes[c].sort()
-                new_size = region_size(box, holes)
+                if v == "VACUOUS":
+                    # The box admits NO execution that walks this path. Neither
+                    # accepting nor shrinking is defensible: accepting certifies
+                    # a region containing no input, and shrinking responds to an
+                    # empty box by making it emptier. Recorded as its own
+                    # reason, because the cause is upstream -- the region came
+                    # from a subtraction or a pin that excluded this path from
+                    # the slice entirely -- and naming it as a refutation would
+                    # send the reader looking at the solver instead.
+                    #
+                    # ON A SPLIT PIECE THIS IS THE EXPECTED OUTCOME, not a
+                    # defect: the discarded side of a cut may hold no domain at
+                    # all, and that is precisely the question S3 pays a query to
+                    # ask instead of assuming the answer either way.
+                    reason = (
+                        "region is VACUOUS: the certification query witnessed "
+                        "NO execution admitted by it that walks this path, so "
+                        "every exit assert held for want of an execution. "
+                        "Before the non-vacuity witness existed this printed as "
+                        "a certificate")
+                    break
+                if v == "UNKNOWN":
+                    # No verdict at all -- ESBMC crashed, was killed, or
+                    # produced neither line. Shrinking here would treat "we
+                    # never found out" as "refuted" and would quietly hand back
+                    # a NARROWER box that nothing ever checked.
+                    reason = ("no verdict from the certification query "
+                              "(ESBMC printed neither SUCCESSFUL nor FAILED)")
+                    break
+                # ---- S4: PREFER THE PUNCH, under a stated budget ----
+                #
+                # A hole removes ONE value; a side cut removes a whole side
+                # chosen by whichever counterexample the solver returned. So
+                # where a punch is available it is both the larger surviving
+                # region and the one that does not depend on a value nobody
+                # picked.
+                #
+                # BUDGETED, because it is not strictly better: punching
+                # converges only when the excluded set is a few points, and
+                # against a boundary that is an interval it would punch forever,
+                # one value per round, while a side cut crosses it at once.
+                # `--max-holes` is that policy, it is stated rather than
+                # inferred, and when it is exhausted the loop falls back to the
+                # side cut it always used. MEASURED on the S4 fixture: with a
+                # budget of 2 the punched region ended WIDER than the unpunched
+                # one, which is that caveat happening rather than being argued.
+                #
+                # Applied ONLY when the tool actually suggested one, so a log
+                # carrying only a SHRINK line drives exactly the path it did
+                # before this existed -- which is what the must-flip test pins.
+                usable = [(c, val) for c, val in punches
+                          if len(holes.get(c, ())) < args.max_holes]
+                if usable:
+                    for c, val in usable:
+                        holes.setdefault(c, [])
+                        if val not in holes[c]:
+                            holes[c].append(val)
+                            holes[c].sort()
+                    new_size = region_size(box, holes)
+                    if new_size > prev_size:
+                        reason = (
+                            f"INVARIANT VIOLATED: a PUNCH widened the region "
+                            f"(|R| {prev_size} -> {new_size}), which no hole "
+                            f"can do")
+                        break
+                    prev_size = new_size
+                    print(f"[punch {tag}] "
+                          + ", ".join(f"{c} != {val}" for c, val in usable)
+                          + f"  |R| {new_size}")
+                    continue
+                if nb is None or nb == box:
+                    reason = (
+                        "refuted with no single-coordinate cut available"
+                        + divergence_text(ce, last_wit,
+                                          set(last_wit_box) | set(pins),
+                                          caveats,
+                                          assumed_ranges(last_wit_box, pins),
+                                          assumed_holes(holes, pins)))
+                    break
+                # C3: a shrink that does not shrink is a defect, not a slow
+                # round. A region that GREW would mean the cut moved a bound
+                # outwards, which no legal cut can do and which nothing
+                # downstream would ever notice -- the loop would simply certify
+                # a wider region than the one it measured.
+                #
+                # CHECKED ON THE UNCLAMPED `nb`, deliberately. `split_on_cut`
+                # below clamps the suggestion to the current interval, and if
+                # that clamping ran first a suggestion reaching outside the box
+                # would be silently trimmed instead of caught here.
+                new_size = region_size(nb, holes)
                 if new_size > prev_size:
-                    failed[enc] = (
-                        f"INVARIANT VIOLATED: a PUNCH widened the region "
-                        f"(|R| {prev_size} -> {new_size}), which no hole can do")
+                    reason = (
+                        f"INVARIANT VIOLATED: the shrink WIDENED the region "
+                        f"(|R| {prev_size} -> {new_size}). A cut may only ever "
+                        f"make the region narrower; a wider one would certify "
+                        f"inputs that were never measured. Refusing to continue "
+                        f"this path")
                     break
+                # ---- S3: KEEP THE DISCARDED SIDE, under a stated budget ----
+                #
+                # Enqueued BEFORE `box` advances, and derived from the box the
+                # cut was applied to, so the pieces partition exactly the set
+                # that was about to be narrowed. `has_ce` is computed rather
+                # than assumed: the tool's cut is supposed to keep the CE, but
+                # on a piece that never held one there is nothing to keep, and
+                # `ce_in_region` answers it exactly.
+                coord = cut_of(box, nb)
+                if coord is not None and args.max_region_pieces > 1:
+                    _, rest = split_on_cut(box, coord, *nb[coord])
+                    for r in rest:
+                        if piece_no + len(queue) >= args.max_region_pieces:
+                            print(f"[split {tag}] piece budget "
+                                  f"{args.max_region_pieces} reached; "
+                                  f"{coord} in [{r[coord][0]}, {r[coord][1]}] "
+                                  f"is DISCARDED UNMEASURED -- it is not known "
+                                  f"to be outside the domain, only unexamined")
+                            continue
+                        queue.append((r, dict(holes),
+                                      not ce_in_region(r, holes, ce)))
+                        print(f"[split {tag}] keeping the discarded side "
+                              f"{coord} in [{r[coord][0]}, {r[coord][1]}] as a "
+                              f"separate piece")
                 prev_size = new_size
-                print(f"[punch enc={enc}] "
-                      + ", ".join(f"{c} != {val}" for c, val in usable)
-                      + f"  |R| {new_size}")
-                continue
-            if nb is None or nb == box:
-                failed[enc] = (
-                    "refuted with no single-coordinate cut available"
+                print(f"[shrink {tag}] {box} -> {nb}  |R| {new_size}")
+                box = nb
+            else:
+                reason = (
+                    "shrink round budget exhausted"
                     + divergence_text(ce, last_wit,
                                       set(last_wit_box) | set(pins),
                                       caveats,
                                       assumed_ranges(last_wit_box, pins),
                                       assumed_holes(holes, pins)))
-                break
-            # C3: a shrink that does not shrink is a defect, not a slow round.
-            # A region that GREW would mean the cut moved a bound outwards,
-            # which no legal cut can do and which nothing downstream would ever
-            # notice -- the loop would simply certify a wider region than the
-            # one it measured.
-            new_size = region_size(nb, holes)
-            if new_size > prev_size:
-                failed[enc] = (
-                    f"INVARIANT VIOLATED: the shrink WIDENED the region "
-                    f"(|R| {prev_size} -> {new_size}). A cut may only ever make "
-                    f"the region narrower; a wider one would certify inputs "
-                    f"that were never measured. Refusing to continue this path")
-                break
-            prev_size = new_size
-            print(f"[shrink enc={enc}] {box} -> {nb}  |R| {new_size}")
-            box = nb
-        else:
-            failed[enc] = (
-                "shrink round budget exhausted"
-                + divergence_text(ce, last_wit, set(last_wit_box) | set(pins),
-                                  caveats,
-                                  assumed_ranges(last_wit_box, pins),
-                                  assumed_holes(holes, pins)))
+            if reason is not None:
+                piece_fail.append(reason)
+        # A path FAILS only when NO piece of it certified. Reported with the
+        # FIRST piece's reason, which at --max-region-pieces 1 is the only one
+        # and reproduces the old message verbatim; the others are appended so a
+        # multi-piece failure does not read as a single-box one.
+        if not any(k[0] == enc for k in ok):
+            failed[enc] = piece_fail[0] if piece_fail else "no piece was measured"
+            if len(piece_fail) > 1:
+                failed[enc] += (
+                    f" (and {len(piece_fail) - 1} further piece(s) of this "
+                    f"path also failed: "
+                    + "; ".join(piece_fail[1:]) + ")")
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean
     # an input would have to walk two different paths. Reporting them and
     # carrying on would be shipping a contradiction.
+    # KEYED BY (enc, piece) SINCE S3, and the check is deliberately run over ALL
+    # pairs rather than only across distinct paths. Two pieces of the SAME path
+    # are carved as complements of one another, so they are disjoint by
+    # construction -- which makes an intersection between them a defect in the
+    # splitting, exactly the kind this function exists to catch, and skipping
+    # them would leave the new code as the only part of the loop with no
+    # partition check on it.
     overlap = certified_overlap(ok, ok_holes)
     if overlap:
         print("\n=== INVARIANT VIOLATED: certified regions intersect ===")
+
+        def _k(k):
+            return f"enc={k[0]}" + (f" piece {k[1]}" if k[1] > 1 else "")
         for e1, e2 in overlap:
-            print(f"  enc={e1} and enc={e2} share at least one point:")
-            print(f"    enc={e1}: {ok[e1]}")
-            print(f"    enc={e2}: {ok[e2]}")
+            print(f"  {_k(e1)} and {_k(e2)} share at least one point:")
+            print(f"    {_k(e1)}: {ok[e1]}")
+            print(f"    {_k(e2)}: {ok[e2]}")
         print("Path domains partition the input space, so this cannot be true "
               "of any correct output. Refusing to report these as certified. "
               "This is the check that would have caught the certification gate "
@@ -2324,22 +2520,40 @@ def main():
         return 1
 
     print("\n=== CERTIFIED REGIONS ===")
-    for enc, box in sorted(ok.items()):
-        pin_txt = "".join(f", {n} == {v}" for n, v in pins.items())
-        hs = ok_holes.get(enc) or {}
+    # Grouped by path, so a region reported as several boxes reads as ONE
+    # statement about that path (their union) rather than as several paths. The
+    # "N of M" label appears only when a path really has more than one piece, so
+    # a single-piece run prints exactly the line it always printed.
+    by_enc = {}
+    for key in ok:
+        by_enc.setdefault(key[0], []).append(key)
+    for enc in sorted(by_enc):
+        keys = sorted(by_enc[enc])
+        for i, key in enumerate(keys, 1):
+            box = ok[key]
+            pin_txt = "".join(f", {n} == {v}" for n, v in pins.items())
+            hs = ok_holes.get(key) or {}
 
-        def _one(n, lo, hi, hs=hs):
-            # The punched set is printed WITH its interval, never as a footnote:
-            # `[0, 2^160-1]` and `[0, 2^160-1] \ {255}` are different regions,
-            # and the second is the one that was certified. A reader who quotes
-            # the interval alone would be quoting a region the query refuted.
-            v = sorted(hs.get(n, ()))
-            return (f"{n} in [{lo}, {hi}]"
-                    + (" \\ {" + ", ".join(str(x) for x in v) + "}" if v
-                       else ""))
-        print(f"  enc={enc}: "
-              + ", ".join(_one(n, lo, hi) for n, (lo, hi) in box.items())
-              + pin_txt)
+            def _one(n, lo, hi, hs=hs):
+                # The punched set is printed WITH its interval, never as a
+                # footnote: `[0, 2^160-1]` and `[0, 2^160-1] \ {255}` are
+                # different regions, and the second is the one that was
+                # certified. A reader who quotes the interval alone would be
+                # quoting a region the query refuted.
+                v = sorted(hs.get(n, ()))
+                return (f"{n} in [{lo}, {hi}]"
+                        + (" \\ {" + ", ".join(str(x) for x in v) + "}" if v
+                           else ""))
+            label = (f"enc={enc}" if len(keys) == 1
+                     else f"enc={enc} piece {i}/{len(keys)}")
+            print(f"  {label}: "
+                  + ", ".join(_one(n, lo, hi) for n, (lo, hi) in box.items())
+                  + pin_txt)
+        if len(keys) > 1:
+            print(f"  enc={enc}: the region of this path is the UNION of the "
+                  f"{len(keys)} boxes above. Each was certified by its own "
+                  f"query; the union is certified because each member is, and "
+                  f"they are pairwise disjoint (checked above)")
     for enc, why in sorted(failed.items()):
         print(f"  enc={enc}: NOT CERTIFIED — {why}; this path falls back to its "
               f"concrete counterexample test")

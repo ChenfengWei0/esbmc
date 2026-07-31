@@ -47,6 +47,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       region_size,
                                       coordinate_accounting,
                                       punch_targets,
+                                      cut_of,
+                                      split_on_cut,
                                       brackets_for)
 
 FAILURES = []
@@ -1119,6 +1121,87 @@ check("C5-empty-and-None-buckets-are-tolerated",
       coordinate_accounting({"a"}, {"free coordinate": ["a"],
                                     "pinned": set(),
                                     "refused by the tool": None})[0], [])
+
+# --- S3: a refutation's cut splits the box, it does not just narrow it ---
+#
+# The discarded side is NOT known to be outside the path's domain: the cut
+# excludes ONE refuting witness, and the rest of that side may be domain the
+# path really has. Certification is a per-query judgement, so a union of
+# separately certified boxes is certified; only the REPRESENTATION had to change.
+
+# Which coordinate moved, read by diffing rather than threaded through certify.
+check("S3-cut-is-read-off-the-diff",
+      cut_of({"a": (0, 100), "b": (0, 9)}, {"a": (11, 100), "b": (0, 9)}), "a")
+# Zero coordinates moved is the no-progress case the existing branch reports.
+check("S3-no-change-is-no-cut",
+      cut_of({"a": (0, 100)}, {"a": (0, 100)}), None)
+# Two coordinates moved is not a single-coordinate cut and must not be guessed at.
+check("S3-two-changes-is-not-a-cut",
+      cut_of({"a": (0, 100), "b": (0, 9)}, {"a": (1, 100), "b": (1, 9)}), None)
+
+# An INTERIOR cut yields the kept piece and BOTH complements.
+kept, rest = split_on_cut({"a": (0, 100), "b": (0, 9)}, "a", 40, 60)
+check("S3-interior-cut-keeps-the-suggestion", kept["a"], (40, 60))
+check("S3-interior-cut-leaves-the-other-coordinate", kept["b"], (0, 9))
+check("S3-interior-cut-yields-two-pieces", [r["a"] for r in rest],
+      [(0, 39), (61, 100)])
+
+# THE PARTITION PROPERTY, which is what makes the union sound: the kept piece and
+# the complements must tile the ORIGINAL box exactly -- no point lost, no point
+# counted twice. Checked as arithmetic rather than asserted in a comment, which
+# is this project's own rule for the propositions a method rests on.
+_orig = region_size({"a": (0, 100), "b": (0, 9)})
+_sum = region_size(kept) + sum(region_size(r) for r in rest)
+check("S3-the-pieces-tile-the-original-exactly", _sum, _orig)
+check("S3-the-pieces-are-pairwise-disjoint",
+      certified_overlap({(3, 1): kept, (3, 2): rest[0], (3, 3): rest[1]}), [])
+
+# A cut flush against one end yields ONE complement, not an empty interval.
+kept2, rest2 = split_on_cut({"a": (0, 100)}, "a", 0, 60)
+check("S3-cut-at-the-low-end-yields-one-piece", [r["a"] for r in rest2],
+      [(61, 100)])
+check("S3-cut-at-the-high-end-yields-one-piece",
+      [r["a"] for r in split_on_cut({"a": (0, 100)}, "a", 40, 100)[1]],
+      [(0, 39)])
+
+# THE MUST-FLIP that keeps --max-region-pieces 1 byte-identical to today: a cut
+# that removes nothing produces NO pieces, so nothing is ever enqueued and the
+# existing no-progress branch is the one that speaks.
+check("S3-a-cut-that-removes-nothing-yields-no-pieces",
+      split_on_cut({"a": (0, 100)}, "a", 0, 100)[1], [])
+# A suggestion reaching OUTSIDE the current interval is clamped, so a complement
+# can never be handed back a range the region never had. (The unclamped `nb` is
+# what the C3 widening check sees -- that ordering is deliberate and is why this
+# clamps rather than rejects.)
+check("S3-a-suggestion-wider-than-the-box-yields-no-pieces",
+      split_on_cut({"a": (10, 20)}, "a", 0, 100)[1], [])
+check("S3-a-suggestion-wider-than-the-box-is-clamped",
+      split_on_cut({"a": (10, 20)}, "a", 0, 100)[0]["a"], (10, 20))
+# A suggestion that does not meet the interval at all is not a cut: no kept
+# piece is defensible, so the box comes back unchanged and no piece is spawned.
+check("S3-a-disjoint-suggestion-leaves-the-box-alone",
+      split_on_cut({"a": (10, 20)}, "a", 50, 60)[0]["a"], (10, 20))
+check("S3-a-disjoint-suggestion-spawns-nothing",
+      split_on_cut({"a": (10, 20)}, "a", 50, 60)[1], [])
+# A coordinate the box does not carry cannot be split on.
+check("S3-an-unknown-coordinate-spawns-nothing",
+      split_on_cut({"a": (0, 9)}, "zz", 1, 2)[1], [])
+
+# THE C2 ASYMMETRY the loop depends on: the kept piece holds the CE and the
+# complements do not, BY CONSTRUCTION. That is why C2 is applied to one and the
+# non-vacuity witness carries the others -- running C2 on a complement would
+# reject every piece S3 exists to keep.
+_CE = {"a": 50}
+check("S3-the-kept-piece-holds-the-ce", ce_in_region(kept, {}, _CE), [])
+check("S3-a-complement-does-not-hold-the-ce",
+      ce_in_region(rest[0], {}, _CE) != [], True)
+
+# The partition check must survive the key change from `enc` to `(enc, piece)`.
+check("S3-overlap-still-fires-on-tuple-keys",
+      certified_overlap({(2, 1): {"a": (0, 5)}, (7, 1): {"a": (0, 5)}}),
+      [((2, 1), (7, 1))])
+check("S3-overlap-still-silent-on-a-real-partition",
+      certified_overlap({(2, 1): {"a": (6, BIG)}, (3, 1): {"a": (0, 5)}}), [])
 
 if FAILURES:
     print("FAILED:")
