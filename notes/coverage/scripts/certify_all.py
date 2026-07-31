@@ -34,11 +34,13 @@ measured is choosing the bar after seeing the scores.
 """
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -74,6 +76,67 @@ RE_NOTCERT = re.compile(r"^  enc=(\d+): NOT CERTIFIED — (.*?); this path falls
 RE_PIN_FIRED = re.compile(r"^\[env\] msg\.value PINNED to 0")
 RE_PIN_PAYABLE = re.compile(r"^\[env\] msg\.value NOT pinned: this unit is PAYABLE")
 RE_PIN_UNKNOWN = re.compile(r"^\[env\] msg\.value NOT auto-pinned")
+
+
+def available_gib():
+    """MemAvailable, in GiB. None when it cannot be read.
+
+    Read rather than assumed, because the whole point of the budget below is to
+    replace a guess with an arithmetic bound. `MemAvailable` is the kernel's own
+    estimate of what can be handed out without swapping, which is the quantity
+    that matters -- `MemFree` would under-count by the whole page cache.
+    """
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024.0 * 1024.0)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def job_memlimit_gib(jobs, reserve_frac=0.60, floor_gib=4):
+    """Per-job `--memlimit`, or a refusal string. NEVER a silent degradation.
+
+    THE RULE THIS REPLACES, AND WHY IT IS SAFE TO REPLACE IT. The project rule
+    has been "never run esbmc concurrently -- it exhausted the machine once and
+    forced a reboot". That rule is right, and its stated REASON is memory. The
+    crash predates the discipline of passing `--memlimit` on every run; with a
+    limit enforced per process, "how many fit" stops being a guess and becomes
+    arithmetic over a number the kernel publishes.
+
+    So this does not relax the rule, it discharges it: `jobs * memlimit` must fit
+    inside a fraction of measured MemAvailable, and if it does not, this returns
+    a REFUSAL rather than a smaller limit. Quietly shrinking the limit would be
+    the failure this repository keeps hitting from the other side -- a bound that
+    silently rewrites the thing it was supposed to bound.
+
+    `reserve_frac` 0.60 leaves the rest for the page cache, the driver processes
+    themselves and whatever else the machine is doing. `floor_gib` 4 is the point
+    below which a real benchmark unit starts dying of the limit rather than of
+    the problem, which would turn a parallelism decision into a measurement
+    change.
+    """
+    if jobs <= 1:
+        return 8, None
+    avail = available_gib()
+    if avail is None:
+        return None, ("cannot read MemAvailable from /proc/meminfo, so the "
+                      "memory budget for parallel jobs cannot be computed. "
+                      "Refusing to guess -- run with --jobs 1")
+    budget = avail * reserve_frac
+    per = int(budget // jobs)
+    if per < floor_gib:
+        return None, (
+            f"--jobs {jobs} does not fit: MemAvailable is {avail:.1f} GiB, the "
+            f"budget is {reserve_frac:.0%} of that = {budget:.1f} GiB, which is "
+            f"{per} GiB per job and below the {floor_gib} GiB floor. Below the "
+            f"floor a unit starts dying of the memory limit rather than of the "
+            f"problem, which would make this a measurement change and not a "
+            f"scheduling one. Use --jobs {max(1, int(budget // floor_gib))} or "
+            f"fewer")
+    return per, None
 
 
 def units_of(bench):
@@ -223,6 +286,23 @@ def main():
                          "exact region from level 0 plus refinement. ONE shape, "
                          "so this is offered rather than made default.")
     ap.add_argument("--level0", action="store_true", default=True)
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="how many units to certify CONCURRENTLY. Default 1, "
+                         "which is the historical behaviour.\n"
+                         "The project rule has been 'never run esbmc "
+                         "concurrently' -- it exhausted this machine once and "
+                         "forced a reboot. That rule is right and its stated "
+                         "REASON is memory; the crash predates the discipline "
+                         "of passing --memlimit on every run. With a limit "
+                         "enforced per process, how many fit is arithmetic over "
+                         "a number the kernel publishes, not a guess.\n"
+                         "So this does not relax the rule, it discharges it: "
+                         "jobs x memlimit must fit inside 60%% of measured "
+                         "MemAvailable, and if it does not the sweep REFUSES "
+                         "rather than shrinking the limit. A silently smaller "
+                         "limit would turn a scheduling decision into a "
+                         "measurement change -- units would start dying of the "
+                         "limit instead of the problem.")
     ap.add_argument("--redo", action="store_true")
     ap.add_argument("--workdir", default="/tmp/certify_all")
     args = ap.parse_args()
@@ -230,6 +310,23 @@ def main():
     names = args.benchmarks or [b for b in BENCHMARKS if b != "st1inch_St1inch"]
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     os.makedirs(args.workdir, exist_ok=True)
+
+    # THE MEMORY BOUND IS COMPUTED AND PRINTED BEFORE ANY RUN, and a failure to
+    # fit is a refusal. Printed even at --jobs 1, so the number a sweep ran
+    # under is in its own log rather than in whoever's memory launched it.
+    memlimit, refusal = job_memlimit_gib(args.jobs)
+    if refusal:
+        print(f"[sweep] REFUSING --jobs {args.jobs}: {refusal}")
+        return 1
+    avail = available_gib()
+    print(f"[sweep] --jobs {args.jobs}, --memlimit {memlimit}g each"
+          + (f" (MemAvailable {avail:.1f} GiB; "
+             f"{args.jobs} x {memlimit} = {args.jobs * memlimit} GiB committed)"
+             if avail is not None else "")
+          + ". Every esbmc run carries the limit, which is what makes running "
+            "more than one of them an arithmetic question rather than a guess.",
+          flush=True)
+    write_lock = threading.Lock()
 
     done = set()
     if os.path.exists(args.out) and not args.redo:
@@ -279,10 +376,15 @@ def main():
                   f"expected to be killed here too: "
                   f"{', '.join(killed_in_roundtrip)}")
 
+        todo = [(i, u) for i, u in enumerate(units, 1)
+                if (bench, u) not in done]
         for i, unit in enumerate(units, 1):
             if (bench, unit) in done:
-                print(f"  [{i}/{len(units)}] {unit} — already recorded")
-                continue
+                print(f"  [{i}/{len(units)}] {unit} — already recorded",
+                      flush=True)
+
+        def run_unit(item):
+            i, unit = item
             uwd = os.path.join(wd, unit)
             os.makedirs(uwd, exist_ok=True)
             cmd = [sys.executable, DRIVER,
@@ -294,7 +396,7 @@ def main():
                    "--refine-rounds", str(args.refine_rounds),
                    "--shrink-rounds", str(args.shrink_rounds),
                    "--timeout", str(min(args.timeout, 180)),
-                   "--memlimit", "8g", "--workdir", uwd]
+                   "--memlimit", f"{memlimit}g", "--workdir", uwd]
             if args.level0:
                 cmd.append("--level0")
             if args.skip_bracket:
@@ -317,24 +419,48 @@ def main():
             rec = parse_driver(out)
             rec.update({"benchmark": bench, "unit": unit,
                         "bucket": bucket(rec, rc, out),
-                        "wall_s": round(wall, 1), "exit": rc})
-            with open(args.out, "a") as f:
-                f.write(json.dumps(rec) + "\n")
-            logp = os.path.join(uwd, "driver.log")
-            with open(logp, "w") as f:
+                        "wall_s": round(wall, 1), "exit": rc,
+                        "memlimit_gib": memlimit, "jobs": args.jobs,
+                        # THE CONFIGURATION TRAVELS WITH THE RECORD. Two units
+                        # measured under different ladders are not comparable,
+                        # and this project has already paid once for a ratio
+                        # whose numerator and denominator came from runs that
+                        # shared only a benchmark name.
+                        "skip_bracket": bool(args.skip_bracket),
+                        "level0": bool(args.level0),
+                        "probes": args.probes,
+                        "refine_rounds": args.refine_rounds,
+                        "shrink_rounds": args.shrink_rounds,
+                        "unit_timeout_s": args.timeout})
+            with open(os.path.join(uwd, "driver.log"), "w") as f:
                 f.write(out)
-            # FLUSHED. This sweep's expected runtime is hours and its expected
-            # ending is a kill, so an unflushed progress line is a progress line
-            # that does not exist: Python block-buffers stdout to a file, and
-            # the first run of this script showed an EMPTY log after three
-            # minutes of real work. A long job that cannot be watched is a long
-            # job that gets restarted for no reason.
-            print(f"  [{i}/{len(units)}] {unit}: {rec['bucket']}, "
-                  f"{len(rec['certified'])} certified / "
-                  f"{len(rec['not_certified'])} not, "
-                  f"{len(rec['coords'])} free coordinate(s), "
-                  f"msg.value pin {rec['msg_value_pin']}, {wall:.0f}s",
-                  flush=True)
+            # ONE WRITER AT A TIME. Two processes appending to the same JSONL
+            # can interleave a partial line, and a half-written record is worse
+            # than a missing one -- it survives the resume check and is parsed
+            # as data. FLUSHED for the same reason as before: this sweep's
+            # expected ending is a kill, so an unflushed progress line is a
+            # progress line that does not exist.
+            with write_lock:
+                with open(args.out, "a") as f:
+                    f.write(json.dumps(rec) + "\n")
+                    f.flush()
+                print(f"  [{i}/{len(units)}] {unit}: {rec['bucket']}, "
+                      f"{len(rec['certified'])} certified / "
+                      f"{len(rec['not_certified'])} not, "
+                      f"{len(rec['coords'])} free coordinate(s), "
+                      f"msg.value pin {rec['msg_value_pin']}, {wall:.0f}s",
+                      flush=True)
+            return rec
+
+        if args.jobs <= 1:
+            for item in todo:
+                run_unit(item)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=args.jobs) as pool:
+                # Threads, not processes: every worker's real work is a
+                # subprocess, so the GIL is released for all of it.
+                list(pool.map(run_unit, todo))
 
     print(f"\n[sweep] wrote {args.out}")
     return 0
