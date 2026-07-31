@@ -1078,6 +1078,18 @@ check("S4-a-value-inside-the-interval-is-kept",
 # SUGGESTION LINE is what stops a bare scan harvesting text as a coordinate.
 check("S4-prose-elsewhere-is-not-harvested",
       punch_targets(WARN + "\nsomething about a != 7 in passing", {}), [])
+# THE DEFAULT IS OFF. `punch_targets` still reports what the tool suggested --
+# it is a parser, and refusing to parse would hide the suggestion from the log
+# as well -- but the LOOP applies nothing at `--max-holes 0`. Pinned as the
+# arithmetic the loop's filter performs, so the house rule ("every existing
+# number reproduced verbatim without the flag", the same one --level0 follows)
+# cannot be undone by a later default change without this going red.
+check("S4-max-holes-0-admits-no-punch",
+      [(c, v) for c, v in punch_targets(WARN + "\n" + _PUNCH, {})
+       if len({}.get(c, ())) < 0], [])
+check("S4-max-holes-1-admits-the-first-punch",
+      [(c, v) for c, v in punch_targets(WARN + "\n" + _PUNCH, {})
+       if len({}.get(c, ())) < 1], [("to", 255)])
 
 # --- C5: coordinate accounting ---
 #

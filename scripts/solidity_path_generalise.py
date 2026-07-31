@@ -1644,7 +1644,7 @@ def main():
     ap.add_argument("--probes", type=int, default=16)
     ap.add_argument("--refine-rounds", type=int, default=3)
     ap.add_argument("--shrink-rounds", type=int, default=4)
-    ap.add_argument("--max-holes", type=int, default=4,
+    ap.add_argument("--max-holes", type=int, default=0,
                     help="per coordinate, how many values the loop may PUNCH "
                          "OUT (Definition 5) before it falls back to a side "
                          "cut. The tool prints a PUNCH suggestion whenever the "
@@ -1661,8 +1661,13 @@ def main():
                          "strictly better, which is why this is a budget and "
                          "not a switch: against a boundary that is an INTERVAL "
                          "a punch removes one value per round forever, where a "
-                         "side cut crosses it in one. 0 disables punching and "
-                         "reproduces the previous behaviour exactly.")
+                         "side cut crosses it in one. DEFAULT 0, i.e. OFF, "
+                         "which reproduces every existing number verbatim -- "
+                         "the same house rule --level0 follows, and for the "
+                         "same reason: this is POLICY, the tool itself says "
+                         "neither cut is strictly better, and a policy that "
+                         "silently changes what a default run reports is a "
+                         "policy nobody chose. Raise it to opt in.")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--ast", default=None,
                     help="prebuilt .solast, passed positionally. Needed for "
