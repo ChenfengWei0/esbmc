@@ -69,8 +69,51 @@ MEMLIMIT = "8g"
 DEFAULT_OUTER_TIMEOUT = 300
 DEFAULT_MAX_GOALS = 10000
 
+# THE SOLVER/ENCODER IS A CONFIGURATION VARIABLE, NOT SCAFFOLDING.
+#
+# It was previously not passed at all, so every run took whatever ESBMC
+# auto-selects. On st1inch that is bitwuzla, and MEASURED: 22 runs, 22 killed by
+# the outer timeout, 0 reports, 0 F claims -- a whole benchmark contributing a
+# zero that reads like "reached nothing" and is actually "never returned".
+#
+# The cause is not the source. Three backends fail three different ways on one
+# query (bitwuzla never returns; cvc5 raises bad_alloc at 4 GB with 0.000 s of
+# decision-procedure time; z3 refuses at ENCODING time with "datatype is not
+# well-founded"), and a hand-written self-referential Solidity struct
+# (notes/coverage/poc/D05_RecursiveStruct.sol) is accepted by all three -- so the
+# recursion is introduced by ESBMC's own tuple encoding. That made the ENCODER
+# the variable to change, and notes/coverage/scripts/st_encoders.py is the
+# six-cell matrix that found the one that decides it: with
+# `--z3 --tuple-node-flattener` the same run produces a complete report in 43 s.
+#
+# Recorded as a TABLE WITH ITS JUSTIFICATION, applied automatically, announced on
+# stdout, and written into index.json -- rather than hardcoded in the command
+# builder. A corpus whose every row came from one silently-chosen cell is exactly
+# the failure this project has already had; the flags a row was produced with
+# have to be visible in that row.
+ENCODER_EXCEPTIONS = {
+    "st1inch_St1inch": (
+        ["--z3", "--tuple-node-flattener"],
+        "default (bitwuzla) never returns on this benchmark: 22/22 runs killed, "
+        "0 reports. z3's default tuple encoding refuses at encoding time with "
+        "'datatype is not well-founded'; the node flattener avoids building it. "
+        "Measured by notes/coverage/scripts/st_encoders.py: 43 s to a complete "
+        "report where every other cell of the matrix produced none.",
+    ),
+}
 
-def esbmc_cmd(solast, flat, primary, focus, goals):
+
+def solver_flags_for(bench_key, override):
+    """(flags, reason). An explicit --solver-flags always wins and says so."""
+    if override:
+        return list(override), "explicit --solver-flags"
+    if bench_key in ENCODER_EXCEPTIONS:
+        return list(ENCODER_EXCEPTIONS[bench_key][0]), \
+            ENCODER_EXCEPTIONS[bench_key][1]
+    return [], "tool default (no solver flag passed)"
+
+
+def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=()):
     cmd = [
         str(ESBMC), str(solast), "--sol", str(flat),
         "--solidity-path-coverage",
@@ -78,7 +121,7 @@ def esbmc_cmd(solast, flat, primary, focus, goals):
         "--cov-report-json",
         "--path-cov-max-goals", str(goals),
         "--memlimit", MEMLIMIT,
-    ]
+    ] + list(solver_flags)
     if primary:
         # scope_contract. NOTE the asymmetry with the baseline, which passes
         # --coverage-whole-unit and then excludes contracts one by one: the
@@ -92,6 +135,29 @@ def esbmc_cmd(solast, flat, primary, focus, goals):
     if focus:
         cmd += ["--focus-function", focus]
     return cmd
+
+
+def binary_identity():
+    """Who produced a run record. Both halves are load-bearing.
+
+    `head` is the commit the tree was on; `mtime` is the binary's own
+    timestamp, and it is here because HEAD alone lies in exactly the situation
+    this project is always in -- an uncommitted fix in the tree means two
+    different binaries share one HEAD. `dirty` records whether src/ had
+    uncommitted changes, so a row produced from a work-in-progress tree can
+    never be mistaken for one produced from the commit it names.
+    """
+    def _sh(args):
+        try:
+            return subprocess.run(args, capture_output=True, text=True,
+                                  cwd=str(REPO), timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    return {
+        "head": _sh(["git", "rev-parse", "--short", "HEAD"]),
+        "srcDirty": bool(_sh(["git", "status", "--porcelain", "--", "src/"])),
+        "binaryMtime": int(ESBMC.stat().st_mtime) if ESBMC.exists() else 0,
+    }
 
 
 def one_run(tag, cmd, timeout, workdir):
@@ -132,6 +198,9 @@ def one_run(tag, cmd, timeout, workdir):
         # never read as "this configuration reached nothing".
         "killedByOuterTimeout": killed,
         "reportPresent": report.exists(),
+        # Which binary produced this record. Checked on resume; see the refusal
+        # in collect() for why a journal is not portable across builds.
+        "binary": binary_identity(),
     }
     # THREE DIFFERENT ZEROS, kept apart. "0 units enumerated" (the code has no
     # externally-callable function in scope), "0 paths in the units there are",
@@ -179,8 +248,12 @@ def one_run(tag, cmd, timeout, workdir):
     return rec, None
 
 
-def collect(bench_key, whole, timeout, goals, out_suffix=""):
+def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
+            fresh=False):
     flat_rel, primary, _solc, project = base.BENCHES[bench_key]
+    sflags, sreason = solver_flags_for(bench_key, solver_override)
+    print(f"  [solver] {' '.join(sflags) if sflags else '(none)'} -- {sreason}",
+          flush=True)
     flat = INPUTS / flat_rel
     solast = INPUTS / (flat_rel + ".solast")
     if not solast.exists():
@@ -216,6 +289,51 @@ def collect(bench_key, whole, timeout, goals, out_suffix=""):
             if line.strip():
                 r = json.loads(line)
                 done[r["tag"]] = r
+
+    # RESUMING ACROSS A DIFFERENT BINARY IS THE TRAP THIS FEATURE SETS.
+    #
+    # The journal makes a sweep resumable, and resumability means "a tag in the
+    # journal is skipped and its existing report reused". That is exactly right
+    # for continuing an interrupted sweep and exactly WRONG after a fix: re-run
+    # the command and every run prints `(already done)`, the stale reports stay,
+    # `index.json` is rewritten to look current, and the analysis reports the
+    # OLD build's numbers under the NEW build's name. Nothing anywhere says so
+    # -- it is a clean-looking complete collection.
+    #
+    # This is not hypothetical for this corpus. Every existing collection was
+    # produced before several defects were fixed (including one that left
+    # st1inch with 22/22 killed runs and no reports at all), so the next thing
+    # anyone does here IS a re-collection, and the resume path would silently
+    # defeat it.
+    #
+    # So each record carries the identity of the binary that produced it, and a
+    # journal whose records came from a different one is REFUSED rather than
+    # resumed. Refused, not auto-cleared: deleting someone's collection because
+    # a timestamp moved is its own way to lose data, and the operator should
+    # choose between --fresh and quarantining the directory.
+    ident = binary_identity()
+    stale = {t: r.get("binary") for t, r in done.items()
+             if r.get("binary") != ident}
+    if stale and not fresh:
+        shown = list(stale.items())[:5]
+        sys.exit(
+            f"{bench_key}: {len(stale)} of {len(done)} journal record(s) were "
+            f"produced by a DIFFERENT binary than the one on disk now.\n"
+            f"  now:  {ident}\n"
+            + "".join(f"  was:  {t} -> {b}\n" for t, b in shown)
+            + (f"  ... and {len(stale) - len(shown)} more\n"
+               if len(stale) > len(shown) else "")
+            + "Resuming would skip those runs and reuse their reports, so the "
+              "analysis would quote the old build's numbers under the new "
+              "build's name. Re-run with --fresh to discard this collection "
+              "and start over, or move the directory aside to keep it.")
+    if fresh and done:
+        print(f"  [fresh] discarding {len(done)} journal record(s) and their "
+              f"reports", flush=True)
+        done = {}
+        journal.unlink()
+        for p in reports_dir.glob("*.json"):
+            p.unlink()
 
     # THE REPORTS DIRECTORY IS RECONCILED WITH THE JOURNAL, and this is not
     # housekeeping. `work/` is emptied per run (one_run), but `reports/` never
@@ -261,7 +379,7 @@ def collect(bench_key, whole, timeout, goals, out_suffix=""):
             rec, d = one_run(tag,
                              esbmc_cmd(solast, flat,
                                        None if pkind == "library" else primary,
-                                       None, goals),
+                                       None, goals, sflags),
                              timeout, out_dir / "work" / tag)
             record(rec)
             if d is not None:
@@ -339,13 +457,14 @@ def collect(bench_key, whole, timeout, goals, out_suffix=""):
                         "are covered through their callers' paths; external "
                         "ones are an unmeasured gap under this configuration",
                     "contract": cname, "function": fname, "kind": ckind,
+                    "binary": binary_identity(),
                 }
                 print(f"  [{i}/{len(todo)}] {tag}  (skipped: library)",
                       flush=True)
                 record(rec)
                 continue
             print(f"  [{i}/{len(todo)}] {tag}", flush=True)
-            cmd = esbmc_cmd(solast, flat, primary, fname, goals)
+            cmd = esbmc_cmd(solast, flat, primary, fname, goals, sflags)
             rec, d = one_run(tag, cmd, timeout, out_dir / "work" / tag)
             rec["contract"], rec["function"], rec["kind"] = cname, fname, ckind
             record(rec)
@@ -362,6 +481,12 @@ def collect(bench_key, whole, timeout, goals, out_suffix=""):
             "solidityMaxTx": 1,
             "pathCovMaxGoals": goals,
             "memlimit": MEMLIMIT,
+            # Written into the index so no later table can quote a row without
+            # the encoder it was produced with. A benchmark whose runs needed a
+            # non-default encoder is not comparable to one that did not, and
+            # that difference has to travel WITH the data.
+            "solverFlags": sflags,
+            "solverFlagsReason": sreason,
             "outerTimeoutSeconds": timeout,
             "innerEsbmcTimeout": None,
             "innerTimeoutNote":
@@ -388,6 +513,16 @@ def main():
     ap.add_argument("--out-suffix", default="",
                     help="appended to the output directory name; two "
                          "configurations must never share one directory")
+    ap.add_argument("--fresh", action="store_true",
+                    help="discard this benchmark's journal and reports and "
+                         "collect from scratch. Required when the binary "
+                         "changed since the journal was written; without it "
+                         "the resume path would reuse the old build's reports")
+    ap.add_argument("--solver-flags", default="",
+                    help="space-separated ESBMC solver/encoder flags, e.g. "
+                         "'--z3 --tuple-node-flattener'. Overrides the "
+                         "per-benchmark ENCODER_EXCEPTIONS table; whichever "
+                         "applies is printed and recorded in index.json")
     a = ap.parse_args()
     if a.list or not a.bench:
         for k in base.BENCHES:
@@ -399,7 +534,8 @@ def main():
         sys.exit("--whole needs --out-suffix (e.g. --out-suffix __whole): "
                  "writing it into the per-method directory rewrites that "
                  "collection's index.json and leaves its reports unreadable")
-    idx = collect(a.bench, a.whole, a.timeout, a.goals, a.out_suffix)
+    idx = collect(a.bench, a.whole, a.timeout, a.goals, a.out_suffix,
+                  a.solver_flags.split(), a.fresh)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "
