@@ -355,6 +355,18 @@ protected:
     std::size_t front_base,
     std::size_t back_base);
 
+  // Move the pending front-block statements queued at or above `front_base`
+  // that `cond` READS into `hoisted`, leaving every other pending statement
+  // where it was. Used by the control-statement arms so a condition's operand
+  // temporaries are built before the branch tests them, WITHOUT lifting the
+  // guarded checks that the same queue also carries. See the definition in
+  // solidity_convert_stmt.cpp for the two cases and why statement kind is the
+  // wrong discriminator.
+  void hoist_operands_read_by(
+    const exprt &cond,
+    std::size_t front_base,
+    code_blockt &hoisted);
+
   // Symbol id of a library function's formal parameter (pure — no reliance on
   // current_functionName). Shared between the library function body builder
   // and the call-site copy-back logic so the ID format stays in one place.

@@ -19,6 +19,147 @@
 #include <fstream>
 #include <set>
 
+// Does `e` mention the symbol `id` anywhere in its tree?
+static bool expr_mentions_symbol(const exprt &e, const irep_idt &id)
+{
+  if (e.id() == "symbol" && e.identifier() == id)
+    return true;
+  for (const auto &op : e.operands())
+    if (expr_mentions_symbol(op, id))
+      return true;
+  return false;
+}
+
+void solidity_convertert::hoist_operands_read_by(
+  const exprt &cond,
+  std::size_t front_base,
+  code_blockt &hoisted)
+{
+  // WHICH PENDING STATEMENTS MAY BE LIFTED ABOVE A BRANCH, AND WHICH MAY NOT.
+  //
+  // Converting a control statement's CONDITION queues statements on the shared
+  // front block, and they are not all of one kind. Two live in the same queue
+  // with OPPOSITE placement requirements:
+  //
+  //   (a) operand materialisation. `b == bytes32(uint256(1))` lowers to
+  //       `bytes_static_equal(&b, &_ESBMC_aux18)` plus a queued
+  //       `_ESBMC_aux18 = bytes_static_from_uint(1, 32)`. The condition READS
+  //       the temporary, so leaving it behind emits a comparison against an
+  //       unbuilt struct. MEASURED: it constrained `b` not at all, and ESBMC
+  //       accepted one bytes32 equal to both bytes32(1) and bytes32(2).
+  //
+  //   (b) a guarded check. `k < 2 && b[k] == 0` queues the bounds assertion
+  //       for `b[k]`, which the chain only evaluates when `k < 2`. Lifting it
+  //       above the branch makes it unconditional and reports a bounds
+  //       violation for k >= 2 that no execution performs -- a false positive,
+  //       which in this pipeline is a RED generated test.
+  //
+  // A first attempt lifted the whole queue and traded (a) for (b): it fixed the
+  // bytesN hole and broke `local_array_bounds_shortcircuit_guard_pass`. The two
+  // cannot be told apart by statement kind without sniffing, and sniffing is
+  // how a rule ends up right for the shapes that were thought of.
+  //
+  // THE PROPERTY THAT SEPARATES THEM IS IN THE DATA. (a) exists BECAUSE the
+  // condition reads it -- the condition expression literally contains
+  // `&_ESBMC_aux18`. (b) declares nothing the condition mentions: the bounds
+  // assertion introduces no name, and the array-length temporary it does
+  // introduce is read by the assertion, not by `k < 2 && b[k] == 0`. So the
+  // test is "does the condition reference the symbol this statement declares",
+  // asked of the converted expression rather than of the statement's shape.
+  //
+  // Everything not lifted stays queued and keeps its previous placement
+  // exactly, so this narrows what moves rather than changing where the rest
+  // goes. Note the pre-existing asymmetry this does NOT repair: a brace-less
+  // body never reaches get_block, so its (b) statements were already being
+  // flushed above the branch. That is the same defect in the other spelling and
+  // is left alone here rather than fixed blind.
+  //
+  // CALLED FROM `if` AND `while` ONLY. The other two loop forms were MEASURED
+  // rather than assumed, and the measurement contradicted the guess in both
+  // directions:
+  //
+  //   for        STILL DEFECTIVE. `for (; b == bytes32(uint256(1)) &&
+  //              b == bytes32(uint256(2)); )` runs its body -- the model admits
+  //              one bytes32 equal to two constants. Reproduced at --unwind 4
+  //              and 8 as well as the default, so it is not a bound artefact.
+  //   do-while   NOT DEFECTIVE, and for a reason worth stating: a do-while's
+  //              BODY executes before its condition, so `get_block` draining
+  //              the pending queue into the body lands the temporary before the
+  //              use rather than after it. The very mechanism that broke the
+  //              braced `if` makes this form accidentally right.
+  //
+  // (The do-while probe was first read as vacuous -- a loop bound could make
+  // its assertion hold without the fix -- and was re-run at two higher bounds
+  // against the `for` case as a paired control, which stayed FAILED at each.
+  // Without that control "SUCCESSFUL" would not have been a result.)
+  //
+  // `for` is left alone here rather than fixed blind, because it needs its own
+  // regression and its own answer to where a LOOP condition's operands belong.
+  // `while` above already had to choose "once, before the loop", and that
+  // choice is wrong for a condition operand that depends on state the body
+  // mutates. Extending the helper without settling that spreads one
+  // half-answer to another place.
+  code_blockt &fblk =
+    current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl;
+  auto &fops = fblk.operands();
+  if (fops.size() <= front_base)
+    return;
+
+  exprt::operandst keep;
+  std::vector<irep_idt> moved_syms;
+  for (std::size_t i = front_base; i < fops.size(); ++i)
+  {
+    const exprt &op = fops[i];
+    bool read_by_cond = false;
+    if (op.is_code() && op.statement() == "decl" && !op.operands().empty())
+      read_by_cond = expr_mentions_symbol(cond, op.op0().identifier());
+    if (read_by_cond)
+    {
+      moved_syms.push_back(op.op0().identifier());
+      exprt moved = op;
+      convert_expression_to_code(moved);
+      hoisted.operands().push_back(moved);
+    }
+    else
+      keep.push_back(op);
+  }
+
+  // THE PARTITION IS SOUND ONLY IF NOTHING LEFT BEHIND READS SOMETHING MOVED.
+  //
+  // Order is preserved WITHIN the moved group and WITHIN the kept group, but
+  // not BETWEEN them: the kept entries stay on the front block and are flushed
+  // where they always were, while the moved ones are emitted in the wrapper
+  // block that carries the branch, i.e. afterwards. So a pending statement that
+  // originally came AFTER a moved decl and READS it would now run BEFORE it --
+  // use before definition, which is precisely the defect this function exists
+  // to remove, reintroduced one level up.
+  //
+  // No input is known to produce that shape, and searching for one would prove
+  // nothing if the search came back empty. So the requirement is checked at run
+  // time instead, and the whole regression suite becomes the search: if the
+  // shape occurs anywhere it stops here and names both statements, rather than
+  // emitting a program whose temporaries are out of order and letting the
+  // result be read as a verdict about the contract.
+  for (const auto &k : keep)
+    for (const auto &sym : moved_syms)
+      if (expr_mentions_symbol(k, sym))
+      {
+        log_error(
+          "solidity frontend: hoisting the condition's operand temporaries "
+          "would reorder them past a pending statement that reads one. "
+          "Symbol `{}` is declared by a statement lifted above the branch, "
+          "and the statement `{}`, which stays behind, mentions it. Emitting "
+          "this would place a use before its definition.",
+          sym.as_string(),
+          k.pretty());
+        abort();
+      }
+
+  fops.resize(front_base);
+  for (auto &k : keep)
+    fops.push_back(k);
+}
+
 void solidity_convertert::reset_auxiliary_vars()
 {
   current_baseContractName = "";
@@ -885,9 +1026,17 @@ bool solidity_convertert::get_statement(
   {
     // Based on rule if-statement
     // 1. Condition: make a exprt for condition
+    const std::size_t cond_front_base =
+      (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+        .operands()
+        .size();
     exprt cond;
     if (get_expr(stmt["condition"], cond))
       return true;
+    // Operand temporaries the condition READS must be built before the branch
+    // tests them; everything else the condition queued keeps its placement.
+    code_blockt cond_hoisted;
+    hoist_operands_read_by(cond, cond_front_base, cond_hoisted);
 
     // 2. Then: make a exprt for trueBody
     codet then = code_skipt();
@@ -930,14 +1079,45 @@ bool solidity_convertert::get_statement(
       if_expr.copy_to_operands(else_expr);
     }
 
-    new_expr = if_expr;
+    if (cond_hoisted.operands().empty())
+      new_expr = if_expr;
+    else
+    {
+      // THE BRANCH MUST CARRY ITS OWN LOCATION BEFORE IT IS WRAPPED.
+      //
+      // get_statement ends with `new_expr.location() = loc`, which was the only
+      // thing giving this `ifthenelse` a source location. Wrapping it makes
+      // `new_expr` the BLOCK, so the block gets `loc` and the branch inside
+      // gets nothing -- the goto program then reads
+      //
+      //     // 3132 no location
+      //     IF !(_Bool)return_value$_bytes_static_equal$2 THEN GOTO 1
+      //
+      // and branch coverage, which identifies a branch by its source location,
+      // reports "No branch detected" and generates 0 VCCs. MEASURED: it silently
+      // emptied `foundry_covgen_bytesN_fail`, whose whole subject is the branch
+      // `if (x == bytes4(0x12345678))`. A wrapper that loses the location does
+      // not break the branch, it makes it invisible to the pass that counts
+      // branches -- which for this project is worse.
+      if_expr.location() = loc;
+      // The temporaries and then the branch, as one statement, so the enclosing
+      // block cannot separate them.
+      cond_hoisted.copy_to_operands(if_expr);
+      new_expr = cond_hoisted;
+    }
     break;
   }
   case SolidityGrammar::StatementT::WhileStatement:
   {
+    const std::size_t wc_front_base =
+      (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+        .operands()
+        .size();
     exprt cond = true_exprt();
     if (get_expr(stmt["condition"], cond))
       return true;
+    code_blockt wc_hoisted;
+    hoist_operands_read_by(cond, wc_front_base, wc_hoisted);
 
     codet body = codet();
     if (get_block(stmt["body"], body))
@@ -949,7 +1129,28 @@ bool solidity_convertert::get_statement(
     code_while.cond() = cond;
     code_while.body() = body;
 
-    new_expr = code_while;
+    if (wc_hoisted.operands().empty())
+      new_expr = code_while;
+    else
+    {
+      // ONE EVALUATION, BEFORE THE LOOP -- and that is a real restriction, not
+      // a free choice. The temporaries are built once and the loop then tests
+      // the condition against them on every iteration, which is right for the
+      // constant operands this handles (`bytes32(uint256(1))`) and WRONG for a
+      // condition operand that depends on state the body mutates. Nothing here
+      // detects that case; it is stated so the limit is visible rather than
+      // discovered. The previous behaviour built them inside the body, i.e.
+      // after the first test, which is wrong for every shape including the
+      // constant one.
+      //
+      // Location stamped before wrapping, for the same reason as the
+      // IfStatement arm: get_statement's trailing `new_expr.location() = loc`
+      // would otherwise land on the wrapper and leave the loop with none, which
+      // is invisible to every pass that identifies a construct by location.
+      code_while.location() = loc;
+      wc_hoisted.copy_to_operands(code_while);
+      new_expr = wc_hoisted;
+    }
     break;
   }
   case SolidityGrammar::StatementT::DoWhileStatement:
