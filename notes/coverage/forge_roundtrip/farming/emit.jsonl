@@ -1,0 +1,28 @@
+{"tag": "FarmAccounting__farmedSinceCheckpointScaled", "exitCode": 0, "wallSeconds": 5.39, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "FarmAccounting__startFarming", "exitCode": 6, "wallSeconds": 5.18, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "FarmAccounting__stopFarming", "exitCode": 6, "wallSeconds": 5.11, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "FarmAccounting__claim", "exitCode": 6, "wallSeconds": 5.12, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "UserAccounting__farmedPerToken", "exitCode": 0, "wallSeconds": 5.51, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "UserAccounting__farmed", "exitCode": 6, "wallSeconds": 5.09, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "UserAccounting__eraseFarmed", "exitCode": 0, "wallSeconds": 5.41, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "UserAccounting__updateFarmedPerToken", "exitCode": 0, "wallSeconds": 5.42, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "UserAccounting__updateBalances", "exitCode": 6, "wallSeconds": 5.13, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "Distributor__setDistributor", "exitCode": 1, "wallSeconds": 6.43, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 5}
+{"tag": "Distributor__distributor", "exitCode": 1, "wallSeconds": 5.75, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}
+{"tag": "FarmingLib__makeInfo", "exitCode": 0, "wallSeconds": 5.34, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "FarmingLib__getData", "exitCode": 0, "wallSeconds": 5.41, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "FarmingLib__startFarming", "exitCode": 6, "wallSeconds": 5.0, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "FarmingLib__stopFarming", "exitCode": 6, "wallSeconds": 5.21, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "FarmingLib__farmed", "exitCode": 6, "wallSeconds": 5.18, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "FarmingLib__claim", "exitCode": 6, "wallSeconds": 5.19, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "FarmingLib__updateBalances", "exitCode": 6, "wallSeconds": 5.06, "killed": false, "emitted": [], "ambiguousEntryName": true}
+{"tag": "FarmingPool__decimals", "exitCode": 1, "wallSeconds": 6.02, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 3}
+{"tag": "FarmingPool__farmInfo", "exitCode": 1, "wallSeconds": 5.92, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}
+{"tag": "FarmingPool__startFarming", "exitCode": 1, "wallSeconds": 11.07, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 9}
+{"tag": "FarmingPool__stopFarming", "exitCode": 1, "wallSeconds": 6.95, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 3}
+{"tag": "FarmingPool__farmed", "exitCode": 1, "wallSeconds": 5.99, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "defaultedCalls": 4, "defaultedArgs": 4, "defaultedByType": "ADDRESS x4", "nonUnitFunctionsPresent": true, "cases": 3}
+{"tag": "FarmingPool__deposit", "exitCode": 1, "wallSeconds": 14.11, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 4}
+{"tag": "FarmingPool__withdraw", "exitCode": 1, "wallSeconds": 8.43, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 2}
+{"tag": "FarmingPool__claim", "exitCode": 1, "wallSeconds": 6.99, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 3}
+{"tag": "FarmingPool__exit", "exitCode": 1, "wallSeconds": 17.91, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 5}
+{"tag": "FarmingPool__rescueFunds", "exitCode": 1, "wallSeconds": 68.49, "killed": false, "emitted": ["FarmingPool.cov.t.sol"], "defaultedCalls": 170, "defaultedArgs": 170, "defaultedByType": "UINT256 x170", "nonUnitFunctionsPresent": true, "cases": 10}

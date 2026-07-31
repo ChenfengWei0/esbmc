@@ -49,11 +49,22 @@ FORGE_STD = (REPO / "notes/coverage-comparison/_foundry_roundtrip/aqua_forge"
              / "lib" / "forge-std")
 OUT = REPO / "notes/coverage/forge_roundtrip"
 
+# `via_ir` + optimizer are needed for the larger flats, and the failure they fix
+# is NOT an emitter defect: farming's flat trips solc's "Stack too deep" at
+# `farming__FarmingPool.flat.sol:3777`, inside the CONTRACT, before any generated
+# test is even looked at. Without this the round-trip reports "forge build
+# failed" on farming and an unwary reader files it against the generator.
+#
+# `forge coverage` then needs `--ir-minimum` (see the coverage invocation), which
+# is why the two are set together rather than one at a time.
 FOUNDRY_TOML = """[profile.default]
 src = "src"
 test = "test"
 libs = ["lib"]
 solc = "0.8.30"
+via_ir = true
+optimizer = true
+optimizer_runs = 200
 """
 
 
@@ -283,8 +294,11 @@ def main():
             sys.exit(f"forge build failed after disabling red tests (rc={rc})")
 
     print("=== forge coverage ===", flush=True)
+    # --ir-minimum is required once via_ir is on: forge's coverage
+    # instrumentation cannot run against a full viaIR pipeline.
     rc, out, _ = run(["forge", "coverage", "--report", "lcov",
-                      "--report-file", "lcov.info"], 3600, cwd=str(proj))
+                      "--report-file", "lcov.info", "--ir-minimum"],
+                     3600, cwd=str(proj))
     (proj / "coverage.log").write_text(out)
     lcov = proj / "lcov.info"
     if not lcov.exists():
