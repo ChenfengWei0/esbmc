@@ -216,4 +216,21 @@ nothing but the generic under-report warning to show for it.
 * the simplification dimension: 6938 VCC -> 1822, and what happens to a
   path-coverage claim that is simplified away is unread;
 * whether any of this transfers to the whole-contract configuration, which died
-  of solver OOM at 8 g after solving 5100+ claims and discarding all of them.
+  of solver OOM at 8 g and discarded everything it had already decided.
+
+  **CORRECTION.** An earlier version of this line, and the commit message that
+  introduced this note, said that run had solved "5100+ claims". It had solved
+  **938**, and refuted **5**. The log carries two `✓ PASSED` shapes that mean
+  opposite things — solve-time (`bmc.cpp:2888`) and symex-time simplification
+  (`symex_main.cpp:82`) — and the second occurs 5116 times, which is exactly
+  `6938 - 1822`, the simplification delta printed on the VCC line. I counted the
+  simplified-away claims as solved ones. The direction of the finding is
+  unchanged (a dying run discards real decided work, and five refuted paths is a
+  third of that contract's 15 witnesses), but the magnitude is 938, not 5100.
+
+  Both dimensions are now answered in `notes/coverage/scope-and-resources.md`:
+  whole-contract completes at `--memlimit 20g` (777.8 s, 15.86 GiB peak — 1.98x
+  the 8 GiB it had been given, so it could never have finished), and its F set
+  compared AS A SET against the union of the per-method reports is 15 both
+  sides, 0 only-whole, 0 only-per-method. **Whole-contract reaches nothing focus
+  cannot, at 2.4x wall and 2x memory. `--focus-function` stays.**
