@@ -1,4 +1,5 @@
 #include <goto-programs/goto_coverage.h>
+#include <goto-programs/goto_functions.h>
 #include <goto-programs/goto_inline.h>
 #include <util/arith_tools.h>
 #include <goto-programs/k_path_spanning.h>
@@ -558,6 +559,115 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
   abort();
 }
 
+// ---- THE THIRD STATE: a vacuity verdict the UNWIND BOUND may have made up ----
+//
+// Both stage-2/3 gates rest on one proposition:
+//
+//     "a VACUOUS verdict means no execution the region admits walks this path"
+//
+// and that proposition is FALSE whenever an unwinding ASSUMPTION removed
+// executions on the path. Under `--solidity-path-coverage` that assumption is
+// not a user choice: the pass forces `no-unwinding-assertions`
+// (esbmc_parseoptions.cpp:4305), so `loop_bound_exceeded` takes its `else`
+// branch and emits `assume(!guard)` instead of an unwinding assertion
+// (symex_goto.cpp:482-506). Every execution that needed one more iteration is
+// then simply gone -- and the non-vacuity witness `assert(tr != enc || cnt !=
+// depth)` HOLDS for want of those executions, which is byte for byte what a
+// genuinely empty region produces.
+//
+// MEASURED, aqua `Aqua.dock` enc=12 depth=3, `--contract Aqua --focus-function
+// dock --solidity-max-tx 1`, read out of cov-report.json rather than from exit
+// codes:
+//
+//     config                          F   bounded-holds   decision steps
+//     default                         2   61              4
+//     --no-simplify                   0   63              0
+//     --no-simplify --partial-loops   2   61              4
+//
+// The two lost witnesses do not become "never asked"; they become
+// `bounded-holds`, i.e. the tool asserts the path does not hold when it does.
+// `--unwindset 64:512` also restores F=2 while `1:64`, `62:16` and `64:64` do
+// not, so the single loop responsible is loop 64 = `__memset_impl`
+// (src/c2goto/library/string.c:298), entered only because `--path-cov-assert`
+// forces `--no-simplify` (esbmc_parseoptions.cpp:4223) and therefore stops
+// folding loop guards (symex_goto.cpp:20). On that contract `--path-cov-certify`
+// printed CERTIFIED and `--path-cov-assert` printed VACUOUS for the IDENTICAL
+// region, and scripts/solidity_path_put.py refused the PUT on the false signal.
+//
+// SO THE VERDICT BECOMES A THIRD, EXPLICIT TOKEN rather than being folded into
+// either of the other two. Folding it into VACUOUS is the defect. Folding it
+// into CERTIFIED would be worse. "No verdict" is not "no", and a verdict that
+// cannot be trusted has to be a distinct word a driver can branch on -- which
+// is why the caller prints `RESULT: UNDECIDED-TRUNCATED` and not a warning
+// beside `RESULT: VACUOUS`.
+//
+// ---- WHY THIS READS goto_functionst::truncated_loops AND ADDS NO COUNTER ----
+//
+// That set is the bookkeeping the generic "Coverage may be UNDER-REPORTED: N
+// loop(s) hit the unwind bound" warning already uses (bmc.cpp:806-823), written
+// at exactly one place (symex_goto.cpp:501-506). A second, independent counter
+// would drift from it -- the two would disagree about a run and there would be
+// no way to tell which was right.
+//
+// It also needs NO `no-unwinding-assertions` lookup of its own, and that is a
+// property of the write site rather than an omission: the insert lives INSIDE
+// the `else` branch that fires only when `no_unwinding_assertions` is true, and
+// `loop_bound_exceeded` returns before reaching either branch under
+// `--partial-loops` (symex_goto.cpp:474). So a non-empty set already means
+// "a loop was cut AND the cut was silent AND the executions were really
+// discarded" -- a strictly stronger condition than the warning's own
+// `options.get_bool_option("no-unwinding-assertions")` guard.
+//
+// The set is process-global and is never cleared, so this is monotone across
+// k-induction phases and thread interleavings: once a run has truncated
+// something, no later phase of that process may print a confident vacuity.
+// That is the safe direction for a soundness gate.
+//
+// Returns "" when nothing was truncated -- i.e. when the confident verdict is
+// still the tool's to give.
+static std::string path_cov_truncated_loops()
+{
+  std::lock_guard<std::mutex> lk(goto_functionst::truncated_loops_mutex);
+  std::string s;
+  for (const auto &l : goto_functionst::truncated_loops)
+    s += (s.empty() ? "" : "; ") + l;
+  return s;
+}
+
+// The shared body of the third state, so the two gates cannot drift apart in
+// what they claim. `mode` is the flag name, `enc_txt` the path, `why` the
+// reason the non-vacuity witness did not come back refuted.
+static void path_cov_report_truncated(
+  const char *mode,
+  const std::string &enc_txt,
+  const std::string &why,
+  const std::string &loops)
+{
+  log_error(
+    "{}: RESULT: UNDECIDED-TRUNCATED -- the non-vacuity witness for path "
+    "enc={} did NOT come back refuted ({}), AND this run cut at least one loop "
+    "at the unwind bound while unwinding assertions were disabled, so the "
+    "executions needing one more iteration were ASSUMED AWAY rather than "
+    "explored. VACUOUS would mean \"no execution the region admits walks this "
+    "path\"; that proposition is FALSE whenever a truncation assumption removed "
+    "executions on the path, so THIS RUN IS NOT ENTITLED TO IT and the "
+    "confident word is withheld. This is NOT a weaker VACUOUS and must not be "
+    "read as one: it is the explicit third state, and the region may well be "
+    "perfectly non-empty. MEASURED on aqua Aqua.dock enc=12 (--focus-function "
+    "dock --solidity-max-tx 1): --path-cov-certify answered CERTIFIED while "
+    "--path-cov-assert answered VACUOUS for the IDENTICAL region, and the whole "
+    "difference was one truncated library loop (__memset_impl, "
+    "src/c2goto/library/string.c:298) whose executions --unwindset 64:512 "
+    "brings back. TO GET A VERDICT: raise --unwind, use "
+    "--unwindset/--unwindsetname for the loop(s) named here, or pass "
+    "--partial-loops (which suppresses the assumption), then re-run. Loops "
+    "truncated: {}",
+    mode,
+    enc_txt,
+    why,
+    loops);
+}
+
 void goto_coveraget::report_path_cov_certify()
 {
   if (!path_cov_certify_mode)
@@ -592,6 +702,32 @@ void goto_coveraget::report_path_cov_certify()
   const char nv = verdict_of(path_cov_certify_nonvacuous_key);
   if (nv != 'F')
   {
+    // ---- THE TRUNCATION GATE, IN FRONT OF THE VACUITY VERDICT ----
+    //
+    // Read BEFORE the VACUOUS line is composed, because by the time that line
+    // exists the confident word has already been said. See
+    // path_cov_truncated_loops() above for why a non-empty set is exactly the
+    // condition under which "nothing walks this path" stops being a statement
+    // about the region and becomes a statement about the bound.
+    //
+    // It covers the WHOLE `nv != 'F'` branch, not only `nv == 'P'`. A witness
+    // that never reached the solver, or that came back unknown, is no more
+    // trustworthy under a truncated exploration than one that held -- and all
+    // three land on the same confident sentence today.
+    const std::string why =
+      nv == 'P' ? "the antecedent held on every execution, i.e. no admitted "
+                  "input reaches this path"
+                : (nv == '?' ? "the witness claim never reached the solver"
+                             : "the solver returned unknown for the witness "
+                               "claim");
+    const std::string truncated = path_cov_truncated_loops();
+    if (!truncated.empty())
+    {
+      path_cov_report_truncated(
+        "--path-cov-certify", enc_txt, why, truncated);
+      exit(1);
+    }
+
     log_error(
       "--path-cov-certify: RESULT: VACUOUS — the box admits NO execution that "
       "walks path enc={} of this unit ({}). Every exit assert therefore holds "
@@ -603,11 +739,7 @@ void goto_coveraget::report_path_cov_certify()
       "bound, so a box naming an entry state the constructor never produces is "
       "well-formed, in-type, non-empty and admits nothing",
       enc_txt,
-      nv == 'P' ? "the antecedent held on every execution, i.e. no admitted "
-                  "input reaches this path"
-                : (nv == '?' ? "the witness claim never reached the solver"
-                             : "the solver returned unknown for the witness "
-                               "claim"));
+      why);
     exit(1);
   }
 
@@ -1577,6 +1709,35 @@ void goto_coveraget::report_path_cov_assertions()
     }
     if (nvv != 'F')
     {
+      // ---- THE TRUNCATION GATE, IN FRONT OF THE VACUITY VERDICT ----
+      //
+      // Same gate as report_path_cov_certify()'s, and this is the side the
+      // defect was MEASURED on: `--path-cov-assert` is the ONLY one of the
+      // three sub-modes that forces `--no-simplify`
+      // (esbmc_parseoptions.cpp:4223, against :4200-4203 for the other two),
+      // and that force is precisely what lets a library loop be entered,
+      // truncated at 4, and its executions assumed away. So this arm sees the
+      // aqua signature -- the witness holding while six MUTUALLY CONTRADICTORY
+      // rungs all hold beside it -- and printing VACUOUS there is the wrong
+      // answer, not a conservative one.
+      const std::string enc_txt =
+        path_cov_assert_candidates.empty()
+          ? std::string("<unknown>")
+          : std::to_string(path_cov_assert_candidates.front().enc);
+      const std::string why =
+        nvv == 'P' ? "the antecedent held on every execution, i.e. no admitted "
+                     "input reaches this path"
+                   : (nvv == '?' ? "the witness claim never reached the solver"
+                                 : "the solver returned unknown for the witness "
+                                   "claim");
+      const std::string truncated = path_cov_truncated_loops();
+      if (!truncated.empty())
+      {
+        path_cov_report_truncated(
+          "--path-cov-assert", enc_txt, why, truncated);
+        exit(1);
+      }
+
       log_error(
         "--path-cov-assert: THE REGION IS VACUOUS -- no execution it admits "
         "walks path enc={} of this unit ({}). Every candidate below would hold "
@@ -1587,14 +1748,8 @@ void goto_coveraget::report_path_cov_assertions()
         "contract state is NOT havoc'd at this transaction bound, so a region "
         "naming an entry state the constructor never produces is well-formed, "
         "in-type, non-empty and admits nothing. No verdict table is printed",
-        path_cov_assert_candidates.empty()
-          ? 0
-          : path_cov_assert_candidates.front().enc,
-        nvv == 'P' ? "the antecedent held on every execution, i.e. no admitted "
-                     "input reaches this path"
-                   : (nvv == '?' ? "the witness claim never reached the solver"
-                                 : "the solver returned unknown for the witness "
-                                   "claim"));
+        enc_txt,
+        why);
       exit(1);
     }
     log_status(
@@ -3374,9 +3529,17 @@ void goto_coveraget::solidity_path_coverage()
       "emitted at this path's own exit and is REFUTED on every run that "
       "certifies, so a CERTIFIED box prints VERIFICATION FAILED. RESULT is one "
       "of CERTIFIED (every input in the box walks this path), REFUTED (the "
-      "counterexample is an input inside the box that leaves it) or VACUOUS "
+      "counterexample is an input inside the box that leaves it), VACUOUS "
       "(the box admits no execution that walks this path at all, so the run "
-      "establishes nothing)",
+      "establishes nothing), UNDECIDED (nothing was refuted but the solver "
+      "could not answer) or UNDECIDED-TRUNCATED (a loop was cut at the unwind "
+      "bound while unwinding assertions were disabled, so the executions that "
+      "would have witnessed this path may simply have been assumed away -- "
+      "VACUOUS is then not a statement this run is entitled to make). THIS "
+      "LIST IS THE COMPLETE SET and a driver must branch on all of it: an "
+      "unrecognised token is a tool that knows something the driver does not, "
+      "and reading it as \"no verdict line\" silently falls back to the "
+      "VERIFICATION SUCCESSFUL / FAILED line this very message says not to use",
       certify_unit,
       certify_enc,
       certify_depth,

@@ -1064,9 +1064,44 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
 # `RESULT: VACUOUS` (amt <= 49 can never be > 50), and the driver reported
 # "ESBMC printed neither SUCCESSFUL nor FAILED". The pure-function tests could
 # not have caught it: they were written from the format string, not from a log.
+# ---- THE TOKEN IS CAPTURED WHOLE, AND AN UNKNOWN ONE IS FATAL ----
+#
+# This used to be an alternation, `(CERTIFIED|REFUTED|VACUOUS|UNDECIDED)\b`, and
+# it failed in BOTH directions the moment the tool grew a fifth verdict:
+#
+#   * a token the alternation does not list does not match at all, so `result`
+#     stays None and `verdict()` falls through to the whole-line VERIFICATION
+#     SUCCESSFUL / FAILED reading -- the exact fallback the tool's own banner
+#     says must not be used, because the non-vacuity witness is refuted on every
+#     run that certifies. A new verdict would therefore be read as its OPPOSITE.
+#   * worse, `UNDECIDED-TRUNCATED` DOES match, as `UNDECIDED`: `-` is a
+#     non-word character, so `\b` is satisfied right after the prefix. The
+#     driver would have mapped a "the bound may have manufactured this" verdict
+#     onto plain UNKNOWN, silently, and looked like it handled it.
+#
+# So the token is captured whole and looked up in a table that has no default.
+# An unrecognised value is a HARD FAILURE: it means the tool knows a distinction
+# this driver does not, and there is no safe direction to guess in -- one guess
+# certifies a region nothing checked, the other shrinks a region that was
+# already correct.
 CERTIFY_RESULT_RE = re.compile(
-    r"^(?:ERROR: )?--path-cov-certify: RESULT: "
-    r"(CERTIFIED|REFUTED|VACUOUS|UNDECIDED)\b")
+    r"^(?:ERROR: )?--path-cov-certify: RESULT: ([A-Z][A-Z-]*)")
+
+# Tool token -> the state this driver acts on. UNDECIDED-TRUNCATED is its own
+# state and is deliberately NOT folded into UNKNOWN: UNKNOWN means the run did
+# not produce an answer (crash, timeout, solver gave up) and the cause is a
+# property of the RUN, while UNDECIDED-TRUNCATED means the run answered but the
+# unwind bound may have manufactured the answer -- the cause is a property of
+# the BOUND, and the fix is a bigger --unwind / --unwindset, which is actionable
+# in a way a crash is not. Collapsing them would hide the one repair the
+# operator can actually make.
+CERTIFY_RESULT_MAP = {
+    "CERTIFIED": "SUCCESSFUL",
+    "REFUTED": "FAILED",
+    "VACUOUS": "VACUOUS",
+    "UNDECIDED": "UNKNOWN",
+    "UNDECIDED-TRUNCATED": "UNDECIDED_TRUNCATED",
+}
 
 # ---- THE CERTIFY BRANCH'S OWN REFUSAL, WHICH IS NOT THE OUTER BOX'S ----
 #
@@ -1089,6 +1124,15 @@ CERTIFY_RESULT_RE = re.compile(
 CERT_UNEXPRESSIBLE_RE = re.compile(
     r"REFUSING THE QUERY because coordinate '([^']+)' cannot be expressed")
 
+# The loop names the third state carries. Anchored to the RESULT line rather
+# than to the bare phrase, because the generic "Coverage may be UNDER-REPORTED"
+# warning ends with the SAME words and puts its loops on following lines -- a
+# bare scan would capture the empty tail of the warning and report "no loops"
+# on a run that named several. `.` does not cross newlines here (no DOTALL), so
+# the match is confined to the one line that carries both parts.
+CERT_TRUNCATED_RE = re.compile(
+    r"RESULT: UNDECIDED-TRUNCATED.*?Loops truncated: (.*)$", re.M)
+
 
 def unexpressible_coords(log):
     """Coordinates the CERTIFY branch refused to express, from its own message.
@@ -1110,7 +1154,7 @@ def unexpressible_coords(log):
 
 
 def verdict(log):
-    """'SUCCESSFUL' / 'FAILED' / 'VACUOUS' / 'UNKNOWN'.
+    """'SUCCESSFUL' / 'FAILED' / 'VACUOUS' / 'UNDECIDED_TRUNCATED' / 'UNKNOWN'.
 
     THE TOOL'S `RESULT:` LINE WINS, and reading the verdict line instead is now
     an INVERSION rather than a coarser reading. The certification query emits a
@@ -1158,6 +1202,18 @@ def verdict(log):
     a coordinate is pinned) and then print NEITHER verdict line. Folding that
     into FAILED would make the loop respond to a crash by shrinking the box, i.e.
     by treating "we never found out" as "refuted".
+
+    UNDECIDED_TRUNCATED IS A FIFTH STATE, for the same reason UNKNOWN is a third
+    one. It says the run DID answer but a loop was cut at the unwind bound while
+    unwinding assertions were disabled, so the executions that would have
+    witnessed the path may simply have been assumed away and the vacuity verdict
+    is not the tool's to give. Neither shrinking nor accepting is defensible --
+    and neither is calling it UNKNOWN, because unlike a crash it names a repair
+    (raise --unwind / --unwindset for the loop it prints).
+
+    AN UNRECOGNISED TOKEN IS FATAL, never a silent fall-through. See
+    CERTIFY_RESULT_MAP above for the two ways the previous alternation got this
+    wrong, one of which mapped the new token onto UNKNOWN while looking handled.
     """
     result = None
     seen = "UNKNOWN"
@@ -1171,10 +1227,20 @@ def verdict(log):
         elif s == "VERIFICATION FAILED":
             seen = "FAILED"
     if result is not None:
-        # UNDECIDED means the solver was asked and could not answer, which is
-        # the same actionable state as no verdict at all: stop, do NOT shrink.
-        return {"CERTIFIED": "SUCCESSFUL", "REFUTED": "FAILED",
-                "VACUOUS": "VACUOUS", "UNDECIDED": "UNKNOWN"}[result]
+        if result not in CERTIFY_RESULT_MAP:
+            raise SystemExit(
+                f"[certify] ESBMC printed an unrecognised verdict token "
+                f"'RESULT: {result}'. This driver knows only "
+                f"{', '.join(sorted(CERTIFY_RESULT_MAP))}. Refusing to guess: "
+                f"the tool and this script disagree about what verdicts exist, "
+                f"and every fallback available here is wrong in a way nothing "
+                f"downstream could notice -- treating it as no verdict reads "
+                f"the whole-line VERIFICATION SUCCESSFUL/FAILED, which is "
+                f"INVERTED for this mode (the non-vacuity witness is refuted on "
+                f"every run that certifies), and treating it as any known token "
+                f"records a judgement the tool did not make. Teach this script "
+                f"the token instead")
+        return CERTIFY_RESULT_MAP[result]
     return seen
 
 
@@ -1936,7 +2002,21 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
         # the SECOND largest failure bucket -- 22 paths -- with no way to tell a
         # timeout from a crash from an unresolvable coordinate. The machinery to
         # name it already exists and was only ever applied to outer-box rounds.
-        why = round_failure_reason(log) if v == "UNKNOWN" else None
+        #
+        # UNDECIDED_TRUNCATED carries the LOOP NAMES through the same channel,
+        # because that is the whole difference between it and UNKNOWN: it names
+        # the repair. "No verdict" is not actionable; "loop 62 at f:11 was cut
+        # at the unwind bound" is a --unwindset away from one.
+        why = None
+        if v == "UNKNOWN":
+            why = round_failure_reason(log)
+        elif v == "UNDECIDED_TRUNCATED":
+            m = CERT_TRUNCATED_RE.search(log)
+            why = (f"loop(s) cut at the unwind bound: {m.group(1).strip()}"
+                   if m else
+                   "the tool did not name the truncated loop(s), which it "
+                   "normally does -- read the run log rather than trusting "
+                   "this line")
         return v, None, {}, [], unexp, why
     why = None
     # Harvested on every refutation, not only when the shrink fails: the caller
@@ -2860,6 +2940,36 @@ def main():
                         "every exit assert held for want of an execution. "
                         "Before the non-vacuity witness existed this printed as "
                         "a certificate")
+                    break
+                if v == "UNDECIDED_TRUNCATED":
+                    # THE BOUND MAY HAVE MANUFACTURED THE ANSWER.
+                    #
+                    # Handled EXPLICITLY and next to VACUOUS, because that is
+                    # the verdict it replaces: the tool would have said VACUOUS
+                    # and the loop would have recorded "this path has no domain
+                    # in this slice" -- a statement about the REGION -- when the
+                    # truth was a statement about the unwind bound. Recording it
+                    # as vacuous is how a perfectly good region gets dropped;
+                    # recording it as UNKNOWN loses the one thing that makes it
+                    # different, namely that it names its own repair.
+                    #
+                    # Not shrunk and not accepted, for the same reason VACUOUS
+                    # is neither: there is nothing to cut (no witness was
+                    # obtained) and nothing to certify (no execution was
+                    # explored on this path).
+                    reason = (
+                        "the certification query returned "
+                        "UNDECIDED-TRUNCATED: a loop was cut at the unwind "
+                        "bound while unwinding assertions were disabled, so "
+                        "the executions that would witness this path may have "
+                        "been ASSUMED AWAY rather than shown not to exist. "
+                        "This is NOT 'the region is vacuous' -- the region may "
+                        "be perfectly non-empty and the bound is what could "
+                        "not see it"
+                        + (f" ({unknown_why})" if unknown_why else "")
+                        + ". Re-run this path with a larger --unwind, or "
+                          "--unwindset/--unwindsetname on the loop(s) named, "
+                          "to get a verdict")
                     break
                 if v == "UNKNOWN":
                     # No verdict at all -- ESBMC crashed, was killed, or
