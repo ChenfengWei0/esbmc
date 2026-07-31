@@ -1,4 +1,5 @@
 #include <goto-programs/goto_coverage.h>
+#include <util/focus_function.h>
 #include <goto-programs/goto_functions.h>
 #include <goto-programs/goto_inline.h>
 #include <util/arith_tools.h>
@@ -2206,14 +2207,25 @@ bool goto_coveraget::focus_selects_unit(
 {
   if (focus.empty())
     return true; // no narrowing
-  // A caller that already has the fully mangled id may pass it verbatim.
+  // A caller that already has the fully mangled id may pass it verbatim. This
+  // is a whole-value comparison on purpose: an id contains '@' and '#' but no
+  // separator this option uses, so it can never be mistaken for a list.
   if (unit_id == focus)
     return true;
-  // `sol:@C@<C>@F@<fn>#<node-id>` -- compare the <fn> segment, bounded by the
-  // '#' so `pubx` cannot match a focus of `pub`. Exact equality is what the
-  // frontend's own dispatcher filter applies to the source-level name, which is
-  // also what makes every OVERLOAD of the name selected here: they share <fn>
-  // and differ only in <node-id>, and the dispatcher offers all of them.
+  // `sol:@C@<C>@F@<fn>#<node-id>` -- extract the <fn> segment, bounded by the
+  // '#' so `pubx` cannot match a focus of `pub`, and ask the SHARED parser
+  // whether the focus names it.
+  //
+  // --focus-function names a SET (`--focus-function a,b`), and the membership
+  // test lives in util/focus_function.h rather than here because the frontend's
+  // dispatcher filter has to answer the identical question about the identical
+  // value. Two copies of it would be a detector keyed on a condition its own
+  // branch does not state: a unit the dispatcher can enter but this test skips
+  // carries no claim at all, which reads as an honest zero rather than as a
+  // hole. Exact per-name equality is what the frontend applies to the
+  // source-level name, and it is also what makes every OVERLOAD selected here:
+  // overloads share <fn> and differ only in <node-id>, and the dispatcher
+  // offers all of them.
   const std::string tag = "@F@";
   const size_t f = unit_id.find(tag);
   if (f == std::string::npos)
@@ -2222,7 +2234,7 @@ bool goto_coveraget::focus_selects_unit(
   const size_t h = unit_id.find('#', b);
   if (h == std::string::npos)
     return false;
-  return unit_id.compare(b, h - b, focus) == 0;
+  return focus_function_selects(focus, unit_id.substr(b, h - b));
 }
 
 void goto_coveraget::audit_entry_liveness(const std::string &focus_function)

@@ -12,6 +12,7 @@
 #include <util/bitvector.h>
 #include <util/c_types.h>
 #include <util/expr_util.h>
+#include <util/focus_function.h>
 #include <util/i2string.h>
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
@@ -289,32 +290,58 @@ bool solidity_convertert::convert()
     }
 
     const std::string &focus_cnt = *tgt_cnt_set.begin();
-    bool found = false;
-    auto it = funcSignatures.find(focus_cnt);
-    if (it != funcSignatures.end())
-    {
-      for (const auto &m : it->second)
-      {
-        if (m.name != focus_func)
-          continue;
-        if (
-          m.visibility != "public" && m.visibility != "external" &&
-          config.options.get_option("no-visibility").empty())
-          continue;
-        if (m.name == focus_cnt)
-          continue;
-        if (m.name == "receive" || m.name == "fallback")
-          continue;
-        found = true;
-        break;
-      }
-    }
-    if (!found)
+
+    // --focus-function names a SET (comma- or space-separated); see
+    // util/focus_function.h for why the parsing lives there rather than here.
+    // EVERY name is checked, and every name that matched nothing is reported in
+    // ONE message. Reporting only the first would make a user with a
+    // ten-function list fix one typo per run, and -- worse -- a list whose first
+    // name is right and whose second is wrong would pass this check entirely if
+    // the loop stopped at the first success.
+    const std::vector<std::string> focus_names = focus_function_names(focus_func);
+    if (focus_names.empty())
     {
       log_error(
-        "--focus-function '{}' is not a public/external function of "
-        "contract '{}'.",
+        "--focus-function was given the value '{}', which names no function at "
+        "all. Pass one or more public/external function names of contract "
+        "'{}', separated by commas or spaces.",
         focus_func,
+        focus_cnt);
+      return true;
+    }
+
+    std::string missing;
+    for (const auto &want : focus_names)
+    {
+      bool found = false;
+      auto it = funcSignatures.find(focus_cnt);
+      if (it != funcSignatures.end())
+      {
+        for (const auto &m : it->second)
+        {
+          if (m.name != want)
+            continue;
+          if (
+            m.visibility != "public" && m.visibility != "external" &&
+            config.options.get_option("no-visibility").empty())
+            continue;
+          if (m.name == focus_cnt)
+            continue;
+          if (m.name == "receive" || m.name == "fallback")
+            continue;
+          found = true;
+          break;
+        }
+      }
+      if (!found)
+        missing += (missing.empty() ? "" : ", ") + ("'" + want + "'");
+    }
+    if (!missing.empty())
+    {
+      log_error(
+        "--focus-function {} is not a public/external function of "
+        "contract '{}'.",
+        missing,
         focus_cnt);
       return true;
     }

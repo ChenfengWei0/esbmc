@@ -138,11 +138,18 @@ const struct group_opt_templ all_cmd_options[] = {
      boost::program_options::value<std::string>()->value_name("cname"),
      "Set contract name"},
     {"focus-function",
-     boost::program_options::value<std::string>()->value_name("name"),
-     "Restrict the contract harness to verify only the named public/external "
-     "function. The constructor and state initialization still run (unlike "
-     "--function), but the nondet dispatch loop calls only this function. "
-     "Requires --contract when the source declares more than one contract."},
+     boost::program_options::value<std::string>()->value_name("name[,name...]"),
+     "Restrict the contract harness to the named public/external function(s). "
+     "The constructor and state initialization still run (unlike --function), "
+     "but the nondet dispatch loop calls only these. Several names may be given, "
+     "separated by commas or spaces (--focus-function deposit,withdraw), and "
+     "every name must exist -- a value naming a function the contract does not "
+     "have fails the conversion and says which one, so a typo in a long list "
+     "cannot silently narrow the run to the names that happened to be right. "
+     "Under --solidity-path-coverage this ALSO narrows what is enumerated and "
+     "instrumented, so the reported denominator is these units' own path count "
+     "rather than the whole contract's. Requires --contract when the source "
+     "declares more than one contract."},
     {"no-visibility",
      NULL,
      "Force to verify every function, even if it's an unreachable "

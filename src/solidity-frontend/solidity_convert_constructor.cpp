@@ -12,6 +12,7 @@
 #include <util/bitvector.h>
 #include <util/c_types.h>
 #include <util/expr_util.h>
+#include <util/focus_function.h>
 #include <util/i2string.h>
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
@@ -328,10 +329,17 @@ bool solidity_convertert::get_unbound_function(
     // 2.1 construct if-then-else statement
     const auto methods = funcSignatures[c_name];
 
-    // --focus-function: when the caller is the target contract and a focus
-    // function is set, restrict the dispatch loop to only that function.
-    // Other contracts (e.g., cross-contract targets reached from inside the
-    // focus function) keep their full nondet dispatch.
+    // --focus-function: when the caller is the target contract and a focus is
+    // set, restrict the dispatch loop to the functions it names. Other contracts
+    // (e.g. cross-contract targets reached from inside a focused function) keep
+    // their full nondet dispatch.
+    //
+    // The value names a SET, not one function: `--focus-function a,b` keeps both
+    // entries. Membership goes through focus_function_selects() -- the same
+    // parser the path-coverage pass narrows INSTRUMENTATION with -- so the two
+    // cannot disagree about which entries exist. A disagreement would be silent
+    // in the worst direction: an entry this loop kept but the pass did not
+    // instrument is a unit the harness can enter and no claim ever measures.
     const bool focus_applies = !focus_func.empty() && tgt_cnt_set.size() == 1 &&
                                c_name == *tgt_cnt_set.begin();
 
@@ -355,9 +363,9 @@ bool solidity_convertert::get_unbound_function(
       // harness entry already seeds msg_sender/msg_value to nondet values,
       // so the body is exercised under arbitrary caller state, which is the
       // correct over-approximation for both low-level entry points.
-      if (focus_applies && func_name != focus_func)
-        // focus-function mode: skip all non-focus functions on the target
-        // contract to avoid unnecessary verification overhead.
+      if (focus_applies && !focus_function_selects(focus_func, func_name))
+        // focus-function mode: skip every function on the target contract that
+        // the focus does not name.
         continue;
 
       // then: function_call
