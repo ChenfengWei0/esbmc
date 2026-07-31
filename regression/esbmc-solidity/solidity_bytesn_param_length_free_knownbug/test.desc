@@ -2,15 +2,3 @@ KNOWNBUG
 contract.sol
 --contract C --solidity-max-tx 1
 ^VERIFICATION SUCCESSFUL$
---
-^warning: ignoring
---
-`b == bytes32(uint256(b))` is a Solidity tautology and the model refutes it,
-because the ABI bytesN argument's `.length` is left as free as its `.data` and
-`bytes_static_equal` returns false outright on a length mismatch.
-
-Marked KNOWNBUG rather than fixed: the pinning fix was implemented, measured to
-work, and REVERTED because it cost the counterexample its recoverability and
-made the generated-test funnel worse on D11_Bytes32Equality (3 cases / 0 merges
--> 1 case / 1 merge). See the contract header and the reverted branch's comment
-in solidity_convert_call.cpp for what a real fix has to satisfy.
