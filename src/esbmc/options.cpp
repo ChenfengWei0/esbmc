@@ -1021,6 +1021,19 @@ const struct group_opt_templ all_cmd_options[] = {
       "FAULT INJECTION for --solidity-path-coverage: raise(SIGTERM) once N "
       "path claims have been decided, to exercise the external-kill arm of the "
       "signal handler. Same rationale as --path-cov-fault-after"},
+     {"path-cov-fault-mid-witness",
+      boost::program_options::value<int>()->value_name("N"),
+      "FAULT INJECTION for --solidity-path-coverage: throw std::bad_alloc from "
+      "INSIDE the counterexample harvest of the Nth refuted claim -- i.e. after "
+      "the solver answered and the verdict was recorded, but before the claim's "
+      "signature reaches reached_claims. --path-cov-fault-after cannot reach "
+      "that window: it fires at the START of a job, when every previous claim "
+      "has already completed all of its side effects. The window is real and "
+      "was measured, on a 30-line nested-mapping contract that ran out of memory "
+      "in exactly it: the run printed `✗ FAILED: 'put:path:7'` and then reported "
+      "`Path Status: F 0, I 0, U 8`, tripping the tool's own invariant because a "
+      "witnessed path had been filed as undecided with no reason token. Ignored "
+      "without --solidity-path-coverage"},
      {"double-assign-check",
       NULL,
       "Check for duplicate SSA symbol assignments"},

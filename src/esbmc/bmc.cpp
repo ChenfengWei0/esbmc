@@ -1207,10 +1207,27 @@ void report_coverage(
     const bool cov_set_active = !goto_coveraget::path_covered_outpath.empty();
     size_t tracked_instance = 0;
     for (const auto &k : goto_coveraget::all_claims)
+    {
+      // THE SAME DISJUNCTION `Path Status: F` USES, and it has to be, because
+      // `Reached` and `F` are two renderings of one set. Adding `v == 'F'`
+      // below without adding it here produced a report reading
+      // `Path Coverage: 0%` and `Path Status: F 1` in the same block --
+      // measured on the injected mid-harvest fault. Two numbers computed from
+      // one fact must not be able to disagree; a reader would have to guess
+      // which was the defect.
+      char vv = 0;
+      {
+        std::lock_guard lk(goto_coveraget::claim_outcome_mutex);
+        auto it_v =
+          goto_coveraget::claim_outcome.find(k.first + "\t" + k.second);
+        if (it_v != goto_coveraget::claim_outcome.end())
+          vv = it_v->second;
+      }
       if (
         goto_coveraget::path_witnessed_earlier(k) ||
-        reached_claims.count(k.first + "\t" + k.second))
+        reached_claims.count(k.first + "\t" + k.second) || vv == 'F')
         ++tracked_instance;
+    }
 
     log_success("\n[Coverage]\n");
     // ---- THE COMPLETENESS LINE, printed in BOTH directions ----
@@ -1303,9 +1320,39 @@ void report_coverage(
             if (it_o != goto_coveraget::claim_outcome.end())
               v = it_o->second;
           }
+          // ---- A VERDICT THAT WAS MADE MUST NOT BE LOST ----
+          //
+          // `v == 'F'` is in this disjunction because the two records of a
+          // refutation are written at DIFFERENT TIMES and a dying run can land
+          // between them. `claim_outcome[sig] = 'F'` is written the instant the
+          // solver answers SAT; `reached_claims.emplace(sig)` is written only
+          // after build_goto_trace, the counterexample harvest and every
+          // artifact emitter have run. Everything in that window can throw.
+          //
+          // MEASURED on notes/coverage/poc/P16_Mapping.sol -- a 30-line nested
+          // mapping, 8 paths, `std::bad_alloc` at 4 GB:
+          //
+          //     ✗ FAILED: 'put:path:7 at'
+          //     Path Status: F 0, I 0, U 8
+          //     ERROR: INTERNAL DEFECT — 1 path(s) are reported U with NO
+          //            reason token: sol:@C@P16_Mapping@F@put#31:path:7
+          //
+          // The run printed the refutation and then reported zero refutations.
+          // The path fell to the `else` below, `path_u_reason_token` has no
+          // token for 'F' (correctly -- an F is not a U), and the invariant
+          // fired. So the abort was RIGHT and its cause was here: a witnessed
+          // path filed as undecided, which on a live run reads exactly like an
+          // honest "we could not decide it".
+          //
+          // The payload may be absent for such a claim -- the harvest is what
+          // died -- and that is reported as it is: `status: F` with an empty
+          // `inputs` is the true statement (a witness exists, its values did
+          // not survive), whereas dropping the F asserts something false about
+          // the program. The same disjunction is applied to `witnessed` in the
+          // JSON block so the file and the terminal cannot disagree.
           if (
             goto_coveraget::path_witnessed_earlier(k) ||
-            reached_claims.count(sig))
+            reached_claims.count(sig) || v == 'F')
             ++nF;
           else if (v == 'P' && unb)
             ++nI;
@@ -1484,7 +1531,14 @@ void report_coverage(
         // input exists for this path.
         const bool prior =
           goto_coveraget::path_witnessed_earlier({claim_msg, claim_loc});
-        const bool witnessed = covered || prior;
+        // `v == 'F'`: the same disjunction the stdout counters use, for the
+        // same reason. The refutation is recorded in `claim_outcome` the moment
+        // the solver answers and in `reached_claims` only after the trace and
+        // harvest have run, so a run that dies in between has a verdict that
+        // `covered` cannot see. Keeping the two readers in step is what stops
+        // the file and the terminal from disagreeing about how many paths were
+        // witnessed. See the stdout block for the measured P16_Mapping case.
+        const bool witnessed = covered || prior || v == 'F';
 
         // F: feasible, CE in hand.
         // I: PROVEN unreachable. No coverage configuration can establish this
@@ -3046,6 +3100,17 @@ smt_convt::resultt bmct::multi_property_check(
     is_path_cov && !options.get_option("path-cov-fault-sigterm").empty()
       ? (size_t)std::stoul(options.get_option("path-cov-fault-sigterm"))
       : 0;
+  // Throws from INSIDE the counterexample harvest -- after the verdict is
+  // recorded in claim_outcome and before the claim signature reaches
+  // reached_claims. The two records of one refutation are written at different
+  // times and everything between them can throw, so that window needs a fault
+  // of its own: `fault_after` fires at the START of a job, by which point every
+  // earlier claim has completed all of its side effects, and can therefore
+  // never produce the state P16_Mapping produced.
+  const size_t fault_mid_witness =
+    is_path_cov && !options.get_option("path-cov-fault-mid-witness").empty()
+      ? (size_t)std::stoul(options.get_option("path-cov-fault-mid-witness"))
+      : 0;
 
   auto job_function = [this,
                        &eq,
@@ -3054,6 +3119,7 @@ smt_convt::resultt bmct::multi_property_check(
                        &remaining_claims,
                        &fault_after,
                        &fault_sigterm,
+                       &fault_mid_witness,
                        &final_result,
                        &result_mutex,
                        &summary,
@@ -3499,6 +3565,21 @@ smt_convt::resultt bmct::multi_property_check(
         // unchanged, because without --all-witnesses the loop breaks after one.
         if (is_path_cov)
         {
+          // FAULT INJECTION into the window between the two records of one
+          // refutation. `claim_outcome[sig] = 'F'` is already written at this
+          // point; `reached_claims.emplace(sig)` is not, and will not be if
+          // this throws. That is the state P16_Mapping reached by running out
+          // of memory here, and the only way a regression can reach it.
+          if (fault_mid_witness && decided_claims.load() >= fault_mid_witness)
+          {
+            log_error(
+              "--path-cov-fault-mid-witness {}: injecting std::bad_alloc "
+              "INSIDE the counterexample harvest, after {} decided claim(s) "
+              "(fault injection; this is not a real allocation failure)",
+              fault_mid_witness,
+              decided_claims.load());
+            throw std::bad_alloc();
+          }
           goto_coveraget::path_ce_t ce;
           ce.sliced = !options.get_bool_option("no-slice");
           // Same condition the dispatch uses to set protect_ce_symbols: with
