@@ -38,6 +38,7 @@ import concurrent.futures
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -76,6 +77,25 @@ RE_NOTCERT = re.compile(r"^  enc=(\d+): NOT CERTIFIED — (.*?); this path falls
 RE_PIN_FIRED = re.compile(r"^\[env\] msg\.value PINNED to 0")
 RE_PIN_PAYABLE = re.compile(r"^\[env\] msg\.value NOT pinned: this unit is PAYABLE")
 RE_PIN_UNKNOWN = re.compile(r"^\[env\] msg\.value NOT auto-pinned")
+
+
+def _killpg(proc):
+    """Kill a subprocess's whole process GROUP, tolerating a dead one.
+
+    Paired with `start_new_session=True`. Killing only the direct child leaves
+    esbmc grandchildren alive holding their full `--memlimit`, which is what
+    makes `jobs * memlimit` stop being a bound. Idempotent, because it is called
+    from both the timeout path and a `finally`.
+    """
+    if proc is None:
+        return
+    # Called even after a NORMAL exit, on purpose: the group is then empty and
+    # killpg raises ESRCH, which is caught. That costs nothing and means there
+    # is exactly one reaping path instead of two that can drift apart.
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError, AttributeError):
+        pass
 
 
 def available_gib():
@@ -402,19 +422,49 @@ def main():
             if args.skip_bracket:
                 cmd.append("--skip-bracket")
             t1 = time.time()
+            # ---- KILL THE PROCESS GROUP, NOT THE CHILD ----
+            #
+            # `subprocess.run(timeout=)` SIGKILLs the DIRECT child only -- here
+            # the driver `python3` -- and then blocks in communicate(). The
+            # driver's own esbmc grandchild is ORPHANED, and it inherits the
+            # stdout/stderr pipes, so communicate() waits for IT to exit: the
+            # timeout does not fire on time and the worker slot is held.
+            #
+            # That breaks the arithmetic this whole flag rests on. `--jobs N`
+            # commits `N * memlimit`, which assumes live-esbmc-count == N. After
+            # one timeout it is N + orphans, and orphans are entitled to their
+            # full memlimit with no parent to reap them. Four units timing out
+            # together while four more start is 8 x 6 = 48 GiB on a 42 GiB
+            # machine -- i.e. exactly the exhaustion the "never run esbmc
+            # concurrently" rule was written after, reachable through the code
+            # path added to discharge it.
+            #
+            # `start_new_session=True` puts the driver and every descendant in
+            # their own process group; killpg then takes the whole tree. The
+            # `finally` reaps it on ANY exit path, including the
+            # KeyboardInterrupt that leaves the pool -- without it, Ctrl-C
+            # leaves N drivers and N esbmc processes running unattended.
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True,
+                                    start_new_session=True)
             try:
-                p = subprocess.run(cmd, capture_output=True, text=True,
-                                   timeout=args.timeout)
-                out, rc = p.stdout + p.stderr, p.returncode
-            except subprocess.TimeoutExpired as e:
-                def _t(b):
-                    if b is None:
-                        return ""
-                    return b.decode(errors="replace") if isinstance(b, bytes) \
-                        else b
-                out = _t(e.stdout) + _t(e.stderr) + \
-                    f"\n[run] TIMEOUT after {args.timeout}s\n"
+                out, _ = proc.communicate(timeout=args.timeout)
+                rc = proc.returncode
+            except subprocess.TimeoutExpired:
+                _killpg(proc)
+                try:
+                    out, _ = proc.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    out = ""
+                out = (out or "") + f"\n[run] TIMEOUT after {args.timeout}s\n"
                 rc = 124
+            except BaseException:
+                # Includes KeyboardInterrupt. Reap before propagating, or the
+                # tree survives the sweep that started it.
+                _killpg(proc)
+                raise
+            finally:
+                _killpg(proc)
             wall = time.time() - t1
             rec = parse_driver(out)
             rec.update({"benchmark": bench, "unit": unit,
@@ -452,15 +502,47 @@ def main():
                       flush=True)
             return rec
 
+        def guarded(item):
+            # ONE UNIT'S FAILURE MAY NOT END THE CORPUS. `pool.map` re-raises
+            # the first worker exception out of main(), which would abort every
+            # remaining benchmark with a traceback and no record -- the exact
+            # opposite of the incremental design this file's docstring claims.
+            # With N workers the exposure is N times larger, so it is caught
+            # here and written as a record.
+            try:
+                return run_unit(item)
+            except Exception as e:                       # noqa: BLE001
+                i, unit = item
+                rec = {"benchmark": bench, "unit": unit,
+                       "bucket": "SWEEP-ERROR", "reason": f"{type(e).__name__}: {e}",
+                       "jobs": args.jobs}
+                with write_lock:
+                    with open(args.out, "a") as f:
+                        f.write(json.dumps(rec) + "\n")
+                        f.flush()
+                    print(f"  [{i}/{len(units)}] {unit}: SWEEP-ERROR — "
+                          f"{type(e).__name__}: {e}", flush=True)
+                return rec
+
         if args.jobs <= 1:
             for item in todo:
-                run_unit(item)
+                guarded(item)
         else:
             with concurrent.futures.ThreadPoolExecutor(
                     max_workers=args.jobs) as pool:
                 # Threads, not processes: every worker's real work is a
                 # subprocess, so the GIL is released for all of it.
-                list(pool.map(run_unit, todo))
+                #
+                # THE JOIN IS LOAD-BEARING, not incidental. `run_unit` closes
+                # over `bench`, `sol`, `contract`, `wd` and `memlimit`, which
+                # are single cells in main()'s frame and are REBOUND by the next
+                # iteration of the benchmark loop. Hoisting this pool out of the
+                # loop -- the obvious next optimisation, since each benchmark
+                # boundary is a barrier where N-1 workers idle -- would silently
+                # produce records labelled with one benchmark and built from
+                # another's source. If you hoist it, pass those values through
+                # the item tuple first.
+                list(pool.map(guarded, todo))
 
     print(f"\n[sweep] wrote {args.out}")
     return 0

@@ -1,5 +1,43 @@
 # The geometric bracket is ~92% of the wall clock and contributes nothing at this budget
 
+> **CORRECTIONS, 2026-07-31, after an adversarial review and the full sweep.
+> Three claims in the first version of this file were wrong. They are struck
+> below rather than deleted.**
+>
+> **1. THE 28-OF-41 STATISTIC WAS NEVER EVIDENCE ABOUT THE BRACKET.** This file
+> originally offered "of 41 non-certified paths, 28 failed with *no outer-box
+> round finished — a BUDGET outcome*" as corpus support for "the bracket
+> contributes nothing". That reason is produced by ANY outer-box round that
+> times out, and the REFINE rounds are outer-box rounds too. `--skip-bracket`
+> removes only the geometric one. Refuted by the sweep this file launched: with
+> `--skip-bracket` on for all 65 records, the identical reason is still the
+> largest bucket at **61**. Everything resting on that statistic is withdrawn.
+> What survives is only the paired run below, which is a clean single-variable
+> measurement on two named samples.
+>
+> **2. "TIMES 4 FROM THE JOBS" IS UNSUPPORTED AND WAS WRONG IN KIND.** Every
+> number in the combined table is a PER-UNIT wall clock, and per-unit wall clock
+> does not improve with concurrency — it gets WORSE. The speedup from jobs lives
+> in total makespan, which this file never measured. Worse, the pool is created
+> and joined PER BENCHMARK, so each boundary is a barrier: on aqua the eight
+> walls are 0.3, 0.3, 15.9, 20.3, 22.0, 24.3, 66.1, 180.4 and the makespan floor
+> is `max(180.4, 329.6/4) = 180.4`, set entirely by one unit. Realised speedup
+> on aqua is nearer **1.35x**, not 4x.
+>
+> **3. THE COMBINED TABLE CONFOUNDS THREE VARIABLES, NOT TWO.** `skip_bracket`
+> false→true, `jobs` 1→4, **and `memlimit_gib` 8→6** — the `--jobs 1` path
+> bypasses the budget arithmetic entirely and hardcodes 8g. Only the paired
+> `aqua.push` run isolates one variable.
+>
+> **AND ONE THING THE REVIEW ESTABLISHED THAT THIS FILE SHOULD HAVE:** `--jobs`
+> is not a scheduling flag at these budgets, it is a MEASUREMENT parameter. The
+> driver's internal per-esbmc budget is 180s of WALL CLOCK; `aqua.push` takes
+> 15.0s at `--jobs 1` and 20.3s at `--jobs 4`, so concurrency inflates per-unit
+> wall by ~35%, and any internal query above ~133s serially crosses the 180s
+> line at `--jobs 4`. `aqua.ship` is recorded `KILLED` at `wall_s 180.4` with
+> `exit 1` — the OUTER 600s timeout never fired, so that bucket was decided by
+> the scheduling flag. Nobody has measured it at `--jobs 1`.
+
 The corpus stage-2 sweep was a four-hour serial job, which made it a blocker
 rather than a measurement. Two things fixed that, and both are measurements
 rather than guesses.
@@ -29,10 +67,15 @@ measured, so it contributes nothing and costs about 92% of the wall clock.**
 The corpus sweep therefore runs with `--skip-bracket`, and every record carries
 that flag so a later reader cannot compare across configurations by accident.
 
-The corpus data already agreed before the pair was run: of 41 non-certified
-paths in the first partial sweep, **28 failed with "no outer-box round finished
-— a BUDGET outcome"**, which is the bracket timing out. It was the dominant
-failure reason, and it was a property of the ladder rather than of the paths.
+~~The corpus data already agreed before the pair was run: of 41 non-certified
+paths in the first partial sweep, 28 failed with "no outer-box round finished —
+a BUDGET outcome", which is the bracket timing out.~~ **WITHDRAWN — see
+correction 1 at the top.** That reason fires for any outer-box round that times
+out, and the refine rounds are outer-box rounds; with `--skip-bracket` on for
+the whole sweep it is still the largest bucket, at 61 of the non-certified
+paths. The dominant corpus failure is a wall-clock budget outcome in the LADDER
+generally, not in the bracket specifically — which leaves the refine rounds, not
+the bracket, as the thing to measure next.
 
 ## 2. Concurrency: the rule was right, and it is now discharged rather than relaxed
 

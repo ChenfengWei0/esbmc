@@ -71,8 +71,64 @@ def main():
     with open(args.results) as f:
         for line in f:
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 recs.append(json.loads(line))
+            except ValueError:
+                # A SIGKILL between the write and the flush leaves a
+                # newline-less tail, and the NEXT append is glued onto it --
+                # one unparseable line swallowing one good record. The sweep
+                # already tolerates that (it re-runs the unit); this reader used
+                # to die on it with a bare JSONDecodeError, so the file the
+                # producer survives was the file the consumer could not open.
+                print(f"[summary] SKIPPING one unparseable line — a partial "
+                      f"record from an interrupted run. The unit it belonged "
+                      f"to is absent from every number below and will re-run "
+                      f"on the next sweep")
+
+    # ---- THE CONFIGURATION MUST BE ONE, AND IT MUST BE READ ----
+    #
+    # `certify_all.py` writes six configuration fields per record so that "no
+    # later reader can compare across ladders by accident". It wrote them and
+    # nothing read them: this file grouped solely by benchmark and summed every
+    # record into one table. A results file that mixes a bracket-on partial
+    # sweep with a bracket-off one -- exactly what an append-and-resume file
+    # becomes -- produced a single blended corpus number with no warning. The
+    # defence existed in the data format and nowhere in the code, which is this
+    # project's own recurring "written but never wired" shape.
+    CONFIG_KEYS = ["skip_bracket", "level0", "probes", "refine_rounds",
+                   "shrink_rounds", "unit_timeout_s", "jobs", "memlimit_gib"]
+
+    def config_of(r):
+        return tuple(r.get(k) for k in CONFIG_KEYS)
+
+    configs = {}
+    for r in recs:
+        if r.get("bucket") in ("NO-UNIT-LIST", "SWEEP-ERROR"):
+            continue
+        configs.setdefault(config_of(r), []).append(r)
+    if len(configs) > 1:
+        print("=" * 78)
+        print("REFUSING TO SUMMARISE: the results file holds MORE THAN ONE "
+              "configuration")
+        print("=" * 78)
+        for cfg, rs in sorted(configs.items(), key=lambda kv: -len(kv[1])):
+            print(f"  {len(rs):>4} record(s): "
+                  + ", ".join(f"{k}={v}" for k, v in zip(CONFIG_KEYS, cfg)))
+        print()
+        print("Units measured under different ladders, budgets or job counts")
+        print("are not comparable, and blending them yields one corpus number")
+        print("that describes no run. Re-run the minority configuration, or")
+        print("summarise a filtered file. This is a refusal rather than a")
+        print("warning because a warning above a table gets quoted as a table.")
+        return 1
+    if configs:
+        cfg = next(iter(configs))
+        print("configuration (identical for all "
+              f"{sum(len(v) for v in configs.values())} record(s)): "
+              + ", ".join(f"{k}={v}" for k, v in zip(CONFIG_KEYS, cfg)))
+        print()
 
     by_bench = {}
     for r in recs:

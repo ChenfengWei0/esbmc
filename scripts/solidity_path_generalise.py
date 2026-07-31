@@ -1896,7 +1896,15 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
         # SUCCESSFUL: certified. VACUOUS: the box admits nothing, so there is
         # nothing to cut. UNKNOWN: no verdict at all -- the caller must not
         # shrink on it, so no box and no punch are suggested either.
-        return v, None, {}, [], unexp
+        #
+        # AND WHEN IT IS UNKNOWN, SAY WHY. "ESBMC printed neither SUCCESSFUL nor
+        # FAILED" is true and useless, and on the first full corpus sweep it was
+        # the SECOND largest failure bucket -- 22 paths -- with no way to tell a
+        # timeout from a crash from an unresolvable coordinate. The machinery to
+        # name it already exists and was only ever applied to outer-box rounds.
+        why = round_failure_reason(log) if v == "UNKNOWN" else None
+        return v, None, {}, [], unexp, why
+    why = None
     # Harvested on every refutation, not only when the shrink fails: the caller
     # needs it in the budget-exhausted branch too, and by then this run's report
     # has been overwritten by the next one.
@@ -1910,11 +1918,11 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     punches = punch_targets(log, pins, box)
     cut = shrink_target(log, pins)
     if cut is None:
-        return v, None, wit, punches, unexp
+        return v, None, wit, punches, unexp, why
     coord, lo, hi = cut
     nb = dict(box)
     nb[coord] = (lo, hi)
-    return v, nb, wit, punches, unexp
+    return v, nb, wit, punches, unexp, why
 
 
 def main():
@@ -2645,7 +2653,7 @@ def main():
             prev_size = region_size(box, holes)
             reason = None
             for _ in range(args.shrink_rounds):
-                v, nb, wit, punches, unexp = certify(
+                v, nb, wit, punches, unexp, unknown_why = certify(
                     args.esbmc, args.sol, args.contract, args.unit,
                     enc, depth, box, ce, pins, args.max_tx,
                     args.timeout, cwd, ast=args.ast, focus=focus,
@@ -2710,7 +2718,7 @@ def main():
                             "which is a STRONGER statement than the slice that "
                             "was asked for. Re-querying")
                     prev_size = region_size(box, holes)
-                    v, nb, wit, punches, unexp = certify(
+                    v, nb, wit, punches, unexp, unknown_why = certify(
                         args.esbmc, args.sol, args.contract, args.unit,
                         enc, depth, box, ce, pins, args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
@@ -2824,8 +2832,20 @@ def main():
                     # produced neither line. Shrinking here would treat "we
                     # never found out" as "refuted" and would quietly hand back
                     # a NARROWER box that nothing ever checked.
+                    # NAME THE CAUSE. On the first full corpus sweep this was
+                    # the second largest failure bucket -- 22 paths -- and the
+                    # message said only that neither verdict line was printed,
+                    # which cannot distinguish a timeout from a crash from an
+                    # unresolvable coordinate. `round_failure_reason` already
+                    # separates those three and was only ever applied to
+                    # outer-box rounds.
                     reason = ("no verdict from the certification query "
-                              "(ESBMC printed neither SUCCESSFUL nor FAILED)")
+                              "(ESBMC printed neither SUCCESSFUL nor FAILED)"
+                              + (f" — {unknown_why}" if unknown_why else
+                                 ". Its output names no timeout, no bad exit "
+                                 "code and no unresolvable coordinate, so the "
+                                 "cause is NOT one of the three this driver "
+                                 "knows how to name"))
                     break
                 # ---- S4: PREFER THE PUNCH, under a stated budget ----
                 #
