@@ -154,3 +154,38 @@ its own measurement -- see `notes/coverage/scripts/budget_probe.sh`) or a
 benchmark whose in-scope code is not a pure internal library.
 
 Stated here so the next reader does not spend a run discovering it.
+
+---
+
+# The killed units are a SCALE problem, not a budget one (measured)
+
+`notes/coverage/scripts/budget_probe.sh` was written to decide this and had not
+been run. It has now:
+
+    EscrowDst.withdraw, outer budget 1200s (the sweep used 180s)
+    -> /tmp/budget_probe/ is EMPTY: no cov-report.json
+    -> 109452 lines of solver output, no result
+
+`EscrowDst.withdraw` is the SMALLEST of the four units the sweep lost to its
+180s bound (30 enumerated paths). At 1200s -- 6.7x the sweep's budget and 13x
+the baseline's 90s per focused method -- it still produces no report, and a
+path-coverage run killed by a timeout emits nothing at all, so its contribution
+stays exactly 0.
+
+By the probe's own design the other three need not be run: `publicWithdraw` has
+the same 30 paths, `FarmingPool.exit` has 1004 and `rescueFunds` 9536.
+
+## What this settles, and what it costs
+
+It removes the most attractive remaining explanation for subgoal 2's shortfall.
+"Give it more time" is not available: the gap is not a budget artefact, so it
+cannot be closed by a number the paper could defend. It belongs in the text as a
+limitation of complete-path enumeration at this scale.
+
+It also removes a temptation. Our side already runs at 180s against the
+baseline's 90s -- an asymmetry that favours us and is disclosed in
+`notes/commensurability-audit.md`. Had the probe finished at 1200s, raising the
+sweep budget would have raised our numbers while widening that asymmetry to 13x.
+It did not finish, so the question does not arise; but the reasoning should be
+on record either way, because the temptation would have been to take the higher
+number first and disclose second.
