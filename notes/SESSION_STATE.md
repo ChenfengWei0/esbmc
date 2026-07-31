@@ -104,7 +104,34 @@ deploy leaves empty, so they need state an EARLIER TRANSACTION establishes, and
 everything runs at `--solidity-max-tx 1` from the post-constructor state with no
 havoc. `forge_roundtrip.py --max-tx N` exists to test exactly that.
 
-## THE NEXT STEP, precisely (do this first)
+## SETTLED — the `dock` question below is ANSWERED, and by neither candidate
+
+The section that follows is kept for its reasoning, but its two candidate causes
+were BOTH WRONG. A counter added before any fix said so:
+
+    0 dispatcher segment(s) acquired NO method
+    2 reconstruction(s) had the coverage-claim FALLBACK blocked by a CONSTRUCTOR
+
+There were no segments AT ALL (per-claim slicing removes the dispatcher's first
+tx-guard — the very case the fallback exists to repair), and the fallback could
+not run because `ctor_args` had pushed a constructor and the guard read
+`calls.empty()`. TWO defects, and fixing the first alone changed nothing: the
+fallback then ran and still emitted no call, because it derived the method from
+the assert's SOURCE LOCATION and a complete-path claim has none. That second
+defect was already fixed on the SEGMENT route and not here — and those two
+routes are exactly the ones that cover for each other.
+
+Both fixed (`2d35564b16`). `dock` emits 2 cases where it emitted 0. Whether
+those cases COVER lines 2258/2260 is a separate measurement: both carry a
+defaulted `ARRAY:ADDRESS` argument and both are revert-tolerant, so this is an
+emission result, not yet a coverage one.
+
+Three counters were kept rather than deleted with the fix
+(`segments_without_method`, `fallback_rescued_ctor_only`,
+`fallback_unsupported`) — a measurement removed once it has served one
+investigation makes the next one start from a guess.
+
+## THE OLD NEXT STEP (superseded — read the section above first)
 
 `notes/coverage/scripts/emission_loss.py aqua_Aqua` names the whole
 enumeration-to-emission loss as two lines, 2258 and 2260, and both are in

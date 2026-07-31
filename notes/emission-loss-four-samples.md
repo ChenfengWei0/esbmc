@@ -181,6 +181,46 @@ Stated here so the next reader does not spend a run discovering it.
 
 ---
 
+# The `dock` emission defect was REAL, and fixing it did NOT move the number
+
+The first same-run measurement, aqua, immediately after the two `dock` emitter
+defects were fixed:
+
+    emitted test files : 5   (was 6, of which 2 had empty bodies)
+    refused, empty body: 0   (was 4)
+    ours   (generated suite, forge lcov)   : 2 / 8     <- UNCHANGED
+    enumerated 4, emitted 2, lost in emission 2, lost lines [2258, 2260]
+
+`dock` went from 0 emitted cases to 2, both naming their obligation. And the
+coverage is identical, down to the same two lost lines — which are `dock`'s own.
+
+**So the emission defect was not what was blocking the coverage.** The emitted
+`dock` tests do not execute 2258 (the loop header) or 2260 (the `require` inside
+it), and the reason is already written down elsewhere in this repo: those
+branches sit behind a guard on a mapping a fresh deploy leaves EMPTY, so they
+need state an earlier transaction establishes. The emitted call is
+revert-tolerant, so it reverts before the loop and forge records no arm.
+
+This is worth stating plainly because the opposite reading was available and
+attractive: "the emitter lost 2 of 4, we fixed the emitter, therefore the loss
+is gone." Two of four is still lost, by the same lines, for a different reason
+than the one just repaired. **An emission defect and a coverage blocker are not
+the same thing, and this benchmark had both on the same unit.**
+
+What it reassigns: aqua's `enumerated -> emitted` gap is NOT a reconstruction
+gap. It is the transaction bound, which is a parameter of the measurement —
+`forge_roundtrip.py --max-tx N` is the measurement that separates "our tests are
+weak" from "one transaction cannot get there".
+
+## One thing the same-run denominator settled in passing
+
+aqua's `enumerated` is 4 under the same-run denominator and was 4 under the
+cross-run one. So on THIS benchmark the cross-run join was not distorting the
+ratio. That is one benchmark, and it is evidence about aqua, not a licence to
+quote the other three before they are re-run.
+
+---
+
 # The killed units are a SCALE problem, not a budget one (measured)
 
 `notes/coverage/scripts/budget_probe.sh` was written to decide this and had not
