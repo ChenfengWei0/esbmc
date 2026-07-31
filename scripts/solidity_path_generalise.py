@@ -640,6 +640,27 @@ REGION_RE = re.compile(
     r"path enc=(\d+) CERTIFIED region after subtracting sibling outer boxes "
     r"\(zero queries\): ([^—]*)(— WARNING.*)?")
 SHRINK_RE = re.compile(r"retry with (\S+) in \[(\d+), (\d+)\]")
+# ---- THE PUNCH SUGGESTION, which the tool has printed all along ----
+#
+# `audit_certify_witness` emits BOTH a SHRINK suggestion (cut a side off the
+# interval) and, when the witness sits strictly inside it, a PUNCH suggestion
+# (remove that one value, Definition 5). The driver has never parsed the second
+# one: `notes/interval-input-scope-and-plan.md` records it as "implemented and
+# never wired".
+#
+# The difference is not resolution, it is DETERMINISM. A side cut can only keep
+# the side holding this path's own counterexample, so WHICH side survives is
+# decided by a value the solver picked. Measured on one address coordinate: the
+# same region came out as `[256, 2^160-1]` or `[0, 254]` depending on the
+# sibling's counterexample -- a factor of 5.7e45 -- while a hole gives
+# `[0, 2^160-1] \ {v}` in both cases.
+#
+# The suggestion line names one or more `<coord> != <value>` pairs separated by
+# "; ". Anchored to the SUGGESTION LINE first and only then scanned for pairs:
+# `!=` appears in prose elsewhere in the same output, and a bare scan over the
+# whole log would harvest text as a coordinate.
+PUNCH_LINE_RE = re.compile(r"PUNCH SUGGESTION for '[^']*' — (.*)$", re.M)
+PUNCH_PAIR_RE = re.compile(r"(\S+) != (\d+)")
 # The tool publishes each coordinate's own type range. The driver chooses the
 # ladder and cannot choose it correctly without this: laying probes over the
 # whole 256-bit range on a 160-bit `address` puts most of them OUTSIDE the type,
@@ -1511,6 +1532,39 @@ def shrink_target(log, pins):
     return coord, int(m.group(2)), int(m.group(3))
 
 
+def punch_targets(log, pins, box=None):
+    """Values the refutation says can be PUNCHED OUT, as [(coord, value)].
+
+    Same refusal rule as `shrink_target`: never a PINNED coordinate. The pin is
+    what the region is a statement ABOUT, so removing a value from it silently
+    changes the slice the caller asked for -- and a pin is a single value, so
+    punching it would empty the coordinate outright.
+
+    Also refuses a value outside the coordinate's current interval when `box` is
+    given. The tool suggests against the box it was HANDED, and by the time the
+    driver applies it the interval may already have been cut by another round;
+    a hole outside the surviving interval removes nothing and would print beside
+    the region as evidence about values it no longer contains.
+
+    Returns [] when the log carries no suggestion, which is what keeps a
+    SHRINK-only log behaving exactly as it did before this existed.
+    """
+    m = PUNCH_LINE_RE.search(log)
+    if not m:
+        return []
+    out = []
+    for c, v in PUNCH_PAIR_RE.findall(m.group(1)):
+        if c in pins:
+            continue
+        val = int(v)
+        if box is not None and c in box:
+            lo, hi = box[c]
+            if val < lo or val > hi:
+                continue
+        out.append((c, val))
+    return out
+
+
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g",
             holes=None):
@@ -1555,20 +1609,28 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
     v = verdict(log)
     if v != "FAILED":
-        # SUCCESSFUL: certified. UNKNOWN: no verdict at all -- the caller must
-        # not shrink on it, so no box is suggested either.
-        return v, None, {}
+        # SUCCESSFUL: certified. VACUOUS: the box admits nothing, so there is
+        # nothing to cut. UNKNOWN: no verdict at all -- the caller must not
+        # shrink on it, so no box and no punch are suggested either.
+        return v, None, {}, []
     # Harvested on every refutation, not only when the shrink fails: the caller
     # needs it in the budget-exhausted branch too, and by then this run's report
     # has been overwritten by the next one.
     wit = witness_values(cwd, unit)
+    # BOTH suggestions are returned; WHICH to apply is the caller's policy. The
+    # tool prints both and says outright that neither is strictly better --
+    # punching converges only where the excluded set is a few points, a side cut
+    # is what makes progress when the boundary is an interval. Deciding here
+    # would put policy in the measurement path, which is the split this whole
+    # script is built on.
+    punches = punch_targets(log, pins, box)
     cut = shrink_target(log, pins)
     if cut is None:
-        return v, None, wit
+        return v, None, wit, punches
     coord, lo, hi = cut
     nb = dict(box)
     nb[coord] = (lo, hi)
-    return v, nb, wit
+    return v, nb, wit, punches
 
 
 def main():
@@ -1582,6 +1644,25 @@ def main():
     ap.add_argument("--probes", type=int, default=16)
     ap.add_argument("--refine-rounds", type=int, default=3)
     ap.add_argument("--shrink-rounds", type=int, default=4)
+    ap.add_argument("--max-holes", type=int, default=4,
+                    help="per coordinate, how many values the loop may PUNCH "
+                         "OUT (Definition 5) before it falls back to a side "
+                         "cut. The tool prints a PUNCH suggestion whenever the "
+                         "refuting witness sits strictly inside the interval, "
+                         "and a hole is the better cut where it applies: it "
+                         "removes ONE value, while a side cut removes the whole "
+                         "side that does not hold this path's counterexample -- "
+                         "so WHICH side survives is decided by a value the "
+                         "solver picked, not by the method. Measured on one "
+                         "address coordinate: the same region came out as "
+                         "[256, 2^160-1] or [0, 254] depending only on the "
+                         "sibling's counterexample, a factor of 5.7e45, while a "
+                         "hole gives [0, 2^160-1] \\ {v} either way. It is NOT "
+                         "strictly better, which is why this is a budget and "
+                         "not a switch: against a boundary that is an INTERVAL "
+                         "a punch removes one value per round forever, where a "
+                         "side cut crosses it in one. 0 disables punching and "
+                         "reproduces the previous behaviour exactly.")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--ast", default=None,
                     help="prebuilt .solast, passed positionally. Needed for "
@@ -2102,10 +2183,11 @@ def main():
         # the region as measured, then compared after every accepted cut.
         prev_size = region_size(box, holes)
         for _ in range(args.shrink_rounds):
-            v, nb, wit = certify(args.esbmc, args.sol, args.contract, args.unit,
-                                 enc, depth, box, ce, pins, args.max_tx,
-                                 args.timeout, cwd, ast=args.ast, focus=focus,
-                                 memlimit=args.memlimit, holes=holes)
+            v, nb, wit, punches = certify(
+                args.esbmc, args.sol, args.contract, args.unit,
+                enc, depth, box, ce, pins, args.max_tx,
+                args.timeout, cwd, ast=args.ast, focus=focus,
+                memlimit=args.memlimit, holes=holes)
             if wit:
                 last_wit = wit
                 last_wit_box = dict(box)
@@ -2150,6 +2232,42 @@ def main():
                 failed[enc] = ("no verdict from the certification query "
                                "(ESBMC printed neither SUCCESSFUL nor FAILED)")
                 break
+            # ---- S4: PREFER THE PUNCH, under a stated budget ----
+            #
+            # A hole removes ONE value; a side cut removes a whole side chosen
+            # by whichever counterexample the solver returned. So where a punch
+            # is available it is both the larger surviving region and the one
+            # that does not depend on a value nobody picked.
+            #
+            # BUDGETED, because it is not strictly better: punching converges
+            # only when the excluded set is a few points, and against a boundary
+            # that is an interval it would punch forever, one value per round,
+            # while a side cut crosses it at once. `--max-holes` is that policy,
+            # it is stated rather than inferred, and when it is exhausted the
+            # loop falls back to the side cut it always used.
+            #
+            # Applied ONLY when the tool actually suggested one, so a log
+            # carrying only a SHRINK line drives exactly the path it did before
+            # this existed -- which is what the must-flip test pins.
+            usable = [(c, val) for c, val in punches
+                      if len(holes.get(c, ())) < args.max_holes]
+            if usable:
+                for c, val in usable:
+                    holes.setdefault(c, [])
+                    if val not in holes[c]:
+                        holes[c].append(val)
+                        holes[c].sort()
+                new_size = region_size(box, holes)
+                if new_size > prev_size:
+                    failed[enc] = (
+                        f"INVARIANT VIOLATED: a PUNCH widened the region "
+                        f"(|R| {prev_size} -> {new_size}), which no hole can do")
+                    break
+                prev_size = new_size
+                print(f"[punch enc={enc}] "
+                      + ", ".join(f"{c} != {val}" for c, val in usable)
+                      + f"  |R| {new_size}")
+                continue
             if nb is None or nb == box:
                 failed[enc] = (
                     "refuted with no single-coordinate cut available"

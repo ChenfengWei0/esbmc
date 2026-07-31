@@ -46,6 +46,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       ce_in_region,
                                       region_size,
                                       coordinate_accounting,
+                                      punch_targets,
                                       brackets_for)
 
 FAILURES = []
@@ -1036,6 +1037,47 @@ check("RESULT-UNDECIDED-survives-the-ERROR-prefix",
 # older ESBMC keeps working.
 check("no-RESULT-line-falls-back-to-the-verdict-line",
       verdict(WARN + "\nVERIFICATION SUCCESSFUL"), "SUCCESSFUL")
+
+# --- S4: the PUNCH suggestion, verbatim from the tool ---
+#
+# The line below is the tool's own wording (goto_coverage.cpp), not a paraphrase.
+# A paraphrased fixture would pass against a parser that never matches the real
+# output, which is the exact failure the WARNING line at the top of this file
+# records.
+_PUNCH = (
+    "--path-cov-certify: PUNCH SUGGESTION for "
+    "'sol:@C@Gate2@F@send#29:path:3#exit1' — instead of cutting the interval, "
+    "remove the witness itself: add to != 255 to the box's `holes` "
+    "(Definition 5). Legal by the same rule as a side cut (this path's own "
+    "counterexample differs there and survives), and it costs ONE value rather "
+    "than a whole side")
+_SHRINK_ONLY = (
+    "--path-cov-certify: SHRINK SUGGESTION for 'x' — the witness lies outside "
+    "the path on coordinate 'a', and the path's own counterexample lies on the "
+    "other side of it, so retry with a in [11, 100] (everything else unchanged)")
+
+check("S4-a-punch-line-yields-the-coordinate-and-value",
+      punch_targets(WARN + "\n" + _PUNCH, {}), [("to", 255)])
+# THE MUST-FLIP that keeps the old behaviour byte-identical: a log with only a
+# SHRINK line must yield NO punch, so the loop takes exactly the branch it took
+# before this existed.
+check("S4-a-shrink-only-log-yields-no-punch",
+      punch_targets(WARN + "\n" + _SHRINK_ONLY, {}), [])
+# A PINNED coordinate is refused, the same rule shrink_target obeys: a pin is a
+# single value, so punching it would empty the coordinate outright.
+check("S4-a-pinned-coordinate-is-never-punched",
+      punch_targets(WARN + "\n" + _PUNCH, {"to": 255}), [])
+# A value outside the CURRENT interval removes nothing and must not be recorded
+# as if it constrained the region -- the suggestion was made against the box the
+# tool was handed, which a later round may already have cut.
+check("S4-a-value-outside-the-interval-is-dropped",
+      punch_targets(WARN + "\n" + _PUNCH, {}, {"to": (0, 100)}), [])
+check("S4-a-value-inside-the-interval-is-kept",
+      punch_targets(WARN + "\n" + _PUNCH, {}, {"to": (0, 300)}), [("to", 255)])
+# `!=` occurs in prose elsewhere in the same output; anchoring on the
+# SUGGESTION LINE is what stops a bare scan harvesting text as a coordinate.
+check("S4-prose-elsewhere-is-not-harvested",
+      punch_targets(WARN + "\nsomething about a != 7 in passing", {}), [])
 
 # --- C5: coordinate accounting ---
 #
