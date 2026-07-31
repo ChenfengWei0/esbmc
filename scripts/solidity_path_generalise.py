@@ -1202,6 +1202,40 @@ def region_size(box, holes=None):
     return total
 
 
+def coordinate_accounting(payload, buckets):
+    """C5 -- payload names that landed in NO bucket at all.
+
+    Every name the counterexample payload carries must end up somewhere the
+    report can show: a free coordinate, a pin, an environment quantity left
+    unconstrained, a dropped lowering artifact, an unsettable pinned at its CE,
+    or a name the tool refused. A name in NONE of those has silently vanished
+    between the report and the region, and the region is then a statement about
+    a smaller input space than the one the path actually has -- with nothing on
+    screen to say so.
+
+    This is the generic form of a defect this project has already had in the
+    specific: `state._DOCKED` is reported in `entry_storage` and is refused by
+    the coordinate resolver, and the driver believed the report while the tool
+    refused, with no line anywhere saying the two disagreed.
+
+    COVERAGE, NOT PARTITION, and that is deliberate rather than lax. An
+    unsettable coordinate is ALSO added to `pins` (that is what "pinned at the
+    counterexample value" means), so demanding exactly one bucket would fail on
+    correct input. The property worth checking is that nothing falls through.
+
+    `buckets` is an ordered mapping name -> iterable, so the report can say
+    WHICH bucket each name reached and the caller decides the vocabulary.
+    Returns (unaccounted, where) with `where` mapping each payload name to the
+    bucket names that claim it.
+    """
+    where = {}
+    for n in sorted(payload):
+        hit = [b for b, names in buckets.items() if n in (names or ())]
+        if hit:
+            where[n] = hit
+    return sorted(set(payload) - set(where)), where
+
+
 def witness_values(cwd, unit):
     """The REFUTING input's payload, harvested from the certification run.
 
@@ -1775,6 +1809,34 @@ def main():
               "be checked: an immutable or constant coordinate would be "
               "generalised over as if a test could set it. Pass --ast to have "
               "them pinned instead")
+
+    # ---- C5: coordinate accounting, before any region is measured ----
+    #
+    # Every name the payload carries must be visible somewhere in the report.
+    # One that reaches no bucket has vanished between the counterexample and the
+    # region, and the region is then about a smaller input space than the path
+    # has, with nothing on screen saying so. Checked here, where every bucket is
+    # final and before a single query is issued -- a measurement taken over an
+    # input set that was never accounted for is a measurement of the wrong
+    # thing.
+    payload_names = {k for _, _, ce in paths for k in ce}
+    unaccounted, _where = coordinate_accounting(
+        payload_names,
+        {"free coordinate": coords,
+         "pinned": set(pins),
+         "environment (unconstrained)": set(env_names),
+         "dropped lowering artifact": set(artifacts),
+         "unsettable, pinned at its CE": set(unsettable),
+         "refused by the tool": set(refused or ())})
+    if unaccounted:
+        print("[coords] ACCOUNTING VIOLATED — "
+              + f"{len(unaccounted)} payload name(s) reached NO bucket: "
+              + ", ".join(unaccounted)
+              + ". Each is a quantity the counterexample carries that the "
+                "region neither bounds, pins, drops nor refuses, so it is "
+                "silently unconstrained and the region describes a smaller "
+                "input space than the path has. Refusing to measure")
+        return 1
 
     if not coords:
         # NAME BOTH HALVES. "Every coordinate is pinned" is true and useless:

@@ -45,6 +45,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       budget_probe_values,
                                       ce_in_region,
                                       region_size,
+                                      coordinate_accounting,
                                       brackets_for)
 
 FAILURES = []
@@ -998,6 +999,35 @@ check("C3-a-real-cut-is-narrower",
       region_size({"a": (11, 100)}) < region_size({"a": (5, 100)}), True)
 check("C3-a-widening-cut-is-detectable",
       region_size({"a": (0, 100)}) > region_size({"a": (5, 100)}), True)
+
+# --- C5: coordinate accounting ---
+#
+# The must-flip is the whole point: the same payload against buckets that do and
+# do not claim every name. A checker that always returned [] passes the first.
+_B_OK = {"free coordinate": ["a"], "pinned": {"b"},
+         "refused by the tool": {"c"}}
+check("C5-every-payload-name-reaches-a-bucket",
+      coordinate_accounting({"a", "b", "c"}, _B_OK)[0], [])
+check("C5-a-name-in-no-bucket-is-caught",
+      coordinate_accounting({"a", "b", "c", "state._DOCKED"}, _B_OK)[0],
+      ["state._DOCKED"])
+
+# COVERAGE, NOT PARTITION, and this pair pins that decision rather than leaving
+# it to be re-argued. An unsettable coordinate is ALSO added to `pins` -- that is
+# what "pinned at the counterexample value" means -- so a partition check would
+# fail on correct input. Overlap is reported, never an error.
+_B_OVERLAP = {"pinned": {"x"}, "unsettable, pinned at its CE": {"x"}}
+check("C5-overlap-is-not-a-violation",
+      coordinate_accounting({"x"}, _B_OVERLAP)[0], [])
+check("C5-overlap-is-reported-with-both-buckets",
+      coordinate_accounting({"x"}, _B_OVERLAP)[1]["x"],
+      ["pinned", "unsettable, pinned at its CE"])
+
+# An EMPTY bucket must not blow up: several are empty on an ordinary run.
+check("C5-empty-and-None-buckets-are-tolerated",
+      coordinate_accounting({"a"}, {"free coordinate": ["a"],
+                                    "pinned": set(),
+                                    "refused by the tool": None})[0], [])
 
 if FAILURES:
     print("FAILED:")
