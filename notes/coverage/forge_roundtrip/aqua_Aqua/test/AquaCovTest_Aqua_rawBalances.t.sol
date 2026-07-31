@@ -18,6 +18,6 @@ contract AquaCovTest_Aqua_rawBalances is Test {
   // claim: sol:@C@Aqua@F@rawBalances#2819:path:7, sol:@C@Aqua@F@rawBalances#2819:path:2
   function test_cov_0() public {
     // [asserted] path exits normally; a revert fails the test
-    c0.rawBalances(address(uint160(43733)), address(uint160(41623)), bytes32(0x000000000000000000000000000000000000000000000000000000000000c415), address(uint160(32429)));
+    c0.rawBalances(address(uint160(0)), address(uint160(0)), bytes32(0x0000000000000000000000000000000000000000000000000000000000000000), address(uint160(0)));
   }
 }

@@ -1,8 +1,8 @@
-{"tag": "BalanceLib__load", "exitCode": 0, "wallSeconds": 1.38, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
-{"tag": "BalanceLib__store", "exitCode": 0, "wallSeconds": 1.2, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
-{"tag": "Aqua__rawBalances", "exitCode": 1, "wallSeconds": 1.66, "killed": false, "emitted": ["Aqua.cov.t.sol"], "defaultedCalls": 4, "defaultedArgs": 16, "defaultedByType": "ADDRESS x12, BYTES32 x4", "nonUnitFunctionsPresent": true, "cases": 1}
-{"tag": "Aqua__safeBalances", "exitCode": 1, "wallSeconds": 2.18, "killed": false, "emitted": ["Aqua.cov.t.sol"], "defaultedCalls": 2, "defaultedArgs": 10, "defaultedByType": "ADDRESS x8, BYTES32 x2", "nonUnitFunctionsPresent": true, "cases": 2}
-{"tag": "Aqua__ship", "exitCode": -1, "wallSeconds": 300.47, "killed": true, "emitted": [], "nonUnitFunctionsPresent": true}
-{"tag": "Aqua__dock", "exitCode": 1, "wallSeconds": 22.99, "killed": false, "emitted": [], "refusedEmptyBody": 4, "nonUnitFunctionsPresent": true}
-{"tag": "Aqua__pull", "exitCode": 1, "wallSeconds": 4.92, "killed": false, "emitted": ["Aqua.cov.t.sol"], "defaultedCalls": 10, "defaultedArgs": 40, "defaultedByType": "ADDRESS x30, BYTES32 x10", "nonUnitFunctionsPresent": true, "cases": 2}
-{"tag": "Aqua__push", "exitCode": 1, "wallSeconds": 2.32, "killed": false, "emitted": ["Aqua.cov.t.sol"], "defaultedCalls": 2, "defaultedArgs": 10, "defaultedByType": "ADDRESS x6, BYTES32 x2, UINT256 x2", "nonUnitFunctionsPresent": true, "cases": 2}
+{"tag": "BalanceLib__load", "exitCode": 0, "wallSeconds": 1.25, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "BalanceLib__store", "exitCode": 0, "wallSeconds": 1.21, "killed": false, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "Aqua__rawBalances", "exitCode": 1, "wallSeconds": 2.31, "killed": false, "emitted": ["Aqua.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}
+{"tag": "Aqua__safeBalances", "exitCode": 1, "wallSeconds": 2.82, "killed": false, "emitted": ["Aqua.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}
+{"tag": "Aqua__ship", "exitCode": -1, "wallSeconds": 180.43, "killed": true, "emitted": [], "nonUnitFunctionsPresent": true}
+{"tag": "Aqua__dock", "exitCode": 1, "wallSeconds": 10.92, "killed": false, "emitted": ["Aqua.cov.t.sol"], "defaultedCalls": 2, "defaultedArgs": 3, "defaultedByType": "ARRAY:ADDRESS x2, BYTES32 x1", "nonUnitFunctionsPresent": true, "cases": 2}
+{"tag": "Aqua__pull", "exitCode": 1, "wallSeconds": 10.06, "killed": false, "emitted": ["Aqua.cov.t.sol"], "defaultedCalls": 5, "defaultedArgs": 5, "defaultedByType": "ADDRESS x5", "nonUnitFunctionsPresent": true, "cases": 3}
+{"tag": "Aqua__push", "exitCode": 1, "wallSeconds": 3.49, "killed": false, "emitted": ["Aqua.cov.t.sol"], "nonUnitFunctionsPresent": true, "cases": 1}
