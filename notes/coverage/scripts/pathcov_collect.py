@@ -194,14 +194,26 @@ def one_run(tag, cmd, timeout, workdir):
     return rec, None
 
 
-def collect(bench_key, whole, timeout, goals):
+def collect(bench_key, whole, timeout, goals, out_suffix=""):
     flat_rel, primary, _solc, project = base.BENCHES[bench_key]
     flat = INPUTS / flat_rel
     solast = INPUTS / (flat_rel + ".solast")
     if not solast.exists():
         sys.exit(f"missing AST: {solast} (run collect.py first, it generates it)")
 
-    out_dir = OUT / bench_key
+    # THE OUTPUT DIRECTORY IS PART OF THE CONFIGURATION, not a convenience.
+    # `index.json` is REWRITTEN at the end of every collection with only the
+    # runs of that collection, while `runs.jsonl` is appended. So a --whole run
+    # in the per-method directory replaces an 8-run index with a 1-run index,
+    # after which branch_gate.py's report-count reconciliation exits with
+    # "reports/ holds 8 report(s) but index.json records 1" -- the per-method
+    # measurement is not corrupted but is no longer readable, and the failure
+    # surfaces far from the command that caused it.
+    #
+    # Two configurations therefore never share a directory. The suffix is
+    # required rather than defaulted for --whole, so that the two are also
+    # distinguishable by name in every later table.
+    out_dir = OUT / (bench_key + out_suffix)
     out_dir.mkdir(parents=True, exist_ok=True)
     reports_dir = out_dir / "reports"
     reports_dir.mkdir(exist_ok=True)
@@ -340,6 +352,9 @@ def main():
                     help="Pair-1 analogue: one whole-contract run, no focus")
     ap.add_argument("--timeout", type=int, default=DEFAULT_OUTER_TIMEOUT)
     ap.add_argument("--goals", type=int, default=DEFAULT_MAX_GOALS)
+    ap.add_argument("--out-suffix", default="",
+                    help="appended to the output directory name; two "
+                         "configurations must never share one directory")
     a = ap.parse_args()
     if a.list or not a.bench:
         for k in base.BENCHES:
@@ -347,7 +362,11 @@ def main():
         return 0
     if a.bench not in base.BENCHES:
         sys.exit(f"unknown bench: {a.bench}")
-    idx = collect(a.bench, a.whole, a.timeout, a.goals)
+    if a.whole and not a.out_suffix:
+        sys.exit("--whole needs --out-suffix (e.g. --out-suffix __whole): "
+                 "writing it into the per-method directory rewrites that "
+                 "collection's index.json and leaves its reports unreadable")
+    idx = collect(a.bench, a.whole, a.timeout, a.goals, a.out_suffix)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "
