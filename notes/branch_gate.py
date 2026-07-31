@@ -403,10 +403,41 @@ def main():
         ours = sum(capped.values())
 
         killed = sum(1 for r in meta["runs"] if r.get("killedByOuterTimeout"))
-        noreport = sum(1 for r in meta["runs"] if not r.get("reportPresent"))
+        # A DELIBERATE REFUSAL IS NOT A MISSING REPORT, and reading it as one
+        # turns a stated scope limit into a collection failure.
+        #
+        # pathcov_collect.py refuses to run a library through `--function` (it
+        # verifies in isolation from an arbitrary state, which can yield a
+        # counterexample no reachable state supports -- a RED generated test)
+        # and records each such unit with `skipped:
+        # "library-has-no-dispatcher"` plus the full reasoning. Those records
+        # have `reportPresent: false`, and this file counted only that field,
+        # so a benchmark that was deliberately not measured came out as
+        # "NO MEASUREMENT: 14 without a report".
+        #
+        # MEASURED, and it is why this was noticed: re-collecting
+        # limit_order_protocol with the current build flipped its verdict from
+        # "N/A: 0 units (in-scope code is internal-only)" to that failure text.
+        # The collection did not get worse -- the older one ran those library
+        # functions through the unsound `--function` route and got 14 reports
+        # with 0 F claims in them. The producer keeps its zeros apart and this
+        # consumer was collapsing them.
+        skipped = [r for r in meta["runs"] if r.get("skipped")]
+        noreport = sum(1 for r in meta["runs"]
+                       if not r.get("reportPresent") and not r.get("skipped"))
         units = sum(r.get("unitsEnumerated", 0) for r in meta["runs"])
 
-        if units == 0 and (killed or noreport or not meta["runs"]):
+        if skipped and len(skipped) == len(meta["runs"]):
+            # Every unit was refused, so there is nothing to have measured. The
+            # reason is quoted from the record rather than restated, because the
+            # record names WHY the configuration cannot reach it -- which is the
+            # reportable finding, and a different one from "reached nothing".
+            reasons = sorted({r.get("skipped") for r in skipped})
+            verdict = (f"REFUSED: all {len(skipped)} unit(s) skipped "
+                       f"({', '.join(reasons)}) -- not measurable under this "
+                       f"configuration, not a reach result")
+            ours = "-"
+        elif units == 0 and (killed or noreport or not meta["runs"]):
             # `unitsEnumerated` is set only when the collector's regex matched
             # the run's "instrumented N complete path(s) across M unit(s)" line
             # (pathcov_collect.py), and it defaults to 0. So 0 means EITHER
@@ -456,27 +487,31 @@ def main():
 
         print(f"| `{b}` | {denom} | {p1.get('esbmc')} | {bar} | {nat} | "
               f"{ours} | {verdict} |")
-        notes.append((b, st, meta, killed, noreport, capped, canon))
+        notes.append((b, st, meta, killed, noreport, capped, canon,
+                      len(skipped)))
 
     print("\n## What the product side actually saw\n")
     # `reports` is printed because it is the size of the numerator's input set.
     # It was computed and discarded before, which is how a reports/ directory
     # holding files from an earlier collection could inflate the numerator with
     # nothing in the output to show for it.
+    # `skipped` is its own column and not folded into `no report`: a unit the
+    # collector refused on soundness grounds and a run that died are different
+    # findings, and one column for both is how the first reads as the second.
     print("| bench | runs | reports read | PARTIAL | completeness unstated | "
-          "no report | killed | F claims | F w/o sequence | steps | "
+          "skipped | no report | killed | F claims | F w/o sequence | steps | "
           "unrecorded | ABI-gate dropped |")
-    print("|" + "---|" * 12)
-    for b, st, meta, killed, noreport, _c, _k in notes:
+    print("|" + "---|" * 13)
+    for b, st, meta, killed, noreport, _c, _k, nskipped in notes:
         print(f"| `{b}` | {len(meta['runs'])} | {st['reports']} | "
               f"{st['partial_reports']} | {st['unstated_reports']} | "
-              f"{noreport} | "
+              f"{nskipped} | {noreport} | "
               f"{killed} | {st['f_claims']} | {st['f_without_sequence']} | "
               f"{st['decision_steps']} | {st['unrecorded_steps']} | "
               f"{st['synthetic_dropped']} |")
 
     print("\n## Per-file, ours (capped) vs that file's canonical decisions\n")
-    for b, _st, _m, _k, _n, capped, canon in notes:
+    for b, _st, _m, _k, _n, capped, canon, _s in notes:
         print(f"- `{b}`:")
         for f in sorted(canon):
             print(f"    {capped.get(f, 0):>4} / {len(canon[f]):<4}  {f}")
