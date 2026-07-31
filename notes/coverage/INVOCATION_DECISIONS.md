@@ -344,15 +344,37 @@ library-route run produced 0 units and 0 paths. Still present at
 ```
 esbmc <flat>.solast --sol <flat>
       --solidity-path-coverage
-      --contract <C> --focus-function <f>
-      --solidity-max-tx 1
+      --contract <C>
+      --solidity-max-tx 2
       --cov-report-json
       --path-cov-max-goals 10000
       --memlimit <sized for this contract, not 8g by habit>
 ```
 
-no `--function`, no bounding strategy, no `--coverage-multi-tx`, no
-`--no-slice`, no `--no-simplify`, no arithmetic check flags.
+no `--function`, no `--focus-function`, no bounding strategy, no
+`--coverage-multi-tx`, no `--no-slice`, no `--no-simplify`, no arithmetic check
+flags.
+
+**This block previously printed `--focus-function <f> --solidity-max-tx 1`,
+i.e. the configuration rows 1 and 2 OVERTURNED**, and anyone who copied it
+copied the overturned cell. Whole contract at `--solidity-max-tx 2` is the only
+configuration measured to reach cross-function state at all (`Tiny` 75% -> 100%,
+`Tiny3` 71.4% -> 100%, `P09_TimeLock` 71.4% -> 100%, `P20` 71.4% -> 100%; a
+k-hop setup needs `tx = k+1`, pinned by `P04_Chain2` at 88.9% / 100% / 100% for
+tx 2 / 3 / 4).
+
+`--focus-function` is still WANTED, for two things it is now good at and one it
+never was:
+
+* DEBUGGING a contract that does not finish. It narrows instrumentation as well
+  as dispatch, so st1inch's `setFeeReceiver` goes from 275 instrumented paths to
+  5 and the failure lands on one claim instead of the whole contract.
+* Splitting a large contract across runs, now that it takes a SET
+  (`--focus-function deposit,withdraw`) and unions through
+  `--coverage-covered-set`.
+* It is NOT the measurement configuration. Focused runs cannot reach
+  cross-function state at any tx bound -- every transaction is another call to
+  the same entries -- which is exactly the hole that made rows 1 and 2 wrong.
 
 Bounded from OUTSIDE by a subprocess timeout — `--timeout` is useless here,
 because the partial-result rescue is gated on branch coverage and a path-coverage

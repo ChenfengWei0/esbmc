@@ -387,7 +387,40 @@ def main():
     for stem, fns in sorted(red.items()):
         print(f"  {stem}: {len(fns)} RED  ({', '.join(fns)})")
 
+    # ---- REFUSE TO PRESENT THE RATE AS FINAL WHILE PAYLOADS CONTRADICT PATHS -
+    #
+    # The conversion rate above is built from `F` and from what the emitter
+    # rendered. Both are claims about paths, and a payload that contradicts its
+    # own decision sequence makes them claims about a path the test does not
+    # walk. Measured: 37 of 161 emitted cases carry more than one path id, all of
+    # them the ABI-value-gate pair whose payload reports `msg.value = 0` on both
+    # arms -- so the numerator is inflated by exactly the paths the emitter could
+    # not tell apart.
+    #
+    # So this is a GATE and not a footnote. It runs the consistency checker over
+    # the reports this run produced and exits non-zero when any decision
+    # disagrees. A number that is quoted while this fires is a number about a
+    # different set of paths than the one it names.
+    print("\n## Payload-vs-path gate\n", flush=True)
+    reports = sorted((proj / "_gen").glob("*/cov-report.json"))
+    if not reports:
+        print("  no report to check -- the gate did NOT pass, it had nothing "
+              "to look at")
+        print(f"\nproject: {proj}")
+        return 2
+    rc, out = sh([sys.executable,
+                  str(Path(__file__).resolve().parent / "ce_consistency.py")]
+                 + [str(p) for p in reports], timeout=600)
+    for ln in out.splitlines():
+        print("  " + ln)
     print(f"\nproject: {proj}")
+    if rc != 0:
+        print("\n**GATE FAILED.** At least one counterexample payload does not "
+              "walk the path it is filed under, so `F`, `claims rendered` and "
+              "the GREEN count above describe a path set that differs from the "
+              "one they are labelled with. Fix the payload before quoting the "
+              "rate.")
+        return 1
     return 0
 
 
