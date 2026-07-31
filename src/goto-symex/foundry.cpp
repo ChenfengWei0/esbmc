@@ -2582,7 +2582,53 @@ std::string foundry_generator::fingerprint(const test_case &tc)
     fp += ")";
     // ③A0: two counterexamples that differ ONLY in msg.value (not a param) must
     // NOT dedup to one case — fold the emitted value into the fingerprint.
-    if (call.payable && call.msg_value)
+    //
+    // ---- NOT GATED ON `payable`, AND THAT GATE WAS THE MERGE ----
+    //
+    // `payable` decides whether `{value: N}` can be RENDERED (Solidity refuses
+    // `c.f{value: 1}(x)` on a non-payable method). It says nothing about whether
+    // two counterexamples are the SAME counterexample, which is the only
+    // question a dedup fingerprint asks. Gating the fold on it made a
+    // non-payable unit's two ABI-value-gate paths -- no value sent, and value
+    // sent and rejected by the entry -- collapse onto ONE case labelled with
+    // BOTH path ids.
+    //
+    // MEASURED across the hand-written PoC set: 37 of 161 emitted cases carried
+    // more than one path id. A single concrete call cannot walk two decision
+    // sequences, so each of those was a path counted as rendered that the test
+    // provably cannot reach -- in the numerator of the ratio this pipeline
+    // exists to report.
+    //
+    // Unconditional is the right scope for THIS function: its job is identity,
+    // and two executions differing in the value sent are two executions whether
+    // or not the callee can legally accept it. What to EMIT for the non-payable
+    // one is a separate question, answered where the call is written. Until it
+    // is, that case renders as a value-less revert-tolerant call: it no longer
+    // claims the sibling's path, and it does not yet walk its own.
+    //
+    // ---- BUT ONLY WHEN THE CALL RENDERS AT ALL ----
+    //
+    // `supported` is here because dropping the `payable` gate alone was ALSO
+    // wrong, and a regression caught it rather than review. MEASURED on
+    // foundry_covgen_env_receive_fail, whose `receive()` takes an argument type
+    // the emitter cannot render:
+    //
+    //     function test_cov_0() public {
+    //       // UNSUPPORTED: RecvC.receive has an argument type ESBMC cannot
+    //       // yet render as a literal
+    //     }
+    //     function test_cov_1() public {   // byte-identical
+    //
+    // An unsupported call renders as the SAME comment whatever value it
+    // carried, so two of them are genuinely one artifact and splitting them
+    // produces duplicate empty test functions -- more cases, no more coverage,
+    // which is the shape this project refuses everywhere else.
+    //
+    // So the rule is not "always fold" and not "fold when payable"; it is FOLD
+    // WHAT THE EMITTED TEXT CAN EXPRESS. A supported call's value is visible in
+    // the artifact (or will be, once the non-payable arm is rendered); an
+    // unsupported one's is not, and never will be.
+    if (call.msg_value && call.supported)
     {
       const std::string v = format_sol_value("UINT256", call.msg_value);
       if (!v.empty() && v != "0")
