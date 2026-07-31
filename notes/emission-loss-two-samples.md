@@ -50,3 +50,45 @@ CONTRACT, before solc looks at any generated test. The harness's `foundry.toml`
 lacked `via_ir`; aqua's flat is small enough not to trip it. Filing that as an
 emitter defect would have put a plausible, entirely fictional entry on a list
 that already has real ones.
+
+---
+
+# Third sample: EscrowSrc
+
+| | aqua | farming | EscrowSrc |
+|---|---|---|---|
+| bar | 7/8 | 26/26 | 16/16 |
+| native | 6/8 | 26/26 | 8/16 |
+| **ours** | **2/8** | **10/26** | **3/16** |
+| enumerated | 4 | 18 | 6 |
+| emitted | 2 | 10 | 3 |
+| **emission retains** | **50%** | **56%** | **50%** |
+| RED disabled | 1 | 14 | 17 |
+| empty-body refusals | 4 | 0 | 0 |
+| defaulted, dominant type | ADDRESS/BYTES32 | UINT256 (170/174) | mixed, UINT32-heavy |
+
+## The one quantitative claim that survives three samples
+
+**Emission retains about half of what the enumeration reaches** -- 50%, 56%,
+50%. Every OTHER regularity taken from aqua alone has been narrowed by a later
+sample: the defaulted-argument type profile differs on all three, empty-body
+refusals happen only on aqua, and the dominant loss mechanism moves from an
+unreconstructed call (aqua) to RED tests (farming 14, EscrowSrc 17).
+
+## A specific question settled
+
+`ImmutablesLib` is 0/8 on BOTH Escrows, and it was not known whether the
+enumeration missed those eight or the emitter dropped them. EscrowSrc answers
+it: `enumerated 0, emitted 0, LOST IN EMISSION 0`. They were NEVER ENUMERATED.
+That is an enumeration-side gap and no emitter change can touch it.
+
+## Second near-miss of the same kind
+
+EscrowSrc first reported `forge build failed` straight after `emitted 6 test
+file(s)` -- again reading as the generator producing something unbuildable, and
+again the harness: `forge_roundtrip.py` pinned `solc = "0.8.30"` while the flat
+pins `=0.8.23`. `collect.py` has recorded the correct per-benchmark solc all
+along. The fix is to pin NOTHING and let forge satisfy the flat's own pragma, so
+there is no second place for that mapping to drift. Two such near-misses in one
+evening, on the same output line, is why a build failure is now read before it
+is filed.
