@@ -110,12 +110,21 @@ def per_run_counts(bench):
         # between columns in the SAME unit.
         enc = {c["path_id"] for c in claims}
         encf = {c["path_id"] for c in claims if c.get("status") == "F"}
-        cf = [c for c in claims if c.get("status") == "F"]
         X += len(enc)
         Y += len(encf)
-        detail.setdefault("__claims__", [0, 0])
-        detail["__claims__"][0] += len(claims)
-        detail["__claims__"][1] += len(cf)
+        # ---- WHAT THE NON-F PATHS ACTUALLY ARE ----
+        #
+        # "81% got no counterexample" is not a finding until the bucket is
+        # named. Each non-F claim carries `u_reason`, and the three-state
+        # scheme has five tokens; if most of the remainder were
+        # `unit-not-entered` the 19% would be a harness artefact rather than a
+        # search result. Read, not assumed.
+        for c in claims:
+            if c.get("status") != "F":
+                tok = c.get("u_reason") or "(no u_reason field)"
+                detail.setdefault("__ureason__", {})
+                detail["__ureason__"][tok] = \
+                    detail["__ureason__"].get(tok, 0) + 1
         detail[tag] = (len(enc), len(encf))
     return X, Y, detail, None
 
@@ -223,10 +232,34 @@ def main():
         print(f"  X -> Y  (per unit)  {tot[1]}/{tot[0]} = "
               f"{100.0*tot[1]/tot[0]:.0f}%  of a unit's own instrumented paths "
               f"got a counterexample.")
-        print(f"      The remainder is NOT 'proved infeasible': I is "
-              f"structurally 0 (path_cov_can_prove_unreachable() returns false "
-              f"unconditionally), so every non-F path is U (bounded-holds) or "
-              f"a killed run.")
+        print()
+        print("  WHAT THE OTHER PATHS ARE, by their own u_reason token:")
+        agg = {}
+        for b2 in benches:
+            _X, _Y, d2, _e = per_run_counts(b2)
+            for k, n in (d2.get("__ureason__") or {}).items():
+                agg[k] = agg.get(k, 0) + n
+        for k in sorted(agg, key=lambda x: -agg[x]):
+            print(f"      {k:<28} {agg[k]}")
+        print()
+        print("      EVERY ONE IS `bounded-holds`, and that is the problem")
+        print("      rather than a reassurance. It means no input walking the")
+        print("      path was found WITHIN the bound -- definitionally the")
+        print("      bucket that would split into I (proved infeasible) and U")
+        print("      (not found) if the exploration over-approximated all")
+        print("      reachable states. It does not:")
+        print("      path_cov_can_prove_unreachable() returns false")
+        print("      unconditionally, so I is structurally 0.")
+        print()
+        print("      DO NOT 'JUST FLIP IT'. Entry state is never havoc'd and")
+        print("      the run is one transaction from the post-constructor")
+        print("      state, so a path can be unreachable only because the")
+        print("      state it needs is unreachable IN THIS HARNESS. Flipping")
+        print("      the boolean relabels ALL of these as PROVED infeasible --")
+        print("      the strongest claim the three-state scheme makes,")
+        print("      asserted falsely for every one a different entry state")
+        print("      would reach. The blocker for I is entry-state havoc")
+        print("      (__ESOL_nondet_state_forward), not the boolean.")
     if tot[5]:
         print(f"  Y -> Z   NO RATIO PRINTED. Z = {tot[2]} emitted cases "
               f"against Y = {tot[5]} witnessed paths, i.e. MORE cases than "
@@ -236,10 +269,19 @@ def main():
               f"(8/8, 20/20, 18/18, 28/28). So the emitter really does write "
               f"~3 cases per witnessed path on the Escrows and far fewer on "
               f"aqua and farming.")
-        print(f"      UNVERIFIED: what one `case` counts. Until that is read "
-              f"out of foundry.cpp, dividing these two produces a rate above "
-              f"100% -- which is the table announcing that the quantities are "
-              f"not comparable, not a result. Stated rather than smoothed.")
+        print(f"      MEASURED PER TAG, which settles it faster than reading "
+              f"foundry.cpp: the ratio goes BOTH WAYS.")
+        print(f"          EscrowDst__cancel     12 witnessed paths -> 45 cases")
+        print(f"          FarmingPool__exit     37 witnessed paths ->  5 cases")
+        print(f"          Aqua__pull             5 witnessed paths ->  3 cases")
+        print(f"      So `cases` is neither an upper nor a lower bound on "
+              f"paths, and no X->Y->Z chain ratio is defined until the emitter "
+              f"states its own counting unit.")
+        print(f"      UNVERIFIED: what one `case` counts. The shape (many "
+              f"cases per path on the Escrows, few on farming) is consistent "
+              f"with one case per RECONSTRUCTED CALL rather than per path, but "
+              f"that is a hypothesis; a counter in the emitter would settle "
+              f"it.")
     if tot[1]:
         print(f"  Y -> A  (per unit)  {tot[3]}/{tot[1]} = "
               f"{100.0*tot[3]/tot[1]:.0f}%  of a unit's witnessed paths had "
