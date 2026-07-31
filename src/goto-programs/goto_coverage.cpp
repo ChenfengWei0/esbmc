@@ -2200,6 +2200,31 @@ void goto_coveraget::report_path_cov_assertions()
     nv_unreached);
 }
 
+bool goto_coveraget::focus_selects_unit(
+  const std::string &unit_id,
+  const std::string &focus)
+{
+  if (focus.empty())
+    return true; // no narrowing
+  // A caller that already has the fully mangled id may pass it verbatim.
+  if (unit_id == focus)
+    return true;
+  // `sol:@C@<C>@F@<fn>#<node-id>` -- compare the <fn> segment, bounded by the
+  // '#' so `pubx` cannot match a focus of `pub`. Exact equality is what the
+  // frontend's own dispatcher filter applies to the source-level name, which is
+  // also what makes every OVERLOAD of the name selected here: they share <fn>
+  // and differ only in <node-id>, and the dispatcher offers all of them.
+  const std::string tag = "@F@";
+  const size_t f = unit_id.find(tag);
+  if (f == std::string::npos)
+    return false;
+  const size_t b = f + tag.size();
+  const size_t h = unit_id.find('#', b);
+  if (h == std::string::npos)
+    return false;
+  return unit_id.compare(b, h - b, focus) == 0;
+}
+
 void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
 {
   // Rebuilt every call: report_coverage can run more than once (k-induction
@@ -2209,13 +2234,18 @@ void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
   if (all_claims.empty())
     return;
 
-  // Is this unit the one --focus-function narrowed the dispatcher to? Unit ids
-  // look like "sol:@C@<C>@F@<fn>#<id>".
+  // Is this unit the one --focus-function names?
+  //
+  // Goes through focus_selects_unit(), the SAME matcher solidity_path_coverage()
+  // narrows instrumentation with. Two independent copies of this test would be a
+  // detector keyed on a condition its own branch does not state: a unit the
+  // narrowing considered focused but this test did not would be filed
+  // "excluded by --focus-function" — informational — when it is in fact the
+  // focused unit having never been entered, which is the hard failure below.
   auto is_focused = [&focus_function](const std::string &unit) {
     if (focus_function.empty())
       return true; // no narrowing: every unit is expected to be entered
-    const std::string tag = "@F@" + focus_function + "#";
-    return unit.find(tag) != std::string::npos;
+    return focus_selects_unit(unit, focus_function);
   };
 
   // Group the enumerated paths by unit. The claim comment is
@@ -3618,6 +3648,44 @@ void goto_coveraget::solidity_path_coverage()
     h = fnv1a("reentry_depth=" + std::to_string(path_cov_unwind), h);
     h = fnv1a("goal_cap=" + std::to_string(path_cov_max_goals), h);
     h = fnv1a("contract=" + scope_contract, h);
+    // ---- --focus-function IS DELIBERATELY *NOT* IN THIS FINGERPRINT ----
+    //
+    // It narrows which units are instrumented, so a focused run writes a
+    // covered set describing a SUBSET of the paths a whole-contract run
+    // describes. The question the fingerprint answers is narrower than that:
+    // "does an id written then still designate the same path now?" -- and for
+    // this axis it does, by construction.
+    //
+    // A stable id is `hex64(fnv1a("exit:" + <exit location>, idh))` where `idh`
+    // folds, per decision, the decision's SOURCE SITE, its operand index, its
+    // polarity and its per-site occurrence count, seeded with
+    // `fnv1a("unit:" + <unit id>)`. Every one of those inputs comes from the
+    // unit's own body -- and the unit's own body does not depend on the focus,
+    // because the EXPANSION loop is not narrowed (see the header on
+    // `focus_function`; that is exactly why it is not). So the same path has the
+    // same id under `--focus-function f`, under a different focus, and under no
+    // focus at all. An old id either matches exactly or does not match; it can
+    // never designate a DIFFERENT path, which is the failure this guard exists
+    // to prevent.
+    //
+    // Nothing is lost on write-back either: write_path_covered_set_atomic seeds
+    // its id set from the LOADED ids and only inserts, and carries the loaded
+    // payloads forward before this run's overwrite them. A focused run therefore
+    // UNIONS with the other units' entries rather than replacing them.
+    //
+    // Adding the field would be actively harmful rather than merely
+    // conservative: every focus would get its own fingerprint, so each per-method
+    // run would DISCARD the accumulated file and re-solve from scratch --
+    // destroying the union the per-method sweep exists to build, which is the
+    // documented workflow ("their paths are meant to be witnessed by the run
+    // that focuses on them and unioned via the covered set").
+    //
+    // The residual is stated rather than hidden, and it is NOT introduced here:
+    // the resulting file is an UNATTRIBUTABLE union -- a flat array of ids with
+    // no record of which configuration witnessed each -- so a percentage
+    // computed from it belongs to no single invocation. That was already true
+    // before instrumentation was narrowed, because the focus was already outside
+    // this fingerprint and already produced unionable files.
     // Source content, not mtime or path: the same bytes must produce the same
     // fingerprint on another machine.
     std::vector<std::string> srcs;
@@ -4234,6 +4302,30 @@ void goto_coveraget::solidity_path_coverage()
       return nullptr;
     if (!body_in_user_src(m_it->second.body))
       return nullptr;
+    // ---- --focus-function MUST NOT REACH THIS PREDICATE ----
+    //
+    // A unit body has a DOUBLE IDENTITY: (a) an externally-callable entry with
+    // its own ABI value gate, and (b) a physically inlined copy inside another
+    // unit's path when it is called internally. --focus-function suppresses (a)
+    // for non-focused units -- that is the narrowing, and it is done in the
+    // ENUMERATION loop. Suppressing (b) as well, by refusing to expand a call
+    // whose callee is a non-focused unit, is a different change and a wrong one:
+    // the focused unit then loses the callee's decisions from its own path
+    // identity and every `enc` silently means something else.
+    //
+    // MEASURED as a must-flip pair on
+    // regression/esbmc-solidity/solidity_path_cov_focus_function_keeps_callee_-
+    // decisions (`--focus-function caller`, where `caller` internally calls the
+    // PUBLIC `pub` and the private `helper`):
+    //
+    //     correct            expanded 2 calls, 5 paths, 5.00x, enc 15/14/13/12/2
+    //     (b) suppressed     expanded 1 call,  3 paths, 3.00x, enc 7/6/2
+    //
+    // The broken side looks BETTER -- fewer paths, 100% coverage instead of 80%,
+    // a faster run -- and it is silent: refusing the callee here also hides it
+    // from the residual-unit-call scan below, which is the detector that exists
+    // to name an unexpanded call to a gated unit, so not even the NAMED OBSTACLE
+    // warning fires. Nothing marks it. Do not add a focus test here.
     return &m_it->second;
   };
 
@@ -4622,6 +4714,15 @@ void goto_coveraget::solidity_path_coverage()
   // In-scope user functions that are NOT units (internal/private helpers).
   size_t non_unit_functions = 0;
   size_t units_enumerated = 0;
+  // --focus-function: units that ARE units and ARE in scope but are not the
+  // focused one, so this run enumerates and instruments nothing for them.
+  size_t units_skipped_by_focus = 0;
+  // Every unit id the loop below considered, focused or not. Kept ONLY so the
+  // no-match failure can print what was actually available. "focus 'x' matched
+  // nothing" sends a reader to check the spelling; the candidate list lets them
+  // see instead whether the name is present under a different contract, or
+  // absent entirely, without having to guess which.
+  std::vector<std::string> focus_candidates;
   // Units disqualified wholesale: the model and the EVM disagree there, so no
   // path of the unit may become a test. TWO causes reach this, counted apart
   // because they are different defects needing the same containment — both are
@@ -4811,6 +4912,45 @@ void goto_coveraget::solidity_path_coverage()
       ++non_unit_functions;
       continue;
     }
+
+    // ---- --focus-function NARROWS INSTRUMENTATION, NOT ONLY DISPATCH ----
+    //
+    // Placed HERE, after the unit test, so `non_unit_functions` keeps counting
+    // the same population it always did; and after the --contract scope test, so
+    // `focus_candidates` lists what a focused run could actually have chosen.
+    //
+    // The EXPANSION loop above is deliberately NOT narrowed (see the header on
+    // `focus_function`): the focused unit's body — and hence every `enc`, every
+    // depth and every stable path id — stays bit-identical to a whole-contract
+    // run's. That is the whole reason this narrowing is safe, and it is why a
+    // callee's decisions are still inside the focused unit's paths.
+    //
+    // A unit named by an active stage-2/3 spec is NEVER skipped, whatever the
+    // focus says. Those three modes each narrow to their own unit at their own
+    // branch further down; skipping their target here would leave them with no
+    // assume and no assert, and the run would then die at their route-5 gate
+    // blaming the unit NAME — pointing the reader at a spelling mistake that
+    // does not exist. Same failure shape the outer-box/certify precedence
+    // already produced once.
+    {
+      const std::string uid = f_it->first.as_string();
+      focus_candidates.push_back(uid);
+      auto spec_names = [&uid](const std::string &spec) {
+        return uid == spec ||
+               uid.find("@F@" + spec + "#") != std::string::npos;
+      };
+      const bool stage_target = (outer_on && spec_names(outer_unit)) ||
+                                (certify_on && spec_names(certify_unit)) ||
+                                (assert_on && spec_names(assert_unit));
+      if (
+        !focus_function.empty() && !stage_target &&
+        !focus_selects_unit(uid, focus_function))
+      {
+        ++units_skipped_by_focus;
+        continue;
+      }
+    }
+
     ++units_enumerated;
     bool gate_inserted = false;
 
@@ -8069,6 +8209,80 @@ void goto_coveraget::solidity_path_coverage()
     }
 
   }
+
+  // ---- A --focus-function THAT MATCHED NO UNIT IS NOT A MEASUREMENT ----
+  //
+  // Same shape as the certify/assert route-5 gates below. Narrowing
+  // instrumentation is what makes the symptom possible at all: before it, a
+  // focus naming nothing still instrumented the whole contract and printed a
+  // full report; now it would instrument nothing, and
+  //
+  //     Complete Paths : 0 / No complete path enumerated
+  //
+  // is byte-compatible with a contract that genuinely has no unit, so a
+  // per-method sweep would record a clean zero for a name it got wrong.
+  //
+  // ---- THIS IS A SECOND LINE, AND IT HAS NO REPRODUCER TODAY ----
+  //
+  // Stated plainly rather than implied, because a guard described as if it fires
+  // is one nobody re-checks. Both routes I could construct are closed EARLIER,
+  // and both were measured rather than reasoned about:
+  //
+  //  * a misspelled name never reaches here. The frontend validator
+  //    (solidity_convert.cpp, run at the top of convert()) requires the name to
+  //    be a public/external, non-constructor, non-receive/fallback method of the
+  //    target contract, and otherwise fails the conversion:
+  //        ERROR: --focus-function 'nosuchfn' is not a public/external function
+  //               of contract 'C'
+  //        ERROR: CONVERSION ERROR            (exit 6)
+  //    That is the layer `solidity_path_cov_focus_function_no_match_fails` pins,
+  //    because it is the layer that actually enforces the property.
+  //
+  //  * "the name is right but --contract scoped the unit out" does not occur
+  //    either, because Solidity inheritance is merge-BY-COPY here: measured with
+  //    `contract D is B` and `--contract D --focus-function basefn`, the unit is
+  //    `sol:@C@D@F@basefn#23` -- attributed to D, in scope, enumerated normally.
+  //
+  // So this gate exists for a route that does not exist yet: a focus name that
+  // passes the frontend validator while its goto function is not an
+  // `is_external_entry` unit, or any future caller that sets focus_function
+  // without going through that validator. It costs one comparison. The candidate
+  // list is printed with it because the two causes above need different fixes
+  // and a bare "matched nothing" sends the reader to the spelling in both cases.
+  if (!focus_function.empty() && units_enumerated == 0)
+  {
+    std::string cands;
+    for (const auto &c : focus_candidates)
+      cands += (cands.empty() ? "" : "; ") + c;
+    log_error(
+      "--solidity-path-coverage: --focus-function '{}' matched NONE of the {} "
+      "unit(s) in scope, so NOT ONE path was enumerated and this run measures "
+      "nothing. It would otherwise print an empty coverage report that is "
+      "indistinguishable from a contract with no externally-callable function. "
+      "Note the frontend already checks the name against --contract '{}' and "
+      "fails the conversion when it is not one of its public/external methods, "
+      "so reaching HERE means the name passed that check and still selected no "
+      "enumerated UNIT — compare it against the list rather than against the "
+      "source. The unit(s) that were available: {}",
+      focus_function,
+      focus_candidates.size(),
+      scope_contract.empty() ? "<unset>" : scope_contract,
+      cands.empty() ? "<none: no unit reached the focus test at all>" : cands);
+    exit(1);
+  }
+  if (units_skipped_by_focus > 0)
+    log_status(
+      "--solidity-path-coverage: --focus-function '{}' narrowed INSTRUMENTATION "
+      "to {} unit(s); {} other in-scope unit(s) were not enumerated at all. "
+      "Their paths are absent from the denominator ON PURPOSE: the dispatcher "
+      "cannot enter them in this run, so no exploration could ever witness them "
+      "and counting them made the reported coverage a contract-level number "
+      "wearing a unit-level label. Internal-call EXPANSION still ran for every "
+      "unit, so this unit's path identity is unchanged -- a callee's decisions "
+      "are still part of it",
+      focus_function,
+      units_enumerated,
+      units_skipped_by_focus);
 
   // ---- A CERTIFICATION QUERY THAT MATCHED NO UNIT IS NOT A CERTIFICATE ----
   //

@@ -4242,6 +4242,18 @@ bool esbmc_parseoptionst::process_goto_program(
       // contract (not sibling contracts). --coverage-whole-unit opts out.
       if (cmdline.isset("contract") && !cmdline.isset("coverage-whole-unit"))
         tmp.scope_contract = cmdline.getval("contract");
+      // --focus-function scoping. The frontend already narrows which entry the
+      // DISPATCHER may call; this narrows what gets ENUMERATED AND INSTRUMENTED,
+      // so a focused run's published numbers describe the focused unit instead
+      // of the whole contract. Measured on aqua `--focus-function dock`: 2846
+      // paths in the denominator, of which 2783 belong to units the dispatcher
+      // cannot enter in that run, so `Path Coverage` read 0.07% where the honest
+      // figure against `dock`'s own 63 paths is 3.17%.
+      //
+      // Read here rather than inside the pass, like every other knob, so the
+      // pass keeps having no command-line dependency of its own.
+      if (cmdline.isset("focus-function"))
+        tmp.focus_function = cmdline.getval("focus-function");
       // Cross-run persisted covered-set: a complete path already witnessed
       // (CE in hand) in an earlier escalation round is not re-instrumented,
       // so each round spends its budget only on paths still lacking a CE.

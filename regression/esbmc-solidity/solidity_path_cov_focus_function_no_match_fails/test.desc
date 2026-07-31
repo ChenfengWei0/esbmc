@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract C --focus-function nosuchfunction --solidity-max-tx 1
+^ERROR: --focus-function 'nosuchfunction' is not a public/external function of contract 'C'\.$
+^ERROR: CONVERSION ERROR$

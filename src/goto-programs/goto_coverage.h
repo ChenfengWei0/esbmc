@@ -249,11 +249,22 @@ public:
   // that puts named-obstacle at the top: when the unit is disqualified, or was
   // never entered, every finer classification of its paths is meaningless.
   //
-  // This is NOT a reserved slot — it fires today. With --focus-function the
-  // audit deliberately does not abort for the units the narrowing excluded, so
-  // their paths reach the report; measured before the ordering was fixed, they
-  // were all reported `not-solved-this-run` on a run whose own log line one
-  // line earlier said the unit had not been entered.
+  // WHAT USED TO FIRE THIS, AND WHY IT NO LONGER DOES. The live producer was
+  // --focus-function: the pass instrumented every unit while the dispatcher
+  // entered one, so the excluded units' paths reached the report and were filed
+  // here (measured before the ordering was fixed, they were reported
+  // `not-solved-this-run` on a run whose own log line one line earlier said the
+  // unit had not been entered). Since --focus-function narrows INSTRUMENTATION
+  // (see `focus_function`), those units produce no claims at all, so on a
+  // COMPLETE run `units_not_entered` can only ever name the focused unit — and
+  // that is a hard failure in audit_entry_liveness, not a token.
+  //
+  // The slot is therefore reached today only on a PARTIAL run, where the audit
+  // downgrades its abort to a warning and the un-entered units are the ones the
+  // run stopped before reaching. It is kept, and kept SECOND, because the
+  // ordering argument above is about what the token MEANS, not about how often
+  // it occurs: a claim of a unit nothing entered must not be filed under a
+  // verdict-derived token whatever put it there.
   //
   // This is an INVARIANT ASSERTION, not a detector: the live tokens partition
   // the possible states by construction (a claim's verdict is one of
@@ -307,6 +318,19 @@ public:
   // ("a unit with instrumented claims should be entered") only holds for the
   // focused unit, so the check is narrowed to where it holds rather than
   // weakened everywhere.
+  //
+  // SINCE --focus-function ALSO NARROWS INSTRUMENTATION (see `focus_function`),
+  // the excluded units have no claims, so `all_claims` holds the focused unit's
+  // paths and nothing else. The `dead_by_design` branch below is therefore
+  // unreachable on a complete run, and the audit's HARD FAILURE now covers the
+  // focused unit itself — a strengthening: a focused run whose one unit was
+  // never entered used to be reported as a normal per-method result and is now
+  // a defect. The narrowing is KEPT rather than deleted because it is the
+  // property that makes the abort safe, and deleting it would leave nothing
+  // stating why the abort may fire here at all.
+  //
+  // It uses focus_selects_unit(), the same matcher the instrumentation
+  // narrowing uses, so the two cannot disagree about which unit is focused.
   static void audit_entry_liveness(const std::string &focus_function);
 
   // Units the audit found had claims instrumented but NONE decided, i.e. the
@@ -850,6 +874,84 @@ public:
   // declaring contract and excluded. Empty => no scoping (unchanged
   // whole-unit behaviour, e.g. C/C++/no --contract).
   std::string scope_contract = "";
+
+  // ---- --focus-function NARROWS WHAT IS INSTRUMENTED, not only what is
+  // ---- ENTERED ----
+  //
+  // Set from --focus-function; empty when unset. The frontend's dispatcher
+  // filter (solidity_convert_constructor.cpp) already narrows which entry the
+  // harness may call. This narrows the OTHER half: solidity_path_coverage()
+  // enumerates and instruments path claims for THIS unit only.
+  //
+  // WHY, and it is not performance. A focused run used to instrument the whole
+  // contract's path set, so the numbers it published were CONTRACT-level while
+  // reading as the unit's. MEASURED on aqua `--focus-function dock`:
+  //
+  //     Complete Paths : 2846    Reached : 2    Path Coverage: 0.07%
+  //
+  // 2783 of those 2846 belong to units the dispatcher cannot enter in this run,
+  // so no exploration could ever witness them. The honest denominator is
+  // `dock`'s own 63 paths, i.e. 3.17% -- the published metric was wrong by 45x,
+  // and `summary.paths_total` carried the same contract-level number into
+  // cov-report.json, where it has already been misread as the unit's.
+  //
+  // The time saving is a SIDE EFFECT AND A SMALL ONE; do not quote it as the
+  // reason. Focus already narrowed the solve stage (symex never reaches a
+  // non-focused unit's assert -- aqua `dock`: 2846 instrumented, 63 VCCs), so
+  // the only phase this can compress is the instrumentation pass itself, billed
+  // to `GOTO program processing time`: measured 0.20-1.80 s across the corpus,
+  // against a `GOTO program creation time` of 1.1-13.4 s that is the FRONTEND's
+  // Solidity->GOTO conversion and is not affected by this at all.
+  //
+  // ---- WHAT THIS MUST NOT NARROW: the EXPANSION loop ----
+  //
+  // solidity_path_coverage() walks goto_functions TWICE: first to expand
+  // internal calls physically into each unit (sol_path_inlinet::expand_here)
+  // and to run degradation, then to enumerate and instrument. ONLY THE SECOND
+  // LOOP IS NARROWED.
+  //
+  // The first must not be, and the reason is mechanical rather than cautious:
+  // `expand_here` copies the callee's body AS IT IS AT THAT MOMENT, and the
+  // expansion loop rewrites each unit's body in place as it goes. So a unit C
+  // that the loop reaches BEFORE a unit F is already expanded when F splices it
+  // in, and F gets one further level of call depth for free. Skipping
+  // non-focused units there -- or merely skipping their degradation, which also
+  // rewrites their bodies -- would change what lands inside the focused unit,
+  // and every `enc` would silently mean something else: a smaller, faster run
+  // with different answers. Leaving the loop alone keeps the focused unit's body
+  // BIT-IDENTICAL to its body in a whole-contract run, which is also what makes
+  // the covered-set argument below hold.
+  //
+  // The price is stated rather than optimised away: a focused run still pays the
+  // whole contract's expansion and degradation cost.
+  std::string focus_function = "";
+
+  // Does `--focus-function focus` select the unit `unit_id`?
+  //
+  // ONE matcher, used by both the instrumentation narrowing and
+  // audit_entry_liveness, so the two can never disagree about which unit the
+  // focus names -- a drift that would classify a focused-but-never-entered unit
+  // as "excluded by design" (informational) instead of as the hard failure it
+  // is.
+  //
+  // Unit ids are `sol:@C@<C>@F@<fn>#<node-id>`, so the test is on the <fn>
+  // segment, plus the fully mangled spelling for callers that have one.
+  //
+  // EXACT equality on <fn>, deliberately, because that is precisely what the
+  // frontend's dispatcher filter tests (`func_name != focus_func`, on the
+  // source-level name from funcSignatures). Matching the same set matters in
+  // both directions: name-only matching keeps EVERY OVERLOAD, which the
+  // dispatcher also offers, so no entry can be entered without being measured.
+  //
+  // NO `<focus>_` PREFIX RULE, although `--function` has one (is_target_func)
+  // for modifier renaming. MEASURED on regression solidity_path_cov_modifier_-
+  // expands: with a modifier the UNIT keeps the source name
+  // (`sol:@C@M@F@set#38`) and the renamed body `set_onlyOwner` is the NON-unit
+  // that gets expanded into it -- so the prefix rule buys nothing here and would
+  // over-match a sibling public function whose name merely starts with
+  // `<focus>_`.
+  static bool
+  focus_selects_unit(const std::string &unit_id, const std::string &focus);
 
   // --cov-report-json: the report exists FOR the per-path counterexample
   // payload (call arguments / EVM environment / post-state). The symex slicer
