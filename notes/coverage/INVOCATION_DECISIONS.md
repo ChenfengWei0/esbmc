@@ -1,0 +1,308 @@
+# The invocation decision table
+
+**This file is subgoal 1's deliverable.** Not a script that runs — a decision
+per dimension, each one backed by a measurement, and each one naming the
+artefact that would have to be re-run to overturn it.
+
+Why it exists: every corpus number produced before 2026-07-31 came from ONE
+configuration that had never been compared against another. A configuration with
+one cell and no control is not a chosen configuration; it is the first thing
+that happened to run. That is how a 0/5 gate result, a 65-unit stage-2 sweep and
+every funnel ratio came to be measurements of a cell rather than of a method.
+
+Rules for this file:
+* a row may only say DECIDED if a run exists that would have changed it;
+* a row that says OPEN says what experiment closes it;
+* every verdict is read off `cov-report.json`, never off an exit code —
+  **exit codes are not comparable across bounding strategies** (measured: tx1
+  exits 1 with F=2, multi-tx+k-induction exits 0 with the same F=2);
+* set comparisons, never count comparisons, when asking "does configuration A
+  reach something B does not" (measured: a count comparison licensed the
+  opposite conclusion on scope, see row 1).
+
+---
+
+## The table
+
+| # | dimension | decision | status |
+|---|---|---|---|
+| 1 | scope | **keep `--focus-function <f>` with `--contract <C>`** | DECIDED |
+| 2 | tx depth | **`--solidity-max-tx 1`** | DECIDED |
+| 3 | bounding strategy | **none** | DECIDED |
+| 4 | slicing | **default** (do not pass `--no-slice`) | DECIDED |
+| 5 | simplification | **never pass `--no-simplify`** to the collector | DECIDED |
+| 6 | arithmetic checks | **do not pass them — they cannot help** | DECIDED |
+| 7 | solver | **let it auto-select** | DECIDED (one contract) |
+| 8 | resources | **`--memlimit` sized per contract; 8g is not a default** | DECIDED |
+| 9 | `--all-witnesses` | **wanted, blocked by a one-line gate** | OPEN |
+| 10 | isolated-function mode | **`--function` is BANNED** | DECIDED |
+
+---
+
+## 1. scope — keep `--focus-function`
+
+Whole-contract IS viable; `--memlimit 8g` was the entire obstacle. Same command,
+only the limit differing:
+
+| memlimit | wall | peak RSS | report |
+|---|---|---|---|
+| 8g | 312 s | — | **none** (solver OOM -> `bad_alloc` -> SIGABRT) |
+| 20g | 777.8 s | 15.86 GiB | yes |
+
+Peak is **1.98x** the 8 GiB it had been given. It could never have finished.
+
+And it reaches nothing focus cannot. F sets compared **as sets**: 15 both sides,
+0 only-whole, 0 only-per-method. `bounded-holds` sums to the same 1807 and
+`not-solved-this-run` is 1024 in every report. Cost of whole-contract: 2.4x
+wall, 2x memory, no parallelism, no resume.
+
+**A count comparison would have given the opposite answer.** Against the
+collection as it sits on disk it reads `whole 15 / per-method 13 / only-whole 2`,
+both in `Aqua.ship` — exactly what the theory predicts. It is false: the
+per-method collection has no `ship` report at all (killed at the 180 s timeout).
+Re-run focused with a real budget, `ship` finds the same two `enc` values.
+
+Caveat: one contract. Aqua's units are guarded by `msg.*` and their own
+arguments, not by sibling-written state. `FarmingPool.deposit`/`withdraw` is
+where this could still differ.
+
+Evidence: `notes/coverage/scope-and-resources.md`.
+
+## 2. tx depth — `--solidity-max-tx 1`
+
+* `--solidity-max-tx 0` is the SHALLOWEST setting under coverage, not the
+  unbounded one: bound 0 emits `while(nondet){body}` and coverage rewrites the
+  back-edge to a SKIP, leaving one transaction.
+* `--solidity-max-tx N>=2` is the configuration the tool itself warns produces
+  mis-attributed Foundry tests.
+* **`--coverage-multi-tx` does nothing under path coverage.** Path coverage is
+  absent from `unbounded_modes`, so its bound is 2, so `emit_tx_driver` copies
+  the body twice with **no loop and no back edge** — and `--coverage-multi-tx`
+  exists to exempt the back-edge neutralisation from removing a back edge that
+  is not there. Measured: its cells are field-for-field identical to `tx2`.
+
+**There is no ESBMC configuration today that gives path coverage more than 2
+straight-line transactions.** Cross-function entry state is not purchasable with
+a flag; it needs `__ESOL_nondet_state_forward` (implemented, never wired).
+
+Measured on three units (`Aqua.safeBalances`, `Aqua.dock`, `FarmingPool.deposit`):
+tx1 / tx2 / tx0 / multi-tx+unwind / multi-tx+k-induction all give the same F.
+
+Evidence: `notes/coverage/option-matrix-round1.md`,
+`notes/path-coverage-invocation-contract.md` §2, §10.4.
+
+## 3. bounding strategy — none
+
+`--unwind N` (or nothing, in which case the pass installs 4 for itself) and NO
+strategy. Both alternatives are actively harmful, not merely expensive:
+
+* **`--k-induction` changes what is INSTRUMENTED.** `goto_k_induction` runs
+  BEFORE the path-coverage block, and its havoc+assume preambles trip the pass's
+  own NAMED OBSTACLE criterion, excluding **2796 of 2846 paths** — of which 63
+  are the focused unit's entire path set. That is why every k-induction cell
+  shows `bounded-holds = 0`: not "nothing held", but "the unit was not measured".
+  No bound setting repairs it. Isolated: `--inductive-step` alone reproduces it;
+  `--incremental-bmc` never shows it.
+* **`--incremental-bmc` is pure waste**: 50 base cases re-asking the same 63
+  claims, final report field-for-field identical to the 10 s no-strategy run.
+* **`--overflow-check --k-induction` has no closing phase**: the flag disables
+  the inductive step and Solidity auto-disables the forward condition. Measured:
+  225 s, 14 base cases, OOM from k=12, no report.
+
+Two values are RECORDED WRONG under a strategy, which is worse than absent:
+`summary.bound.unwind` is the LAST k (2 under k-induction, 50 under incremental,
+whatever `--unwind` said), and the covered-set fingerprint's `loop_bound` is
+likewise taken from `path_cov_unwind` while `do_bmc_strategy` overwrites `unwind`
+with `k_step` AFTER instrumentation. **Two runs at different k share a
+fingerprint and union freely.**
+
+And the source's declaration that the symex bound and the enumeration bound
+"MUST agree" is **a comment only** — `goto_coverage.cpp` never reads the unwind
+option, `config.options` or `max_unwind`. Worse, the under-report warning
+(`bmc.cpp:806-823`) actively RECOMMENDS switching to `--k-induction` /
+`--incremental-bmc`, and fires in every cell that produces a report.
+
+⇒ two follow-ups, both queued: make "MUST agree" a runtime gate, and delete the
+recommendation that teaches users to break the measurement.
+
+UNVERIFIED: the matrix ran against a snapshot predating `d09536838a`; cells are
+mutually comparable but describe the older build and want one re-confirmation.
+
+Evidence: `notes/coverage/unwind-vs-strategy.md`.
+
+## 4. slicing — default
+
+`--no-slice` changes nothing measurable: same F, same `inputs`, same U, in both
+simplification settings, on three units.
+
+But the exemption list has a structural hole worth stating, because it explains
+a loss that was previously misread. The list protects three categories —
+contract objects, contract-scope stores, environment — identified by symbol id
+prefix. **Function parameters cannot be in it**: their ids contain `@F@`, which
+the contract-scope criterion explicitly excludes. They survive only by DATA
+DEPENDENCY, because the guards that build `tr` read them.
+
+⇒ a parameter that participates in no decision on a given path IS sliced away,
+never reaches `inputs`, and the Foundry emitter fills it with a type default
+marked `defaulted` — reported, not refused. The "defaulted args" counts seen
+earlier are this, not a rendering gap.
+
+Evidence: `notes/path-coverage-invocation-contract.md` §10.1,
+`notes/coverage/option-matrix-round1.md`.
+
+## 5. simplification — never `--no-simplify` from the collector
+
+On `Aqua.dock`, `--no-simplify` takes F from **2 to 0** — with exit 0, a normally
+written report, U = 2846, no OOM, no timeout and no warning. The two lost
+witnesses do not become "never asked": `not-solved-this-run` stays 0 and
+`bounded-holds` grows 61 -> 63. **The claim was asked and the tool answered that
+the path does not hold, when it does.**
+
+Mechanism: `--no-simplify` stops `do_simplify` folding loop guards, so a library
+loop (`__memset_impl`) is actually entered, is truncated at the coverage-forced
+`--unwind 4`, and the unconditionally-forced `no-unwinding-assertions` turns the
+unwinding assert into an ASSUME that deletes exactly the witnessing executions.
+Confirmed two ways: `--partial-loops` restores F=2 with one flag, and
+`--unwindset 64:512` restores it independently.
+
+**It is contract-specific**: `Aqua.safeBalances` and `FarmingPool.deposit` show
+no effect in any of the four cells. So this can be measured and cannot be
+reasoned about.
+
+**Not to be confused with the tool's internal force.** `--path-cov-assert`
+forces `no-simplify` at `esbmc_parseoptions.cpp:4223` and MUST keep doing so:
+measured with the force env-gated, the R1 ladder goes 3 HOLDS / 3 REFUTED / 0
+no-verdict -> **0 / 3 / 3**, i.e. every HOLDS becomes "never reached the solver",
+destroying the entire positive output of a mode whose result IS a HOLDS/REFUTED
+table. The fix was not to remove the force but to stop the resulting verdict
+from lying: a run that would report VACUOUS while a loop was truncated now
+reports `RESULT: UNDECIDED-TRUNCATED`, pinned by four regressions including the
+must-not-fire direction.
+
+Evidence: `notes/coverage/certify-vs-assert-vacuity.md`,
+`notes/coverage/option-matrix-round1.md`.
+
+## 6. arithmetic checks — passing them cannot help
+
+The enumerating DFS fans out at exactly three site kinds: conditional GOTO,
+folded short-circuit in ASSIGN, folded short-circuit in RETURN. Everything else
+falls through to straight-line. `goto_check` produces a **single-successor
+ASSERT** (`targets` never assigned; `get_successors`' assert arm pushes only
+`next`).
+
+⇒ `--overflow-check`, `--unsigned-overflow-check`, `--div-by-zero-check`,
+`--bounds-check` **cannot change the enumerated path set**. An EVM revert on
+overflow is not in this method's decision set under any flag combination, and no
+option can put it there — that would be a frontend change.
+
+⇒ they are not free either: path coverage is the only coverage mode that does
+NOT neutralise pre-existing asserts, so each goto_check claim becomes its own
+solver job and its own counterexample block while counting in no numerator.
+
+**One exception, for a different reason.** `--div-by-zero-check` during
+CERTIFICATION is still wanted — not to add a decision, but so an independent
+claim excludes zero divisors from the region. With the check off, ESBMC models
+`a/0` as `type(uintN).max`, a value that exists in neither real Solidity
+(`Panic(0x12)`) nor bare EVM (`0`); that all-ones value would otherwise
+participate in building R2 assertions.
+
+Also settled: `no-assertions` is set for BOTH branch and path coverage by one
+shared condition, so the two metrics are not asymmetric on that axis; and
+`unchecked { }` produces a byte-identical model to a normal block under every
+flag combination, because all `#sol_unchecked` readers end in
+`add_guarded_claim`.
+
+Evidence: `notes/path-coverage-invocation-contract.md` §11.
+
+## 7. solver — auto-select
+
+Aqua auto-selects CVC5 with a stated reason ("detected >=3-level nested-mapping
+shape; Bitwuzla aborts on the CONST_ARRAY-initialised infinite mapping array").
+`--z3` was deliberately NOT tried: the fallback was contingent on CVC5 being
+what ran out of memory, and at 20 g it does not. Overriding an auto-selection
+that carries a soundness reason needs its own evidence.
+
+## 8. resources — size the limit, and expect to lose everything on death
+
+`--memlimit 8g` was copied, never chosen; whole-contract aqua peaks at
+15.86 GiB. Size per contract.
+
+A dying run produces NOTHING, and the loss is real work: the 8 g whole-contract
+run died 51.5% through the solve having decided **938 claims and REFUTED 5** —
+a third of that contract's 15 witnesses — and discarded all of it.
+
+Three mechanisms, all verified:
+* `report_coverage` sits after the per-claim job loop and INSIDE `run_thread`'s
+  try, so a throw unwinds past it to the only verification-phase catch. **The
+  report is lost even when the OOM is caught.**
+* `branch_cov_active` is written only by `branch_coverage()`;
+  `solidity_path_coverage()` writes none of the signal-safe atomics, so
+  SIGALRM/SIGTERM/SIGINT emit nothing for path coverage.
+* A mid-solve persistence mechanism already exists (the covered-set writer) and
+  the collector has never passed `--coverage-covered-set` — but it persists only
+  stable path ids, **so enabling it before the payload is persisted converts a
+  lost witness into a permanently payload-less `F`**. Payload first, always.
+
+Corpus cost of this: 27 runs killed at a 180 s outer timeout plus 2 solver OOMs,
+every one contributing zero.
+
+Evidence: `notes/coverage/scope-and-resources.md`.
+
+## 9. `--all-witnesses` — OPEN
+
+Fully wired, no coverage gate, and cheap: extra MODELS from one solver call
+(one `push_ctx`, per witness a blocking clause + `dec_solve`, one `pop_ctx`), not
+extra query rounds. Foundry collects per witness.
+
+But `bmc.cpp:3087` gates the counterexample-payload harvest on
+`if (is_path_cov && witnesses.empty())`, so only the FIRST witness reaches
+`cov-report.json`. **Stage 2 therefore gets nothing from it today**, although up
+to 16 counterexamples per feasible path is exactly the raw material its
+refinement ladder and boundary witnesses want.
+
+Closes when: the harvest gate is lifted and the report says how many witnesses
+each F claim carries. Must stay opt-in.
+
+Evidence: `notes/path-coverage-invocation-contract.md` §12.
+
+## 10. `--function` — banned
+
+It verifies a function in ISOLATION from an ARBITRARY contract state, so a
+counterexample may rest on a state no `constructor() -> transaction sequence`
+can reach on chain. This project's deliverable is a test that must be GREEN on
+the unmodified contract, so such a counterexample becomes a RED test with
+nothing marking it.
+
+Removed from `pathcov_collect.py`; the library route now REFUSES and records its
+reason instead of approximating. Measured cost of the removal: zero — every
+library-route run produced 0 units and 0 paths. Still present at
+`notes/coverage/scripts/forge_roundtrip.py` and must be removed there too.
+
+---
+
+## The settled command line
+
+```
+esbmc <flat>.solast --sol <flat>
+      --solidity-path-coverage
+      --contract <C> --focus-function <f>
+      --solidity-max-tx 1
+      --cov-report-json
+      --path-cov-max-goals 10000
+      --memlimit <sized for this contract, not 8g by habit>
+```
+
+no `--function`, no bounding strategy, no `--coverage-multi-tx`, no
+`--no-slice`, no `--no-simplify`, no arithmetic check flags.
+
+Bounded from OUTSIDE by a subprocess timeout — `--timeout` is useless here,
+because the partial-result rescue is gated on branch coverage and a path-coverage
+run killed by it emits nothing at all.
+
+## What this table does NOT license
+
+None of it converts the 0/5 branch-coverage gate result into a pass. It removes
+the objection that the gate was measuring an arbitrary cell: eight of ten
+dimensions are now decided against measurements, and the two structural losses
+that remain (cross-function entry state; a dying run discarding decided work)
+are named, quantified, and have identified change sites.
