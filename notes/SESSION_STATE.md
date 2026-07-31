@@ -87,7 +87,7 @@ Three defects found end to end, and what happened to each:
 | a test the emitter ASSERTED exits normally that REVERTS | GUARDED at pipeline level (run every test, disable + count the red ones) | 1 red disabled, coverage unchanged |
 | every recovered argument zero, and zeros alias to one mapping slot | de-aliased (distinct identities per parameter name) | **coverage UNCHANGED -- the aliasing hypothesis is REFUTED** |
 
-**SECOND SAMPLE, and it narrows the table above.** `notes/emission-loss-three-samples.md`
+**SECOND SAMPLE, and it narrows the table above.** `notes/emission-loss-four-samples.md`
 (a THIRD sample has since landed there too — see the section at the end of this file):
 farming is bar 26, native 26, OURS 10. Three of the aqua-derived claims do NOT
 generalise -- on farming 170 of 174 defaulted arguments are UINT256 (not mapping
@@ -275,16 +275,19 @@ Recorded here so a reader finds a DECISION rather than a gap.
 
 ## Three samples, and where to read them
 
-`notes/emission-loss-three-samples.md` is the current state of subgoal 2.
+`notes/emission-loss-four-samples.md` is the current state of subgoal 2.
 
-The ONE quantitative claim that survives three benchmarks: emission retains
-about half of what the enumeration reaches (aqua 2 of 4, farming 10 of 18,
-EscrowSrc 3 of 6). Everything else taken from aqua alone was narrowed by a later
-sample -- read that file before quoting any mechanism as general.
+The ONE quantitative claim that survives FOUR benchmarks: emission retains
+**40-56%** of what the enumeration reaches (aqua 2/4, farming 10/18, EscrowSrc
+3/6, EscrowDst 2/5). Quote the RANGE -- the fourth sample is what stopped it
+being a number that had looked precise three times. Everything else taken from
+aqua alone was narrowed by a later sample; read that file before quoting any
+mechanism as general.
 
-Settled there and worth not re-deriving: `ImmutablesLib` is 0/8 on both Escrows
+Settled there on BOTH Escrows and worth not re-deriving: `ImmutablesLib` is 0/8
 because those eight decisions were NEVER ENUMERATED, not because the emitter
-dropped them. No emitter change can touch them.
+dropped them (EscrowDst adds `EscrowDst.sol`'s own two). No emitter change can
+touch them.
 
 Re-run any sample with
 `python3 notes/coverage/scripts/forge_roundtrip.py <bench> --timeout 180`
