@@ -26,8 +26,8 @@ Rules for this file:
 
 | # | dimension | decision | status |
 |---|---|---|---|
-| 1 | scope | **keep `--focus-function <f>` with `--contract <C>`** | DECIDED |
-| 2 | tx depth | **`--solidity-max-tx 1`** | DECIDED |
+| 1 | scope | ~~keep `--focus-function`~~ **OVERTURNED — see row 2** | REOPENED |
+| 2 | tx depth | ~~`--solidity-max-tx 1`~~ **whole contract + `--solidity-max-tx 2`** | OVERTURNED |
 | 3 | bounding strategy | **none** | DECIDED |
 | 4 | slicing | **default** (do not pass `--no-slice`) | DECIDED |
 | 5 | simplification | **never pass `--no-simplify`** to the collector | DECIDED |
@@ -68,7 +68,66 @@ where this could still differ.
 
 Evidence: `notes/coverage/scope-and-resources.md`.
 
-## 2. tx depth — `--solidity-max-tx 1`
+## ROWS 1 AND 2 ARE OVERTURNED. A ten-line hand-written contract did it in
+## five seconds, and the matrix had a hole exactly where the answer was.
+
+`notes/coverage/poc/Tiny.sol`: `bal` starts at 0 and only `deposit` can raise
+it; `withdraw`'s interesting paths sit behind `require(bal >= amt)`.
+
+| configuration | paths | F | bounded-holds | coverage |
+|---|---|---|---|---|
+| `--focus-function withdraw`, tx=1 | 5 | 3 | 2 | 60% |
+| whole contract, tx=1 | 8 | 6 | 2 | 75% |
+| **whole contract, tx=2** | 8 | **8** | **0** | **100%**, 8/8 with inputs |
+| whole contract, tx=3 | 8 | 8 | 0 | 100%, field-identical to tx=2 |
+
+**Whole contract at `--solidity-max-tx 2` reaches everything.** One preceding
+call is enough; tx=3 adds nothing.
+
+Two further hand-written experiments pin down what is actually going on, each
+about a second:
+
+* `Tiny2.sol` — identical except the CONSTRUCTOR sets `bal = 500`. Then
+  `--focus-function withdraw` at tx=1 gives **5 of 5, 100%**. So the obstacle
+  was never "the state"; it was "a call has to happen first".
+* `Tiny3.sol` — the predecessor `seed()` has no `require` and no branch. Whole
+  contract at tx=1: still 2 bounded-holds. At tx=2: **7 of 7**. So a preceding
+  call is needed even when it carries no user-level decision of its own.
+
+### The error, stated precisely
+
+The matrix crossed **tx only under `--focus-function`**, where by construction
+raising the bound cannot help — every transaction is another call to the same
+`f`. And it crossed **scope only at tx=1**, which is where whole-contract and
+per-method were found to have identical F sets.
+
+**The cell `whole contract x tx=2` was never run.** From two individually
+correct observations I concluded "the transaction dimension buys nothing", and
+wrote it into this table as DECIDED.
+
+The aqua evidence that seemed to confirm it — F sets equal as sets, 15/15, zero
+either-only — holds only because aqua's units are guarded by `msg.*` and their
+own arguments rather than by sibling-written state. That caveat was written down
+in `scope-and-resources.md` when the measurement was made, and I did not act on
+it.
+
+### What this costs, stated rather than avoided
+
+`--solidity-max-tx N>=2` is the configuration ESBMC itself warns about: it
+"reconstructs multi-transaction sequences unreliably (methods can be
+mis-attributed across transactions)" for Foundry emission
+(`esbmc_parseoptions.cpp:553-565`).
+
+So the split is: **enumerate at tx=2 whole-contract**, because it is the only
+configuration that reaches cross-function state at all; and **confront the
+emission attribution problem directly** rather than avoiding the configuration.
+This file previously listed the tx ladder as the first thing to cut, citing that
+warning. That traded away the method's only route to its own hardest paths in
+order to avoid an engineering problem in the renderer.
+
+### Superseded text, kept because its reasoning is still cited elsewhere
+
+## 2. tx depth — the old row: `--solidity-max-tx 1`
 
 * `--solidity-max-tx 0` is the SHALLOWEST setting under coverage, not the
   unbounded one: bound 0 emits `while(nondet){body}` and coverage rewrites the
