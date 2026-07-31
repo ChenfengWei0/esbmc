@@ -621,13 +621,31 @@ def unsettable_coords(coords, mutability):
     return out
 
 
-def geometric_values(limit):
-    """Round-1 ladder: magnitude-independent, one run."""
+def geometric_values(limit, lo=0):
+    """Round-1 ladder: magnitude-independent, one run.
+
+    SYMMETRIC WHEN THE COORDINATE'S RANGE GOES NEGATIVE. The unsigned ladder
+    starts at 0 and doubles upward, which brackets a bound of unknown magnitude
+    in one run -- but on a signed coordinate every probe would then sit in the
+    non-negative half, and a boundary at -1000 would be bracketed only by the
+    endpoint. The negative side is laid the same way, mirrored, so the property
+    the ladder exists for ("within a factor of two of the bound, whatever its
+    magnitude, in ONE run") holds on both halves.
+
+    `lo` defaults to 0, so an unsigned coordinate produces the identical list it
+    always did -- byte for byte, which is what the must-flip pins.
+    """
     vals, v = [0], 1
     while v <= limit:
         vals.append(v)
         v *= 2
     vals.append(limit)
+    if lo < 0:
+        v = 1
+        while -v >= lo:
+            vals.append(-v)
+            v *= 2
+        vals.append(lo)
     return sorted(set(vals))
 
 
@@ -762,7 +780,21 @@ BRACKET_RE = re.compile(r"path enc=(\d+) BRACKET \(refine[^)]*\): (.*)")
 REGION_RE = re.compile(
     r"path enc=(\d+) CERTIFIED region after subtracting sibling outer boxes "
     r"\(zero queries\): ([^—]*)(— WARNING.*)?")
-SHRINK_RE = re.compile(r"retry with (\S+) in \[(\d+), (\d+)\]")
+# ---- EVERY DECIMAL THE TOOL PRINTS MAY CARRY A SIGN ----
+#
+# Five patterns in this file matched `\d+` only. That was correct while
+# `coord_expressible` accepted unsigned bit-vectors alone, and it becomes a
+# SILENT failure the moment signed coordinates are accepted: a published
+# `TYPE RANGE [-578..., 578...]` matches nothing, `type_ranges` stays empty, and
+# `_span` falls back to `(0, UINT256_MAX)` -- so the ladder is laid over the
+# wrong range and the loop measures nothing while looking like it ran. The
+# driver has to be signed-ready BEFORE the tool starts emitting signed ranges,
+# or the first signed run is a silent no-op that has to be diagnosed twice.
+#
+# One shared fragment so the five cannot drift apart again.
+_INT = r"-?\d+"
+SHRINK_RE = re.compile(r"retry with (\S+) in \[(" + _INT + r"), (" + _INT
+                       + r")\]")
 # ---- THE PUNCH SUGGESTION, which the tool has printed all along ----
 #
 # `audit_certify_witness` emits BOTH a SHRINK suggestion (cut a side off the
@@ -783,7 +815,7 @@ SHRINK_RE = re.compile(r"retry with (\S+) in \[(\d+), (\d+)\]")
 # `!=` appears in prose elsewhere in the same output, and a bare scan over the
 # whole log would harvest text as a coordinate.
 PUNCH_LINE_RE = re.compile(r"PUNCH SUGGESTION for '[^']*' — (.*)$", re.M)
-PUNCH_PAIR_RE = re.compile(r"(\S+) != (\d+)")
+PUNCH_PAIR_RE = re.compile(r"(\S+) != (" + _INT + r")")
 # The tool publishes each coordinate's own type range. The driver chooses the
 # ladder and cannot choose it correctly without this: laying probes over the
 # whole 256-bit range on a 160-bit `address` puts most of them OUTSIDE the type,
@@ -791,14 +823,15 @@ PUNCH_PAIR_RE = re.compile(r"(\S+) != (\d+)")
 # impossible-looking bracket (`lower in [2^255, 1)`) arose, and the inverted
 # span it produced killed the loop.
 TYPE_RANGE_RE = re.compile(
-    r"coordinate '([^']+)' has TYPE RANGE \[(\d+), (\d+)\]")
+    r"coordinate '([^']+)' has TYPE RANGE \[(" + _INT + r"), (" + _INT
+    + r")\]")
 
 
 # `name in [lo, hi]`, optionally followed by Definition 5's punched set
 # `\ {v, w}`. One regex for both so the hole can never be read as belonging to
 # the NEXT coordinate: they are captured in the same match as their interval.
 INTERVAL_RE = re.compile(
-    r"(\S+) in \[(\d+), (\d+)\](?: \\ \{([0-9, ]+)\})?")
+    r"(\S+) in \[(" + _INT + r"), (" + _INT + r")\](?: \\ \{([-0-9, ]+)\})?")
 
 
 def parse_intervals(text):
@@ -839,7 +872,8 @@ def brackets_for(coord, brackets, type_range=None):
     type_lo, type_hi = type_range or (0, UINT256_MAX)
     for txt in brackets.values():
         for m in re.finditer(
-                re.escape(coord) + r" (upper|lower) in [\[(](\d+), (\d+)[\])]",
+                re.escape(coord) + r" (upper|lower) in [\[(](" + _INT
+                + r"), (" + _INT + r")[\])]",
                 txt):
             a, b = int(m.group(2)), int(m.group(3))
             # THE TEST IS WHETHER THE BRACKET CONSTRAINS ANYTHING, not whether
@@ -936,8 +970,8 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             # not been published yet -- the previous behaviour exactly, which is
             # what the FIRST round has to fall back on since nothing has been
             # measured before it.
-            limit = (type_ranges or {}).get(c, (0, UINT256_MAX))[1]
-            vals = [str(v) for v in geometric_values(limit)]
+            tr = (type_ranges or {}).get(c, (0, UINT256_MAX))
+            vals = [str(v) for v in geometric_values(tr[1], tr[0])]
             geo[c] = sorted(set(vals + extra), key=int)
             spec_coords.append({"name": c, "values": None})
         else:

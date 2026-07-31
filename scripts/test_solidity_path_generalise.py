@@ -50,6 +50,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       region_size,
                                       coordinate_accounting,
                                       punch_targets,
+                                      geometric_values,
+                                      TYPE_RANGE_RE,
                                       cut_of,
                                       split_on_cut,
                                       copy_holes,
@@ -1441,6 +1443,80 @@ check("C2-pins-as-a-box-clears-an-agreeing-path",
 # ...and the box check alone sees NEITHER, which is the structural blindness.
 check("C2-the-box-check-alone-cannot-see-a-pin-conflict",
       ce_in_region({"x": (0, 9)}, {}, {"msg.value": 7, "x": 3}), [])
+
+# --- S7 groundwork: every decimal the tool prints may carry a SIGN ---
+#
+# Five patterns matched `\d+` only. That was correct while only unsigned
+# bit-vectors were accepted as coordinates, and it becomes a SILENT failure the
+# moment the tool starts publishing signed ranges: `TYPE RANGE [-578..., 578...]`
+# matches nothing, `type_ranges` stays empty, `_span` falls back to
+# (0, UINT256_MAX), and the ladder is laid over the wrong range while the loop
+# reports that it ran. The driver is made signed-ready BEFORE the tool emits
+# signed ranges, so the first signed run is not a silent no-op.
+#
+# EVERY CHECK BELOW IS A PAIR: the signed case must parse, and the unsigned case
+# must be byte-identical to what it always was.
+
+INT256_MIN = -(1 << 255)
+INT256_MAX = (1 << 255) - 1
+
+check("S7-type-range-parses-a-negative-lower-bound",
+      TYPE_RANGE_RE.search(
+          f"coordinate 'a' has TYPE RANGE [{INT256_MIN}, {INT256_MAX}]"
+      ).groups(),
+      ("a", str(INT256_MIN), str(INT256_MAX)))
+check("S7-type-range-unsigned-unchanged",
+      TYPE_RANGE_RE.search(
+          f"coordinate 'a' has TYPE RANGE [0, {BIG}]").groups(),
+      ("a", "0", str(BIG)))
+
+check("S7-interval-parses-negatives",
+      parse_intervals("a in [-5, 5], b in [0, 9]"),
+      {"a": (-5, 5), "b": (0, 9)})
+check("S7-interval-unsigned-unchanged",
+      parse_intervals("a in [0, 5]"), {"a": (0, 5)})
+# The punched set too -- its character class was digits-and-comma only, so a
+# negative hole would have silently truncated the set at the minus sign.
+check("S7-holes-parse-negatives",
+      parse_holes("a in [-9, 9] \\ {-3, 0, 3}"), {"a": [-3, 0, 3]})
+check("S7-holes-unsigned-unchanged",
+      parse_holes("a in [0, 9] \\ {3}"), {"a": [3]})
+
+check("S7-shrink-target-takes-a-negative-cut",
+      shrink_target("--path-cov-certify: refuted; retry with a in [-100, -5]",
+                    {}), ("a", -100, -5))
+check("S7-shrink-target-unsigned-unchanged",
+      shrink_target("--path-cov-certify: refuted; retry with a in [11, 100]",
+                    {}), ("a", 11, 100))
+
+_PUNCH_NEG = ("--path-cov-certify: PUNCH SUGGESTION for 'x' — instead of "
+              "cutting the interval, remove the witness itself: add a != -7 to "
+              "the box's `holes` (Definition 5)")
+check("S7-punch-parses-a-negative-value",
+      punch_targets(_PUNCH_NEG, {}), [("a", -7)])
+
+check("S7-bracket-scan-parses-negatives",
+      brackets_for("a", {14: "a upper in (-500, -100]"},
+                   (INT256_MIN, INT256_MAX)),
+      (-500, -100))
+check("S7-bracket-scan-unsigned-unchanged",
+      brackets_for("a", {14: "a upper in (500, 900]"}), (500, 900))
+
+# The ladder. `lo` defaults to 0, so the unsigned list must be IDENTICAL to the
+# one the loop has always laid -- that is the must-flip that keeps every
+# existing number reproducible.
+check("S7-geometric-unsigned-is-byte-identical",
+      geometric_values(64), [0, 1, 2, 4, 8, 16, 32, 64])
+check("S7-geometric-explicit-zero-lo-is-the-same",
+      geometric_values(64, 0), geometric_values(64))
+# ...and with a negative lower end the ladder is mirrored, so a boundary in the
+# negative half is bracketed within a factor of two too, rather than reached
+# only by the endpoint.
+check("S7-geometric-signed-is-symmetric",
+      geometric_values(8, -8), [-8, -4, -2, -1, 0, 1, 2, 4, 8])
+check("S7-geometric-signed-keeps-both-endpoints",
+      (geometric_values(100, -100)[0], geometric_values(100, -100)[-1]),
+      (-100, 100))
 
 if FAILURES:
     print("FAILED:")
