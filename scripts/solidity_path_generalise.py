@@ -873,11 +873,37 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     return boxes, brackets, regions, warned, failure, region_holes, type_ranges
 
 
-def verdict(log):
-    """'SUCCESSFUL' / 'FAILED' / 'UNKNOWN', read as a LINE, never a substring.
+CERTIFY_RESULT_RE = re.compile(
+    r"^--path-cov-certify: RESULT: (CERTIFIED|REFUTED|VACUOUS|UNDECIDED)\b")
 
-    This function exists because of a measured, total failure of the soundness
-    gate. The test used to be:
+
+def verdict(log):
+    """'SUCCESSFUL' / 'FAILED' / 'VACUOUS' / 'UNKNOWN'.
+
+    THE TOOL'S `RESULT:` LINE WINS, and reading the verdict line instead is now
+    an INVERSION rather than a coarser reading. The certification query emits a
+    non-vacuity witness at the path's own exit -- an assert carrying only
+    `tr != enc || cnt != depth` -- which is REFUTED exactly when the box admits
+    an execution that walks the path. That is the precondition of the whole
+    certificate, so on a run that CERTIFIES the witness fails and ESBMC prints
+    `VERIFICATION FAILED`. A driver reading the verdict line would record every
+    certificate as a refutation and shrink a box that was already correct.
+
+    The witness also creates a state the verdict line never had. Before it, a
+    semantically unsatisfiable box -- `state.s in [0,0]` against a constructor
+    that assigns 7, which is well-formed, in-type, non-empty and admits nothing
+    -- made every exit assert hold for want of an execution and printed
+    SUCCESSFUL with exit 0. That is VACUOUS, and it must not be folded into
+    either side: accepting it certifies a region containing no input, and
+    shrinking it responds to an empty box by making it emptier.
+
+    The whole-line verdict stays as the FALLBACK, for two live cases: an older
+    ESBMC that does not print the RESULT line, and a run that dies before
+    reaching it.
+
+    THE OLDER REASON THIS FUNCTION EXISTS IS STILL LIVE, and it is why the
+    fallback is read as a LINE and never as a substring: a measured, total
+    failure of the soundness gate. The test used to be:
 
         if "VERIFICATION SUCCESSFUL" in log: return True
 
@@ -901,13 +927,22 @@ def verdict(log):
     into FAILED would make the loop respond to a crash by shrinking the box, i.e.
     by treating "we never found out" as "refuted".
     """
+    result = None
     seen = "UNKNOWN"
     for line in log.splitlines():
         s = line.strip()
-        if s == "VERIFICATION SUCCESSFUL":
+        m = CERTIFY_RESULT_RE.match(s)
+        if m:
+            result = m.group(1)
+        elif s == "VERIFICATION SUCCESSFUL":
             seen = "SUCCESSFUL"
         elif s == "VERIFICATION FAILED":
             seen = "FAILED"
+    if result is not None:
+        # UNDECIDED means the solver was asked and could not answer, which is
+        # the same actionable state as no verdict at all: stop, do NOT shrink.
+        return {"CERTIFIED": "SUCCESSFUL", "REFUTED": "FAILED",
+                "VACUOUS": "VACUOUS", "UNDECIDED": "UNKNOWN"}[result]
     return seen
 
 
@@ -1943,6 +1978,21 @@ def main():
             if v == "SUCCESSFUL":
                 ok[enc] = box
                 ok_holes[enc] = holes
+                break
+            if v == "VACUOUS":
+                # The box admits NO execution that walks this path. Neither
+                # accepting nor shrinking is defensible: accepting certifies a
+                # region containing no input, and shrinking responds to an empty
+                # box by making it emptier. Recorded as its own reason, because
+                # the cause is upstream -- the region came from a subtraction or
+                # a pin that excluded this path from the slice entirely -- and
+                # naming it as a refutation would send the reader looking at the
+                # solver instead.
+                failed[enc] = (
+                    "region is VACUOUS: the certification query witnessed NO "
+                    "execution admitted by it that walks this path, so every "
+                    "exit assert held for want of an execution. Before the "
+                    "non-vacuity witness existed this printed as a certificate")
                 break
             if v == "UNKNOWN":
                 # No verdict at all -- ESBMC crashed, was killed, or produced

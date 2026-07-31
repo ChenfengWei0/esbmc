@@ -66,6 +66,10 @@ bool goto_coveraget::path_cov_certify_mode = false;
 std::vector<std::string> goto_coveraget::path_cov_certify_box_names;
 std::vector<std::array<std::string, 3>> goto_coveraget::path_cov_certify_box;
 std::map<std::string, std::string> goto_coveraget::path_cov_certify_ce;
+std::pair<std::string, std::string>
+  goto_coveraget::path_cov_certify_nonvacuous_key;
+std::vector<std::pair<std::string, std::string>>
+  goto_coveraget::path_cov_certify_exit_keys;
 std::map<std::string, std::vector<std::string>>
   goto_coveraget::path_cov_certify_holes;
 bool goto_coveraget::path_cov_outer_box_mode = false;
@@ -283,11 +287,26 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
   if (!box_has_argument)
     return;
 
+  // The NON-VACUITY WITNESS is refuted on every SUCCESSFUL certification, and
+  // it is not a refutation of the box -- it is the proof that the box is not
+  // empty. Nothing is owed for it: there is no escaping input to name and no
+  // side to cut on, and demanding one would abort every certification that
+  // works. This is the same narrowing as `ce_payload_requested` above, and it
+  // has to be applied at BOTH loops below: the audit's own hard failure and the
+  // shrink suggestion, which would otherwise propose cutting the box on a
+  // claim that is not asking for a cut.
+  auto is_nonvacuity_claim = [](const std::pair<std::string, std::string> &k) {
+    return !path_cov_certify_nonvacuous_key.first.empty() &&
+           k == path_cov_certify_nonvacuous_key;
+  };
+
   std::vector<std::string> witnessless;
   {
     std::lock_guard lock(claim_outcome_mutex);
     for (const auto &key : all_claims)
     {
+      if (is_nonvacuity_claim(key))
+        continue;
       const std::string sig = key.first + "\t" + key.second;
       auto v = claim_outcome.find(sig);
       if (v == claim_outcome.end() || v->second != 'F')
@@ -314,6 +333,8 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
     std::lock_guard lock(claim_outcome_mutex);
     for (const auto &key : all_claims)
     {
+      if (is_nonvacuity_claim(key))
+        continue;
       const std::string sig = key.first + "\t" + key.second;
       auto v = claim_outcome.find(sig);
       if (v == claim_outcome.end() || v->second != 'F')
@@ -534,6 +555,140 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
     witnessless.size(),
     names);
   abort();
+}
+
+void goto_coveraget::report_path_cov_certify()
+{
+  if (!path_cov_certify_mode)
+    return;
+
+  auto verdict_of = [](const std::pair<std::string, std::string> &k) -> char {
+    if (k.first.empty())
+      return '?';
+    std::lock_guard<std::mutex> lock(claim_outcome_mutex);
+    auto it = claim_outcome.find(k.first + "\t" + k.second);
+    return it == claim_outcome.end() ? '?' : it->second;
+  };
+
+  // The path number, read back out of the witness claim's own comment
+  // (`<unit-id>:path:<enc>#nonvacuous`) rather than kept in a second static:
+  // one source for the identity the whole line is about, so the message and
+  // the claim cannot name different paths.
+  std::string enc_txt = "<unknown>";
+  {
+    const std::string &c = path_cov_certify_nonvacuous_key.first;
+    const size_t p = c.rfind(":path:");
+    const size_t h = c.rfind("#nonvacuous");
+    if (p != std::string::npos && h != std::string::npos && h > p + 6)
+      enc_txt = c.substr(p + 6, h - p - 6);
+  }
+
+  // ---- NON-VACUITY FIRST, and it decides the whole line ----
+  //
+  // Read before the `#exitN` verdicts, because if the box admits no execution
+  // that walks pi then those verdicts say nothing: every one of them holds for
+  // want of an execution, which is byte for byte what a certified box produces.
+  const char nv = verdict_of(path_cov_certify_nonvacuous_key);
+  if (nv != 'F')
+  {
+    log_error(
+      "--path-cov-certify: RESULT: VACUOUS — the box admits NO execution that "
+      "walks path enc={} of this unit ({}). Every exit assert therefore holds "
+      "FOR WANT OF AN EXECUTION, which is indistinguishable from a certified "
+      "box: this run establishes NOTHING about the box. The four structural "
+      "gates in front of it are SYNTACTIC (lo>hi, a name bounded twice, holes "
+      "emptying the interval, a decimal outside the coordinate's type) and none "
+      "of them can see this — contract state is NOT havoc'd at this transaction "
+      "bound, so a box naming an entry state the constructor never produces is "
+      "well-formed, in-type, non-empty and admits nothing",
+      enc_txt,
+      nv == 'P' ? "the antecedent held on every execution, i.e. no admitted "
+                  "input reaches this path"
+                : (nv == '?' ? "the witness claim never reached the solver"
+                             : "the solver returned unknown for the witness "
+                               "claim"));
+    exit(1);
+  }
+
+  // ---- WHAT AN ABSENT `#exitN` VERDICT MEANS HERE, and why it is not the
+  // ---- "absence is not evidence" mistake ----
+  //
+  // MEASURED on the `_box_inside` fixture: the unit has 4 exits, the box makes
+  // 2 of them unreachable, and their asserts never become verification
+  // conditions at all (`Generated 3 VCC(s)`). They were not discharged by the
+  // simplifier and `--no-simplify` does not bring them back -- symex never
+  // reaches the instruction.
+  //
+  // For THIS query an unreachable exit is a POSITIVE fact: no input the box
+  // admits leaves through it, which is exactly what the certificate claims. It
+  // is also the reading the verdict line always had, since an assert that is
+  // never reached cannot fail.
+  //
+  // The reason that inference is safe HERE and nowhere else is the non-vacuity
+  // witness above. Without it, "every exit unreachable" -- i.e. nothing
+  // executed at all -- was indistinguishable from a certificate, and that is
+  // the hole this whole change closes. With it, the all-absent case is caught
+  // and reported VACUOUS before this point is reached. So the witness is what
+  // converts absence from a silent false certificate into a named one; the
+  // count is still printed rather than folded away, because a certificate
+  // resting mostly on unreachable exits is a weaker artefact than one resting
+  // on discharged ones and a reader should be able to see which they have.
+  //
+  // 'U' is NOT absence and is NOT folded in: the solver was asked and could not
+  // answer.
+  size_t refuted = 0, holds = 0, unknown = 0, unreachable = 0;
+  for (const auto &k : path_cov_certify_exit_keys)
+    switch (verdict_of(k))
+    {
+    case 'F':
+      ++refuted;
+      break;
+    case 'P':
+      ++holds;
+      break;
+    case '?':
+      ++unreachable;
+      break;
+    default:
+      ++unknown;
+      break;
+    }
+
+  if (refuted > 0)
+    log_status(
+      "--path-cov-certify: RESULT: REFUTED — {} of {} exit assert(s) were "
+      "refuted, so an input the box admits leaves this path. The witness input "
+      "is the value the box gets shrunk with; see the SHRINK / PUNCH suggestion "
+      "above. Non-vacuity WAS witnessed, so this is a genuine refutation and "
+      "not an empty box",
+      refuted,
+      path_cov_certify_exit_keys.size());
+  else if (unknown > 0)
+    log_error(
+      "--path-cov-certify: RESULT: UNDECIDED — no exit assert was refuted, but "
+      "{} of {} came back UNKNOWN from the solver. That is not a certificate: "
+      "'nothing refuted it' and 'it was checked' are different statements, and "
+      "only the second certifies anything",
+      unknown,
+      path_cov_certify_exit_keys.size());
+  else
+    log_status(
+      "--path-cov-certify: RESULT: CERTIFIED — every input the box admits walks "
+      "path enc={} ({} of {} exit assert(s) discharged by the solver, {} at "
+      "exits the box makes unreachable), and NON-VACUITY was witnessed, so this "
+      "is a statement about executions rather than about an empty box. "
+      "BOUNDED: true under THIS exploration (tx/unwind bound, post-constructor "
+      "entry state), never 'proven'",
+      enc_txt,
+      holds,
+      path_cov_certify_exit_keys.size(),
+      unreachable);
+
+  log_status(
+    "--path-cov-certify: the run's VERIFICATION SUCCESSFUL / FAILED line is "
+    "NOT the result of this mode. The non-vacuity witness is REFUTED on every "
+    "run that certifies, so a certified box prints VERIFICATION FAILED. Read "
+    "the RESULT line above");
 }
 
 // ---- ONE bound record and ONE parser for every stage-2/3 region spec ----
@@ -3021,6 +3176,8 @@ void goto_coveraget::solidity_path_coverage()
   path_cov_certify_box.clear();
   path_cov_certify_ce.clear();
   path_cov_certify_holes.clear();
+  path_cov_certify_nonvacuous_key = {};
+  path_cov_certify_exit_keys.clear();
   std::string certify_unit;
   uint64_t certify_enc = 0, certify_depth = 0;
   std::vector<certify_boundt> certify_box;
@@ -3096,9 +3253,14 @@ void goto_coveraget::solidity_path_coverage()
       "depth={} over {} bounded input(s). The per-path identity asserts are NOT "
       "emitted in this mode and NO [Coverage] block is printed — a certified "
       "box makes these claims HOLD, which the coverage counters would report as "
-      "uncovered. The verdict of this run is VERIFICATION SUCCESSFUL (every "
-      "input in the box walks this path) versus FAILED (the counterexample is "
-      "an input inside the box that leaves it)",
+      "uncovered. THE RESULT OF THIS RUN IS THE `RESULT:` LINE, not the "
+      "VERIFICATION SUCCESSFUL / FAILED verdict: a non-vacuity witness is "
+      "emitted at this path's own exit and is REFUTED on every run that "
+      "certifies, so a CERTIFIED box prints VERIFICATION FAILED. RESULT is one "
+      "of CERTIFIED (every input in the box walks this path), REFUTED (the "
+      "counterexample is an input inside the box that leaves it) or VACUOUS "
+      "(the box admits no execution that walks this path at all, so the run "
+      "establishes nothing)",
       certify_unit,
       certify_enc,
       certify_depth,
@@ -6133,8 +6295,80 @@ void goto_coveraget::solidity_path_coverage()
         const std::string comment = id2string(f_it->first) +
                                     ":path:" + std::to_string(certify_enc) +
                                     "#exit" + std::to_string(exit_idx++);
-        all_claims.insert({comment, xpc->location.as_string()});
+        const std::string xloc = xpc->location.as_string();
+        all_claims.insert({comment, xloc});
+        // Recorded so the RESULT line can tell REFUTED from VACUOUS. Reading
+        // "some claim in all_claims was refuted" instead would call every
+        // successful certification a refutation, because the non-vacuity
+        // witness emitted below is refuted on exactly those runs.
+        path_cov_certify_exit_keys.push_back({comment, xloc});
         insert_assert(goto_program, xpc, cert_guard, comment);
+      }
+
+      // ---- THE NON-VACUITY WITNESS (see the header) ----
+      //
+      // At pi's OWN exit, carrying only `tr != enc || cnt != depth`. REFUTED
+      // means some execution the box admits walks THIS path; anything else
+      // means the box is semantically empty and every `#exitN` assert above
+      // holds for want of an execution.
+      //
+      // pi's own exit comes from `to_insert`, the enumeration's own record --
+      // not from `exits`, which is a flat scan of exit-kind instructions and
+      // does not know which one belongs to enc.
+      {
+        goto_programt::targett nv_pc;
+        bool nv_found = false;
+        for (const auto &e : to_insert)
+        {
+          const std::string &cm = std::get<2>(e);
+          const size_t q = cm.rfind(":path:");
+          if (q == std::string::npos)
+            continue;
+          if (strtoull(cm.substr(q + 6).c_str(), nullptr, 10) == certify_enc)
+          {
+            nv_pc = std::get<0>(e);
+            nv_found = true;
+            break;
+          }
+        }
+        // ---- enc is not a path of this unit ----
+        //
+        // Today this is not silently green -- `tr == enc` fails on every
+        // execution, so the run answers FAILED -- but it answers the WRONG
+        // QUESTION, and the reason it gives ("an input inside the box leaves
+        // the path") is about a path that does not exist. The driver then
+        // shrinks a box against a refutation it can never satisfy. Refused for
+        // the same reason the stage-3 ladder refuses it: a spec naming a
+        // non-existent path is a caller defect, and answering it at all
+        // launders that defect into a measurement.
+        if (!nv_found)
+        {
+          log_error(
+            "--path-cov-certify: unit '{}' — REFUSING THE QUERY: path enc={} "
+            "is not among this unit's {} enumerated path(s). `tr == {}` is then "
+            "false on every execution, so the run would answer FAILED and name "
+            "an escaping input for a path that does not exist — a refutation "
+            "the driver can never satisfy by shrinking. Check enc against the "
+            "enumeration run's report",
+            uid,
+            certify_enc,
+            to_insert.size(),
+            certify_enc);
+          exit(1);
+        }
+        const std::string nv_comment = id2string(f_it->first) +
+                                       ":path:" + std::to_string(certify_enc) +
+                                       "#nonvacuous";
+        const std::string nv_loc = nv_pc->location.as_string();
+        all_claims.insert({nv_comment, nv_loc});
+        path_cov_certify_nonvacuous_key = {nv_comment, nv_loc};
+        insert_assert(
+          goto_program,
+          nv_pc,
+          or2tc(
+            notequal2tc(tr, constant_int2tc(utype, BigInt(certify_enc))),
+            notequal2tc(cnt, constant_int2tc(utype, BigInt(certify_depth)))),
+          nv_comment);
       }
 
       ++certify_units_matched;

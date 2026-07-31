@@ -777,6 +777,56 @@ public:
   static std::vector<std::array<std::string, 3>> path_cov_certify_box;
   static std::map<std::string, std::string> path_cov_certify_ce;
 
+  // ---- THE CERTIFY-SIDE NON-VACUITY WITNESS ----
+  //
+  // The stage-3 ladder got this defence first; certification, which is the
+  // OLDER and more quoted of the two, had none. The hole is identical and the
+  // consequence is worse, because a certification run's whole output is one
+  // verdict line: the four structural gates in front of the box are all
+  // SYNTACTIC (lo > hi, a name bounded twice, holes emptying the interval, a
+  // decimal outside the coordinate's type) and none of them can see that the
+  // box is unsatisfiable SEMANTICALLY. Contract state is not havoc'd at
+  // `--solidity-max-tx 1`, so `state.x in [0,0]` against a constructor that
+  // assigns 7 is well-formed, in-type, non-empty -- and admits no execution at
+  // all. Every exit assert then holds for want of an execution and the run
+  // prints VERIFICATION SUCCESSFUL with exit 0, which is a FALSE certificate
+  // rather than a weak one.
+  //
+  // The witness is one extra claim at pi's OWN exit carrying only the path
+  // identity antecedent `tr != enc || cnt != depth`. It is REFUTED exactly when
+  // some execution the box admits walks THIS path -- the property the whole
+  // certificate is conditioned on. At ENTRY it would only witness that the unit
+  // is reachable, which passes on a box that reaches the unit and never this
+  // path.
+  //
+  // It is deliberately NOT one of the `#exitN` claims: those are the
+  // certificate, this is its precondition, and folding it in would make a
+  // vacuous run indistinguishable from a refuted one.
+  static std::pair<std::string, std::string> path_cov_certify_nonvacuous_key;
+
+  // The `#exitN` claim keys this mode emitted, in emission order. Kept because
+  // the RESULT line has to tell REFUTED from VACUOUS, and "some claim was
+  // refuted" is not enough: the non-vacuity witness is refuted on every
+  // SUCCESSFUL certification, so a reader of `all_claims` alone would call
+  // every certificate a refutation.
+  static std::vector<std::pair<std::string, std::string>>
+    path_cov_certify_exit_keys;
+
+  // Print `--path-cov-certify: RESULT: CERTIFIED | REFUTED | VACUOUS`.
+  //
+  // THE RUN'S OWN VERDICT LINE IS NOT THE RESULT OF THIS MODE, and that is a
+  // consequence of the witness above rather than a preference: the witness is
+  // REFUTED on a successful certification, so the run prints VERIFICATION
+  // FAILED for a box that certified. A driver reading the verdict line would
+  // then read every certificate as a refutation -- so the tool states its own
+  // result on a line of its own, and the driver reads THAT.
+  //
+  // The two changes are inseparable. Emitting the witness without the RESULT
+  // line silently inverts every certification the driver has ever recorded;
+  // emitting the RESULT line without the witness leaves the vacuity hole open
+  // while looking as though it had been closed.
+  static void report_path_cov_certify();
+
   // ---- PUNCHED INTERVALS (Definition 5): R_c = [L, U] \ H ----
   //
   // The values REMOVED from each coordinate's interval. A closed interval alone

@@ -1162,9 +1162,14 @@ void report_coverage(
       log_status(
         "--path-cov-certify: no [Coverage] block is printed in certification "
         "mode — the claims here are `assume(box); assert(tr == pi)`, so a "
-        "CERTIFIED box makes them hold and would be counted as uncovered. The "
-        "result of this run is the VERIFICATION SUCCESSFUL / FAILED verdict "
-        "below, and on FAILED the counterexample input inside the box");
+        "CERTIFIED box makes them hold and would be counted as uncovered");
+      // THE RESULT LINE, and it replaces the verdict line as this mode's
+      // answer. The non-vacuity witness is REFUTED on every run that
+      // certifies, so a certified box now prints VERIFICATION FAILED — which
+      // is why the tool has to state its own result rather than let a caller
+      // infer one. Printed last in this arm so it is the final word before the
+      // verdict a reader must NOT use.
+      goto_coveraget::report_path_cov_certify();
     }
     else if (goto_coveraget::path_cov_assert_mode)
     {

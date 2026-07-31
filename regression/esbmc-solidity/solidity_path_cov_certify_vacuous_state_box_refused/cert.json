@@ -1,0 +1,3 @@
+{ "unit": "f", "enc": 2, "depth": 1,
+  "box": [ { "name": "state.s", "lo": "0", "hi": "0" },
+           { "name": "a", "lo": "11", "hi": "100" } ] }
