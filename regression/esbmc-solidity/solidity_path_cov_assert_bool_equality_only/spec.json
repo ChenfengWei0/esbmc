@@ -1,0 +1,3 @@
+{ "unit": "bump", "enc": 2, "depth": 1,
+  "region": [ { "name": "a", "lo": "11", "hi": "100" },
+              { "name": "state.flag", "lo": "0", "hi": "0" } ] }

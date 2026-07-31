@@ -790,11 +790,28 @@ static std::string path_cov_structural_refusal(
 // Every constant in these queries is built with constant_int2tc ON THE
 // COORDINATE'S OWN TYPE, so a decimal above the type's maximum WRAPS and the
 // query is emitted about a different number than the one written down.
+//
+// ---- BOOL IS NOT AN 8-BIT TYPE HERE, WHATEVER get_width() SAYS ----
+//
+// `bool_type2t::get_width()` returns 8 (src/irep2/irep2_type.cpp — "for the
+// byte representing memory model"). That is the right answer to the question it
+// answers and must not be changed. It is the WRONG answer to this one: the
+// generic `2^width - 1` below would make the admissible range of a bool
+// [0, 255], and `state.flag in [0, 200]` would then pass every type gate in the
+// pipeline and be emitted as a constraint nobody could have meant. The value
+// domain of a bool is {0, 1}, so that is what is checked and that is the
+// maximum reported.
 static bool path_cov_fits_type(
   const type2tc &t,
   const std::string &dec,
   std::string &tmax_out)
 {
+  if (is_bool_type(t))
+  {
+    tmax_out = "1";
+    const BigInt v = string2integer(dec);
+    return v >= 0 && v <= 1;
+  }
   BigInt tmax = 1;
   for (unsigned w = 0; w < t->get_width(); ++w)
     tmax *= 2;
@@ -822,6 +839,63 @@ path_cov_out_of_type_refusal(const path_cov_boundt &b, const type2tc &bt)
            tmax + "])";
   }
   return std::string();
+}
+
+// ---- S5: the ENTRY CONSTRAINT of a BOOL coordinate ----
+//
+// A bool's domain has two points, so `lo`, `hi` and the holes together name a
+// SUBSET S of {0,1} — and every subset of a two-point set is expressible
+// EXACTLY as a disjunction of equalities. Returns `OR over v in S of (c == v)`,
+// or a nil expression when S is empty (which the caller must refuse: an
+// unsatisfiable entry assumption certifies vacuously, the oldest false-
+// certificate route in this file).
+//
+// WHY NOT `lo <= c && c <= hi`: because `>=` / `<=` on a bool operand reaches
+// the `assert(is_signedbv_type(...))` arms of smt_conv (2494 / 2525 / 2556 /
+// 2587) and SIGABRTs. And why not `constant_int2tc(bool_type, v)`: whether that
+// is well formed at the SMT layer was never established, and it does not need to
+// be — `gen_true_expr()` / `gen_false_expr()` are the constants of that type
+// this file already builds, so the question is sidestepped rather than answered.
+//
+// `holes_applied` is the number of holes that REMOVED A VALUE THE INTERVAL
+// ACTUALLY HELD. It is deliberately not `holes.size()`: the caller reports it,
+// and a counter that reads the spec instead of the formula is the defect this
+// file already fixed once on the certify side. On a two-point domain a hole
+// outside [lo, hi] removes nothing, and saying it removed something would be
+// the same lie in the other direction.
+//
+// |S| == 2 STILL RETURNS A GUARD (`c == false || c == true`). It is trivially
+// true, and emitting it anyway is the point: the caller increments its
+// emitted-bounds counter next to the insertion, so a silent nil here would make
+// that counter describe a conjunct that never existed.
+static expr2tc path_cov_bool_domain_guard(
+  const expr2tc &c,
+  const std::string &lo_dec,
+  const std::string &hi_dec,
+  const std::vector<std::string> &holes,
+  size_t &holes_applied)
+{
+  const BigInt lo = string2integer(lo_dec), hi = string2integer(hi_dec);
+  std::set<BigInt> hset;
+  for (const auto &h : holes)
+    hset.insert(string2integer(h));
+  expr2tc g;
+  holes_applied = 0;
+  for (int64_t v = 0; v <= 1; ++v)
+  {
+    const BigInt bv((int64_t)v);
+    if (bv < lo || bv > hi)
+      continue;
+    if (hset.count(bv) != 0)
+    {
+      ++holes_applied;
+      continue;
+    }
+    const expr2tc eq =
+      equality2tc(c, v != 0 ? gen_true_expr() : gen_false_expr());
+    g = is_nil_expr(g) ? eq : or2tc(g, eq);
+  }
+  return g;
 }
 
 // ---- The contract instance object of ONE named contract, by EXACT id ----
@@ -2793,15 +2867,45 @@ public:
 // at most the one that was written down. A new bounded type is one line here;
 // a new unbounded type costs a named refusal, not a crash.
 //
-// Bit-vectors only. Address, bytesN and every Solidity integer lower to one, so
-// this covers the coordinates that have ever been measured. `bool` is left OUT
-// on purpose rather than by oversight: a two-point domain has no interval to
-// measure, and the honest shape for it is an equality coordinate, which this
-// stage does not have. Refusing it names it instead of bounding it wrongly.
+// Unsigned bit-vectors and BOOL. Address, bytesN and every Solidity integer
+// lower to an unsigned bit-vector, so that arm covers the coordinates that have
+// ever been measured.
+//
+// ---- S5: `bool` IS EXPRESSIBLE, BUT NOT AS AN INTERVAL ----
+//
+// It used to be refused here, and the stated reason was right about the shape
+// and wrong about the conclusion: a two-point domain has no interval to
+// measure, so the honest form is an EQUALITY coordinate. That form exists —
+// `{0,1}` has only four subsets, so lo/hi/holes collapse to an allowed set
+// `S ⊆ {0,1}` and the constraint is `OR over v in S of (c == v)`, which is
+// exact rather than an approximation. Refusing it cost the class a
+// flag-setting function is entirely about.
+//
+// WHAT EVERY CALLER OWES IN RETURN, because this predicate no longer implies
+// it: a bool coordinate may NOT have `>=` / `<=` / `>` / `<` built on it. Those
+// arms of smt_conv fall through to `assert(is_signedbv_type(...))`
+// (src/solvers/smt/smt_conv.cpp 2494 / 2525 / 2556 / 2587) — SIGABRT, which is
+// exactly the class of failure this whitelist exists to prevent. Nor may a
+// `constant_int2tc` be built on a bool type; `gen_true_expr()` /
+// `gen_false_expr()` are the only constants of that type this file makes.
+//
+// Stage 3's per-variable ladder therefore takes `coord_expressible` as its
+// EQUALITY gate and derives its interval gate as `equality_ok &&
+// !is_bool_type(vt)`. Widening this test without that split un-gates the
+// ordering rungs and crashes; the two changes are one change.
+//
+// One further trap, recorded because the type system actively misleads here:
+// `bool_type2t::get_width()` returns 8 (irep2_type.cpp — "the byte representing
+// memory model"). That is correct for its own purpose and must NOT be changed,
+// but it means a naive `2^width - 1` type-range check admits `[0, 255]` for a
+// bool. `path_cov_fits_type` and certify's copy of it both special-case bool to
+// `[0, 1]` for that reason.
 static bool
 coord_expressible(const type2tc &t, std::string &why)
 {
   if (is_unsignedbv_type(t))
+    return true;
+  if (is_bool_type(t))
     return true;
   // SIGNED IS REFUSED, and it was NOT before. Letting it in was my own hole and
   // it is a live false certificate, reproduced on a must-flip pair that differs
@@ -2850,10 +2954,6 @@ coord_expressible(const type2tc &t, std::string &why)
     why = "it resolves to a POINTER (a contract or interface handle) — the "
           "value is an address in the model's own allocator, not an input a "
           "test can set";
-  else if (is_bool_type(t))
-    why = "it resolves to a BOOLEAN — a two-point domain has no interval to "
-          "measure; the honest shape is an equality coordinate, which this "
-          "stage does not have";
   else
     why = "it does not resolve to a bit-vector, which is the only kind this "
           "stage can put a bound on";
@@ -5813,6 +5913,30 @@ void goto_coveraget::solidity_path_coverage()
             integer2string(hi - 1),
             ct->get_width());
         }
+        else if (is_bool_type(ct))
+        {
+          // ---- S5: PUBLISH IT, or the subtraction is skipped entirely ----
+          //
+          // The publication above is unsigned-only, and this map is what seeds
+          // `bounds` with the free bound in report_outer_boxes. A coordinate
+          // absent from it has `have_l`/`have_u` false unless some probe HOLDS,
+          // so with no seed a bool coordinate can land in "(unbounded within the
+          // probed span)" and be dropped from `box`, and the sibling subtraction
+          // never runs on it.
+          //
+          // The range is [0, 1] and NOT [0, 2^get_width()-1]: get_width() is 8
+          // for a bool (the memory-model byte), which would publish [0, 255] to
+          // the driver and invite a ladder of 255 meaningless probes.
+          path_cov_outer_box_type_range[c.name] = {"0", "1"};
+          log_status(
+            "--path-cov-outer-box: coordinate '{}' has TYPE RANGE [0, 1] "
+            "(BOOLEAN). It is an EQUALITY coordinate, not an interval one: a "
+            "probe is emitted as `c == false` / `c == true` rather than as an "
+            "ordering comparison, and only the values 0 and 1 are meaningful. "
+            "Note its bit width reads as 8 (the memory-model byte) — that is "
+            "NOT its value range",
+            c.name);
+        }
       }
 
       // A pin whose coordinate was refused cannot be established, so it must
@@ -5923,6 +6047,34 @@ void goto_coveraget::solidity_path_coverage()
         for (const auto &[pname, pval] : pins_applied)
         {
           const expr2tc &pexpr = snap.at(pname);
+          if (is_bool_type(pexpr->type))
+          {
+            // ---- S5: no constant_int2tc on a bool, and no silent coercion ----
+            //
+            // `!= 0 means true` would accept a pin value of 7 and label every
+            // region below "measured under flag == 7" while having pinned it to
+            // true. The pin is part of the ANSWER (it is printed with every box
+            // and every certified region), so a value the coordinate cannot hold
+            // is refused rather than rounded.
+            const BigInt pv = string2integer(pval);
+            if (pv < 0 || pv > 1)
+            {
+              log_error(
+                "--path-cov-outer-box: REFUSING the pin '{} == {}': the "
+                "coordinate is a BOOLEAN and its value domain is {{0, 1}}. "
+                "Coercing this to true/false would label every region below "
+                "with a pin that was never applied, and the pin is part of the "
+                "answer, not a detail of how it was obtained",
+                pname,
+                pval);
+              exit(1);
+            }
+            not_this_path = or2tc(
+              not_this_path,
+              notequal2tc(
+                pexpr, pv == 0 ? gen_false_expr() : gen_true_expr()));
+            continue;
+          }
           not_this_path = or2tc(
             not_this_path,
             notequal2tc(
@@ -5985,13 +6137,25 @@ void goto_coveraget::solidity_path_coverage()
           // type maximum is already seeded as the free bound, so nothing is
           // lost. Counted and reported, because a silently shorter ladder is a
           // silently coarser measurement.
+          //
+          // ---- S5: THE DROP WAS UNSIGNED-ONLY, SO A BOOL BYPASSED IT ----
+          //
+          // With bool accepted by coord_expressible, a driver value of `7` on a
+          // bool coordinate reached the probe builder untouched. Its type
+          // maximum is 1, not 2^get_width()-1 = 255: get_width() answers a
+          // memory-model question, not a value-domain one.
           size_t out_of_type = 0;
-          if (is_unsignedbv_type(ct))
+          if (is_unsignedbv_type(ct) || is_bool_type(ct))
           {
             BigInt tmax = 1;
-            for (unsigned b = 0; b < ct->get_width(); ++b)
-              tmax *= 2;
-            tmax -= 1;
+            if (is_bool_type(ct))
+              tmax = 1;
+            else
+            {
+              for (unsigned b = 0; b < ct->get_width(); ++b)
+                tmax *= 2;
+              tmax -= 1;
+            }
             std::vector<BigInt> kept;
             kept.reserve(probe_vals.size());
             for (const BigInt &v : probe_vals)
@@ -6039,10 +6203,40 @@ void goto_coveraget::solidity_path_coverage()
             for (int dir = 0; dir < 2; ++dir)
             {
               const bool upper = dir == 0;
-              const expr2tc cmp =
-                upper ? lessthanequal2tc(snap[c.name], constant_int2tc(ct, v))
-                      : greaterthanequal2tc(
-                          snap[c.name], constant_int2tc(ct, v));
+              expr2tc cmp;
+              if (is_bool_type(ct))
+              {
+                // ---- S5: the SAME probe, written without an ordering op ----
+                //
+                // On {0,1} the two ladder predicates are exactly expressible as
+                // equalities, so no new probe KIND is needed and
+                // report_outer_boxes' tightening and type-range seed are
+                // untouched:
+                //
+                //     c <= 0  ==  c == false        c <= 1  ==  true
+                //     c >= 1  ==  c == true         c >= 0  ==  true
+                //
+                // The trivially-true arms are emitted as `true` rather than
+                // skipped: the probe then HOLDS, which is the correct reading —
+                // 1 IS an upper bound for a bool, and 0 IS a lower bound. A
+                // skipped probe would instead go undecided and read as "the
+                // solver was never asked".
+                //
+                // Values outside {0,1} cannot arrive here: the type drop above
+                // removes them and the coordinate is refused when none survive.
+                const expr2tc &cv = snap[c.name];
+                if (upper)
+                  cmp = (v <= 0) ? equality2tc(cv, gen_false_expr())
+                                 : gen_true_expr();
+                else
+                  cmp = (v >= 1) ? equality2tc(cv, gen_true_expr())
+                                 : gen_true_expr();
+              }
+              else
+                cmp =
+                  upper ? lessthanequal2tc(snap[c.name], constant_int2tc(ct, v))
+                        : greaterthanequal2tc(
+                            snap[c.name], constant_int2tc(ct, v));
               const std::string comment =
                 id2string(f_it->first) + ":path:" + std::to_string(penc) + "#" +
                 (upper ? "ub" : "lb") + "_" + c.name + "_" + integer2string(v);
@@ -6286,21 +6480,23 @@ void goto_coveraget::solidity_path_coverage()
         // Checked here rather than in the structural block above because this is
         // the first point where the coordinate's TYPE is known; the block above
         // can only compare decimals with each other. coord_expressible has
-        // already restricted `bt` to an unsigned bit-vector, so the admissible
-        // range is exactly [0, 2^width - 1].
+        // already restricted `bt` to an unsigned bit-vector or a bool.
+        //
+        // The range now comes from `path_cov_fits_type` rather than from a
+        // second inline `2^width - 1`. That is what the duplication note at the
+        // top of this file asks for, and S5 is precisely the change that would
+        // otherwise have gone into one copy and not the other: a bool's
+        // `get_width()` is 8, so the inline arithmetic admitted [0, 255] and
+        // `state.flag in [0, 200]` would have been certified as written.
         {
-          BigInt tmax = 1;
-          for (unsigned w = 0; w < bt->get_width(); ++w)
-            tmax *= 2;
-          tmax -= 1;
           std::vector<std::pair<std::string, std::string>> vals = {
             {"lo", b.lo}, {"hi", b.hi}};
           for (const auto &h : b.holes)
             vals.push_back({"hole", h});
           for (const auto &[what, txt] : vals)
           {
-            const BigInt v = string2integer(txt);
-            if (v >= 0 && v <= tmax)
+            std::string tmax;
+            if (path_cov_fits_type(bt, txt, tmax))
               continue;
             log_error(
               "--path-cov-certify: unit '{}' — REFUSING THE QUERY on coordinate "
@@ -6314,7 +6510,7 @@ void goto_coveraget::solidity_path_coverage()
               b.name,
               what,
               txt,
-              integer2string(tmax));
+              tmax);
             exit(1);
           }
         }
@@ -6322,22 +6518,61 @@ void goto_coveraget::solidity_path_coverage()
         // `lo <= c <= hi`, then one `c != h` per hole (Definition 5). With no
         // holes this is byte for byte the assumption emitted before punched
         // intervals existed, so every existing spec is unaffected.
-        expr2tc bguard = and2tc(
-          greaterthanequal2tc(bs, constant_int2tc(bt, string2integer(b.lo))),
-          lessthanequal2tc(bs, constant_int2tc(bt, string2integer(b.hi))));
-        for (const auto &h : b.holes)
+        expr2tc bguard;
+        if (is_bool_type(bt))
+        {
+          // ---- S5: a bool is an EQUALITY coordinate ----
+          //
+          // No ordering operator is built on it at all (that is a SIGABRT, see
+          // path_cov_bool_domain_guard) and no integer constant of its type is
+          // built either. lo/hi/holes collapse to the allowed set and the whole
+          // bound — interval AND holes — is one disjunction of equalities.
+          size_t applied = 0;
+          bguard =
+            path_cov_bool_domain_guard(bs, b.lo, b.hi, b.holes, applied);
+          if (is_nil_expr(bguard))
+          {
+            // Unreachable through the structural gates above (`lo > hi` and
+            // punched-empty are both refused there, and on {0,1} those two
+            // exhaust the ways S can be empty). Kept anyway, and kept as a
+            // REFUSAL rather than an assert: if a fourth route ever opens, the
+            // failure it produces is a VERIFICATION SUCCESSFUL next to a box
+            // holding no inputs, which is the one outcome this query exists to
+            // prevent.
+            log_error(
+              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on coordinate "
+              "'{}': it is a BOOLEAN and the box admits NEITHER value "
+              "(lo={}, hi={}, {} hole(s)). The entry assumption is then "
+              "unsatisfiable and every exit assert would hold for want of an "
+              "execution — a false certificate, not a weak one",
+              uid,
+              b.name,
+              b.lo,
+              b.hi,
+              b.holes.size());
+            exit(1);
+          }
+          holes_emitted += applied;
+        }
+        else
         {
           bguard = and2tc(
-            bguard,
-            notequal2tc(bs, constant_int2tc(bt, string2integer(h))));
-          // Incremented HERE, inside the conjunction, and not from
-          // `b.holes.size()` next to the insert. MEASURED on the fault injection
-          // for this very change: with the conjunction disabled the query
-          // correctly flipped to FAILED while the line above still reported
-          // "1 hole(s) punched" — a counter that reads the SPEC cannot witness
-          // whether the spec reached the formula, which is the only thing it was
-          // added to witness.
-          ++holes_emitted;
+            greaterthanequal2tc(bs, constant_int2tc(bt, string2integer(b.lo))),
+            lessthanequal2tc(bs, constant_int2tc(bt, string2integer(b.hi))));
+          for (const auto &h : b.holes)
+          {
+            bguard = and2tc(
+              bguard,
+              notequal2tc(bs, constant_int2tc(bt, string2integer(h))));
+            // Incremented HERE, inside the conjunction, and not from
+            // `b.holes.size()` next to the insert. MEASURED on the fault
+            // injection for this very change: with the conjunction disabled the
+            // query correctly flipped to FAILED while the line above still
+            // reported "1 hole(s) punched" — a counter that reads the SPEC
+            // cannot witness whether the spec reached the formula, which is the
+            // only thing it was added to witness.
+            ++holes_emitted;
+          }
         }
 
         goto_programt::instructiont asm_i;
@@ -6586,14 +6821,46 @@ void goto_coveraget::solidity_path_coverage()
             exit(1);
           }
         }
-        expr2tc bguard = and2tc(
-          greaterthanequal2tc(bs, constant_int2tc(bt, string2integer(b.lo))),
-          lessthanequal2tc(bs, constant_int2tc(bt, string2integer(b.hi))));
-        for (const auto &h : b.holes)
+        expr2tc bguard;
+        if (is_bool_type(bt))
+        {
+          // ---- S5: same collapse as the certify side, same helper ----
+          //
+          // Deliberately the SAME function rather than a second copy: the file
+          // already carries one duplicated bound-parse/gate pair and says at the
+          // top what that costs ("a fix to one copy does not reach the other").
+          size_t applied = 0;
+          bguard =
+            path_cov_bool_domain_guard(bs, b.lo, b.hi, b.holes, applied);
+          if (is_nil_expr(bguard))
+          {
+            log_error(
+              "--path-cov-assert: unit '{}' -- REFUSING THE LADDER on region "
+              "coordinate '{}': it is a BOOLEAN and the region admits NEITHER "
+              "value (lo={}, hi={}, {} hole(s)). Nothing executes, so EVERY "
+              "candidate on the ladder would hold for want of an execution and "
+              "the table would read as a whole set of certified post-state "
+              "assertions",
+              uid,
+              b.name,
+              b.lo,
+              b.hi,
+              b.holes.size());
+            exit(1);
+          }
+          holes_emitted += applied;
+        }
+        else
         {
           bguard = and2tc(
-            bguard, notequal2tc(bs, constant_int2tc(bt, string2integer(h))));
-          ++holes_emitted;
+            greaterthanequal2tc(bs, constant_int2tc(bt, string2integer(b.lo))),
+            lessthanequal2tc(bs, constant_int2tc(bt, string2integer(b.hi))));
+          for (const auto &h : b.holes)
+          {
+            bguard = and2tc(
+              bguard, notequal2tc(bs, constant_int2tc(bt, string2integer(h))));
+            ++holes_emitted;
+          }
         }
         goto_programt::instructiont asm_i;
         asm_i.type = ASSUME;
@@ -6881,16 +7148,27 @@ void goto_coveraget::solidity_path_coverage()
         }
         const type2tc vt = live->type;
 
-        // ---- (F): coord_expressible is the WRONG gate for the equality rungs
+        // ---- (F): coord_expressible is the EQUALITY gate, NOT the interval one
         //
-        // It refuses `bool` because a two-point domain has no interval. That is
-        // right for the interval and delta rungs and wrong for `post == pre` /
-        // `post != pre`, which are perfectly expressible on a bool -- reusing it
-        // as written would silently drop every boolean state variable, which is
-        // exactly the class a flag-setting function is about.
+        // The two must be computed in THIS order and never collapsed. Before
+        // S5, `coord_expressible` refused bool and this read
+        // `interval_ok = coord_expressible(...)`, `equality_ok = interval_ok ||
+        // is_bool_type(vt)` -- which was correct only for as long as the
+        // whitelist kept bool out. The moment S5 widened the whitelist,
+        // `interval_ok` became TRUE for a bool, the `if (!interval_ok) continue`
+        // below stopped firing, and the four ordering rungs were built as
+        // `>=` / `<=` / `>` / `<` over a bool -- which lands in the
+        // `assert(is_signedbv_type(...))` arms of smt_conv (2494 / 2525 / 2556 /
+        // 2587) and SIGABRTs. Widening the whitelist WITHOUT this split turns a
+        // deliberately correct path into the exact crash the whitelist exists to
+        // prevent, so the two edits are one edit.
+        //
+        // `post == pre` / `post != pre` remain perfectly expressible on a bool,
+        // and they are the class a flag-setting function is entirely about, so
+        // the equality rungs are still emitted.
         std::string why;
-        const bool interval_ok = coord_expressible(vt, why);
-        const bool equality_ok = interval_ok || is_bool_type(vt);
+        const bool equality_ok = coord_expressible(vt, why);
+        const bool interval_ok = equality_ok && !is_bool_type(vt);
         if (!equality_ok)
         {
           path_cov_refused_coords[vname] = why;
@@ -6898,7 +7176,16 @@ void goto_coveraget::solidity_path_coverage()
         }
         if (!interval_ok)
           path_cov_refused_coords[vname + " [ordering/interval rungs]"] =
-            why +
+            // `why` is EMPTY when coord_expressible accepted the type, which is
+            // now the bool case -- the only way to reach here with equality_ok.
+            // Printing an empty reason would read as "refused, cause unknown".
+            (why.empty()
+               ? std::string(
+                   "it resolves to a BOOLEAN -- a two-point domain has no "
+                   "ordering to measure, and `post >= pre` built on a bool "
+                   "operand reaches the signedbv-asserting arm of the SMT "
+                   "conversion rather than a comparison")
+               : why) +
             ". The equality rungs (post == pre / post != pre) ARE emitted for "
             "it -- only the ordering, interval and delta rungs are not";
 
