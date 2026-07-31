@@ -611,6 +611,56 @@ public:
   static std::atomic<size_t> live_decided;
   static std::atomic<size_t> claims_total_atomic;
 
+  // ---- THIS RUN DID NOT CONCLUDE, AND EVERYTHING BELOW IS CONDITIONED ON IT --
+  //
+  // Empty means the solve loop ran to the end. Non-empty names how it died, and
+  // is the single fact that changes three otherwise-unrelated behaviours:
+  //
+  //   * `cov-report.json` is stamped PARTIAL (report["partial"], and the same
+  //     under `summary`). A partial report read as a complete one would deflate
+  //     every numerator computed from it, silently, and it lands under the same
+  //     filename a complete report does — so the marker is the only thing
+  //     separating them and it is written in both directions, never omitted.
+  //   * a claim with NO verdict is filed `run-died-before-solving` rather than
+  //     `not-solved-this-run`. Today that token means "simplified away at symex
+  //     time", which is a fact about the CLAIM; a claim the run never got to is
+  //     a fact about the RUN, and collapsing the two makes the report unable to
+  //     explain the very thing it is reporting.
+  //   * audit_entry_liveness stops aborting. Its premise -- "a unit with
+  //     instrumented claims should have been entered" -- only holds for a run
+  //     that reached the end of its job loop. On a run that died at claim 1 of
+  //     N almost every unit is legitimately un-entered, and aborting there would
+  //     destroy the partial report on its way out.
+  static std::string path_cov_partial_reason;
+
+  // The claim comments the per-claim solve loop was actually given, i.e. the
+  // asserts that survived simplification and reached the equation. Filled once,
+  // before the first solve, by walking the equation.
+  //
+  // WITHOUT IT THE PARTIAL RUN'S U-REASONS ARE WRONG, and wrong in the
+  // direction that overstates the damage. MEASURED on aqua at 8 g: 2846 paths,
+  // of which 1024 never became a VCC at all (the simplifier folded them away at
+  // symex time) and 1822 reached the loop. Classifying every undecided claim as
+  // `run-died-before-solving` reported 1826 paths as lost to the death when
+  // ~901 were -- and the other 925 are lost to something no budget can fix.
+  // Two different facts, two different next actions, one cell.
+  //
+  // RESIDUAL IMPRECISION, stated rather than left to be found: a claim can be
+  // folded away on one symex branch and generated on another. Such a claim IS
+  // in this set, so if the run dies before reaching it, it is filed
+  // `run-died-before-solving` -- which is right. The reverse (a claim in
+  // neither population) cannot occur: a claim absent from the equation was
+  // never queued.
+  static std::set<std::string> claims_in_solve_loop;
+
+  // Signal-safe snapshot for path coverage, mirroring branch coverage's
+  // (branch_cov_active / total_branch_atomic / live_reached). Written at the
+  // end of instrumentation and in the per-claim job; read ONLY by the signal
+  // handler, which may take no lock and may not walk a std::map.
+  static std::atomic<bool> path_cov_active;
+  static std::atomic<size_t> total_paths_atomic;
+  static std::atomic<size_t> live_F;
+
   // Each enumerated path's DECISION DEPTH, keyed like all_claims.
   //
   // Reported because the next stage cannot be driven without it: every stage-2

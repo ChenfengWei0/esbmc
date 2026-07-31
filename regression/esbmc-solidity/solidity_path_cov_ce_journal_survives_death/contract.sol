@@ -41,8 +41,14 @@
 //     statement about the disk. A census of what the writer believes it wrote
 //     would have printed correct-looking numbers throughout the period in which
 //     nothing called the covered-set writer at all.
-//   * `Coverage report written to cov-report.json` must be ABSENT. That is the
-//     whole claim: the payload survived a run that never got to write a report.
+//   * the run must be one that DIED. This line originally asserted that
+//     `Coverage report written to cov-report.json` was ABSENT, which was true
+//     when the only report was the end-of-run one. Step 2 deliberately changed
+//     that: a dying run now writes a PARTIAL report. The assertion was replaced
+//     rather than deleted -- it is now `Report Completeness: PARTIAL ...
+//     std::bad_alloc`, which pins the same fact (this run did not conclude) in
+//     the vocabulary the tool now has. Deleting it would have left the journal
+//     line provable by a run that finished normally, which is not the claim.
 //
 // The contract is chosen so that every enumerated path is feasible (F 4, I 0,
 // U 0), which makes the FIRST decided claim a witnessed one and the injected

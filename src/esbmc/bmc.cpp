@@ -771,8 +771,19 @@ void report_coverage(
   const std::unordered_multiset<std::string> &reached_mul_claims,
   pytest_generator &pytest_gen,
   ctest_generator &ctest_gen,
-  foundry_generator &foundry_gen)
+  foundry_generator &foundry_gen,
+  const std::string &partial_reason)
 {
+  // Published to the U-reason classifier before anything reads it, so a claim
+  // that never got a verdict is filed `run-died-before-solving` rather than
+  // `not-solved-this-run` (which means "the simplifier folded it away", a fact
+  // about the claim and not about the run), and so audit_entry_liveness stops
+  // treating an un-entered unit as a defect. Both consumers run inside this
+  // function, below.
+  const bool is_partial = !partial_reason.empty();
+  if (is_partial)
+    goto_coveraget::path_cov_partial_reason = partial_reason;
+
   bool is_assert_cov = options.get_bool_option("assertion-coverage") ||
                        options.get_bool_option("assertion-coverage-claims");
   bool is_cond_cov = options.get_bool_option("condition-coverage") ||
@@ -1202,6 +1213,26 @@ void report_coverage(
         ++tracked_instance;
 
     log_success("\n[Coverage]\n");
+    // ---- THE COMPLETENESS LINE, printed in BOTH directions ----
+    //
+    // A partial report lands under the same filename a complete one does, and
+    // the [Coverage] block below is byte-compatible with a run that genuinely
+    // measured these numbers. So the discriminator is stated as its own line,
+    // unconditionally: a marker that is only present when something is wrong is
+    // indistinguishable, to any consumer that has not been taught about it,
+    // from a marker that was forgotten.
+    if (is_partial)
+      log_result(
+        "Report Completeness: PARTIAL — this run did not conclude ({}). {} of "
+        "{} claim(s) had been decided. Every count below is a LOWER BOUND: the "
+        "paths never reached are reported U with reason "
+        "'run-died-before-solving', which is NOT the same as "
+        "'not-solved-this-run'",
+        partial_reason,
+        goto_coveraget::live_decided.load(std::memory_order_relaxed),
+        goto_coveraget::claims_total_atomic.load(std::memory_order_relaxed));
+    else
+      log_result("Report Completeness: COMPLETE");
     if (total == 0)
       log_result("No complete path enumerated");
     else
@@ -1883,11 +1914,43 @@ void report_coverage(
     }
 
     json report;
+    // ---- PARTIAL, AT THE TOP LEVEL, IN BOTH DIRECTIONS ----
+    //
+    // A partial report is written to the same `cov-report.json` a complete one
+    // is, because that is where every consumer looks and the alternative --
+    // writing it somewhere else -- reproduces today's behaviour of keeping
+    // nothing. The marker is therefore the ONLY thing separating them, so it is
+    // emitted unconditionally: `false` on a complete run is what makes its
+    // absence a detectable defect rather than an assumed default. A consumer
+    // that reads `partial` with a default of false would otherwise treat a
+    // report from a build that forgot to set it as complete.
+    //
+    // Duplicated under `summary` on purpose. Every existing reader of these
+    // reports (report_summary.py, branch_gate.py, fset_cmp.py, gap_attribution
+    // .py) opens `summary` and several never look at the top level at all; a
+    // marker they cannot see is a marker that does not exist.
+    report["partial"] = is_partial;
+    if (is_partial)
+      report["partial_reason"] = partial_reason;
     report["coverage_type"] = cov_type;
     report["source_files"] = json::array();
     for (const auto &f : source_files)
       report["source_files"].push_back(f);
     report["claims"] = claims_json;
+    report["summary"]["partial"] = is_partial;
+    if (is_partial)
+    {
+      report["summary"]["partial_reason"] = partial_reason;
+      // The two numbers that say HOW partial. Without them a reader can see
+      // that the run was cut short but not whether it was cut short at 1% or
+      // 99%, and the difference decides whether the report is worth consuming
+      // at all. Taken from the atomics the job loop maintains, so they are the
+      // same numbers the signal handler would have printed.
+      report["summary"]["claims_decided"] =
+        goto_coveraget::live_decided.load(std::memory_order_relaxed);
+      report["summary"]["claims_total"] =
+        goto_coveraget::claims_total_atomic.load(std::memory_order_relaxed);
+    }
     report["summary"]["total"] = total;
     report["summary"]["covered"] = covered_count;
     report["summary"]["uncovered"] = total - covered_count;
@@ -2792,6 +2855,22 @@ smt_convt::resultt bmct::multi_property_check(
   goto_coveraget::claims_total_atomic.store(
     remaining_claims, std::memory_order_relaxed);
 
+  // The exact set of claims this loop was given, recorded BEFORE it starts.
+  // It is what lets a partial run tell "the loop never got to this claim" from
+  // "the simplifier folded this claim away and no loop was ever going to see
+  // it" -- two facts with opposite next actions that would otherwise share one
+  // U-reason cell. Taken from the equation rather than from the job indices
+  // because an index says nothing about WHICH claim it is until the per-job
+  // slicer has run, and a job that never runs never slices.
+  if (is_path_cov)
+  {
+    std::set<std::string> queued;
+    for (const auto &step : eq.SSA_steps)
+      if (step.is_assert() && !step.ignore)
+        queued.insert(step.comment);
+    goto_coveraget::claims_in_solve_loop.swap(queued);
+  }
+
   // Reorder so user-source claims solve before c2goto/library claims. Walk
   // SSA_steps once, mapping each assertion's 1-based index to a bool flag
   // "is in user source". Library paths contain "c2goto/library" or "/library/";
@@ -3685,6 +3764,12 @@ smt_convt::resultt bmct::multi_property_check(
         // this metric by construction. Incremental (not just at run end) for
         // the same reason as branch coverage — a mid-solve kill on a large
         // contract must not throw away the paths already witnessed.
+        // Signal-safe numerator. Bumped under reached_claims_mutex, beside the
+        // insertion it counts, so the two cannot drift; read only by the kill
+        // handler, which cannot walk reached_claims (a std::unordered_set,
+        // possibly mid-rehash when the signal lands).
+        if (is_path_cov)
+          goto_coveraget::live_F.fetch_add(1, std::memory_order_relaxed);
         if (is_path_cov && !goto_coveraget::path_covered_outpath.empty())
           goto_coveraget::write_path_covered_set_atomic(fmt::format(
             "mid-solve after claim {} of {}", decided_now, remaining_claims));
@@ -3771,6 +3856,115 @@ smt_convt::resultt bmct::multi_property_check(
       }
   };
 
+  // ---- THE REPORT MUST OUTLIVE THE JOB LOOP ----
+  //
+  // report_coverage sits AFTER this loop and INSIDE run_thread's try
+  // (bmc.cpp:2405), and the only verification-phase catch is at :2559. So an
+  // allocation failure in any job unwound straight past the report: a CAUGHT
+  // OOM cost the ENTIRE report, not part of it. Measured on aqua at 8 g -- 938
+  // decided claims and 5 of 15 witnesses, discarded at 51.5% completion.
+  //
+  // The fix is to make the tail run on the exception path too, then rethrow so
+  // nothing downstream sees a different control flow than before. It is
+  // deliberately NOT a per-job catch that swallows the failure and continues:
+  // when memory is genuinely exhausted the next job throws too, and a loop that
+  // absorbs N allocation failures reports N claims as "solver-unknown" while
+  // spending the rest of the budget failing. Stopping and keeping the work is
+  // the honest behaviour.
+  // ---- THE RESCUE MUST NOT NEED MEMORY IT NO LONGER HAS ----
+  //
+  // MEASURED, and it is the whole reason this exists: with the catch below in
+  // place but no cushion, the aqua whole-contract run at 8 g DID reach the
+  // rescue, printed "Writing a PARTIAL report with the 938 of 1822 claim(s)
+  // decided so far", got as far as the [Coverage] block -- and then threw a
+  // SECOND std::bad_alloc while building the JSON, because building a report
+  // for 2846 claims needs tens of megabytes and the process had just failed to
+  // get any. `cov-report.json` was still not written. A rescue that allocates
+  // at the moment allocation is impossible is not a rescue.
+  //
+  // So a block is reserved BEFORE the solve and released as the first act of
+  // the rescue, returning it to the allocator's free list where the report can
+  // reuse it without growing the data segment (which is what --memlimit caps:
+  // RLIMIT_DATA, esbmc_parseoptions.cpp:691-708).
+  //
+  // Deliberately NOT touched: untouched pages cost address space, which is the
+  // resource under pressure, and no RSS. Sized against the measurement above --
+  // aqua's 2846-claim report is ~1.6 MB of text and tens of MB of DOM, so 128
+  // MiB is comfortable at 1.6% of an 8 g budget. Only allocated for path
+  // coverage, which is the mode that dies this way.
+  std::unique_ptr<char[]> oom_cushion;
+  if (is_path_cov)
+  {
+    try
+    {
+      oom_cushion.reset(new char[128u * 1024u * 1024u]);
+    }
+    catch (const std::bad_alloc &)
+    {
+      // Already too tight to reserve. Say so rather than proceed silently: it
+      // predicts that the partial report will not fit either.
+      log_warning(
+        "could not reserve the 128 MiB rescue cushion; if this run dies of an "
+        "allocation failure the PARTIAL report may not fit in memory either");
+    }
+  }
+
+  auto emit_partial = [&](const std::string &reason) {
+    // FIRST, before anything that allocates.
+    oom_cushion.reset();
+    log_error(
+      "the per-claim solve loop did not finish ({}). Writing a PARTIAL report "
+      "with the {} of {} claim(s) decided so far, rather than discarding them. "
+      "It is marked partial in the JSON (`partial: true`, and the same under "
+      "`summary`) and on stdout; it must NOT be read as a measurement of this "
+      "program",
+      reason,
+      decided_claims.load(),
+      remaining_claims);
+    // The rescue gets its own handler so that a failure INSIDE it cannot
+    // replace the original reason with its own. Without this, a second
+    // bad_alloc thrown while building the JSON propagates out of the catch
+    // clause in place of the `throw;` below, and the log then blames the
+    // report writer for a run that died in the solver -- the wrong cause,
+    // reported confidently.
+    try
+    {
+      report_simple_summary(summary);
+      if (
+        bs && !fc && !is && !options.get_bool_option("k-induction") &&
+        !options.get_bool_option("incremental-bmc"))
+        report_coverage(
+          options,
+          reached_claims,
+          reached_mul_claims,
+          pytest_gen,
+          ctest_gen,
+          foundry_gen,
+          reason);
+    }
+    catch (const std::bad_alloc &)
+    {
+      log_error(
+        "the PARTIAL report itself could not be built: there was not enough "
+        "memory left to serialise it, even after releasing the rescue cushion. "
+        "{} of {} claim(s) had been decided. The counterexample payloads of "
+        "every path witnessed so far are still on disk in cov-ce-journal.json, "
+        "which is written per witness and needs no allocation at this point; "
+        "that file, NOT this run's absent cov-report.json, is what survived",
+        decided_claims.load(),
+        remaining_claims);
+    }
+    catch (...)
+    {
+      log_error(
+        "the PARTIAL report itself failed to be written. {} of {} claim(s) had "
+        "been decided; the witnesses are in cov-ce-journal.json",
+        decided_claims.load(),
+        remaining_claims);
+    }
+  };
+  try
+  {
   // PARALLEL
   if (options.get_bool_option("parallel-solving"))
   {
@@ -3799,6 +3993,41 @@ smt_convt::resultt bmct::multi_property_check(
   // SEQUENTIAL
   else
     std::for_each(std::begin(jobs), std::end(jobs), job_function);
+  }
+  // Typed arms, not a bare catch(...), because the REASON is the point: a
+  // reader of a partial report has to be able to tell an out-of-memory kill
+  // from a frontend error from an internal invariant, and "unknown exception"
+  // is the answer that sends them back to the log they no longer have.
+  catch (const std::bad_alloc &)
+  {
+    emit_partial("std::bad_alloc — the process ran out of memory during the "
+                 "per-claim solve");
+    throw;
+  }
+  catch (const std::string &e)
+  {
+    emit_partial("error: " + e);
+    throw;
+  }
+  catch (const char *e)
+  {
+    emit_partial(std::string("error: ") + e);
+    throw;
+  }
+  catch (const std::exception &e)
+  {
+    emit_partial(std::string("exception: ") + e.what());
+    throw;
+  }
+  catch (...)
+  {
+    // Reached only by a throw of a type nothing here knows about. Kept rather
+    // than dropped: the alternative is that the one exception nobody
+    // anticipated is also the one that costs the whole report.
+    emit_partial("an exception of unrecognised type escaped the per-claim "
+                 "solve loop");
+    throw;
+  }
 
   // show summary
   report_simple_summary(summary);

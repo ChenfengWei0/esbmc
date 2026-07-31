@@ -101,6 +101,11 @@ std::atomic<size_t> goto_coveraget::live_reached{0};
 std::atomic<size_t> goto_coveraget::covered_run{0};
 std::atomic<size_t> goto_coveraget::live_decided{0};
 std::atomic<size_t> goto_coveraget::claims_total_atomic{0};
+std::string goto_coveraget::path_cov_partial_reason;
+std::set<std::string> goto_coveraget::claims_in_solve_loop;
+std::atomic<bool> goto_coveraget::path_cov_active{false};
+std::atomic<size_t> goto_coveraget::total_paths_atomic{0};
+std::atomic<size_t> goto_coveraget::live_F{0};
 
 void goto_coveraget::write_covered_set_atomic()
 {
@@ -489,12 +494,22 @@ const std::vector<std::string> &goto_coveraget::path_u_reason_tokens()
   // Report order == classification priority, so the printed line reads in the
   // same order the decision is made. `unit-not-entered` sits second on purpose;
   // see path_u_reason_token.
+  // `run-died-before-solving` sits LAST and is the only token that is a fact
+  // about the RUN rather than about the path. It splits what used to be one
+  // bucket: `not-solved-this-run` means the claim was simplified away at symex
+  // time and never reached `assertion()`, which is a property of the claim and
+  // is the same on every re-run; this one means the process stopped issuing
+  // jobs, which says nothing about the claim at all. Folding them together made
+  // a report unable to explain the very thing it was reporting -- a partial run
+  // would show a large `not-solved-this-run` count that reads as "the simplifier
+  // took them", when in fact nobody asked.
   static const std::vector<std::string> tokens = {
     "named-obstacle",
     "unit-not-entered",
     "bounded-holds",
     "solver-unknown",
-    "not-solved-this-run"};
+    "not-solved-this-run",
+    "run-died-before-solving"};
   return tokens;
 }
 
@@ -537,9 +552,25 @@ std::string goto_coveraget::path_u_reason_token(
   case 'U':
     return "solver-unknown";
   case 0:
-    // Instrumented, never decided. The whole-unit version of this is what the
-    // entry-liveness audit aborts on; a single claim in this state slips past
-    // it, which is precisely why it needs a name of its own.
+    // Instrumented, never decided -- and there are TWO ways to be in this state
+    // that a reader must not have to guess between.
+    //
+    // The claim was QUEUED and the job loop stopped before reaching it. That is
+    // a fact about the run, it is not reproducible from the claim, and
+    // re-running with a bigger budget is the fix.
+    //
+    // The claim was NEVER QUEUED: the simplifier folded it to `true` at symex
+    // time and it never reached `assertion()`. That is a fact about the claim,
+    // identical on every re-run, and no budget changes it.
+    //
+    // Same cell, opposite meanings, opposite next actions -- and the membership
+    // test is what separates them. Testing only `path_cov_partial_reason` would
+    // sweep BOTH into the first bucket on any partial run: measured on aqua,
+    // 1826 paths reported as lost to the death when ~901 were.
+    if (
+      !path_cov_partial_reason.empty() &&
+      claims_in_solve_loop.count(claim_key.first))
+      return "run-died-before-solving";
     return "not-solved-this-run";
   default:
     // THE ABORT PATH IS THE DEFAULT, deliberately. 'F' means witnessed, hence
@@ -2234,6 +2265,33 @@ void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
   for (const auto &d : dead)
     names += (names.empty() ? "" : "; ") + d;
 
+  // THE AUDIT'S PREMISE DOES NOT HOLD ON A RUN THAT DIED, and applying it there
+  // would be the third time this check has accused a correct run of a defect it
+  // does not have (the first was --focus-function; the second was the certify
+  // audit on --result-only). "A unit with instrumented claims should have been
+  // entered" is true of a run that reached the end of its job loop. A run that
+  // stopped at claim 1 of 1822 has legitimately entered almost nothing.
+  //
+  // And the cost of getting it wrong here is not a false accusation but a lost
+  // artefact: this audit runs BEFORE any figure is printed and before the JSON
+  // is written (bmc.cpp:1134 vs :1336), so aborting would destroy the partial
+  // report on its way out -- the exact deliverable the partial path exists to
+  // save.
+  if (!path_cov_partial_reason.empty())
+  {
+    log_warning(
+      "--solidity-path-coverage: {} unit(s) had claims instrumented but none "
+      "decided: {}. NOT treated as a defect, because this run did not conclude "
+      "({}). On a complete run this is a hard failure; here it means only that "
+      "the run stopped before reaching those units, and their paths are filed "
+      "'unit-not-entered' with that caveat rather than being used as evidence "
+      "of anything",
+      dead.size(),
+      names,
+      path_cov_partial_reason);
+    return;
+  }
+
   if (total_decided == 0)
     log_error(
       "--solidity-path-coverage: INTERNAL DEFECT — NOT ONE of the {} "
@@ -3480,6 +3538,11 @@ void goto_coveraget::solidity_path_coverage()
   // it. It is truncated and rewritten from scratch by every run that asks for
   // the payload.
   path_ce_journal_path = emit_ce_journal ? "cov-ce-journal.json" : "";
+  // Cleared per instrumentation, like every other static here: a stale reason
+  // would stamp a perfectly complete run PARTIAL, which is the mirror of the
+  // failure this whole mechanism exists to prevent and just as damaging.
+  path_cov_partial_reason.clear();
+  claims_in_solve_loop.clear();
   revert_paths.clear();
   rollback_revert_paths.clear();
   undetermined_exit_paths.clear();
@@ -8172,6 +8235,25 @@ void goto_coveraget::solidity_path_coverage()
       skipped_paths,
       covered_set_path,
       all_claims.size());
+
+  // ---- THE SIGNAL-SAFE SNAPSHOT, published before a single claim is solved ----
+  //
+  // A path-coverage run killed by SIGALRM/SIGTERM/SIGINT used to emit NOTHING:
+  // the rescue in esbmc_parseoptions.cpp is gated on `branch_cov_active`, whose
+  // only writer is branch_coverage(). This pass wrote none of the atomics, so
+  // the handler returned at its first line and 27 killed runs across the corpus
+  // contributed a zero that is indistinguishable in the gate table from a
+  // measured zero.
+  //
+  // Set HERE, at the end of instrumentation, because that is the first moment
+  // the denominator exists and the last moment before anything can be killed
+  // mid-solve. A kill during symex then prints "0 of N decided", which is not a
+  // result but IS the difference between "this run was cut short" and "this run
+  // reached nothing".
+  total_paths_atomic.store(all_claims.size(), std::memory_order_relaxed);
+  live_F.store(0, std::memory_order_relaxed);
+  live_decided.store(0, std::memory_order_relaxed);
+  path_cov_active.store(true, std::memory_order_relaxed);
 
   goto_functions.update();
 }

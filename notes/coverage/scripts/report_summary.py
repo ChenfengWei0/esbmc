@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Print a cov-report.json's `summary` block, and the per-status claim census.
 
+A PARTIAL report is announced before any number, and a report that does not say
+either way is announced as UNSTATED rather than assumed complete. See the
+`partial` handling in main(): a run killed mid-solve now writes a real report to
+the same filename, so completeness is a property that has to be read, not one
+that can be inferred from the file existing.
+
 A path-coverage report is ~1.6 MB, almost all of it counterexample payload. The
 question asked of it is nearly always one of four numbers -- F, U, the U-reason
 histogram, and how many F claims carry inputs -- and reading the file to find
@@ -27,6 +33,39 @@ def main(argv):
             continue
         d = json.loads(path.read_text())
         s = d.get("summary", {})
+
+        # PARTIAL FIRST, BEFORE ANY NUMBER IS PRINTED.
+        #
+        # A partial report is written to the same `cov-report.json` a complete
+        # one is -- there is nowhere else to put it that a consumer would look
+        # -- so the ONLY thing separating them is this field, and a reader that
+        # printed F/U/percentages above it would have already done the damage:
+        # every count in a partial report is a lower bound, and quoting one as
+        # a measurement deflates whatever it is compared against.
+        #
+        # Read from BOTH levels because they are written at both, and treat a
+        # MISSING field as unknown rather than as False. A report from a build
+        # older than the partial marker genuinely cannot say, and defaulting
+        # that to "complete" is the same silent assumption this whole field
+        # exists to remove.
+        partial = d.get("partial", s.get("partial"))
+        if partial is True:
+            print("  ** PARTIAL REPORT -- NOT A MEASUREMENT **")
+            reason = d.get("partial_reason") or s.get("partial_reason") or "?"
+            print(f"     reason                  {reason}")
+            if "claims_decided" in s:
+                print(f"     claims decided          {s['claims_decided']}"
+                      f" of {s.get('claims_total', '?')}")
+            print("     every count below is a LOWER BOUND; the paths the run "
+                  "never reached carry")
+            print("     u_reason 'run-died-before-solving', which is NOT "
+                  "'not-solved-this-run'")
+        elif partial is None:
+            print("  completeness               UNSTATED (report predates the "
+                  "`partial` field; cannot be read as complete)")
+        else:
+            print("  completeness               complete")
+
         for k in ("paths_total", "covered", "uncovered", "percentage",
                   "F_feasible_with_ce", "I_proven_unreachable", "U_undecided",
                   "U_of_which_bounded_holds", "revert_exit_paths"):

@@ -225,7 +225,8 @@ def pathcov_reached_flat_lines(report_paths):
     lines = set()
     stats = {"reports": 0, "f_claims": 0, "f_without_sequence": 0,
              "decision_steps": 0, "unrecorded_steps": 0,
-             "synthetic_dropped": 0, "missing_reports": []}
+             "synthetic_dropped": 0, "missing_reports": [],
+             "partial_reports": 0, "unstated_reports": 0}
     for p in report_paths:
         p = Path(p)
         if not p.exists():
@@ -233,6 +234,32 @@ def pathcov_reached_flat_lines(report_paths):
             continue
         d = json.loads(p.read_text())
         stats["reports"] += 1
+
+        # A PARTIAL REPORT IS NOT A MEASUREMENT, AND IT IS NOW A FILE THAT
+        # EXISTS. Before the partial path was built, a run that died wrote
+        # nothing, so `reportPresent` in the collector's index was a sound proxy
+        # for "this run measured something" -- that is exactly what
+        # `killed_runs` in this docstring relied on. It no longer is: a killed
+        # run writes a real cov-report.json to the same filename, with real
+        # claims in it, and the only thing separating it from a complete one is
+        # the `partial` field.
+        #
+        # Counted rather than excluded. Its F claims ARE genuine witnesses and
+        # their decisions were genuinely walked, so dropping them would throw
+        # away real reach; what must not happen is the row reading as a full
+        # measurement. So the numerator keeps them and the verdict says the
+        # measurement is partial -- the same treatment `killed_runs` already
+        # gets, applied to the case that now produces data instead of silence.
+        #
+        # A report with no `partial` field at all predates the marker and is
+        # counted separately: "cannot say" is not "complete", and this project
+        # has a standing rule that no-verdict must be an explicit third state.
+        _partial = d.get("partial", d.get("summary", {}).get("partial"))
+        if _partial is True:
+            stats["partial_reports"] += 1
+        elif _partial is None:
+            stats["unstated_reports"] += 1
+
         for c in d.get("claims", []):
             if c.get("status") != "F":
                 continue
@@ -415,8 +442,16 @@ def main():
             # A run that produced nothing is NOT a measured zero either. Saying
             # so in the verdict cell is the difference between a result and a
             # lower bound dressed up as one.
+            #
+            # `partial_reports` joins this list for the same reason and is the
+            # newer hazard: a killed run used to leave no file, so `noreport`
+            # caught it; it now leaves a real report with real claims, and
+            # nothing but the `partial` field distinguishes it. `unstated` is
+            # here too -- a report that cannot say whether it is complete must
+            # not be counted as one that says it is.
             if killed or noreport or st["f_without_sequence"] or \
-                    st["unrecorded_steps"]:
+                    st["unrecorded_steps"] or st["partial_reports"] or \
+                    st["unstated_reports"]:
                 verdict += " (partial)"
 
         print(f"| `{b}` | {denom} | {p1.get('esbmc')} | {bar} | {nat} | "
@@ -428,11 +463,14 @@ def main():
     # It was computed and discarded before, which is how a reports/ directory
     # holding files from an earlier collection could inflate the numerator with
     # nothing in the output to show for it.
-    print("| bench | runs | reports read | no report | killed | F claims | "
-          "F w/o sequence | steps | unrecorded | ABI-gate dropped |")
-    print("|" + "---|" * 10)
+    print("| bench | runs | reports read | PARTIAL | completeness unstated | "
+          "no report | killed | F claims | F w/o sequence | steps | "
+          "unrecorded | ABI-gate dropped |")
+    print("|" + "---|" * 12)
     for b, st, meta, killed, noreport, _c, _k in notes:
-        print(f"| `{b}` | {len(meta['runs'])} | {st['reports']} | {noreport} | "
+        print(f"| `{b}` | {len(meta['runs'])} | {st['reports']} | "
+              f"{st['partial_reports']} | {st['unstated_reports']} | "
+              f"{noreport} | "
               f"{killed} | {st['f_claims']} | {st['f_without_sequence']} | "
               f"{st['decision_steps']} | {st['unrecorded_steps']} | "
               f"{st['synthetic_dropped']} |")

@@ -127,8 +127,96 @@ struct resultt
 // instrumentation time. Strictly async-signal-safe: only atomic loads,
 // stack buffer, manual unsigned->decimal, one write(2). No malloc, no
 // iostream, no std::set access (it may be mid-mutation at SIGALRM).
+// Shared async-signal-safe primitives for both arms below. No malloc, no
+// iostream, no locale, no std::string: a signal can land inside the allocator
+// or inside the log mutex, and a handler that touches either can deadlock a
+// process that was about to die anyway -- turning "partial data" into "no data
+// and a hang".
+namespace
+{
+struct sigbuf
+{
+  char buf[512];
+  size_t n = 0;
+  void put(const char *s)
+  {
+    while (*s && n < sizeof(buf))
+      buf[n++] = *s++;
+  }
+  void put_uint(size_t v)
+  {
+    char tmp[24];
+    size_t t = 0;
+    do
+    {
+      tmp[t++] = static_cast<char>('0' + v % 10);
+      v /= 10;
+    } while (v && t < sizeof(tmp));
+    while (t && n < sizeof(buf))
+      buf[n++] = tmp[--t];
+  }
+  void flush()
+  {
+    ssize_t w = write(STDOUT_FILENO, buf, n);
+    (void)w; // nothing actionable in a signal handler if write() fails
+    n = 0;
+  }
+};
+} // namespace
+
+// ---- THE PATH-COVERAGE ARM ----
+//
+// 27 runs across the corpus were killed at a 180 s outer timeout and every one
+// of them emitted NOTHING, because the only rescue was gated on
+// `branch_cov_active` -- an atomic whose sole writer is branch_coverage()
+// (goto_coverage.cpp). solidity_path_coverage() wrote none of the signal-safe
+// atomics, so on a path-coverage run the handler returned at its first line and
+// the killed run's zero was indistinguishable, in the gate table, from a
+// measured zero.
+//
+// A SECOND ARM, NOT A WIDENED CONDITION. The branch metric's numerator and
+// denominator are meaningless here: `total_branch` counts decision edges,
+// `total_paths_atomic` counts complete paths, and printing one under the
+// other's heading would be a wrong number wearing the right label.
+//
+// WHAT IT CAN AND CANNOT DO, said in the text it prints rather than left for a
+// reader to assume: it is a LOWER BOUND, it carries no counterexample payload,
+// and no cov-report.json was written. The payload for the paths it counts is in
+// cov-ce-journal.json when --cov-report-json was given -- which is exactly why
+// the journal had to land before this arm existed.
+static void emit_path_coverage_on_signal()
+{
+  if (!goto_coveraget::path_cov_active.load(std::memory_order_relaxed))
+    return;
+  const size_t total =
+    goto_coveraget::total_paths_atomic.load(std::memory_order_relaxed);
+  const size_t decided =
+    goto_coveraget::live_decided.load(std::memory_order_relaxed);
+  const size_t claims =
+    goto_coveraget::claims_total_atomic.load(std::memory_order_relaxed);
+  size_t f = goto_coveraget::live_F.load(std::memory_order_relaxed);
+  if (f > total && total) // defensive: numerator can never exceed the universe
+    f = total;
+
+  sigbuf b;
+  b.put("\n[Coverage]\nReport Completeness: PARTIAL — terminated by signal "
+        "before verification concluded\nComplete Paths : ");
+  b.put_uint(total);
+  b.put("\nClaims Decided : ");
+  b.put_uint(decided);
+  b.put(" of ");
+  b.put_uint(claims);
+  b.put("\nPath Status: F ");
+  b.put_uint(f);
+  b.put(" (partial: LOWER BOUND, no cov-report.json was written, and this line "
+        "carries no counterexample payload. The payload for these paths is in "
+        "cov-ce-journal.json when --cov-report-json was given)\n");
+  b.flush();
+}
+
 static void emit_branch_coverage_on_timeout()
 {
+  emit_path_coverage_on_signal();
   if (!goto_coveraget::branch_cov_active.load(std::memory_order_relaxed))
     return;
   const size_t total =

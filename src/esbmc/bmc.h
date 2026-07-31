@@ -174,12 +174,20 @@ private:
   void report_simple_summary(const SimpleSummary &summary) const;
 };
 
+// `partial_reason` empty => this run reached the end of its per-claim job loop
+// and the report describes everything it was asked to check. Non-empty => the
+// loop was cut short and the report is a PARTIAL one that names why.
+//
+// It is a parameter rather than a global read inside, because the CALLER is the
+// only place that knows: report_coverage has three call sites and only one of
+// them (the catch around the job loop) is on the death path.
 void report_coverage(
   const optionst &options,
   std::unordered_set<std::string> &reached_claims,
   const std::unordered_multiset<std::string> &reached_mul_claims,
   pytest_generator &pytest_gen,
   ctest_generator &ctest_gen,
-  foundry_generator &foundry_gen);
+  foundry_generator &foundry_gen,
+  const std::string &partial_reason = "");
 
 #endif
