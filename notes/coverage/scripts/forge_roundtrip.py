@@ -100,10 +100,25 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
         cwd.mkdir(parents=True, exist_ok=True)
         for stale in cwd.glob("*"):
             stale.unlink()
+        # `--cov-report-json` IS NOT OPTIONAL HERE, and it is not for diagnostics.
+        #
+        # The `enumerated` column of the emission-loss table used to be read from
+        # notes/coverage/pathcov/<bench>/reports/ -- a DIFFERENT set of esbmc
+        # runs. Numerator and denominator were then a join across two runs that
+        # merely shared a benchmark name and a timeout, which does not support
+        # the word "retains": a ratio between two runs measures the difference
+        # between the runs as much as anything the emitter did. Asking THIS run
+        # for its own report makes the two columns the same run by construction.
+        #
+        # It is not free: the flag registers no-slice exemptions, so the sliced
+        # formula differs and the solver may pick different model values, hence
+        # possibly different tests. That is the correct trade -- a slightly
+        # different suite whose denominator is its own, over a suite whose
+        # denominator came from somewhere else.
         cmd = [str(ESBMC), str(solast), "--sol", str(flat),
                "--solidity-path-coverage", "--solidity-max-tx", str(max_tx),
-               "--generate-foundry-testcase", "--memlimit", "8g",
-               "--result-only"]
+               "--generate-foundry-testcase", "--cov-report-json",
+               "--memlimit", "8g", "--result-only"]
         if ckind == "library":
             cmd += ["--function", fname]
         else:

@@ -174,6 +174,54 @@ private:
   /// indistinguishable from a path that was never witnessed.
   size_t suppressed_empty_body = 0;
 
+  /// WHY the body was empty. `suppressed_empty_body` says a case reconstructed
+  /// only a constructor; it does not say which of two very different things
+  /// happened, and the two need opposite fixes:
+  ///
+  ///   (a) a call to the unit WAS built and came back unsupported -- an argument
+  ///       type that cannot be rendered. Then the fix is in the renderer.
+  ///   (b) no dispatcher segment ever acquired a method, so no call was built at
+  ///       all, and the coverage-claim FALLBACK that exists to repair exactly
+  ///       that could not run because `calls` was already non-empty -- holding
+  ///       nothing but the constructor. Then the fix is the fallback's guard.
+  ///
+  /// (a) is ruled out by construction on the ordinary route: an unsupported call
+  /// is still pushed into `calls`, so it satisfies `method != contract` and the
+  /// empty-body refusal never fires for it. But "ruled out by reading the code"
+  /// is exactly the standard this project has been burned by twice -- argument
+  /// aliasing and the transaction bound were both plausible, cheap, and refuted
+  /// by measurement. So the distinction gets a COUNTER before it gets a fix.
+  ///
+  /// `segments_without_method` counts dispatcher segments dropped by the
+  /// `!s.method.empty()` guard: a loop-only branch never sets the segment's
+  /// method, which is the documented `dock`/`push` shape.
+  /// `fallback_rescued_ctor_only` counts reconstructions in which no callable
+  /// call existed but a CONSTRUCTOR had already been pushed. Under the original
+  /// `calls.empty()` guard those were exactly the cases the coverage-claim
+  /// fallback could not repair: they reached collect() with an empty body and
+  /// were refused. The guard now asks the question the emission loop asks --
+  /// is there a call that is NOT a constructor? -- so the same counter reads as
+  /// how many cases the fix RESCUES.
+  ///
+  /// MEASURED on aqua `dock`, counter in place and guard not yet changed:
+  /// `segments_without_method 0`, fallback blocked in 2 reconstructions. So
+  /// there were no segments AT ALL -- per-claim slicing removes the
+  /// dispatcher's first tx-guard, which is the very case the fallback exists
+  /// for -- and the constructor blocked the repair. Kept after the fix rather
+  /// than deleted: it is what separates this route from an unrenderable-argument
+  /// route on the next benchmark, and a measurement removed once it has served
+  /// one investigation makes the next one start from a guess.
+  mutable size_t segments_without_method = 0;
+  mutable size_t fallback_rescued_ctor_only = 0;
+
+  /// `<C>.<m>(<param>: <sol-type>, ...)` for each call the coverage-claim
+  /// fallback BUILT and then discarded as unsupported. The fallback only keeps
+  /// a call when `supported` is true, so an unrenderable argument makes it a
+  /// silent no-op whose only symptom is an empty-body refusal three steps
+  /// later, naming neither the method nor the argument. Recorded so the next
+  /// question -- renderer gap or resolution gap? -- is answered by the run.
+  mutable std::set<std::string> fallback_unsupported;
+
   /// Contracts Solidity forbids `new` on (abstract / interface / library),
   /// detected from the `#sol_no_new` flag stamped on their constructor symbol.
   /// The generator degrades their instantiation to UNSUPPORTED so the emitted

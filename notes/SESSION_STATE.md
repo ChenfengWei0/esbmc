@@ -277,12 +277,31 @@ Recorded here so a reader finds a DECISION rather than a gap.
 
 `notes/emission-loss-four-samples.md` is the current state of subgoal 2.
 
-The ONE quantitative claim that survives FOUR benchmarks: emission retains
-**40-56%** of what the enumeration reaches (aqua 2/4, farming 10/18, EscrowSrc
-3/6, EscrowDst 2/5). Quote the RANGE -- the fourth sample is what stopped it
-being a number that had looked precise three times. Everything else taken from
-aqua alone was narrowed by a later sample; read that file before quoting any
-mechanism as general.
+The ONE quantitative claim that survives FOUR benchmarks, **with its wording
+now corrected**: across four benchmarks the emitted suite's forge lcov covers
+**40-56%** of the canonical decisions the enumeration's F paths walk (aqua 2/4,
+farming 10/18, EscrowSrc 3/6, EscrowDst 2/5).
+
+**It may NOT be worded "emission RETAINS x%".** That is causal, and the two
+columns were not produced by the same runs: `emission_loss.py` read its
+denominator from `notes/coverage/pathcov/<bench>/reports/` -- the SWEEP's runs
+-- while the numerator came from the lcov of tests produced by
+`forge_roundtrip.py`'s OWN esbmc runs. The two shared a benchmark name and a
+180s timeout and nothing else, so a difference BETWEEN THE RUNS is
+indistinguishable from a loss in the emitter. Found by an adversarial audit and
+confirmed by reading `emission_loss.py:37` against `:56`.
+
+FIXED FOR THE NEXT MEASUREMENT, not retroactively: `forge_roundtrip.py` now
+passes `--cov-report-json`, so each emit run drops its own report in
+`_gen/<tag>/`, and `emission_loss.py` prefers those and PRINTS which provenance
+it used. The archived four-sample numbers were produced the old way and are
+labelled `cross-run` when re-read; re-running the four benchmarks is what turns
+the band into a retention rate. **Until that re-run lands, quote the band with
+its wording, never with the word "retains".**
+
+Quote the RANGE -- the fourth sample is what stopped it being a number that had
+looked precise three times. Everything else taken from aqua alone was narrowed
+by a later sample; read that file before quoting any mechanism as general.
 
 Settled there on BOTH Escrows and worth not re-deriving: `ImmutablesLib` is 0/8
 because those eight decisions were NEVER ENUMERATED, not because the emitter

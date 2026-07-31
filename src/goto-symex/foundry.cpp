@@ -2177,7 +2177,14 @@ foundry_generator::test_case foundry_generator::reconstruct(
     calls.push_back(std::move(cc));
   }
   for (const auto &s : segs)
-    if (!s.method.empty()) // dispatcher chose no method on this path
+    if (s.method.empty())
+      // The dispatcher chose no method for this segment. A branch that only
+      // exists inside a loop body never sets it (the documented dock/push
+      // shape), so the segment contributes NO call -- and if a constructor was
+      // already pushed, the fallback below cannot repair it. Counted rather
+      // than inferred; see foundry.h.
+      ++segments_without_method;
+    else
     {
       sol_call c = build_call(s.contract, s.method, s.args);
       c.reverts = s.reverts;
@@ -2206,7 +2213,47 @@ foundry_generator::test_case foundry_generator::reconstruct(
   // nothing. Derive the covered method directly from the guard-true coverage
   // assert's source location and reconstruct one call to it, with recovered
   // params (or type defaults for dispatcher-supplied nondet args).
-  if (calls.empty() && focus_fn.empty())
+  // THE GUARD USED TO BE `calls.empty()`, AND A CONSTRUCTOR COUNTED.
+  //
+  // MEASURED on 1inch aqua, unit `dock`, with the counter below added first:
+  //
+  //     0 dispatcher segment(s) acquired NO method
+  //     2 reconstruction(s) had the FALLBACK skipped solely because a
+  //       CONSTRUCTOR had already been pushed
+  //
+  // So there were no segments at all -- under per-claim slicing the
+  // dispatcher's first tx-guard is gone, which is exactly the case this
+  // fallback exists to repair -- and the repair could not run because
+  // `ctor_args` had produced a constructor call and `calls.empty()` was
+  // therefore false. `collect()` then refused the case for having an empty
+  // body, and `dock` emitted no test at all while its two witnessed paths sat
+  // in the report.
+  //
+  // The guard has to ask what the emission loop asks: is there a call that is
+  // NOT a constructor? The emission loop skips `method == contract`
+  // (`continue; // constructor -> setUp()`), so a constructor contributes
+  // nothing to the body, and a guard that counts it is asking a different
+  // question from the one whose answer it is used for.
+  //
+  // The counter is kept, not deleted with the fix. It is what distinguishes
+  // this route from an unrenderable-argument route on the NEXT benchmark, and
+  // removing a measurement once it has served one investigation is how the
+  // next one starts from a guess again.
+  bool has_real_call = false;
+  for (const auto &c : calls)
+    if (c.method != c.contract)
+    {
+      has_real_call = true;
+      break;
+    }
+  // Counts what the OLD guard would have blocked: no callable call, but a
+  // constructor already present. Under `calls.empty()` these were exactly the
+  // cases that reached collect() with an empty body and were refused. Reading
+  // it after the fix is reading how many cases the fix rescued -- which is the
+  // fault-injection evidence, kept as a live counter instead of a one-off.
+  if (!has_real_call && !calls.empty() && focus_fn.empty())
+    ++fallback_rescued_ctor_only;
+  if (!has_real_call && focus_fn.empty())
   {
     // Contracts that expose a dispatcher (`_ESBMC_Nondet_Extcall_<C>`): the
     // covered method's owner is whichever of these can call it.
@@ -2224,15 +2271,56 @@ foundry_generator::test_case foundry_generator::reconstruct(
     {
       if (!step.is_assert() || !smt_conv.l_get(step.guard_ast).is_true())
         continue;
-      // The coverage assert's source location names the covered method (bare
-      // name, e.g. "dock", or a modifier wrapper "bump_onlyOwner"); resolve it
-      // to the real dispatcher-callable method and its owner contract.
+      // THE CLAIM'S OWN IDENTITY NAMES THE METHOD; ITS LOCATION DOES NOT.
+      //
+      // This fallback used to read only `step_location_method(step)`, i.e. the
+      // assert's SOURCE LOCATION. A complete-path claim carries none -- the
+      // solver line reads `'dock:path:12 at'` with nothing after `at` -- so
+      // `raw_m` came back empty, every candidate was skipped, and the fallback
+      // reconstructed nothing while appearing to have tried. That is the same
+      // defect already fixed on the segment route above, where the comment
+      // records it in full; it was fixed there and not here, and the two
+      // routes are precisely the ones that cover for each other.
+      //
+      // MEASURED on aqua `dock`: with the guard repaired so this fallback
+      // actually runs, it still emitted no call, because of this. Two
+      // independent defects on one path, and fixing only the first produces a
+      // run that looks exactly like the broken one.
+      //
+      // `sol:@C@<C>@F@<m>#<id>:path:<enc>` names contract and method outright.
+      // The location stays as the fallback for a claim whose identity does not
+      // parse (e.g. a branch-coverage claim reaching this code).
+      std::string c, m;
+      {
+        const std::string &cmt = step.comment;
+        const size_t pp = cmt.find(":path:");
+        if (pp != std::string::npos && has_prefix(cmt, "sol:@C@"))
+        {
+          const std::string fid = cmt.substr(0, pp);
+          const size_t f = fid.find("@F@");
+          if (f != std::string::npos)
+          {
+            const std::string cc = fid.substr(7, f - 7);
+            std::string mm = fid.substr(f + 3);
+            const size_t h = mm.find('#');
+            if (h != std::string::npos)
+              mm = mm.substr(0, h);
+            const std::string r = resolve_dispatcher_method(cc, mm);
+            if (!r.empty())
+            {
+              c = cc;
+              m = r;
+            }
+          }
+        }
+      }
       const std::string raw_m = step_location_method(step);
-      if (raw_m.empty())
+      if (m.empty() && raw_m.empty())
         continue;
-      std::string c = config.options.get_option("contract");
-      std::string m =
-        c.empty() ? std::string() : resolve_dispatcher_method(c, raw_m);
+      if (m.empty())
+        c = config.options.get_option("contract");
+      if (m.empty())
+        m = c.empty() ? std::string() : resolve_dispatcher_method(c, raw_m);
       if (m.empty())
       {
         c.clear();
@@ -2267,6 +2355,23 @@ foundry_generator::test_case foundry_generator::reconstruct(
       {
         calls.push_back(std::move(call));
         break;
+      }
+      // WHY the fallback's call was rejected. Without this the fallback is a
+      // silent no-op: it resolves the method, builds the call, throws it away,
+      // and the only downstream symptom is an empty-body refusal three steps
+      // later that names neither the method nor the argument. Recorded as
+      // `<C>.<m>(<param>: <sol-type>)` so the next question -- is this a
+      // renderer gap or a resolution gap? -- is answered by the run rather
+      // than by reading build_call again.
+      {
+        std::string bad;
+        for (const auto &a : call.args)
+          if (a.literal.empty())
+            bad += (bad.empty() ? "" : ", ") + a.param + ": " +
+                   (a.sol_type.empty() ? "<no sol_type>" : a.sol_type);
+        fallback_unsupported.insert(
+          c + "." + m + "(" + (bad.empty() ? "<no unrenderable arg>" : bad) +
+          ")");
       }
     }
   }
@@ -2370,6 +2475,12 @@ void foundry_generator::clear()
   mock_specs.clear();
   claims_by_fingerprint.clear();
   suppressed_obstacle = 0;
+  // suppressed_empty_body was NOT reset here, which would carry a previous
+  // round's refusals into the next one's report. Every other accumulator in
+  // this function is cleared; this one was simply missed.
+  suppressed_empty_body = 0;
+  segments_without_method = 0;
+  fallback_rescued_ctor_only = 0;
 }
 
 void foundry_generator::collect(
@@ -3005,6 +3116,45 @@ void foundry_generator::generate() const
       "and only reading the body tells them apart. The paths remain witnessed; "
       "what is refused is shipping a test that does not exercise them",
       suppressed_empty_body);
+
+  // WHICH ROUTE produced those empty bodies. Printed unconditionally whenever
+  // either counter fired, and printed BESIDE the refusal rather than instead of
+  // it, because the refusal is the outcome and this is the cause -- reporting
+  // one without the other is what left the aqua `dock` case unexplained for two
+  // days while looking fully diagnosed.
+  if (segments_without_method || fallback_rescued_ctor_only)
+    log_warning(
+      "Foundry: reconstruction accounting -- {} dispatcher segment(s) acquired "
+      "NO method and contributed no call; in {} reconstruction(s) NO callable "
+      "call existed and a CONSTRUCTOR was already present, so the "
+      "coverage-claim FALLBACK ran to reconstruct the covered method. Under the "
+      "previous `calls.empty()` guard those {} case(s) were instead refused for "
+      "having an EMPTY BODY -- the constructor made `calls` non-empty while "
+      "holding nothing callable. This is the empty-body route that does NOT "
+      "involve an unrenderable argument: an unsupported call is still pushed "
+      "and still satisfies `method != contract`, so it can never produce an "
+      "empty body",
+      segments_without_method,
+      fallback_rescued_ctor_only,
+      fallback_rescued_ctor_only);
+
+  if (!fallback_unsupported.empty())
+  {
+    std::string names;
+    for (const auto &s : fallback_unsupported)
+      names += (names.empty() ? "" : "; ") + s;
+    log_warning(
+      "Foundry: the coverage-claim fallback BUILT and then DISCARDED {} "
+      "call(s) as unsupported: {}. The fallback keeps a call only when every "
+      "argument rendered, so this is a RENDERER gap, not a resolution one -- "
+      "the method was found and the call was constructed. Each entry names the "
+      "parameter and its Solidity type; an entry reading `<no unrenderable "
+      "arg>` instead means the call was marked unsupported for a reason other "
+      "than a literal it could not produce (an overload it could not "
+      "disambiguate, receive/fallback, or an unmocked interface handle)",
+      fallback_unsupported.size(),
+      names);
+  }
 
   // ---- DEFAULTED ARGUMENTS: REPORTED, not yet refused ----
   //

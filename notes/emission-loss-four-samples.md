@@ -1,3 +1,27 @@
+> **READ THIS FIRST — the word "retains" below is WITHDRAWN.**
+>
+> Every table in this file that says "emission retains X%" was produced with a
+> denominator from a DIFFERENT set of esbmc runs than the numerator.
+> `emission_loss.py` read `enumerated` from
+> `notes/coverage/pathcov/<bench>/reports/` — the sweep's runs — while `emitted`
+> came from the forge lcov of tests produced by `forge_roundtrip.py`'s own esbmc
+> runs. The two shared a benchmark name and a 180s budget and nothing else, so a
+> difference BETWEEN THE RUNS is indistinguishable from a loss in the emitter.
+> A ratio across two runs cannot carry a causal word.
+>
+> Found by an adversarial audit; confirmed by reading `emission_loss.py:37`
+> against `:56`. The numbers themselves are not withdrawn — what they are a
+> ratio OF is.
+>
+> **Say instead:** "across four benchmarks the emitted suite's forge lcov covers
+> 40–56% of the canonical decisions the enumeration's F paths walk."
+>
+> FIXED FOR THE NEXT MEASUREMENT: `forge_roundtrip.py` now passes
+> `--cov-report-json` so each emit run writes its own report, and
+> `emission_loss.py` prefers those and PRINTS `same-run` vs `cross-run` before
+> any number. Re-running the four benchmarks is what turns this band into a
+> retention rate. Until then the tables below are `cross-run`.
+
 # The emission loss on two benchmarks, and what the second one narrows
 
 aqua's numbers were a single sample and were being stated as general. The second
