@@ -954,7 +954,8 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             region_holes[int(m.group(1))] = parse_holes(m.group(2))
             if m.group(3):
                 warned.add(int(m.group(1)))
-    return boxes, brackets, regions, warned, failure, region_holes, type_ranges
+    return (boxes, brackets, regions, warned, failure, region_holes,
+            type_ranges, unresolvable_coords(log))
 
 
 # The `ERROR: ` PREFIX IS NOT OPTIONAL DECORATION. VACUOUS and UNDECIDED are
@@ -972,6 +973,46 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
 CERTIFY_RESULT_RE = re.compile(
     r"^(?:ERROR: )?--path-cov-certify: RESULT: "
     r"(CERTIFIED|REFUTED|VACUOUS|UNDECIDED)\b")
+
+# ---- THE CERTIFY BRANCH'S OWN REFUSAL, WHICH IS NOT THE OUTER BOX'S ----
+#
+# The two branches refuse an unresolvable name with DIFFERENT sentences, and
+# that is the whole reason this regex exists separately:
+#
+#   outer box   "unit '<id>' has no input named 'state._DOCKED'"
+#   certify     "REFUSING THE QUERY because coordinate 'state._DOCKED' cannot
+#                be expressed: the name does not resolve to an input of this
+#                unit"
+#
+# They also see different inputs: the outer-box spec carries pins in a `pin`
+# field the tool resolves separately, while `certify` folds every pin into the
+# `box` as a degenerate bound. So a pin the certify branch cannot express is one
+# the outer-box rounds never even complained about -- MEASURED: a first attempt
+# at this fix harvested the outer-box wording, and on the very run that
+# motivated it the outer-box rounds said nothing at all and the fix never fired.
+# Two branches, two sentences, and a detector wired to the wrong one is a
+# detector that is never wrong and never right.
+CERT_UNEXPRESSIBLE_RE = re.compile(
+    r"REFUSING THE QUERY because coordinate '([^']+)' cannot be expressed")
+
+
+def unexpressible_coords(log):
+    """Coordinates the CERTIFY branch refused to express, from its own message.
+
+    Certification refuses the WHOLE query on one such name -- rightly, since
+    dropping a requested bound would certify a wider box than the one asked
+    about. So a single unexpressible pin returns no verdict for EVERY path of
+    the unit, and the driver used to report that as "ESBMC printed neither
+    SUCCESSFUL nor FAILED": true, and useless.
+
+    MEASURED on aqua.rawBalances and aqua.safeBalances, the first two real units
+    of the first corpus sweep. `state._DOCKED` is a contract-scope global, not a
+    component of the contract object, so it cannot be a coordinate; the driver
+    reads it as a `constant` state variable and pins it at its counterexample
+    value. Every certification query then failed in about three seconds -- which
+    is what distinguished it from a timeout and is what made it findable.
+    """
+    return sorted(set(CERT_UNEXPRESSIBLE_RE.findall(log)))
 
 
 def verdict(log):
@@ -1158,6 +1199,39 @@ def round_accounting(log):
             f"{dist}; verdicts PASSED={npass} FAILED={nfail}")
 
 
+def unresolvable_coords(log):
+    """Names the tool says it cannot resolve as coordinates of this unit.
+
+    THE SAME SENTENCE `round_failure_reason` READS, harvested unconditionally
+    rather than only when the round measured nothing -- and that difference is a
+    live defect, not a tidy-up.
+
+    The two stage-2 branches treat an unresolvable name in OPPOSITE ways, by
+    design: an outer-box round rejects the coordinate and carries on measuring
+    the others, while certification refuses the WHOLE query, because dropping a
+    requested bound would certify a wider box than the one asked about. Both are
+    right. What follows from the pair is that a name the outer-box round merely
+    complained about will KILL every certification query of that unit -- and
+    since the round still produced regions, `round_failure_reason` returns None
+    and the complaint was never read.
+
+    MEASURED on aqua.rawBalances and aqua.safeBalances, the first two real units
+    of the first corpus sweep. `state._DOCKED` is a mapping, lowered to a
+    contract-scope global rather than a field of the contract object, so the
+    counterexample harvest reports it in `entry_storage` and the resolver
+    refuses it. The driver reads it as a `constant` state variable and PINS it
+    at its counterexample value -- and every certification query on those units
+    then came back with no verdict in three seconds. The reported reason was
+    "ESBMC printed neither SUCCESSFUL nor FAILED", which is true and useless.
+
+    Dropping such a name is SOUND in the only direction that matters: an
+    unmentioned coordinate is universally quantified, so the certificate becomes
+    STRONGER, not wider. It is still announced, because it changes what the
+    region is a statement about.
+    """
+    return sorted(set(re.findall(r"has no input named '([^']+)'", log)))
+
+
 def round_failure_reason(log):
     """Why an outer-box round measured NOTHING, or None if it ran.
 
@@ -1177,7 +1251,7 @@ def round_failure_reason(log):
     Collapsing either into "no region for this path" is the failure-as-result
     pattern this file keeps running into.
     """
-    unresolved = sorted(set(re.findall(r"has no input named '([^']+)'", log)))
+    unresolved = unresolvable_coords(log)
     if unresolved:
         return ("the outer-box round rejected coordinate(s) "
                 + ", ".join(unresolved)
@@ -1732,11 +1806,17 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
               ["--path-cov-certify", path, "--cov-report-json"],
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
     v = verdict(log)
+    # REFUSED IS NOT UNKNOWN. A query the tool declined to attempt because one
+    # coordinate cannot be expressed is a fact about the SPEC, and it is fixable
+    # by the caller -- unlike a crash or a timeout, which are facts about the
+    # run. Folding it into UNKNOWN is what made the first corpus sweep report
+    # every real unit as "ESBMC printed neither SUCCESSFUL nor FAILED".
+    unexp = unexpressible_coords(log)
     if v != "FAILED":
         # SUCCESSFUL: certified. VACUOUS: the box admits nothing, so there is
         # nothing to cut. UNKNOWN: no verdict at all -- the caller must not
         # shrink on it, so no box and no punch are suggested either.
-        return v, None, {}, []
+        return v, None, {}, [], unexp
     # Harvested on every refutation, not only when the shrink fails: the caller
     # needs it in the budget-exhausted branch too, and by then this run's report
     # has been overwritten by the next one.
@@ -1750,11 +1830,11 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     punches = punch_targets(log, pins, box)
     cut = shrink_target(log, pins)
     if cut is None:
-        return v, None, wit, punches
+        return v, None, wit, punches, unexp
     coord, lo, hi = cut
     nb = dict(box)
     nb[coord] = (lo, hi)
-    return v, nb, wit, punches
+    return v, nb, wit, punches, unexp
 
 
 def main():
@@ -2217,16 +2297,22 @@ def main():
     # this it is a NameError on every default run, i.e. the flag would become
     # mandatory by accident.
     eq_values, cand = {}, {}
+    # Names the TOOL refuses as coordinates of this unit, accumulated across
+    # every round. Read at the end, before certification, because certification
+    # refuses the whole query on one such name while the outer-box rounds carry
+    # on -- so this set is exactly the difference between the two branches.
+    unresolvable = set()
     # Learned from the tool, round by round, and never guessed. Empty until a
     # round has published one, so the FIRST ladder falls back to the full 256-bit
     # range exactly as before -- there is nothing to know it from yet.
     type_ranges = {}
     if args.level0:
         cand = level0_candidates(paths, coords)
-        l0_boxes, _, _, _, l0_failure, _, tr_new = outer_round(
+        (l0_boxes, _, _, _, l0_failure, _, tr_new, unres) = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, values_by_coord=cand,
             ast=args.ast, focus=focus, memlimit=args.memlimit)
+        unresolvable.update(unres)
         # Level 0 lays no ladder, but it DOES publish every coordinate's type
         # range -- so the geometric bracket that follows can be bounded by the
         # type instead of by 2^256. That ordering is why the fix costs no extra
@@ -2316,13 +2402,14 @@ def main():
               "code takes when the bracket measures nothing")
     else:
         (_, brackets, regions, warned, round_failure, region_holes,
-         tr_new) = outer_round(
+         tr_new, unres) = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
             values_by_coord=eq_values, extra_values=cand,
             type_ranges=type_ranges, claim_budget=args.claim_budget)
         type_ranges.update(tr_new)
+        unresolvable.update(unres)
         print(f"[bracket] {brackets}")
     # MEASURED, and it is the binding cost on real input: the geometric round
     # ignores --probes entirely (see geometric_values) and lays down one probe
@@ -2350,13 +2437,14 @@ def main():
     spans = {c: _span(c) for c in coords}
     for r in range(args.refine_rounds):
         (_, brackets, regions, warned, round_failure, region_holes,
-         tr_new) = outer_round(
+         tr_new, unres) = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
             values_by_coord=eq_values, extra_values=cand,
             type_ranges=type_ranges)
         type_ranges.update(tr_new)
+        unresolvable.update(unres)
         last_failure = round_failure or last_failure
         print(f"[refine {r+1}] spans={spans} regions={regions}"
               + (f" holes={ {k: v for k, v in region_holes.items() if v} }"
@@ -2367,6 +2455,16 @@ def main():
         if new == spans:
             break
         spans = new
+
+    if unresolvable:
+        # Reported, not acted on. These are names the OUTER-BOX rounds refused,
+        # and that branch drops the coordinate and keeps measuring, so no bound
+        # of theirs ever reaches a region. The certify branch has its OWN
+        # refusal with its own wording, handled where it happens.
+        print("[coords] the outer-box rounds refused "
+              + ", ".join(sorted(unresolvable))
+              + " as coordinate(s) of this unit, so no region below carries a "
+                "bound on them and each holds for ALL their values")
 
     # Certify every candidate, shrinking on the witness when refuted.
     ok, failed, ok_holes = {}, {}, {}
@@ -2448,11 +2546,48 @@ def main():
             prev_size = region_size(box, holes)
             reason = None
             for _ in range(args.shrink_rounds):
-                v, nb, wit, punches = certify(
+                v, nb, wit, punches, unexp = certify(
                     args.esbmc, args.sol, args.contract, args.unit,
                     enc, depth, box, ce, pins, args.max_tx,
                     args.timeout, cwd, ast=args.ast, focus=focus,
                     memlimit=args.memlimit, holes=holes)
+                # ---- A COORDINATE THE QUERY CANNOT EXPRESS: DROP AND RETRY ----
+                #
+                # Not a shrink round. The tool declined to ATTEMPT the query, so
+                # nothing was measured and consuming budget for it would let one
+                # unexpressible pin exhaust the whole path. Bounded by
+                # construction: each pass removes at least one name from a
+                # finite set or stops.
+                #
+                # Dropping is sound in the only direction that matters -- an
+                # unmentioned coordinate is universally quantified, so the
+                # certificate gets STRONGER, not wider. It is announced anyway,
+                # because it changes what the region is a statement about.
+                while unexp:
+                    gone = [n for n in unexp
+                            if n in pins or n in box or n in holes]
+                    if not gone:
+                        break
+                    for n in gone:
+                        pins.pop(n, None)
+                        box.pop(n, None)
+                        holes.pop(n, None)
+                    print(f"[certify {tag}] DROPPED " + ", ".join(gone)
+                          + " — the certification query cannot express "
+                            "it (a mapping, a dynamic array or a `constant` is "
+                            "lowered to a contract-scope global, not a "
+                            "component of the contract object), and it refuses "
+                            "the WHOLE query on one such name. Without this the "
+                            "unit returns no verdict on every path. Every "
+                            "region below therefore holds for ALL values of it, "
+                            "which is a STRONGER statement than the slice that "
+                            "was asked for. Re-querying")
+                    prev_size = region_size(box, holes)
+                    v, nb, wit, punches, unexp = certify(
+                        args.esbmc, args.sol, args.contract, args.unit,
+                        enc, depth, box, ce, pins, args.max_tx,
+                        args.timeout, cwd, ast=args.ast, focus=focus,
+                        memlimit=args.memlimit, holes=holes)
                 if wit:
                     last_wit = wit
                     last_wit_box = dict(box)

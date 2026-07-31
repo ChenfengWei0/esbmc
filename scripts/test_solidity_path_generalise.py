@@ -53,6 +53,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       cut_of,
                                       split_on_cut,
                                       function_mutability,
+                                      unexpressible_coords,
+                                      unresolvable_coords,
                                       brackets_for)
 
 FAILURES = []
@@ -1277,6 +1279,49 @@ os.unlink(_p2)
 # absence, which is what stops it reading as a property of the contract.
 check("S10-missing-ast-pins-nothing", function_mutability("/no/such/ast"), {})
 check("S10-none-ast-pins-nothing", function_mutability(None), {})
+
+# --- the CERTIFY branch's refusal is NOT the OUTER-BOX branch's ---
+#
+# VERBATIM from the run that exposed this, `ERROR: ` prefix included. The two
+# branches refuse an unresolvable name with different sentences AND see
+# different inputs -- the outer-box spec carries pins in a `pin` field, while
+# certify folds every pin into the `box` as a degenerate bound. So a pin certify
+# cannot express is one the outer-box rounds never complained about.
+#
+# THE FIRST ATTEMPT AT THIS FIX HARVESTED THE OUTER-BOX WORDING, and on the very
+# run that motivated it the outer-box rounds said nothing at all, so the fix
+# never fired: the pin was still in the box, the query was still refused, and
+# the report was unchanged. A detector wired to the wrong sentence is never
+# wrong and never right, so both sentences are pinned here, in both directions.
+_CERT_REFUSED = (
+    "ERROR: --path-cov-certify: unit 'sol:@C@Aqua@F@rawBalances#2819' — "
+    "REFUSING THE QUERY because coordinate 'state._DOCKED' cannot be "
+    "expressed: the name does not resolve to an input of this unit. Name a "
+    "parameter of this unit, an environment value as `msg.value` / "
+    "`tx.origin` / `block.timestamp`, or a state variable at entry as "
+    "`state.<field>` (which reaches the contract object's own components only "
+    "— a mapping or a dynamic array does not resolve). Certification is not "
+    "attempted: dropping the bound would certify a WIDER box than the one "
+    "asked for")
+_OUTER_REFUSED = (
+    "ERROR: --path-cov-outer-box: unit 'sol:@C@Aqua@F@pull#3153' has no input "
+    "named 'state._DOCKED'. Name a parameter, an environment value ...")
+
+check("the-certify-refusal-names-its-coordinate",
+      unexpressible_coords(_CERT_REFUSED), ["state._DOCKED"])
+# MUST FLIP (1): the OUTER-BOX wording must NOT be read as a certify refusal.
+# This is the bug, in the direction it actually happened.
+check("the-outer-box-refusal-is-not-a-certify-refusal",
+      unexpressible_coords(_OUTER_REFUSED), [])
+# MUST FLIP (2): and the certify wording must NOT be read as an outer-box one,
+# or `round_failure_reason` would start blaming the wrong branch.
+check("the-certify-refusal-is-not-an-outer-box-refusal",
+      unresolvable_coords(_CERT_REFUSED), [])
+check("the-outer-box-refusal-is-still-read-by-its-own-reader",
+      unresolvable_coords(_OUTER_REFUSED), ["state._DOCKED"])
+# A clean log names nothing, so a successful run cannot drop a pin by accident.
+check("a-clean-log-refuses-nothing", unexpressible_coords(CERTIFIED), [])
+check("a-refuted-log-refuses-nothing", unexpressible_coords(REFUTED), [])
 
 if FAILURES:
     print("FAILED:")
