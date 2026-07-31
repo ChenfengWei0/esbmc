@@ -1146,6 +1146,62 @@ def empty_coords(box, holes=None):
     return sorted(out)
 
 
+def ce_in_region(box, holes, ce):
+    """C2 -- coordinates on which the region EXCLUDES this path's own CE.
+
+    The counterexample is a KNOWN member of the path's domain: the enumeration
+    witnessed the path with it. So a certified region that does not contain it
+    has certainly cut into the real domain, and the certificate is about some
+    other set than the one the path actually has.
+
+    This is not a new proposition. It is the exact rule every subtraction cut
+    already obeys inside the tool ("a cut is legal only if this path's own
+    counterexample survives it"), and the driver has had `ce` in hand the whole
+    time and never checked it. Two things can break it from the driver side:
+    holes are carried ACROSS shrink rounds, so a hole punched in round 1 can
+    land on the CE after a later side cut moves the interval; and a `--pin` the
+    caller supplies can conflict with the CE outright.
+
+    Pure arithmetic, no query. Returns a list of human-readable violations,
+    empty when the region contains the CE.
+    """
+    holes = holes or {}
+    bad = []
+    for n, (lo, hi) in sorted(box.items()):
+        if n not in ce:
+            continue
+        v = ce[n]
+        if v < lo or v > hi:
+            bad.append(f"{n}: CE {v} outside [{lo}, {hi}]")
+        elif v in set(holes.get(n, ())):
+            bad.append(f"{n}: CE {v} was PUNCHED OUT of [{lo}, {hi}]")
+    return bad
+
+
+def region_size(box, holes=None):
+    """C3 -- |R| for a punched product region, as an exact integer.
+
+    The arithmetic is the tool's own `path_cov_kept_in` per coordinate, times
+    over the coordinates. Shared so the two sides cannot disagree about whether
+    a region is empty while agreeing about which is wider.
+
+    Used for the monotonicity check: a region may only ever get NARROWER across
+    shrink rounds. "Only ever narrower" is the invariant the whole subtraction
+    rests on and it has lived in comments on both sides without either ever
+    computing it.
+    """
+    holes = holes or {}
+    total = 1
+    for n, (lo, hi) in sorted(box.items()):
+        if hi < lo:
+            return 0
+        k = (hi - lo + 1) - len([v for v in holes.get(n, ()) if lo <= v <= hi])
+        if k <= 0:
+            return 0
+        total *= k
+    return total
+
+
 def witness_values(cwd, unit):
     """The REFUTING input's payload, harvested from the certification run.
 
@@ -1967,6 +2023,9 @@ def main():
         # binds and the harvest is faithful, so "reported outside the bound" had
         # to be the checker's error, not the model's.
         last_wit, last_wit_box = {}, dict(box)
+        # C3: |R| may only ever get NARROWER across shrink rounds. Seeded with
+        # the region as measured, then compared after every accepted cut.
+        prev_size = region_size(box, holes)
         for _ in range(args.shrink_rounds):
             v, nb, wit = certify(args.esbmc, args.sol, args.contract, args.unit,
                                  enc, depth, box, ce, pins, args.max_tx,
@@ -1976,6 +2035,20 @@ def main():
                 last_wit = wit
                 last_wit_box = dict(box)
             if v == "SUCCESSFUL":
+                # C2, BEFORE the region is recorded as certified. A region that
+                # excludes this path's own counterexample is certified about a
+                # set the path does not have, and the CE is the one member of
+                # the domain we know for certain.
+                missing = ce_in_region(box, holes, ce)
+                if missing:
+                    failed[enc] = (
+                        "CERTIFIED region does NOT contain this path's own "
+                        "counterexample (" + "; ".join(missing) + "). The CE is "
+                        "a known member of the domain -- the enumeration "
+                        "witnessed the path with it -- so the region has been "
+                        "cut into the real domain and the certificate is about "
+                        "a different set. Refusing to report it as certified")
+                    break
                 ok[enc] = box
                 ok_holes[enc] = holes
                 break
@@ -2011,7 +2084,21 @@ def main():
                                       assumed_ranges(last_wit_box, pins),
                                       assumed_holes(holes, pins)))
                 break
-            print(f"[shrink enc={enc}] {box} -> {nb}")
+            # C3: a shrink that does not shrink is a defect, not a slow round.
+            # A region that GREW would mean the cut moved a bound outwards,
+            # which no legal cut can do and which nothing downstream would ever
+            # notice -- the loop would simply certify a wider region than the
+            # one it measured.
+            new_size = region_size(nb, holes)
+            if new_size > prev_size:
+                failed[enc] = (
+                    f"INVARIANT VIOLATED: the shrink WIDENED the region "
+                    f"(|R| {prev_size} -> {new_size}). A cut may only ever make "
+                    f"the region narrower; a wider one would certify inputs "
+                    f"that were never measured. Refusing to continue this path")
+                break
+            prev_size = new_size
+            print(f"[shrink enc={enc}] {box} -> {nb}  |R| {new_size}")
             box = nb
         else:
             failed[enc] = (

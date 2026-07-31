@@ -43,6 +43,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       lowering_artifacts,
                                       thin_to,
                                       budget_probe_values,
+                                      ce_in_region,
+                                      region_size,
                                       brackets_for)
 
 FAILURES = []
@@ -948,6 +950,54 @@ check("the-same-bracket-is-informative-on-a-wider-type",
 # The real cause of the observed (0, 2^256-1) span is the DEGENERATE
 # contribution filtered just above, not the folding.
 
+
+# --- C2: the certified region must contain this path's own counterexample ---
+#
+# Each pair is a MUST-FLIP: the same region and the same CE, differing only in
+# the one thing the check is about. A check with no direction that must flip
+# cannot testify for itself -- one that always returned [] passes the first half
+# of every pair below.
+
+# (i) inside vs outside the interval.
+check("C2-ce-inside-the-interval-is-clean",
+      ce_in_region({"a": (10, 20)}, {}, {"a": 15}), [])
+check("C2-ce-outside-the-interval-is-caught",
+      ce_in_region({"a": (10, 20)}, {}, {"a": 21}),
+      ["a: CE 21 outside [10, 20]"])
+
+# (ii) THE HOLE. This is the half a `lo <= ce <= hi` test cannot see, and it is
+# the live route: holes are carried ACROSS shrink rounds, so a hole punched in
+# an early round can land on the CE after a later side cut moves the interval.
+check("C2-ce-not-punched-is-clean",
+      ce_in_region({"a": (10, 20)}, {"a": [11]}, {"a": 15}), [])
+check("C2-ce-punched-out-is-caught",
+      ce_in_region({"a": (10, 20)}, {"a": [15]}, {"a": 15}),
+      ["a: CE 15 was PUNCHED OUT of [10, 20]"])
+
+# (iii) a coordinate the CE does not mention is UNCONSTRAINED, not violated.
+# Reporting it would make every partial payload look like a broken region --
+# the payload legitimately omits coordinates the path never read.
+check("C2-coordinate-absent-from-the-ce-is-not-a-violation",
+      ce_in_region({"a": (10, 20), "b": (0, 5)}, {}, {"a": 15}), [])
+
+# --- C3: |R|, and the direction it may move ---
+check("C3-size-is-the-product-over-coordinates",
+      region_size({"a": (0, 9), "b": (0, 1)}), 20)
+check("C3-a-hole-removes-exactly-one-value",
+      region_size({"a": (0, 9)}, {"a": [4]}), 9)
+check("C3-a-hole-outside-the-interval-removes-nothing",
+      region_size({"a": (0, 9)}, {"a": [40]}), 10)
+check("C3-an-inverted-interval-is-empty",
+      region_size({"a": (9, 0)}), 0)
+# The punched-empty route, which `lo <= hi` passes: a well-formed interval whose
+# every value has been removed.
+check("C3-punched-empty-is-empty-though-lo-le-hi",
+      region_size({"a": (5, 5)}, {"a": [5]}), 0)
+# The must-flip for monotonicity: the same cut read in both directions.
+check("C3-a-real-cut-is-narrower",
+      region_size({"a": (11, 100)}) < region_size({"a": (5, 100)}), True)
+check("C3-a-widening-cut-is-detectable",
+      region_size({"a": (0, 100)}) > region_size({"a": (5, 100)}), True)
 
 if FAILURES:
     print("FAILED:")
