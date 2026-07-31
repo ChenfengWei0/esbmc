@@ -30,6 +30,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import collect as base  # noqa: E402
+import forge_roundtrip as fr  # noqa: E402
 
 DATA = Path("/home/samson/workspace/esbmc/notes/coverage/data")
 
@@ -56,22 +57,15 @@ def main():
             continue
         d = json.loads(p.read_text())
         pf = d.get("per_function", {})
-        # `instrumented` is recorded ONLY in the whole-contract (`no_function`)
-        # entry; the per-method entry carries `reached` alone. Reading the
-        # per-method one returns None for every benchmark, which reads as "no
-        # ceiling known" rather than as "wrong section" -- so the lookup is
-        # written against the section that actually has the field, and the
-        # denominator is taken from the same place so the two cannot come from
-        # different scopes.
-        nf = d.get("no_function", {})
-        ast = forge = None
-        for e in nf.get("perFile", []):
+        # ONE implementation of the ceiling lookup, imported rather than copied.
+        # A second copy is a second thing that can drift, and this very field
+        # was read from the wrong section in two places at once an hour ago.
+        forge = fr.forge_branch_universe(d)
+        ast = None
+        for e in d.get("no_function", {}).get("perFile", []):
             a = e.get("astDecisions")
-            n = (e.get("native") or {}).get("instrumented")
             if isinstance(a, int):
                 ast = (ast or 0) + a
-            if isinstance(n, int):
-                forge = (forge or 0) + n
         tot = pf.get("total", {})
         bar = tot.get("esbmcReached")
         nat = tot.get("nativeReached")

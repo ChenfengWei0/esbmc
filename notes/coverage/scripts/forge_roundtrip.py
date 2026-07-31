@@ -177,6 +177,38 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
     return tests, recs
 
 
+def forge_branch_universe(locked):
+    """How many branches forge's instrument records for this benchmark's files.
+
+    NOT the AST decision count, and the difference is not cosmetic: the two
+    instruments disagree about what a decision IS, in BOTH directions. On aqua
+    forge omits the two `for` LOOP HEADERS (2249, 2258), so `native 6/8` is
+    really 6 of 6; on farming and st1inch forge records MORE branches than the
+    AST count. A count difference therefore says nothing about WHICH lines are
+    missing -- only intersecting the two sets does.
+
+    The field lives ONLY in the whole-contract (`no_function`) entry. The
+    per-method entry carries `reached` alone, and reading that returns None for
+    every benchmark -- which prints as "no ceiling known" and is
+    indistinguishable from having read the wrong section. That was the first
+    version of this, in two places at once; caught by running it.
+
+    Returns None when the benchmark has no native lcov record, because "we do
+    not know the ceiling" and "the ceiling is the whole denominator" are
+    different statements and only one of them is safe to quote.
+
+    ONE implementation, imported by instrument_ceiling.py rather than copied --
+    a second copy is a second thing that can drift, which is the failure the
+    `solc` pin in this same file was already fixed for.
+    """
+    out = None
+    for pf in locked.get("no_function", {}).get("perFile", []):
+        nat = pf.get("native") or {}
+        if isinstance(nat.get("instrumented"), int):
+            out = (out or 0) + nat["instrumented"]
+    return out
+
+
 def parse_lcov_reached(lcov_path):
     """Original-file lines with at least one BRDA arm taken, per source file."""
     by_file = defaultdict(set)
@@ -331,36 +363,6 @@ def main():
                   if base.is_project_own_marker(m, project)})
     canon = {m: by_file.get(m, set()) for m in own if by_file.get(m)}
 
-    # ---- FORGE'S OWN BRANCH UNIVERSE, which is NOT the AST denominator ----
-    #
-    # MEASURED on aqua, and the locked dataset has recorded it all along without
-    # anything reading it: `native.instrumented` is 6 while `astDecisions` is 8.
-    # The two missing lines are 2249 and 2258 -- both `for` LOOP HEADERS. forge's
-    # branch coverage does not treat a loop condition as a branch; the AST-derived
-    # canonical decision set does.
-    #
-    # So `ours / astDecisions` has a CEILING BELOW THE DENOMINATOR, by
-    # construction and not by any property of the generated tests. Four
-    # hand-written probes that provably execute `dock`'s loop -- including a
-    # ship-then-dock sequence establishing the state its `require` needs -- moved
-    # the number not at all, because no test can credit a line forge does not
-    # instrument.
-    #
-    # `bar` is ESBMC's column and ESBMC's universe IS 8, so comparing `ours/8`
-    # against `bar/8` silently mixes two instruments' universes. Printed here so
-    # the ceiling travels with the number instead of being rediscovered.
-    # `instrumented` is recorded ONLY in the whole-contract (`no_function`)
-    # entry. The per-method entry carries `reached` alone, and reading THAT
-    # returns None for every benchmark -- which prints as "no ceiling known"
-    # and is indistinguishable from a benchmark that genuinely has none. Caught
-    # by running it: the first version read `per_function` and reported `?`
-    # across all six.
-    forge_universe = None
-    for pf in locked.get("no_function", {}).get("perFile", []):
-        nat = pf.get("native") or {}
-        if isinstance(nat.get("instrumented"), int):
-            forge_universe = (forge_universe or 0) + nat["instrumented"]
-
     reached = parse_lcov_reached(lcov)
     # forge reports the flat under its project-relative path; the flat IS the
     # compilation unit, so every canonical decision line is a line of it.
@@ -372,6 +374,12 @@ def main():
     locked = json.loads(
         (REPO / "notes/coverage/data" / f"esbmc_{a.bench}.json").read_text())
     p2 = locked["per_function"]["total"]
+    # Computed HERE, after `locked` exists. The first version of this sat above
+    # `reached = ...`, forty lines before `locked` is assigned, and every run
+    # died with UnboundLocalError AFTER the whole expensive pipeline had
+    # finished -- emission, build, self-check and coverage all completed, then
+    # the summary crashed. A cheap mistake in the most expensive possible place.
+    forge_universe = forge_branch_universe(locked)
 
     print()
     print("=" * 78)
