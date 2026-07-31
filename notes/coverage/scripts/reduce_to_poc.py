@@ -36,14 +36,40 @@ THE PREDICATE IS EXPLICIT, NEVER "it broke". `--fail-on` takes one of:
     budget           at least one claim carries `claim-budget-exceeded`
     bounded-holds    at least N paths are bounded-holds (with --min-bh)
     internal-defect  the run printed its own INTERNAL DEFECT invariant
+    never-returns    still alive at --timeout and had to be killed
+    z3-not-well-founded
+                     z3 refused AT ENCODING TIME with `datatype is not
+                     well-founded`
+    solver-oom       the backend died allocating (`std::bad_alloc` / `Out of
+                     memory`) -- NOT the same failure as never returning
 
 "The same way" means the same predicate is still true. Reducing against "it
 exits non-zero" is how a memory bug turns into a syntax error and the reduction
-reports success.
+reports success. That is also why the last three are separate predicates rather
+than `crash`: on st1inch the SAME query failed three different ways under three
+backends -- bitwuzla never returned, cvc5 raised std::bad_alloc at 4 GB with
+0.000 s of decision-procedure time, and z3 refused before solving at all -- and
+`crash` would happily accept a reduction that swapped one for another.
+
+THE BACKEND IS PART OF THE FAILURE, so `--solver-flags` is passed through
+verbatim, printed before any reduction starts, and written into the reduced
+file's banner. A reducer that always runs the default backend cannot reduce a
+defect the default backend alone has, and cannot reduce a defect that only
+appears under the backend actually in use: the path-coverage collector runs
+st1inch with `--z3 --tuple-node-flattener`, so a reduction made without those
+flags is a reduction of a different run.
+
+AND SO IS THE UNIT. `--focus-function` is passed through for the same reason:
+the st1inch encoder failure was observed under `--focus-function
+setFeeReceiver`, and the whole contract is a different query. Reducing without
+it would either make every candidate "fail" by timing out (so nothing is ever
+removed) or reproduce some other unit's failure under the same name.
 
 Usage:
     reduce_to_poc.py --sol X.sol --contract C --fail-on no-report
                      [--tx 1] [--timeout 120] [--memlimit 4g] [--min-bh 1]
+                     [--solver-flags "--z3 --tuple-node-flattener"]
+                     [--focus-function setFeeReceiver]
                      [--out notes/coverage/poc/R_X.sol]
 """
 import argparse
@@ -82,9 +108,12 @@ def sh(cmd, cwd=None, timeout=300):
         return -1, out
 
 
-def run_once(src_text, contract, tx, timeout, memlimit):
+def run_once(src_text, contract, tx, timeout, memlimit, solver_flags=(),
+             focus=None):
     """Compile and run one candidate in its own directory. Returns
-    (compiles, rc, stdout, report_or_None)."""
+    (compiles, rc, stdout, report_or_None). rc == -1 means it was killed at
+    `timeout`, kept distinct from every real exit code because "never
+    returned" is a failure mode in its own right here."""
     d = Path(tempfile.mkdtemp(prefix="reduce_"))
     try:
         sol = d / "C.sol"
@@ -97,7 +126,9 @@ def run_once(src_text, contract, tx, timeout, memlimit):
         cmd = [str(ESBMC), str(ast), "--sol", str(sol),
                "--solidity-path-coverage", "--cov-report-json",
                "--memlimit", memlimit, "--contract", contract,
-               "--solidity-max-tx", str(tx)]
+               "--solidity-max-tx", str(tx)] + list(solver_flags)
+        if focus:
+            cmd += ["--focus-function", focus]
         rc, out = sh(cmd, cwd=str(d), timeout=timeout)
         rep = d / "cov-report.json"
         data = None
@@ -133,6 +164,14 @@ def predicate(kind, min_bh, compiles, rc, out, data):
         return ur.get("bounded-holds", 0) >= min_bh
     if kind == "internal-defect":
         return "INTERNAL DEFECT" in (out or "")
+    if kind == "never-returns":
+        # run_once yields -1 only on the kill-at-timeout path.
+        return rc == -1
+    if kind == "z3-not-well-founded":
+        return "datatype is not well-founded" in (out or "")
+    if kind == "solver-oom":
+        o = out or ""
+        return "std::bad_alloc" in o or "Out of memory" in o
     raise SystemExit(f"unknown --fail-on: {kind}")
 
 
@@ -199,16 +238,35 @@ def main():
     ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--memlimit", default="4g")
     ap.add_argument("--min-bh", type=int, default=1)
+    ap.add_argument("--solver-flags", default="",
+                    help="extra backend flags, e.g. "
+                         "\"--z3 --tuple-node-flattener\"")
+    ap.add_argument("--focus-function", default=None,
+                    help="restrict to one unit, as the observed failure was")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
+    solver_flags = a.solver_flags.split()
+    shown = " ".join(solver_flags) if solver_flags else "(default)"
     text = Path(a.sol).read_text()
 
     def fails(t):
-        c, rc, out, data = run_once(t, a.contract, a.tx, a.timeout, a.memlimit)
+        c, rc, out, data = run_once(t, a.contract, a.tx, a.timeout, a.memlimit,
+                                    solver_flags, a.focus_function)
         return predicate(a.fail_on, a.min_bh, c, rc, out, data)
 
-    print(f"# reducing {a.sol} against `{a.fail_on}`\n", flush=True)
+    print(f"# reducing {a.sol} against `{a.fail_on}`", flush=True)
+    print(f"#   backend flags: {shown}", flush=True)
+    print(f"#   focus-function: {a.focus_function or '(whole contract)'}",
+          flush=True)
+    print(f"#   timeout {a.timeout}s, memlimit {a.memlimit}, "
+          f"tx {a.tx}\n", flush=True)
+
+    # A reduction that removes the focused unit would be reducing a different
+    # query, and PASS 1 removes whole functions -- so the unit is protected by
+    # the predicate rather than by a rule: dropping it changes the failure and
+    # the candidate is rejected. Said here because "the reducer deleted the
+    # function I was focusing on" reads as a bug in the reducer if it happens.
     t0 = time.time()
     if not fails(text):
         sys.exit(
@@ -260,7 +318,15 @@ def main():
         banner = (
             f"// MINIMAL REPRODUCTION, reduced automatically from {a.sol}\n"
             f"// against the predicate `{a.fail_on}` at "
-            f"--solidity-max-tx {a.tx}, --memlimit {a.memlimit}.\n"
+            f"--solidity-max-tx {a.tx}, --memlimit {a.memlimit},\n"
+            f"// timeout {a.timeout}s, backend flags {shown},\n"
+            f"// focus-function "
+            f"{a.focus_function or '(whole contract)'}.\n"
+            f"// The backend flags are part of the reproduction: the same "
+            f"query fails\n"
+            f"// differently under different backends, so a run without them "
+            f"is a run of\n"
+            f"// something else.\n"
             f"// Every element still here is one whose removal made the "
             f"failure GO AWAY,\n"
             f"// so this file is not merely smaller -- each remaining part is "

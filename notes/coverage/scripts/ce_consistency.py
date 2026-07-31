@@ -194,13 +194,26 @@ def main():
                     skipped += 1
                     # Name the SHAPE, not the instance: bucketing on the raw
                     # predicate text would give one bucket per contract and
-                    # defeat the point. The bytes helper call is called out by
-                    # name because they are a known open defect
-                    # (D11_Bytes32Equality) whose fix is judged on this count.
+                    # defeat the point.
+                    #
+                    # The bytes helper gets its own bucket because it was once
+                    # proposed as the acceptance criterion for the bytesN
+                    # payload defect ("a correct fix must move these OUT of
+                    # skipped"). That criterion was wrong and is recorded here
+                    # so it is not re-proposed: the defect was an aux-ordering
+                    # bug in the frontend, it IS fixed, and these decisions are
+                    # still refused -- because the refusal is about the
+                    # CHECKER's inputs, not about the payload. `branch_claim`
+                    # here is the LOWERED form, a call's return value, and the
+                    # report carries no operands for it, so nothing in this
+                    # file could ever decide it. Moving them out needs the
+                    # report to publish the source-level predicate
+                    # (`b == bytes32(uint256(1))`) instead of the lowering.
                     if "_bytes_static_equal" in pred:
-                        note_skip("bytesN equality helper "
-                                  "(`_bytes_static_equal`) -- see "
-                                  "D11_Bytes32Equality.sol")
+                        note_skip("bytesN equality lowered to a helper call "
+                                  "(`_bytes_static_equal`); the report "
+                                  "publishes no operands for it, so this "
+                                  "checker cannot decide it either way")
                     elif "return_value$" in pred:
                         note_skip("a call's return value, not a payload name")
                     elif why and why.startswith("payload does not bind"):

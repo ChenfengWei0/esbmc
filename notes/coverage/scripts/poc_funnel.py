@@ -263,21 +263,58 @@ def main():
             # test functions understates what the emitter claims to cover --
             # and counting claim ids reveals the merges, which is where the
             # ABI-value-gate payload defect shows up.
+            #
+            # THE EMITTER'S REASON IS IN THE ARTIFACT, NOT ONLY IN THE LOG.
+            # `emit_reasons` reads the run log, and for an unrenderable
+            # argument the log says nothing while the generated file says
+            # exactly what happened, in the emitter's own words:
+            #
+            #   // UNSUPPORTED: P26_TypeMatrix.takeEnum has an argument type
+            #   //              ESBMC cannot yet render as a literal
+            #
+            # Before this, that loss printed as "NO REASON IN THE LOG", which
+            # is a claim about the emitter (it did not say) when the truth was
+            # about this script (it did not look). So the case body is parsed
+            # alongside the claim ids and the note is quoted verbatim.
             ids = set()
             merged = 0
             merge_groups = []
+            unsupported = []
+            cur_parts, cur_body = None, []
+
+            def close_case():
+                nonlocal merged
+                if cur_parts is None:
+                    return
+                note = ""
+                for bl in cur_body:
+                    if "UNSUPPORTED" in bl:
+                        note = bl.strip().lstrip("/").strip()
+                        break
+                if note:
+                    unsupported.append(note)
+                if len(cur_parts) > 1:
+                    merged += 1
+                    merge_groups.append({"parts": cur_parts,
+                                         "unsupported": bool(note),
+                                         "note": note})
+
             for line in txt.splitlines():
                 s = line.strip()
                 if s.startswith("// claim:"):
-                    parts = [x.strip() for x in
-                             s[len("// claim:"):].split(",") if x.strip()]
-                    ids.update(parts)
-                    if len(parts) > 1:
-                        merged += 1
-                        merge_groups.append(parts)
+                    close_case()
+                    cur_parts = [x.strip() for x in
+                                 s[len("// claim:"):].split(",") if x.strip()]
+                    cur_body = []
+                    ids.update(cur_parts)
+                elif cur_parts is not None:
+                    cur_body.append(line)
+            close_case()
+
             row["claims_rendered"] = len(ids)
             row["merged_cases"] = merged
             row["merge_groups"] = merge_groups
+            row["unsupported_notes"] = unsupported
         rows.append(row)
 
     # ---- build ONCE for the whole set --------------------------------------
@@ -384,8 +421,19 @@ def main():
                   "mentions_unsupported"):
             if k in r:
                 bits.append(f"{k}={r[k]}")
-        print(f"  {r['stem']}: F={f} cases={c}  "
-              f"{'; '.join(bits) if bits else 'NO REASON IN THE LOG'}")
+        notes = r.get("unsupported_notes") or []
+        if not bits and not notes:
+            print(f"  {r['stem']}: F={f} cases={c}  NO REASON IN THE LOG OR "
+                  f"THE EMITTED FILE")
+        else:
+            print(f"  {r['stem']}: F={f} cases={c}  "
+                  f"{'; '.join(bits) if bits else ''}")
+        # Quoted from the generated test, not paraphrased: the emitter names
+        # the contract, the method and what it could not render, and that is
+        # the whole finding. Summarising it here would lose the method name,
+        # which is the only part that says what to fix.
+        for n in notes:
+            print(f"      {n}")
     if not any_loss:
         print("  nothing lost: every counterexample became a case\n")
 
@@ -414,8 +462,27 @@ def main():
             fn = c.get("path_function") or ""
             pid = c.get("path_id") or ""
             by_cond[f"{fn}:path:{pid}"] = c
-        for parts in groups:
+        for grp in groups:
+            parts = grp["parts"]
             any_merge = True
+            # A MERGE HAS MORE THAN ONE CAUSE, AND THIS SECTION USED TO REPORT
+            # ONLY ONE OF THEM. When the case body is UNSUPPORTED the emitter
+            # produced an EMPTY function, so every path it could not render
+            # collapses onto that one no-op -- the renderer did not fail to
+            # tell two decisions apart, it never got as far as a call. Reading
+            # the first differing decision anyway printed
+            #   "first disagree at decision #0 [SYNTHETIC ABI VALUE GATE]"
+            # for P26's three takeEnum paths, which names a coordinate that had
+            # nothing to do with it. `msg.value` was innocent; the argument
+            # type was the cause, and it is stated in the file.
+            if grp.get("unsupported"):
+                print(f"  {r['stem']}: {len(parts)} claim(s) on one case, and "
+                      f"the case is EMPTY -- not a coordinate the renderer "
+                      f"could not distinguish:")
+                print(f"      {grp['note']}")
+                for p in parts:
+                    print(f"      {p.rsplit(':', 2)[-1]:>4}: (no call emitted)")
+                continue
             seqs = []
             for p in parts:
                 c = by_cond.get(p)
