@@ -221,6 +221,74 @@ quote the other three before they are re-run.
 
 ---
 
+# PART OF THE "GAP" IS NOT REACHABLE BY THE MEASURING INSTRUMENT
+
+Four hypotheses were burned on aqua's `dock` before the source was read. In
+order, each refuted by a measurement rather than by an argument:
+
+1. **an unrenderable argument** — refuted by the emitter counter
+   (`segments_without_method 0`, an unsupported call is still pushed);
+2. **the reconstruction route** — TWO real defects, both fixed, `dock` went
+   0 → 2 emitted cases, and `ours` stayed 2/8;
+3. **the transaction bound** — `--max-tx 2`: `enumerated` stayed 4, `emitted`
+   stayed 2, the same two lines lost, RED tests 1 → 2, defaulted args 8 → 122;
+4. **the defaulted array length** (`new address[](4)` on a fresh deploy) — a
+   hand-written probe at lengths 0, 1 and 4 covered the identical 2 decisions.
+
+Then the source, which settles it:
+
+```solidity
+function dock(address app, bytes32 strategyHash, address[] calldata tokens) external {
+    for (uint256 i = 0; i < tokens.length; i++) {                  // 2258
+        Balance storage balance = _balances[msg.sender][app][strategyHash][tokens[i]];
+        require(balance.tokensCount == tokens.length, ...);        // 2260
+        balance.store(0, _DOCKED);
+    }
+```
+
+Even a hand-written `ship(...)` then `dock(...)` — which passes, so 2260's
+require genuinely succeeded — moves the number by nothing. The reason:
+
+    canonical decisions          : 8  [2235, 2239, 2246, 2249, 2251, 2258, 2260, 2278]
+    forge BRDA, arm taken        : 2  [2235, 2278]
+    forge BRDA, mentioned at all : 6  [2235, 2239, 2246, 2251, 2260, 2278]
+    NOT INSTRUMENTED BY FORGE    : [2249, 2258]
+
+**2249 and 2258 are the two `for` loop headers, and forge's branch coverage does
+not instrument them at all.** No test — ours, the project's own, or hand-written
+— can ever credit them. And the locked dataset has recorded this the whole time,
+unread:
+
+    "esbmc":  { "instrumented": 8, "reached": 7 }
+    "native": { "instrumented": 6, "reached": 6 }
+
+So on aqua:
+
+| column | instrument | what it really is |
+|---|---|---|
+| bar 7/8 | ESBMC | 7 of ESBMC's 8 |
+| native 6/8 | forge lcov | **6 of forge's 6 — 100% of what its instrument sees** |
+| ours 2/8 | forge lcov | **2 of forge's 6** |
+
+`ours/8` versus `bar/8` mixes two instruments' universes, and the AST
+denominator flatters the apparent gap. `forge_roundtrip.py` now prints the forge
+ceiling beside both forge-measured columns and says so outright.
+
+**This does not close subgoal 2** — 2 of 6 is still far short of 6 of 6. What it
+does is stop part of the shortfall being attributed to the generator when it
+belongs to the metric, and it re-scales the target: the reachable ceiling for
+our deliverable on aqua is 6, not 8.
+
+UNRESOLVED, recorded rather than smoothed over: in the probe run, 2251 and 2260
+show as instrumented-but-never-taken even though the probe's `ship`/`dock`
+sequence executed both and its four tests passed. Either forge coverage did not
+count the probe contract, or a passing `require` is not recorded as a taken arm.
+That question is open and does not affect the finding above, which rests on
+`NOT INSTRUMENTED` (a set forge never mentions at any count) and on the locked
+dataset's own `native.instrumented: 6`.
+
+---
+
 # The killed units are a SCALE problem, not a budget one (measured)
 
 `notes/coverage/scripts/budget_probe.sh` was written to decide this and had not

@@ -331,6 +331,30 @@ def main():
                   if base.is_project_own_marker(m, project)})
     canon = {m: by_file.get(m, set()) for m in own if by_file.get(m)}
 
+    # ---- FORGE'S OWN BRANCH UNIVERSE, which is NOT the AST denominator ----
+    #
+    # MEASURED on aqua, and the locked dataset has recorded it all along without
+    # anything reading it: `native.instrumented` is 6 while `astDecisions` is 8.
+    # The two missing lines are 2249 and 2258 -- both `for` LOOP HEADERS. forge's
+    # branch coverage does not treat a loop condition as a branch; the AST-derived
+    # canonical decision set does.
+    #
+    # So `ours / astDecisions` has a CEILING BELOW THE DENOMINATOR, by
+    # construction and not by any property of the generated tests. Four
+    # hand-written probes that provably execute `dock`'s loop -- including a
+    # ship-then-dock sequence establishing the state its `require` needs -- moved
+    # the number not at all, because no test can credit a line forge does not
+    # instrument.
+    #
+    # `bar` is ESBMC's column and ESBMC's universe IS 8, so comparing `ours/8`
+    # against `bar/8` silently mixes two instruments' universes. Printed here so
+    # the ceiling travels with the number instead of being rediscovered.
+    forge_universe = None
+    for pf in locked["per_function"].get("perFile", []):
+        nat = pf.get("native") or {}
+        if isinstance(nat.get("instrumented"), int):
+            forge_universe = (forge_universe or 0) + nat["instrumented"]
+
     reached = parse_lcov_reached(lcov)
     # forge reports the flat under its project-relative path; the flat IS the
     # compilation unit, so every canonical decision line is a line of it.
@@ -356,9 +380,24 @@ def main():
         print(f"  {hit:>4} / {len(c):<4}  {f}")
     print(f"  TOTAL {tot_ours} / {tot_c}")
     print()
-    print(f"  bar    (branch coverage, esbmcReached) : {p2['esbmcReached']}")
-    print(f"  native (project's own suite, lcov)     : {p2['nativeReached']}")
-    print(f"  ours   (generated suite, forge lcov)   : {tot_ours}")
+    print(f"  bar    (branch coverage, esbmcReached) : {p2['esbmcReached']}"
+          f"   [ESBMC universe: {tot_c}]")
+    print(f"  native (project's own suite, lcov)     : {p2['nativeReached']}"
+          + (f"   [forge universe: {forge_universe}]"
+             if forge_universe is not None else ""))
+    print(f"  ours   (generated suite, forge lcov)   : {tot_ours}"
+          + (f"   [forge universe: {forge_universe}]"
+             if forge_universe is not None else ""))
+    if forge_universe is not None and forge_universe < tot_c:
+        print()
+        print(f"  ** CEILING: forge instruments only {forge_universe} of the "
+              f"{tot_c} canonical decision(s) in these files, so `native` and "
+              f"`ours` CANNOT exceed {forge_universe} whatever the tests do. "
+              f"`bar` is ESBMC's column and its universe is {tot_c}. Comparing "
+              f"ours/{tot_c} with bar/{tot_c} mixes two instruments' universes; "
+              f"the honest reading of `ours` is {tot_ours}/{forge_universe} of "
+              f"what its own instrument can see. The lines forge omits are loop "
+              f"HEADERS, which its branch coverage does not treat as branches.")
     print()
     print(f"  emitted test files : {emitted}")
     print(f"  runs               : {len(recs)}")
