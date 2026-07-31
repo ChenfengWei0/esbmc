@@ -91,6 +91,23 @@ def main(argv):
                     f_inputs += 1
         print(f"  claims by status           {dict(st)}")
         print(f"  F claims carrying inputs   {f_inputs}/{f_total}")
+
+        # PER UNIT, because `paths_total` is a CONTRACT-level number and has
+        # already been misread as a unit's once. On a hand-written PoC the
+        # per-unit count is the whole experiment: the prediction is written in
+        # the contract's comment and this is what it is checked against.
+        per_unit = {}
+        for c in d.get("claims", []):
+            fn = c.get("path_function") or c.get("function") or "?"
+            e = per_unit.setdefault(fn, Counter())
+            e[c.get("status", "?")] += 1
+            e["all"] += 1
+        if len(per_unit) > 1 or "?" not in per_unit:
+            print("  per unit")
+            for fn in sorted(per_unit):
+                e = per_unit[fn]
+                print(f"    {fn:<24} paths {e['all']:>4}   F {e['F']:>4}   "
+                      f"U {e['U']:>4}   I {e['I']:>4}")
     return 0
 
 
