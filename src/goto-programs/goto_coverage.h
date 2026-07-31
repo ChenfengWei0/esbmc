@@ -943,6 +943,22 @@ public:
   static std::vector<std::pair<std::string, std::string>>
     path_cov_outer_box_pins;
 
+  // ---- S2: the measured unit is a NAMED OBSTACLE ----
+  //
+  // Non-empty names the reason. The outer box is a MEASUREMENT, not a
+  // certificate, so unlike certify this does not refuse the round -- a
+  // containment statement about an obstructed unit is still a true containment
+  // statement. What it must not do is travel WITHOUT the caveat: every region
+  // line the subtraction prints is a candidate a driver hands straight to the
+  // certification query, and on an obstructed unit that query can answer
+  // SUCCESSFUL about executions the chain does not have.
+  //
+  // Recorded here rather than read from `named_obstacle_paths` at report time,
+  // because that map is filled by the insertion loop the outer-box branch
+  // `continue`s past: in this mode it is EMPTY, and a reader of it would print
+  // no caveat while looking exactly like a reader that had checked.
+  static std::string path_cov_outer_box_obstacle;
+
   // ---- Coordinates the tool REFUSED to express, and why ----
   //
   // Two things can make a coordinate unusable, and they used to be one thing:

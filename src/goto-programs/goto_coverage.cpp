@@ -83,6 +83,7 @@ std::map<std::string, std::pair<std::string, std::string>>
   goto_coveraget::path_cov_outer_box_type_range;
 std::vector<std::pair<std::string, std::string>>
   goto_coveraget::path_cov_outer_box_pins;
+std::string goto_coveraget::path_cov_outer_box_obstacle;
 std::map<std::string, std::string> goto_coveraget::path_cov_refused_coords;
 bool goto_coveraget::path_cov_assert_mode = false;
 std::vector<goto_coveraget::assert_candidatet>
@@ -1401,6 +1402,19 @@ void goto_coveraget::report_outer_boxes()
         "from the slice; the honest statement is that exclusion. Do NOT hand "
         "this box to the certification query: an unsatisfiable assumption "
         "answers SUCCESSFUL for want of any execution";
+    // S2: the unit itself is disqualified, so EVERY region below is a candidate
+    // that must not be handed to the certification query -- which now refuses
+    // this unit outright, so a driver that ignored this line would simply get a
+    // named non-zero exit there instead. Printed with the region rather than
+    // once at the top, because the region line is what gets quoted.
+    std::string obstacle_note;
+    if (!path_cov_outer_box_obstacle.empty())
+      obstacle_note =
+        " — NAMED OBSTACLE: " + path_cov_outer_box_obstacle +
+        ". The containment above is still true, but this region must NOT be "
+        "certified or turned into a test: the model admits an execution the "
+        "chain does not have, so a test built from a counterexample in it can "
+        "be RED on the UNMODIFIED contract";
     std::string caveat;
     if (degenerate > 0)
       caveat =
@@ -1411,10 +1425,11 @@ void goto_coveraget::report_outer_boxes()
         "concrete counterexample test)";
     log_status(
       "--path-cov-outer-box: path enc={} CERTIFIED region after subtracting "
-      "sibling outer boxes (zero queries): {}{}{}",
+      "sibling outer boxes (zero queries): {}{}{}{}",
       enc,
       s,
       empty_note,
+      obstacle_note,
       caveat);
     // Printed as its own line, and printed as a COUNT, because the property a
     // regression has to pin is "the subtraction punched rather than took a
@@ -3076,6 +3091,7 @@ void goto_coveraget::solidity_path_coverage()
   path_cov_outer_box_ce.clear();
   path_cov_outer_box_type_range.clear();
   path_cov_outer_box_pins.clear();
+  path_cov_outer_box_obstacle.clear();
   path_cov_refused_coords.clear();
   if (!path_cov_outer_box_path.empty())
   {
@@ -5655,6 +5671,35 @@ void goto_coveraget::solidity_path_coverage()
         uid.find("@F@" + outer_unit + "#") == std::string::npos)
         continue;
 
+      // ---- S2: record, do NOT refuse ----
+      //
+      // The asymmetry with certify is deliberate and is the same one the
+      // refused-coordinate handling already draws. An outer box is a
+      // CONTAINMENT statement per coordinate, and it stays true on an
+      // obstructed unit; certification is an assertion ABOUT the box and can
+      // come back SUCCESSFUL over executions the chain does not have. So this
+      // side measures and labels, and the certify side refuses.
+      //
+      // Read from the per-unit LOCALS. `named_obstacle_paths` is filled by the
+      // insertion loop this branch `continue`s past, so in this mode it is
+      // empty and a reader of it would print no caveat while looking like a
+      // reader that had checked.
+      if (unit_has_lost_decision || unit_calls_gated_unit)
+        path_cov_outer_box_obstacle =
+          std::string(
+            unit_has_lost_decision
+              ? "the unit contains a source decision the frontend lowered to a "
+                "control-flow-free assume, so the reverting execution does not "
+                "exist in the model at all"
+              : "") +
+          (unit_has_lost_decision && unit_calls_gated_unit ? "; " : "") +
+          (unit_calls_gated_unit
+             ? "the unit still calls another UNIT's own body unexpanded (" +
+                 residual_unit_names +
+                 "), routing an INTERNAL call through the EXTERNAL-entry body "
+                 "and its ABI value gate"
+             : "");
+
       // Snapshot each coordinate at ENTRY. The assertion sits at the exit, and
       // a parameter may have been reassigned in between; asserting on the live
       // symbol would then bound the wrong value — and bound it in the safe-
@@ -6042,6 +6087,45 @@ void goto_coveraget::solidity_path_coverage()
         uid.find("@F@" + certify_unit + "#") != std::string::npos;
       if (!is_target)
         continue; // other units contribute nothing to this query
+
+      // ---- S2: A NAMED OBSTACLE UNIT MAY NOT BE CERTIFIED ----
+      //
+      // The stage-3 ladder refuses one (N4) and certification did not, although
+      // certification is the OLDER gate and the one every region in the report
+      // is stamped with. On an obstructed unit the model admits an execution the
+      // chain does not have, so `assume(box); assert(tr == pi)` can answer
+      // SUCCESSFUL for a box whose inputs include executions that cannot happen
+      // -- and the region is then handed to an emitter as certified.
+      //
+      // THE TRAP, and it is the reason this is read from the LOCALS: the public
+      // `named_obstacle_paths` map is filled by the insertion loop BELOW, which
+      // this branch `continue`s past. In certify mode that map is EMPTY, so a
+      // gate reading it would never fire while looking exactly like a gate. The
+      // same trap is documented on the stage-3 side and was written down before
+      // either was implemented; both flags here are per-unit locals computed
+      // above, independent of that map.
+      //
+      // Two routes, counted apart because they are different defects needing
+      // the same containment: a source decision lowered to a control-flow-free
+      // assume (the reverting execution does not exist in the model AT ALL, so
+      // no query can see it), and an unexpanded call to another UNIT (which
+      // routes an internal call through the external-entry body and its ABI
+      // value gate).
+      if (unit_has_lost_decision || unit_calls_gated_unit)
+      {
+        log_error(
+          "--path-cov-certify: unit '{}' — REFUSING THE QUERY: this unit is a "
+          "NAMED OBSTACLE, so the model admits an execution the chain does not "
+          "have. A box certified here can contain inputs whose modelled "
+          "execution cannot happen on chain, and the region would be reported "
+          "as certified all the same — which is a false certificate, not a weak "
+          "one (lost decision: {}; calls a gated unit: {}). Certification is "
+          "not attempted",
+          uid,
+          unit_has_lost_decision ? "yes" : "no",
+          unit_calls_gated_unit ? "yes" : "no");
+        exit(1);
+      }
 
       // 1. Assume the box at unit entry. Each bound names either a call
       //    argument (resolved against this unit's own parameter list) or an EVM
