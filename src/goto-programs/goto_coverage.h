@@ -157,6 +157,12 @@ public:
     path_stable_id;
   static std::string path_covered_outpath;
 
+  // On-disk schema of the complete-path covered set. 3 adds `payloads` (see
+  // path_covered_payload, declared below beside path_ce_t). Versions <= 2 carry
+  // ids only and are REFUSED on load: reading one would mark paths covered
+  // while permanently reporting them as payload-less.
+  static constexpr int PATH_COVERED_SET_VERSION = 3;
+
   // Fail-closed guard for the file above. The stable key protects against
   // RE-NUMBERING; it cannot protect against a change that alters what a path IS
   // (different source, a decision kind added to the set, a different loop or
@@ -165,10 +171,22 @@ public:
   // because migration logic is where this class of silent error hides.
   static std::string path_cov_fingerprint;
 
-  // Serialise the complete-path covered set + its fingerprint (atomic publish,
-  // same .tmp-then-rename discipline as write_covered_set_atomic). No-op when
-  // no --coverage-covered-set was given.
-  static void write_path_covered_set_atomic();
+  // Serialise the complete-path covered set + its fingerprint + every
+  // witnessed path's CE PAYLOAD (atomic publish, same .tmp-then-rename
+  // discipline as write_covered_set_atomic). No-op when no
+  // --coverage-covered-set was given.
+  //
+  // `when` labels the call site in the line this prints ("mid-solve after
+  // claim 3 of 8" / "at run end"). It is not decoration: the whole claim being
+  // made is that the payload is on disk BEFORE the run ends, and a line that
+  // does not say when it was written cannot distinguish that from the old
+  // behaviour.
+  //
+  // The counts printed are READ BACK OUT OF THE PUBLISHED FILE, not taken from
+  // the in-memory maps that produced it. A census of what the writer believes
+  // it wrote would have gone on printing correct-looking numbers throughout the
+  // period in which nothing called this function at all.
+  static void write_path_covered_set_atomic(const std::string &when = "");
 
   // Was this claim's path already witnessed in an EARLIER round?
   //
@@ -527,6 +545,72 @@ public:
   };
   static std::map<std::string, path_ce_t> path_ce;
 
+  // ---- THE COUNTEREXAMPLE PAYLOAD, PERSISTED WITH THE ID ----
+  //
+  // The cross-run file used to hold ONLY stable ids. That is enough to SKIP a
+  // path, and not enough to keep the thing the skip is protecting: a path
+  // recorded as covered but carrying no inputs can never produce a test, and
+  // the report says so with `payload_absent_reason` -- permanently, because the
+  // round that could still have produced the payload is the one that just
+  // skipped the path.
+  //
+  // So enabling the mid-solve write WITHOUT this map converts a witness lost to
+  // an OOM into a payload-less `F` that no later round will ever repair -- a
+  // regression dressed as a fix. The payload is therefore written by the SAME
+  // atomic publish as the id, keyed by the same stable id, and the file's
+  // `version` is bumped so a payload-free file from an older build is REJECTED
+  // rather than silently read as "these paths have no inputs".
+  //
+  // Loaded from the file at instrumentation time; written back as the UNION of
+  // loaded and newly witnessed on every publish, so a round that does not
+  // re-instrument a path does not drop that path's payload either.
+  static std::map<std::string, path_ce_t> path_covered_payload;
+
+  // The payload an EARLIER round persisted for this claim's path, or nullptr.
+  // Goes through path_stable_id -> path_covered_payload, i.e. exactly the
+  // indirection path_witnessed_earlier uses, so the two can never disagree
+  // about which path a claim is.
+  static const path_ce_t *
+  path_payload_earlier(const std::pair<std::string, std::string> &claim_key);
+
+  // ---- THE COUNTEREXAMPLE JOURNAL (`cov-ce-journal.json`) ----
+  //
+  // `cov-report.json` is written exactly once, from report_coverage, which sits
+  // AFTER the per-claim job loop and INSIDE the try that an OOM unwinds. A run
+  // that dies therefore keeps nothing -- measured: a whole-contract run died
+  // 51.5% through the solve having REFUTED 5 of that contract's 15 paths, and
+  // discarded all five.
+  //
+  // The cross-run covered set above would have kept them, but only for a caller
+  // that passed --coverage-covered-set, and no collector in this project ever
+  // has. The journal has no such gate: it is written whenever the run asked for
+  // the counterexample payload at all (--cov-report-json), refreshed by an
+  // atomic .tmp+rename at the moment each path is WITNESSED, and never read
+  // back in, so it cannot accumulate across runs or change what a re-run does.
+  //
+  // It is explicitly INCOMPLETE until the run says otherwise: `complete` is
+  // false on every incremental write and true only on the one written beside
+  // the final report. A journal read as a finished report would understate
+  // every count in it.
+  //
+  // Cost is one serialisation of the witnessed set per witness, i.e. quadratic
+  // in |F|. |F| is single digits per unit on every contract measured so far;
+  // the same shape is already accepted for write_path_covered_set_atomic.
+  static std::string path_ce_journal_path;
+  static void
+  write_path_ce_journal_atomic(const std::string &when, bool complete);
+
+  // How many claims this run has HANDED TO THE SOLVER AND GOT AN ANSWER FOR,
+  // and how many it had. Atomics, because the two readers that need them most
+  // are a signal handler (which may not take a lock or touch a std::map) and
+  // the journal writer (which runs on whichever job thread witnessed a path).
+  //
+  // `live_decided` is the numerator of "how much of this run's work would be
+  // thrown away if it died right now" — the number that turned out to be 938
+  // on the run this whole change is about.
+  static std::atomic<size_t> live_decided;
+  static std::atomic<size_t> claims_total_atomic;
+
   // Each enumerated path's DECISION DEPTH, keyed like all_claims.
   //
   // Reported because the next stage cannot be driven without it: every stage-2
@@ -701,6 +785,13 @@ public:
   // the c2goto crypto/ABI tables and the rest of the harness plumbing are
   // still removed from the formula.
   bool protect_ce_symbols = false;
+
+  // Write the counterexample journal (see path_ce_journal_path). Its own flag
+  // rather than a reuse of protect_ce_symbols: both are set by
+  // --cov-report-json today, and both would keep working if one of them moved,
+  // which is exactly how a mechanism ends up silently disabled by a change to
+  // an unrelated flag.
+  bool emit_ce_journal = false;
 
   // Record the per-path decision sequence (see path_decision_table). Its own
   // flag rather than a reuse of protect_ce_symbols: both happen to be set by

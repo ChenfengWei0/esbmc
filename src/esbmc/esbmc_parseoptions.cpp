@@ -4172,6 +4172,11 @@ bool esbmc_parseoptionst::process_goto_program(
       if (cmdline.isset("cov-report-json"))
       {
         tmp.protect_ce_symbols = true;
+        // ...and the payload has to survive a run that does not finish. The
+        // report is written once, after the job loop and inside the try an OOM
+        // unwinds, so a run that dies keeps none of it. The journal is written
+        // at the moment each path is witnessed. See path_ce_journal_path.
+        tmp.emit_ce_journal = true;
         // The report is also the only place the per-path DECISION SEQUENCE can
         // be published, and it is what puts path coverage and branch coverage
         // on one denominator (the decisions walked). Recorded only for a run

@@ -1324,7 +1324,7 @@ void report_coverage(
     // persisted.
     if (cov_set_active)
     {
-      goto_coveraget::write_path_covered_set_atomic();
+      goto_coveraget::write_path_covered_set_atomic("at run end");
       log_success(
         "coverage covered-set written to {}",
         goto_coveraget::path_covered_outpath);
@@ -1791,14 +1791,68 @@ void report_coverage(
               "--no-slice";
         }
         else if (tri == "F")
+        {
           // Witnessed, but not by THIS run: the cross-run covered-set already
           // held it, so the path was not re-instrumented and no model was
-          // produced here. Without this the reader sees an F with no inputs and
-          // no post-state and cannot tell that from "the CE was empty".
-          claim_entry["ce_extraction"]["payload_absent_reason"] =
-            "path was already witnessed in an earlier round (covered-set) and "
-            "therefore not re-instrumented this run; its counterexample values "
-            "are in the report of the round that witnessed it";
+          // produced here.
+          //
+          // The covered set now carries the PAYLOAD alongside the id, so this
+          // is a lookup rather than an excuse. The old text said the values
+          // "are in the report of the round that witnessed it" — which was a
+          // hope, not a fact: that report is a file in a directory this run
+          // knows nothing about, and on a run that died before writing one it
+          // never existed. Emit the persisted values when they are there, and
+          // keep an accurate reason when they are not.
+          const auto *prior_ce =
+            goto_coveraget::path_payload_earlier({claim_msg, claim_loc});
+          if (prior_ce != nullptr)
+          {
+            json ins = json::object();
+            for (const auto &[n, v] : prior_ce->inputs)
+              ins[prettify_solidity_expr(n)] = v;
+            json envj = json::object();
+            for (const auto &[n, v] : prior_ce->env)
+              envj[prettify_solidity_expr(n)] = v;
+            json fin = json::object();
+            for (const auto &[n, v] : prior_ce->final_state)
+              fin[prettify_solidity_expr(n)] = v;
+            json entry = json::object();
+            for (const auto &[n, v] : prior_ce->entry_storage)
+              entry[prettify_solidity_expr(n)] = v;
+            claim_entry["inputs"] = ins;
+            claim_entry["env"] = envj;
+            claim_entry["entry_storage"] = entry;
+            if (prior_ce->revert_pre_rollback)
+            {
+              claim_entry["state_at_revert_point"] = fin;
+              claim_entry["final_state"] = json::object();
+            }
+            else
+              claim_entry["final_state"] = fin;
+            claim_entry["ce_extraction"]["sliced"] = prior_ce->sliced;
+            claim_entry["ce_extraction"]["compact_trace"] =
+              prior_ce->compact_trace;
+            claim_entry["ce_extraction"]["scoped_to_claim"] =
+              prior_ce->scoped_to_claim;
+            claim_entry["ce_extraction"]["harness_nondets_dropped"] =
+              prior_ce->dropped_internal;
+            // NAMED, not silent. These values were harvested under a DIFFERENT
+            // run's bound and slicing configuration, which is recorded in the
+            // payload itself; a consumer that treats them as this run's own
+            // output would attribute this run's `bound` block to them.
+            claim_entry["ce_extraction"]["payload_source"] =
+              "persisted by the earlier round that witnessed this path "
+              "(cross-run covered-set), not harvested by this run; the "
+              "bound/slicing flags in this block are that round's";
+          }
+          else
+            claim_entry["ce_extraction"]["payload_absent_reason"] =
+              "path was already witnessed in an earlier round (covered-set) "
+              "and therefore not re-instrumented this run, and the covered-set "
+              "file carries NO payload for it. This report cannot produce a "
+              "test for this path; re-run without the covered-set, or with a "
+              "covered-set written by a build that persists payloads";
+        }
       }
       claims_json.push_back(claim_entry);
     }
@@ -1976,6 +2030,15 @@ void report_coverage(
     std::ofstream out("cov-report.json");
     out << report.dump(2) << std::endl;
     log_success("Coverage report written to cov-report.json");
+
+    // Seal the journal. Everything before this point wrote `complete: false`,
+    // which is the honest state of a file that is refreshed while the solve is
+    // still running. A consumer must be able to tell the journal of a run that
+    // finished from the journal of a run that was killed, and the only moment
+    // the tool can say so is here — beside the report it did manage to write.
+    if (is_path_cov && !goto_coveraget::path_ce_journal_path.empty())
+      goto_coveraget::write_path_ce_journal_atomic(
+        "at run end", /*complete=*/true);
   }
 
   // Generate pytest test case from collected data (for coverage mode)
@@ -2637,6 +2700,13 @@ smt_convt::resultt bmct::multi_property_check(
   smt_convt::resultt final_result = smt_convt::P_UNSATISFIABLE;
   std::mutex result_mutex;
   std::atomic<size_t> ce_counter{0};
+  // How many claims this run has actually DECIDED (a solver verdict came back).
+  // Three consumers, and none of them can be served by a count taken after the
+  // loop, because the whole point is that the loop may not finish:
+  //   * the "mid-solve after claim N of M" label on every incremental publish;
+  //   * the PARTIAL report's `claims_decided` / `claims_total`;
+  //   * the signal-safe snapshot the kill handler reads.
+  std::atomic<size_t> decided_claims{0};
   // Sequential default consumes `jobs` in iteration order; using a sorted
   // vector lets us solve user-source claims before c2goto/library claims so
   // multi-property doesn't burn the budget on spurious library-side dereference
@@ -2713,6 +2783,15 @@ smt_convt::resultt bmct::multi_property_check(
   for (size_t i = 1; i <= remaining_claims; i++)
     jobs.push_back(i);
 
+  // Published BEFORE the first solve, so that a run killed during job 1 still
+  // has a denominator to report its partial numerator against. Set here rather
+  // than in the pass, because it is the count of claims that survived
+  // simplification and reached this loop — which is what "decided so far" is a
+  // fraction of, and is not the instrumented path count.
+  goto_coveraget::live_decided.store(0, std::memory_order_relaxed);
+  goto_coveraget::claims_total_atomic.store(
+    remaining_claims, std::memory_order_relaxed);
+
   // Reorder so user-source claims solve before c2goto/library claims. Walk
   // SSA_steps once, mapping each assertion's 1-based index to a bool flag
   // "is in user source". Library paths contain "c2goto/library" or "/library/";
@@ -2752,9 +2831,36 @@ smt_convt::resultt bmct::multi_property_check(
    * Finally, this function is affected by the "multi-fail-fast" option, which makes this instance stop
    * if final_result is set to SAT
    */
+  // FAULT INJECTION, shipped rather than kept in a throwaway build.
+  //
+  // The three mechanisms this file now carries -- the mid-solve payload
+  // publish, the PARTIAL report on the exception path, and the signal arm --
+  // all only fire on a run that does NOT reach a clean exit. A regression that
+  // cannot produce such a run cannot pin any of them, and `test.desc` describes
+  // exactly one invocation with no environment of its own and with --timeout /
+  // --memlimit stripped by the harness. So the fault has to be reachable from
+  // the command line or it is not testable at all, and an untested rescue path
+  // is the shape this project has already shipped twice (a function written and
+  // never called; a guard that was always true).
+  //
+  // Both are 0 (off) unless asked for, and both are refused outside
+  // --solidity-path-coverage so no ordinary run can trip over them.
+  const size_t fault_after =
+    is_path_cov && !options.get_option("path-cov-fault-after").empty()
+      ? (size_t)std::stoul(options.get_option("path-cov-fault-after"))
+      : 0;
+  const size_t fault_sigterm =
+    is_path_cov && !options.get_option("path-cov-fault-sigterm").empty()
+      ? (size_t)std::stoul(options.get_option("path-cov-fault-sigterm"))
+      : 0;
+
   auto job_function = [this,
                        &eq,
                        &ce_counter,
+                       &decided_claims,
+                       &remaining_claims,
+                       &fault_after,
+                       &fault_sigterm,
                        &final_result,
                        &result_mutex,
                        &summary,
@@ -2779,6 +2885,29 @@ smt_convt::resultt bmct::multi_property_check(
                        &is_color,
                        &YELLOW,
                        &runtime_solver](const size_t &i) {
+    // Fault injection (see the two constants above). Checked BEFORE this job
+    // does anything, so the N claims already decided have completed every
+    // side effect they own -- including the incremental covered-set publish,
+    // which is the thing the step-1 regression is asserting survived.
+    if (fault_after && decided_claims.load() >= fault_after)
+    {
+      log_error(
+        "--path-cov-fault-after {}: injecting std::bad_alloc after {} decided "
+        "claim(s) (fault injection; this is not a real allocation failure)",
+        fault_after,
+        decided_claims.load());
+      throw std::bad_alloc();
+    }
+    if (fault_sigterm && decided_claims.load() >= fault_sigterm)
+    {
+      log_error(
+        "--path-cov-fault-sigterm {}: raising SIGTERM after {} decided "
+        "claim(s) (fault injection; this is not a real external kill)",
+        fault_sigterm,
+        decided_claims.load());
+      raise(SIGTERM);
+    }
+
     //"multi-fail-fast n": stop after first n SATs found.
     if (is_fail_fast && fail_fast_cnt >= fail_fast_limit)
       return;
@@ -2933,6 +3062,13 @@ smt_convt::resultt bmct::multi_property_check(
       else if (it_o->second != 'F')
         it_o->second = verdict;
     }
+
+    // This claim now HAS a verdict. Counted here rather than at the bottom of
+    // the job so that a job which throws while building its counterexample
+    // still counts the decision it genuinely made -- the whole quarrel with the
+    // old behaviour is that decided work was thrown away.
+    const size_t decided_now = ++decided_claims;
+    goto_coveraget::live_decided.store(decided_now, std::memory_order_relaxed);
 
     double solve_time_s = (solve_stop - solve_start);
 
@@ -3550,7 +3686,17 @@ smt_convt::resultt bmct::multi_property_check(
         // the same reason as branch coverage — a mid-solve kill on a large
         // contract must not throw away the paths already witnessed.
         if (is_path_cov && !goto_coveraget::path_covered_outpath.empty())
-          goto_coveraget::write_path_covered_set_atomic();
+          goto_coveraget::write_path_covered_set_atomic(fmt::format(
+            "mid-solve after claim {} of {}", decided_now, remaining_claims));
+        // THE PAYLOAD, ON DISK, NOW. Unlike the covered set above this needs no
+        // opt-in flag, because the run that lost five witnesses to an OOM was
+        // not passing one and no collector in this project ever has. Written
+        // here rather than at the end of the run for the only reason that
+        // matters: the end of the run may not happen.
+        if (is_path_cov && !goto_coveraget::path_ce_journal_path.empty())
+          goto_coveraget::write_path_ce_journal_atomic(
+            fmt::format("after claim {} of {}", decided_now, remaining_claims),
+            /*complete=*/false);
         if (
           is_branch_cov && !goto_coveraget::covered_set_outpath.empty() &&
           goto_coveraget::covered_set.emplace(claim.claim_msg, claim.claim_loc)

@@ -51,6 +51,8 @@ std::map<std::pair<std::string, std::string>, std::string>
 std::map<std::string, std::vector<std::string>>
   goto_coveraget::degraded_call_sites;
 std::map<std::string, goto_coveraget::path_ce_t> goto_coveraget::path_ce;
+std::map<std::string, goto_coveraget::path_ce_t>
+  goto_coveraget::path_covered_payload;
 std::map<std::pair<std::string, std::string>, uint64_t>
   goto_coveraget::path_decision_depth;
 std::map<std::string, std::vector<goto_coveraget::path_decisiont>>
@@ -97,6 +99,8 @@ std::atomic<size_t> goto_coveraget::total_branch_atomic{0};
 std::atomic<bool> goto_coveraget::covered_set_mode{false};
 std::atomic<size_t> goto_coveraget::live_reached{0};
 std::atomic<size_t> goto_coveraget::covered_run{0};
+std::atomic<size_t> goto_coveraget::live_decided{0};
+std::atomic<size_t> goto_coveraget::claims_total_atomic{0};
 
 void goto_coveraget::write_covered_set_atomic()
 {
@@ -146,31 +150,262 @@ static std::string hex64(uint64_t v)
   return out;
 }
 
-void goto_coveraget::write_path_covered_set_atomic()
+// ---- The CE payload <-> JSON round trip for the cross-run covered set ----
+//
+// Deliberately field-by-field rather than a blanket dump: every field that is
+// NOT written here is a field a carried-over `F` will be missing, and the
+// report's readers (the Foundry emitter, the certify audit, the stage-2 ladder)
+// each consume a different subset. The pairs are written as ORDERED ARRAYS, not
+// as JSON objects, because `inputs` is a sequence with a meaning -- an object
+// would silently re-sort it and lose the call-argument order.
+static nlohmann::json
+pairs_to_json(const std::vector<std::pair<std::string, std::string>> &v)
+{
+  nlohmann::json a = nlohmann::json::array();
+  for (const auto &[n, val] : v)
+    a.push_back({{"name", n}, {"value", val}});
+  return a;
+}
+
+static std::vector<std::pair<std::string, std::string>>
+pairs_from_json(const nlohmann::json &a)
+{
+  std::vector<std::pair<std::string, std::string>> v;
+  if (!a.is_array())
+    return v;
+  for (const auto &e : a)
+    v.emplace_back(
+      e.value("name", std::string()), e.value("value", std::string()));
+  return v;
+}
+
+static nlohmann::json path_ce_to_json(
+  const goto_coveraget::path_ce_t &ce,
+  const std::string &claim_msg,
+  const std::string &claim_loc)
+{
+  nlohmann::json j;
+  // The claim this payload belongs to. Not needed to READ the payload back --
+  // the stable id is the key -- but it is what makes the file diagnosable by a
+  // human, and a payload filed under the wrong path is the one error this whole
+  // content-addressed scheme exists to prevent.
+  j["claim"] = claim_msg;
+  j["loc"] = claim_loc;
+  j["inputs"] = pairs_to_json(ce.inputs);
+  j["env"] = pairs_to_json(ce.env);
+  j["extcall_returns"] = pairs_to_json(ce.extcall_returns);
+  j["entry_storage"] = pairs_to_json(ce.entry_storage);
+  j["final_state"] = pairs_to_json(ce.final_state);
+  j["state_written_unrendered"] = ce.state_written_unrendered;
+  j["entry_storage_known"] = ce.entry_storage_known;
+  j["dropped_internal"] = ce.dropped_internal;
+  j["sliced"] = ce.sliced;
+  j["compact_trace"] = ce.compact_trace;
+  j["payload_symbols_protected"] = ce.payload_symbols_protected;
+  j["scoped_to_claim"] = ce.scoped_to_claim;
+  j["revert_pre_rollback"] = ce.revert_pre_rollback;
+  return j;
+}
+
+static goto_coveraget::path_ce_t path_ce_from_json(const nlohmann::json &j)
+{
+  goto_coveraget::path_ce_t ce;
+  ce.inputs = pairs_from_json(j.value("inputs", nlohmann::json::array()));
+  ce.env = pairs_from_json(j.value("env", nlohmann::json::array()));
+  ce.extcall_returns =
+    pairs_from_json(j.value("extcall_returns", nlohmann::json::array()));
+  ce.entry_storage =
+    pairs_from_json(j.value("entry_storage", nlohmann::json::array()));
+  ce.final_state =
+    pairs_from_json(j.value("final_state", nlohmann::json::array()));
+  for (const auto &s :
+       j.value("state_written_unrendered", nlohmann::json::array()))
+    ce.state_written_unrendered.push_back(s.get<std::string>());
+  ce.entry_storage_known = j.value("entry_storage_known", false);
+  ce.dropped_internal = j.value("dropped_internal", (size_t)0);
+  ce.sliced = j.value("sliced", true);
+  ce.compact_trace = j.value("compact_trace", true);
+  ce.payload_symbols_protected = j.value("payload_symbols_protected", false);
+  ce.scoped_to_claim = j.value("scoped_to_claim", false);
+  ce.revert_pre_rollback = j.value("revert_pre_rollback", false);
+  return ce;
+}
+
+std::string goto_coveraget::path_ce_journal_path;
+
+void goto_coveraget::write_path_ce_journal_atomic(
+  const std::string &when,
+  bool complete)
+{
+  if (path_ce_journal_path.empty())
+    return;
+  const size_t claims_decided = live_decided.load(std::memory_order_relaxed);
+  const size_t claims_total = claims_total_atomic.load(std::memory_order_relaxed);
+  nlohmann::json out;
+  out["version"] = PATH_COVERED_SET_VERSION;
+  out["kind"] = "solidity-complete-path-ce-journal";
+  out["fingerprint"] = path_cov_fingerprint;
+  // THE FIRST FIELD A READER MUST SEE. This file is a live journal, not a
+  // report: on every write but the last it describes a run that has not
+  // finished, and a consumer that read it as a finished report would deflate
+  // every numerator it computed from it.
+  out["complete"] = complete;
+  out["partial"] = !complete;
+  out["claims_decided"] = claims_decided;
+  out["claims_total"] = claims_total;
+  out["witnesses"] = nlohmann::json::object();
+  size_t written = 0;
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    for (const auto &[sig, ce] : path_ce)
+    {
+      auto o = claim_outcome.find(sig);
+      if (o == claim_outcome.end() || o->second != 'F')
+        continue;
+      const auto tab = sig.rfind('\t');
+      const std::string msg =
+        tab == std::string::npos ? sig : sig.substr(0, tab);
+      const std::string loc =
+        tab == std::string::npos ? std::string() : sig.substr(tab + 1);
+      nlohmann::json e = path_ce_to_json(ce, msg, loc);
+      // The stable path id when there is one, so a consumer can join this file
+      // against a covered set or against a later round's report. Absent rather
+      // than faked when the id was not recorded (the stage-2/3 modes do not
+      // populate path_stable_id at all).
+      auto sid = path_stable_id.find({msg, loc});
+      if (sid != path_stable_id.end())
+        e["path_id_stable"] = sid->second;
+      out["witnesses"][sig] = e;
+      ++written;
+    }
+  }
+  const std::string tmp = path_ce_journal_path + ".tmp";
+  {
+    std::ofstream f(tmp);
+    if (!f)
+    {
+      log_warning("path-cov CE journal: cannot write {}", tmp);
+      return;
+    }
+    f << out.dump(2) << "\n";
+  }
+  if (std::rename(tmp.c_str(), path_ce_journal_path.c_str()) != 0)
+  {
+    log_warning(
+      "path-cov CE journal: atomic rename to {} failed", path_ce_journal_path);
+    return;
+  }
+
+  // Read back off the disk, for the same reason the covered-set census is: the
+  // claim being made is "the payload is in a file", and only a file that was
+  // re-opened supports it. `written` is kept beside the disk count so a
+  // disagreement between what was serialised and what landed is visible rather
+  // than averaged away.
+  size_t on_disk = 0, with_inputs = 0;
+  bool readback_ok = false;
+  {
+    std::ifstream rb(path_ce_journal_path);
+    if (rb)
+    {
+      try
+      {
+        nlohmann::json v;
+        rb >> v;
+        const nlohmann::json w =
+          v.value("witnesses", nlohmann::json::object());
+        on_disk = w.size();
+        for (auto it = w.begin(); it != w.end(); ++it)
+          if (it.value().contains("inputs") && !it.value()["inputs"].empty())
+            ++with_inputs;
+        readback_ok = true;
+      }
+      catch (const std::exception &)
+      {
+        readback_ok = false;
+      }
+    }
+  }
+  if (!readback_ok)
+  {
+    log_error(
+      "--solidity-path-coverage: CE journal {} was published but could not be "
+      "read back. The counterexample payload is the deliverable a dying run is "
+      "supposed to keep; an unreadable journal means it was NOT kept",
+      path_ce_journal_path);
+    return;
+  }
+  if (on_disk != written)
+  {
+    log_error(
+      "--solidity-path-coverage: CE journal {} holds {} witness(es) but {} "
+      "were serialised. These must be equal; a journal that silently loses "
+      "entries is the failure it exists to prevent",
+      path_ce_journal_path,
+      on_disk,
+      written);
+    return;
+  }
+  log_success(
+    "--solidity-path-coverage: CE journal {} updated {}: {} witnessed path(s) "
+    "on disk, {} with non-empty inputs (complete={})",
+    path_ce_journal_path,
+    when,
+    on_disk,
+    with_inputs,
+    complete ? "true" : "false");
+}
+
+const goto_coveraget::path_ce_t *goto_coveraget::path_payload_earlier(
+  const std::pair<std::string, std::string> &claim_key)
+{
+  auto it = path_stable_id.find(claim_key);
+  if (it == path_stable_id.end())
+    return nullptr;
+  auto p = path_covered_payload.find(it->second);
+  return p == path_covered_payload.end() ? nullptr : &p->second;
+}
+
+void goto_coveraget::write_path_covered_set_atomic(const std::string &when)
 {
   if (path_covered_outpath.empty())
     return;
   nlohmann::json out;
-  out["version"] = 2;
+  out["version"] = PATH_COVERED_SET_VERSION;
   out["kind"] = "solidity-complete-path";
   // The fingerprint is written so the NEXT run can refuse this file outright.
   out["fingerprint"] = path_cov_fingerprint;
   out["covered"] = nlohmann::json::array();
+  out["payloads"] = nlohmann::json::object();
   // A path counts as covered only when a counterexample was actually obtained
   // ('F'). 'P' (no witness at this bound) and 'U' (undecided) are not evidence
   // of anything and must never enter a cross-run cover.
   std::set<std::string> ids = path_covered_ids;
+  // Loaded payloads are carried forward FIRST, then this run's overwrite them.
+  // A path skipped this round (already witnessed) has no entry in path_ce, so
+  // without this line the very first write-back of round 2 would delete every
+  // payload round 1 persisted -- the exact loss this map exists to prevent,
+  // arriving one round later.
+  std::map<std::string, nlohmann::json> payloads;
+  for (const auto &[id, ce] : path_covered_payload)
+    payloads[id] = path_ce_to_json(ce, "", "");
   {
     std::lock_guard lock(claim_outcome_mutex);
     for (const auto &[claim, id] : path_stable_id)
     {
-      auto o = claim_outcome.find(claim.first + "\t" + claim.second);
-      if (o != claim_outcome.end() && o->second == 'F')
-        ids.insert(id);
+      const std::string sig = claim.first + "\t" + claim.second;
+      auto o = claim_outcome.find(sig);
+      if (o == claim_outcome.end() || o->second != 'F')
+        continue;
+      ids.insert(id);
+      auto c = path_ce.find(sig);
+      if (c != path_ce.end())
+        payloads[id] = path_ce_to_json(c->second, claim.first, claim.second);
     }
   }
   for (const auto &id : ids)
     out["covered"].push_back(id);
+  for (const auto &[id, j] : payloads)
+    out["payloads"][id] = j;
   const std::string tmp = path_covered_outpath + ".tmp";
   {
     std::ofstream f(tmp);
@@ -182,8 +417,62 @@ void goto_coveraget::write_path_covered_set_atomic()
     f << out.dump(2) << "\n";
   }
   if (std::rename(tmp.c_str(), path_covered_outpath.c_str()) != 0)
+  {
     log_warning(
       "coverage-covered-set: atomic rename to {} failed", path_covered_outpath);
+    return;
+  }
+
+  // ---- THE CENSUS IS READ BACK OFF THE DISK ----
+  //
+  // Not from `ids`/`payloads` above. A count taken from the producer's own
+  // in-memory state is a statement about what the producer intended, and this
+  // very function spent an unknown period never being called at all while every
+  // number around it looked right. Re-opening the file it just published makes
+  // "the payload is on disk" and "the line says so" the same statement.
+  size_t on_disk_ids = 0, on_disk_payloads = 0, on_disk_with_inputs = 0;
+  bool readback_ok = false;
+  {
+    std::ifstream rb(path_covered_outpath);
+    if (rb)
+    {
+      try
+      {
+        nlohmann::json v;
+        rb >> v;
+        on_disk_ids = v.value("covered", nlohmann::json::array()).size();
+        const nlohmann::json p =
+          v.value("payloads", nlohmann::json::object());
+        on_disk_payloads = p.size();
+        for (auto it = p.begin(); it != p.end(); ++it)
+          if (it.value().contains("inputs") && !it.value()["inputs"].empty())
+            ++on_disk_with_inputs;
+        readback_ok = true;
+      }
+      catch (const std::exception &)
+      {
+        readback_ok = false;
+      }
+    }
+  }
+  if (!readback_ok)
+  {
+    log_error(
+      "--solidity-path-coverage: covered-set {} was published but could not be "
+      "read back. The counterexample payload is the deliverable a dying run is "
+      "supposed to keep; an unreadable file means it was NOT kept, and saying "
+      "nothing here would leave a lost witness looking exactly like a saved one",
+      path_covered_outpath);
+    return;
+  }
+  log_success(
+    "--solidity-path-coverage: covered-set persisted {}: {} path(s) on disk, "
+    "{} with CE payload, {} with non-empty inputs ({})",
+    when.empty() ? std::string("at run end") : when,
+    on_disk_ids,
+    on_disk_payloads,
+    on_disk_with_inputs,
+    path_covered_outpath);
 }
 
 bool goto_coveraget::path_witnessed_earlier(
@@ -3182,8 +3471,15 @@ void goto_coveraget::solidity_path_coverage()
   covered_set.clear();
   covered_set_outpath.clear();
   path_covered_ids.clear();
+  path_covered_payload.clear();
   path_stable_id.clear();
   path_covered_outpath.clear();
+  // Filename hardcoded relative to CWD, exactly like cov-report.json, and
+  // deliberately never READ back in: a journal that a later run loaded would
+  // accumulate, and "what this run witnessed" would stop being answerable from
+  // it. It is truncated and rewritten from scratch by every run that asks for
+  // the payload.
+  path_ce_journal_path = emit_ce_journal ? "cov-ce-journal.json" : "";
   revert_paths.clear();
   rollback_revert_paths.clear();
   undetermined_exit_paths.clear();
@@ -3260,6 +3556,12 @@ void goto_coveraget::solidity_path_coverage()
         nlohmann::json j;
         in >> j;
         const std::string fp = j.value("fingerprint", std::string());
+        const int ver = j.value("version", 0);
+        // FINGERPRINT FIRST, VERSION SECOND, and the order is deliberate: the
+        // fingerprint is the stronger discriminator (it covers the source
+        // bytes), and its message is what the fail-closed regression pins. A
+        // file that fails both should be reported for the reason that makes the
+        // entries meaningless, not for the reason that makes them incomplete.
         if (fp != path_cov_fingerprint)
         {
           // Fail closed. No migration: a file written under a different source,
@@ -3274,9 +3576,46 @@ void goto_coveraget::solidity_path_coverage()
             fp.empty() ? "<none>" : fp,
             path_cov_fingerprint);
         }
+        else if (ver != PATH_COVERED_SET_VERSION)
+        {
+          // Also fail closed, and for a reason the fingerprint cannot see. A
+          // version <= 2 file has the RIGHT ids for the RIGHT program and no
+          // `payloads` object at all. Loading it would skip every listed path
+          // as "already witnessed" and then report each one as an `F` whose
+          // counterexample values are "in the report of the round that
+          // witnessed it" — a round whose report may no longer exist. The
+          // resulting F can never produce a test and nothing marks it, which is
+          // strictly worse than re-solving the path.
+          log_status(
+            "--coverage-covered-set: discarding {} — it is schema version {} "
+            "and this build reads version {}. Versions <= 2 persist path IDS "
+            "with NO counterexample payload, so carrying them over would mark "
+            "paths covered while permanently reporting them as payload-less. "
+            "Recomputing from scratch; no entries are carried over",
+            covered_set_path,
+            ver,
+            PATH_COVERED_SET_VERSION);
+        }
         else
+        {
           for (const auto &e : j.value("covered", nlohmann::json::array()))
             path_covered_ids.insert(e.get<std::string>());
+          const nlohmann::json pl =
+            j.value("payloads", nlohmann::json::object());
+          for (auto it = pl.begin(); it != pl.end(); ++it)
+            path_covered_payload[it.key()] = path_ce_from_json(it.value());
+          // Printed even when the two agree, and ESPECIALLY when they do not: a
+          // covered id with no payload is a path that will be skipped this
+          // round and reported without inputs, which is the failure mode this
+          // whole schema change exists to close. It must be visible on load,
+          // not discovered later in the report.
+          log_status(
+            "--coverage-covered-set: loaded {} — {} witnessed path(s), {} of "
+            "them carrying a CE payload",
+            covered_set_path,
+            path_covered_ids.size(),
+            path_covered_payload.size());
+        }
       }
       catch (const std::exception &ex)
       {
@@ -3285,6 +3624,7 @@ void goto_coveraget::solidity_path_coverage()
           covered_set_path,
           ex.what());
         path_covered_ids.clear();
+        path_covered_payload.clear();
       }
     }
   }

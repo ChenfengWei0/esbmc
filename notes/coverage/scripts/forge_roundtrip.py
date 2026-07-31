@@ -96,6 +96,49 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
     tests, recs = [], []
     for i, (cname, fname, ckind) in enumerate(callables, 1):
         tag = f"{cname}__{fname}"
+        if ckind == "library":
+            # `--function` IS NOT AVAILABLE, and the reason is soundness.
+            #
+            # A pure library has no dispatcher harness, so `--contract <Lib>`
+            # errors with "No verification targets(contracts) were found", and
+            # this loop used to fall back to `--function fname`. But
+            # `--function` verifies in ISOLATION from an ARBITRARY contract
+            # state, so a counterexample can rest on a state combination no
+            # `constructor() -> transaction sequence` reaches on chain -- and
+            # THIS script's whole point is that the emitted test must be GREEN
+            # on the unmodified contract. An isolated-state counterexample is
+            # precisely a red test, and the self-check gate below would disable
+            # it while the run that produced it looked fine.
+            #
+            # It never fired: every library-route run reported "0 complete
+            # path(s) across 0 unit(s)" because the functions reached were
+            # `internal`, and internal functions are not units. But
+            # `ImmutablesLib.protocolFeeAmountCd` and three siblings are
+            # `external` -- units by visibility, sitting on this route in the
+            # corpus today. The route was correct only because its inputs
+            # happened to be internal, which nothing checks.
+            #
+            # Refused and recorded rather than approximated. Same decision as
+            # pathcov_collect.py; see notes/coverage/INVOCATION_DECISIONS.md
+            # row 10.
+            rec = {"tag": tag, "exitCode": None, "wallSeconds": 0.0,
+                   "killed": False, "emitted": [],
+                   "skipped": "library-has-no-dispatcher",
+                   "skippedDetail":
+                       "a library has no dispatcher harness, so --contract "
+                       "<Lib> finds no verification targets; the only other "
+                       "route is --function, which verifies in isolation from "
+                       "an arbitrary state and can yield a counterexample no "
+                       "reachable state supports -- i.e. a RED test. Internal "
+                       "library functions are covered through their callers' "
+                       "paths; external ones are an unmeasured gap under this "
+                       "configuration"}
+            print(f"  [{i}/{len(callables)}] {tag}  (skipped: library)",
+                  flush=True)
+            recs.append(rec)
+            with journal.open("a") as fh:
+                fh.write(json.dumps(rec) + "\n")
+            continue
         cwd = proj / "_gen" / tag
         cwd.mkdir(parents=True, exist_ok=True)
         for stale in cwd.glob("*"):
@@ -118,11 +161,8 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
         cmd = [str(ESBMC), str(solast), "--sol", str(flat),
                "--solidity-path-coverage", "--solidity-max-tx", str(max_tx),
                "--generate-foundry-testcase", "--cov-report-json",
-               "--memlimit", "8g", "--result-only"]
-        if ckind == "library":
-            cmd += ["--function", fname]
-        else:
-            cmd += ["--contract", primary, "--focus-function", fname]
+               "--memlimit", "8g", "--result-only",
+               "--contract", primary, "--focus-function", fname]
         print(f"  [{i}/{len(callables)}] {tag}", flush=True)
         rc, out, wall = run(cmd, timeout, cwd=str(cwd))
         (cwd / "run.log").write_text(out)
@@ -415,6 +455,12 @@ def main():
     print()
     print(f"  emitted test files : {emitted}")
     print(f"  runs               : {len(recs)}")
+    # Printed unconditionally, like every other count here. A refused run is
+    # not a run that reached nothing -- it is a callable this configuration
+    # declines to measure, and leaving it out of the table would make the
+    # denominator quietly smaller than the callable set.
+    print(f"  refused, library   : "
+          f"{sum(1 for r in recs if r.get('skipped'))}")
     print(f"  killed by timeout  : {sum(1 for r in recs if r['killed'])}")
     print(f"  ambiguous name     : "
           f"{sum(1 for r in recs if r.get('ambiguousEntryName'))}")

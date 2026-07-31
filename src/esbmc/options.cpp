@@ -981,6 +981,22 @@ const struct group_opt_templ all_cmd_options[] = {
     {"segfault-handler", NULL, "Print stacktrace on segmentation fault"}}},
   {"DEBUG options",
    {
+     {"path-cov-fault-after",
+      boost::program_options::value<int>()->value_name("N"),
+      "FAULT INJECTION for --solidity-path-coverage: throw std::bad_alloc "
+      "once N path claims have been decided, to exercise the partial-report "
+      "and mid-solve-persistence paths. Ignored without "
+      "--solidity-path-coverage. It exists because those paths only run on a "
+      "run that does NOT reach a clean exit, and a regression cannot produce "
+      "one otherwise: the harness strips --timeout/--memlimit and a test "
+      "description is a single invocation with no environment of its own. An "
+      "untested rescue path is how this tool has already shipped a function "
+      "that was never called and a guard that was always true"},
+     {"path-cov-fault-sigterm",
+      boost::program_options::value<int>()->value_name("N"),
+      "FAULT INJECTION for --solidity-path-coverage: raise(SIGTERM) once N "
+      "path claims have been decided, to exercise the external-kill arm of the "
+      "signal handler. Same rationale as --path-cov-fault-after"},
      {"double-assign-check",
       NULL,
       "Check for duplicate SSA symbol assignments"},
