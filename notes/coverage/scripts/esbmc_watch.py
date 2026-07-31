@@ -39,7 +39,21 @@ def live_runs():
                 argv = f.read().decode("utf-8", "replace").split("\0")
         except OSError:
             continue
-        if any(a == FLAG for a in argv):
+        # THE WRAPPER CARRIES THE FLAG TOO. Runs are launched as
+        # `timeout N setsid <esbmc> ... --solidity-path-coverage ...`, so the
+        # `timeout` process's OWN cmdline contains the flag and matching on the
+        # flag alone counts every run twice. Observed: a 2 MB process beside a
+        # 2237 MB one, both "runs"; and a 4-run alert fired against 253 MB
+        # total, i.e. two real runs and two wrappers.
+        #
+        # An alarm that fires on a condition that is not happening is not a
+        # conservative alarm -- it is one that gets ignored, which is the same
+        # end state as not having it. So the program itself must be esbmc:
+        # `startswith` rather than `==`, because a snapshot binary is copied to
+        # `esbmc_snapshot_<something>` precisely so a concurrent rebuild cannot
+        # swap it, and those runs are exactly the ones this guard exists for.
+        prog = os.path.basename(argv[0]) if argv and argv[0] else ""
+        if any(a == FLAG for a in argv) and prog.startswith("esbmc"):
             rss = 0
             try:
                 with open(f"/proc/{pid}/status") as f:
