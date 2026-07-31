@@ -735,7 +735,37 @@ bool solidity_convertert::assign_param_nondet(
       else
       {
         // Scalar harness parameter (uint/int/bool/address/bytesN/enum):
-        // pass an explicit nondet side-effect rather than a nil arg. The
+        //
+        // bytesN SITS HERE AND IS NOT A SCALAR, AND THAT IS A KNOWN, MEASURED
+        // GAP -- recorded here rather than fixed, because the obvious fix was
+        // tried and made the pipeline worse.
+        //
+        // bytesN lowers to `BytesStatic { unsigned char data[32]; size_t
+        // length; }`, so the whole-struct nondet below leaves `.length` as free
+        // as `.data`. `bytes_static_equal` returns FALSE OUTRIGHT on a length
+        // mismatch (solidity_bytes.c:354), and an ABI bytesN argument has
+        // length N by construction, so the model admits states the chain
+        // cannot produce. MEASURED -- both of these are Solidity tautologies
+        // and ESBMC reports VERIFICATION FAILED for them:
+        //
+        //     b == bytes32(uint256(b))
+        //     !(b == bytes32(uint256(1))) && uint256(b) == 1
+        //
+        // PoC notes/coverage/poc/D12_Bytes32LengthFree.sol; pinned by
+        // solidity_bytesn_param_length_free_knownbug.
+        //
+        // WHAT WAS TRIED AND REVERTED: passing
+        // `bytes_static_from_uint(nondet_uint256(), N)`, which pins `.length`
+        // and made both tautologies SUCCESSFUL. It also routes around
+        // `get_nondet_expr` -- and the paragraph below is exactly why that is
+        // not free. The parameter's value stopped being recoverable, so the
+        // emitter reported it DEFAULTED, and on D11_Bytes32Equality the funnel
+        // went from 3 paths / 3 cases / 0 merges to 3 paths / 1 case / 1 merge.
+        // A sound model whose counterexample cannot be read back is not an
+        // improvement for a pipeline whose deliverable is the test. Any real
+        // fix has to pin the length AND keep the value recoverable.
+        //
+        // Pass an explicit nondet side-effect rather than a nil arg. The
         // sibling branches above already pass real nondet values for
         // string/bytes/array params; a nil scalar left the callee param as
         // an unassigned free symbol (symex_function.cpp:168 "is this valid?"
