@@ -22,7 +22,10 @@ paraphrased fixture would have passed against the old code too, which is the
 whole failure mode being pinned here.
 """
 
+import json
+import os
 import sys
+import tempfile
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
@@ -49,6 +52,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       punch_targets,
                                       cut_of,
                                       split_on_cut,
+                                      function_mutability,
                                       brackets_for)
 
 FAILURES = []
@@ -1202,6 +1206,77 @@ check("S3-overlap-still-fires-on-tuple-keys",
       [((2, 1), (7, 1))])
 check("S3-overlap-still-silent-on-a-real-partition",
       certified_overlap({(2, 1): {"a": (6, BIG)}, (3, 1): {"a": (0, 5)}}), [])
+
+# --- S10: msg.value on a non-payable unit, read as a FACT not pinned as policy ---
+#
+# MEASURED on one contract, controlled -- identical command apart from the flag:
+#
+#     auto-pin ON   4 of 5 paths certified, each region the path's EXACT domain
+#     auto-pin OFF  0 of 5
+#
+# and the ON run carries ONE pin (msg.value == 0) where --pin-env carries
+# fifteen, so the region is universally quantified over everything else. That
+# difference is the reason this is not "--pin-env made default": a non-payable
+# function's ABI gate reverts every call carrying value, so pinning msg.value
+# excludes nothing REACHABLE, while pinning block.timestamp turns the region
+# into a statement about one slice.
+#
+# The mutability is READ from the AST for the same reason state_mutability is:
+# "every counterexample has msg.value 0" is true of a non-payable function and
+# equally true of a payable one nobody happened to send value to.
+
+_AST = {
+    "nodeType": "SourceUnit",
+    "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C",
+        "nodes": [
+            {"nodeType": "FunctionDefinition", "name": "f",
+             "stateMutability": "nonpayable"},
+            {"nodeType": "FunctionDefinition", "name": "deposit",
+             "stateMutability": "payable"},
+            {"nodeType": "FunctionDefinition", "name": "peek",
+             "stateMutability": "view"},
+        ],
+    }],
+}
+_fd, _p = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd, "w") as _f:
+    # solc's --ast-compact-json output carries a banner before the object, and
+    # the reader skips to the first '{'. Written WITH one, because a fixture
+    # without it would pass against a reader that cannot handle the real file.
+    _f.write("======= C.sol =======\nJSON AST (compact format):\n\n")
+    json.dump(_AST, _f)
+
+check("S10-nonpayable-is-read", function_mutability(_p).get("f"), "nonpayable")
+# THE MUST-FLIP. A payable function really can be called with value, so pinning
+# it to 0 would generalise over a strictly smaller space than the contract has.
+# Without this pair a reader that always said "nonpayable" would pass.
+check("S10-payable-is-read", function_mutability(_p).get("deposit"), "payable")
+check("S10-view-is-read-and-is-not-payable",
+      function_mutability(_p).get("peek"), "view")
+# An OVERLOAD declared both ways cannot be resolved from the name, so the
+# PAYABLE reading wins -- the direction that declines to pin, i.e. declines to
+# act. Opposite of state_mutability's tie-break, and deliberately so: there the
+# risky move is dropping a settable coordinate, here it is pinning a quantity
+# that really can vary.
+_AST2 = {"nodeType": "SourceUnit", "nodes": [
+    {"nodeType": "FunctionDefinition", "name": "g",
+     "stateMutability": "nonpayable"},
+    {"nodeType": "FunctionDefinition", "name": "g",
+     "stateMutability": "payable"}]}
+_fd2, _p2 = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd2, "w") as _f2:
+    json.dump(_AST2, _f2)
+check("S10-an-overload-declared-both-ways-reads-as-payable",
+      function_mutability(_p2).get("g"), "payable")
+os.unlink(_p)
+os.unlink(_p2)
+
+# Same failure direction as every other AST read here: absent means pin nothing,
+# which reproduces the previous behaviour exactly. The driver REPORTS the
+# absence, which is what stops it reading as a property of the contract.
+check("S10-missing-ast-pins-nothing", function_mutability("/no/such/ast"), {})
+check("S10-none-ast-pins-nothing", function_mutability(None), {})
 
 if FAILURES:
     print("FAILED:")

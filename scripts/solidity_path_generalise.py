@@ -404,6 +404,69 @@ def state_mutability(ast_path):
     return out
 
 
+def function_mutability(ast_path):
+    """Each function's Solidity `stateMutability`, read from the solc AST.
+
+    S10. `msg.value` is the single measured difference between a unit that
+    certifies and one that certifies NOTHING, and it is not a close call:
+    MEASURED on one contract, same command apart from the environment,
+    0 of 5 paths certified against 4 of 5. A non-payable function carries an
+    ABI-level decision on `msg.value`, so a box leaving it unconstrained always
+    admits an input that reverts at the gate, and certification is refused
+    however far the box is shrunk. Most real code is non-payable, so this is
+    most units.
+
+    THE POINT OF READING IT RATHER THAN PINNING BY POLICY. `--pin-env` pins
+    every environment quantity the paths agree on, which changes what every
+    region MEANS -- each becomes a statement about that environment slice, and
+    that is why it is off by default. Pinning `msg.value = 0` on a function the
+    SOURCE declares non-payable is not that. It is a fact about the contract:
+    on chain, every call to a non-payable function that reaches the body has
+    `msg.value == 0`, because the compiler-inserted gate reverts the rest. The
+    region is not being narrowed to a slice; the excluded inputs cannot reach
+    the body at all.
+
+    What it DOES exclude is the ABI-gate revert path itself, whose whole domain
+    is `msg.value != 0`. That path's region goes empty and is reported as empty
+    -- which is honest, and is why this is announced on stdout rather than done
+    quietly.
+
+    Returns {name: mutability}. Same failure direction as `state_mutability`: an
+    unreadable or absent AST returns {}, which pins nothing and reproduces the
+    previous behaviour exactly. Failing OPEN is the wrong direction on the
+    merits here too, and is accepted for the same reason -- it is the status
+    quo, and the absence is reported loudly.
+
+    OVERLOADS: a name declared twice with different mutability cannot be
+    resolved from the name alone, so the PAYABLE reading wins. That is the
+    conservative direction: it declines to pin, i.e. it declines to act.
+    """
+    if not ast_path or not os.path.exists(ast_path):
+        return {}
+    try:
+        txt = open(ast_path).read()
+        ast = json.loads(txt[txt.index("{"):])
+    except (OSError, ValueError):
+        return {}
+    out = {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("nodeType") == "FunctionDefinition":
+                nm, mu = n.get("name"), n.get("stateMutability")
+                if nm and mu:
+                    if out.get(nm) in (None, mu) or mu == "payable":
+                        out[nm] = mu
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(ast)
+    return out
+
+
 def declared_struct_fields(ast_path):
     """Every field name declared on any struct in the source.
 
@@ -1851,6 +1914,22 @@ def main():
                          "starts at full-type resolution, so separation now "
                          "depends on the counterexamples being far apart "
                          "rather than on a measured bracket.")
+    ap.add_argument("--no-auto-pin-value", action="store_true",
+                    help="do NOT pin msg.value to 0 on a unit the source "
+                         "declares non-payable. The pin is ON by default, and "
+                         "unlike --level0 / --max-holes / --max-region-pieces "
+                         "this default is deliberately NOT the conservative "
+                         "one, because it is not a policy: a non-payable "
+                         "function's ABI gate reverts every call carrying "
+                         "value, so no input with msg.value != 0 reaches the "
+                         "body and pinning it excludes nothing reachable. "
+                         "MEASURED, same contract and command apart from the "
+                         "environment: 0 of 5 paths certified unconstrained, "
+                         "4 of 5 with it. What the pin DOES exclude is the "
+                         "ABI-gate revert path itself, whose whole domain is "
+                         "msg.value != 0; its region is then reported EMPTY. "
+                         "Pass this flag to get that path back and lose the "
+                         "others.")
     ap.add_argument("--pin-env", action="store_true",
                     help="pin each msg./tx./block. quantity on which every "
                          "witnessed path agrees, at that value. Off by default "
@@ -1921,6 +2000,62 @@ def main():
     if args.env_coord:
         print(f"[env] probed as free coordinate(s): "
               f"{', '.join(sorted(args.env_coord))}")
+
+    # ---- S10: msg.value on a NON-PAYABLE unit is 0, as a fact not a policy ----
+    #
+    # This is the single largest measured difference between certifying and
+    # certifying nothing. Same contract, same command apart from the
+    # environment: 0 of 5 paths certified, against 4 of 5.
+    #
+    # It is deliberately NOT `--pin-env` made default. That flag pins every
+    # environment quantity the paths agree on, which turns each region into a
+    # statement about an environment SLICE, and that is a real change of
+    # meaning. This pins one quantity, on units whose SOURCE declares that the
+    # quantity cannot be anything else: a non-payable function's
+    # compiler-inserted gate reverts every call carrying value, so no input with
+    # `msg.value != 0` reaches the body. Nothing reachable is excluded.
+    #
+    # What IS excluded is the ABI-gate revert path itself, whose entire domain
+    # is `msg.value != 0`. Its region goes empty and is reported as empty. That
+    # is the cost, it is stated here, and it is why this prints rather than
+    # happening quietly.
+    fn_mut = function_mutability(args.ast)
+    mu = fn_mut.get(args.unit)
+    if args.no_auto_pin_value:
+        print("[env] --no-auto-pin-value: msg.value is NOT pinned even if this "
+              "unit is non-payable. A non-payable unit's ABI gate is a decision "
+              "on msg.value, so leaving it unconstrained refuses certification "
+              "however far the box is shrunk")
+    elif "msg.value" not in {k for _, _, ce in paths for k in ce}:
+        pass                    # not in the payload; nothing to pin
+    elif "msg.value" in pins:
+        pass                    # an explicit --pin always wins
+    elif mu is None:
+        # Same failure direction as every other AST read here, and reported for
+        # the same reason: an exclusion that does not happen must still be
+        # visible, or its absence reads as a property of the contract.
+        print("[env] msg.value NOT auto-pinned: this unit's stateMutability "
+              "could not be read"
+              + (" (no --ast given)" if not args.ast else
+                 f" (the AST names {len(fn_mut)} function(s), not "
+                 f"'{args.unit}')")
+              + ". A non-payable unit cannot certify while msg.value is "
+                "unconstrained, so this is a yield loss with a nameable cause")
+    elif mu == "payable":
+        # THE MUST-FLIP. A payable function really can be called with value, so
+        # pinning it to 0 would generalise over a strictly smaller input space
+        # than the contract has -- and say nothing about it.
+        print("[env] msg.value NOT pinned: this unit is PAYABLE, so a call may "
+              "carry value and pinning it to 0 would exclude reachable inputs")
+    else:
+        pins["msg.value"] = 0
+        print(f"[env] msg.value PINNED to 0: the source declares '{args.unit}' "
+              f"{mu} (not payable), so every call reaching its body has "
+              f"msg.value == 0 -- the ABI gate reverts the rest. This is a fact "
+              f"about the contract, not a slice: no reachable input is "
+              f"excluded. The ABI-gate revert path itself IS excluded, and its "
+              f"region will be reported EMPTY. Disable with "
+              f"--no-auto-pin-value")
     if args.pin_env and env_names:
         agreed, disagreed = {}, []
         for n in env_names:
@@ -1939,10 +2074,20 @@ def main():
                   f"{', '.join(disagreed)}. Left unconstrained, so a path "
                   f"guarded by one of these cannot certify.")
     elif env_names:
-        print(f"[env] {len(env_names)} environment quantity(s) left "
-              f"unconstrained (--pin-env is off). A non-payable function has an "
-              f"ABI-level decision on msg.value, so its paths cannot certify "
-              f"while it is unconstrained.")
+        # The count must EXCLUDE anything the auto-pin above already fixed, or
+        # the line contradicts the one printed two paragraphs earlier -- and the
+        # msg.value sentence must not be repeated once msg.value is pinned,
+        # which is exactly the "gate that reports a state it no longer has"
+        # shape this file keeps catching elsewhere.
+        loose = [n for n in env_names if n not in pins]
+        if loose:
+            print(f"[env] {len(loose)} environment quantity(s) left "
+                  f"unconstrained (--pin-env is off)"
+                  + ("" if "msg.value" in pins else
+                     ". A non-payable function has an ABI-level decision on "
+                     "msg.value, so its paths cannot certify while it is "
+                     "unconstrained")
+                  + ".")
 
     coords = sorted({k for _, _, ce in paths for k in ce}
                     - set(pins) - set(env_names))
