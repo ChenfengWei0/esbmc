@@ -3512,6 +3512,11 @@ smt_convt::resultt bmct::multi_property_check(
               {claim.claim_msg, claim.claim_loc}) > 0;
           // Ordered so the emitted post-state is deterministic across runs.
           std::map<std::string, std::string> last_state;
+          // The EVM environment, LAST write wins -- see the `is_env` branch
+          // below for why first-wins was wrong and what it cost. Separate from
+          // `input_seen` on purpose: sharing one set lets an environment name
+          // and a parameter name suppress each other.
+          std::map<std::string, std::string> last_env;
           std::set<std::string> input_seen;
           // Scope prefix this path's function parameters carry. A Solidity
           // parameter symbol is `sol:@C@<contract>@F@<method>@<param>` (see
@@ -3853,8 +3858,60 @@ smt_convt::resultt bmct::multi_property_check(
               }
               else if (is_env)
               {
-                if (input_seen.insert(name).second)
-                  ce.env.emplace_back(name, val);
+                // ---- LAST WRITE WINS FOR THE ENVIRONMENT, NOT FIRST ----
+                //
+                // A parameter is assigned once, at the call, so first-wins is
+                // right for `inputs`. The EVM environment is not: it is written
+                // once at declaration (`solidity_blockchain.c`, before the
+                // harness runs) and then RE-SEEDED at the top of every
+                // dispatcher iteration by `_sol_per_tx_reseed`. First-wins
+                // therefore always published the declaration-time value and
+                // silently discarded the one the transaction actually ran under.
+                //
+                // MEASURED on notes/coverage/poc/D09_ValueGate.sol -- six lines,
+                // one unit, no source decision, so the only decision in the run
+                // is the synthetic ABI value gate. From the `set:path:2`
+                // counterexample, verbatim:
+                //
+                //     State 11  solidity_blockchain.c:31
+                //       msg_value = 0
+                //     State 51  solidity_misc.c:171  _sol_per_tx_reseed
+                //       msg_value = 0xFFFF...FFFF
+                //     State 72  D09_ValueGate.sol:36  set
+                //       path_tr$0 = 2
+                //     Violated property: ...:path:2
+                //
+                // `path:2` is the depth-1 revert taken when value is sent to a
+                // NONPAYABLE entry, so it requires `msg.value != 0`, and the
+                // report published 0 -- the condition under which the path is
+                // NOT taken. The sibling `set:path:3` is the control: there the
+                // reseed chooses 0 and 0 is correct, so the old code was right
+                // half the time by coincidence.
+                //
+                // THE COST WAS NOT A MISSING FIELD. Both arms of the gate then
+                // render as the same call, so ONE emitted Foundry case carries
+                // BOTH path ids -- 37 of 161 cases across the PoC set -- and a
+                // path no test can reach is counted as covered. The same
+                // mechanism reseeds msg_sender (State 50), which is the other 6
+                // of the 63 payload-vs-path contradictions
+                // `notes/coverage/scripts/ce_consistency.py` reports, so 61 of
+                // the 63 are this one line.
+                //
+                // "LAST" IS BOUNDED BY THE LOOP, NOT BY THE TRACE. This walk
+                // already breaks at this path's own violated assert (see the
+                // `st.comment == claim.claim_msg` guard above), so the last
+                // write kept here is the reseed of the transaction that ENTERED
+                // the unit -- not a later transaction's. That is what makes this
+                // correct at `--solidity-max-tx 2` and not only at 1. Solidity
+                // cannot assign msg.* inside a function, so there is no write
+                // between entry and the assert to prefer over the reseed.
+                //
+                // Its own map, no longer sharing `input_seen` with the
+                // parameters: one shared set means an environment name and a
+                // parameter name that happen to collide silently suppress each
+                // other, and `std::map` additionally makes the published order
+                // deterministic across runs rather than trace-order.
+                last_env[name] = val;
               }
               else
                 ++ce.dropped_internal;
@@ -3862,6 +3919,12 @@ smt_convt::resultt bmct::multi_property_check(
           }
           for (const auto &[n, v] : last_state)
             ce.final_state.emplace_back(n, v);
+          // Published after the walk, for the same reason `final_state` is: the
+          // value that belongs in the report is the one in force when the unit
+          // ran, and that is only known once the walk has stopped at this path's
+          // own assert.
+          for (const auto &[n, v] : last_env)
+            ce.env.emplace_back(n, v);
           // Pick the snapshot for the invocation the refuted assert sits in.
           // Anything else would be a different invocation's entry state, which
           // for a recursive function is a different number — reporting it would
