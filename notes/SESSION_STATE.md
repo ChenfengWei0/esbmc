@@ -87,7 +87,8 @@ Three defects found end to end, and what happened to each:
 | a test the emitter ASSERTED exits normally that REVERTS | GUARDED at pipeline level (run every test, disable + count the red ones) | 1 red disabled, coverage unchanged |
 | every recovered argument zero, and zeros alias to one mapping slot | de-aliased (distinct identities per parameter name) | **coverage UNCHANGED -- the aliasing hypothesis is REFUTED** |
 
-**SECOND SAMPLE, and it narrows the table above.** `notes/emission-loss-two-samples.md`:
+**SECOND SAMPLE, and it narrows the table above.** `notes/emission-loss-three-samples.md`
+(a THIRD sample has since landed there too — see the section at the end of this file):
 farming is bar 26, native 26, OURS 10. Three of the aqua-derived claims do NOT
 generalise -- on farming 170 of 174 defaulted arguments are UINT256 (not mapping
 keys), there are ZERO empty-body refusals (aqua had 4), and the loss is spread
