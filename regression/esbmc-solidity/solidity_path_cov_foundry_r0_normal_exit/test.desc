@@ -6,5 +6,5 @@ contract.sol
 ^Generated Foundry coverage test with 8 case\(s\): R0.cov.t.sol$
 ^Foundry: 8 of 8 case\(s\) name the obligation they were reconstructed from, standing for 8 refuted path claim\(s\)$
 ^Foundry: 4 call\(s\) emitted bare \(exit census confirmed normal; a revert fails the test\)$
-^Foundry: 4 call\(s\) wrapped in revert-tolerant try/catch \(outcome not confirmed\)$
+^Foundry: 1 call\(s\) wrapped in revert-tolerant try/catch \(outcome not confirmed\)$
 ^VERIFICATION FAILED$

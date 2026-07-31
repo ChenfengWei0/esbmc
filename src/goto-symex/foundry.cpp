@@ -3061,11 +3061,86 @@ size_t foundry_generator::write_foundry_file(
             deal_line += "    vm.prank(" + sdr + ");\n";
         }
 
+        // ---- VALUE SENT TO A NON-PAYABLE ENTRY: THE ABI VALUE GATE'S OWN
+        // ---- REVERTING PATH ----
+        //
+        // This path exists in every unit of every contract -- it is the
+        // synthetic ABI value gate taking its rejecting arm -- and until now it
+        // could not be rendered at all. The value pin is suppressed for a
+        // non-payable method, correctly, because Solidity REFUSES
+        // `c.f{value: 1}(x)` at compile time there. The consequence was not a
+        // missing test but a wrong one: with the value dropped, the call text is
+        // identical to the sibling path's, the dedup key collapsed them (fixed
+        // separately), and the surviving case named both path ids while walking
+        // only one.
+        //
+        // The EVM does allow sending value to a non-payable function; the
+        // callee simply rejects it. So the faithful replay is a low-level call,
+        // which is legal for any function and whose boolean result IS the
+        // assertion:
+        //
+        //     vm.deal(address(this), N);
+        //     (bool ok, ) = address(c0).call{value: N}(
+        //         abi.encodeWithSignature("set(uint256)", 0));
+        //     assertFalse(ok, "...");
+        //
+        // `assertFalse` rather than a bare call: this path's whole content is
+        // that the entry REJECTED the value, so a run in which it succeeds is
+        // an ESBMC<->EVM divergence and must be loud. Same reasoning as the
+        // `vm.expectRevert()` arm below, using the mechanism a low-level call
+        // offers instead of a cheatcode.
+        //
+        // The signature is built from the DECLARED argument types
+        // (`sol_type_to_solidity` on each arg's `#sol_type`), not from the
+        // literals: `abi.encodeWithSignature` hashes the textual selector, so a
+        // literal's spelling must not reach it.
+        std::string nonpayable_value;
+        if (!call.payable && call.msg_value)
+        {
+          const std::string v = format_sol_value("UINT256", call.msg_value);
+          if (!v.empty() && v != "0")
+            nonpayable_value = v;
+        }
+        std::string abi_sig;
+        if (!nonpayable_value.empty())
+        {
+          abi_sig = call.method + "(";
+          bool first = true;
+          for (const auto &a : call.args)
+          {
+            const std::string st = sol_type_to_solidity(a.sol_type);
+            if (st.empty())
+            {
+              abi_sig.clear(); // cannot name the type -> cannot build a selector
+              break;
+            }
+            if (!first)
+              abi_sig += ",";
+            abi_sig += st;
+            first = false;
+          }
+          if (!abi_sig.empty())
+            abi_sig += ")";
+        }
+
         if (!call.supported || (!is_lib && !built.count(call.contract)))
           // No `vm.deal` here: the call is not emitted, so an orphan deal would
           // be dead noise and would over-report the pinned-value count.
           f << "    // UNSUPPORTED: " << call.contract << "." << call.method
             << " has an argument type ESBMC cannot yet render as a literal\n";
+        else if (!is_lib && !nonpayable_value.empty() && !abi_sig.empty())
+        {
+          const std::string args = join_args(call);
+          f << "    vm.deal(address(this), " << nonpayable_value << ");\n";
+          f << "    // [asserted] value sent to a NON-PAYABLE entry: the call "
+               "must fail\n";
+          f << "    (bool ok" << fn << ", ) = address(" << recv << ").call{"
+            << "value: " << nonpayable_value << "}(\n";
+          f << "        abi.encodeWithSignature(\"" << abi_sig << "\""
+            << (args.empty() ? "" : ", " + args) << "));\n";
+          f << "    assertFalse(ok" << fn
+            << ", \"value sent to a non-payable entry must revert\");\n";
+        }
         else if (call.reverts)
         {
           // Phase A detected this edge reverts (conservative #sol_error
