@@ -271,3 +271,21 @@ emitted and counted as passing, distinguishable from a real one only by reading
 it. The count is not the goal; the coverage of distinct properties is.
 
 Recorded here so a reader finds a DECISION rather than a gap.
+
+## Three samples, and where to read them
+
+`notes/emission-loss-three-samples.md` is the current state of subgoal 2.
+
+The ONE quantitative claim that survives three benchmarks: emission retains
+about half of what the enumeration reaches (aqua 2 of 4, farming 10 of 18,
+EscrowSrc 3 of 6). Everything else taken from aqua alone was narrowed by a later
+sample -- read that file before quoting any mechanism as general.
+
+Settled there and worth not re-deriving: `ImmutablesLib` is 0/8 on both Escrows
+because those eight decisions were NEVER ENUMERATED, not because the emitter
+dropped them. No emitter change can touch them.
+
+Re-run any sample with
+`python3 notes/coverage/scripts/forge_roundtrip.py <bench> --timeout 180`
+and read the per-line loss with
+`python3 notes/coverage/scripts/emission_loss.py <bench>`.
