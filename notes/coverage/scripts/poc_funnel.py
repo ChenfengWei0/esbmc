@@ -265,6 +265,7 @@ def main():
             # ABI-value-gate payload defect shows up.
             ids = set()
             merged = 0
+            merge_groups = []
             for line in txt.splitlines():
                 s = line.strip()
                 if s.startswith("// claim:"):
@@ -273,8 +274,10 @@ def main():
                     ids.update(parts)
                     if len(parts) > 1:
                         merged += 1
+                        merge_groups.append(parts)
             row["claims_rendered"] = len(ids)
             row["merged_cases"] = merged
+            row["merge_groups"] = merge_groups
         rows.append(row)
 
     # ---- build ONCE for the whole set --------------------------------------
@@ -344,10 +347,15 @@ def main():
     print(f"`merged cases` = {tot['merged']} emitted case(s) are labelled with "
           f"MORE THAN ONE path id. A single concrete call cannot walk two "
           f"different decision sequences, so each merge is one path counted as "
-          f"rendered that the test cannot actually reach. Every merge measured "
-          f"so far is the pair that differs only on the synthetic ABI value "
-          f"gate, whose payload reports `msg.value = 0` on BOTH arms -- run "
-          f"ce_consistency.py on the reports under _gen/ to see it named.\n")
+          f"rendered that the test cannot actually reach.\n")
+    print("This footnote used to assert that EVERY merge is the synthetic ABI "
+          "value gate. The section below, added to check that claim rather "
+          "than repeat it, refuted it on its first run: on P26_TypeMatrix two "
+          "paths differing on a bytesN equality "
+          "(`(_Bool)return_value$_bytes_static_equal$2`) are also rendered as "
+          "one call, and one case carries THREE path ids. So the coordinate "
+          "the renderer cannot distinguish is not always `msg.value`, and each "
+          "merge is attributed individually below instead of being assumed.\n")
 
     # ---- where each stage lost, named ---------------------------------------
     print("## Where each stage lost\n")
@@ -380,6 +388,67 @@ def main():
               f"{'; '.join(bits) if bits else 'NO REASON IN THE LOG'}")
     if not any_loss:
         print("  nothing lost: every counterexample became a case\n")
+
+    # ---- WHICH DECISION THE MERGED PATHS DISAGREE ON ----
+    #
+    # Not a guess. Every merged case names >1 path id, and each of those
+    # ids has its own `decisions` array in the same cov-report.json. Two paths
+    # that one concrete call is claimed to walk must differ SOMEWHERE, and the
+    # first index at which their decision sequences differ is exactly the
+    # coordinate the renderer failed to distinguish. Printing it turns "NO
+    # REASON IN THE LOG" into a named, attributable loss -- and it is what
+    # showed that every merge measured so far is one coordinate, the synthetic
+    # ABI value gate, rather than an assortment.
+    print("\n### merged cases -> WHICH decision the renderer could not "
+          "distinguish\n")
+    any_merge = False
+    for r in rows:
+        groups = r.get("merge_groups") or []
+        if not groups:
+            continue
+        rep = proj / "_gen" / r["stem"] / "cov-report.json"
+        if not rep.exists():
+            continue
+        by_cond = {}
+        for c in json.loads(rep.read_text()).get("claims", []):
+            fn = c.get("path_function") or ""
+            pid = c.get("path_id") or ""
+            by_cond[f"{fn}:path:{pid}"] = c
+        for parts in groups:
+            any_merge = True
+            seqs = []
+            for p in parts:
+                c = by_cond.get(p)
+                seqs.append([] if c is None else (c.get("decisions") or []))
+            # First index at which the arms disagree.
+            where = None
+            for i in range(max(len(s) for s in seqs)):
+                arms = {tuple(s[i].get("arm") for s in seqs if i < len(s))}
+                present = [s[i] for s in seqs if i < len(s)]
+                if len(present) != len(seqs) or len(
+                        {d.get("arm") for d in present}) > 1:
+                    where = (i, present)
+                    break
+            if where is None:
+                print(f"  {r['stem']}: {len(parts)} claim(s) merged, and their "
+                      f"decision sequences are IDENTICAL -- that is a separate "
+                      f"defect (two path ids for one sequence)")
+                continue
+            i, present = where
+            d0 = present[0] if present else {}
+            gate = " [SYNTHETIC ABI VALUE GATE]" if d0.get(
+                "synthetic_abi_gate") else ""
+            print(f"  {r['stem']}: {len(parts)} claim(s) on one case, first "
+                  f"disagree at decision #{i}{gate}")
+            for p, s in zip(parts, seqs):
+                if i < len(s):
+                    print(f"      {p.rsplit(':', 2)[-1]:>4}: "
+                          f"{s[i].get('branch_claim')} [{s[i].get('arm')}]")
+                else:
+                    print(f"      {p.rsplit(':', 2)[-1]:>4}: (sequence is "
+                          f"shorter -- this path exits before decision #{i})")
+    if not any_merge:
+        print("  no case carries more than one path id\n")
 
     print("\n### rendered -> GREEN  (RED on the contract it came from)\n")
     if not any(red.values()):
