@@ -16,12 +16,25 @@ token. On the big contract that would have been absorbed into "too slow".
 HOW IT REDUCES. Syntactic units, largest first, each removal kept only if the
 failure SURVIVES:
 
-    1. whole functions       (the biggest win, and usually most of the file)
-    2. modifiers and their use sites
-    3. base contracts and `using ... for`
-    4. statements inside the function that still fails
-    5. mapping nesting depth, then mappings to scalars
-    6. integer width
+    PASS 1  whole function-like blocks (function / modifier / constructor /
+            receive / fallback) -- the biggest win, usually most of the file
+    PASS 2  single statements inside whatever blocks remain
+    PASS 3  whole TYPE-level blocks: contract / library / interface / struct /
+            enum
+    PASS 4  single state-variable declarations at contract scope
+
+PASS 3 and 4 exist because of a measurement, not a hunch: reducing st1inch
+against `z3-not-well-founded` deleted the focused function's ENTIRE body and
+the failure survived, then stalled at 2830 lines -- everything left was type
+structure, which passes 1 and 2 cannot touch. Four hand-written single-factor
+candidates were refuted before adding them (struct-in-struct-with-mapping
+through a mapping; a string state variable; a base-contract chain plus an
+interface; an immutable of interface type), which is when guessing shapes stops
+paying.
+
+Dropping a contract that something else inherits from simply fails to compile,
+and a candidate that does not compile is already rejected by the predicate, so
+these passes need no dependency analysis -- only the willingness to try.
 
 After each candidate removal the contract must still COMPILE and must still
 FAIL THE SAME WAY. A candidate that changes the failure mode is rejected and
@@ -65,12 +78,26 @@ setFeeReceiver`, and the whole contract is a different query. Reducing without
 it would either make every candidate "fail" by timing out (so nothing is ever
 removed) or reproduce some other unit's failure under the same name.
 
+THE COMPILER IS PART OF THE ARTIFACT TOO. The benchmarks pin an exact pragma
+-- st1inch pins 0.8.23, and its committed .solast was built by that compiler --
+while the solc on PATH here is 0.8.34. Compiling a candidate with the wrong
+front end makes the reduced file a reproduction of a run nobody measured, and
+`predicate` short-circuits to False whenever a candidate does not compile, so
+the reducer refuses before ESBMC is invoked at all and the refusal is
+indistinguishable from "the failure went away". `--solc` names the binary to
+use. It is deliberately not `solc-select use`: that switches the compiler for
+the regression suite as well, which currently passes under 0.8.34.
+
 Usage:
     reduce_to_poc.py --sol X.sol --contract C --fail-on no-report
                      [--tx 1] [--timeout 120] [--memlimit 4g] [--min-bh 1]
-                     [--solver-flags "--z3 --tuple-node-flattener"]
+                     [--solver-flags="--z3 --tuple-node-flattener"]
                      [--focus-function setFeeReceiver]
+                     [--solc ~/.solc-select/artifacts/solc-0.8.23/solc-0.8.23]
                      [--out notes/coverage/poc/R_X.sol]
+
+Note the `=` in --solver-flags: argparse reads a separate value that begins
+with `-` as another option and refuses the command outright.
 """
 import argparse
 import json
@@ -109,7 +136,7 @@ def sh(cmd, cwd=None, timeout=300):
 
 
 def run_once(src_text, contract, tx, timeout, memlimit, solver_flags=(),
-             focus=None):
+             focus=None, solc="solc"):
     """Compile and run one candidate in its own directory. Returns
     (compiles, rc, stdout, report_or_None). rc == -1 means it was killed at
     `timeout`, kept distinct from every real exit code because "never
@@ -118,7 +145,7 @@ def run_once(src_text, contract, tx, timeout, memlimit, solver_flags=(),
     try:
         sol = d / "C.sol"
         sol.write_text(src_text)
-        rc, out = sh(["solc", "--ast-compact-json", str(sol)], timeout=120)
+        rc, out = sh([solc, "--ast-compact-json", str(sol)], timeout=120)
         if rc != 0:
             return False, rc, out, None
         ast = d / "C.solast"
@@ -181,6 +208,60 @@ def predicate(kind, min_bh, compiles, rc, out, data):
 FUNC_RE = re.compile(
     r"^[ \t]*(function|modifier|constructor|receive|fallback)\b[^\n]*$")
 
+# Type-level blocks. `abstract contract` is covered because the keyword
+# `contract` is matched anywhere the line starts with an optional `abstract`.
+TYPE_RE = re.compile(
+    r"^[ \t]*(abstract[ \t]+)?(contract|library|interface|struct|enum)\b"
+    r"[^\n]*$")
+
+# A state-variable declaration at contract scope: an indented line ending in
+# `;` that is not a statement inside a body. The caller only offers lines that
+# are NOT inside a function-like block, so this stays a cheap shape test.
+STATE_RE = re.compile(r"^[ \t]+[A-Za-z_][^;{}]*;[ \t]*$")
+
+
+def blocks_matching(text, header_re):
+    """(start, end, header) for every block whose header line matches, closed by
+    brace depth rather than by a regex spanning the body -- a regex that tries
+    to span a body stops at the first nested `}` and silently truncates."""
+    lines = text.splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        if header_re.match(lines[i]):
+            depth = 0
+            started = False
+            j = i
+            while j < len(lines):
+                depth += lines[j].count("{") - lines[j].count("}")
+                if "{" in lines[j]:
+                    started = True
+                if started and depth <= 0:
+                    break
+                if not started and lines[j].rstrip().endswith(";"):
+                    break  # a declaration, not a definition
+                j += 1
+            out.append((i, min(j, len(lines) - 1), lines[i].strip()))
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+def state_var_lines(text):
+    """Line indices that look like contract-scope state variables: they match
+    STATE_RE and are NOT inside any function-like block."""
+    inside = set()
+    for lo, hi, _ in blocks_matching(text, FUNC_RE):
+        inside.update(range(lo, hi + 1))
+    out = []
+    for k, ln in enumerate(text.splitlines()):
+        if k in inside:
+            continue
+        if STATE_RE.match(ln) and not ln.strip().startswith("//"):
+            out.append(k)
+    return out
+
 
 def top_level_blocks(text):
     """(start_line, end_line, header) for every function-like block, matched by
@@ -239,10 +320,16 @@ def main():
     ap.add_argument("--memlimit", default="4g")
     ap.add_argument("--min-bh", type=int, default=1)
     ap.add_argument("--solver-flags", default="",
-                    help="extra backend flags, e.g. "
-                         "\"--z3 --tuple-node-flattener\"")
+                    help="extra backend flags. MUST use the `=` form -- "
+                         "--solver-flags=\"--z3 --tuple-node-flattener\" -- "
+                         "because argparse reads a separate value beginning "
+                         "with `-` as another option and refuses")
     ap.add_argument("--focus-function", default=None,
                     help="restrict to one unit, as the observed failure was")
+    ap.add_argument("--solc", default="solc",
+                    help="solc binary to compile candidates with; must satisfy "
+                         "the source's pragma or nothing compiles and the "
+                         "reducer refuses without ever running ESBMC")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
@@ -250,15 +337,19 @@ def main():
     shown = " ".join(solver_flags) if solver_flags else "(default)"
     text = Path(a.sol).read_text()
 
+    last = {}
+
     def fails(t):
         c, rc, out, data = run_once(t, a.contract, a.tx, a.timeout, a.memlimit,
-                                    solver_flags, a.focus_function)
+                                    solver_flags, a.focus_function, a.solc)
+        last.update(compiles=c, rc=rc, out=out, data=data)
         return predicate(a.fail_on, a.min_bh, c, rc, out, data)
 
     print(f"# reducing {a.sol} against `{a.fail_on}`", flush=True)
     print(f"#   backend flags: {shown}", flush=True)
     print(f"#   focus-function: {a.focus_function or '(whole contract)'}",
           flush=True)
+    print(f"#   solc           : {a.solc}", flush=True)
     print(f"#   timeout {a.timeout}s, memlimit {a.memlimit}, "
           f"tx {a.tx}\n", flush=True)
 
@@ -269,11 +360,32 @@ def main():
     # function I was focusing on" reads as a bug in the reducer if it happens.
     t0 = time.time()
     if not fails(text):
-        sys.exit(
-            f"REFUSING TO REDUCE: the ORIGINAL does not satisfy `{a.fail_on}`. "
-            f"Reducing against a predicate the input does not meet produces a "
-            f"minimal contract for a different failure, and it will look like "
-            f"a success. Fix the predicate first.")
+        # A REFUSAL MUST CARRY WHAT ACTUALLY HAPPENED. "Does not satisfy the
+        # predicate" is a negative with no content: it does not separate "the
+        # failure is gone" from "it failed a different way", "it was killed at
+        # the timeout", "solc rejected it" or "it simply succeeded" -- and
+        # those call for different next actions. Guessing between them is how a
+        # defect that was FIXED and a defect that was RENAMED become the same
+        # event in the notes.
+        where = Path(a.out).with_suffix(".refused.log") if a.out else \
+            Path("reduce_refused.log")
+        where.parent.mkdir(parents=True, exist_ok=True)
+        where.write_text(last.get("out") or "")
+        print(f"REFUSING TO REDUCE: the ORIGINAL does not satisfy "
+              f"`{a.fail_on}`.")
+        print(f"  compiles           : {last.get('compiles')}"
+              f"{'   <- solc rejected it; check --solc against the pragma' if last.get('compiles') is False else ''}")
+        print(f"  exit code          : {last.get('rc')}"
+              f"{'   (-1 = killed at the timeout)' if last.get('rc') == -1 else ''}")
+        print(f"  cov-report.json    : "
+              f"{'written' if last.get('data') is not None else 'absent'}")
+        print(f"  full output        : {where}   "
+              f"({len((last.get('out') or '').splitlines())} lines)")
+        print("Reducing against a predicate the input does not meet produces a "
+              "minimal contract for a different failure, and it looks like a "
+              "success. Read the output above before choosing another "
+              "predicate.")
+        return 1
     print(f"  original reproduces `{a.fail_on}`   "
           f"({len(text.splitlines())} lines)\n", flush=True)
 
@@ -308,6 +420,36 @@ def main():
             if changed:
                 break
 
+    # PASS 3 -- whole type-level blocks. Runs after the function passes on
+    # purpose: with the bodies gone a contract or library is far more likely to
+    # be removable whole, and each attempt here costs a full compile+run.
+    changed = True
+    while changed:
+        changed = False
+        blocks = blocks_matching(text, TYPE_RE)
+        blocks.sort(key=lambda b: b[0] - b[1])  # largest first
+        for lo, hi, header in blocks:
+            cand = drop_lines(text, lo, hi)
+            if fails(cand):
+                print(f"  dropped  TYPE {header[:65]}   "
+                      f"-> {len(cand.splitlines())} lines", flush=True)
+                text = cand
+                changed = True
+                break
+
+    # PASS 4 -- single state-variable declarations.
+    changed = True
+    while changed:
+        changed = False
+        for k in state_var_lines(text):
+            cand = drop_lines(text, k, k)
+            if fails(cand):
+                print(f"  dropped  state: "
+                      f"{text.splitlines()[k].strip()[:60]}", flush=True)
+                text = cand
+                changed = True
+                break
+
     print(f"\n  reduced to {len(text.splitlines())} lines in "
           f"{round(time.time() - t0)}s\n", flush=True)
     print(text)
@@ -321,7 +463,7 @@ def main():
             f"--solidity-max-tx {a.tx}, --memlimit {a.memlimit},\n"
             f"// timeout {a.timeout}s, backend flags {shown},\n"
             f"// focus-function "
-            f"{a.focus_function or '(whole contract)'}.\n"
+            f"{a.focus_function or '(whole contract)'}, solc {a.solc}.\n"
             f"// The backend flags are part of the reproduction: the same "
             f"query fails\n"
             f"// differently under different backends, so a run without them "
