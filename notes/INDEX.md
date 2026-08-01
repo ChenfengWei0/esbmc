@@ -33,7 +33,31 @@ undated.
 
 ---
 
-## 0. THE RESUME PATH — three files, in this order, before anything else
+## 0. THE RESUME PATH
+
+### 0.0 ⛔ `/home/samson/workspace/paper_review/WORKORDER.md` OVERRIDES EVERY FILE BELOW
+
+**Read it first and obey it over anything in this index.** It is the user's own
+instruction file and it says so in its first line: "与任何其他 md 文件冲突时，以本文件为准."
+
+It was NOT on disk until 2026-08-01 and nothing here pointed at it — which is
+exactly the failure this index exists to prevent, committed against the one file
+that outranks the index. Two of its rules contradict habits recorded below and
+WIN: no new `.md` files at all (so most of §8's "compress these" is moot), and no
+full-benchmark runs.
+
+Its §2 declares the paper's Methodology frozen and names `VeriPUT.tex` as the
+authority. ⚠ **That file does not exist anywhere on this machine.**
+`/home/samson/workspace/VeriPUT/` is a directory holding
+`Datasets/ Motivation_Examples/ Results/ Scripts/ Tools/` and an EMPTY README —
+no `.tex`. So the frozen method cannot be read, and any claim that the
+implementation "matches the method" is currently uncheckable. Say so rather than
+assuming agreement.
+
+The read papers are PDFs under
+`paper_review/papers_to_write/esbmc_cov_test_gen/pdfs/` (44 files).
+
+### 0.1 Then these three, in this order
 
 | order | file | why |
 |---|---|---|
