@@ -167,6 +167,40 @@ non-effect.
 
 ### `Path Status: F` did not drop anywhere — the falsifier did not fire
 
+### `EscrowDst.publicWithdraw`: it moved too, but the attribution is NOT clean and that is stated rather than claimed
+
+    780 VCCs over 5 paths (156x), 136 claims decided, F 4
+    Report Completeness: PARTIAL — terminated by signal (the 900 s outer kill)
+
+The corpus row for this unit says symex never finished — it "never printed a VCC
+count at all". It now reaches 780 VCCs and witnesses 4 paths. **But relative to
+that corpus row I changed TWO things: the binary AND the outer timeout
+(300 s -> 900 s).** So for this unit the repair and the budget are confounded and
+neither can be credited. The clean comparison is `withdraw`, where the OLD binary
+was run at the SAME 900 s and died of OOM at 80 %.
+
+It is still PARTIAL at 900 s, so `publicWithdraw` has a real cost beyond the
+duplication. `killed_triage.py`'s classification of it as the defect candidate
+stands.
+
+### A REVERSE FINDING THAT BOUNDS THIS FIX, AND IT IS THE MOST USEFUL THING HERE
+
+`withdraw:path:2` was **PASSED** (`bounded-holds`) on its early copies and became
+**F** on a later one — that is where the fifth path came from.
+
+⇒ **An UNSAT verdict is NOT final across copies.** Different re-entry depths are
+different executions, so a path that holds at depth 1 can be feasible at depth 3.
+
+⇒ Extending the skip to already-PASSED keys — the obvious next optimisation, and
+the one that would remove the remaining 85 solves — is **UNSOUND for coverage**.
+It would have skipped `path:2` after its first PASS and left this unit at 4/5 and
+80 %, i.e. it would have undone the very result this repair produced.
+
+So the fix is bounded by construction: only refuted keys can be skipped, and the
+residual cost sits precisely on the keys that cannot be. Any future work on the
+duplication has to attack the duplication itself (why one instrumented assert
+becomes 85 or 156 VCCs), not the solving of it.
+
 ## STILL UNRESOLVED, and it decides whether this is the whole fix
 
 `bmc.cpp:3548-3549` states the cause as "the same claim key is INSTRUMENTED at
