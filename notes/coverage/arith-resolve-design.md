@@ -1,8 +1,8 @@
 # Entry condition 3: the model wraps, so the counterexample is a value the chain rejects
 
-**Status: PREMISE UNDER TEST.** No code written. This file records what was read
-out of the source, so the next reader does not re-derive it, and states the one
-experiment that decides whether the design below is implementable at all.
+**Status: PREMISE TESTED, AND IT FAILED. The capability is NOT already in the
+tool; (c) requires the C++ change designed below.** See "The premise experiment"
+at the end for the 12 cells and what each one rules out.
 
 Decision context: **C1 was overturned by its own measured cost** (lowering
 checked arithmetic to a two-exit branch is `2^k`, and `arith_exponent.py` measured
@@ -219,6 +219,60 @@ changed).
 after slicing has already removed their operands. Both are answerable from
 `goto_coverage.cpp`, and both leave the design above intact — only the
 implementation site moves.
+
+### RESULT, measured 2026-08-01: 12 of 12 cells IDENTICAL
+
+| contract | 2_check | 3_check_assume | 4_assume_only |
+|---|---|---|---|
+| D10_WrapNotPanic (`--overflow-check`) | IDENTICAL | **IDENTICAL** | IDENTICAL |
+| Tiny2 (`--overflow-check`) | IDENTICAL | **IDENTICAL** | IDENTICAL |
+| P18_Unchecked (`--div-by-zero-check`) | IDENTICAL | **IDENTICAL** | IDENTICAL |
+
+**THE PREMISE FAILS.** `--cov-assume-asserts` does not reach `goto_check`'s
+asserts under path coverage, so the capability (c) needs is NOT already in the
+tool and the design above has to be implemented rather than scheduled.
+
+The cells that make that readable, and they are why cell 4 was in the matrix:
+
+* **cell 4 == cell 1 in all three contracts**, so `--cov-assume-asserts` has no
+  other side effect on this mode. Without that, "cell 3 == cell 1" would have
+  been consistent with the flag doing something unrelated that happened to cancel
+  out, and nothing could have been concluded from it.
+* **cell 2 == cell 1** reproduces, on the CURRENT build, what D10's header
+  recorded on an earlier one: adding the claim constrains no model.
+* **the wrap itself still reproduces** — `D10.add` path 7 is witnessed at
+  `amt = 2^256-1` with `bal: 500 -> 499`, and `Tiny2.deposit` path 7 the same.
+  A premise experiment on a failure that had quietly gone away would prove
+  nothing, so this is checked rather than assumed.
+
+### A SECOND DEFECT FELL OUT OF IT, and it is worse than §7.1 predicted
+
+`P18_Unchecked.div` path 6 is reported with
+
+```
+final_state {"r": "0xFFFF...FFFF / 0"}
+```
+
+— **an unevaluated division expression as a STRING, not a number.** EXECUTION_PLAN
+§7.1 predicted that `a/0` would enter the report as `type(uint256).max` (the
+SMT-LIB total-function value of `bvudiv`) and warned that the value would flow
+into R2 assertions. What actually happens is one step earlier: the simplifier
+explicitly refuses to fold a zero divisor, so the expression never becomes a
+constant at all and `from_expr` renders the whole thing.
+
+Two things follow, and the second is the one that matters:
+
+* **`--div-by-zero-check` does not change it** (cell 2 is IDENTICAL). So this is
+  not "turn the check on and it goes away". INVOCATION_DECISIONS row 6's stated
+  exception — that `--div-by-zero-check` is wanted at CERTIFICATION time so an
+  independent claim excludes zero divisors from the region — is about a different
+  stage and is NOT refuted here; what is measured is that at ENUMERATION time the
+  flag changes no witness.
+* **`final_state` is contracted to hold values, and here it holds an
+  expression.** Every consumer that reads it either parses it as an integer
+  (`solidity_path_generalise.py`'s `coord_values` calls `parse_int` and REFUSES
+  the coordinate on failure — safe, but it loses the coordinate) or renders it
+  into a test. The R1/R2 assertion ladder is built from exactly this field.
 
 ---
 
