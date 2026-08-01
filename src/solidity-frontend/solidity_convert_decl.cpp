@@ -1259,7 +1259,35 @@ bool solidity_convertert::get_struct_class(const nlohmann::json &struct_def)
     // ""tag-struct Struct_Name"
     name = struct_def["name"].get<std::string>();
     id = prefix + "struct " + struct_def["canonicalName"].get<std::string>();
-    t.tag("struct " + name);
+    // THE TAG MUST BE AS QUALIFIED AS THE ID, and it was not.
+    //
+    // The id above uses `canonicalName` -- `L1.Data` -- while the tag used the
+    // bare `name`, `Data`. Two names for one thing, and they disagreed on
+    // whether the declaring scope counts. The tag is what survives into
+    // `struct_type2t::name`, and z3_conv.cpp:1030 builds the tuple SORT NAME
+    // out of exactly that:
+    //
+    //     std::string("struct_type_" + strct.name.as_string())
+    //
+    // So two structs called `Data` in different libraries (or contracts) asked
+    // z3 for two datatypes under ONE name. When one of them holds the other --
+    // `library AddressSet { struct Data { AddressArray.Data items; } }`, the
+    // ordinary Solidity idiom -- the sort ends up containing itself, and z3
+    // refuses at ENCODING time with `datatype is not well-founded` and aborts.
+    //
+    // MEASURED: notes/coverage/poc/D13_Z3TupleNotWellFounded.sol, reduced from
+    // st1inch (4874 lines -> 17). The same file with the structs renamed
+    // `AlphaData` / `BetaData` and nothing else changed completes normally;
+    // that one-variable pair is the whole diagnosis. st1inch hits it through
+    // AddressArray.Data + AddressSet.Data, which is why the path-coverage
+    // collector has to carry `--z3 --tuple-node-flattener` as a workaround.
+    //
+    // WHY HERE AND NOT IN z3_conv: a sort name has to be STABLE across the
+    // repeated mk_struct_sort calls for one type, so "make it unique" cannot
+    // mean a counter, and synthesising one from the members would leave two
+    // distinct Solidity types sharing a name everywhere else. The name is
+    // supposed to identify the type; giving two types one name is the defect.
+    t.tag("struct " + struct_def["canonicalName"].get<std::string>());
 
     // populate the member_entity_scope
     // this map is used to find reference when there is no decl_ref_id provided in the nodes

@@ -91,14 +91,36 @@ DEFAULT_MAX_GOALS = 10000
 # builder. A corpus whose every row came from one silently-chosen cell is exactly
 # the failure this project has already had; the flags a row was produced with
 # have to be visible in that row.
+#
+# HALF THIS TABLE'S ORIGINAL JUSTIFICATION IS NOW WRONG, AND IT IS REWRITTEN
+# RATHER THAN DELETED. It used to say z3's default tuple encoding refuses at
+# encoding time, so the node flattener was needed to avoid building the
+# datatype. That refusal was a real defect and it is FIXED -- two library or
+# contract structs sharing a short name were handed one z3 tuple sort
+# (solidity_convert_decl.cpp gave the type a bare tag while its symbol id used
+# canonicalName; z3_conv.cpp:1030 names the sort from the tag). Plain `--z3`
+# now completes on st1inch where it used to core-dump.
+#
+# The entry STAYS because the OTHER half is still true and was re-measured
+# after the fix: bitwuzla still never returns at 120 s. And the flattener is
+# still what the corpus was collected with, so removing it would change the
+# configuration a table was produced under, which is the thing this table
+# exists to prevent.
+#
+# What the fix did NOT buy, stated because it is the tempting claim: it does
+# not make st1inch's claims decidable. setFeeReceiver reports 5 claims / 5
+# `solver-unknown` under BOTH `--z3` and `--z3 --tuple-node-flattener`, and the
+# full sweep is 59 solver-unknown out of 128 claims. The encoder was never what
+# made them undecidable.
 ENCODER_EXCEPTIONS = {
     "st1inch_St1inch": (
         ["--z3", "--tuple-node-flattener"],
         "default (bitwuzla) never returns on this benchmark: 22/22 runs killed, "
-        "0 reports. z3's default tuple encoding refuses at encoding time with "
-        "'datatype is not well-founded'; the node flattener avoids building it. "
-        "Measured by notes/coverage/scripts/st_encoders.py: 43 s to a complete "
-        "report where every other cell of the matrix produced none.",
+        "0 reports, and re-measured as still not returning at 120 s after the "
+        "struct-tag fix. z3 decides the encoding either way now; the flattener "
+        "is kept because it is the configuration this corpus was collected "
+        "under. NOTE: it does not make the claims decidable -- 5/5 "
+        "solver-unknown on setFeeReceiver with and without it.",
     ),
 }
 

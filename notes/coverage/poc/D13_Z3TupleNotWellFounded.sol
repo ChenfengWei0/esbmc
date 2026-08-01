@@ -48,13 +48,33 @@ pragma solidity ^0.8.20;
 // never returns on the same query and cvc5 raises std::bad_alloc, so a run
 // without `--z3` is a run of something else.
 //
-// WHAT IS MEASURED AND WHAT IS INFERRED. Measured: the same short name aborts,
-// distinct short names do not. Inferred, and NOT yet read out of the source:
-// that the type-to-sort mapping keys on the struct's short name, so two
-// distinct Solidity types are handed one tuple sort. The fix belongs wherever
-// that key is built, and confirming the key is the next step -- the sentence
-// above is a hypothesis with a very strong experiment behind it, not a reading
-// of the code.
+// THE KEY, NOW READ OUT OF THE SOURCE rather than inferred from behaviour.
+// src/solvers/z3/z3_conv.cpp:1030-1031:
+//
+//     z3::symbol tuple_name = z3_ctx.str_symbol(
+//       std::string("struct_type_" + strct.name.as_string()).c_str());
+//
+// The z3 tuple sort is named after `strct.name` and nothing else. Two
+// `struct_type2t`s with the same name therefore ask z3 for two datatypes under
+// ONE name, and when one holds the other z3 sees `struct_type_Data` with a
+// `struct_type_Data` field -- self-referential, no base case, refused.
+//
+// WHY ONLY z3. bitwuzla and cvc5 flatten tuples rather than declaring
+// datatypes, so a name collision costs them nothing here; they fail on this
+// benchmark for their own unrelated reasons (never returning, and
+// std::bad_alloc). `--tuple-node-flattener` avoids it on z3 for the same
+// reason, which is why it works as a stopgap and why it is not a fix.
+//
+// WHERE THE FIX BELONGS, and this part is a judgement, not a measurement. Not
+// in z3_conv: a sort name has to be STABLE across the repeated mk_struct_sort
+// calls for one type, so "make it unique" cannot mean a counter, and deriving
+// it from the members would only paper over two distinct types still sharing a
+// name everywhere else. The name is supposed to identify the type, so the
+// frontend giving two distinct Solidity types one name is the defect. The
+// reference side already qualifies it -- solidity_convert_type.cpp:596-629
+// takes the second whitespace token of `struct L1.Data storage ref`, i.e.
+// `L1.Data` -- so the mismatch is on the DEFINITION side, which is where to
+// look next.
 //
 // `--cov-report-json` IS PART OF THE REPRODUCTION, and finding that out was an
 // accident worth keeping. Neither state variable below is ever read, so slicing
