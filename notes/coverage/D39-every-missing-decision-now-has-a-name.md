@@ -121,6 +121,47 @@ says nothing about `withdraw`. The log above is `withdraw`, and it names the sam
 eight sites — so the mechanism is now confirmed present on a second unit, which
 is what D27 predicted and D28 declined to assume.
 
+## ⇒ THE COMPLETE TABLE: 31 missing decisions, 30 attributed, 1 unexplained
+
+After the modifier and depth-bound rules landed, every benchmark except aqua
+attributes to **zero unexplained**:
+
+| bench | missing | breakdown |
+|---|---|---|
+| `aqua_Aqua` | 1 | **1 UNEXPLAINED** |
+| `cross_chain_swap_EscrowDst` | 12 | 8 library/`--function` banned · 2 past depth bound · 1 past depth bound *via its modifier's applier* · 1 killed unit *via its modifier* |
+| `cross_chain_swap_EscrowSrc` | 10 | 8 library/`--function` banned · 1 past depth bound · 1 via its modifier's applier |
+| `farming` | 8 | 5 killed unit · 3 constructor-scope |
+| `limit_order_protocol` | (3) | whole benchmark REFUSED — primary target is a library |
+| `st1inch_St1inch` | 72 | characterised separately by D36 / D37 / D38 |
+
+Three of the rules are new here, and each was written because a decision was
+sitting unattributed for a reason the enclosing definition alone cannot express:
+
+* **modifier → applier.** A modifier is not callable, so responsibility for its
+  decisions belongs to the units that apply it. `BaseEscrow.onlyAccessTokenHolder`
+  is applied only by `publicWithdraw`, EscrowDst's **killed** unit — so its
+  decision was never going to be measured, and it read as unattributed purely
+  because the AST node enclosing it is the modifier.
+* **modifier → applier → depth bound.** `BaseEscrow.onlyValidSecret` is applied
+  by `_withdraw` (EscrowDst) and `_withdrawTo` (EscrowSrc) — **internal
+  functions, not units**, and both are named in their run's own
+  `deeper than the call depth bound` list. The modifier body rides on an
+  unexpanded callee, so its decision was never in any path identity either. This
+  also answers the asymmetry D39 first flagged as "the real open question": the
+  guard is a crypto-inversion guard, but that is **not** why we miss it — we miss
+  it because the function it decorates was never expanded.
+* **library + every unit skipped.** Taken from the journal's own `skipped`
+  records rather than from `contractKind` alone: "this is a library" and "this
+  collection measured none of it" are different statements and only the second
+  licenses the attribution.
+
+**The one genuinely unexplained decision in the whole corpus** is aqua's flat
+2239, `require(tokensCount1 > 0 && tokensCount1 != _DOCKED, …)` in
+`Aqua.safeBalances`. That unit ran and reported `F 2, U 9`, so this is a real
+reach gap on paths that stayed `bounded-holds` — the only place in the corpus
+where the method failed to reach a decision it was entitled to reach.
+
 ## Files
 
-`notes/coverage/scripts/gap_lines.py`.
+`notes/coverage/scripts/gap_lines.py`, `notes/coverage/scripts/expansion_report.py`.

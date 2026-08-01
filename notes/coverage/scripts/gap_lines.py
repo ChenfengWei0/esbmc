@@ -58,6 +58,18 @@ def owner_of_each_decision(flat_path):
     ast = ast_decisions.extract_ast_json(solast)
 
     owner = {}
+    # modifier name -> the FunctionDefinitions that APPLY it.
+    #
+    # A modifier body's decisions belong, for attribution purposes, to whatever
+    # units invoke it -- a modifier is not itself callable, so "which unit is
+    # responsible for reaching this decision" is answered by its call sites, not
+    # by the definition that encloses it. Without this, a decision inside the
+    # modifier of a unit that was KILLED reads as unattributed, because the
+    # enclosing definition is the modifier and the killed-unit rule keys on the
+    # function name. MEASURED: that is exactly what happened to
+    # `BaseEscrow.onlyAccessTokenHolder`, the modifier of EscrowDst's killed
+    # `publicWithdraw`.
+    modifier_users = {}
 
     def walk(node, ctx):
         if node is None:
@@ -70,12 +82,17 @@ def owner_of_each_decision(flat_path):
             return
         nt = node.get("nodeType")
         if nt == "ContractDefinition":
-            ctx = dict(ctx, contract=node.get("name"))
+            ctx = dict(ctx, contract=node.get("name"),
+                       ckind=node.get("contractKind"))
         elif nt == "FunctionDefinition":
             k = node.get("kind") or ("constructor" if node.get("isConstructor")
                                      else "function")
             ctx = dict(ctx, fn=node.get("name") or k, fnkind=k,
                        vis=node.get("visibility"))
+            for mi in node.get("modifiers") or []:
+                mn = (mi.get("modifierName") or {}).get("name")
+                if mn:
+                    modifier_users.setdefault(mn, []).append(dict(ctx))
         elif nt == "ModifierDefinition":
             ctx = dict(ctx, fn=node.get("name"), fnkind="modifier",
                        vis="modifier")
@@ -92,7 +109,58 @@ def owner_of_each_decision(flat_path):
                 walk(v, ctx)
 
     walk(ast, {})
-    return owner
+    return owner, modifier_users
+
+
+UNEXPANDED_NEEDLE = "deeper than the call depth bound"
+
+
+def unexpanded_functions(bench, meta):
+    """Function names the run REFUSED to expand, read from each unit's own log.
+
+    The producer prints, once per run:
+
+      WARNING: 8 call site(s) are deeper than the call depth bound (4) and were
+      NOT expanded (sol:@C@EscrowDst@F@_ethTransfer#1708,
+      sol:@C@EscrowDst@F@_withdraw_onlyValidImmutables#0, ...); paths through
+      them are MERGED rather than enumerated.
+
+    An unexpanded callee contributes NO decisions to its caller's path identity,
+    so its branches cannot appear in any `decisions` array however many paths are
+    witnessed. That makes this list the difference between "we failed to reach
+    it" and "it was never in the path identity to reach".
+
+    Keyed on the JOURNAL's tags, never a glob over work/ -- a skipped unit's
+    directory can hold an earlier collection's log (D38 section 4a), and mixing
+    vintages here would attribute one run's truncation to another's decisions.
+
+    The mangled name is `sol:@C@<contract>@F@<fn>#<id>`, and `<fn>` may be a
+    function CONCATENATED with a modifier (`_withdraw_onlyValidImmutables`), so
+    a plain equality test misses the function it is really about. Matching is
+    therefore `== fn` or `startswith(fn + "_")`.
+    """
+    work = gate.PATHCOV / bench / "work"
+    names = set()
+    for r in meta.get("runs", []):
+        if r.get("skipped"):
+            continue
+        log = work / str(r.get("tag", "")) / "run.log"
+        if not log.exists():
+            continue
+        for ln in log.read_text(errors="replace").splitlines():
+            if UNEXPANDED_NEEDLE not in ln:
+                continue
+            for tok in ln.replace("(", " ").replace(")", " ").split():
+                tok = tok.strip(",;")
+                if "@F@" in tok:
+                    names.add(tok.split("@F@", 1)[1].split("#", 1)[0])
+    return names
+
+
+def past_depth_bound(fn, unexpanded):
+    if not fn:
+        return False
+    return any(u == fn or u.startswith(fn + "_") for u in unexpanded)
 
 
 def describe_owner(o):
@@ -128,8 +196,25 @@ def one(bench):
               f"timeout), so their decisions\n     cannot appear below: "
               f"{', '.join(killed)}\n")
 
-    owner = owner_of_each_decision(base["flat"])
+    owner, modifier_users = owner_of_each_decision(base["flat"])
     killed_fns = {t.split("__", 1)[1] for t in killed if "__" in t}
+    # The units the collection actually RAN, so "every applier was killed" can be
+    # distinguished from "some applier ran and still did not reach it". Taken
+    # from the journal rather than from the reports, because a killed unit has no
+    # report and would otherwise not appear as having been attempted at all.
+    ran_fns = {r.get("function") for r in meta["runs"]
+               if r.get("function") and not r.get("skipped")
+               and r.get("reportPresent")}
+    # Contracts every one of whose units the collector refused. Taken from the
+    # journal's own `skipped` records rather than from the contract kind alone:
+    # "this is a library" and "this collection therefore measured none of it"
+    # are different statements, and only the second licenses the attribution.
+    skipped_libs = {r.get("contract") for r in meta["runs"] if r.get("skipped")}
+    unexpanded = unexpanded_functions(bench, meta)
+    if unexpanded:
+        print(f"   call site(s) the run(s) refused to expand (past the depth "
+              f"bound): {len(unexpanded)}\n     "
+              + ", ".join(sorted(unexpanded)) + "\n")
     tally = {}
 
     for f in sorted(canon):
@@ -151,16 +236,68 @@ def one(bench):
             #                         the run did not finish.
             #   (blank)            -- a real unexplained miss, the only kind
             #                         worth calling a gap.
+            extra = ""
             if o and o.get("fnkind") == "constructor":
                 why = "CONSTRUCTOR-SCOPE (not a unit path by definition)"
             elif o and o.get("fn") in killed_fns:
                 why = "KILLED UNIT (no report; not measured)"
+            elif o and o.get("fnkind") == "modifier":
+                # A modifier is not callable, so responsibility for its
+                # decisions belongs to the units that APPLY it. Three cases,
+                # kept apart because they have different standings.
+                users = modifier_users.get(o.get("fn"), [])
+                names = sorted({u.get("fn") for u in users})
+                ran = [n for n in names if n in ran_fns]
+                dead = [n for n in names if n in killed_fns]
+                if names and not ran and dead:
+                    why = (f"KILLED UNIT via modifier (every applier died: "
+                           f"{', '.join(dead)})")
+                elif not names:
+                    why = "MODIFIER APPLIED BY NOTHING (dead code in this flat)"
+                elif any(past_depth_bound(n, unexpanded) for n in names):
+                    # The modifier body rides on whatever applies it. If every
+                    # applier is a callee the run refused to expand, the
+                    # modifier's decisions were never in any path identity
+                    # either -- the same cause as the applier's own decisions,
+                    # reached one level out.
+                    blocked = [n for n in names
+                               if past_depth_bound(n, unexpanded)]
+                    why = (f"PAST DEPTH BOUND via its applier "
+                           f"({', '.join(blocked)}) -- D28: raising it buys 0")
+                else:
+                    why = ""
+                    extra = (f"applied by {', '.join(names)}"
+                             + (f"; ran: {', '.join(ran)}" if ran else "")
+                             + (f"; killed: {', '.join(dead)}" if dead else ""))
+            elif o and past_depth_bound(o.get("fn"), unexpanded):
+                why = ("PAST DEPTH BOUND (not expanded, so never in any path "
+                       "identity) -- D28: raising it buys 0")
+            elif o and o.get("ckind") == "library" and o.get("contract") in skipped_libs:
+                # A LIBRARY whose every unit the collector REFUSED. Not a reach
+                # failure and not a knob: a library has no dispatcher harness,
+                # so `--contract <Lib>` finds no verification targets, and the
+                # only other route is `--function`, which verifies from an
+                # ARBITRARY contract state and can produce a counterexample no
+                # reachable state supports -- a RED generated test. The baseline
+                # reaches these decisions precisely by taking that route
+                # (collect.py routes library units through --function), which is
+                # why the two sides differ here.
+                #
+                # D28 additionally MEASURED that the other candidate -- these
+                # sitting past the call-depth bound -- is not the fix: 4 -> 6
+                # buys 8 more paths, 4 more witnesses and ZERO decisions, and
+                # bound 8 does not finish.
+                why = ("LIBRARY, --function BANNED (#33/D28: a stated "
+                       "applicability limit, and the depth bound is measured "
+                       "not to be the fix)")
             else:
                 why = ""
             tally[why or "UNEXPLAINED"] = tally.get(why or "UNEXPLAINED", 0) + 1
             print(f"       flat {ln:>6}   {text[:88]}")
             print(f"       {'':>11}   in {who}"
                   + (f"   <- {why}" if why else ""))
+            if extra:
+                print(f"       {'':>11}   {extra}")
         print()
 
     if tally:
