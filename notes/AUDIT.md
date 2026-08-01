@@ -49,9 +49,21 @@
 - **路径 π** = **一次调用**从入口到返回或回滚所走的完整决策序列。
 - **路径域 D_π** = **测试能给出的输入**里，走那条路的那些。
 
-⇒ 由此推出（用户明确裁定）：**构造器里的那次执行不是一次外部调用**——它没有
-calldata、没有 ABI 值门、没有发起交易的账户，**压根不在 X_u 里**。把它算作覆盖会
-破坏健全性命题（发出的测试会是红的）。
+⇒ 由此推出：**构造器里的那次执行不算单元路径的覆盖。** 结论成立——把它算作覆盖
+会破坏健全性命题（发出的测试会是红的），D34 已用 forge 实证。
+
+**⚠ 但此前给这条结论的理由是错的。两位外部审核者独立指出，我核实后确认。**
+之前写的是「它没有 calldata、没有 ABI 值门、没有发起交易的账户」——**三条都不成立**：
+合约创建**有** sender、**有** value，构造器参数**就是 ABI 编码的**，非 `payable`
+构造器同样带 callvalue 检查。
+
+**正确的理由只有一条，而且是作用域定义、不是事实陈述**：
+
+> 构造器的执行**不是已部署合约的入口点**，因此属于 fixture 构造，而非单元覆盖的目标。
+
+⚠ **论文原文没有那个错误理由**——`notes/main(1).tex` §Problem Definition 只写
+"each entry point the outside world may call"。**错的是这份审计，论文这一处是干净的。**
+`[实测 — 通读 main(1).tex 1482 行]`
 
 ### 1.3 命题
 
@@ -289,16 +301,22 @@ st = new St1inch(token, EXP_BASE, feeReceiver);   // 全部具体值
 | 入口状态 | 所有可达状态 | **一个确定的后置状态** |
 | 交付物 | 性质的证明 | **一条能跑绿的用例** |
 
-我们的**问题定义**（1.2）站在右边。我们的**求解任务**站在左边。
-**这两边不一致，是这五天的根本病灶。**
+**⛔ 我最初在这里写的是「问题定义站在右边，求解任务站在左边」。这是写反的，
+而且比写反更糟——真实情况是三方不一致。见第 12 部分。**
+`[实测 — 通读 main(1).tex]`
 
 它同时解释三件我一直分开处理的事：
 
 1. **st1inch 0/86** —— 构造器守卫污染每条路径条件（3.5）。
 2. **751 条未见证路径 100 % 是 `bounded-holds`** —— 我一直把它当"要不要 havoc 入口
    状态"的**开关**问题；它其实是"入口状态该由谁决定"的**建模**问题。
-3. **`I` 结构性为 0** —— 在**具体部署 + 具体入口状态**下，"这条路径不可达"是一个
-   **可判定**的问题；`I` 本来可以有意义。
+3. **`I` 结构性为 0** —— **⛔ 我最初写的是「在具体部署 + 具体入口状态下，
+   『这条路径不可达』是一个可判定的问题」。这条也过强，两位审核者都指出，我确认。**
+   论文 794–796 自己已经定死：**只有不依赖界的推理才算 unreachable**，有界内不可
+   反驳属第三类。固定 fixture 不改变这一点，只是把界从"任意部署"缩到"这个部署"——
+   参数域仍然巨大、循环与回调仍然有界、求解器仍然可能超时。
+   正确说法：**不可达问题被缩小为"相对于固定 fixture 与声明界的一次验证查询"**，
+   **不是**变得可判定或容易。
 
 ---
 
@@ -790,6 +808,104 @@ ESBMC 自己的截断警告在建议它们，**我一次没试过**，而 `--unw
 7. **`coverage/unwind-vs-strategy.md`（33 KB）未读**——它很可能已答 P3。
 8. **`interval-input-scope-and-plan.md`（37 KB）未读**——subgoal 3 的计划文档。
 9. **`SESSION_STATE.md`（19 KB）未读。**
+
+---
+
+## 第 12 部分 · ⛔ 论文自己内部矛盾——这是最上游，必须先裁定
+
+**本节全部 `[实测]`，出处是 `notes/main(1).tex`，我本轮通读了全部 1482 行。**
+
+### 12.1 两处直接对立的原文
+
+**§Problem Definition，第 640–641 行**：
+
+> "The state a call starts from ranges over **every state the model admits**,
+> not only those a prior transaction could establish."
+
+**§Verdicts，第 798–802 行**：
+
+> "Reachability is settled over the whole contract and not over $u$ alone, since
+> a path guarded by state that only an earlier call can establish is reachable,
+> and asking about $u$ from an **arbitrary starting state answers a different
+> question**."
+
+⇒ 一处说「**不限于**前一笔交易能建立的状态」，另一处说「从**任意**起始状态问
+是**另一个问题**」。**这不是措辞不一致，是两个相反的裁定。**
+
+### 12.2 而实现是第三种，两边都不是
+
+实现用的是**固定的后构造状态、从不 havoc、也不写入**。它既不是"遍历模型允许的
+全部状态"，也不是"限于前序交易可建立的状态"。
+
+⇒ **三个答案。** 这是 751 条 `bounded-holds`、`I` 恒为 0、以及 aqua 那九条 U 路径
+全部比被见证的深一层决策的**共同上游**。
+
+### 12.3 三个选项，及各自的下游后果
+
+| | 选项 1：**可由前序交易建立** | 选项 2：**模型允许的全部状态** | 选项 3：**测试可写入的状态** |
+|---|---|---|---|
+| 依据 | §Verdicts 798–802 | §Problem Definition 640–641 | §Coordinates 941：*"The state the contract is in is **set by writing it**"* |
+| 入口状态怎么来 | 由一串交易建立 | havoc | fixture 定死代码/`immutable`/`constant`/环境；**可变槽是坐标，由测试写入** |
+| 发出的测试长什么样 | 测试里跑那串前序交易 | `vm.store` 直接写 | preamble + 写坐标（**论文 1196–1208 的 H17/H18 已经是这个形状**） |
+| `I` 的含义 | 链上真不可达（最强） | 模型允许的状态里没有 | **相对于 fixture 与声明界不可达**（必须改名） |
+| Case Study 1（`FeeVault.withdraw` 要 `deposits[alice] > 0`） | ✅ 测试先 `deposit()` | ✅ 直接写槽 | ✅ 两种都行 |
+| 探索成本 | **高**（要多笔交易；而闸锁在 tx=1） | 低 | 低 |
+| 风险 | 与锁定基线的 tx=1 口径冲突 | 见证可能命名一个**任何交易序列都产生不了**的状态 | 需要状态坐标抽取与 alias 处理 |
+
+**我的建议是选项 3**，理由不是折中，而是：
+
+1. **论文 941 行已经这么写了**（"由写入来设置"），坐标节把状态槽列为坐标；
+2. **发射侧已经按它设计**：论文 1196–1208 的**统一 preamble** + **落地检查**
+   （*"fails loudly … 是让省略规则可证伪而不是断言"*）——**snapshot 与 preamble
+   是同一件事的两端**，两份外部 review 都没把它们接起来；
+3. **语料实测支持**：143 个状态变量只有 24 个（17 %）是 `mutable`，三份输入是 0 %。
+   ⇒ 83 % 本来就该由 fixture 固定（havoc 它们只会造出渲染不出来的反例），
+   **要 havoc 的面很小**。`[沿用 — 07-31 语料普查，我本轮未复核]`
+
+**⚠ 但选项 3 有代价，必须同时接受**：`I` 要改名为"相对 fixture 与界不可达"，
+Introduction 的 Challenge 3 要跟着收窄。**不能一边固定部署，一边声称对整个合约
+证明了不可达。**
+
+### 12.4 ⇒ 两份外部 review 都漏掉的一段，它改变 fuzz-first 的整个算法
+
+论文 **1249–1256，Soundness of Emission 的推论**：
+
+> "**None of this depends on $\Pi_G(u)$ being complete.** … Soundness therefore
+> rests on $\Delta_G(u)$ being instrumented completely, which is **local**, and
+> not on the enumeration being complete, which is **global**."
+
+而健全性只需三条（1216–1222）：(i) 记录在每个决策点写入；(ii) 决定路径的量都是
+坐标；(iii) declined ≠ discharged。
+
+⇒ **三条里没有一条要求见证由验证器产生。**
+
+**所以 fuzz-first 不是妥协，它已经被论文自己的健全性论证许可。** 需要改的只有
+Contribution 1 那句 "Every path witnessed by the verifier…" 和 Workflow 那句机制
+陈述；**健全性命题一个字不用动**。
+
+**这也意味着 X→Y = 19 % 是产率问题、不是健全性问题**——论文已写明枚举不完整只让
+区域变窄、断言变弱。⇒ **在 X→Y 上继续投入的边际价值，比我这五天以为的低得多。**
+
+### 12.5 ⇒ 另一段：论文自带的闸本该拦下重入见证
+
+§Coordinates **1004–1013**：
+
+> "Not every quantity a verifier fixes is a coordinate. … Where a quantity that
+> decides the path is not a coordinate, $\pi$ receives **no region and no test**,
+> and it is reported together with the quantity responsible."
+
+而论文对回调的规定是（决策点第三源 677–681 + 坐标节 943–946）：
+回调是**输入坐标**，**由部署一个 stub 来设置**。
+
+**实现却把外部调用建模成对整个 dispatcher 的无界 nondet 重入——那不是任何 stub
+能设置的量。**
+
+⇒ **按论文自己的规则，那 780 个 VCC 背后的路径本就该被这道闸拦下、不发测试。**
+实现没有实施这条规则。
+
+⇒ 这给「171 个见证可能已被污染」一个**论文级依据**，而不只是工程推测：
+不是"聚合规则可能有问题"，是**"论文规定的坐标分类闸没有对重入模型实施"**。
+**在这条修好之前，171 / 7 / 12 这三个数都不能引用。**
 
 ---
 
