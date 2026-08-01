@@ -1015,7 +1015,8 @@ def bound_lines(pname, kind, width, lo, hi, holes):
 
 
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
-              params, emitted, case, layout, ladder_rows, notes, cell=None):
+              params, emitted, case, layout, ladder_rows, notes, cell=None,
+              unwind=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -1157,6 +1158,15 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     out.append(f"  // claim: {path_function}:path:{enc}   depth={depth_}")
     if cell:
         out.append(f"  // CELL {cell[0]} -- {cell[1]}")
+    if unwind:
+        out.append(f"  // LADDER WIDENED: {' '.join(unwind)}")
+        out.append(f"  // These apply to the ASSERTION LADDER run only. The "
+                   f"emit run that")
+        out.append(f"  // produced the preamble and the concrete case below ran "
+                   f"BEFORE any")
+        out.append(f"  // loop had been named, so it did not carry them -- the "
+                   f"oracle and the")
+        out.append(f"  // body come from two runs at different symex bounds.")
     out.append(f"  // CERTIFIED REGION (stage 2), certified by an independent")
     out.append(f"  // `assume(box); assert(tr == pi)` query, not by the "
                f"subtraction:")
@@ -1429,7 +1439,7 @@ def main():
     rows, summary, refusal, blocker = parse_ladder(out2)
 
     # ---- THE UNWIND LADDER: widen the loops the tool NAMED, and say so -----
-    unwind_attempts = []
+    unwind_attempts, unwind_applied = [], []
     k = 8
     for attempt in range(1, a.auto_unwind + 1):
         if blocker != "truncated":
@@ -1460,10 +1470,14 @@ def main():
                                 "rows_after": len(rows)})
         print(f"[put]     exit={rc2b} {w2b:.1f}s  blocker={blocker} "
               f"rows={len(rows)}")
-        # The widened flags become part of THIS run's configuration, so the
-        # artefact records them rather than the ones the caller typed.
+        # ⛔ NOT folded into `a.esbmc_arg`. Doing that was the first version
+        # and it wrote a FALSE record: step 1 -- the emit run that supplies the
+        # preamble and the concrete case -- already ran WITHOUT the widening,
+        # so listing the widened flags as the run's configuration claims both
+        # runs used them. They are kept in their own field, and the emitted test
+        # says which of its two halves the widening applies to.
         if blocker != "truncated":
-            a.esbmc_arg = a.esbmc_arg + extra
+            unwind_applied.extend(extra)
         k *= 2
     if refusal:
         print(f"[put]   ladder REFUSED: {refusal}")
@@ -1584,7 +1598,8 @@ def main():
     put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
                            region, holes, pins, params, emitted, case,
                            layout, rows, notes,
-                           cell=(cell_name, cell_rule))
+                           cell=(cell_name, cell_rule),
+                           unwind=unwind_applied)
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
@@ -1645,6 +1660,10 @@ def main():
                    # emitted under another are two measurements; the artefact
                    # has to say which one it is.
                    "esbmc_extra_args": a.esbmc_arg,
+                   # The widening applies to the LADDER run only. The emit run
+                   # that produced the preamble and the concrete case ran before
+                   # any loop was named, so it did not carry these.
+                   "unwind_applied_to_ladder_only": unwind_applied,
                    "unwind_attempts": unwind_attempts,
                    "cell": {"name": cell_name, "scope": a.scope,
                             "max_tx": a.max_tx, "rule": cell_rule},

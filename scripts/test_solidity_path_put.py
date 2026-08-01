@@ -357,6 +357,40 @@ def test_the_cell_is_named_and_an_unsettled_one_says_so():
     return bad
 
 
+def test_a_widened_ladder_says_which_half_it_applies_to():
+    """The oracle and the body come from two runs at different symex bounds.
+
+    The emit run supplies the preamble and the concrete case and happens BEFORE
+    any loop has been named, so it never carries the widening. Recording the
+    widened flags as "the run's configuration" -- which the first version did --
+    claims both runs used them, and that is a false provenance on the one
+    artefact whose whole value is that its provenance is checkable.
+    """
+    em, case = make_case()
+    notes = []
+    put, _stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes, cell=cell_of("focus", 1),
+        unwind=["--unwindset", "64:512"])
+    text = "\n".join(put or [])
+    bad = check("LADDER WIDENED: --unwindset 64:512" in text,
+                "the widening is named on the test")
+    bad += check("ASSERTION LADDER run only" in text,
+                 "and it says which half of the test it applies to")
+    # MUST NOT FIRE: an un-widened run must not grow the disclaimer, or every
+    # PUT would carry a caveat about something that did not happen.
+    put2, _ = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=[], cell=cell_of("focus", 1), unwind=[])
+    bad += check("LADDER WIDENED" not in "\n".join(put2 or []),
+                 "an un-widened run carries no such line")
+    return bad
+
+
 def test_the_emitted_test_carries_its_cell():
     """A PUT that does not say which cell produced it is quotable into both."""
     em, case = make_case()
@@ -423,6 +457,7 @@ def main():
     bad = 0
     for t in (test_both_truncation_shapes_are_read,
               test_the_ladder_widens_every_named_loop,
+              test_a_widened_ladder_says_which_half_it_applies_to,
               test_the_cell_is_named_and_an_unsettled_one_says_so,
               test_the_emitted_test_carries_its_cell,
               test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
