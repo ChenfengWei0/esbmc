@@ -71,18 +71,55 @@ Three things worth noting without yet claiming them:
   16/16 on EscrowSrc, so the baseline got it and we did not; that asymmetry is
   not yet explained.
 * **`EscrowDst._withdraw`'s two decisions are missing although its caller
-  `withdraw` witnessed 5 of 5 paths.** An internal callee's decisions are
-  supposed to be part of its caller's path identity. EscrowDst also shows
-  depth-bound truncation on 4 of 4 runs with **8 sites past the bound** — a
-  candidate, and testable.
-* **`ImmutablesLib`'s 8 split 4 `internal` / 4 `external`.** Task #33 attributed
-  the whole 0/8 to the `--function` ban, which is a clean explanation for the 4
-  external ones. The 4 **internal** ones should be reachable through their
-  callers, so that half of the attribution is now in doubt and needs re-checking.
+  `withdraw` witnessed 5 of 5 paths.** ⇒ **RESOLVED, see below.**
+* **`ImmutablesLib`'s 8 split 4 `internal` / 4 `external`.** ⇒ **RESOLVED, see
+  below — the doubt was unnecessary.**
 
-None of these is claimed here. The point of this note is that the corpus's
-missing decisions are now **enumerable and individually named**, which is the
-precondition for attributing any of them.
+The point of this note is that the corpus's missing decisions are now
+**enumerable and individually named**, which is the precondition for attributing
+any of them.
+
+## ⇒ Both doubts resolved the same afternoon, by the run's own log and by D28
+
+`notes/coverage/scripts/expansion_report.py` on
+`work/EscrowDst__withdraw/run.log` (1.7 MB, 19742 lines — which is why this
+needed a whole-file reader rather than an eye):
+
+> `WARNING: 8 call site(s) are deeper than the call depth bound (4) and were NOT
+> expanded (sol:@C@EscrowDst@F@_ethTransfer#1708,
+> **sol:@C@EscrowDst@F@_withdraw_onlyValidImmutables#0**,
+> **sol:@C@ImmutablesLib@F@hash#932**, sol:@C@SafeERC20@F@safeTransfer#1141);
+> paths through them are MERGED rather than enumerated.`
+
+So `_withdraw` is **named as unexpanded**. An unexpanded callee contributes no
+decisions to its caller's path identity, so flat 1626/1629 could not appear in
+any `decisions` array however many paths were witnessed. Not a traversal miss —
+the branches were never part of the path identity. The same line explains
+EscrowSrc's `BaseEscrow._ethTransfer` miss (flat 1530).
+
+**And raising the bound is already measured NOT to be the fix.** D28 swept it on
+this benchmark and pre-registered this outcome as "the one that looks like
+progress and is not": bound 4 → 6 buys **8 more paths and 4 more witnesses and
+zero additional canonical decisions** — `EscrowDst.sol` stays `0/2`,
+`ImmutablesLib` stays `0/8` — while bound 8 does not finish in 400 s, and the
+residual frontier goes **up**, 8 → 34, because expanding deeper exposes more of
+it than it consumes.
+
+**The `ImmutablesLib` doubt was therefore unnecessary**, and D28 had already
+recorded the reason D39 briefly re-opened: D27 falsified the old "in-degree 0"
+explanation by finding `ImmutablesLib.hash#932` past the bound in all four
+EscrowDst units and all six EscrowSrc units, and D28 then measured that moving
+the bound buys nothing. Task #33's conclusion stands: the baseline reaches those
+decisions through `--function` **isolation**, which this project bans because it
+verifies from an arbitrary contract state and can yield a counterexample no
+reachable state supports — a RED generated test. A stated applicability limit,
+not a knob in the wrong position.
+
+What this note adds to D28 is small and worth stating exactly: D28's own "what it
+does not settle" section says it measured **one unit** (`EscrowDst.cancel`) and
+says nothing about `withdraw`. The log above is `withdraw`, and it names the same
+eight sites — so the mechanism is now confirmed present on a second unit, which
+is what D27 predicted and D28 declined to assume.
 
 ## Files
 
