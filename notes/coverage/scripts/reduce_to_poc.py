@@ -141,12 +141,56 @@ def sh(cmd, cwd=None, timeout=300):
         return -1, out
 
 
+_BIN_FP = None
+
+
+def _binary_fingerprint():
+    st = ESBMC.stat()
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _assert_same_binary():
+    """A reduction is a CHAIN of comparisons, and every link must be judged by
+    the same binary.
+
+    This is not hypothetical. On 2026-08-01 a reduction of st1inch against
+    `solver-unknown` was started, and esbmc was rebuilt TWICE while it ran --
+    once to a pristine baseline and once back to a patched build whose whole
+    subject was ARITHMETIC ENCODING. Every candidate after the first rebuild was
+    judged by a different tool than the one that verified the original, and the
+    predicate is exactly the kind that an encoding change can flip. The run had
+    to be discarded at 4573 lines, having cost sixteen minutes.
+
+    Nothing reported it. The reducer kept printing `dropped ... -> N lines` and
+    the checkpoints kept landing on disk, so the output was indistinguishable
+    from a sound reduction -- which is why this is a hard failure rather than a
+    warning. A reduced file whose provenance spans two binaries is worse than no
+    file: it looks like evidence.
+    """
+    global _BIN_FP
+    fp = _binary_fingerprint()
+    if _BIN_FP is None:
+        _BIN_FP = fp
+        return
+    if fp != _BIN_FP:
+        raise SystemExit(
+            "\n*** ESBMC WAS REBUILT MID-REDUCTION -- STOPPING ***\n"
+            f"    started with mtime_ns={_BIN_FP[0]} size={_BIN_FP[1]}\n"
+            f"    now         mtime_ns={fp[0]} size={fp[1]}\n"
+            "    Every candidate judged after the rebuild was compared against a\n"
+            "    different tool than the one that verified the original, so the\n"
+            "    reduction chain is not sound and its output must not be used.\n"
+            "    Re-run against a fixed binary. Do not 'continue from' the\n"
+            "    checkpoint on disk: it carries removals from both builds.")
+
+
 def run_once(src_text, contract, tx, timeout, memlimit, solver_flags=(),
              focus=None, solc="solc"):
     """Compile and run one candidate in its own directory. Returns
     (compiles, rc, stdout, report_or_None). rc == -1 means it was killed at
     `timeout`, kept distinct from every real exit code because "never
     returned" is a failure mode in its own right here."""
+    _assert_same_binary()
     d = Path(tempfile.mkdtemp(prefix="reduce_"))
     try:
         sol = d / "C.sol"
