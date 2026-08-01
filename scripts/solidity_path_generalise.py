@@ -286,9 +286,35 @@ def coord_values(c):
 def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     ast=None, focus=None, memlimit="8g", path_function=None):
     """Step 1. Returns (paths, refused) where paths = [(enc, depth, ce)]."""
+    # FRESHNESS, BY REMOVAL -- the same guard `certify` already has, and this is
+    # the step that needed it more.
+    #
+    # `run` does NOT raise on a timeout: it returns the partial output with a
+    # marker so callers can read it as UNKNOWN (see its docstring). Enumeration
+    # then asks only `os.path.exists`, so a run that timed out, aborted, or was
+    # refused at instrumentation time falls through to whatever
+    # `cov-report.json` is already sitting in `cwd` -- and `--workdir` is
+    # explicitly reusable, which is why `certify` needed this guard in the first
+    # place ("the previous shrink round left one right here").
+    #
+    # A CROSS-UNIT stale report is caught: the `claim_unit(c) == unit` filter
+    # empties, and the WIRING CHECK below exits loudly. The one that is NOT
+    # caught is the same unit re-run in the same workdir under DIFFERENT flags --
+    # another `--max-tx`, `--focus` on instead of off, a rebuilt binary. Then the
+    # filter matches, the old (enc, depth, ce) triples flow into the bracket, the
+    # refine rounds and every certification query, and the whole result is about
+    # a configuration nobody asked for. Nothing downstream could notice: an enc
+    # is just an integer.
+    #
+    # Deleting first also RESTORES the error below. With a stale file present,
+    # "ESBMC produced no cov-report.json" -- the branch that exists to surface
+    # ESBMC's own message about a solc mismatch or a missing contract -- can
+    # never fire, so the actionable diagnostic is replaced by silent stale data.
+    report = os.path.join(cwd, "cov-report.json")
+    if os.path.exists(report):
+        os.remove(report)
     log = run(esbmc, sol, contract, ["--cov-report-json"], max_tx, timeout, cwd,
               ast=ast, focus=focus, memlimit=memlimit)
-    report = os.path.join(cwd, "cov-report.json")
     if not os.path.exists(report):
         # Do NOT let this surface as a FileNotFoundError about a JSON file.
         # ESBMC has already said what went wrong -- a solc version mismatch, a
