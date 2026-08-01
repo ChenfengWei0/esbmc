@@ -46,6 +46,78 @@ pragma solidity ^0.8.20;
 // EXPECTED once C1 lands: `add` enumerates a revert exit for the overflow, and
 // the normal-exit counterexample satisfies `a + b < 2^256`.
 //
+// ---- WHAT C1 COSTS, MEASURED 2026-08-01, BEFORE IMPLEMENTING IT ----
+//
+// Every checked operation that becomes a two-exit branch DOUBLES the paths
+// through everything after it, and the path count is already the binding
+// resource: the collector caps a unit at 10000 paths and on st1inch twelve
+// units had call points WITHDRAWN from their path identity to fit that cap.
+// So the cost is 2^k for k = checked ops reachable on a unit's path, counting
+// the internal callees path coverage inlines. Measured by
+// notes/coverage/scripts/arith_exponent.py:
+//
+//     aqua      worst unit `ship`          k = 1    -> x2
+//     st1inch   `constructor`              k = 29   -> x536,870,912
+//     st1inch   `earlyWithdraw(To)`        k = 10   -> x1024
+//     st1inch   `deposit*` (four units)    k = 7    -> x128
+//
+// st1inch's 29 are the `_EXP_TABLE_0..29` chain -- thirty multiply-then-divide
+// steps in the constructor, the same code the D13 reduction walked through.
+//
+// So C1 is x2 on a toy and 10^8 on a real contract, and this file is a toy. A
+// decision taken on this contract alone would have been taken on the cheapest
+// possible sample. The alternatives worth weighing against it, none of which
+// multiply the path count:
+//
+//   (b) ASSUME no-overflow while solving a path claim. The counterexample can
+//       then not wrap. Loses the overflow-revert path entirely -- an honest
+//       coverage gap rather than a red test.
+//   (c) RE-QUERY on demand: solve as now; if the counterexample wraps, re-solve
+//       that ONE claim with a no-wrap constraint. At most one extra query per
+//       affected claim, no path growth, and it reuses the certification
+//       machinery that already assumes a constraint and re-solves. If no
+//       non-wrapping witness exists, the path genuinely requires an overflow
+//       and can be reported as exactly that.
+//
+// ---- DECIDED 2026-08-01: (c), WITH FOUR CONDITIONS ----
+//
+// (a) is not implementable at 2^29. (b) is UNSOUND in a way the number hides:
+// `assume(no overflow)` deletes paths that genuinely exist on chain -- it is
+// the `require -> assume` cell of the soundness table, "absent from the model",
+// and it deletes them silently, with no count. (c) changes no model by default
+// and pays only where a counterexample actually wraps.
+//
+// The four conditions are not polish; the first is a hole in (c) as first
+// proposed here:
+//
+//   1. THE RE-SOLVE MUST CARRY THE PATH CONSTRAINT. Checked arithmetic is
+//      itself a two-way decision -- wrapping and not wrapping are different
+//      destinations -- so re-solving with only `no overflow` added lets the
+//      solver return a witness of a DIFFERENT path, which is then not a witness
+//      of this one at all. The query is
+//
+//          assume(tr == pi AND no overflow);  assert(false)
+//
+//      and its UNSAT is not "the re-solve failed": it is a PROOF that this path
+//      is reachable only by overflowing. That proof is free, from the same
+//      query.
+//
+//   2. "WRAPPED" IS THE VERIFIER'S OWN OVERFLOW CHECK, never a range test on
+//      the rendered decimal. Deciding it by re-deriving whether a printed value
+//      exceeds its type is the same shape as the geometric ladder's own wrap
+//      defect -- a second implementation of an arithmetic the model already
+//      performs, free to disagree with it.
+//
+//   3. "THIS PATH NECESSARILY OVERFLOWS" IS ITS OWN BUCKET, counted beside
+//      F / I / U and not folded into U. It is not a failure to decide; it is a
+//      decided property of the path, and it says the path is reachable on chain
+//      only through a revert.
+//
+//   4. THE COST IS PRINTED, NOT INFERRED LATER: how many claims were re-solved
+//      and what the re-solving cost in wall time. Nobody knows today whether
+//      that is three claims or three thousand, and this project's recurring
+//      failure is exactly the number nobody measured.
+//
 // ---- THE `require` IS LOAD-BEARING, AND THE FIRST VERSION LACKED IT ----
 //
 // Without `require(amt > 0)` this contract does NOT reproduce: measured, the
