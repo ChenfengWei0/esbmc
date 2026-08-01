@@ -505,6 +505,33 @@ never was:
 * Splitting a large contract across runs, now that it takes a SET
   (`--focus-function deposit,withdraw`) and unions through
   `--coverage-covered-set`.
+
+  ⚠ **This was challenged and the challenge was refuted by measurement, so the
+  recommendation stands WITH its evidence attached.** `goto_coverage.cpp`
+  fingerprints the covered set on unwind / cap / contract and states in a comment
+  that `--focus-function` is DELIBERATELY excluded, followed by a second comment
+  calling the file "an UNATTRIBUTABLE union". Since `enc` is built per unit by
+  the same recurrence, two units routinely carry the same small integers — so if
+  a stored id were the bare path identity, unioning two focused runs would let
+  one unit's witnessed path mark another unit's covered.
+  `notes/coverage/scripts/covered_set_focus_check.py` ran the two focused halves
+  of `poc/Tiny.sol` through one covered set:
+
+  ```
+  after --focus-function deposit    3 ids: 20de17aabff5849f a002de3d11d390ab f273a9d2627a6d05
+  after --focus-function withdraw   6 ids: (those three, plus 6309533331637c0c a4d0663fdc70c843 eff4c268fd4931af)
+  ```
+
+  Every id is a content address, not an `enc`; the union GREW and run 1's ids
+  survived; and the three ids each run contributed match its own F count exactly
+  (deposit 3 of 3, withdraw 3 of 5). **No cross-unit collision is possible on
+  this evidence.**
+
+  What the code's own "unattributable" comment says is still true and is a
+  different point: the file records no per-id configuration, so a PERCENTAGE
+  computed from a union belongs to no single invocation. That is a caveat for a
+  consumer, not a collision — and `pathcov_collect.py` does not pass
+  `--coverage-covered-set` at all, so the gate is not exposed to it.
 * It is NOT the measurement configuration. Focused runs cannot reach
   cross-function state at any tx bound -- every transaction is another call to
   the same entries -- which is exactly the hole that made rows 1 and 2 wrong.
