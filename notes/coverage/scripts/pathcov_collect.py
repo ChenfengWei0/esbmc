@@ -158,11 +158,24 @@ def solver_flags_for(bench_key, override):
     return [], "tool default (no solver flag passed)"
 
 
-def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=()):
+def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1):
+    # `max_tx` IS A PARAMETER NOW, AND IT WAS A LITERAL `"1"` BEFORE.
+    #
+    # The docstring at the top of this file argues at length for 1 -- correctly,
+    # FOR THE GATE. But INVOCATION_DECISIONS.md prints TWO command lines, and the
+    # second one (whole contract, tx>=2) had NO COLLECTOR AT ALL: the decision was
+    # taken, written down, and half implemented. Every path count this project has
+    # is therefore from one cell, and "the tx ladder was never run" is a
+    # consequence of there being no way to run it, not of anyone choosing not to.
+    #
+    # The gate is protected by two independent things, neither of which is this
+    # default: `branch_gate.assert_gate_config` REFUSES any collection whose
+    # recorded `solidityMaxTx` is not 1, and `collect()` below refuses to write a
+    # non-gate cell into the gate's own directory.
     cmd = [
         str(ESBMC), str(solast), "--sol", str(flat),
         "--solidity-path-coverage",
-        "--solidity-max-tx", "1",
+        "--solidity-max-tx", str(max_tx),
         "--cov-report-json",
         "--path-cov-max-goals", str(goals),
         "--memlimit", MEMLIMIT,
@@ -333,7 +346,24 @@ def one_run(tag, cmd, timeout, workdir):
 
 
 def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
-            fresh=False):
+            fresh=False, max_tx=1, focus_with=()):
+    # ---- THE LADDER'S TWO AXES, AND WHY THEY ARE NOT A PLAIN PRODUCT ----
+    #
+    # `--focus-function` controls WIDTH (which functions the dispatcher may
+    # offer); `--solidity-max-tx` controls DEPTH (how many transactions the
+    # harness drives). They are not independent, and one cell is already ruled
+    # out by measurement: under a SINGLE-name focus, no tx bound reaches
+    # cross-function state, because the other functions are not in the dispatcher
+    # for a later transaction to call (INVOCATION_DECISIONS rows 1-2, measured on
+    # poc/Tiny.sol: focus/tx1 60% -> whole/tx1 75% -> whole/tx2 100%).
+    #
+    # What single-focus + tx>=2 DOES buy is the unit calling ITSELF again, which
+    # is not nothing (`pull` writes state with no precondition) and is not the
+    # same as width. So the informative design is a 2x2 factorial -- width off/on
+    # crossed with depth 1/2 -- plus a depth extension, which separates width
+    # from depth and gives their interaction. `focus_with` is the middle cell:
+    # {unit} plus the functions that write what the unit reads, i.e. the cheap
+    # approximation of whole-contract for benchmarks where whole does not finish.
     flat_rel, primary, _solc, project = base.BENCHES[bench_key]
     sflags, sreason = solver_flags_for(bench_key, solver_override)
     print(f"  [solver] {' '.join(sflags) if sflags else '(none)'} -- {sreason}",
@@ -355,6 +385,30 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # Two configurations therefore never share a directory. The suffix is
     # required rather than defaulted for --whole, so that the two are also
     # distinguishable by name in every later table.
+    #
+    # ---- THE GATE'S DIRECTORY IS THE GATE'S, AND A LADDER CELL MAY NOT ENTER ----
+    #
+    # The unsuffixed directory is where every gate row's numerator comes from.
+    # A ladder run that landed there would not corrupt one number, it would
+    # REPLACE the gate collection with a deeper one, and `index.json` is rewritten
+    # at the end of every collection -- so the gate would silently start reporting
+    # a cell it is not entitled to read. `branch_gate.assert_gate_config` would
+    # then refuse and the operator would be told the gate is broken, which is a
+    # confusing way to discover that a ladder run overwrote it.
+    #
+    # Refused rather than auto-suffixed: inventing a directory name means the
+    # operator does not know where the data went, and this file's own rule is
+    # that two configurations must be distinguishable BY NAME in every later
+    # table.
+    if (max_tx != 1 or focus_with) and not out_suffix:
+        sys.exit(
+            f"{bench_key}: refusing to write a LADDER cell (max-tx={max_tx}, "
+            f"focus-with={','.join(focus_with) or 'none'}) into the gate's own "
+            f"directory {OUT / bench_key}.\n"
+            f"The unsuffixed directory holds the collection every gate row is "
+            f"computed from, and a collection rewrites its index.json wholesale. "
+            f"Pass --out-suffix (e.g. --out-suffix __tx{max_tx}"
+            + ("__focusset" if focus_with else "") + ").")
     out_dir = OUT / (bench_key + out_suffix)
     out_dir.mkdir(parents=True, exist_ok=True)
     reports_dir = out_dir / "reports"
@@ -497,7 +551,7 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             rec, d = one_run(tag,
                              esbmc_cmd(solast, flat,
                                        None if pkind == "library" else primary,
-                                       None, goals, sflags),
+                                       None, goals, sflags, max_tx),
                              timeout, out_dir / "work" / tag)
             record(rec)
             if d is not None:
@@ -609,7 +663,14 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                 record(rec)
                 continue
             print(f"  [{i}/{len(todo)}] {tag}", flush=True)
-            cmd = esbmc_cmd(solast, flat, primary, fname, goals, sflags)
+            # THE FOCUS SET IS A COMMA-SEPARATED STRING, NOT A REPEATED FLAG.
+            # `optionst::cmdline()` calls `set_option` per value and `set_option`
+            # OVERWRITES, so `--focus-function A --focus-function B` parses
+            # cleanly and verifies only B. The multi-name form (task #5) takes one
+            # comma-separated string, same as `--contract`.
+            focus_arg = ",".join([fname] + [f for f in focus_with if f != fname])
+            cmd = esbmc_cmd(solast, flat, primary, focus_arg, goals, sflags,
+                            max_tx)
             rec, d = one_run(tag, cmd, timeout, out_dir / "work" / tag)
             rec["contract"], rec["function"], rec["kind"] = cname, fname, ckind
             record(rec)
@@ -623,7 +684,16 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
         "flatInput": str(flat),
         "config": {
             "mode": "whole" if whole else "per-method",
-            "solidityMaxTx": 1,
+            # RECORDED FROM THE ARGUMENT, not from a literal. It used to be a
+            # hardcoded 1 beside a hardcoded flag; the two agreed only because
+            # neither could change. `branch_gate.assert_gate_config` reads THIS
+            # field to decide whether a collection may be quoted into the gate
+            # table, so a literal here would let a ladder cell present itself as
+            # the gate cell.
+            "solidityMaxTx": max_tx,
+            # The extra names added to every unit's focus set. Empty for the gate
+            # and artefact cells; non-empty for the middle cell of the width axis.
+            "focusWith": list(focus_with),
             "pathCovMaxGoals": goals,
             "memlimit": MEMLIMIT,
             # Written into the index so no later table can quote a row without
@@ -668,6 +738,32 @@ def main():
                          "'--z3 --tuple-node-flattener'. Overrides the "
                          "per-benchmark ENCODER_EXCEPTIONS table; whichever "
                          "applies is printed and recorded in index.json")
+    ap.add_argument("--max-tx", type=int, default=1,
+                    help="DEPTH axis: --solidity-max-tx. Default 1, which is "
+                         "the GATE cell and the only value the gate table may "
+                         "read. This was a hardcoded literal until now, so the "
+                         "tx ladder had no command-line entry at all and has "
+                         "never been run on a real benchmark -- the only tx=2 "
+                         "measurement in the project is on poc/Tiny.sol. "
+                         "Requires --out-suffix for any value but 1, so a "
+                         "ladder run cannot overwrite the gate's collection. "
+                         "NOTE 0 is NOT unbounded: under coverage it is the "
+                         "SHALLOWEST setting (the back-edge is rewritten to a "
+                         "SKIP, leaving one transaction).")
+    ap.add_argument("--focus-with", default="",
+                    help="WIDTH axis: comma-separated EXTRA function names "
+                         "added to every unit's focus set, so a later "
+                         "transaction has something other than the unit itself "
+                         "to dispatch. Empty (default) reproduces the "
+                         "single-name focus exactly. Use for the middle cell of "
+                         "the width axis -- {unit} plus the functions that "
+                         "WRITE what the unit reads -- which is the cheap "
+                         "approximation of whole-contract on benchmarks where "
+                         "whole does not finish. Measured: a SINGLE-name focus "
+                         "reaches no cross-function state at ANY tx bound, "
+                         "because the other functions are not in the dispatcher "
+                         "for a later transaction to call. Requires "
+                         "--out-suffix.")
     a = ap.parse_args()
     if a.list or not a.bench:
         for k in base.BENCHES:
@@ -679,8 +775,10 @@ def main():
         sys.exit("--whole needs --out-suffix (e.g. --out-suffix __whole): "
                  "writing it into the per-method directory rewrites that "
                  "collection's index.json and leaves its reports unreadable")
+    focus_with = tuple(s for s in
+                       (x.strip() for x in a.focus_with.split(",")) if s)
     idx = collect(a.bench, a.whole, a.timeout, a.goals, a.out_suffix,
-                  a.solver_flags.split(), a.fresh)
+                  a.solver_flags.split(), a.fresh, a.max_tx, focus_with)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "
