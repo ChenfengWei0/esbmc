@@ -105,6 +105,26 @@ smt_convt::resultt z3_convt::dec_solve()
   if (result == z3::unsat)
     return smt_convt::P_UNSATISFIABLE;
 
+  // z3 answered `unknown`, and this is the ONLY place that answer still carries
+  // a reason. `smt_convt::resultt` has no P_UNKNOWN, so every backend folds
+  // unknown into P_ERROR (cvc5_conv.cpp does the same) and every caller
+  // downstream sees a bare error code -- path coverage turns it into the `U`
+  // token `solver-unknown`, which is then indistinguishable from a genuine
+  // solver failure.
+  //
+  // MEASURED, and it is why this line exists rather than a comment saying the
+  // reason is unavailable: on `st1inch --focus-function setFeeReceiver --z3
+  // --tuple-node-flattener`, 8 of 10 VCCs return no verdict after 9.6-11.3s
+  // while z3's own `timeout` parameter is set to 120000ms and the report prints
+  // `0 claim(s) abandoned over budget`. So z3 gives up ~110s early, on an
+  // 875-assignment formula, for a reason NOTHING in this tree records. Whether
+  // that is an internal resource bound or an incomplete fragment changes which
+  // Threats entry the benchmark's 0% belongs to, and the two are not the same
+  // limitation.
+  log_warning(
+    "z3 returned `unknown` (reason: {}); this is reported as `solver-unknown` "
+    "and is NOT a proof that the property holds",
+    solver.reason_unknown());
   return smt_convt::P_ERROR;
 }
 

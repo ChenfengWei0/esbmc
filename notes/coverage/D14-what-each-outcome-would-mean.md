@@ -96,6 +96,85 @@ records this by construction.
   exonerated on aqua, not on st1inch, where bitwuzla still never returns and
   plain `--z3` core-dumped before the struct-tag fix.
 
+## OUTCOME (2026-08-01, added after the fact and labelled as such)
+
+**The reduction did not reach any of A/B/C/D. It was STOPPED BY DECISION at
+4874 → 4369 lines, 38 minutes in, on the user's instruction.** That is recorded
+as its own line rather than filed under B, because "stalls with most of the file
+present" and "was switched off with most of the file present" produce the same
+artefact and mean opposite things — B is a statement about the input, this is a
+statement about the schedule. Reading a killed run as B would be the exact
+laundering this file was written to prevent.
+
+The checkpoint is on disk (`notes/coverage/poc/D14_SolverUnknown.sol`, 4369
+lines) and the reduction is resumable; nothing is lost but elapsed time.
+
+### What answered the question instead, and it was already on disk
+
+`notes/coverage/pathcov/st1inch_St1inch/work/St1inch__setFeeReceiver/run.log`,
+from the 2026-08-01 corpus re-collection, had never been read line by line. It
+settles two things the reduction was being run to approach:
+
+    5 paths  ->  Generated 10 VCC(s), 10 remaining after simplification
+                 (875 assignments, symex 0.095s)
+
+    path:15  10.738s no verdict      path:15   9.789s no verdict
+    path:14  11.300s no verdict      path:14  10.913s no verdict
+    path:13   0.010s ✓ PASSED        path:13  10.102s no verdict
+    path:12   0.010s ✓ PASSED        path:12  10.258s no verdict
+    path:2    9.654s no verdict      path:2   10.065s no verdict
+
+    Claim Budget: 120s per claim — 0 claim(s) abandoned over budget
+                  (z3: native solver parameter `timeout`, milliseconds)
+    Verdicts Preserved: 2
+    U Reasons: bounded-holds 2, solver-unknown 3
+
+**1. z3 gives up ~110 seconds early.** Its own `timeout` parameter is set to
+120000 ms — the report names the mechanism — and every no-verdict solve stops at
+9.6–11.3 s on an 875-assignment formula. So the flat band is **not** a bound
+ESBMC configures. That agrees with the source reading (the z3 backend sets no
+rlimit, no max_memory, no max_conflicts, no soft_timeout; `z3_conv.cpp:58-73` is
+the complete list of parameters it passes), but it is now measured rather than
+argued.
+
+**2. A hypothesis of mine is REFUTED here, and it was mine, not a candidate
+inherited from this file.** I proposed that the corpus's 89 no-verdicts might
+largely be duplicate solves of already-decided claims — i.e. bookkeeping rather
+than solver behaviour. On this unit only **2 of 10** solves are that shape
+(path:13 and path:12's second solve). The other 8 are genuinely undecided:
+path:15, path:14 and path:2 return no verdict on **both** of their solves. The
+duplicate-key defect is real and the tool names it itself ("the same claim key
+was solved more than once, which is a separate defect"), but it does not explain
+the no-verdicts.
+
+### A reading in this file's own header has to be corrected
+
+The table above in "The one fact any explanation has to fit" prints
+
+    decided (UNSAT)   106 solves   0.010 – 0.026 s
+    no verdict         89 solves   8.435 – 13.554 s
+
+as if the two partitioned a set of claims. **They partition SOLVE EVENTS, and
+every claim is solved more than once** (10 VCCs for 5 paths on this unit). So
+"106 of 195" must never be read as "106 of 195 claims decided". The direction of
+the finding is unchanged — zero SAT in 195 solves stands, and 0 % is still
+forced — but the denominator is a different object than the sentence implied.
+
+### What is now the next action, and why it is not the reduction
+
+Both remaining explanations for the band (a z3-internal resource bound vs an
+incomplete fragment) are distinguished by one string that z3 will hand over on
+request and that **nothing in this tree has ever asked for**:
+`Z3_solver_get_reason_unknown` has no caller anywhere. `z3_convt::dec_solve`
+(`z3_conv.cpp:96-109`) maps `z3::unknown` onto `P_ERROR` and logs nothing, and
+`smt_convt::resultt` has no `P_UNKNOWN` to fold into instead.
+
+That is a three-line change at one site, it needs no reduced input, and it is on
+the critical path under **every** one of A/B/C/D — a minimal PoC would tell us
+which construct, and this tells us why. It is being made now. The two are
+complementary, not alternatives, and the reduction stays resumable for the half
+this does not answer.
+
 ## Provenance of the run
 
 Binary `36bd85abe1` (mtime 2026-08-01 12:13:59), unchanged for the whole run and
