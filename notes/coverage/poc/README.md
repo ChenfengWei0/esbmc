@@ -81,9 +81,19 @@ refuted candidates are kept in the file headers so they are not re-proposed.
 | D17 | `D17_ExpChain.sol` | fixed-point chain LENGTH, 30 steps vs 3, single factor | the control for D14's leading suspect. Written BEFORE resuming the reducer, on the project's own rule that a hand-written PoC precedes automated reduction |
 | D18 | `D18_QualifiedError.sol` | a custom-error `revert`, QUALIFIED vs unqualified, four functions differing in one property | `expr.cpp:688-695` turns a MemberAccess call to an `ErrorDefinition` into `code_skipt()`, so the qualified spelling may not prune its path — which would enumerate a reverting path as a NORMAL exit and render it as a test asserting the call succeeds. The expectation is DIFFERENTIAL (the spellings must agree with each other), so it needs no knowledge of `uses_revert_observation`, whose value under path coverage was unknown when the file was written |
 
+| D19 | `D19_PanicSemantics.t.sol` | which arithmetic operations actually Panic **on chain** | a **forge** test, not an ESBMC one — the question is Solidity semantics and this project does not answer those from memory. 7/7 with three positive controls firing: shifts and narrowing TRUNCATE, `+ - * / %` and unary negation REVERT. Kills the "a singleton `{overflow}` implies Panic 0x11" premise |
+| D20 | `D20_FalseRevertOnly.sol` | a path that needs a narrowing truncation, against `--path-cov-arith-resolve` | REFUTED the suspicion it was built for (no false "revert-only") and CONFIRMED a worse one in the opposite direction: `uint256` proved, `uint8` missed, from one shape differing only in declared type. Its first run was inconclusive **by its own written criterion** because the positive control did not fire — recorded rather than redone |
+| D21 | `D21_NarrowOverflowMissed.sol` | the WIDTH boundary of `--overflow-check`, crossed with operator and signedness | the root cause of D20: Solidity operands are promoted to `signed int`, so the overflow claim is vacuous below 32 bits. `uint8`/`uint16`/`int8` and `uint8` `*`/`-` are all MISSED; 32 bits and above are detected. The boundary was the explanation's own prediction, with its falsifier written in the file |
+
 There is no D15 file. D15 is the KILLED-unit investigation, and it resolved into
 `killed_triage.py` plus a single remaining target (`EscrowDst.publicWithdraw`)
 rather than into a contract.
+
+D18 is `D18_QualifiedError.sol` — the qualified-vs-unqualified custom-error
+revert, crossed against constructor and function scope. Its prediction was
+REFUTED with a live positive control; two earlier versions of it were wrong in
+ways that would each have produced a confident answer, and both are recorded in
+the file rather than replaced.
 
 ## What has been run
 
