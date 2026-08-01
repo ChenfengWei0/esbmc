@@ -17,9 +17,32 @@ NOT free choices:
       coverage's own default is 2 (it is absent from `unbounded_modes`), and
       N>=2 is the configuration the tool itself warns produces mis-attributed
       Foundry tests. 1 is the only value that is both explicit and honest.
-      It is also what the locked branch-coverage dataset actually ran at --
-      branch coverage IS in `unbounded_modes`, so it got bound 0, so one
-      transaction. The two sides are at the same transaction depth.
+
+      IT IS ALSO WHAT THE LOCKED BRANCH-COVERAGE BASELINE RUNS AT, AND THAT IS
+      NOW MEASURED RATHER THAN INFERRED. This clause used to read "branch
+      coverage IS in `unbounded_modes`, so it got bound 0, so one transaction"
+      -- a chain of reasoning off an option table, on which the commensurability
+      of the entire gate rested. `notes/coverage/D25-baseline-is-one-
+      transaction.md` ran the baseline's own command shape on `poc/Tiny.sol`,
+      whose line 41 is reachable only after a preceding call:
+
+        baseline verbatim / plain BMC / either + `--solidity-max-tx 1`
+                                      -> Reached 5 of 8, line 41 NOT reached
+        plain BMC + `--solidity-max-tx 2`
+                                      -> Reached 8 of 8, line 41 reached
+
+      So the baseline is at one transaction, and `--k-induction
+      --unlimited-k-steps` buys it no reach at all (the havoc suspicion is
+      refuted, not merely unproven).
+
+      ⛔ AND THIS IS WHY THE VALUE MUST NOT BE RAISED HERE, even though
+      INVOCATION_DECISIONS rows 1 and 2 overturned tx=1 for the METHOD. The
+      baseline itself gains 5/8 -> 8/8 at tx=2 and is LOCKED, so it cannot be
+      re-run to restore parity. Running this side at 2 against a baseline at 1
+      would be running deeper than the thing being compared to. The artefact /
+      enumeration run may use whole-contract tx=2; THIS script produces the gate
+      row and stays at 1. Two command lines, and INVOCATION_DECISIONS now prints
+      both.
 
   --cov-report-json
       Not optional. Without it the per-claim slicer removes every state write

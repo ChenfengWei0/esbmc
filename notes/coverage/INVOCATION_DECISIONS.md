@@ -416,6 +416,28 @@ library-route run produced 0 units and 0 paths. Still present at
 
 ## The settled command line
 
+⛔ **THERE ARE TWO, AND PRINTING ONE WAS AN ERROR** (measured 2026-08-01,
+`notes/coverage/D25-baseline-is-one-transaction.md`). Rows 1 and 2 are correct
+about REACH and are not withdrawn. What they do not settle is the axis where a
+LOCKED opponent fixes the depth for us:
+
+* the **GATE** run is compared against the branch-coverage baseline, and that
+  baseline is **measured** to run at ONE transaction — cells A/B/C/D of D25 are
+  identical on reach, so naming the bound changes nothing and the default really
+  does resolve to one. Worse, cell E shows the BASELINE ITSELF goes 5/8 → 8/8 at
+  `--solidity-max-tx 2`. Running our side at 2 against a baseline at 1 is not
+  "using the settled configuration", it is running deeper than the thing being
+  compared to. **The gate run stays at `--solidity-max-tx 1`.**
+* the **ARTEFACT / enumeration** run has no second party to match, and there the
+  question is what this method can reach. **Whole contract + `--solidity-max-tx 2`,
+  as rows 1 and 2 say.**
+
+This is the same asymmetry `EXECUTION_PLAN.md` §5 already states for the harness
+(enumeration may be relaxed, certification must be tightened to the artefact);
+it had simply never been applied to the transaction axis.
+
+### (a) the ENUMERATION / ARTEFACT command line
+
 ```
 esbmc <flat>.solast --sol <flat>
       --solidity-path-coverage
@@ -425,6 +447,21 @@ esbmc <flat>.solast --sol <flat>
       --path-cov-max-goals 10000
       --memlimit <sized for this contract, not 8g by habit>
 ```
+
+### (b) the GATE command line — identical but for one value
+
+```
+      --solidity-max-tx 1
+```
+
+and it is `pathcov_collect.py` that issues it. A run of (a) may never be quoted
+into the branch-coverage gate table, and a run of (b) may never be quoted as the
+method's reach.
+
+⚠ The havoc suspicion that motivated D25 was **refuted**, and is recorded so it
+is not raised again: the baseline's `--k-induction --unlimited-k-steps` buys it
+**no reach at all** (cell A ≡ cell B). Its coverage does not rest on an entry
+state no call sequence produces, so the gate's bar is a legitimate bar.
 
 no `--function`, no `--focus-function`, no bounding strategy, no
 `--coverage-multi-tx`, no `--no-slice`, no `--no-simplify`.
