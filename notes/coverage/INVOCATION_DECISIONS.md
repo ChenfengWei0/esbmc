@@ -31,7 +31,7 @@ Rules for this file:
 | 3 | bounding strategy | **none** | DECIDED |
 | 4 | slicing | **default** (do not pass `--no-slice`) | DECIDED |
 | 5 | simplification | **never pass `--no-simplify`** to the collector | DECIDED |
-| 6 | arithmetic checks | **do not pass them — they cannot help** | DECIDED |
+| 6 | arithmetic checks | **enumeration: do not pass them (they cannot change the path set). EMISSION: pass them — `--path-cov-arith-resolve` needs them** | AMENDED 2026-08-01 |
 | 7 | solver | **let it auto-select** | DECIDED (one contract) |
 | 8 | resources | **`--memlimit` sized per contract; 8g is not a default** | DECIDED |
 | 9 | `--all-witnesses` | **wanted, blocked by a one-line gate** | OPEN |
@@ -241,7 +241,40 @@ must-not-fire direction.
 Evidence: `notes/coverage/certify-vs-assert-vacuity.md`,
 `notes/coverage/option-matrix-round1.md`.
 
-## 6. arithmetic checks — passing them cannot help
+## 6. arithmetic checks — cannot change the PATH SET, but they can change WHICH
+## MEMBER of a path's domain the solver returns (amended 2026-08-01)
+
+**The row's argument is intact; its conclusion was too broad.** Everything below
+about the enumerated path set remains true and measured. What is now false is the
+sentence "passing them cannot help", because it silently answered a second
+question the argument never addressed: *which member of the path's domain does
+the counterexample take?*
+
+`--path-cov-arith-resolve` (2026-08-01) is built on exactly that distinction. On
+a WITNESSED path carrying a checked operation it re-solves that one claim with
+`goto_check`'s own conditions assumed and prefers a non-wrapping witness.
+Measured, must-flip pair:
+
+| | off | on |
+|---|---|---|
+| `D10_WrapNotPanic.add` | `amt = 2^256-1`, `bal 500 → 499` — **wraps** | `amt = 2^256-501`, `bal = 2^256-1` — saturates exactly |
+| cost | — | 3 claims re-solved in 0.008s |
+
+Three of the PoC set's RED tests were this (two Panic 0x11, one Panic 0x12), and
+a test that is red on the unmodified contract is the one outcome this pipeline
+must never produce. So for the ENUMERATION run the row's advice still stands —
+the checks add claims and change no path — and for a run that intends to emit
+tests, `--overflow-check` and/or `--div-by-zero-check` are now a PREREQUISITE of
+the flag that fixes it, which refuses to run without them rather than no-op.
+
+⚠ **Two costs the amendment does not hide.** The checks still become their own
+solver jobs (the paragraph below), and under path coverage a non-instrumented
+claim now produces no Foundry case at all — a deliberate change measured on
+`D16_OnlyByOverflow`, where `goto_check`'s own refuted overflow claim was
+emitting a duplicate of the path claim's call and defeated the first version of
+the refusal.
+
+### The original row, unchanged below
 
 The enumerating DFS fans out at exactly three site kinds: conditional GOTO,
 folded short-circuit in ASSIGN, folded short-circuit in RETURN. Everything else
@@ -394,8 +427,29 @@ esbmc <flat>.solast --sol <flat>
 ```
 
 no `--function`, no `--focus-function`, no bounding strategy, no
-`--coverage-multi-tx`, no `--no-slice`, no `--no-simplify`, no arithmetic check
-flags.
+`--coverage-multi-tx`, no `--no-slice`, no `--no-simplify`.
+
+**Add THREE flags when the run is meant to EMIT TESTS** (amended 2026-08-01 —
+row 6):
+
+```
+      --overflow-check --div-by-zero-check --path-cov-arith-resolve
+      --generate-foundry-testcase
+```
+
+Without them a witnessed path whose counterexample wraps or divides by zero is
+rendered as a bare call asserting a NORMAL exit, and is RED on the unmodified
+contract — measured three times across the PoC set. `--path-cov-arith-resolve`
+REFUSES to run if neither check is enabled, so this cannot be half-copied into a
+silent no-op. It costs at most one extra query per witnessed path that carries a
+checked operation (measured: 3 claims in 0.008s on a toy, 8 in 0.024s on
+another), and it changes nothing on a path with no such operation.
+
+⚠ **This block is for the EMISSION run, not the enumeration run**, and the two
+answer different questions. Row 6's original argument — the checks are
+single-successor asserts, so they cannot change the enumerated path SET — is
+untouched; what they change is which MEMBER of a path's domain the solver
+returns.
 
 **This block previously printed `--focus-function <f> --solidity-max-tx 1`,
 i.e. the configuration rows 1 and 2 OVERTURNED**, and anyone who copied it
