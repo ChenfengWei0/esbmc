@@ -54,8 +54,37 @@ no `.tex`. So the frozen method cannot be read, and any claim that the
 implementation "matches the method" is currently uncheckable. Say so rather than
 assuming agreement.
 
-The read papers are PDFs under
-`paper_review/papers_to_write/esbmc_cov_test_gen/pdfs/` (44 files).
+### 0.0.1 THE PAPER SIDE — none of it was in this index until now
+
+This index covers `esbmc/notes/` only, so every file the PAPER lives in was
+invisible from here. Listed by directory, with sizes, because "the paper source"
+turned out to mean four different places and asking for it by name found none of
+them.
+
+**`paper_review/papers_to_write/esbmc_cov_test_gen/` — the drafts.** No `.tex`
+anywhere; the paper is being written as markdown.
+
+| file | KB | what it is |
+|---|---|---|
+| `progress.md` | 554 | **the verbatim transcript and the authority.** Never rewritten, append-only, and the user decides when it is updated |
+| `Implementation_plan.md` | 27 | ⛔ **not one character may be edited** |
+| `Implementation_plan_stage234.md` | 126 | may be edited; stages 2/3/4 design |
+| `EXECUTION_PLAN.md` | 94 | the live operational doc: what is blocked, what each gate's criterion is |
+| `methodology_draft.md` / `method_update.md` | 28 / 59 | the Methodology text and its running corrections |
+| `threats_draft.md` | 17 | Threats, with T-numbered items |
+| `evaluation_skeleton.md` | 8 | RQ table and the "no stratifying by contract size" rule |
+| `related_work*.md` | 1.5 / 74 / 6 | three files: the text, the process log, the regrouping |
+| `OBSERVABLES.md`, `test_shape_checklist.md` | 15 / 7 | |
+| `改进智能合约coverage测试的断言生成方法.md` | 122 | the ORIGINAL design conversation this whole project came out of |
+| `refs.tsv` | 1 | bibliography rows |
+| `OVERNIGHT_PLAN*.md`, `overnight_state*.md`, `OVERNIGHT_REPORT.md`, `POSTMORTEM_2026-07-23.md`, `impl_progress_round2.md` | 24–168 | records of past unattended runs; the T0–T4 block of 2026-07-29 is here |
+| `notes/` | | `handoff-2026-07-29.md`, `reach-gate-measurement.md` (97 KB), `soltg-chc-reading.md` |
+| `pdfs/` | | **44 read papers**, including `soltg-cav24.pdf`, `cc-solbmc-2024.pdf`, `put-tillmann-fse05.pdf`, `houdini-fme01.pdf` |
+
+**`/home/samson/workspace/VeriPUT/` — the ARTEFACT repo, not the paper.**
+`Datasets/Patch-Bug-Bench`, `Results/`, `Scripts/`, `Motivation_Examples/`, and
+`Tools/{SolTG, SynTest, CC-SolBMC, SolAR}` — i.e. the baselines to compare
+against. README is EMPTY and there is no `.tex`.
 
 ### 0.1 Then these three, in this order
 
