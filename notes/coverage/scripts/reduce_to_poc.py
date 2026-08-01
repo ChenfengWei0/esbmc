@@ -424,6 +424,18 @@ def main():
                     help="solc binary to compile candidates with; must satisfy "
                          "the source's pragma or nothing compiles and the "
                          "reducer refuses without ever running ESBMC")
+    ap.add_argument("--types-first", action="store_true",
+                    help="run the TYPE-level pass (whole contract / library / "
+                         "interface / struct / enum) BEFORE the function and "
+                         "statement passes. Every candidate costs one solc "
+                         "compile plus one ESBMC run, so the candidate COUNT is "
+                         "the cost, and on a large flat the two differ by an "
+                         "order of magnitude: st1inch's 4874-line flat offers "
+                         "242 function-like blocks against 30 type-level ones, "
+                         "and one type-level try can remove a 1144-line library "
+                         "outright. Not the default, because on a single-contract "
+                         "PoC the type pass has nothing to remove and costs a "
+                         "wasted run per round")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
@@ -520,70 +532,109 @@ def main():
 
     checkpoint(text, "original, before any removal")
 
-    # PASS 1 -- whole function-like blocks, largest first.
-    changed = True
-    while changed:
-        changed = False
-        blocks = top_level_blocks(text)
-        blocks.sort(key=lambda b: b[0] - b[1])  # largest first
-        for lo, hi, header in blocks:
-            cand = drop_lines(text, lo, hi)
-            if fails(cand):
-                print(f"  dropped  {header[:70]}   "
-                      f"-> {len(cand.splitlines())} lines", flush=True)
-                text = cand
-                checkpoint(text, f"PASS 1, {len(text.splitlines())} lines")
-                changed = True
-                break
-
-    # PASS 2 -- single statements inside whatever blocks remain.
-    changed = True
-    while changed:
-        changed = False
-        for lo, hi, header in top_level_blocks(text):
-            for k in statements_of(text, lo, hi):
-                cand = drop_lines(text, k, k)
+    # The four passes, each a fixpoint loop over one kind of syntactic unit.
+    # Extracted from the straight-line sequence they used to be so the ORDER can
+    # be chosen -- see --types-first below.
+    def pass_functions():
+        nonlocal text
+        changed = True
+        while changed:
+            changed = False
+            blocks = top_level_blocks(text)
+            blocks.sort(key=lambda b: b[0] - b[1])  # largest first
+            for lo, hi, header in blocks:
+                cand = drop_lines(text, lo, hi)
                 if fails(cand):
-                    print(f"  dropped  stmt: "
-                          f"{text.splitlines()[k].strip()[:60]}", flush=True)
+                    print(f"  dropped  {header[:70]}   "
+                          f"-> {len(cand.splitlines())} lines", flush=True)
                     text = cand
-                    checkpoint(text, f"PASS 2, {len(text.splitlines())} lines")
+                    checkpoint(text, f"PASS fn, {len(text.splitlines())} lines")
                     changed = True
                     break
-            if changed:
-                break
 
-    # PASS 3 -- whole type-level blocks. Runs after the function passes on
-    # purpose: with the bodies gone a contract or library is far more likely to
-    # be removable whole, and each attempt here costs a full compile+run.
-    changed = True
-    while changed:
-        changed = False
-        blocks = blocks_matching(text, TYPE_RE)
-        blocks.sort(key=lambda b: b[0] - b[1])  # largest first
-        for lo, hi, header in blocks:
-            cand = drop_lines(text, lo, hi)
-            if fails(cand):
-                print(f"  dropped  TYPE {header[:65]}   "
-                      f"-> {len(cand.splitlines())} lines", flush=True)
-                text = cand
-                checkpoint(text, f"PASS 3, {len(text.splitlines())} lines")
-                changed = True
-                break
+    def pass_statements():
+        nonlocal text
+        changed = True
+        while changed:
+            changed = False
+            for lo, hi, header in top_level_blocks(text):
+                for k in statements_of(text, lo, hi):
+                    cand = drop_lines(text, k, k)
+                    if fails(cand):
+                        print(f"  dropped  stmt: "
+                              f"{text.splitlines()[k].strip()[:60]}", flush=True)
+                        text = cand
+                        checkpoint(text,
+                                   f"PASS stmt, {len(text.splitlines())} lines")
+                        changed = True
+                        break
+                if changed:
+                    break
 
-    # PASS 4 -- single state-variable declarations.
-    changed = True
-    while changed:
-        changed = False
-        for k in state_var_lines(text):
-            cand = drop_lines(text, k, k)
-            if fails(cand):
-                print(f"  dropped  state: "
-                      f"{text.splitlines()[k].strip()[:60]}", flush=True)
-                text = cand
-                checkpoint(text, f"PASS 4, {len(text.splitlines())} lines")
-                changed = True
-                break
+    def pass_types():
+        nonlocal text
+        changed = True
+        while changed:
+            changed = False
+            blocks = blocks_matching(text, TYPE_RE)
+            blocks.sort(key=lambda b: b[0] - b[1])  # largest first
+            for lo, hi, header in blocks:
+                cand = drop_lines(text, lo, hi)
+                if fails(cand):
+                    print(f"  dropped  TYPE {header[:65]}   "
+                          f"-> {len(cand.splitlines())} lines", flush=True)
+                    text = cand
+                    checkpoint(text,
+                               f"PASS type, {len(text.splitlines())} lines")
+                    changed = True
+                    break
+
+    def pass_state_vars():
+        nonlocal text
+        changed = True
+        while changed:
+            changed = False
+            for k in state_var_lines(text):
+                cand = drop_lines(text, k, k)
+                if fails(cand):
+                    print(f"  dropped  state: "
+                          f"{text.splitlines()[k].strip()[:60]}", flush=True)
+                    text = cand
+                    checkpoint(text,
+                               f"PASS state, {len(text.splitlines())} lines")
+                    changed = True
+                    break
+
+    # THE ORDER IS A COST DECISION, AND IT IS NOW MEASURED RATHER THAN ARGUED.
+    #
+    # The default runs functions and statements first. The reason written here
+    # was that "with the bodies gone a contract or library is far more likely to
+    # be removable whole" -- a plausible argument, and it was never checked
+    # against what the passes actually COST. Every candidate costs the same, one
+    # solc compile plus one ESBMC run, so the number of candidates IS the cost:
+    #
+    #     st1inch__St1inch.flat.sol, 4874 lines, measured 2.4 min per candidate
+    #       function-like blocks : 242  ->  9.7 h
+    #       type-level blocks    :  30  ->  1.2 h
+    #     and one type-level try can remove `library SafeCast` (1144 lines),
+    #     `library Math` (674) or `library SafeERC20` (473) outright, taking
+    #     dozens of function candidates with it.
+    #
+    # Both orders can be right for different inputs -- on a single-contract PoC
+    # the type pass has nothing to remove and costs a wasted run each round. So
+    # this is a FLAG rather than a new default, the default is unchanged, and the
+    # order used is printed with the run so a reduction's provenance says which
+    # one produced it.
+    order = ([("types", pass_types), ("functions", pass_functions),
+              ("statements", pass_statements), ("state-vars", pass_state_vars)]
+             if a.types_first else
+             [("functions", pass_functions), ("statements", pass_statements),
+              ("types", pass_types), ("state-vars", pass_state_vars)])
+    print(f"  pass order: {' -> '.join(n for n, _ in order)}"
+          f"{'   (--types-first)' if a.types_first else '   (default)'}\n",
+          flush=True)
+    for _name, fn in order:
+        fn()
 
     print(f"\n  reduced to {len(text.splitlines())} lines in "
           f"{round(time.time() - t0)}s\n", flush=True)
