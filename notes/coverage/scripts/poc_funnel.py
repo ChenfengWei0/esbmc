@@ -332,8 +332,22 @@ def main():
         (proj / "test.log").write_text(out)
         cur = None
         seen = set()
+        # BOTH HEADERS. forge prints every failure twice -- under its suite
+        # (`Ran N tests for <file>:<contract>`) and again in a closing block
+        # (`Encountered N failing test(s) in <file>:<contract>`). Matching only
+        # the first left `cur` pointing at the LAST suite that ran, so the
+        # closing block's duplicates were re-keyed onto that contract. Measured:
+        # one spurious RED filed against P13_Exits, for a `test_cov_5` its file
+        # does not contain, while its own suite result was `0 failed`. Every
+        # generated suite names its tests test_cov_0, test_cov_1, ..., so the
+        # function name identifies nothing without its contract.
         for line in out.splitlines():
             m = re.match(r"Ran \d+ tests? for (\S+):(\S+)", line)
+            if m:
+                cur = m.group(2)
+                continue
+            m = re.match(r"Encountered \d+ failing tests? in (\S+):(\S+)",
+                         line)
             if m:
                 cur = m.group(2)
                 continue
@@ -349,6 +363,32 @@ def main():
                 else:
                     red[stem].append(m.group(2))
         print(f"  rc={rc}\n")
+
+        # ---- CROSS-CHECK AGAINST forge's OWN TOTAL ----
+        #
+        # This parser reconstructs a number the tool already prints. Checking
+        # one against the other is what turns "an unrecognised header shape"
+        # from a silent miscount into a loud one -- which is exactly how the
+        # P13_Exits phantom would have been caught the first time instead of by
+        # noticing that a contract with no arithmetic had an arithmetic panic.
+        m = re.search(r"(\d+) tests? passed, (\d+) failed", out)
+        if m:
+            fg, fr = int(m.group(1)), int(m.group(2))
+            pg = sum(green.values())
+            pr = sum(len(v) for v in red.values())
+            if (fg, fr) != (pg, pr):
+                print(f"  ** PARSE DISAGREES WITH forge's OWN SUMMARY: this "
+                      f"script counted {pg} passed / {pr} failed, forge "
+                      f"reported {fg} passed / {fr} failed. The per-contract "
+                      f"GREEN/RED columns below are NOT trustworthy; a header "
+                      f"shape this parser does not know re-keys failures onto "
+                      f"the wrong suite. **\n")
+            else:
+                print(f"  parse agrees with forge's own summary: "
+                      f"{fg} passed, {fr} failed\n")
+        else:
+            print("  ** forge printed no summary line this parser recognises, "
+                  "so the GREEN/RED columns are unchecked **\n")
 
     # ---- the table ---------------------------------------------------------
     print("## The funnel, per contract "

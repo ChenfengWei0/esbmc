@@ -349,11 +349,34 @@ def main():
     # test uniquely.
     reds = []
     seen_red = set()
+    passes = 0
     cur_file = cur_contract = None
+    # BOTH SUITE HEADERS. forge prints every failure twice -- under
+    # `Ran N tests for <file>:<contract>` and again under
+    # `Encountered N failing test(s) in <file>:<contract>`. Matching only the
+    # first leaves `cur_file` pointing at the LAST suite that ran, so the
+    # closing block's duplicates are attributed to it. Here that is not merely
+    # a miscount: the attribution drives the RENAME below, so the disable is
+    # attempted in the wrong file -- a no-op that leaves the genuinely red test
+    # enabled while the log says it was disabled. MEASURED on the PoC funnel,
+    # which shares this parser: 4 RED reported where forge said 3, the extra
+    # one filed against a contract with no arithmetic whose own suite result
+    # was `0 failed`.
     for line in out.splitlines():
         m = re.match(r"Ran \d+ tests? for (\S+):(\S+)", line)
         if m:
             cur_file, cur_contract = m.group(1), m.group(2)
+            continue
+        m = re.match(r"Encountered \d+ failing tests? in (\S+):(\S+)", line)
+        if m:
+            cur_file, cur_contract = m.group(1), m.group(2)
+            continue
+        m = re.match(r"\[PASS[^\]]*\]\s+(\w+)\(", line)
+        if m and cur_file:
+            key = (cur_file, cur_contract, m.group(1))
+            if key not in seen_red:
+                seen_red.add(key)
+                passes += 1
             continue
         m = re.match(r"\[FAIL[^\]]*\]\s+(\w+)\(", line)
         if m and cur_file:
@@ -361,6 +384,22 @@ def main():
             if key not in seen_red:
                 seen_red.add(key)
                 reds.append(key)
+
+    # CROSS-CHECK AGAINST forge's OWN TOTAL. This reconstructs a number the
+    # tool already prints; checking one against the other is what turns the
+    # next unknown header shape into a loud failure instead of a confident
+    # wrong rename.
+    m = re.search(r"(\d+) tests? passed, (\d+) failed", out)
+    if m:
+        fg, fr = int(m.group(1)), int(m.group(2))
+        if (fg, fr) != (passes, len(reds)):
+            print(f"** PARSE DISAGREES WITH forge's OWN SUMMARY: parsed "
+                  f"{passes} passed / {len(reds)} failed, forge reported "
+                  f"{fg} passed / {fr} failed. The disable step below would "
+                  f"act on the wrong set. **", flush=True)
+        else:
+            print(f"    parse agrees with forge: {fg} passed, {fr} failed",
+                  flush=True)
     if reds:
         print(f"=== {len(reds)} RED test(s) on the unmodified contract ===",
               flush=True)
