@@ -37,7 +37,8 @@ Each switch is independent, so a rung can be tested alone or in combination, and
 a 2^k cell can be run if the single-factor rungs all come back clean.
 
 Usage: python3 gen_setfee_ladder.py <out.sol> [--ctor-calls-unit] [--exp-table]
-                                    [--vp-calls] [--erc20-strings] [--depth N]
+                                    [--vp-calls] [--erc20-strings]
+                                    [--depth N] [--width N] [--op muldiv|mul|div]
 """
 import sys
 from pathlib import Path
@@ -55,8 +56,8 @@ contract D36 {{
     error ZeroAddress();
     event FeeReceiverSet(address receiver);
 
-    uint256 private constant _ONE_E18 = 1e18;
-    uint256 private constant _VOTING_POWER_DIVIDER = 20;
+    uint@W@ private constant _ONE_E18 = 1e18;
+    uint@W@ private constant _VOTING_POWER_DIVIDER = 20;
     uint256 public constant MAX_LOCK_PERIOD = 2 * 365 days;
 
     address public owner;
@@ -83,7 +84,7 @@ contract D36 {{
 VP_FN = """
     /// The same shape as VotingPowerCalculator._votingPowerAt: THIRTY independent
     /// branches, each a 256-bit multiply and divide. Not a straight-line chain.
-    function _votingPowerAt(uint256 balance, uint256 timestamp) internal view returns (uint256 votingPower) {{
+    function _votingPowerAt(uint@W@ balance, uint256 timestamp) internal view returns (uint@W@ votingPower) {{
         unchecked {{
             uint256 t = timestamp;
             votingPower = balance;
@@ -99,9 +100,12 @@ def main(argv):
     out = Path(argv[1])
     flags = set(a for a in argv[2:] if a.startswith("--"))
     depth = 30
+    width = 256
     for i, a in enumerate(argv):
         if a == "--depth" and i + 1 < len(argv):
             depth = int(argv[i + 1])
+        if a == "--width" and i + 1 < len(argv):
+            width = int(argv[i + 1])
 
     ctor_calls = "--ctor-calls-unit" in flags
     exp_table = "--exp-table" in flags
@@ -116,8 +120,8 @@ def main(argv):
 
     decls, ctor_body, ctor_args = [], [], []
     if exp_table:
-        decls += [f"    uint256 public immutable T{i};\n" for i in range(depth)]
-        ctor_args.append("uint256 expBase_")
+        decls += [f"    uint{width} public immutable T{i};\n" for i in range(depth)]
+        ctor_args.append(f"uint{width} expBase_")
         ctor_body.append("        T0 = expBase_;\n")
         ctor_body += [f"        T{i} = (T{i-1} * T{i-1}) / _ONE_E18;\n"
                       for i in range(1, depth)]
@@ -166,16 +170,17 @@ def main(argv):
     rungs_op = f" op={op}"
 
     rungs = (" ".join(sorted(flags)) or "(bare)") + (rungs_op if vp_calls else "")
-    out.write_text(HEAD.format(
+    text = HEAD.format(
         rungs=rungs,
         decls="".join(decls) + ("\n" if decls else ""),
         ctor_args=", ".join(ctor_args),
         ctor_body="".join(ctor_body),
-        vp_fn=VP_FN.format(branches=branches) if vp_calls else "",
-        table_reader=("\n    function tableTop() public view returns (uint256) "
+        vp_fn=(VP_FN.format(branches=branches) if vp_calls else ""),
+        table_reader=("\n    function tableTop() public view returns (uint@W@) "
                       f"{{ return T{depth - 1}; }}\n" if exp_table else ""),
-    ))
-    print(f"wrote {out}   rungs: {rungs}")
+    )
+    out.write_text(text.replace("uint@W@", f"uint{width}"))
+    print(f"wrote {out}   rungs: {rungs} width={width}")
     return 0
 
 

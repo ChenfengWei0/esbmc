@@ -100,12 +100,40 @@ control that fires (rung 0 witnesses 4 of 4).
 conversion. "z3 runs out of memory on a 355-assignment formula it encodes in two
 milliseconds" is an observation with a reproduction, not a root cause.
 
-## Next, in the order the evidence supports
+## ⇒ AND THE SECOND FACTOR IS THE BIT WIDTH. Measured.
 
-1. **Does the bit WIDTH matter?** The same ladder at `uint64` or `uint128`. If it
-   solves, width is the second factor and the finding becomes "wide conditional
-   arithmetic", which is far more actionable.
-2. Only then, the encoder itself.
+Same 30 branches, same everything, only the declared width changing:
+
+| width | paths | F | U | VCC assign | min solve | max solve |
+|---|---|---|---|---|---|---|
+| **`uint64`** | 4 | **4** | 0 | **355** | **0.036 s** | **0.052 s** |
+| `uint128` | — | — | — | **355** | 121.080 s | 121.104 s — **per-claim timeout, NO REPORT** |
+| `uint256` | 4 | **0** | 4 | **355** | 3.773 s | 17.050 s — `out of memory` |
+
+**The formula is the same size in all three — 355 assignments — and the same
+shape. Only the width differs. `uint64` decides in THIRTY-SIX MILLISECONDS; the
+same thing at `uint256` exhausts 4 GiB.**
+
+⇒ The characterisation is now complete on the evidence available:
+
+> **Conditional composition of WIDE bit-vector arithmetic.** Thirty levels at
+> 64 bits is trivial, at 128 bits it exceeds a 120 s per-claim budget, and at
+> 256 bits z3 gives up on memory in seconds. Depth alone is not it (straight-line
+> 256-bit solves). Width alone is not it (256-bit straight-line solves). Size is
+> not it (355 assignments throughout). The operator is not it (mul, div and
+> muldiv all fail at 256).
+
+⇒ **And this is not a corner case for Solidity.** `uint256` is the language's
+default integer type, so any contract that composes 256-bit arithmetic through a
+sequence of conditionals lands here. `VotingPowerCalculator` is one instance;
+nothing suggests it is a rare one.
+
+## Next
+
+Read the SMT conversion. Everything above is behaviour with a reproduction; the
+encoder has not been looked at. The reproduction is now small enough (a 60-line
+generated contract, 355 assignments, seconds per cell, and a `uint64` control
+that solves in 36 ms) that a bisect inside the conversion is affordable.
 
 ## Files
 
