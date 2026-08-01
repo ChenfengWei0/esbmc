@@ -66,6 +66,56 @@ different answers; it is not why one of st1inch's answers exhausts 8 GiB. That
 remains open, and conflating the two would repeat exactly the mistake D30 was
 withdrawn for.
 
+## ⛔ THE FRAMING BELOW WAS WRONG AND IS CORRECTED HERE (user, 2026-08-01)
+
+Everything from "Candidate fixes" down was written as a two-option DESIGN choice
+to be settled by measuring the baseline's scope. **It is not a design choice, and
+the baseline does not get to settle it.**
+
+**It is fixed by our own Problem Definition.** A unit `u` is an externally
+callable ENTRY POINT; a path is the complete decision sequence of ONE CALL from
+entry to return or revert; the path domain is the set of inputs A TEST CAN SUPPLY
+that walk it. The constructor-scope execution is not an external call — it has no
+calldata, no ABI value gate, and no originating account. **It is not a member of
+`X_u` at all.** So option (2) — "count it, and key/refuse around it" —
+contradicts a definition this project has already written down. It is not an
+option.
+
+**And it breaks the soundness proposition, which is why this is not accounting.**
+The proposition is that every input the emitted test admits lies in `D_π` and the
+test passes on the contract. If the constructor-scope execution counts as
+covering `π`, the values it took enter our understanding of `D_π` — and no
+transaction on chain can reproduce them, so the rendered test is RED. The note
+below already observed "it renders no legal test" and then filed it as a
+bookkeeping problem. **It is a soundness problem.**
+
+**The comparability argument below has its direction backwards, and is
+withdrawn.** It reasoned: if the baseline counts deployment-time executions in
+its reach, refusing them costs us against the baseline. The correct reading is
+the opposite — that would mean the BASELINE is crediting a coverage with no
+emittable test, i.e. measuring something the artefact cannot match. The response
+is not to loosen our definition to a looser denominator; it is to REPORT the
+difference as a fact (both denominators, the reason, the size). That is the
+discipline this project already applies when it lists every path that got no test
+together with its reason.
+
+⇒ The baseline-scope measurement recorded below **stays**, but it is re-filed:
+it is an EVALUATION scope datum, not the basis of a decision.
+
+⇒ **The decision is A: a constructor-scope execution does not witness a unit
+path.** The cost — a path reachable only from constructor scope stays U forever —
+is honest, because such a path genuinely has no test, and "no test, with the
+reason" is already the reporting format.
+
+⇒ **One thing below survives independently of all of this**: the claim must be
+keyed by `(signature, instantiation)`. That reason has nothing to do with whether
+the execution counts. The same function body executed twice in one run yields TWO
+independent verdicts, and sharing one key merges them into one. That is an
+accounting defect under A and under B alike.
+
+<details>
+<summary>The superseded framing, kept because its measurements are still valid</summary>
+
 ## Candidate fixes — CANDIDATES, none checked against the instrumentation site
 
 1. **Do not let a constructor-scope execution witness a UNIT path.** A unit's
@@ -117,6 +167,8 @@ constructor scope would have to depend on storage that exists only mid-
 construction. Nothing in this fixture has one, and nothing here searched the
 corpus for one. If such a decision exists, option (1) loses it and the baseline
 keeps it.
+
+</details>
 
 ## Reproduction
 
