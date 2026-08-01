@@ -32,7 +32,7 @@ Rules for this file:
 | 4 | slicing | **default** (do not pass `--no-slice`) | DECIDED |
 | 5 | simplification | **never pass `--no-simplify`** to the collector | DECIDED |
 | 6 | arithmetic checks | **enumeration: do not pass them (they cannot change the path set). EMISSION: pass them — `--path-cov-arith-resolve` needs them** | AMENDED 2026-08-01 |
-| 7 | solver | **let it auto-select** | DECIDED (one contract) |
+| 7 | solver | **auto-select as the default, but it is per-benchmark: measurably RIGHT on aqua and measurably WRONG on st1inch** | AMENDED 2026-08-01 |
 | 8 | resources | **`--memlimit` sized per contract; 8g is not a default** | DECIDED |
 | 9 | `--all-witnesses` | **wanted, blocked by a one-line gate** | OPEN |
 | 10 | isolated-function mode | **`--function` is BANNED** | DECIDED |
@@ -307,6 +307,41 @@ flag combination, because all `#sol_unchecked` readers end in
 Evidence: `notes/path-coverage-invocation-contract.md` §11.
 
 ## 7. solver — auto-select, WITH ONE MEASURED EXCEPTION
+
+> **⛔ AMENDED 2026-08-01: "let it auto-select" is measurably WRONG on st1inch and
+> measurably RIGHT on aqua, and the row may no longer be stated as one default.**
+> `notes/coverage/D31-the-router-is-right-about-aqua-and-wrong-about-st1inch.md`
+> ran five backends x two vehicles, every st1inch cell gated on reproducing
+> `F = 2` on `aqua safeBalances` first — a backend that cannot produce SAT at all
+> has said nothing by returning 0.
+>
+> | on `st1inch setFeeReceiver` | | on `aqua safeBalances` | |
+> |---|---|---|---|
+> | auto | **180 s, NO REPORT** | auto (=cvc5) | F=2 ✅ |
+> | `--z3 --tuple-node-flattener` | **103.8 s, complete, F=0** | same | F=2 ✅, fastest cell |
+> | `--cvc5` | 180 s, no return | `--cvc5` | F=2 ✅ |
+> | `--bitwuzla` | 180 s, no return | `--bitwuzla` | **F=0, 4 solver-unknown** ❌ |
+> | `--z3` | VOID (failed control) | `--z3` | **SIGABRT** ❌ |
+>
+> Three things follow, and they are different claims:
+> 1. **No backend fixes the coverage.** The only cell that both passed the
+>    control and returned gives `F = 0`. What auto-selection costs on st1inch is
+>    the REPORT, not the reach — see D30 for the source-level mechanism (a
+>    30-deep chain of 256-bit `mul`/`div` in the constructor, inherited by every
+>    query).
+> 2. **The router is right about aqua.** Its stated reason for avoiding bitwuzla
+>    there now has its counterfactual: bitwuzla FAILS the aqua control. The row
+>    previously had the reason and not the test.
+> 3. **Plain `--z3` SIGABRTs on aqua** while `--z3 --tuple-node-flattener`
+>    completes in 2.0 s, and `--z3 --tuple-sym-flattener` SIGABRTs too
+>    (`encoder_arms.py`, same day). Two of three z3 configurations abort on aqua.
+>    Unexplained, recorded as a defect with a reproduction rather than a
+>    preference.
+>
+> ⇒ The row stays "auto-select" as the DEFAULT, because it is right where it has
+> been tested except on st1inch, and the collector's `ENCODER_EXCEPTIONS` already
+> overrides it there. What is withdrawn is the word DECIDED: this is a
+> per-benchmark question with two measured, opposite answers.
 
 Aqua auto-selects CVC5 with a stated reason ("detected >=3-level nested-mapping
 shape; Bitwuzla aborts on the CONST_ARRAY-initialised infinite mapping array").
