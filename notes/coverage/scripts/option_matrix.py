@@ -94,6 +94,31 @@ INSTR_RE = re.compile(
     r"instrumented (\d+) complete path\(s\) across (\d+) unit\(s\)")
 
 
+def binary_identity():
+    """Who produced a cell: HEAD, whether src/ was dirty, the binary's mtime.
+
+    Same three fields pathcov_collect.py and certify_all.py record, on purpose:
+    a record here and a record there have to be comparable when someone asks
+    which build a number came from. HEAD alone lies whenever there is an
+    uncommitted fix in the tree, which is this project's normal state.
+    """
+    def _sh(argv):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True,
+                                  cwd=str(REPO), timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    try:
+        mtime = int(ESBMC.stat().st_mtime)
+    except OSError:
+        mtime = 0
+    return {
+        "head": _sh(["git", "rev-parse", "--short", "HEAD"]),
+        "srcDirty": bool(_sh(["git", "status", "--porcelain", "--", "src/"])),
+        "binaryMtime": mtime,
+    }
+
+
 def _killpg(p):
     try:
         os.killpg(os.getpgid(p.pid), signal.SIGKILL)
@@ -195,6 +220,12 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--only", action="append", default=[],
                     help="restrict a dimension, e.g. --only tx=tx1,multitx-unwind")
+    ap.add_argument("--redo", action="store_true",
+                    help="discard the existing cells.jsonl (moved aside, not "
+                         "deleted) and re-measure every cell. REQUIRED after "
+                         "the binary changes: without it the matrix reuses "
+                         "cells produced by a build that no longer exists, and "
+                         "there was previously no way to force a re-run at all")
     a = ap.parse_args()
 
     flat = Path(a.flat).resolve()
@@ -226,12 +257,46 @@ def main():
         REPO / "notes/coverage/option_matrix" / flat.stem)
     out_dir.mkdir(parents=True, exist_ok=True)
     journal = out_dir / "cells.jsonl"
+    ident = binary_identity()
+
+    # --redo MOVES THE OLD FILE ASIDE rather than appending beside it. Records
+    # are appended, so re-measuring without this would leave two rows with one
+    # `cell` key and different numbers, and which one a reader gets would be a
+    # property of its parsing order.
+    if a.redo and journal.exists():
+        keep_path = str(journal) + ".superseded"
+        os.replace(str(journal), keep_path)
+        print(f"NOTE: --redo moved the previous cells to {keep_path}", flush=True)
+
     done = {}
     if journal.exists():
+        stale = []
         for ln in journal.read_text().splitlines():
             if ln.strip():
                 r = json.loads(ln)
                 done[r["cell"]] = r
+                if r.get("binary") != ident:
+                    stale.append((r["cell"], r.get("binary")))
+        # RESUMING ACROSS A DIFFERENT BINARY, the third instance of this in this
+        # repository and the one with no escape hatch: a cell already in the
+        # journal was skipped forever, with no --redo and no identity check. The
+        # matrix exists to answer "is the gate measuring the cell or the
+        # method"; a matrix that silently reuses cells from a build that no
+        # longer exists answers neither, and says nothing while doing it.
+        if stale:
+            shown = stale[:5]
+            print(f"REFUSING to resume: {len(stale)} of {len(done)} cell(s) in "
+                  f"{journal} were produced by a DIFFERENT binary than the one "
+                  f"on disk now.")
+            print(f"  now:  {ident}")
+            for cell, was in shown:
+                print(f"  was:  {cell} -> {was}")
+            if len(stale) > len(shown):
+                print(f"  ... and {len(stale) - len(shown)} more")
+            print("Re-run with --redo to re-measure, or move the file aside to "
+                  "keep it. Reusing them would put an old build's cells in a "
+                  "table describing the new one.")
+            return 1
 
     cells = []
     for sl, sa in scope:
@@ -265,6 +330,9 @@ def main():
         rec = run_cell(cmd, a.timeout, out_dir / "work" / cell.replace("|", "__"))
         rec["cell"] = cell
         rec["cmd"] = " ".join(cmd)
+        # Which binary produced this cell. Read on resume; a journal whose
+        # cells came from another build is refused rather than continued.
+        rec["binary"] = ident
         with journal.open("a") as fh:
             fh.write(json.dumps(rec) + "\n")
         done[cell] = rec

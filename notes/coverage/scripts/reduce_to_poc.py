@@ -55,6 +55,12 @@ THE PREDICATE IS EXPLICIT, NEVER "it broke". `--fail-on` takes one of:
                      well-founded`
     solver-oom       the backend died allocating (`std::bad_alloc` / `Out of
                      memory`) -- NOT the same failure as never returning
+    solver-unknown   the run FINISHED and wrote a report, and at least
+                     --min-unknown claim(s) came back neither sat nor unsat.
+                     Nothing died, so `crash` / `never-returns` / `no-report`
+                     are all FALSE here. This is st1inch's actual blocker (59
+                     of its 128 claims) and the one the branch gate turns into
+                     a 0 that reads like zero coverage
 
 "The same way" means the same predicate is still true. Reducing against "it
 exits non-zero" is how a memory bug turns into a syntax error and the reduction
@@ -169,7 +175,7 @@ def run_once(src_text, contract, tx, timeout, memlimit, solver_flags=(),
         shutil.rmtree(d, ignore_errors=True)
 
 
-def predicate(kind, min_bh, compiles, rc, out, data):
+def predicate(kind, min_bh, compiles, rc, out, data, min_unknown=1):
     if not compiles:
         return False
     if kind == "no-report":
@@ -199,6 +205,21 @@ def predicate(kind, min_bh, compiles, rc, out, data):
     if kind == "solver-oom":
         o = out or ""
         return "std::bad_alloc" in o or "Out of memory" in o
+    if kind == "solver-unknown":
+        # The report exists and the run finished; the solver simply returned
+        # neither sat nor unsat for at least N claims. Distinct from every
+        # failure above: nothing died, nothing was killed, nothing refused --
+        # which is why `crash`, `never-returns` and `no-report` are all FALSE
+        # here and reducing against any of them would reduce a different thing.
+        #
+        # This is st1inch's actual blocker: 59 of its 128 claims come back
+        # solver-unknown, and the branch gate turns that into a 0 that reads
+        # like zero coverage. A minimal contract that reproduces ONE such claim
+        # is what turns it back into a finding.
+        if not data:
+            return False
+        ur = data.get("summary", {}).get("U_reasons", {})
+        return ur.get("solver-unknown", 0) >= min_unknown
     raise SystemExit(f"unknown --fail-on: {kind}")
 
 
@@ -318,7 +339,13 @@ def main():
     ap.add_argument("--tx", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--memlimit", default="4g")
-    ap.add_argument("--min-bh", type=int, default=1)
+    ap.add_argument("--min-bh", type=int, default=1,
+                    help="threshold for --fail-on bounded-holds ONLY")
+    ap.add_argument("--min-unknown", type=int, default=1,
+                    help="threshold for --fail-on solver-unknown ONLY. A "
+                         "separate knob rather than a reuse of --min-bh: one "
+                         "flag standing for two different counts is a name "
+                         "that stops describing its contents")
     ap.add_argument("--solver-flags", default="",
                     help="extra backend flags. MUST use the `=` form -- "
                          "--solver-flags=\"--z3 --tuple-node-flattener\" -- "
@@ -343,7 +370,8 @@ def main():
         c, rc, out, data = run_once(t, a.contract, a.tx, a.timeout, a.memlimit,
                                     solver_flags, a.focus_function, a.solc)
         last.update(compiles=c, rc=rc, out=out, data=data)
-        return predicate(a.fail_on, a.min_bh, c, rc, out, data)
+        return predicate(a.fail_on, a.min_bh, c, rc, out, data,
+                         a.min_unknown)
 
     print(f"# reducing {a.sol} against `{a.fail_on}`", flush=True)
     print(f"#   backend flags: {shown}", flush=True)
