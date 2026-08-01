@@ -24,8 +24,34 @@
 > FALSE.** The script pre-registered exactly this outcome as "D30 is WITHDRAWN
 > rather than softened", and that is what happens.
 >
-> **THE MOST LIKELY REASON THE PoC DOES NOT REPRODUCE, stated as the next thing
-> to check and not as a new explanation**: `setFeeReceiver` never reads any
+> **⚠ THE FIRST RUN OF THAT FALSIFICATION WAS ITSELF CONFOUNDED, and the
+> instrument caught it rather than a reviewer.** `exp_chain_sweep.py` passed no
+> solver flag, so ESBMC AUTO-SELECTED — and on this fixture it picks bitwuzla
+> ("Z3 is much slower on 256-bit bit-vector arithmetic"), while the st1inch run
+> being compared against used `--z3 --tuple-node-flattener`. A falsification
+> carried out on a different backend from the phenomenon proves nothing, whatever
+> it shows. `run_stats.py` prints the auto-selection line for exactly this
+> reason, and printing it is how this was noticed.
+>
+> **RE-RUN WITH THE BACKEND HELD FIXED at `--z3 --tuple-node-flattener`, the
+> configuration st1inch runs under: depth 3, 15 and 30 all give 4/4 witnessed at
+> 0.002-0.004 s.** Identical to the confounded run. The withdrawal stands, now
+> unconfounded, and the script grew a `--solver-flags` argument so the next
+> comparison cannot be made this way by accident.
+>
+> **AND THE SAME INSTRUMENT NAMED THE NEXT LEAD.** VCCs per instrumented path:
+>
+> | | paths | VCCs | ratio | claim keys solved more than once |
+> |---|---|---|---|---|
+> | PoC (either backend) | 4 | 4 | **1.00** | **0** |
+> | st1inch `setFeeReceiver` | 5 | 10 | **2.00** | **5 of 5, two DISAGREEING** |
+>
+> ⇒ The duplicate solving is **not universal** — the PoC does not do it. Whatever
+> st1inch has that the PoC lacks is what doubles the instantiation, and that is
+> the thing to find. See D32.
+>
+> **THE MOST LIKELY REASON THE PoC DOES NOT REPRODUCE THE OOM, stated as the next
+> thing to check and not as a new explanation**: `setFeeReceiver` never reads any
 > `T_k`, so the per-claim slicer removes the whole chain — which is exactly what
 > row 4 of `INVOCATION_DECISIONS` says slicing does (things survive by DATA
 > DEPENDENCY, because the guards that build `tr` read them). If that is right,

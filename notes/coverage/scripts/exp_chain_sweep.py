@@ -55,7 +55,7 @@ RE_TIME = re.compile(r"Runtime decision procedure:\s*([0-9.]+)s")
 RE_ASSIGN = re.compile(r"([0-9]+) assignments")
 
 
-def cell(depth, wd, timeout):
+def cell(depth, wd, timeout, solver_flags=()):
     wd.mkdir(parents=True, exist_ok=True)
     sol = wd / f"D32_chain{depth}.sol"
     r = subprocess.run([sys.executable, str(GEN), str(depth), str(sol)],
@@ -73,7 +73,8 @@ def cell(depth, wd, timeout):
            "--solidity-path-coverage", "--contract", "D32",
            "--focus-function", "setFeeReceiver",
            "--solidity-max-tx", "1", "--cov-report-json",
-           "--path-cov-max-goals", "10000", "--memlimit", "8g"]
+           "--path-cov-max-goals", "10000", "--memlimit", "8g"] \
+        + list(solver_flags)
     (wd / "cmd.txt").write_text(" ".join(cmd) + "\n")
     t0 = time.time()
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -110,8 +111,22 @@ def main(argv):
     ap.add_argument("outdir", nargs="?", default="exp_chain_out")
     ap.add_argument("--depths", default="3,15,30")
     ap.add_argument("--timeout", type=int, default=180)
+    # THE BACKEND MUST BE HELD FIXED, AND THE FIRST RUN OF THIS SCRIPT DID NOT.
+    # With no flag ESBMC AUTO-SELECTS, and on this fixture it picks bitwuzla
+    # ("Z3 is much slower on 256-bit bit-vector arithmetic") -- while the
+    # st1inch run this was being compared against used `--z3
+    # --tuple-node-flattener`. A falsification carried out on a different
+    # backend from the phenomenon is confounded, whatever it shows.
+    # `run_stats.py` prints the auto-selection line for exactly this reason.
+    ap.add_argument("--solver-flags", default="",
+                    help="space-separated backend flags, e.g. "
+                         "'--z3 --tuple-node-flattener'. Pass the SAME ones the "
+                         "phenomenon was observed under; leaving this empty lets "
+                         "ESBMC auto-select and the comparison is then across "
+                         "two backends as well as two depths")
     a = ap.parse_args(argv[1:])
     depths = [int(x) for x in a.depths.split(",")]
+    sflags = a.solver_flags.split()
     for p in (ESBMC, Path(SOLC), GEN):
         if not Path(p).exists():
             sys.exit(f"missing {p}")
@@ -120,11 +135,16 @@ def main(argv):
           "setter unsolvable?\n")
     print(f"binary : {ESBMC}  (mtime {int(ESBMC.stat().st_mtime)})")
     print(f"unit   : D32.setFeeReceiver -- identical at every depth")
-    print(f"factor : constructor chain depth {depths}\n")
+    print(f"factor : constructor chain depth {depths}")
+    print(f"backend: "
+          + (" ".join(sflags) if sflags else
+             "AUTO-SELECTED -- the backend is NOT held fixed, so this run "
+             "compares two things at once")
+          + "\n")
 
     res = {}
     for d in depths:
-        r = cell(d, Path(a.outdir) / f"depth{d}", a.timeout)
+        r = cell(d, Path(a.outdir) / f"depth{d}", a.timeout, sflags)
         res[d] = r
         if "error" in r:
             print(f"    depth {d:<3} BUILD FAILED: {r['error']}")
