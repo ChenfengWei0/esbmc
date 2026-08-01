@@ -568,6 +568,145 @@ class EmittedFile:
         return None
 
 
+# ---------------------------------------------------------------------------
+# The ENVIRONMENT the emitted preamble actually sets, versus the one certified
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. A region coordinate is one of three kinds and the driver had
+# only two answers: a declared PARAMETER is lifted, a `state.` coordinate is
+# established with `vm.store`, and an ENVIRONMENT coordinate (`msg.`/`tx.`/
+# `block.`) fell through BOTH loops and was dropped without a word.
+#
+# MEASURED, on FeeVault.setDiscount enc=7: the certified region is
+# `msg.sender in [0, 0]`, and the emitter's kept preamble happens to carry
+# `vm.prank(address(uint160(0)))`. The emitted PUT is therefore inside its own
+# certified slice BY LUCK. Had the two disagreed, the test would have run under
+# a caller the certification never spoke about, silently -- which is the same
+# defect as the dropped `state.` pin, found a second time in the same function.
+#
+# The environment is not ESTABLISHED here, it is CHECKED. The emitter already
+# writes `vm.prank(...)` and `{value: ...}` from the counterexample and that
+# statement shape is kept verbatim (it is what makes the R0 exit-kind
+# expectation hold by construction); re-deriving it would put the same fact in
+# two places. So the question is only whether the two agree, and a disagreement
+# REFUSES rather than annotates.
+ENV_PREFIXES = ("msg.", "tx.", "block.")
+
+_PRANK_RE = re.compile(r"vm\.(?:start)?[Pp]rank\(")
+_VALUE_RE = re.compile(r"\{\s*value\s*:\s*([^},]+?)\s*\}")
+
+
+def _lit_int(expr):
+    """The integer a rendered Solidity literal denotes, or None if it is not one.
+
+    Handles the emitter's own renderings -- `address(uint160(<dec>))`
+    (foundry.cpp:370-371 renders an address that way precisely so it never emits
+    a 40-hex-digit literal), `uint256(<dec>)`, a bare decimal, and hex. Anything
+    else returns None, which the caller reports as UNCHECKABLE rather than as
+    agreement: an expression this cannot read is not a value it may assume.
+    """
+    if expr is None:
+        return None
+    s = expr.strip()
+    while True:
+        m = re.match(r"^(?:address|payable|u?int\d*)\s*\(\s*(.*)\s*\)$", s)
+        if not m:
+            break
+        s = m.group(1).strip()
+    try:
+        return int(s, 0)
+    except ValueError:
+        return None
+
+
+def _arg0(line, open_idx):
+    """The first argument of a call whose `(` is at `open_idx`, as text."""
+    depth, i = 1, open_idx + 1
+    start = i
+    while i < len(line) and depth:
+        if line[i] == "(":
+            depth += 1
+        elif line[i] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    if depth:
+        return None
+    return split_top_level(line[start:i])[0] if line[start:i].strip() else None
+
+
+def observed_env(body, call_i, call_line):
+    """What the emitted case sets for `msg.sender` / `msg.value` at THIS call.
+
+    The LAST prank above the call wins, because that is the semantics forge
+    gives it -- `vm.prank` sets the sender for the next call only. `msg.value`
+    comes from the call's own `{value: ...}` option; its ABSENCE is 0, which is
+    a fact about the EVM and not a guess.
+
+    Returns {name: (value_or_None, evidence_text)}. A None value with evidence
+    means "found something and could not read it"; a None value with no
+    evidence means "the preamble says nothing about this".
+    """
+    sender, sender_ev = None, None
+    for ln in body[:call_i]:
+        m = _PRANK_RE.search(ln)
+        if m:
+            sender_ev = ln.strip()
+            sender = _lit_int(_arg0(ln, m.end() - 1))
+    value, value_ev = 0, "no {value:} option on the call, so msg.value is 0"
+    m = _VALUE_RE.search(call_line)
+    if m:
+        value_ev = m.group(0)
+        value = _lit_int(m.group(1))
+    return {"msg.sender": (sender, sender_ev), "msg.value": (value, value_ev)}
+
+
+def env_disagreements(body, call_i, call_line, region, pins):
+    """(refusals, unchecked) for every width-1 environment quantity certified.
+
+    `refusals` is non-empty exactly when the emitted case is KNOWN to run
+    outside the certified slice, or when it cannot be shown to run inside it.
+    `unchecked` names the environment quantities this driver has no way to
+    compare -- block.timestamp and friends -- so they appear on the emitted PUT
+    instead of being invisible, which is the failure this whole block exists to
+    stop repeating.
+    """
+    want = {}
+    for n, (lo, hi) in region.items():
+        if n.startswith(ENV_PREFIXES) and lo == hi:
+            want[n] = lo
+    for n, v in pins.items():
+        if n.startswith(ENV_PREFIXES) and n not in want:
+            want[n] = v
+    obs = observed_env(body, call_i, call_line)
+    refusals, unchecked = [], []
+    for n, v in sorted(want.items()):
+        if n not in obs:
+            unchecked.append(
+                f"{n} == {v} is NOT CHECKED: this driver can compare only "
+                f"msg.sender and msg.value against the emitted preamble, so "
+                f"whether the test runs in that part of the slice is unknown")
+            continue
+        got, ev = obs[n]
+        if got is None:
+            refusals.append(
+                f"{n} is certified at {v}, and the emitted case "
+                + (f"sets it with `{ev}`, which this driver cannot read as a "
+                   f"value" if ev else
+                   "never sets it, so it takes forge's default rather than the "
+                   "certified value")
+                + ". Emitting anyway would produce a test that is not known to "
+                  "run inside the region it quotes")
+            continue
+        if got != v:
+            refusals.append(
+                f"{n} is certified at {v} but the emitted case sets it to "
+                f"{got} (`{ev}`). The test would walk a different execution "
+                f"from the one the region is a statement about")
+    return refusals, unchecked
+
+
 CALL_LINE_RE_TMPL = r"^(\s*)(try )?(\w+)\.{unit}\("
 
 
@@ -678,6 +817,15 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     if len(params) != len(args):
         notes.append(f"declared arity {len(params)} != emitted arity "
                      f"{len(args)}; refusing to rewrite positionally")
+        return None, None
+
+    # The environment the emitted case runs under must be the one certified.
+    # Checked, not established -- see `env_disagreements`.
+    env_refusals, env_unchecked = env_disagreements(
+        body, call_i, call_line, region, pins)
+    if env_refusals:
+        notes.append("the emitted case does not run in the certified "
+                     "environment slice: " + "; ".join(env_refusals))
         return None, None
 
     lifted, repl, sig, pre_lines = [], {}, [], []
@@ -836,6 +984,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"  //   rung DROPPED: {s}")
     for s in state_skipped:
         out.append(f"  //   entry-state bound DROPPED: {s}")
+    for s in env_unchecked:
+        out.append(f"  //   environment NOT CHECKED: {s}")
     out.append(f"  function {fname}({sig_txt}) public {{")
     out += pre_lines
     # ---- WHAT MAY BE INSERTED BEFORE THE CALL, AND WHAT MAY NOT -----------
@@ -883,7 +1033,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     out.append("  }")
     stats = {"fuzz_params": len(sig), "lifted": lifted, "asserts": len(asserts),
              "oracle_skipped": oracle_skipped,
-             "state_stored": stored, "state_skipped": state_skipped}
+             "state_stored": stored, "state_skipped": state_skipped,
+             "env_unchecked": env_unchecked}
     return out, stats
 
 
@@ -1168,6 +1319,8 @@ def main():
         print(f"[put]     entry state stored: {s}")
     for s in stats["state_skipped"]:
         print(f"[put]     entry state dropped: {s}")
+    for s in stats.get("env_unchecked") or []:
+        print(f"[put]     environment NOT CHECKED: {s}")
     for n in notes:
         print(f"[put]   note: {n}")
 

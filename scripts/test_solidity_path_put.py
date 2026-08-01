@@ -195,11 +195,105 @@ def test_region_bound_still_wins_over_a_duplicate_pin():
     return bad
 
 
+def test_env_agreement_emits_when_the_preamble_matches():
+    """`msg.sender in [0, 0]` against a preamble that pranks 0: EMIT.
+
+    This is the FeeVault enc=7 case verbatim, and it is here as the control.
+    A gate that only ever refuses is indistinguishable from one that is broken,
+    and this fixture is what makes the refusal below a discriminator rather than
+    a constant.
+    """
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "msg.sender": (0, 0)},
+        holes={}, pins={"msg.value": 0},
+        params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes)
+    bad = 0
+    bad += check(put is not None,
+                 f"agreement emits a PUT (notes: {notes})")
+    bad += check(stats and not stats.get("env_unchecked"),
+                 "nothing is reported unchecked when both are comparable")
+    return bad
+
+
+def test_env_disagreement_refuses():
+    """`msg.sender in [1, 1]` against the SAME preamble: REFUSE.
+
+    The emitted case pranks 0. Emitting would produce a test that runs under a
+    caller the certification never spoke about -- and it would look exactly like
+    the passing case above, which is why this is a refusal and not a note.
+    """
+    em, case = make_case()
+    notes = []
+    put, _stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "msg.sender": (1, 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes)
+    bad = 0
+    bad += check(put is None, "a disagreeing environment REFUSES")
+    bad += check(any("msg.sender is certified at 1" in n and "sets it to 0" in n
+                     for n in notes),
+                 f"the refusal names both values: {notes}")
+    return bad
+
+
+def test_env_value_pin_disagreement_refuses():
+    """`msg.value == 7` against a call carrying no `{value:}`: REFUSE.
+
+    The ABSENCE of a value option is 0 -- a fact about the EVM, not a guess --
+    so this is a genuine disagreement and not an unknown.
+    """
+    em, case = make_case()
+    notes = []
+    put, _stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={"msg.value": 7}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=LADDER, notes=notes)
+    bad = 0
+    bad += check(put is None, "a disagreeing msg.value REFUSES")
+    bad += check(any("msg.value is certified at 7" in n for n in notes),
+                 f"the refusal names msg.value: {notes}")
+    return bad
+
+
+def test_uncomparable_env_quantity_is_disclosed_not_ignored():
+    """`block.timestamp == 42` is neither checkable nor silently fine."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "block.timestamp": (42, 42)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes)
+    bad = 0
+    bad += check(put is not None,
+                 "an uncomparable quantity does not block emission")
+    bad += check(any("block.timestamp == 42 is NOT CHECKED" in s
+                     for s in (stats or {}).get("env_unchecked", [])),
+                 f"it is disclosed: {(stats or {}).get('env_unchecked')}")
+    bad += check("environment NOT CHECKED: block.timestamp == 42"
+                 in "\n".join(put or []),
+                 "and the disclosure is ON the emitted test, not only in stats")
+    return bad
+
+
 def main():
     bad = 0
     for t in (test_pin_with_a_slot_is_established,
               test_pin_without_a_slot_is_reported_not_dropped,
-              test_region_bound_still_wins_over_a_duplicate_pin):
+              test_region_bound_still_wins_over_a_duplicate_pin,
+              test_env_agreement_emits_when_the_preamble_matches,
+              test_env_disagreement_refuses,
+              test_env_value_pin_disagreement_refuses,
+              test_uncomparable_env_quantity_is_disclosed_not_ignored):
         print(f"--- {t.__name__}")
         bad += t()
     if bad:
