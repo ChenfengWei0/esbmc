@@ -4237,6 +4237,68 @@ smt_convt::resultt bmct::multi_property_check(
                   break;
                 }
             }
+            // ---- THE GUARD ABOVE TESTS THE WRONG EXPRESSION ----
+            //
+            // `is_constant_expr(st.value)` is checked BEFORE the projection, and
+            // a Solidity state write is lowered as a whole-object update: the
+            // model hands back the entire contract struct, which IS a
+            // constant_struct, so the test passes. The value actually published
+            // is the PROJECTED MEMBER, and that can be anything the simplifier
+            // declined to fold.
+            //
+            // MEASURED on notes/coverage/poc/P18_Unchecked.sol, unit `div`,
+            // path 6:
+            //
+            //     final_state {"r": "0xFFFF...FFFF / 0"}
+            //
+            // -- an unevaluated division, as a STRING, in a field contracted to
+            // hold values. The simplifier explicitly refuses to fold a zero
+            // divisor (smt_conv), so `a / 0` never becomes a constant and
+            // from_expr renders all of it. `--div-by-zero-check` does NOT change
+            // it: that cell is byte-identical, because the check adds a claim
+            // and constrains no model.
+            //
+            // EXECUTION_PLAN §7.1 predicted this one step later -- it expected
+            // `type(uint256).max`, bvudiv's total-function value -- and warned
+            // the value would flow into R2 assertions. The R1/R2 ladder is built
+            // from this exact field, and a consumer either parses it as an
+            // integer (solidity_path_generalise.py's coord_values refuses the
+            // coordinate on failure, safe but lossy) or renders it into a test.
+            //
+            // Dropped and NAMED, through the channel that already exists for
+            // "this path wrote it and the value is not renderable" -- the same
+            // one mapping and dynamic-array stores use. Silently omitting it
+            // would let a reader infer the variable was UNCHANGED, which is a
+            // wrong conclusion rather than a missing one.
+            if (!is_constant_expr(val_expr))
+            {
+              const std::string bare_un =
+                name.find("this->") != std::string::npos
+                  ? name.substr(name.rfind("->") + 2)
+                  : name;
+              // THE SAME PLUMBING FILTER ITS TWO NEIGHBOURS USE. Without it
+              // this reported `_ESBMC_Object_<C>.$address` and
+              // `_ESBMC_bind_cname` as user state the path wrote and could not
+              // render -- measured on P18 the moment the drop was added. Those
+              // are ESBMC's own address-binding fields; the contract-scope
+              // branch above drops them as `dropped_internal` and the `this->`
+              // branch below refuses them by the same two tests, so a third
+              // spelling of the rule would have been a third thing to keep in
+              // step. Reporting them would be noise in a list whose whole value
+              // is that every name in it is a real state variable.
+              if (
+                bare_un.empty() || bare_un[0] == '$' ||
+                bare_un.rfind("_ESBMC", 0) == 0 ||
+                bare_un.find("_bind_cname") != std::string::npos ||
+                bare_un.find("return_value$") != std::string::npos)
+              {
+                ++ce.dropped_internal;
+                continue;
+              }
+              if (unrendered_seen.insert(bare_un).second)
+                ce.state_written_unrendered.push_back(bare_un);
+              continue;
+            }
             const std::string val = from_expr(ns, "", val_expr);
             // WHOLE-OBJECT restore: require(cond) / revert("msg") lower to a
             // rollback block that assigns the entry snapshot back as ONE
