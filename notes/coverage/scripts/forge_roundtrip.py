@@ -74,6 +74,41 @@ optimizer_runs = 200
 """
 
 
+def binary_identity():
+    """Which build produced these records.
+
+    NOT the resume guard the sibling collectors have, and the difference is
+    worth stating because it was got wrong twice today. `emit.jsonl` is UNLINKED
+    at the start of every run (see main), so this script cannot reuse a record
+    from an older build -- the "resumed across a different binary" hazard that
+    `pathcov_collect`, `certify_all` and `option_matrix` each had does not exist
+    here.
+
+    What DID exist is a provenance gap in the artefact: the funnel this script
+    measures -- emitted, compiled, forge-passed -- is subgoal 1's headline
+    number, and the journal it leaves on disk carried nothing saying which build
+    produced it. Reading those files a week later, or comparing two benchmarks
+    collected either side of a fix, there was no way to tell. Same three fields
+    as the siblings, on purpose: a record here and a record there have to be
+    comparable when someone asks which build a number came from.
+    """
+    def _sh(argv):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True,
+                                  cwd=str(REPO), timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    try:
+        mtime = int(ESBMC.stat().st_mtime)
+    except OSError:
+        mtime = 0
+    return {
+        "head": _sh(["git", "rev-parse", "--short", "HEAD"]),
+        "srcDirty": bool(_sh(["git", "status", "--porcelain", "--", "src/"])),
+        "binaryMtime": mtime,
+    }
+
+
 def run(cmd, timeout, cwd=None):
     t0 = time.time()
     try:
@@ -93,6 +128,7 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
     """One esbmc run per callable, each in its own CWD (the emitted filename is
     hardcoded), each renamed so the suite can hold all of them at once."""
     callables = base.enumerate_own_callable_functions(flat, project)
+    ident = binary_identity()
     tests, recs = [], []
     for i, (cname, fname, ckind) in enumerate(callables, 1):
         tag = f"{cname}__{fname}"
@@ -135,6 +171,7 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
                        "configuration"}
             print(f"  [{i}/{len(callables)}] {tag}  (skipped: library)",
                   flush=True)
+            rec["binary"] = ident
             recs.append(rec)
             with journal.open("a") as fh:
                 fh.write(json.dumps(rec) + "\n")
@@ -211,6 +248,7 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
             dest = proj / "test" / f"{newc}.t.sol"
             dest.write_text(txt)
             tests.append(dest.name)
+        rec["binary"] = ident
         recs.append(rec)
         with journal.open("a") as fh:
             fh.write(json.dumps(rec) + "\n")
