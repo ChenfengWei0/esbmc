@@ -400,17 +400,51 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
              if r.get("binary") != ident}
     if stale and not fresh:
         shown = list(stale.items())[:5]
+        # ---- SAY WHICH FIELD MOVED. "A DIFFERENT BINARY" IS SOMETIMES FALSE ----
+        #
+        # The comparison is on the whole dict, which is the right GATE -- but the
+        # sentence it printed asserted the binary had changed, and that is not
+        # what the dict differing means. MEASURED on this corpus: EscrowDst's 18
+        # records carry THREE identities and st1inch's 22 carry three, while
+        # `binaryMtime` is IDENTICAL within each benchmark. The binary file never
+        # changed; `head` moved because commits were made while the collection
+        # ran, and `srcDirty` flipped with them.
+        #
+        # The two cases need opposite actions and the old message could not tell
+        # them apart:
+        #   * binaryMtime differs -> a genuinely different binary produced those
+        #     runs. Reusing their reports would quote the old build's numbers
+        #     under the new build's name. --fresh is the only correct answer.
+        #   * only head/srcDirty differ -> the SAME binary file produced them and
+        #     the repo moved underneath. The measurement is homogeneous; what is
+        #     lost is only the ability to name the source by commit. Discarding
+        #     the collection here throws away good data for a bookkeeping change.
+        #
+        # Still REFUSED in both cases -- this is a gate, and an operator who is
+        # told which case it is can act; one who is told a false thing cannot.
+        mt_now = (ident or {}).get("binaryMtime")
+        mt_moved = sum(1 for b in stale.values()
+                       if (b or {}).get("binaryMtime") != mt_now)
+        if mt_moved:
+            headline = (f"{mt_moved} of them were produced by a genuinely "
+                        f"DIFFERENT BINARY (binaryMtime differs)")
+        else:
+            headline = ("the BINARY IS THE SAME FILE in every one of them "
+                        "(binaryMtime is identical) -- only `head`/`srcDirty` "
+                        "moved, i.e. the repository was committed to while this "
+                        "collection ran. The measurement is homogeneous; what "
+                        "is lost is the ability to name its source by commit")
         sys.exit(
-            f"{bench_key}: {len(stale)} of {len(done)} journal record(s) were "
-            f"produced by a DIFFERENT binary than the one on disk now.\n"
+            f"{bench_key}: {len(stale)} of {len(done)} journal record(s) do not "
+            f"match the identity on disk now, and {headline}.\n"
             f"  now:  {ident}\n"
             + "".join(f"  was:  {t} -> {b}\n" for t, b in shown)
             + (f"  ... and {len(stale) - len(shown)} more\n"
                if len(stale) > len(shown) else "")
-            + "Resuming would skip those runs and reuse their reports, so the "
-              "analysis would quote the old build's numbers under the new "
-              "build's name. Re-run with --fresh to discard this collection "
-              "and start over, or move the directory aside to keep it.")
+            + "Refused either way, because resuming would skip those runs and "
+              "reuse their reports. Re-run with --fresh to discard this "
+              "collection and start over, or move the directory aside to keep "
+              "it.")
     if fresh and done:
         print(f"  [fresh] discarding {len(done)} journal record(s) and their "
               f"reports", flush=True)

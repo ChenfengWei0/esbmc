@@ -468,9 +468,23 @@ def main():
                                   r.get("binary")))
         if stale:
             shown = stale[:5]
+            # SAY WHICH FIELD MOVED -- see the same fix in pathcov_collect.py.
+            # "a DIFFERENT binary" is FALSE when only `head`/`srcDirty` moved,
+            # which is what a mid-collection commit produces: measured on the
+            # stage-1 corpus, EscrowDst and st1inch each carry three identities
+            # with an IDENTICAL binaryMtime. Refused either way; named correctly
+            # so the operator can tell "the build changed" from "I committed".
+            mt_now = (ident or {}).get("binaryMtime")
+            mt_moved = sum(1 for _b, _u, was in stale
+                           if (was or {}).get("binaryMtime") != mt_now)
+            what = (f"{mt_moved} of them by a genuinely DIFFERENT BINARY "
+                    f"(binaryMtime differs)" if mt_moved else
+                    "the BINARY IS THE SAME FILE in all of them (binaryMtime "
+                    "identical) -- only head/srcDirty moved, i.e. the repo was "
+                    "committed to mid-sweep")
             print(f"[sweep] REFUSING to resume: {len(stale)} of {len(done)} "
-                  f"record(s) in {args.out} were produced by a DIFFERENT binary "
-                  f"than the one on disk now.")
+                  f"record(s) in {args.out} do not match the identity on disk "
+                  f"now, and {what}.")
             print(f"  now:  {ident}")
             for b, u, was in shown:
                 print(f"  was:  {b}/{u} -> {was}")
