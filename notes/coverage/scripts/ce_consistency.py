@@ -83,12 +83,32 @@ def as_int(tok):
     return int(tok, 16) if tok.lower().startswith("0x") else int(tok)
 
 
-def lookup(name, claim):
+def unit_simple_name(claim):
+    """`sol:@C@C@F@tern_call#92` -> `tern_call`. None when unrecognisable."""
+    pf = claim.get("path_function") or ""
+    if "@F@" not in pf:
+        return None
+    tail = pf.split("@F@", 1)[1]
+    return tail.split("#", 1)[0] or None
+
+
+def lookup(name, claim, allow_inputs=True):
     """Resolve a source-level name against the payload. Returns (value, where)
     or (None, None) when the payload does not mention it -- which is itself
     worth printing, because a decision on a name the payload never bound is a
-    path whose test cannot be reconstructed."""
-    for bucket in ("inputs", "entry_storage", "env"):
+    path whose test cannot be reconstructed.
+
+    `allow_inputs=False` is passed for a decision that lives in an INLINED
+    CALLEE. `inputs` binds the UNIT's parameters; the callee's own parameters
+    are different variables that merely may share a name, and binding them by
+    bare name is how this checker produced its one DISAGREE (see the header of
+    the patch that introduced this). `entry_storage` and `env` stay available
+    because a state variable and the environment mean the same thing wherever
+    the decision sits.
+    """
+    buckets = ("inputs", "entry_storage", "env") if allow_inputs \
+        else ("entry_storage", "env")
+    for bucket in buckets:
         d = claim.get(bucket) or {}
         if name in d:
             v = d[name]
@@ -99,7 +119,7 @@ def lookup(name, claim):
     return None, None
 
 
-def evaluate(pred, claim):
+def evaluate(pred, claim, allow_inputs=True):
     """Return (True/False, None) if decidable, else (None, reason)."""
     core, nots = strip_nots(pred)
     m = CMP.match(core)
@@ -113,7 +133,7 @@ def evaluate(pred, claim):
             op = FLIP[op]
         else:
             name, op, lit = m.group(1), m.group(2), m.group(3)
-        val, _ = lookup(name, claim)
+        val, _ = lookup(name, claim, allow_inputs)
         if val is None:
             return None, f"payload does not bind `{name}`"
         rhs = as_int(lit)
@@ -122,8 +142,8 @@ def evaluate(pred, claim):
         if not m:
             return None, f"unparsed predicate `{core}`"
         ln, op, rn = m.group(1), m.group(2), m.group(3)
-        val, _ = lookup(ln, claim)
-        rhs, _ = lookup(rn, claim)
+        val, _ = lookup(ln, claim, allow_inputs)
+        rhs, _ = lookup(rn, claim, allow_inputs)
         if val is None:
             return None, f"payload does not bind `{ln}`"
         if rhs is None:
@@ -189,7 +209,17 @@ def main():
                 # Both arms of the same source decision, both consistent, and
                 # the final-state arithmetic independently says which arm ran.
                 want = False
-                got, why = evaluate(pred, c)
+                # A DECISION INSIDE AN INLINED CALLEE DOES NOT SPEAK THE
+                # UNIT'S NAMES. Internal calls are physically inlined before
+                # enumeration, so a callee's `if (y > 200)` arrives here with
+                # `function: leaf2` while `inputs` binds the UNIT's `y`. Those
+                # are different variables that happen to share a spelling, and
+                # resolving one against the other is what produced this
+                # checker's only DISAGREE on a payload that was correct.
+                unit = unit_simple_name(c)
+                dfn = dec.get("function")
+                in_callee = bool(unit and dfn and dfn != unit)
+                got, why = evaluate(pred, c, allow_inputs=not in_callee)
                 if got is None:
                     skipped += 1
                     # Name the SHAPE, not the instance: bucketing on the raw
@@ -216,6 +246,13 @@ def main():
                                   "checker cannot decide it either way")
                     elif "return_value$" in pred:
                         note_skip("a call's return value, not a payload name")
+                    elif in_callee and why and \
+                            why.startswith("payload does not bind"):
+                        note_skip("a decision inside an INLINED CALLEE reading "
+                                  "a name that is the callee's own local; the "
+                                  "report publishes no argument mapping, so "
+                                  "this checker cannot bind it and must not "
+                                  "guess from the caller's payload")
                     elif why and why.startswith("payload does not bind"):
                         note_skip("payload does not bind a name the decision "
                                   "reads")
