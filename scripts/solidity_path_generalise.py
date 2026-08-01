@@ -3270,6 +3270,82 @@ def main():
                 "therefore a statement holding for ALL their values, which is "
                 "STRONGER than the slice originally asked for. They appear in "
                 "no pin list above because the list is printed after the drop")
+
+    # ---- THE RESULT, MACHINE-READABLE. Everything above is PROSE ----
+    #
+    # Until this existed the certified region was PRINTED and nowhere else. The
+    # only JSON the loop left behind was `cert.json`, which is the certification
+    # QUERY's input spec and is OVERWRITTEN per attempt -- so after a run it
+    # holds the LAST path tried, which is typically one that did NOT certify.
+    # MEASURED on FeeVault.setDiscount: enc=6 certified with `bps in [251,
+    # 65535]`, and the only cert.json on disk described enc=7, uncertified.
+    #
+    # That forces the next stage to parse this script's stdout, which is the
+    # exact antipattern this project keeps paying for: two ledgers of one fact,
+    # the second one a regex over prose that silently stops matching when a
+    # sentence is reworded. A TestPlan built that way would be a plan whose
+    # provenance nothing can check.
+    #
+    # WHAT IS WRITTEN IS WHAT WAS CERTIFIED, not a re-derivation: `ok`,
+    # `ok_holes`, `pins` and `failed` are the same objects the block above
+    # prints, read once, here. A consumer and this report cannot disagree.
+    #
+    # The per-path counterexample travels with it because the downstream plan
+    # needs a KNOWN MEMBER of the domain -- for the concrete-replay fallback, and
+    # for the C2 check that a region contains it.
+    ce_by_enc = {e: ce for e, _d, ce in paths}
+    depth_by_enc = {e: d for e, d, _ce in paths}
+    out = {
+        "schema": "path-generalise-result/1",
+        "contract": args.contract,
+        "unit": args.unit,
+        "path_function": args.path_function,
+        "max_tx": args.max_tx,
+        # The slice every region below is a statement ABOUT. A region quoted
+        # without its pins is a region quoted wrong.
+        "pins": {n: str(v) for n, v in sorted(pins.items())},
+        "dropped_by_certify": sorted(dropped_by_certify),
+        "certified": [
+            {
+                "enc": key[0],
+                "piece": key[1],
+                "depth": depth_by_enc.get(key[0]),
+                "verdict": "CERTIFIED",
+                # `hi >= lo` and a width > 1 on at least one coordinate is what
+                # separates a PUT from a concrete replay with extra syntax. The
+                # consumer decides; the numbers are here to decide from.
+                "box": [
+                    {"name": n, "lo": str(lo), "hi": str(hi),
+                     "holes": [str(h) for h in sorted(
+                         (ok_holes.get(key) or {}).get(n, ()))]}
+                    for n, (lo, hi) in sorted(ok[key].items())
+                ],
+                "ce": {n: str(v)
+                       for n, v in sorted(ce_by_enc.get(key[0], {}).items())},
+            }
+            for key in sorted(ok)
+        ],
+        # NOT omitted. A path that did not certify is a REPORTABLE OUTCOME with
+        # a named reason, and leaving it out would let a consumer read the file
+        # as "these are all the paths" when it is "these are the ones that
+        # certified".
+        "not_certified": [
+            {"enc": e, "depth": depth_by_enc.get(e), "verdict": "NOT_CERTIFIED",
+             "reason": why,
+             "ce": {n: str(v) for n, v in sorted(ce_by_enc.get(e, {}).items())}}
+            for e, why in sorted(failed.items())
+        ],
+        "enumerated": [
+            {"enc": e, "depth": d} for e, d, _ in paths
+        ],
+    }
+    result_path = os.path.join(cwd, "generalise-result.json")
+    with open(result_path, "w") as f:
+        json.dump(out, f, indent=2, sort_keys=True)
+    print(f"\n[result] machine-readable result written to {result_path}: "
+          f"{len(out['certified'])} certified region(s), "
+          f"{len(out['not_certified'])} not certified, over "
+          f"{len(out['enumerated'])} witnessed path(s)")
     return 0 if ok else 1
 
 
