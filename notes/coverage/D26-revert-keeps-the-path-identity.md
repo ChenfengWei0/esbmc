@@ -69,10 +69,36 @@ first decision is the synthesised ABI non-payable value gate, and its revert arm
 is a complete path of its own. So a function with no `revert` in its source still
 has a revert-exit path — which is why `g`, written to have none, has one.
 
-**`enc=63` is the only U, and it is the all-decisions-TRUE path.** Every other
-combination solved in the same run. It is not the question this fixture was built
-for and is not explained here; it is recorded because "one claim of twenty is
-undecided" is exactly the shape that gets read as noise.
+**`enc=63` is the only U, and it is `bounded-holds` — on a path that is
+INFEASIBLE BY ARITHMETIC.** `report_summary.py` on the same report:
+
+```
+U_reasons   bounded-holds 1, solver-unknown 0, claim-budget-exceeded 0,
+            named-obstacle 0, not-solved-this-run 0, unit-not-entered 0
+```
+
+The three `if`s are independently reachable and `require(a + b + c > 100)` splits
+each combination in two — except one: with `a = b = c = 0` the sum is 0, so the
+`require` cannot pass. **Exactly one of the twenty enumerated paths has an empty
+domain, and it is the one that came back U.**
+
+⇒ That is the right verdict to REACH and the wrong LABEL to give it. `I` (proven
+unreachable) is hardwired off — `bmc.cpp:722-725` is a bare `return false` — so a
+path the solver has genuinely refuted lands in `bounded-holds`, which reads as
+"not shown within the exploration bound". `EXECUTION_PLAN.md` §2 step 0.6 says
+that line must not be flipped until the exploration is confirmed to
+over-approximate every reachable state, and that is still not true today.
+
+So this is a fixture where **the correct answer is knowable by hand**: 19 feasible,
+1 infeasible, and the tool has the verdict but not the vocabulary. Worth keeping
+for the day 0.6 is attempted — a must-flip pair for enabling `I` needs exactly
+this, a path whose infeasibility is arithmetic rather than bound-dependent.
+
+⚠ Do not read it as "`bounded-holds` means infeasible". It is the union of
+"infeasible" and "not shown within the bound", and this run cannot separate them
+in general — it separates them HERE because the contract is small enough to check
+by hand. The corpus-scale claim already on record stands: `bounded-holds` being
+the majority U reason says nothing about coverage (aqua is 7/7 with 2831 of them).
 
 ## Falsifier
 
