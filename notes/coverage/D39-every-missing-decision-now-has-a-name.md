@@ -156,11 +156,33 @@ sitting unattributed for a reason the enclosing definition alone cannot express:
   collection measured none of it" are different statements and only the second
   licenses the attribution.
 
-**The one genuinely unexplained decision in the whole corpus** is aqua's flat
-2239, `require(tokensCount1 > 0 && tokensCount1 != _DOCKED, …)` in
-`Aqua.safeBalances`. That unit ran and reported `F 2, U 9`, so this is a real
-reach gap on paths that stayed `bounded-holds` — the only place in the corpus
-where the method failed to reach a decision it was entitled to reach.
+### ⇒ And the last one closed too: 31 of 31 attributed, 0 unexplained
+
+aqua's flat 2239, `require(tokensCount1 > 0 && tokensCount1 != _DOCKED, …)` in
+`Aqua.safeBalances`. The report answers it directly:
+
+* the witnessed `safeBalances:path:14` walks line **2235** — the *first* require —
+  and reverts at `path_depth: 3`;
+* **all nine U paths sit at `path_depth: 5`**, i.e. exactly the paths that get
+  past 2235 to 2239, and every one carries `bounded-holds` with all six other
+  U-reason buckets at zero;
+* `tokensCount1 > 0` needs `_balances` non-zero, and the report's own
+  `known_limitation_entry_state` says: *"transaction entry state is the
+  post-constructor state; contract state is not havoc'd, so paths guarded by
+  state that an earlier transaction would have to establish are reported U at
+  this tx bound."*
+
+The rule added for this is deliberately worded **"consistent with, NOT
+established as the cause"**: it observes that no U in the unit carries any other
+reason; it does not read the guard and prove a second transaction is required.
+Claiming more would repeat the `onlyValidSecret` mistake above — a plausible
+explanation sitting next to the evidence rather than derived from it.
+
+**And note what aqua's row actually says**: ours `7`, bar `7`, denominator `8`.
+The locked baseline misses one of the eight as well. Whether it is the same one
+is unknowable — METHODOLOGY §4 records baseline reach as a count with no
+per-decision identity — but "the method missed a decision the baseline got" is
+**not** what this row shows.
 
 ## Files
 

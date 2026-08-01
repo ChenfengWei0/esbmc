@@ -211,6 +211,19 @@ def one(bench):
     # are different statements, and only the second licenses the attribution.
     skipped_libs = {r.get("contract") for r in meta["runs"] if r.get("skipped")}
     unexpanded = unexpanded_functions(bench, meta)
+    # unit -> how many U paths it has, IF every one of them is `bounded-holds`.
+    # Read off the journal's own uReasons breakdown, which publishes every token
+    # including the zeros -- so "all of them" is checked against the other six
+    # buckets being zero, not inferred from the one that is non-zero.
+    bounded_only = {}
+    for r in meta["runs"]:
+        ur = r.get("uReasons") or {}
+        if not ur or not r.get("function"):
+            continue
+        bh = ur.get("bounded-holds", 0)
+        others = sum(v for k, v in ur.items() if k != "bounded-holds")
+        if bh and others == 0:
+            bounded_only[r["function"]] = bh
     if unexpanded:
         print(f"   call site(s) the run(s) refused to expand (past the depth "
               f"bound): {len(unexpanded)}\n     "
@@ -290,6 +303,29 @@ def one(bench):
                 why = ("LIBRARY, --function BANNED (#33/D28: a stated "
                        "applicability limit, and the depth bound is measured "
                        "not to be the fix)")
+            elif o and o.get("fn") in ran_fns and bounded_only.get(o.get("fn")):
+                # The unit RAN, and every path of it that stayed U did so with
+                # `bounded-holds` -- "no witness at this exploration", not a
+                # solver failure and not a scope refusal. The report's own
+                # `known_limitation_entry_state` names what that usually is:
+                #
+                #   "transaction entry state is the post-constructor state;
+                #    contract state is not havoc'd, so paths guarded by state
+                #    that an earlier transaction would have to establish are
+                #    reported U at this tx bound"
+                #
+                # DELIBERATELY WORDED AS CONSISTENT-WITH, NOT AS THE CAUSE. All
+                # this observes is that no U in the unit carries any other
+                # reason; it does not read the decision's guard and prove it
+                # needs a second transaction. Calling it established would be
+                # the same move as the `onlyValidSecret` crypto story -- a
+                # plausible explanation sitting next to the evidence rather than
+                # derived from it.
+                n = bounded_only[o.get("fn")]
+                why = (f"NO WITNESS AT tx=1 — the unit ran and all {n} of its "
+                       f"U path(s) are `bounded-holds`; consistent with the "
+                       f"report's own known_limitation_entry_state (state a "
+                       f"prior tx must establish), NOT established as the cause")
             else:
                 why = ""
             tally[why or "UNEXPLAINED"] = tally.get(why or "UNEXPLAINED", 0) + 1
