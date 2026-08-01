@@ -79,8 +79,44 @@ withdrawn for.
    where marking without excluding was the half-fix.
 
 Which is right depends on whether the constructor-scope execution should count as
-coverage at all, and that is a methodology question, not only an implementation
-one. Neither has been attempted here.
+coverage at all. That is a methodology question, and it had ONE testable input
+that had not been taken.
+
+### The comparability objection to (1), tested and NOT supported
+
+The objection runs: our gate is compared against branch coverage, branch coverage
+counts a decision as reached when it EXECUTES regardless of who called it, so
+refusing constructor-scope witnesses would make us score below the baseline on
+the same denominator for a reason that is not about the method.
+
+Measured, on the same fixture pair, with the baseline's own flag set
+(`--branch-coverage-claims --coverage-whole-unit --k-induction
+--unlimited-k-steps --no-assertions`):
+
+| cell | Branches | Reached | covered decision lines |
+|---|---|---|---|
+| constructor does NOT call the unit | 4 | **4** | the `require` and the `if` |
+| constructor CALLS the unit | 4 | **4** | the `require` and the `if` |
+
+**Identical.** The constructor call adds nothing to the baseline's numerator,
+because the dispatcher call alone already reaches both decisions.
+
+And there is a structural reason to expect that generally, not just here: for a
+PUBLIC unit the dispatcher supplies a NONDET argument, so any decision in the
+body that depends on the argument is dispatcher-reachable by construction. The
+one decision that depends on state — `require(msg.sender == owner)` — is
+*constant-true* in constructor scope (owner was just set to msg.sender) and has
+BOTH arms available under the dispatcher. The dispatcher covers more, not less.
+
+⇒ **On this evidence option (1) costs nothing in comparability**, and it removes
+the red test rather than annotating it. That is a recommendation, not a ruling:
+one fixture plus a structural argument.
+
+⚠ **The residual, named rather than waved away**: a decision reachable ONLY from
+constructor scope would have to depend on storage that exists only mid-
+construction. Nothing in this fixture has one, and nothing here searched the
+corpus for one. If such a decision exists, option (1) loses it and the baseline
+keeps it.
 
 ## Reproduction
 
