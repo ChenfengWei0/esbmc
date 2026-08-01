@@ -49,6 +49,7 @@ Usage:
     python3 notes/branch_gate.py <cov-report.json> [...]   # both sides
 """
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -448,6 +449,44 @@ def pathcov_reports_for(bench):
     return meta, files
 
 
+DEPTH_RE = re.compile(
+    r"(\d+) call site\(s\) are deeper than the call depth bound \((\d+)\)")
+SC_RE = re.compile(r"(\d+) short-circuit site\(s\)[^.\n]*cap")
+
+
+def truncation_from_logs(bench, runs):
+    """The three deflating counters, read from the logs of JOURNAL-NAMED runs.
+
+    Used only for collections made before `pathcov_collect.one_run` recorded
+    them. Keyed on the journal's `tag` rather than on a glob, so a directory left
+    behind by an earlier collection cannot contribute: those belong to units the
+    current collection SKIPS, which never call `one_run` and so never have their
+    workdir cleared.
+
+    Returns [] when no log is readable, which the caller renders as `?` rather
+    than as 0.
+    """
+    work = PATHCOV / bench / "work"
+    out = []
+    for r in runs:
+        log = work / str(r.get("tag", "")) / "run.log"
+        if not log.exists():
+            continue
+        try:
+            text = log.read_text(errors="replace")
+        except OSError:
+            continue
+        m = DEPTH_RE.search(text)
+        sc = SC_RE.search(text)
+        out.append({
+            "depthBoundUnexpandedSites": int(m.group(1)) if m else 0,
+            "depthBound": int(m.group(2)) if m else None,
+            "degradedUnits": text.count("DEGRADED unit "),
+            "scSitesOverCap": int(sc.group(1)) if sc else 0,
+        })
+    return out
+
+
 def main():
     print("# Branch-coverage gate\n")
     print("Unit: canonical decision (METHODOLOGY 2), identified by flat line.")
@@ -618,6 +657,49 @@ def main():
               f"{killed} | {st['f_claims']} | {st['f_without_sequence']} | "
               f"{st['decision_steps']} | {st['unrecorded_steps']} | "
               f"{st['synthetic_dropped']} |")
+
+    # ---- THE THREE MECHANISMS THAT DEFLATE THIS NUMERATOR ----
+    #
+    # The docstring above lists them and says none is visible here. That was
+    # true, and it is the shape this file explicitly calls worse than an
+    # acknowledged gap -- a disclosure promised in a comment and not
+    # implemented. `pathcov_collect.one_run` now captures them off each run's
+    # stdout, which is the only place they exist (`degraded_call_sites` never
+    # reaches `cov-report.json`).
+    #
+    # UNRECORDED IS NOT ZERO. A journal record written before those fields
+    # existed carries no key, and printing 0 for it would say "nothing was
+    # truncated" about a run nobody asked. Rendered as `?`, per the standing
+    # rule that no-verdict is an explicit third state.
+    print("\n## What was TRUNCATED away from our numerator "
+          "(`?` = this run predates the recording, which is not 0)\n")
+    print("| bench | runs w/ a depth-bound truncation | max sites past the "
+          "bound | runs w/ a DEGRADED unit | max degraded units | "
+          "short-circuit sites over cap |")
+    print("|" + "---|" * 6)
+    for b, _st, meta, _k, _n, _c, _canon, _s, _cell in notes:
+        runs = [r for r in meta["runs"] if not r.get("skipped")]
+        rec = [r for r in runs if "depthBoundUnexpandedSites" in r]
+        src = "journal"
+        if not rec:
+            # FALLBACK: read the runs' own logs, but ONLY for tags the journal
+            # names -- which is the whole difference between this and the ad-hoc
+            # census that found these numbers first. `work/` is NOT reconciled
+            # against the journal: `one_run` clears a workdir per run and a unit
+            # the collection SKIPS never calls it, so a pre-ban directory from an
+            # earlier collection survives untouched. Globbing `work/*` would
+            # therefore mix vintages, which is the exact hazard
+            # `pathcov_reports_for` already guards `reports/` against.
+            rec, src = truncation_from_logs(b, runs), "logs"
+        if not rec:
+            print(f"| `{b}` | ? | ? | ? | ? | ? |")
+            continue
+        db = [r.get("depthBoundUnexpandedSites", 0) for r in rec]
+        dg = [r.get("degradedUnits", 0) for r in rec]
+        sc = [r.get("scSitesOverCap", 0) for r in rec]
+        print(f"| `{b}` ({src}) | {sum(1 for x in db if x)}/{len(rec)} | "
+              f"{max(db)} | {sum(1 for x in dg if x)}/{len(rec)} | {max(dg)} | "
+              f"{max(sc)} |")
 
     print("\n## Per-file, ours (capped) vs that file's canonical decisions\n")
     for b, _st, _m, _k, _n, capped, canon, _s, _cell in notes:

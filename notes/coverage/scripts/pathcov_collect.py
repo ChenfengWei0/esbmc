@@ -277,6 +277,45 @@ def one_run(tag, cmd, timeout, workdir):
     # condition on the baseline side as `status: "ambiguous"`.
     if "is ambiguous" in out:
         rec["ambiguousEntryName"] = True
+
+    # THE THREE MECHANISMS THAT DEFLATE THE GATE'S NUMERATOR, CAPTURED HERE
+    # BECAUSE THEY EXIST NOWHERE ELSE A CONSUMER CAN REACH.
+    #
+    # `branch_gate.py`'s docstring lists them -- internal calls withdrawn by
+    # degradation or by the call-depth bound, and a short-circuit site over the
+    # operand cap -- and says none is visible in the gate's output. It also
+    # records that an earlier version of that paragraph CLAIMED one of them was
+    # "reported beside the gate rather than folded into it", which was false:
+    # traced end to end, `degraded_call_sites` is surfaced only by
+    # `log_warning`, never reaches the report's `summary`, and is read nowhere.
+    #
+    # The measurement it needs therefore has to be taken HERE, at the only place
+    # that sees the run's stdout. `notes/coverage/D27-the-gate-gap-is-named-in-
+    # our-own-logs.md` read these same lines out of `work/*/run.log` after the
+    # fact and found the shape they explain: the ONE benchmark that clears the
+    # gate is the only one with nothing truncated. That census had to trust
+    # `work/`, which is NOT reconciled against this journal -- a unit the
+    # collection SKIPS never calls `one_run`, so its pre-ban directory survives
+    # and 2026-07-30 logs sit beside 2026-08-01 ones. Recording into the journal
+    # instead puts the numbers under the same reconciliation as everything else.
+    #
+    # A record written before this field existed carries NO key, and a consumer
+    # must render that as "unrecorded" rather than as 0 -- the same third-state
+    # rule the rest of this pipeline follows. Absent is not zero.
+    m = re.search(
+        r"(\d+) call site\(s\) are deeper than the call depth bound \((\d+)\)",
+        out)
+    if m:
+        rec["depthBoundUnexpandedSites"] = int(m.group(1))
+        rec["depthBound"] = int(m.group(2))
+    else:
+        rec["depthBoundUnexpandedSites"] = 0
+    # Each DEGRADED unit line names one unit whose call sites were withdrawn to
+    # fit the goal cap. Counted, not just flagged: st1inch shows twelve on a
+    # single run and the count is what distinguishes that from an isolated one.
+    rec["degradedUnits"] = out.count("DEGRADED unit ")
+    m = re.search(r"(\d+) short-circuit site\(s\)[^.\n]*cap", out)
+    rec["scSitesOverCap"] = int(m.group(1)) if m else 0
     if report.exists():
         try:
             d = json.loads(report.read_text())
