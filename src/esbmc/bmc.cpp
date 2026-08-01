@@ -56,6 +56,7 @@ std::atomic<size_t> goto_coveraget::arith_resolve_replaced{0};
 std::atomic<size_t> goto_coveraget::arith_resolve_ms{0};
 std::atomic<size_t> goto_coveraget::arith_conditions_seen{0};
 std::atomic<size_t> goto_coveraget::arith_revert_only_suppressed{0};
+std::atomic<size_t> goto_coveraget::verdicts_preserved{0};
 
 std::unordered_set<std::string> goto_functionst::reached_claims;
 std::unordered_multiset<std::string> goto_functionst::reached_mul_claims;
@@ -1317,6 +1318,16 @@ void report_coverage(
         "Arithmetic Re-solve: OFF (--path-cov-arith-resolve). A witnessed "
         "path whose counterexample wraps or divides by zero is emitted as a "
         "normal-exit test and is RED on the unmodified contract");
+
+    // Printed unconditionally, zero included. A NON-ZERO value means the same
+    // claim key reached the solve loop more than once and a decision it had
+    // already made would have been thrown away -- so this line is both the
+    // guard's effect and the duplicate-instrumentation defect's detector.
+    log_result(
+      "Verdicts Preserved: {} — a claim already DECIDED whose later solve "
+      "returned no verdict kept its decision. Non-zero also means the same "
+      "claim key was solved more than once, which is a separate defect",
+      goto_coveraget::verdicts_preserved.load(std::memory_order_relaxed));
 
     if (total == 0)
       log_result("No complete path enumerated");
@@ -3505,12 +3516,57 @@ smt_convt::resultt bmct::multi_property_check(
       else
         verdict = 'U';
       std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
-      // 'F' is final: a witness stays valid, so a later phase's failure to
-      // reprove must never downgrade it.
+      // ---- A DECIDED VERDICT IS NEVER REPLACED BY A NON-DECISION ----
+      //
+      // This used to protect 'F' alone -- "a witness stays valid, so a later
+      // phase's failure to reprove must never downgrade it" -- and left every
+      // other cell last-writer-wins. 'P' needs exactly the same protection, and
+      // for exactly the same reason: it is a DECISION (the solver answered
+      // UNSAT), while 'U' and 'B' are the absence of one.
+      //
+      // MEASURED on st1inch `--focus-function setFeeReceiver --z3
+      // --tuple-node-flattener`, one run, and it is not a corner case. The run
+      // generates 10 VCCs for 5 paths and solves EACH PATH CLAIM TWICE under the
+      // SAME (comment, location) key -- `paths_total` is 5, so `all_claims`, a
+      // std::set of that pair, holds five:
+      //
+      //     path:13   0.010s   ✓ PASSED        then again  2.246s   no verdict
+      //     path:12   0.010s   ✓ PASSED        then again  2.054s   no verdict
+      //
+      // Both were PROVEN in ten milliseconds and both are reported
+      // `solver-unknown`. So an unknown share of st1inch's 59 `solver-unknown`
+      // -- the number the branch gate turns into a 0 that reads as zero
+      // coverage -- is not the solver failing to decide, it is this line
+      // discarding a decision it had.
+      //
+      // 'P' -> 'F' IS STILL ALLOWED, and must be: a claim that held at one
+      // exploration can be refuted at a deeper one, and that refutation is a
+      // later, stronger DECISION. What is refused is 'P' -> 'U' and 'P' -> 'B',
+      // which replace an answer with the absence of an answer.
+      //
+      // The duplicate solve itself is a SECOND defect and is not fixed here:
+      // the same claim key is instrumented at more than one site, so half the
+      // solving time on this unit buys nothing. Fixing the bookkeeping makes
+      // the numbers right; fixing the duplication also makes them cheaper. They
+      // are separate, and folding them into one change would leave neither
+      // testable on its own.
       auto it_o = goto_coveraget::claim_outcome.find(claim_sig);
       if (it_o == goto_coveraget::claim_outcome.end())
         goto_coveraget::claim_outcome.emplace(claim_sig, verdict);
-      else if (it_o->second != 'F')
+      else if (it_o->second == 'F')
+      {
+        // final, keep
+      }
+      else if (it_o->second == 'P' && verdict != 'F')
+      {
+        // A decision is already recorded and the new outcome is not one.
+        // Counted rather than kept silently: "the guard fired" and "the guard
+        // was never needed" must be distinguishable, and on this corpus the
+        // count is the size of a number already published.
+        goto_coveraget::verdicts_preserved.fetch_add(
+          1, std::memory_order_relaxed);
+      }
+      else
         it_o->second = verdict;
     }
 

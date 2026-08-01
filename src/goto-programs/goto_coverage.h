@@ -741,6 +741,18 @@ public:
   // never witnessed.
   static std::atomic<size_t> arith_revert_only_suppressed;
 
+  // How many times a DECIDED verdict was kept because a later solve of the same
+  // claim key came back without one. Printed on every path-coverage run,
+  // including at zero: "the guard fired N times" and "the guard was never
+  // needed" are different statements, and a guard whose only evidence is that it
+  // compiles is the shape this pass has shipped twice.
+  //
+  // Non-zero means the same claim key reached the solve loop more than once --
+  // which is itself a defect (duplicate instrumentation), measured on st1inch as
+  // 10 VCCs for 5 paths. So this counter is simultaneously the fix's effect and
+  // the other defect's detector.
+  static std::atomic<size_t> verdicts_preserved;
+
   // Signal-safe snapshot for path coverage, mirroring branch coverage's
   // (branch_cov_active / total_branch_atomic / live_reached). Written at the
   // end of instrumentation and in the per-claim job; read ONLY by the signal
