@@ -444,8 +444,23 @@ nothing marking it.
 
 Removed from `pathcov_collect.py`; the library route now REFUSES and records its
 reason instead of approximating. Measured cost of the removal: zero — every
-library-route run produced 0 units and 0 paths. Still present at
-`notes/coverage/scripts/forge_roundtrip.py` and must be removed there too.
+library-route run produced 0 units and 0 paths.
+
+~~Still present at `notes/coverage/scripts/forge_roundtrip.py` and must be
+removed there too.~~ **DONE, verified 2026-08-01** by reading that file in full:
+`--function` appears at four places and every one of them is prose — the comment
+at `:136-159` explaining the removal, and the `skippedDetail` string at
+`:166-171` that the refusal records. No command list in the file constructs it;
+the library branch writes `"skipped": "library-has-no-dispatcher"` and continues.
+
+The comment there adds one thing this row did not have. The old route "never
+fired: every library-route run reported 0 complete path(s) across 0 unit(s)
+because the functions reached were `internal`, and internal functions are not
+units. But `ImmutablesLib.protocolFeeAmountCd` and three siblings are
+`external` — units by visibility, sitting on this route in the corpus today.
+**The route was correct only because its inputs happened to be internal, which
+nothing checks.**" So the measured cost of removal being zero was luck, not a
+property of the ban.
 
 ---
 
