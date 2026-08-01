@@ -80,6 +80,51 @@ pragma solidity ^0.8.20;
 // (TypeMemberCall via `solidity_grammar.cpp:956-957`, versus LibraryMemberCall
 // via :942-945). "Qualified" and "library" are two properties and only one of
 // them is under test.
+//
+// ---- MEASURED 2026-08-01. THE PREDICTION IS REFUTED, WITH A LIVE CONTROL ----
+//
+//   contract                 paths   F   U   `v == 0` arm
+//   D18_CtorNoRevert (ctrl)    3     3   0   WITNESSED        <- control fires
+//   D18_CtorPlain              3     2   1   bounded-holds
+//   D18_CtorLibQual            3     2   1   bounded-holds
+//   D18_CtorContractQual       3     2   1   bounded-holds
+//   D18_FnPlain                4     4   0   (function row)
+//   D18_FnLibQual              4     4   0   IDENTICAL to FnPlain
+//
+// The qualified revert PRUNES exactly like the unqualified one, in constructor
+// scope as well as function scope. Library-qualified and contract-qualified are
+// indistinguishable from plain.
+//
+// The control is the whole reason that sentence is allowed. `D18_CtorNoRevert`
+// has no revert and `v = x`, so `v == 0` is reachable by deploying with x = 0 --
+// and it IS witnessed, both arms, 3/3 F. So "not witnessed" in the three revert
+// rows is a result and not a blind spot.
+//
+// WHAT IS NOT CLAIMED: that the source reading is wrong. The drop at
+// expr.cpp:688-695 is real and so is stmt.cpp's fall-through at :1213. What is
+// refuted is the BEHAVIOURAL CONSEQUENCE -- something between them prevents it.
+// Named but unchecked candidates: `get_func_modifier`'s re-scoping of a
+// constructor body, and whatever lowering path coverage applies to constructors.
+// Anyone acting on the source reading has to re-establish that first.
+//
+// TWO EARLIER VERSIONS OF THIS FILE WERE WRONG, kept here rather than quietly
+// replaced, because each was wrong in a way that would have produced a confident
+// answer:
+//   v1 put every function in `external` scope -- the one cell the reading itself
+//      predicts CANNOT fail. It would have reported "the spellings agree".
+//   v2 gave the constructor contracts no public function at all, so all three
+//      reported `paths_total 0`. A constructor is not a unit and cannot be
+//      enumerated directly; it has to be observed THROUGH a unit that reads what
+//      it wrote.
+//
+// ---- A SEPARATE DEFECT FELL OUT OF THE SAME RUNS ----
+//
+// Every run, INCLUDING the control, reports `final_state` `v: '0'` -- even on the
+// path whose own decision proves `v != 0` (the `v == 0/taken` arm sets tag = 2).
+// That is the D09_ValueGate shape on the STATE channel: the payload is harvested
+// from the declaration-time write rather than the last write before the unit is
+// entered. D09's fix was for `env`. Tracked separately; `final_state` is what the
+// R1/R2 ladder is built from, so a wrong value there is wrong CONTENT.
 
 library L18 {
     error LibSaysNo(uint256 got);
@@ -91,49 +136,99 @@ contract D18_ErrHolder {
 
 // ---------------- constructor row: the cell predicted to be LIVE ----------
 
+// A CONSTRUCTOR IS NOT A UNIT, so its paths cannot be enumerated directly --
+// MEASURED: the first version of this row gave all three contracts NO public
+// function, and all three reported `paths_total 0`. The constructor has to be
+// observed THROUGH a unit that reads what it wrote.
+//
+// `v` is written ONLY after the revert. If the qualified revert still prunes,
+// `x == 0` is dead, so `v` is 1 or 2 at every entry and `probe`'s `v == 0` arm
+// is UNREACHABLE. If the revert was dropped, deployment continues with x == 0,
+// `v` keeps its default 0, and that arm becomes REACHABLE.
+//
+// So the discriminator is one bit, on one arm, and it needs no path arithmetic:
+//   Plain    -> `v == 0` NOT witnessed
+//   LibQual  -> `v == 0` witnessed  == the defect
+
+// POSITIVE CONTROL FOR THE WHOLE CONSTRUCTOR ROW. No revert at all, and `v = x`,
+// so `v == 0` is reachable by deploying with x == 0. If THIS contract also fails
+// to witness the `v == 0` arm, the discriminator cannot fire and NO row of this
+// row means anything -- the same trap the first D20 run fell into.
+contract D18_CtorNoRevert {
+    uint256 public v;
+    uint256 public tag;
+
+    constructor(uint256 x) {
+        v = x;
+    }
+
+    function probe() external {
+        if (v == 0) {
+            tag = 1;
+        } else {
+            tag = 2;
+        }
+    }
+}
+
 contract D18_CtorPlain {
     error LocalSaysNo(uint256 got);
 
     uint256 public v;
+    uint256 public tag;
 
     constructor(uint256 x) {
         if (x == 0) {
             revert LocalSaysNo(x);
         }
-        if (x > 10) {
-            v = 1;
+        v = x > 10 ? 1 : 2;
+    }
+
+    function probe() external {
+        if (v == 0) {
+            tag = 1;
         } else {
-            v = 2;
+            tag = 2;
         }
     }
 }
 
 contract D18_CtorLibQual {
     uint256 public v;
+    uint256 public tag;
 
     constructor(uint256 x) {
         if (x == 0) {
             revert L18.LibSaysNo(x);
         }
-        if (x > 10) {
-            v = 1;
+        v = x > 10 ? 1 : 2;
+    }
+
+    function probe() external {
+        if (v == 0) {
+            tag = 1;
         } else {
-            v = 2;
+            tag = 2;
         }
     }
 }
 
 contract D18_CtorContractQual {
     uint256 public v;
+    uint256 public tag;
 
     constructor(uint256 x) {
         if (x == 0) {
             revert D18_ErrHolder.HolderSaysNo(x);
         }
-        if (x > 10) {
-            v = 1;
+        v = x > 10 ? 1 : 2;
+    }
+
+    function probe() external {
+        if (v == 0) {
+            tag = 1;
         } else {
-            v = 2;
+            tag = 2;
         }
     }
 }
