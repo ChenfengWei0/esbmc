@@ -60,9 +60,60 @@ pragma solidity ^0.8.20;
 // arithmetic at all, so nothing can be assumed away; if it is refused, the
 // filter is catching claims that have nothing to do with arithmetic and the
 // diagnosis above is not the whole story.
+//
+// ---- MEASURED 2026-08-01. THE SUSPICION IS REFUTED AND A WORSE ONE CONFIRMED --
+//
+// FIRST RUN WAS INCONCLUSIVE BY THIS FILE'S OWN CRITERION and is recorded rather
+// than quietly redone: `addGate` was written at uint8, the positive control did
+// NOT fire (0 paths proven revert-only), and the file already said that a run
+// refusing neither path has the re-solve off or broken. A negative result with a
+// dead positive control is not a negative result. `addGate256` was added -- the
+// uint256 shape the proof arm has been measured to fire on -- and the uint8 one
+// kept, turning a broken control into an experiment.
+//
+// SECOND RUN, `--overflow-check --path-cov-arith-resolve`, decoded with the
+// polarity rule (`branch_claim` is the PROBE GUARD and is FALSE on the edge
+// actually taken):
+//
+//   claim                            edge actually taken   witness        verdict
+//   addGate256 `!(s<500)` fallthru   s < 500  = WRAPPED    a = 2^256-4    arith_revert_only TRUE
+//   addGate    `!(s<200)` fallthru   s < 200  = WRAPPED    a = 248        arith_revert_only None
+//   narrowGate `!(v==0&&x!=0)` ft    condition TRUE        x = 2^256-256  None  (correct)
+//   plainGate  (all three)           --                    --             None  (correct)
+//
+// 1. THE FALSE REFUSAL DOES NOT REPRODUCE. `narrowGate` is witnessed with a
+//    genuinely truncating input and is NOT proven revert-only. The negative
+//    control is clean too. The narrowing producer either is not present under
+//    plain `--overflow-check` or is not caught by the filter.
+//
+// 2. THE SAME RUN SHIPS A RED TEST, in the OPPOSITE direction -- a MISSED
+//    refusal, not a false one. `addGate`'s wrapping path is witnessed at
+//    a = 248 (200 + 248 = 448, truncated to 192 < 200), reported `exit_kind:
+//    normal` with `arith_revert_only: None`, so it renders as a bare call
+//    asserting the call succeeds. D19_PanicSemantics.t.sol already measured the
+//    chain's answer for exactly this: uint8 `200 + 200` reverts Panic(0x11). So
+//    the emitted test is RED on the unmodified contract.
+//
+// 3. THE MECHANISM IS VISIBLE IN THE COUNTS. Every claim in the run reports the
+//    SAME "7 arithmetic condition(s)" -- including all three `plainGate` paths,
+//    which contain no arithmetic whatsoever. The conditions are global (harness
+//    and constructor), and `addGate`'s own uint8 addition contributes NONE. So
+//    no overflow claim is generated for narrow-width arithmetic under
+//    `--overflow-check`, and the re-solve cannot assume what was never emitted.
+//
+// WHAT THIS FILE NOW PINS, and it is not what it was written to pin: the proof
+// arm is WIDTH-DEPENDENT. uint256 is detected, uint8 is not, from one source
+// shape differing only in the declared type. Until that is fixed, "0 paths
+// proven reachable only through a checked-arithmetic revert" means "none at
+// 256 bits", not "none".
 
 contract D20_FalseRevertOnly {
     uint256 public tag;
+    uint256 public big;
+
+    constructor() {
+        big = 500;
+    }
 
     // THE EXPERIMENT. Reachable on chain (x = 256), and reachable ONLY through
     // a truncation that the chain performs without reverting.
@@ -73,8 +124,25 @@ contract D20_FalseRevertOnly {
         }
     }
 
-    // POSITIVE CONTROL: genuinely reachable only by wrapping a checked add, so
-    // a correct re-solve MUST prove this one revert-only.
+    // POSITIVE CONTROL AT uint256 -- literally D16_OnlyByOverflow's shape, which
+    // is the one width the proof arm has been MEASURED to fire on. If this does
+    // not get proved revert-only, the re-solve is off or broken and no other row
+    // of this run can be read.
+    function addGate256(uint256 a) external {
+        uint256 s = big + a;
+        if (s < 500) {
+            tag = 4;
+        }
+    }
+
+    // THE SAME EXPERIMENT AT uint8, and it is an EXPERIMENT rather than a second
+    // control. Measured on the first run of this file: `addGate` was NOT proved
+    // revert-only, while `s = 200 + a` under `uint8` is unsatisfiable for
+    // `s < 200` once no-overflow is assumed. Either uint8 checked arithmetic
+    // produces no `overflow` claim at all, or it produces a NARROWING one
+    // (goto_check.cpp:1252-1261) -- which is the very producer this file is
+    // about. Whichever it is, the difference between this row and `addGate256`
+    // is the finding.
     function addGate(uint8 a) external {
         uint8 b = 200;
         uint8 s = b + a;
