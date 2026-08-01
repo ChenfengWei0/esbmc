@@ -313,6 +313,106 @@ def canonical_in_scope(flat_path, project):
 
 PATHCOV = HERE / "coverage" / "pathcov"
 
+# THE GATE'S COMMENSURABILITY PREMISE, AS A RUNTIME CHECK RATHER THAN A NOTE.
+#
+# This gate compares our numerator against a LOCKED baseline. The comparison is
+# only a comparison if both sides ran at the same transaction depth, and that
+# depth is now MEASURED rather than inferred: notes/coverage/D25-baseline-is-
+# one-transaction.md ran the baseline's own command shape on poc/Tiny.sol, whose
+# line 41 is reachable only after a preceding call.
+#
+#   baseline verbatim / plain BMC / either + --solidity-max-tx 1
+#                                 -> Reached 5 of 8, line 41 NOT reached
+#   plain BMC + --solidity-max-tx 2
+#                                 -> Reached 8 of 8, line 41 reached
+#
+# So the baseline sits at ONE transaction, and it gains 5/8 -> 8/8 at two. It is
+# LOCKED and cannot be re-run at two to restore parity. A product-side collection
+# made at tx>=2 would therefore be running DEEPER than the thing it is compared
+# to, and every row printed from it would be a number nobody could defend.
+#
+# WHY THIS IS CODE AND NOT A SENTENCE. INVOCATION_DECISIONS.md rows 1 and 2
+# overturned tx=1 for the METHOD -- correctly, on reach -- and now the file
+# deliberately prints TWO command lines: enumeration/artefact at whole-contract
+# tx=2, gate at tx=1. Two legitimate configurations exist and only prose keeps
+# them apart, which in this project is the shape that has already failed: a
+# protection a note claims and the code does not implement. The consumer that
+# prints the headline number is the right place to enforce it.
+#
+# An index with no `config` block at all is REFUSED, not waved through: it
+# predates the recording and cannot say which cell it came from. "Cannot say" is
+# not "complete" -- the same third-state rule this file already applies to
+# `unstated_reports`.
+GATE_SOLIDITY_MAX_TX = 1
+
+
+def assert_gate_config(bench, meta):
+    """Refuse to print a gate row from a collection made in another cell.
+
+    Returns a short description of the cell for the audit table, or exits.
+    """
+    cfg = (meta or {}).get("config")
+    if not cfg:
+        sys.exit(
+            f"{bench}: its index.json records no `config` block, so the cell "
+            f"this collection came from is unknown. A gate row whose "
+            f"configuration cannot be stated is not a measurement -- re-collect "
+            f"with the current pathcov_collect.py, which records it.")
+    tx = cfg.get("solidityMaxTx")
+    if tx != GATE_SOLIDITY_MAX_TX:
+        sys.exit(
+            f"{bench}: collected at --solidity-max-tx {tx!r}, but the gate "
+            f"requires {GATE_SOLIDITY_MAX_TX}. The locked baseline is MEASURED "
+            f"to run at one transaction and to gain 5/8 -> 8/8 at two "
+            f"(notes/coverage/D25-baseline-is-one-transaction.md); it cannot be "
+            f"re-run to match. Comparing a deeper product run against it is not "
+            f"a comparison. INVOCATION_DECISIONS.md prints TWO command lines for "
+            f"exactly this reason -- whole-contract tx=2 is the ENUMERATION "
+            f"line and may not be quoted into this table.")
+    return (f"mode={cfg.get('mode')} tx={tx} goals={cfg.get('pathCovMaxGoals')} "
+            f"solver={' '.join(cfg.get('solverFlags') or []) or 'default'}")
+
+
+def _self_test():
+    """Prove the refusal FIRES, in both directions, without touching the corpus.
+
+    A guard that has never been seen to refuse is indistinguishable from one
+    that cannot. This runs three synthetic indexes through `assert_gate_config`
+    in a subprocess (it exits the process on refusal, by design) and reports
+    which of them it stopped.
+    """
+    import subprocess
+    cases = [
+        ("tx=1, the gate cell", {"config": {"solidityMaxTx": 1, "mode":
+                                            "per-method"}}, False),
+        ("tx=2, the enumeration cell", {"config": {"solidityMaxTx": 2, "mode":
+                                                   "whole"}}, True),
+        ("no config block at all", {"runs": []}, True),
+    ]
+    ok = True
+    print("## self-test: does the configuration guard actually refuse?\n")
+    for name, meta, want_refusal in cases:
+        prog = ("import json,sys; sys.path.insert(0, %r); "
+                "import branch_gate as g; "
+                "g.assert_gate_config('SELFTEST', json.loads(%r)); "
+                "print('ACCEPTED')" % (str(HERE), json.dumps(meta)))
+        cp = subprocess.run([sys.executable, "-c", prog],
+                            capture_output=True, text=True)
+        refused = cp.returncode != 0
+        good = refused == want_refusal
+        ok = ok and good
+        print(f"  [{'ok ' if good else 'BAD'}] {name}: "
+              f"{'refused' if refused else 'accepted'} "
+              f"(expected {'refusal' if want_refusal else 'acceptance'})")
+        if refused:
+            print("        " + (cp.stdout + cp.stderr).strip().splitlines()[0])
+    print()
+    if not ok:
+        print("  ⛔ the guard does not behave as specified.")
+        return 1
+    print("  ✅ it refuses the two wrong cells and accepts the gate cell.")
+    return 0
+
 
 def pathcov_reports_for(bench):
     """Every cov-report.json the path-coverage collector produced for `bench`,
@@ -396,6 +496,11 @@ def main():
             print(f"| `{b}` | {denom} | {p1.get('esbmc')} | {bar} | {nat} | - "
                   f"| not collected |")
             continue
+
+        # BEFORE any number is computed from these reports: was this collection
+        # made in the cell the gate is entitled to read? Refuses rather than
+        # annotates -- an unusable row printed with a caveat still gets quoted.
+        cell = assert_gate_config(b, meta)
 
         lines, st = pathcov_reached_flat_lines(reports)
         canon, blocks = canonical_in_scope(base["flat"], base["project"])
@@ -488,7 +593,7 @@ def main():
         print(f"| `{b}` | {denom} | {p1.get('esbmc')} | {bar} | {nat} | "
               f"{ours} | {verdict} |")
         notes.append((b, st, meta, killed, noreport, capped, canon,
-                      len(skipped)))
+                      len(skipped), cell))
 
     print("\n## What the product side actually saw\n")
     # `reports` is printed because it is the size of the numerator's input set.
@@ -498,12 +603,16 @@ def main():
     # `skipped` is its own column and not folded into `no report`: a unit the
     # collector refused on soundness grounds and a run that died are different
     # findings, and one column for both is how the first reads as the second.
-    print("| bench | runs | reports read | PARTIAL | completeness unstated | "
-          "skipped | no report | killed | F claims | F w/o sequence | steps | "
-          "unrecorded | ABI-gate dropped |")
-    print("|" + "---|" * 13)
-    for b, st, meta, killed, noreport, _c, _k, nskipped in notes:
-        print(f"| `{b}` | {len(meta['runs'])} | {st['reports']} | "
+    # `cell` travels with the number, because a configuration that is checked
+    # once and then not shown is a configuration the reader has to take on
+    # trust. Every row here has passed `assert_gate_config`, and this column is
+    # what it passed WITH.
+    print("| bench | cell | runs | reports read | PARTIAL | completeness "
+          "unstated | skipped | no report | killed | F claims | "
+          "F w/o sequence | steps | unrecorded | ABI-gate dropped |")
+    print("|" + "---|" * 14)
+    for b, st, meta, killed, noreport, _c, _k, nskipped, cell in notes:
+        print(f"| `{b}` | {cell} | {len(meta['runs'])} | {st['reports']} | "
               f"{st['partial_reports']} | {st['unstated_reports']} | "
               f"{nskipped} | {noreport} | "
               f"{killed} | {st['f_claims']} | {st['f_without_sequence']} | "
@@ -511,7 +620,7 @@ def main():
               f"{st['synthetic_dropped']} |")
 
     print("\n## Per-file, ours (capped) vs that file's canonical decisions\n")
-    for b, _st, _m, _k, _n, capped, canon, _s in notes:
+    for b, _st, _m, _k, _n, capped, canon, _s, _cell in notes:
         print(f"- `{b}`:")
         for f in sorted(canon):
             print(f"    {capped.get(f, 0):>4} / {len(canon[f]):<4}  {f}")
@@ -562,4 +671,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        sys.exit(_self_test())
     sys.exit(main())
