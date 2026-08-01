@@ -196,8 +196,57 @@ def check_esbmc_args(extra):
     return None
 
 
+# ---- WHICH CELL A RUN IS IN, AND WHY THE ARTEFACT HAS TO SAY SO --------------
+#
+# `notes/coverage/INVOCATION_DECISIONS.md` prints TWO command lines and one rule:
+#
+#   (a) ARTEFACT / enumeration : whole contract, --solidity-max-tx 2
+#   (b) GATE                   : --focus-function <u>, --solidity-max-tx 1
+#   "A run of (a) may never be quoted into the branch-coverage gate table, and a
+#    run of (b) may never be quoted as the method's reach."
+#
+# This driver ran only (b) and said nothing about it, so every PUT it produced
+# was quotable into either table. That is not a bookkeeping detail: rows 1 and 2
+# of that file are marked OVERTURNED because a FOCUSED run cannot reach
+# cross-function state at ANY transaction bound -- every transaction is another
+# call to the same entry. Measured there on a ten-line contract: `Tiny.sol` is
+# 60% focused/tx=1, 75% whole/tx=1, 100% whole/tx=2; and `Tiny2.sol`, identical
+# except that the CONSTRUCTOR establishes the state, is 100% at focused/tx=1.
+# The obstacle was never the state, it was that a call has to happen first.
+#
+# So the cell is a property of the measurement and travels with it: named on the
+# emitted test, and recorded in put.json.
+#
+# ⚠ The cost of (a) is stated rather than hidden: ESBMC itself warns that
+# `--solidity-max-tx N>=2` "reconstructs multi-transaction sequences unreliably
+# (methods can be mis-attributed across transactions)" for Foundry emission. So
+# (a) is not a better default, it is a different question with its own open
+# problem.
+CELLS = {
+    ("whole", 2): ("ARTEFACT",
+                   "whole contract at --solidity-max-tx 2: the only "
+                   "configuration measured to reach cross-function state. May "
+                   "NOT be quoted into the branch-coverage gate table"),
+    ("focus", 1): ("GATE",
+                   "--focus-function at --solidity-max-tx 1, matching the "
+                   "LOCKED branch-coverage baseline, which is measured to run "
+                   "at one transaction. May NOT be quoted as the method's "
+                   "reach"),
+}
+
+
+def cell_of(scope, max_tx):
+    """(name, rule) for this run's configuration. Never guesses a name."""
+    return CELLS.get((scope, max_tx),
+                     ("UNNAMED",
+                      f"scope={scope} --solidity-max-tx={max_tx} is neither of "
+                      f"the two command lines INVOCATION_DECISIONS.md settles, "
+                      f"so this run belongs to no table. Say what it is for "
+                      f"before quoting it anywhere"))
+
+
 def run_esbmc(esbmc, sol, ast, contract, unit, extra, cwd, max_tx, timeout,
-              memlimit):
+              memlimit, scope="focus"):
     """One ESBMC invocation, in its own cwd (the emitted filename is hardcoded).
 
     `--focus-function`, NEVER `--function`.  `--function` verifies the unit in
@@ -206,6 +255,9 @@ def run_esbmc(esbmc, sol, ast, contract, unit, extra, cwd, max_tx, timeout,
     positive, which in this pipeline becomes a test that is RED on the
     unmodified contract.  `--focus-function` narrows which unit is entered and
     leaves the entry state as the post-constructor state.
+
+    `scope="whole"` drops `--focus-function` entirely; see CELLS above for why
+    that is a different measurement rather than a slower one.
 
     `setsid` + `timeout -k` so a kill takes the whole process group: an
     orphaned esbmc grandchild has taken this machine down once.
@@ -216,8 +268,9 @@ def run_esbmc(esbmc, sol, ast, contract, unit, extra, cwd, max_tx, timeout,
     cmd += ["--sol", os.path.abspath(sol),
             "--contract", contract,
             "--solidity-path-coverage", "--solidity-max-tx", str(max_tx),
-            "--focus-function", unit,
             "--memlimit", memlimit, "--result-only"]
+    if scope == "focus":
+        cmd += ["--focus-function", unit]
     cmd += extra
     t0 = time.time()
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
@@ -886,7 +939,7 @@ def bound_lines(pname, kind, width, lo, hi, holes):
 
 
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
-              params, emitted, case, layout, ladder_rows, notes):
+              params, emitted, case, layout, ladder_rows, notes, cell=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -1026,6 +1079,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     out.append(f"  // ===================== PUT (stage 4) "
                f"=====================")
     out.append(f"  // claim: {path_function}:path:{enc}   depth={depth_}")
+    if cell:
+        out.append(f"  // CELL {cell[0]} -- {cell[1]}")
     out.append(f"  // CERTIFIED REGION (stage 2), certified by an independent")
     out.append(f"  // `assume(box); assert(tr == pi)` query, not by the "
                f"subtraction:")
@@ -1172,6 +1227,15 @@ def main():
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--memlimit", default="8g")
     ap.add_argument("--test-suffix", default="")
+    ap.add_argument("--scope", choices=("focus", "whole"), default="focus",
+                    help="focus passes --focus-function <unit> (the GATE "
+                         "cell); whole drops it and lets every entry be "
+                         "dispatched (the ARTEFACT cell, which with "
+                         "--max-tx 2 is the only configuration measured to "
+                         "reach cross-function state). The choice is RECORDED "
+                         "on the emitted test and in put.json, because "
+                         "INVOCATION_DECISIONS.md forbids quoting one cell's "
+                         "run into the other's table.")
     ap.add_argument("--esbmc-arg", action="append", default=[], dest="esbmc_arg",
                     help="passed verbatim to BOTH esbmc runs, once per token: "
                          "`--esbmc-arg --unwindset --esbmc-arg 64:512`. It "
@@ -1207,12 +1271,14 @@ def main():
     notes = []
 
     # ---- 1. the emitter's own output: preamble + concrete case ------------
+    cell_name, cell_rule = cell_of(a.scope, a.max_tx)
     print(f"[put] {a.contract}.{a.unit} enc={a.enc} depth={a.depth}")
+    print(f"[put] CELL {cell_name}: {cell_rule}")
     print("[put] step 1: emit the concrete suite (preamble source of truth)")
     out1, rc1, w1 = run_esbmc(
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
         ["--generate-foundry-testcase", "--cov-report-json"] + a.esbmc_arg,
-        emit_dir, a.max_tx, a.timeout, a.memlimit)
+        emit_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
     produced = sorted(f for f in os.listdir(emit_dir)
                       if f.endswith(".cov.t.sol"))
     print(f"[put]   exit={rc1} {w1:.1f}s  emitted={produced}")
@@ -1271,7 +1337,7 @@ def main():
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
         ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
          "--cov-report-json"] + a.esbmc_arg,
-        assert_dir, a.max_tx, a.timeout, a.memlimit)
+        assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
     rows, summary, refusal, blocker = parse_ladder(out2)
     if refusal:
         print(f"[put]   ladder REFUSED: {refusal}")
@@ -1386,7 +1452,8 @@ def main():
     # ---- 5. build ---------------------------------------------------------
     put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
                            region, holes, pins, params, emitted, case,
-                           layout, rows, notes)
+                           layout, rows, notes,
+                           cell=(cell_name, cell_rule))
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
@@ -1447,6 +1514,8 @@ def main():
                    # emitted under another are two measurements; the artefact
                    # has to say which one it is.
                    "esbmc_extra_args": a.esbmc_arg,
+                   "cell": {"name": cell_name, "scope": a.scope,
+                            "max_tx": a.max_tx, "rule": cell_rule},
                    "stats": stats, "notes": notes}, f, indent=2)
     return 0
 

@@ -57,7 +57,7 @@ import tempfile
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_put import (EmittedFile, build_put,   # noqa: E402
-                               check_esbmc_args)
+                               check_esbmc_args, cell_of)
 
 
 # VERBATIM: bench/FeeVault, `--generate-foundry-testcase --focus-function
@@ -313,9 +313,48 @@ def test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies():
     return bad
 
 
+def test_the_cell_is_named_and_an_unsettled_one_says_so():
+    """Which of the two settled command lines a run is, or neither.
+
+    INVOCATION_DECISIONS.md forbids quoting a run of one cell into the other's
+    table. The enforcement this driver can offer is that the artefact NAMES its
+    cell -- and that a configuration matching neither is called UNNAMED rather
+    than being silently filed under whichever is closer, which is how a
+    focused tx=2 run would end up quoted as the method's reach.
+    """
+    bad = 0
+    n, r = cell_of("whole", 2)
+    bad += check(n == "ARTEFACT" and "gate table" in r,
+                 f"whole/tx=2 is the ARTEFACT cell, with its rule: {n}")
+    n, r = cell_of("focus", 1)
+    bad += check(n == "GATE" and "reach" in r,
+                 f"focus/tx=1 is the GATE cell, with its rule: {n}")
+    for scope, tx in (("focus", 2), ("whole", 1), ("whole", 3)):
+        n, r = cell_of(scope, tx)
+        bad += check(n == "UNNAMED" and "belongs to no table" in r,
+                     f"{scope}/tx={tx} is UNNAMED, not filed under a neighbour")
+    return bad
+
+
+def test_the_emitted_test_carries_its_cell():
+    """A PUT that does not say which cell produced it is quotable into both."""
+    em, case = make_case()
+    notes = []
+    put, _stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes, cell=cell_of("focus", 1))
+    text = "\n".join(put or [])
+    return check("// CELL GATE --" in text,
+                 "the cell is written onto the emitted test")
+
+
 def main():
     bad = 0
-    for t in (test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
+    for t in (test_the_cell_is_named_and_an_unsettled_one_says_so,
+              test_the_emitted_test_carries_its_cell,
+              test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
               test_pin_with_a_slot_is_established,
               test_pin_without_a_slot_is_reported_not_dropped,
               test_region_bound_still_wins_over_a_duplicate_pin,
