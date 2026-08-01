@@ -19,8 +19,23 @@ pragma solidity ^0.8.20;
 //     [FAIL: panic: arithmetic underflow or overflow (0x11)] test_cov_0()
 //
 // The path is real, the exit classification is right ABOUT THE MODEL, and the
-// test is red on the unmodified contract. Two of the two RED tests across the
-// whole PoC set are this one cause (Tiny2 and P18_Unchecked).
+// test is red on the unmodified contract.
+//
+// ALL THREE RED TESTS in the PoC set are a chain-side arithmetic PANIC, and
+// they are NOT all the same panic -- measured 2026-08-01 after the funnel's own
+// RED attribution was fixed (it had been reporting four, one of them a phantom
+// filed against a contract with no arithmetic):
+//
+//     D10_WrapNotPanic.test_cov_0   panic 0x11  overflow
+//     Tiny2.test_cov_0              panic 0x11  overflow
+//     P18_Unchecked.test_cov_5      panic 0x12  DIVISION BY ZERO
+//
+// The third one is why the fix below cannot be about the wrap alone. A
+// counterexample that divides by zero is rejected by the chain for a different
+// reason and through a different Panic code, and `--div-by-zero-check` is a
+// separate flag from `--overflow-check`. Whatever decides "this counterexample
+// is one the chain refuses" has to cover both, or a third of the measured
+// failures survives the fix.
 //
 // ---- WHAT DOES NOT FIX IT, MEASURED RATHER THAN ASSUMED ----
 //
