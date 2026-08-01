@@ -15,6 +15,22 @@ the one-liner is a guess from the filename and **must not be relied on**.
 This marking is the point. A previous version of this project's habit was to
 summarise a file from its name and then reason from the summary.
 
+**`[read]` DOES NOT MEAN CURRENT.** A file can be read in full, accurate on the
+day it was written, and wrong about the tree today — every measurement in here
+was taken against some binary, and the binaries move. So a second marker is used
+where it applies:
+
+`⚠ STALE(<what>)` = this file's MEASUREMENTS came from a build or corpus that no
+longer exists, and the file itself usually says so. Its SOURCE claims may still
+hold; its NUMBERS may not be quoted as current. Re-measuring is the only thing
+that lifts it — not argument, and not the fact that the reasoning still reads
+well.
+
+Two instances are known and marked below (`unwind-vs-strategy.md`, and the whole
+stage-2 sweep). Assume there are more that are not marked yet: if a file gives a
+number and does not name the binary that produced it, treat the number as
+undated.
+
 ---
 
 ## 0. THE RESUME PATH — three files, in this order, before anything else
@@ -26,6 +42,24 @@ summarise a file from its name and then reason from the summary.
 | 3 | `notes/path-coverage-invocation-contract.md` `[cited]` | 1053 lines. Option **semantics read out of the SOURCE**, not `--help` — and `--help` is documented WRONG on transaction depth. |
 
 Then, for whatever you are about to touch, the topic section below.
+
+### 0.1 Before quoting ANY corpus number, check which binary produced it
+
+Both sweeps record the binary that wrote each row (`head`, `srcDirty`,
+`binaryMtime`) and both REFUSE to resume across a different one. That guard is
+not decoration — it has fired:
+
+* `notes/coverage/certify/results.jsonl` (stage 2) — all 66 records were written
+  by `fe550519c7`; the tree moved past it and `certify_all.py` refused to
+  resume. The pre-move file is kept as `results.jsonl.build-fe550519c7`. Any
+  "N of M regions certified" figure taken from it is `fe550519c7`'s.
+* `notes/coverage/pathcov/*/index.json` (stage 1) — same three fields per run,
+  read by `journal_binary_audit.py`.
+
+So the rule is: **a corpus number is undated until you have looked at the
+`binary` field of the rows it came from.** `notes/branch_gate.py` and
+`certify_summary.py` will happily print a table from stale rows — the refusal
+lives in the collectors, not in the readers.
 
 ---
 
@@ -45,7 +79,7 @@ Then, for whatever you are about to touch, the topic section below.
 | **`coverage/EXPLOSION_CONTROL_AUDIT.md`** `[read]` | Every bound, whether it DROPS paths or only weakens, and whether the report discloses it. Plus what is NOT bounded (re-entry instantiation, claim-key multiplicity, entry state). |
 | **`EXPLOSION_CONTROL_OPTIONS.md`** `[read]` | What each option MEANS and how it works, with per-claim provenance. **KNOWN INCOMPLETE** — see §7. |
 | `coverage/option-matrix-round1.md` `[cited]` | first option matrix round. |
-| `coverage/unwind-vs-strategy.md` `[unread]` | **33 KB — the largest unread file directly on the unwind question.** Probably already answers `--incremental-bmc` / `--k-induction`. READ BEFORE re-investigating unwind. |
+| **`coverage/unwind-vs-strategy.md`** `[read]` `⚠ STALE(numbers)` | **VERDICT: no strategy may be used.** Pass `--unwind N` (or nothing, and take the pass's default 4) and NOTHING else. `do_bmc_strategy` overwrites `unwind` with the current `k` at every phase, so `--unwind N` never reaches symex under a strategy; everything in the `is_k_induction` disjunction *additionally* rewrites loops BEFORE instrumentation, which turns the focused unit into a NAMED OBSTACLE while `F` and `Path Coverage` still read normally. ESBMC's own under-report warning recommends exactly the two flags this refuses. ⚠ Its SOURCE facts are structural; its NUMBERS came from a snapshot binary predating `d09536838a`, on ONE unit (`Aqua.dock`), and §0.1 marks them UNVERIFIED on newer builds — the tree is well past that now. Do not quote the numbers as current; re-run the matrix. |
 | `coverage/scope-and-resources.md` `[cited]` | §2 measured the loss a dying run causes and named the change sites. |
 | `coverage/dying-run-keeps-its-work.md` `[read]` | The partial-report rescue, the CE journal, the per-claim budget (`--path-cov-claim-timeout`), and why `claim-budget-exceeded` is its own U token. |
 
@@ -113,12 +147,22 @@ Then, for whatever you are about to touch, the topic section below.
 
 Raised and not yet answered:
 
-1. **`--incremental-bmc` / `--k-induction` were never tried.** ESBMC's own
-   truncation warning names them as the alternatives to a fixed `--unwind`. The
-   bound of 4 is not chosen or argued — it is the value path enumeration uses,
-   adopted so symex matches it. **We have no mechanism for knowing how many
-   unwinds are needed.** `coverage/unwind-vs-strategy.md` (33 KB, unread) is the
-   first place to look.
+1. ~~**`--incremental-bmc` / `--k-induction` were never tried.**~~ **ANSWERED**
+   by `coverage/unwind-vs-strategy.md`, which ran the whole bound × strategy
+   matrix: **no strategy may be used**, and ESBMC's own truncation warning is
+   recommending two flags that were measured to make things worse. Pass
+   `--unwind N` and nothing else; if one loop is the truncating one — the warning
+   names it — use `--unwindset <loop>:<n>`, which moves only the symex side and
+   so explores a superset. `scripts/solidity_path_put.py` now enforces this: it
+   accepts `--esbmc-arg --unwindset …` / `--partial-loops` and refuses every
+   strategy flag by name.
+   **Two parts of this gap remain open.** (a) The matrix's numbers are `⚠ STALE`
+   — snapshot binary, one unit — so the refusal above stands as a refusal to
+   guess, not as a current measurement; re-running it is cheap (~35 min without
+   the `--incremental-bmc` column) and would settle it. (b) **The bound of 4 is
+   still not argued.** It is the value path enumeration uses, adopted so symex
+   matches it, and we still have no mechanism for knowing how many unwinds a
+   given unit needs.
 2. **Layered verification is missing from the audit.** The covered-set
    (`--coverage-covered-set`, on-disk version 3, `witnessed_in_earlier_round`)
    means an already-witnessed path is **not re-instrumented next round**. That is

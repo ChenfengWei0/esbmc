@@ -104,6 +104,98 @@ UINT256_MAX = (1 << 256) - 1
 # Running ESBMC
 # ---------------------------------------------------------------------------
 
+# ---- WHICH EXTRA ESBMC FLAGS THIS DRIVER WILL PASS ON, AND WHICH IT REFUSES --
+#
+# `--esbmc-arg` exists because the tool's OWN refusal names a repair this driver
+# had no way to apply. `--path-cov-assert` answers UNDECIDED-TRUNCATED with:
+#
+#   "TO GET A VERDICT: raise --unwind, use --unwindset/--unwindsetname for the
+#    loop(s) named here, or pass --partial-loops"
+#
+# and then names them (on aqua `dock`: loop 64, `__memset_impl`,
+# src/c2goto/library/string.c:298). Without a passthrough the only response to a
+# named, one-line repair was to record the refusal.
+#
+# THE STRATEGY FLAGS ARE NOT ACCEPTED, and the honest reason is that the only
+# evidence about them on this pipeline is STALE.
+#
+# `notes/coverage/unwind-vs-strategy.md` ran the whole bound x strategy matrix
+# and concluded that none of them may be used. Its findings are of two kinds and
+# they do not age the same way:
+#
+#   * SOURCE facts -- that everything in ESBMC's `is_k_induction` disjunction
+#     also runs `goto_k_induction` BEFORE the path pass instruments, that
+#     `do_bmc_strategy` overwrites the `unwind` option with the current `k` at
+#     every phase, and that the goal set is built once before the strategy loop
+#     is entered. These are structural, and if they still hold then a strategy
+#     answers path claims under a symex bound the enumeration did not choose.
+#   * NUMBERS -- 2796 paths excluded as a NAMED OBSTACLE, the k-loop stopping at
+#     2, three of seven `--incremental-bmc` cells producing no report at all.
+#
+# ⚠ THE NUMBERS ARE NOT CURRENT AND MUST NOT BE QUOTED AS IF THEY WERE. That
+# file's own §0.1 says so: every cell came from a snapshot binary taken BEFORE
+# `d09536838a`, on ONE unit (`Aqua.dock`), and it records "UNVERIFIED: whether
+# these numbers reproduce on a build of `d09536838a`". The tree has moved well
+# past that commit since. The SOURCE line numbers it cites have not been
+# re-checked here either.
+#
+# So this list is a REFUSAL TO GUESS, not a quotation. A strategy flag changes
+# both which claims exist and the bound they are answered under; the last time
+# anyone measured what that does, it silently disqualified the focused unit
+# while `F` and `Path Coverage` still read normally. Until that matrix is re-run
+# against a current build, passing one through here would ship a PUT whose
+# provenance nobody can state. RE-MEASURING IS WHAT LIFTS THIS, not argument.
+#
+# Note also that ESBMC's own under-report warning RECOMMENDS `--k-induction` and
+# `--incremental-bmc`. That warning fired in every cell of the old matrix that
+# produced a report -- including the cells where its own advice had been taken --
+# so it does not distinguish the case where the remedy worked from the case
+# where it did not.
+STRATEGY_FLAGS_REFUSED = {
+    "--k-induction": "it reaches goto_k_induction, which rewrites loops BEFORE "
+                     "the path pass instruments, and it caps symex at whatever "
+                     "k the inductive step stops on regardless of --unwind",
+    "--k-induction-parallel": "same GOTO transform as --k-induction",
+    "--inductive-step": "same GOTO transform as --k-induction",
+    "--loop-invariant": "reaches the same GOTO transform as --k-induction",
+    "--incremental-bmc": "the goal set is frozen before the strategy loop, so "
+                         "every k re-asks the same claims under a different "
+                         "bound",
+    "--falsification": "a strategy: do_bmc_strategy overwrites the unwind bound "
+                       "the enumeration was built for",
+    "--termination": "a strategy: do_bmc_strategy overwrites the unwind bound "
+                     "the enumeration was built for",
+    "--forward-condition": "it is short-circuited in Solidity dispatcher mode, "
+                           "and its report-writing call site is gated off",
+}
+
+
+def check_esbmc_args(extra):
+    """The refusal, or None. Applied to what the CALLER passes, never to the
+    flags this driver adds itself."""
+    for a in extra:
+        if a in STRATEGY_FLAGS_REFUSED:
+            return (f"--esbmc-arg {a} is not accepted: "
+                    f"{STRATEGY_FLAGS_REFUSED[a]}.\n"
+                    f"This is a refusal to guess rather than a current "
+                    f"measurement: the matrix in "
+                    f"notes/coverage/unwind-vs-strategy.md ran on a SNAPSHOT "
+                    f"binary predating d09536838a, on one unit, and that file "
+                    f"marks its own numbers UNVERIFIED on newer builds. A "
+                    f"strategy changes both which claims exist and the bound "
+                    f"they are answered under, and the last measurement of "
+                    f"that showed it disqualifying the focused unit while F "
+                    f"and Path Coverage still read normally -- i.e. silently. "
+                    f"Re-run that matrix against a current build to lift this.\n"
+                    f"If a specific loop needs more iterations -- which is what "
+                    f"the ladder's UNDECIDED-TRUNCATED refusal actually names "
+                    f"-- widen THAT loop with `--esbmc-arg --unwindset "
+                    f"--esbmc-arg <loop>:<n>`. That moves only the symex side, "
+                    f"so it explores a SUPERSET of executions and cannot make "
+                    f"a path look infeasible that is not")
+    return None
+
+
 def run_esbmc(esbmc, sol, ast, contract, unit, extra, cwd, max_tx, timeout,
               memlimit):
     """One ESBMC invocation, in its own cwd (the emitted filename is hardcoded).
@@ -1080,7 +1172,22 @@ def main():
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--memlimit", default="8g")
     ap.add_argument("--test-suffix", default="")
+    ap.add_argument("--esbmc-arg", action="append", default=[], dest="esbmc_arg",
+                    help="passed verbatim to BOTH esbmc runs, once per token: "
+                         "`--esbmc-arg --unwindset --esbmc-arg 64:512`. It "
+                         "exists because the ladder's own UNDECIDED-TRUNCATED "
+                         "refusal NAMES the loop to widen and this driver had "
+                         "no way to act on it. Strategy flags are REFUSED here "
+                         "-- see STRATEGY_FLAGS_REFUSED, which is measured, not "
+                         "cautious. Whatever is passed is recorded in put.json, "
+                         "because a region certified under one set of flags and "
+                         "a test emitted under another is two measurements.")
     a = ap.parse_args()
+
+    refusal = check_esbmc_args(a.esbmc_arg)
+    if refusal:
+        print(f"[put] REFUSED: {refusal}")
+        return 1
 
     region = {k: (int(str(v[0])), int(str(v[1])))
               for k, v in json.loads(a.region).items()}
@@ -1104,7 +1211,7 @@ def main():
     print("[put] step 1: emit the concrete suite (preamble source of truth)")
     out1, rc1, w1 = run_esbmc(
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
-        ["--generate-foundry-testcase", "--cov-report-json"],
+        ["--generate-foundry-testcase", "--cov-report-json"] + a.esbmc_arg,
         emit_dir, a.max_tx, a.timeout, a.memlimit)
     produced = sorted(f for f in os.listdir(emit_dir)
                       if f.endswith(".cov.t.sol"))
@@ -1163,7 +1270,7 @@ def main():
     out2, rc2, w2 = run_esbmc(
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
         ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
-         "--cov-report-json"],
+         "--cov-report-json"] + a.esbmc_arg,
         assert_dir, a.max_tx, a.timeout, a.memlimit)
     rows, summary, refusal, blocker = parse_ladder(out2)
     if refusal:
@@ -1336,6 +1443,10 @@ def main():
                    "ladder": [{"var": v, "text": t, "verdict": d}
                               for v, t, d in rows],
                    "ladder_summary": summary, "ladder_refusal": refusal,
+                   # A region certified under one set of flags and a test
+                   # emitted under another are two measurements; the artefact
+                   # has to say which one it is.
+                   "esbmc_extra_args": a.esbmc_arg,
                    "stats": stats, "notes": notes}, f, indent=2)
     return 0
 

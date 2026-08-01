@@ -56,7 +56,8 @@ import tempfile
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
-from solidity_path_put import EmittedFile, build_put   # noqa: E402
+from solidity_path_put import (EmittedFile, build_put,   # noqa: E402
+                               check_esbmc_args)
 
 
 # VERBATIM: bench/FeeVault, `--generate-foundry-testcase --focus-function
@@ -285,9 +286,37 @@ def test_uncomparable_env_quantity_is_disclosed_not_ignored():
     return bad
 
 
+def test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies():
+    """`--unwindset` through, every strategy flag stopped.
+
+    Both directions, because a passthrough that refuses everything is as useless
+    as one that refuses nothing. `--unwindset` is the one the ladder's own
+    UNDECIDED-TRUNCATED refusal names, and it moves only the symex side -- a
+    SUPERSET of executions, so it cannot make a path look infeasible that is not.
+    The strategy flags change which claims exist AND the bound they are answered
+    under, and the only measurement of that ran on a snapshot binary this note
+    itself marks unverified on newer builds.
+    """
+    bad = 0
+    bad += check(check_esbmc_args(["--unwindset", "64:512"]) is None,
+                 "--unwindset passes through")
+    bad += check(check_esbmc_args(["--partial-loops"]) is None,
+                 "--partial-loops passes through (the third repair the tool "
+                 "names)")
+    bad += check(check_esbmc_args([]) is None, "no extra args is fine")
+    for flag in ("--k-induction", "--incremental-bmc", "--inductive-step",
+                 "--loop-invariant", "--falsification", "--termination",
+                 "--forward-condition", "--k-induction-parallel"):
+        r = check_esbmc_args(["--unwindset", "64:512", flag])
+        bad += check(r is not None and flag in r,
+                     f"{flag} is refused even beside a legitimate flag")
+    return bad
+
+
 def main():
     bad = 0
-    for t in (test_pin_with_a_slot_is_established,
+    for t in (test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
+              test_pin_with_a_slot_is_established,
               test_pin_without_a_slot_is_reported_not_dropped,
               test_region_bound_still_wins_over_a_duplicate_pin,
               test_env_agreement_emits_when_the_preamble_matches,
