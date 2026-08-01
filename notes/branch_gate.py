@@ -458,10 +458,37 @@ def truncation_from_logs(bench, runs):
     """The three deflating counters, read from the logs of JOURNAL-NAMED runs.
 
     Used only for collections made before `pathcov_collect.one_run` recorded
-    them. Keyed on the journal's `tag` rather than on a glob, so a directory left
-    behind by an earlier collection cannot contribute: those belong to units the
-    current collection SKIPS, which never call `one_run` and so never have their
-    workdir cleared.
+    them.
+
+    ---- THE REASON THIS DOCSTRING USED TO GIVE WAS INVERTED ----
+
+    It said: keyed on the journal's `tag` rather than on a glob, "so a directory
+    left behind by an earlier collection cannot contribute: those belong to units
+    the current collection SKIPS, which never call `one_run` and so never have
+    their workdir cleared."
+
+    The second half is true and it is the reason the leftovers EXIST; it is not a
+    reason they are excluded. `pathcov_collect.py`'s skip branch calls
+    `record(rec)` for every skipped unit, so a SKIPPED TAG IS IN THE JOURNAL --
+    keying on `tag` therefore SELECTS such a directory rather than avoiding it.
+    MEASURED on this corpus: 60 leftover `work/<tag>/run.log` files from
+    2026-07-30 sit under skipped tags (aqua 2, EscrowDst 14, EscrowSrc 14,
+    farming 16, limit_order 14), and calling this function with the journal's
+    full `runs` list returns 60 extra rows.
+
+    The protection is real but it lives in the CALLER, which filters
+    `not r.get("skipped")` before calling. So no published number is or was
+    wrong. What was wrong is that the guarantee was asserted HERE, next to code
+    that does not implement it -- which is this project's own "a disclosure
+    promised in a comment and not implemented reads as handled" shape, and it
+    would trap the next caller.
+
+    So the filter is now applied here TOO, as defence in depth, and the reason is
+    stated accurately. On this corpus the three totals are unchanged by it (the
+    leftovers are `--function`-routed library runs that instrumented nothing and
+    printed none of the three warning lines, so every one contributed 0); the row
+    COUNT drops by exactly those 60. Both directions are checked rather than
+    assumed.
 
     Returns [] when no log is readable, which the caller renders as `?` rather
     than as 0.
@@ -469,6 +496,10 @@ def truncation_from_logs(bench, runs):
     work = PATHCOV / bench / "work"
     out = []
     for r in runs:
+        # Defence in depth: the caller already does this, and a reader of THIS
+        # function must not have to know that to use it safely.
+        if r.get("skipped"):
+            continue
         log = work / str(r.get("tag", "")) / "run.log"
         if not log.exists():
             continue
