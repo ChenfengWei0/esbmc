@@ -116,11 +116,19 @@ smt_convt::resultt z3_convt::dec_solve()
   // reason is unavailable: on `st1inch --focus-function setFeeReceiver --z3
   // --tuple-node-flattener`, 8 of 10 VCCs return no verdict after 9.6-11.3s
   // while z3's own `timeout` parameter is set to 120000ms and the report prints
-  // `0 claim(s) abandoned over budget`. So z3 gives up ~110s early, on an
-  // 875-assignment formula, for a reason NOTHING in this tree records. Whether
-  // that is an internal resource bound or an incomplete fragment changes which
-  // Threats entry the benchmark's 0% belongs to, and the two are not the same
-  // limitation.
+  // `0 claim(s) abandoned over budget`. So z3 gives up ~110s early on an
+  // 875-assignment formula, for a reason nothing in this tree recorded BEFORE
+  // this line existed.
+  //
+  // AND THE LINE ANSWERED IT, so the question is not left open here: with it in
+  // place every no-verdict solve reports `reason: out of memory` — an
+  // exhausted resource bound, not an incomplete fragment. Which of those it was
+  // decides which Threats entry the benchmark's 0% belongs to, and they are not
+  // the same limitation. Raising the budget does NOT fix it: 4g and 16g give
+  // identical verdicts with per-solve time scaling ~4x, so the extra memory is
+  // consumed and what is exhausted is our own RLIMIT_DATA
+  // (esbmc_parseoptions.cpp:779-793). Full readings, fixed before that run:
+  // notes/coverage/D14-memlimit-discriminator.md.
   log_warning(
     "z3 returned `unknown` (reason: {}); this is reported as `solver-unknown` "
     "and is NOT a proof that the property holds",
