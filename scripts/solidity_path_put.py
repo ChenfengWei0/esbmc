@@ -702,9 +702,36 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
 
     new_call, _ = rewrite_call_args(call_line, unit, repl)
 
-    # --- entry-state region coordinates: ESTABLISHED with vm.store ----------
+    # --- entry-state coordinates: ESTABLISHED with vm.store -----------------
+    #
+    # A PINNED state coordinate is established here too, and it is not a
+    # refinement -- leaving it out emitted a test that is not in the slice its
+    # own header claims. `state.<v> == k` is `[k, k]`: the same statement about
+    # the entry state a width-one region bound makes, arrived at by a different
+    # route (the operator named it rather than the ladder measuring it), and
+    # certification treats the two identically -- `main()` builds the assert
+    # spec by concatenating the region bounds with `{lo: v, hi: v}` rows for the
+    # pins, so ESBMC has already been answering about the pinned value.
+    #
+    # MEASURED, on FeeVault.setDiscount: the guard is `msg.sender == owner`, and
+    # the emitter's concrete case for the success path pranks `msg.sender = 0`
+    # while `owner` keeps the value the CONSTRUCTOR gave it (the test contract's
+    # own address, since `owner = msg.sender` at deployment). That case is
+    # `[FAIL: EvmError: Revert]` under forge -- the require it was generated to
+    # walk past rejects it. Pinning owner is what makes the path certifiable at
+    # all (it turns a cross-coordinate relation, out of scope by Definition 6,
+    # into coordinate-equals-constant), so the pin is not decoration: the region
+    # is a statement about the slice `owner == 0`, and a test that never puts
+    # the contract in that slice is evidence about a different execution.
+    #
+    # A pin the layout cannot reach is reported through the SAME `state_skipped`
+    # channel as an unreachable region bound, because the consequence is the
+    # same one: the emitted test is not known to be inside the certified slice,
+    # and that has to be visible on the test rather than inferred from silence.
     store_lines, stored, state_skipped = [], [], []
-    for name, (lo, hi) in sorted(region.items()):
+    state_items = [(n, b) for n, b in region.items()]
+    state_items += [(n, (v, v)) for n, v in pins.items() if n not in region]
+    for name, (lo, hi) in sorted(state_items):
         if not name.startswith("state."):
             continue
         v = name[6:]
@@ -767,8 +794,21 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"  //   {n} in [{lo}, {hi}]"
                    + ("  \\ {" + ", ".join(str(h) for h in hs) + "}"
                       if hs else ""))
+    # A pin is printed with WHETHER THE TEST ESTABLISHES IT, because those are
+    # two different tests. `PIN state.owner == 0` alone reads as a precondition
+    # the test satisfies; it only is one if a `vm.store` above put the contract
+    # in that state. The unestablished ones are the interesting line -- they say
+    # the test runs beside the certified slice rather than inside it.
+    established = {s.split(" := ", 1)[0] for s in stored}
     for n, v in sorted(pins.items()):
-        out.append(f"  //   PIN {n} == {v}")
+        if n in established:
+            out.append(f"  //   PIN {n} == {v}   [ESTABLISHED by vm.store "
+                       f"below]")
+        elif n.startswith("state."):
+            out.append(f"  //   PIN {n} == {v}   [NOT ESTABLISHED -- see the "
+                       f"dropped-bound line]")
+        else:
+            out.append(f"  //   PIN {n} == {v}")
     out.append(f"  // Arguments the region does NOT bound keep the "
                f"counterexample's own")
     out.append(f"  // literal: the region is a statement about THAT slice, "

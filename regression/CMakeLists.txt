@@ -91,6 +91,18 @@ add_test(NAME regression/scripts/solidity_path_generalise
 set_tests_properties(regression/scripts/solidity_path_generalise
   PROPERTIES TIMEOUT 60 LABELS "regression;scripts/")
 
+# Stage-4 PUT driver: the same shape, and registered for the same reason. What
+# it pins is that a certified region's slice reaches the emitted test WHOLE --
+# an entry-state coordinate named by a PIN was printed in the header and then
+# dropped, so the test ran beside the certified slice instead of inside it, and
+# the emitter's own concrete case for that path is `[FAIL: EvmError: Revert]`
+# because of it. Pure-function: no ESBMC, no solver, no forge.
+add_test(NAME regression/scripts/solidity_path_put
+         COMMAND ${Python_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_solidity_path_put.py)
+set_tests_properties(regression/scripts/solidity_path_put
+  PROPERTIES TIMEOUT 60 LABELS "regression;scripts/")
+
 # The reducer's mid-rebuild guard. Registered for the same reason as the driver
 # above: a reduction of st1inch was silently invalidated by rebuilding esbmc
 # while it ran, and nothing reported it -- the reducer kept printing progress and

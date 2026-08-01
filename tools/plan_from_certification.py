@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """generalise-result.json + cov-report.json  ->  testplan.json
 
-The stage that was structurally missing. Before it, `foundry.cpp` rendered a
-test from a COUNTEREXAMPLE, inside ESBMC, while certification ran afterwards in
-another process -- so no emitted test could ever carry a certified region. This
-reverses that order:
+⚠ NOT THE SHIPPING ROUTE, and an earlier version of this header said it was.
+The route that produces a PUT with a proved oracle end to end is
+`scripts/solidity_path_put.py`; see the RETRACTION near the end of this file for
+what was claimed here and why it was wrong. This script targets the RICHER
+TestPlan shape (named accounts, a pre-state established by real transactions,
+semantic assertions over locals and return values) and refuses, naming which
+producer each missing part would have to come from.
+
+The order both routes share, and which `foundry.cpp` alone cannot follow --
+inside ESBMC a test is rendered from a COUNTEREXAMPLE while certification runs
+afterwards in another process, so no emitted test can carry a certified region:
 
     witness -> region certification -> [HERE] -> emitter -> forge
 
@@ -165,38 +172,65 @@ def main(argv):
             "with extra syntax, not a parameterized unit test -- emit it "
             "through the replay path instead")
 
-    # The Solidity type of each parameter. NOT guessed from the value: an
-    # address and a uint256 both arrive as integers, and rendering an address as
-    # uint256 changes what `bound` produces.
+    # ---- RETRACTION, kept visible rather than quietly edited out -----------
     #
-    # ⛔ NOT AVAILABLE HERE, and this is the honest stopping point rather than a
-    # place to guess. The certification result carries coordinate NAMES and
-    # bounds; the parameter TYPES live in the unit's signature. Wiring them
-    # through is a change to the result schema, not something to infer.
+    # This script used to stop here and print "STAGE 3 DOES NOT EXIST", naming
+    # that as the reason the pipeline emits no PUT with an oracle. THAT CLAIM
+    # WAS FALSE, and it was false about this repository, not about the method:
+    #
+    #   * stage 3 is `--path-cov-assert <spec.json>` inside ESBMC. It prints a
+    #     POST-STATE ASSERTION LADDER (post ==/!=/>=/<=/>/< pre, and delta
+    #     bounds) with a HOLDS/REFUTED/no-verdict per rung, and it has thirteen
+    #     `solidity_path_cov_assert_*` regressions, `_r1_pair_written` and
+    #     `_r1_pair_unchanged` among them;
+    #   * stage 4 is `scripts/solidity_path_put.py`, 1151 lines, which already
+    #     runs the emitter for the preamble, runs the ladder, reads the storage
+    #     layout from `forge inspect`, reads the parameter types from the solc
+    #     AST, and writes a PUT.
+    #
+    # The two facts this script said were unobtainable -- parameter types and a
+    # proved assertion -- were both already being obtained, a directory away.
+    # The claim was written from memory instead of by opening the scripts, and
+    # it is recorded here rather than deleted because a retraction that leaves
+    # no trace is how the same wrong premise gets re-derived.
+    #
+    # WHAT THIS SCRIPT IS FOR NOW. `solidity_path_put.py` establishes the entry
+    # state with `vm.store` and its oracle is the ladder's own pre/post
+    # relations. The TestPlan schema (`bench/FeeVault/schema/testplan.json`)
+    # describes a STRICTLY RICHER artefact: a fixture of named accounts, a
+    # pre-state established by real transactions (`via.kind == "call"`), locals,
+    # and semantic assertions such as `net == amount - fee`. Nothing in the
+    # certification result or the ladder produces those, so this route still
+    # ends in a refusal -- but the refusal is now about the RICHER shape, and it
+    # names what would have to produce each part.
     raise Refuse(
-        "STOPPED, and the reason is the point of this run.\n\n"
-        f"The verifier certified a real region for {contract}.{unit} "
-        f"enc={a.enc} (exit={exit_kind}): "
+        "the certified region is real and reaches this point, and the TestPlan "
+        "shape is what cannot be filled from it.\n\n"
+        f"CERTIFIED for {contract}.{unit} enc={a.enc} (exit={exit_kind}): "
         + ", ".join(f"{p['name']} in [{p['lo']}, {p['hi']}]" for p in params)
         + (f", concrete {concrete_env}" if concrete_env else "")
         + (f", state {state_pins}" if state_pins else "")
         + (f", points {points}" if points else "")
-        + ".\n\nTwo things are missing before a plan can be written, and "
-          "NEITHER may be filled in by this script:\n"
-          "  (1) the Solidity TYPE of each parameter. `generalise-result.json` "
-          "carries coordinate names and integer bounds; the types live in the "
-          "unit's signature and must be threaded through the result schema. "
-          "Guessing (an address and a uint256 are both integers here) changes "
-          "what bound() produces.\n"
-          "  (2) an ASSERTION. The deliverable is defined as carrying at least "
-          "one proved oracle. The certification query proves WHICH PATH the "
-          "region walks, not what the call leaves behind -- that is stage 3 "
-          "(assertion synthesis), which the paper leaves as a section header "
-          "with no content and which does not exist in the implementation "
-          "either. Writing an assertion here would make `manual: false` false.\n\n"
-          "So B is not 0 because of wiring any more: the wiring now reaches "
-          "this point with a certified region in hand. It is 0 because STAGE 3 "
-          "DOES NOT EXIST.")
+        + "\n\nFor a PUT over exactly this region, with an oracle proved by "
+          "ESBMC's assertion ladder, use the route that ships:\n\n"
+          f"  scripts/solidity_path_put.py --contract {contract} "
+          f"--unit {unit} --enc {a.enc} \\\n"
+          "      --sol <flat.sol> --ast <flat.solast> --forge-project <proj> "
+          "\\\n      --region '<the box above, as JSON>' --pin <each pin>\n\n"
+          "What THIS route additionally needs, and where each part would have "
+          "to come from -- none of it may be invented here:\n"
+          "  (1) `pre_state[].via` -- the TRANSACTION SEQUENCE that puts the "
+          "contract in the entry state. The certification result names the "
+          "entry state as VALUES (`state.owner == 0`); it does not name a "
+          "sequence of calls that reaches them, and `solidity_path_put.py` "
+          "sidesteps the question with `vm.store`. Deriving a sequence is a "
+          "reachability problem nothing in this pipeline solves today.\n"
+          "  (2) semantic assertions over LOCALS and RETURN VALUES (`net == "
+          "amount - fee`). The ladder speaks about STATE VARIABLES, pre versus "
+          "post. A return value is not a state variable, so no rung is about "
+          "it, and writing one here would make `manual: false` a lie.\n"
+          "  (3) named fixture ACCOUNTS. `alice` is a modelling choice a human "
+          "made; the region says `msg.sender in [0, 0]`.")
 
 
 if __name__ == "__main__":
