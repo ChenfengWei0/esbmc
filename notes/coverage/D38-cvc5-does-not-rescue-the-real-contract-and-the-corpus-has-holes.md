@@ -100,6 +100,17 @@ in their work dir is a leftover from an earlier collection. **Any consumer that
 walks the tree for `cov-report.json` counts them as this collection's output**,
 and this script did exactly that until section E existed.
 
+**Scope, checked rather than assumed: the gate is NOT exposed to this.** All 48
+sit under `work/`. `reports/` is reconciled twice — `pathcov_collect.collect()`
+deletes any `reports/*.json` the journal does not name and counts the removal on
+stdout, and `branch_gate.pathcov_reports_for()` additionally `sys.exit`s if the
+file count disagrees with the index. Verified by listing: `reports/` holds
+exactly the live runs (aqua 6, farming 11, EscrowDst 3, limit_order 0) with no
+library units in it. `work/` is the unreconciled half, and the source already
+says so — `truncation_from_logs`'s docstring and `one_run`'s comment both name
+the mechanism (a skipped unit never calls `one_run`, so its directory is never
+cleared). What is new here is the count and the fact that nothing deletes them.
+
 The same class was already fixed once, in `solidity_path_generalise.py`, by
 deleting the stale report *before* the run. The collector does not do that for a
 unit it skips.
@@ -118,16 +129,48 @@ iostream and the log mutex are unsafe in a handler), so a killed unit leaves no
 file.
 
 ⇒ A tree-walking consumer does not see a **zero** for that unit — **it does not
-see the unit**. The paths leave the numerator and the denominator together and
-the benchmark's percentage goes **UP**. `EscrowDst` reads `8/8 + 5/5 + 12/12 =
-25/25 = 100 %` on the units that survived, with `publicWithdraw`'s 5 paths simply
-absent. This is `missing-input-silently-rewrites-scope` in a new place: an absent
-report reads as "this benchmark had fewer units" when it means "a unit was too
-hard". Note two of the three are `rescueFunds` — the same shape in two different
-contracts, which is a lead, not a coincidence.
+see the unit**. Note two of the three are `rescueFunds` — the same shape in two
+different contracts, which is a lead, not a coincidence.
 
 (`EscrowDst.publicWithdraw` is task #22's unit. Its 780-VCC problem now has a
-second face: it is not merely expensive, it is *invisible*.)
+second face: it is not merely expensive, it is *invisible* to anything reading
+`reports/`.)
+
+### ⚠ CORRECTION — this section first overstated its blast radius, and the gate is NOT affected
+
+<details>
+<summary>What it said, and why it is wrong (kept visible rather than deleted)</summary>
+
+It said: "the paths leave the numerator **and the denominator** together and the
+benchmark's percentage goes **UP**. `EscrowDst` reads `8/8 + 5/5 + 12/12 = 25/25
+= 100 %`."
+
+**False for `branch_gate.py`, which is the number that matters.** Checked by
+running it:
+
+* the gate's denominator is the **canonical decision count from an AST walk of
+  the original source** — `recomputed_denominator` cross-checks it per file and
+  reports `agrees on all in-scope file(s)` for all six benchmarks. It does not
+  come from our runs at all, so **a killed unit cannot shrink it**;
+* therefore a killed unit removes decisions from the **numerator only**, and the
+  gate row goes **DOWN**. `cross_chain_swap_EscrowDst` shows `0 / 2
+  contracts/EscrowDst.sol` — `publicWithdraw` lives in that file, and its absence
+  costs reach rather than hiding it;
+* and the gate **already discloses it**: `killed` is its own column (1 each for
+  EscrowDst, farming, st1inch) and the verdict reads `FAIL (partial)`.
+
+The 25/25 = 100 % figure is what a naive `sum(F)/sum(paths_total)` over
+`reports/*.json` yields — a real shape (that is how a path-ratio summary reads),
+but not the gate, and the section stated it as if it were.
+
+**Two things stay true**: the unit really is invisible to anything globbing
+`reports/`, and the gate row really is a lower bound for that benchmark. What was
+wrong was the direction of the error and the claim that the gate is exposed to it.
+
+**Why it was wrong**: the direction was inferred from the shape of a ratio without
+opening the consumer that computes it. `branch_gate.py` was 38 KB away the whole
+time. Same failure as §5 below, in the same note.
+</details>
 
 ### (c) The corpus spans FOUR builds, split cleanly BY BENCHMARK
 

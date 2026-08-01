@@ -543,7 +543,34 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                     "contract": cname, "function": fname, "kind": ckind,
                     "binary": binary_identity(),
                 }
-                print(f"  [{i}/{len(todo)}] {tag}  (skipped: library)",
+                # AND CLEAR ITS WORKDIR. A skipped unit never calls `one_run`,
+                # which is the only thing that empties `work/<tag>/`, so an
+                # EARLIER collection's cov-report.json and run.log survive there
+                # untouched -- for a unit this collection did not run at all.
+                #
+                # MEASURED before this line existed: 48 of the 95
+                # cov-report.json files under notes/coverage/pathcov/ were
+                # leftovers of exactly this kind, every one belonging to a
+                # `library-has-no-dispatcher` record (D38 section 4a). `reports/`
+                # is reconciled against the journal and `branch_gate.py` refuses
+                # a count mismatch, so the GATE never saw them -- but every
+                # ad-hoc consumer that walks the tree does, and this project has
+                # written more than one of those.
+                #
+                # Removed rather than left with a marker: the journal already
+                # records the skip and its full reasoning, so the directory
+                # carries no information that is not better recorded elsewhere,
+                # and a stale file that exists is a file something will read.
+                wd = out_dir / "work" / tag
+                removed = 0
+                if wd.is_dir():
+                    for p in sorted(wd.glob("*")):
+                        if p.is_file():
+                            p.unlink()
+                            removed += 1
+                print(f"  [{i}/{len(todo)}] {tag}  (skipped: library"
+                      + (f"; cleared {removed} stale file(s) from work/{tag})"
+                         if removed else ")"),
                       flush=True)
                 record(rec)
                 continue
