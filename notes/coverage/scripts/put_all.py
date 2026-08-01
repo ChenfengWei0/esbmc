@@ -17,6 +17,7 @@ esbmc is run ONE AT A TIME, by construction: each PUT costs two sequential
 esbmc invocations and this loop is serial.
 """
 
+import argparse
 import json
 import os
 import re
@@ -98,6 +99,20 @@ def ensure_project(bench, flat):
 
 
 def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--scope", choices=("focus", "whole"), default="focus",
+                    help="which of the two settled command lines to run in. "
+                         "Default `focus`, which with --max-tx 1 is the GATE "
+                         "cell -- the one every PUT in this directory was "
+                         "produced in before it was an argument.")
+    ap.add_argument("--max-tx", type=int, default=1)
+    ap.add_argument("--auto-unwind", type=int, default=0,
+                    help="passed to the driver: on an UNDECIDED-TRUNCATED "
+                         "ladder, widen the loops the tool NAMED and retry, up "
+                         "to N times. aqua `dock` is the recorded case.")
+    args = ap.parse_args()
     if not os.path.exists(CERT):
         sys.exit(f"no certify sweep at {CERT}")
     rows = []
@@ -133,7 +148,13 @@ def main():
                "--ast", ast, "--contract", contract, "--unit", unit,
                "--enc", str(enc), "--region", json.dumps(region),
                "--holes", json.dumps(holes),
-               "--forge-project", proj, "--workdir", wd, "--timeout", "600"]
+               "--forge-project", proj, "--workdir", wd, "--timeout", "600",
+               # The CELL is a property of the measurement, not a default of
+               # this sweep. INVOCATION_DECISIONS.md prints two command lines
+               # and forbids quoting one into the other's table, so it is an
+               # argument here and it is printed with the result.
+               "--scope", args.scope, "--max-tx", str(args.max_tx),
+               "--auto-unwind", str(args.auto_unwind)]
         for n, v in pins.items():
             cmd += ["--pin", f"{n}={v}"]
         print(f"\n--- {bench}.{unit} enc={enc} ---")
@@ -146,6 +167,18 @@ def main():
 
     print("\n" + "=" * 84)
     print("STAGE 4: certified region -> PUT with oracle")
+    # THE CELL TRAVELS WITH THE TABLE. A run of the ARTEFACT cell may not be
+    # quoted into the branch-coverage gate table and a run of the GATE cell may
+    # not be quoted as the method's reach, so the table has to say which it is
+    # rather than leaving the reader to remember the flags.
+    cells = sorted({(r[4].get("cell") or {}).get("name", "UNRECORDED")
+                    for r in results})
+    print(f"CELL: scope={args.scope} --solidity-max-tx={args.max_tx} "
+          f"-> {', '.join(cells) if cells else 'no run recorded one'}"
+          + (f", --auto-unwind {args.auto_unwind}" if args.auto_unwind else ""))
+    if len(cells) > 1:
+        print("** MIXED CELLS IN ONE TABLE. These rows are not comparable and "
+              "the table must not be quoted anywhere. **")
     print("=" * 84)
     print(f"{'benchmark':<28}{'unit':<16}{'enc':>5}{'rc':>4}"
           f"{'fuzz':>6}{'asserts':>9}  outcome")
