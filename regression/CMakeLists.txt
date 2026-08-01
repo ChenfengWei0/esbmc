@@ -61,7 +61,19 @@ function(add_esbmc_regression folder modes)
         list(REMOVE_ITEM SUBDIRS bucketsort)
     endif()
     foreach(test ${SUBDIRS})
-        add_esbmc_regression_test(${folder} "${modes}" ${test})
+        # A subdirectory without a test.desc is not a test. testing_tool.py
+        # asserts the file exists and dies with an AssertionError if it does
+        # not, so registering such a directory produces a test that can only
+        # ever fail and that says nothing about the tool.
+        #
+        # This is not hypothetical: `ctest` writes its own `Testing/` artifact
+        # directory into the suite directory (it runs with that cwd), and the
+        # NEXT `cmake .` -- which is mandatory after adding a regression, since
+        # SUBDIRLIST is evaluated at configure time -- then registers it. So the
+        # ordinary act of adding a test manufactures a permanently red one.
+        if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${regression}/${test}/test.desc)
+            add_esbmc_regression_test(${folder} "${modes}" ${test})
+        endif()
     endforeach()
 endfunction()
 
