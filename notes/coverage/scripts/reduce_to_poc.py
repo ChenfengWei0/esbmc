@@ -633,8 +633,47 @@ def main():
     print(f"  pass order: {' -> '.join(n for n, _ in order)}"
           f"{'   (--types-first)' if a.types_first else '   (default)'}\n",
           flush=True)
-    for _name, fn in order:
-        fn()
+
+    # ---- RUN THE WHOLE SEQUENCE TO A GLOBAL FIXPOINT ----
+    #
+    # Each pass reaches its OWN fixpoint, and the four then ran once, in order,
+    # and stopped. That is not a fixpoint of the reduction: a pass can make an
+    # EARLIER pass's rejects removable, and the earlier pass never runs again.
+    #
+    # MEASURED, and in both directions, which is why this is a defect of the
+    # sequence rather than an argument about the order:
+    #   * default order (functions first): emptying the bodies is what makes a
+    #     whole `library` or `contract` removable -- the type pass's own comment
+    #     says so -- but by then the function pass is over, and a type removal
+    #     that frees up more functions gets no second look.
+    #   * --types-first, run on st1inch's flat: the type pass finished in about
+    #     five minutes having removed exactly two LEAF interfaces (4874 -> 4772).
+    #     Every large block -- SafeCast 1144 lines, Math 674, SafeERC20 473 --
+    #     was tried and rejected, because removing something another type
+    #     references does not compile. Those are precisely the ones that become
+    #     removable AFTER the function pass, and this order guarantees they are
+    #     never retried.
+    #
+    # With a global fixpoint the order stops deciding the RESULT and decides only
+    # the speed of reaching it, which is the property a reducer should have.
+    #
+    # It also corrects a cost model that was wrong in both directions. The claim
+    # "every candidate costs a compile plus an ESBMC run, so the candidate count
+    # IS the cost" is false: a candidate that does not COMPILE is rejected by
+    # solc in seconds and never reaches ESBMC. That is why 30 type-level
+    # candidates took five minutes rather than the twenty-two the count
+    # predicted -- and why cheap rejected rounds are affordable to repeat.
+    sweep = 0
+    while True:
+        sweep += 1
+        before = len(text.splitlines())
+        for name, fn in order:
+            fn()
+        after = len(text.splitlines())
+        print(f"  -- sweep {sweep}: {before} -> {after} lines"
+              f"{'  (fixpoint)' if after == before else ''}", flush=True)
+        if after == before:
+            break
 
     print(f"\n  reduced to {len(text.splitlines())} lines in "
           f"{round(time.time() - t0)}s\n", flush=True)
@@ -643,9 +682,12 @@ def main():
     if a.out:
         outp = Path(a.out)
         outp.parent.mkdir(parents=True, exist_ok=True)
-        # The FINAL write replaces the last checkpoint's caveat: every pass has
-        # now run to fixpoint, so this file really is minimal under the four
-        # passes -- which the checkpoints deliberately never claimed.
+        # The FINAL write replaces the last checkpoint's caveat: the whole
+        # SEQUENCE has now run to a fixpoint -- a sweep that removed nothing --
+        # so this file really is minimal under the four passes, which the
+        # checkpoints deliberately never claimed. Each pass reaching its own
+        # fixpoint was not enough: one pass can make an earlier pass's rejects
+        # removable, so "minimal" needs a sweep that changes nothing.
         outp.write_text(banner_for(a, shown) + text)
         print(f"  written to {outp}")
     return 0
