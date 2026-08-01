@@ -108,9 +108,19 @@ def stats(path):
             summary.append(s)
     if cur is not None:
         seq.append(cur)
+    # Counted over the WHOLE text, not sampled: an external call is modelled as
+    # nondet re-entry into the contract's own dispatcher and shows up as
+    # `_ESBMC_Nondet_Extcall_*` unwinding; the Solidity string model unwinds
+    # `nondet_string` / `_str_assign`. Both are candidates for "what makes this
+    # unit's query different from that one's", and a candidate that is counted
+    # can be ruled out, while one that is assumed cannot.
+    extcall = text.count("_ESBMC_Nondet_Extcall")
+    strloop = (text.count("function nondet_string")
+               + text.count("function _str_assign"))
     return {"auto": auto, "solvers": solvers, "symex": symex, "vcc": vcc,
             "instr": instr, "seq": seq, "truncated": truncated,
             "degradation": degradation, "summary": summary,
+            "extcall": extcall, "strloop": strloop,
             "lines": len(lines)}
 
 
@@ -173,10 +183,62 @@ def report(path, st):
     print()
 
 
+def brief(paths):
+    """One line per log: the ratio and the duplicate count, nothing else.
+
+    For sweeping a whole benchmark's `work/*/run.log` at once. The full report
+    is right for one log and unreadable for twenty-two, and an unreadable report
+    is one nobody checks.
+    """
+    # `extcall` and `strloop` are here because the ratio column raised the
+    # question and neither guess should be allowed to stand in for a count. An
+    # external call is modelled as nondet RE-ENTRY into the contract's own
+    # dispatcher, and the summary of that mechanism says one instrumented assert
+    # is instantiated once per re-entry level -- so if the ratio is re-entry
+    # depth, these two columns move together. If they do not, it is something
+    # else, and the table says so instead of me.
+    print(f"{'unit':<34}{'paths':>6}{'VCC':>6}{'ratio':>7}"
+          f"{'solves':>8}{'dupkeys':>9}{'disagree':>10}"
+          f"{'extcall':>9}{'strloop':>9}  backend")
+    for p in paths:
+        f = Path(p)
+        if not f.exists():
+            print(f"{p:<34}  MISSING")
+            continue
+        st = stats(f)
+        name = f.parent.name if f.name == "run.log" else f.stem
+        n_paths = st["instr"][0] if st["instr"] else None
+        n_vcc = st["vcc"][0] if st["vcc"] else None
+        ratio = (f"{n_vcc / n_paths:.2f}"
+                 if n_paths and n_vcc else "-")
+        by_key = {}
+        for e in st["seq"]:
+            by_key.setdefault(e["claim"], []).append(e)
+        dup = {k: v for k, v in by_key.items() if len(v) > 1}
+        dis = sum(1 for v in dup.values()
+                  if len({e["verdict"] for e in v}) > 1)
+        back = (f"AUTO:{st['auto']}" if st["auto"]
+                else (list(st["solvers"])[0] if st["solvers"] else "-"))
+        print(f"{name:<34}{str(n_paths):>6}{str(n_vcc):>6}{ratio:>7}"
+              f"{len(st['seq']):>8}{len(dup):>9}{dis:>10}"
+              f"{st['extcall']:>9}{st['strloop']:>9}  {back}")
+
+
 def main(argv):
     if len(argv) < 2:
         sys.exit(__doc__)
-    for p in argv[1:]:
+    args = [a for a in argv[1:] if a != "--brief"]
+    targets = []
+    for a in args:
+        p = Path(a)
+        if p.is_dir():
+            targets += sorted(p.glob("*/run.log")) + sorted(p.glob("*.log"))
+        else:
+            targets.append(p)
+    if "--brief" in argv:
+        brief(targets)
+        return 0
+    for p in targets:
         f = Path(p)
         if not f.exists():
             print(f"MISSING {p}\n")

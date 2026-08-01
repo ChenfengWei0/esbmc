@@ -59,9 +59,9 @@ contract D32 {{
     address public feeReceiver;
 
 {decls}
-    constructor(uint256 expBase_) {{
+    constructor(uint256 expBase_, address feeReceiver_) {{
         owner = msg.sender;
-{body}    }}
+{body}{ctor_call}    }}
 
     /// The same shape as st1inch's, and the unit under measurement.
     function setFeeReceiver(address feeReceiver_) public {{
@@ -81,12 +81,27 @@ contract D32 {{
 
 
 def main(argv):
-    if len(argv) != 3:
+    if len(argv) < 3:
         sys.exit(__doc__)
     depth = int(argv[1])
     if depth < 1:
         sys.exit("depth must be >= 1")
     out = Path(argv[2])
+    # ---- THE SECOND FACTOR: does the CONSTRUCTOR call the unit? ----
+    #
+    # `St1inch.sol:108` does exactly that -- `setFeeReceiver(feeReceiver_)`
+    # inside the constructor -- and `setFeeReceiver` is the only `public`
+    # function of that contract the constructor calls. Every other setter is
+    # `external`, which Solidity forbids calling internally.
+    #
+    # That is the difference the corpus shows: `setMaxLossRatio` (external) is
+    # 5 paths / 5 VCCs, `setFeeReceiver` (public, called from the constructor) is
+    # 5 paths / 10 VCCs, and it is the ONLY unit of st1inch with a ratio of 2 and
+    # no external call. The unit's body then has TWO identities -- one execution
+    # in constructor scope, one under the dispatcher -- and the instrumented
+    # asserts run in both while sharing ONE claim key.
+    ctor_call = "        setFeeReceiver(feeReceiver_);\n" \
+        if "--ctor-calls-unit" in argv else ""
 
     decls = "".join(f"    uint256 public immutable T{i};\n" for i in range(depth))
     body = ["        T0 = expBase_;\n"]
@@ -94,8 +109,10 @@ def main(argv):
         body.append(f"        T{i} = (T{i - 1} * T{i - 1}) / _ONE_E18;\n")
 
     out.write_text(TEMPLATE_HEAD.format(depth=depth, decls=decls,
-                                        body="".join(body), last=depth - 1))
-    print(f"wrote {out}  (chain depth {depth})")
+                                        body="".join(body), last=depth - 1,
+                                        ctor_call=ctor_call))
+    print(f"wrote {out}  (chain depth {depth}"
+          + (", CONSTRUCTOR CALLS THE UNIT" if ctor_call else "") + ")")
     return 0
 
 
