@@ -71,12 +71,27 @@ it; `option_matrix.py` prints it beside the report contents rather than instead
 of them. Both are correct today, and this is written down so that neither is
 "simplified" later into an exit-code check.
 
-**4. `--focus-function` does not reduce what is INSTRUMENTED.** All six cells
-report 2846 paths across 6 units — the whole contract's path set, identical to
-the whole-contract run. Focus narrows which unit the dispatcher enters, not what
-gets instrumented, so 2844 of the claims are `unit-not-entered`. That is why a
-per-method collection's per-report `paths_total` is a contract-level number and
-must never be read as "this unit has 2846 paths".
+**4.** ~~`--focus-function` does not reduce what is INSTRUMENTED.~~ **⛔ NO LONGER
+TRUE, and struck rather than deleted because the reasoning it supported is still
+worth reading.** As measured here — all six cells reporting 2846 paths across 6
+units, the whole contract's path set, with 2844 claims `unit-not-entered` — this
+was a correct statement about the build of the day. The instrumentation
+narrowing landed afterwards (task #1), and the tool now says so on stdout:
+
+    --solidity-path-coverage: --focus-function 'setFeeReceiver' narrowed
+    INSTRUMENTATION to 1 unit(s); 38 other in-scope unit(s) were not enumerated
+    at all. Their paths are absent from the denominator ON PURPOSE ...
+
+Re-measured 2026-08-01 on `notes/coverage/poc/F01_MultiFocus.sol` (three units
+with three different path counts, built for exactly this):
+
+    one = 3    two = 4    three = 6    whole contract = 13    (3 + 4 + 6)
+    one,two = 7, and the run prints "2 unit(s) kept, 1 other(s) dropped"
+
+**What survives the strike** is the warning attached to it: a per-report
+`paths_total` from a collection made BEFORE the narrowing is a contract-level
+number wearing a unit-level label, and any table quoting those older reports
+still has to read it that way. What is withdrawn is only the present tense.
 
 ## Round 2 — `Aqua.dock`, and the flag that silently deletes every witness
 
