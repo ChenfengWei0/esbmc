@@ -331,6 +331,29 @@ def statements_of(text, lo, hi):
     return out
 
 
+def banner_for(a, shown):
+    """The provenance header. Factored out because it is now written on EVERY
+    checkpoint as well as at the end, and two copies of a provenance string is
+    two things that can drift -- the reduced file would then claim a
+    configuration the run did not use."""
+    return (
+        f"// MINIMAL REPRODUCTION, reduced automatically from {a.sol}\n"
+        f"// against the predicate `{a.fail_on}` at "
+        f"--solidity-max-tx {a.tx}, --memlimit {a.memlimit},\n"
+        f"// timeout {a.timeout}s, backend flags {shown},\n"
+        f"// focus-function "
+        f"{a.focus_function or '(whole contract)'}, solc {a.solc}.\n"
+        f"// The backend flags are part of the reproduction: the same query "
+        f"fails\n"
+        f"// differently under different backends, so a run without them is a "
+        f"run of\n"
+        f"// something else.\n"
+        f"// Every element still here is one whose removal made the failure "
+        f"GO AWAY,\n"
+        f"// so this file is not merely smaller -- each remaining part is "
+        f"load-bearing.\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sol", required=True)
@@ -417,6 +440,42 @@ def main():
     print(f"  original reproduces `{a.fail_on}`   "
           f"({len(text.splitlines())} lines)\n", flush=True)
 
+    # ---- CHECKPOINT AFTER EVERY ACCEPTED REMOVAL ----
+    #
+    # This used to write `--out` ONCE, at the very end. A reduction of a real
+    # benchmark runs for hours, and the expected way a run that long ends on this
+    # machine is a KILL -- so the single write at the end is the one moment that
+    # may never arrive.
+    #
+    # MEASURED: the st1inch `solver-unknown` reduction ran ~45 minutes, got from
+    # 4874 lines to 4016, and then the process was gone with NO output file. The
+    # only thing that survived was the progress log, and only because that run
+    # was launched with `python3 -u`. 858 lines of accepted removals -- every one
+    # of them paid for with a compile and an ESBMC run -- were thrown away.
+    #
+    # Same shape, and the same fix, as the counterexample journal: the end of the
+    # run may not happen, so write when the fact is established rather than when
+    # the run concludes. Each write is atomic (.tmp then rename), so a kill
+    # during the write cannot leave a half-file that still parses as Solidity.
+    def checkpoint(t, note):
+        if not a.out:
+            return
+        outp = Path(a.out)
+        outp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = outp.with_suffix(outp.suffix + ".tmp")
+        tmp.write_text(banner_for(a, shown) +
+                       f"// CHECKPOINT: {note}. This file is the reduction AS OF\n"
+                       f"// THAT POINT, written after every accepted removal "
+                       f"because a run\n"
+                       f"// this long is expected to be killed -- a single write "
+                       f"at the end is\n"
+                       f"// the one moment that may never arrive. It reproduces "
+                       f"the predicate;\n"
+                       f"// it is simply not known to be MINIMAL.\n" + t)
+        os.replace(str(tmp), str(outp))
+
+    checkpoint(text, "original, before any removal")
+
     # PASS 1 -- whole function-like blocks, largest first.
     changed = True
     while changed:
@@ -429,6 +488,7 @@ def main():
                 print(f"  dropped  {header[:70]}   "
                       f"-> {len(cand.splitlines())} lines", flush=True)
                 text = cand
+                checkpoint(text, f"PASS 1, {len(text.splitlines())} lines")
                 changed = True
                 break
 
@@ -443,6 +503,7 @@ def main():
                     print(f"  dropped  stmt: "
                           f"{text.splitlines()[k].strip()[:60]}", flush=True)
                     text = cand
+                    checkpoint(text, f"PASS 2, {len(text.splitlines())} lines")
                     changed = True
                     break
             if changed:
@@ -462,6 +523,7 @@ def main():
                 print(f"  dropped  TYPE {header[:65]}   "
                       f"-> {len(cand.splitlines())} lines", flush=True)
                 text = cand
+                checkpoint(text, f"PASS 3, {len(text.splitlines())} lines")
                 changed = True
                 break
 
@@ -475,6 +537,7 @@ def main():
                 print(f"  dropped  state: "
                       f"{text.splitlines()[k].strip()[:60]}", flush=True)
                 text = cand
+                checkpoint(text, f"PASS 4, {len(text.splitlines())} lines")
                 changed = True
                 break
 
@@ -485,23 +548,10 @@ def main():
     if a.out:
         outp = Path(a.out)
         outp.parent.mkdir(parents=True, exist_ok=True)
-        banner = (
-            f"// MINIMAL REPRODUCTION, reduced automatically from {a.sol}\n"
-            f"// against the predicate `{a.fail_on}` at "
-            f"--solidity-max-tx {a.tx}, --memlimit {a.memlimit},\n"
-            f"// timeout {a.timeout}s, backend flags {shown},\n"
-            f"// focus-function "
-            f"{a.focus_function or '(whole contract)'}, solc {a.solc}.\n"
-            f"// The backend flags are part of the reproduction: the same "
-            f"query fails\n"
-            f"// differently under different backends, so a run without them "
-            f"is a run of\n"
-            f"// something else.\n"
-            f"// Every element still here is one whose removal made the "
-            f"failure GO AWAY,\n"
-            f"// so this file is not merely smaller -- each remaining part is "
-            f"load-bearing.\n")
-        outp.write_text(banner + text)
+        # The FINAL write replaces the last checkpoint's caveat: every pass has
+        # now run to fixpoint, so this file really is minimal under the four
+        # passes -- which the checkpoints deliberately never claimed.
+        outp.write_text(banner_for(a, shown) + text)
         print(f"  written to {outp}")
     return 0
 

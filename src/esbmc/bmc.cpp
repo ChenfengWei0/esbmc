@@ -3632,6 +3632,36 @@ smt_convt::resultt bmct::multi_property_check(
         goto_coveraget::arith_conditions_seen.fetch_add(
           n_arith, std::memory_order_relaxed);
 
+        // ⚠ WHAT THIS DELIBERATELY DOES NOT RECORD, and what it costs later.
+        //
+        // Every matching condition of BOTH families is assumed together and ONE
+        // query is issued, so an UNSAT is a statement about the CONJUNCTION:
+        // "this path, with every overflow AND every division-by-zero condition
+        // holding, is unsatisfiable". It does not say which family -- let alone
+        // which operation -- is responsible, and only the path key is stored
+        // below (`arith_revert_only_paths` is a bare set, unlike
+        // `named_obstacle_paths`, which is a map to a reason).
+        //
+        // That is enough to REFUSE a case, which is all this does today. It is
+        // NOT enough to RENDER one: `vm.expectRevert(stdError.arithmeticError)`
+        // asserts Panic 0x11 exactly, and forge matches the revert data byte for
+        // byte, so emitting the wrong code is a RED test. Whoever adds the
+        // rendering needs the family, and the cheap way to get it is to record
+        // the SET of `property()` values actually converted on THIS claim: when
+        // that set is a single family the UNSAT is attributable to it by
+        // construction, with no extra query. When it holds both, one extra
+        // solve per family decides it, and when both of those are UNSAT the
+        // firing Panic depends on execution ORDER, which no verdict supplies --
+        // there the honest rendering is a bare `vm.expectRevert()`, which
+        // asserts exactly what was proved and nothing more.
+        //
+        // `unchecked { }` is NOT a hazard here, and that is READ rather than
+        // assumed: goto_check.cpp's `overflow_check` returns early on
+        // `loc.get("#sol_unchecked") == "1"`, so no overflow claim is emitted
+        // inside an unchecked block and there is nothing for this loop to
+        // convert. P18_Unchecked measured the same thing from the other side --
+        // an unchecked block and a normal one produce a byte-identical model.
+
         // Nothing to assume => nothing to re-solve. Not an error: a unit with
         // no checked operation on this path is the common case, and paying a
         // query to learn that would make the mechanism cost something on every
@@ -3850,14 +3880,32 @@ smt_convt::resultt bmct::multi_property_check(
           // every path, the readers existed, and their gate (`status == U`)
           // excluded the only dangerous case (`status == F`).
           //
-          // REFUSED HERE, NOT IN foundry.cpp BESIDE THE OBSTACLE REFUSAL, and
-          // the reason is not convenience: the proof is obtained at this line
-          // (the re-solve is a few dozen lines above) and this is the only call
-          // site that feeds the coverage-mode emitter. Putting the test where
-          // the fact is established means the two cannot drift; putting it in
-          // the emitter would need the fact carried there through a second
-          // channel, which is the shape that has already produced one detector
-          // keyed on a string that never round-trips.
+          // REFUSED HERE, NOT IN foundry.cpp BESIDE THE OBSTACLE REFUSAL. The
+          // reason is that a REFUSAL needs no per-call state: the decision is
+          // "do not hand this counterexample over", and this is the only call
+          // site that feeds the coverage-mode emitter, so the test sits where
+          // the proof was established a few dozen lines above.
+          //
+          // ⚠ AN EARLIER VERSION OF THIS COMMENT ALSO CLAIMED that putting it
+          // in the emitter "would need the fact carried there through a second
+          // channel". THAT WAS FALSE and is corrected rather than deleted,
+          // because it would have misdirected the next reader.
+          // `arith_revert_only_paths` is a static keyed by the SAME
+          // (comment, location) pair as `normal_exit_paths` and
+          // `named_obstacle_paths`, which foundry.cpp already reads at
+          // reconstruct()'s segment site and at its refuted-claim site. There
+          // is no second channel; it is the first one.
+          //
+          // ⚠ AND THERE IS A REAL HAZARD FOR WHOEVER DOES WIRE THE EMITTER,
+          // which the obstacle precedent never had to face. Those two sets are
+          // filled at INSTRUMENTATION time, single-threaded, so foundry.cpp's
+          // unlocked reads of them are safe. THIS one is filled HERE, inside
+          // the per-claim job loop, and `--parallel-solving` runs one thread
+          // per job; reconstruct() runs unlocked on a job thread and scans
+          // every guard-true assert, i.e. OTHER claims' keys, which other jobs
+          // may be inserting concurrently. Any read of this set from
+          // foundry.cpp must take `claim_outcome_mutex` -- the mutex the write
+          // above and the read below both use.
           //
           // COVERAGE IS UNAFFECTED. The path IS witnessed and stays F -- it is
           // reachable on chain, through a Panic revert. What is refused is
