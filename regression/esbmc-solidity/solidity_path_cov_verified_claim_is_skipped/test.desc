@@ -1,0 +1,10 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract C --solidity-max-tx 1
+^Unwinding recursion _ESBMC_Nondet_Extcall_C iteration 4 \(4 max\)$
+^--solidity-path-coverage: instrumented 3 complete path\(s\) across 1 unit\(s\)
+[1-9][0-9]* skipped,
+^Complete Paths : 3$
+^Reached : 3$
+^Path Status: F 3, I 0, U 0$
+^VERIFICATION FAILED$
