@@ -733,6 +733,13 @@ public:
   // none reached this unit, and without the number a run that re-solved nothing
   // is indistinguishable from a run that had nothing to re-solve.
   static std::atomic<size_t> arith_conditions_seen;
+  // How many counterexamples were REFUSED to the Foundry emitter because their
+  // path is arith-revert-only. Counted, never silent: goto_coverage.h's own
+  // rule for the obstacle machinery is that "a marked path must not be turned
+  // into a test -- marking without excluding would be worthless", and a
+  // suppression that leaves no trace is indistinguishable from a path that was
+  // never witnessed.
+  static std::atomic<size_t> arith_revert_only_suppressed;
 
   // Signal-safe snapshot for path coverage, mirroring branch coverage's
   // (branch_cov_active / total_branch_atomic / live_reached). Written at the

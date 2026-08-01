@@ -55,6 +55,7 @@ std::atomic<size_t> goto_coveraget::arith_resolve_queries{0};
 std::atomic<size_t> goto_coveraget::arith_resolve_replaced{0};
 std::atomic<size_t> goto_coveraget::arith_resolve_ms{0};
 std::atomic<size_t> goto_coveraget::arith_conditions_seen{0};
+std::atomic<size_t> goto_coveraget::arith_revert_only_suppressed{0};
 
 std::unordered_set<std::string> goto_functionst::reached_claims;
 std::unordered_multiset<std::string> goto_functionst::reached_mul_claims;
@@ -1301,13 +1302,16 @@ void report_coverage(
         "Arithmetic Re-solve: {} condition(s) seen, {} claim(s) re-solved in "
         "{}s, {} took the constrained witness (this counts SAT re-solves, not "
         "wraps fixed -- a path whose witness was already fine is counted too), "
-        "{} path(s) PROVEN reachable only through a checked-arithmetic revert",
+        "{} path(s) PROVEN reachable only through a checked-arithmetic revert, "
+        "{} Foundry case(s) REFUSED for that reason",
         goto_coveraget::arith_conditions_seen.load(std::memory_order_relaxed),
         goto_coveraget::arith_resolve_queries.load(std::memory_order_relaxed),
         goto_coveraget::arith_resolve_ms.load(std::memory_order_relaxed) /
           1000.0,
         goto_coveraget::arith_resolve_replaced.load(std::memory_order_relaxed),
-        goto_coveraget::arith_revert_only_paths.size());
+        goto_coveraget::arith_revert_only_paths.size(),
+        goto_coveraget::arith_revert_only_suppressed.load(
+          std::memory_order_relaxed));
     else
       log_result(
         "Arithmetic Re-solve: OFF (--path-cov-arith-resolve). A witnessed "
@@ -3834,9 +3838,105 @@ smt_convt::resultt bmct::multi_property_check(
         if (want_ctest)
           ctest_gen.collect(local_eq, *solver_ptr, ns);
         if (want_foundry)
-          // Collect into the external strategy-level generator when threaded
-          // (--k-induction), else the owned member (plain BMC).
-          foundry().collect(local_eq, *solver_ptr, ns);
+        {
+          // ---- A PATH PROVEN REVERT-ONLY MUST NOT BECOME A TEST ----
+          //
+          // goto_coverage.h states the rule for the obstacle machinery and it
+          // applies verbatim here: "a marked path must not be turned into a
+          // test. Marking without excluding would be worthless." Recording
+          // `arith_revert_only` in the report and then handing the same
+          // counterexample to the emitter would reproduce, one mechanism later,
+          // exactly the defect a6ea07f2e9 fixed -- where the marking ran on
+          // every path, the readers existed, and their gate (`status == U`)
+          // excluded the only dangerous case (`status == F`).
+          //
+          // REFUSED HERE, NOT IN foundry.cpp BESIDE THE OBSTACLE REFUSAL, and
+          // the reason is not convenience: the proof is obtained at this line
+          // (the re-solve is a few dozen lines above) and this is the only call
+          // site that feeds the coverage-mode emitter. Putting the test where
+          // the fact is established means the two cannot drift; putting it in
+          // the emitter would need the fact carried there through a second
+          // channel, which is the shape that has already produced one detector
+          // keyed on a string that never round-trips.
+          //
+          // COVERAGE IS UNAFFECTED. The path IS witnessed and stays F -- it is
+          // reachable on chain, through a Panic revert. What is refused is
+          // rendering it as a bare call that ASSERTS a normal exit, which is
+          // red on the unmodified contract. Rendering it correctly needs
+          // vm.expectRevert(stdError.arithmeticError / divisionError) and is
+          // its own change.
+          // ---- AND THE REFUSAL IS DEFEATED UNLESS THIS COMES FIRST ----
+          //
+          // MEASURED on notes/coverage/poc/D16_OnlyByOverflow.sol, which exists
+          // to exercise the proof arm. With --overflow-check on, goto_check's
+          // OWN overflow claim is another job in this very loop: it is refuted
+          // (an overflow IS possible), its witness loop runs, and it calls
+          // foundry().collect() like any other claim. The case it reconstructs
+          // is the SAME call as the path claim's, so:
+          //
+          //   without the flag  the two cases share a fingerprint, dedup keeps
+          //                     one, and the PATH claim supplies its name --
+          //                     the run reports `3 of 3 case(s) name the
+          //                     obligation`;
+          //   with the flag     the path claim is refused, the arithmetic
+          //                     claim's copy survives, and the identical
+          //                     wrapping call is emitted anyway as
+          //                     `// claim: not recorded` -- the run reports
+          //                     `2 of 3`.
+          //
+          // So refusing the path claim alone moved the defect rather than
+          // removing it, and made the artefact WORSE: same red test, now with
+          // no provenance back to the report. A claim that is not an
+          // instrumented path goal has no business producing a
+          // complete-path-coverage test case, and under path coverage that is
+          // exactly what these are.
+          //
+          // Narrowed to path coverage on purpose. Branch coverage's goals carry
+          // the same property string, so this cannot change their output; and
+          // no path-coverage run passed an arithmetic check before this flag
+          // existed (INVOCATION_DECISIONS row 6 says not to), so there is no
+          // prior behaviour here to preserve.
+          const bool non_path_claim =
+            is_path_cov && claim.claim_property != "instrumented assertion";
+          if (non_path_claim)
+            log_debug(
+              "coverage",
+              "not collecting a Foundry case for the non-instrumented claim "
+              "'{}' ({}): under path coverage only an enumerated path goal may "
+              "produce a test",
+              claim.claim_msg,
+              claim.claim_property);
+          bool revert_only = false;
+          {
+            std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+            revert_only = goto_coveraget::arith_revert_only_paths.count(
+                            {claim.claim_msg, claim.claim_loc}) > 0;
+          }
+          if (non_path_claim)
+          {
+            // counted separately from the revert-only refusal: they are
+            // different facts and a shared counter would make either
+            // unreadable.
+          }
+          else if (revert_only)
+          {
+            goto_coveraget::arith_revert_only_suppressed.fetch_add(
+              1, std::memory_order_relaxed);
+            log_warning(
+              "--path-cov-arith-resolve: REFUSING to emit a Foundry case for "
+              "'{}'. The re-solve PROVED this path is reachable only by "
+              "violating a checked arithmetic operation, so on chain it is "
+              "reached through a Panic revert -- a bare call asserting a "
+              "normal exit would be RED on the unmodified contract. The path "
+              "remains witnessed (F) and counted as covered; only the "
+              "rendering is refused",
+              prettify_solidity_expr(claim.claim_msg));
+          }
+          else
+            // Collect into the external strategy-level generator when threaded
+            // (--k-induction), else the owned member (plain BMC).
+            foundry().collect(local_eq, *solver_ptr, ns);
+        }
 
         // Solidity complete-path coverage: harvest this path's CE payload
         // (concrete inputs + post-state) NOW, while this witness's solver
