@@ -57,7 +57,28 @@ import tempfile
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_put import (EmittedFile, build_put,   # noqa: E402
-                               check_esbmc_args, cell_of)
+                               check_esbmc_args, cell_of,
+                               truncated_loops, unwindset_args)
+
+
+# VERBATIM captures. Shape 1 is the assert gate's refusal, semicolon-joined on
+# ONE line (aqua Aqua.dock, notes/coverage/put_roundtrip); shape 2 is the
+# under-report warning, one line per loop (FarmingPool.exit, reproduced by hand
+# from that unit's own cert.json). They are DIFFERENT sentences from different
+# code paths, and a parser written for one and pointed at the other never fires.
+TRUNC_SHAPE_1 = (
+    "[put]   ladder REFUSED: ERROR: --path-cov-assert: RESULT: "
+    "UNDECIDED-TRUNCATED -- the non-vacuity witness for path enc=12 did NOT "
+    "come back refuted ... Loops truncated: loop 1 at file "
+    "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c line 38 column 3 "
+    "function __ESBMC_atexit_handler; loop 62 at file "
+    "notes/coverage/inputs/aqua__Aqua.flat.sol line 2258 function dock; loop 64 "
+    "at file /home/samson/workspace/esbmc/src/c2goto/library/string.c line 298 "
+    "column 3 function __memset_impl")
+
+TRUNC_SHAPE_2 = """WARNING: Coverage may be UNDER-REPORTED: 2 loop(s) hit the unwind bound while --no-unwinding-assertions was active, so the paths that needed more iterations were silently assumed away. Goals reachable only through those paths are counted as uncovered. Raise --unwind, use --unwindset/--unwindsetname for the specific loop, or switch to --k-induction / --incremental-bmc. Loops truncated:
+WARNING:   loop 55 at file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 206 column 5 function _str_assign
+WARNING:   loop 56 at file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_string.c line 209 column 5 function _str_assign"""
 
 
 # VERBATIM: bench/FeeVault, `--generate-foundry-testcase --focus-function
@@ -350,9 +371,59 @@ def test_the_emitted_test_carries_its_cell():
                  "the cell is written onto the emitted test")
 
 
+def test_both_truncation_shapes_are_read():
+    """The tool NAMES the loop it cut, in two different sentences.
+
+    This is the mechanism INVOCATION_DECISIONS.md records as missing ("we still
+    have no mechanism for knowing how many unwinds are needed"). It was not
+    missing from the tool, only from every consumer.
+    """
+    bad = 0
+    l1, s1 = truncated_loops(TRUNC_SHAPE_1)
+    bad += check([x[0] for x in sorted(l1)] == [1, 62, 64],
+                 f"shape 1 (assert gate, one line): {[x[0] for x in sorted(l1)]}")
+    bad += check(s1["assert-gate"] == 3 and s1["under-report-warning"] == 0,
+                 f"shape 1 is attributed to its own branch: {s1}")
+    bad += check(any(fn == "__memset_impl" for _i, _f, _l, fn in l1),
+                 "the library loop the measured fix widened is named")
+
+    l2, s2 = truncated_loops(TRUNC_SHAPE_2)
+    bad += check([x[0] for x in sorted(l2)] == [55, 56],
+                 f"shape 2 (under-report warning, one per line): "
+                 f"{[x[0] for x in sorted(l2)]}")
+    bad += check(s2["under-report-warning"] == 2 and s2["assert-gate"] == 0,
+                 f"shape 2 is attributed to its own branch: {s2}")
+
+    # MUST NOT FIRE. A log with no truncation report must yield nothing, or the
+    # ladder would widen loops nobody cut and every run would look truncated.
+    l3, s3 = truncated_loops(
+        "--path-cov-assert: bal: post == pre  HOLDS\n"
+        "some prose that mentions a loop 99 at file x line 1 function f\n")
+    bad += check(l3 == [] and sum(s3.values()) == 0,
+                 f"prose outside either report is NOT read as a truncation: "
+                 f"{l3}")
+    return bad
+
+
+def test_the_ladder_widens_every_named_loop():
+    """--unwindset per named loop, and only the symex side."""
+    loops, _ = truncated_loops(TRUNC_SHAPE_1)
+    got = unwindset_args(loops, 512)
+    want = ["--unwindset", "1:512", "--unwindset", "62:512",
+            "--unwindset", "64:512"]
+    bad = check(got == want, f"one --unwindset per loop, sorted: {got}")
+    bad += check("--unwind" not in got or all(
+        g != "--unwind" for g in got),
+        "the ENUMERATION bound (--unwind) is never touched: widening it would "
+        "change the goal set, i.e. what is being measured")
+    return bad
+
+
 def main():
     bad = 0
-    for t in (test_the_cell_is_named_and_an_unsettled_one_says_so,
+    for t in (test_both_truncation_shapes_are_read,
+              test_the_ladder_widens_every_named_loop,
+              test_the_cell_is_named_and_an_unsettled_one_says_so,
               test_the_emitted_test_carries_its_cell,
               test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
               test_pin_with_a_slot_is_established,

@@ -321,6 +321,82 @@ LADDER_RESULT_MAP = {
 }
 
 
+# ---------------------------------------------------------------------------
+# HOW MANY UNWINDS DOES THIS UNIT NEED? -- ask the tool, it already says
+# ---------------------------------------------------------------------------
+#
+# `notes/coverage/INVOCATION_DECISIONS.md` records the open item as "we still
+# have no mechanism for knowing how many unwinds are needed", and the bound of 4
+# as "not chosen or argued". But ESBMC does not merely truncate silently: every
+# time it cuts a loop at the bound it NAMES the loop, and both of the places it
+# does so were being read by nobody.
+#
+# TWO SHAPES, and they are different sentences from different code paths. A
+# detector written for one and pointed at the other never fires, which is a
+# failure this project has already paid for -- so both are pinned with VERBATIM
+# captures in scripts/test_solidity_path_put.py, and the parser reports WHICH
+# shape it matched so a reworded message shows up as a zero rather than as
+# "nothing was truncated".
+#
+#   (1) the assert gate's refusal, semicolon-joined on ONE line:
+#       Loops truncated: loop 1 at file .../stdlib.c line 38 column 3 function
+#       __ESBMC_atexit_handler; loop 62 at file ...aqua__Aqua.flat.sol line 2258
+#       function dock; loop 64 at file .../string.c line 298 column 3 function
+#       __memset_impl
+#
+#   (2) the under-report warning, one line per loop:
+#       WARNING: Coverage may be UNDER-REPORTED: 2 loop(s) hit the unwind bound...
+#       WARNING:   loop 55 at file .../solidity_string.c line 206 column 5
+#       function _str_assign
+#
+# WHY WIDENING IS SAFE, and why it is `--unwindset` rather than `--unwind`.
+# `--unwindset <loop>:<n>` moves ONLY the symex side (symex_goto.cpp), so the
+# run explores a SUPERSET of executions: it cannot make a path look infeasible
+# that is not. `--unwind N` moves the ENUMERATION bound too, which changes the
+# goal set and therefore what is being measured. INVOCATION_DECISIONS.md states
+# the same asymmetry: use --unwindset to widen symex past the enumeration bound,
+# never to narrow it.
+#
+# MEASURED PRECEDENT: aqua `dock` certifies but its ladder answers
+# UNDECIDED-TRUNCATED, and `--unwindset 64:512` on the named library loop
+# (`__memset_impl`) is what brings its two witnesses back.
+TRUNC_LOOP_RE = re.compile(
+    r"loop (\d+) at file (\S+) line (\d+)(?: column \d+)? function (\S+)")
+
+
+def truncated_loops(log):
+    """[(loop_id, file, line, function)] the run reports cutting, plus a
+    per-shape count so a reworded producer message is visible.
+
+    Only lines that BELONG to one of the two reports are scanned. The regex
+    alone would also match prose that happens to describe a loop, and a
+    numerator built from prose is not a measurement.
+    """
+    found, shapes = [], {"assert-gate": 0, "under-report-warning": 0}
+    for line in log.splitlines():
+        s = line.strip()
+        if "Loops truncated:" in s:
+            shape = "assert-gate"
+        elif s.startswith("WARNING:") and " loop " in s:
+            shape = "under-report-warning"
+        else:
+            continue
+        for m in TRUNC_LOOP_RE.finditer(s):
+            shapes[shape] += 1
+            row = (int(m.group(1)), m.group(2), int(m.group(3)), m.group(4))
+            if row not in found:
+                found.append(row)
+    return found, shapes
+
+
+def unwindset_args(loops, k):
+    """`--unwindset <id>:<k>` for every named loop, as a flat argv list."""
+    out = []
+    for lid, _f, _l, _fn in sorted(loops):
+        out += ["--unwindset", f"{lid}:{k}"]
+    return out
+
+
 def parse_ladder(log):
     """(rows, summary, refusal, blocker) from a --path-cov-assert run's output.
 
@@ -1227,6 +1303,18 @@ def main():
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--memlimit", default="8g")
     ap.add_argument("--test-suffix", default="")
+    ap.add_argument("--auto-unwind", type=int, default=0, metavar="N",
+                    help="on an UNDECIDED-TRUNCATED ladder, RE-RUN it up to N "
+                         "times, widening every loop the tool NAMED with "
+                         "--unwindset <loop>:<k> and doubling k each attempt "
+                         "(8, 16, 32, ...). This is the missing answer to 'how "
+                         "many unwinds does this unit need': the tool already "
+                         "names the loop it cut, and nothing was reading it. "
+                         "--unwindset moves only the symex side, so each "
+                         "attempt explores a SUPERSET -- it cannot make a "
+                         "feasible path look infeasible. OFF by default, "
+                         "because it costs a run per attempt and changes what "
+                         "a default invocation does.")
     ap.add_argument("--scope", choices=("focus", "whole"), default="focus",
                     help="focus passes --focus-function <unit> (the GATE "
                          "cell); whole drops it and lets every entry be "
@@ -1339,6 +1427,44 @@ def main():
          "--cov-report-json"] + a.esbmc_arg,
         assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
     rows, summary, refusal, blocker = parse_ladder(out2)
+
+    # ---- THE UNWIND LADDER: widen the loops the tool NAMED, and say so -----
+    unwind_attempts = []
+    k = 8
+    for attempt in range(1, a.auto_unwind + 1):
+        if blocker != "truncated":
+            break
+        loops, shapes = truncated_loops(out2)
+        if not loops:
+            print("[put]   auto-unwind: the run answered UNDECIDED-TRUNCATED "
+                  "but NAMED NO LOOP that this parser can read "
+                  f"(shape counts {shapes}). Refusing to widen a loop nobody "
+                  "identified -- teach the parser the new wording instead")
+            break
+        named = ", ".join(f"{lid} ({fn}, {f}:{ln})"
+                          for lid, f, ln, fn in sorted(loops))
+        print(f"[put]   auto-unwind {attempt}/{a.auto_unwind}: the tool named "
+              f"loop(s) {named}; re-running with --unwindset at {k}")
+        extra = unwindset_args(loops, k)
+        out2, rc2b, w2b = run_esbmc(
+            a.esbmc, a.sol, a.ast, a.contract, a.unit,
+            ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
+             "--cov-report-json"] + a.esbmc_arg + extra,
+            assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+        rows, summary, refusal, blocker = parse_ladder(out2)
+        unwind_attempts.append({"attempt": attempt, "k": k,
+                                "loops": [list(x) for x in sorted(loops)],
+                                "shapes": shapes, "exit": rc2b,
+                                "wall_s": round(w2b, 1),
+                                "blocker_after": blocker,
+                                "rows_after": len(rows)})
+        print(f"[put]     exit={rc2b} {w2b:.1f}s  blocker={blocker} "
+              f"rows={len(rows)}")
+        # The widened flags become part of THIS run's configuration, so the
+        # artefact records them rather than the ones the caller typed.
+        if blocker != "truncated":
+            a.esbmc_arg = a.esbmc_arg + extra
+        k *= 2
     if refusal:
         print(f"[put]   ladder REFUSED: {refusal}")
         notes.append(f"ladder refused: {refusal}")
@@ -1408,7 +1534,12 @@ def main():
         with open(os.path.join(a.workdir, "put.json"), "w") as f:
             json.dump({"contract": a.contract, "unit": a.unit, "enc": a.enc,
                        "depth": a.depth, "refused": "ladder-undecided-truncated",
-                       "ladder_refusal": refusal, "notes": notes}, f, indent=2)
+                       "ladder_refusal": refusal,
+                       # What was TRIED, so "still truncated" is separable from
+                       # "nobody widened anything". An empty list here with
+                       # --auto-unwind 0 is the second case and says so.
+                       "unwind_attempts": unwind_attempts, "notes": notes},
+                      f, indent=2)
         return 3
     if blocker == "vacuous":
         print("[put] REFUSED: the assertion ladder reports the certified "
@@ -1514,6 +1645,7 @@ def main():
                    # emitted under another are two measurements; the artefact
                    # has to say which one it is.
                    "esbmc_extra_args": a.esbmc_arg,
+                   "unwind_attempts": unwind_attempts,
                    "cell": {"name": cell_name, "scope": a.scope,
                             "max_tx": a.max_tx, "rule": cell_rule},
                    "stats": stats, "notes": notes}, f, indent=2)
