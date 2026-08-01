@@ -3311,8 +3311,46 @@ smt_convt::resultt bmct::multi_property_check(
     }
     else
     {
+      // THE LOOKUP KEY MUST BE THE ONE THE INSERT USES. The insert below
+      // discriminates -- `claim_sig` (msg + "\t" + loc) when `is_goto_cov`,
+      // `claim_cstr` (msg + " at " + loc) otherwise -- and this lookup did not.
+      // So under coverage it asked for a spelling that is never stored,
+      // `is_verified` was ALWAYS false, and the skip a few lines down was dead
+      // code: every symex instantiation of one instrumented assert was solved
+      // again from scratch.
+      //
+      // MEASURED, EscrowDst.withdraw: 5 distinct claim keys, 425 VCCs, ~85
+      // solves per path. All four obtainable witnesses were in hand after the
+      // first 46 solves; the remaining 379 would have re-derived the same four
+      // and the process ran out of memory at 8 GiB first. Same shape on
+      // st1inch `setFeeReceiver` at 2x (10 VCCs for 5 paths). The tool's own
+      // `Verdicts Preserved` line has been reporting this all along -- its
+      // header calls a non-zero value "itself a defect (duplicate
+      // instrumentation)" -- and nothing acted on it.
+      //
+      // The premise was checked before the change rather than after: every
+      // repeated `Solving claim` line for one path is BYTE-IDENTICAL across all
+      // its solves, so a lookup on `claim_sig` really does match. If they had
+      // differed in their location suffix the repair would have fired zero
+      // times while costing a string build per job
+      // (notes/coverage/scripts/claim_key_identity.py is that check).
+      //
+      // SOUND FOR COVERAGE because `reached_claims` only ever receives REFUTED
+      // keys (the insert sits inside the P_SATISFIABLE arm), and for coverage F
+      // is monotone: once a path has a witness it is covered, and further
+      // witnesses of the same path are `--all-witnesses` material, which is
+      // enumerated INSIDE one solve, not across repeats. No 'P'/'U'/'B' verdict
+      // can reach this skip.
+      //
+      // SCOPED TO PATH COVERAGE ON PURPOSE. Repairing it for `is_goto_cov`
+      // would newly enable skipping under branch/condition/k-path coverage as
+      // well, and the branch-coverage dataset this project compares against is
+      // LOCKED. Moving its numbers as a side effect of a path-coverage fix is
+      // precisely the kind of change that cannot be attributed afterwards.
       std::lock_guard lock(reached_claims_mutex);
-      is_verified = reached_claims.count(claim.claim_cstr) ? true : false;
+      is_verified =
+        reached_claims.count(is_path_cov ? claim_sig : claim.claim_cstr) ? true
+                                                                        : false;
     }
     if (is_assert_cov && is_verified)
     {
