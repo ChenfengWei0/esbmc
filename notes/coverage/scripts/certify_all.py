@@ -327,9 +327,52 @@ def main():
                          "because the geometric bracket alone takes 50-70s on a "
                          "TOY contract. A budget below the bracket's own cost "
                          "measures the budget, not the method.")
-    ap.add_argument("--shrink-rounds", type=int, default=3)
-    ap.add_argument("--refine-rounds", type=int, default=2)
-    ap.add_argument("--probes", type=int, default=8)
+    # ---- THESE THREE ARE BELOW THE DRIVER'S OWN DEFAULTS, AND UNARGUED ----
+    #
+    # `solidity_path_generalise.py` defaults to probes=16, refine-rounds=3,
+    # shrink-rounds=4. This sweep runs 8 / 2 / 3. `--timeout 600` above carries a
+    # measured reason for its value; these three carry none, and never have.
+    #
+    # That matters because the LARGEST bucket in `certify_summary.py`'s "WHY
+    # units did NOT certify" table is `shrink round budget exhausted` -- a count
+    # whose meaning is entirely a function of a number nobody argued for. A
+    # reader of that table is being told how often the method ran out of a budget
+    # this sweep chose, not how often the method could not cut.
+    #
+    # MEASURED on the current sweep (binary 01f7dc37e1), EscrowSrc.cancel enc=15,
+    # whose witness diverges on ONE bounded coordinate and no environment
+    # quantity -- the cleanest case in that unit: the path's own counterexample
+    # has `immutables.amount = 0` and after three shrink rounds the refuting
+    # witness sits at 2^253-1. Three halvings of a 256-bit range, which is the
+    # degenerate bisection the level-0 mechanism exists to avoid and which level 0
+    # declined to apply here (the coordinate is not a point for every path).
+    # Reaching a bound that way needs about 256 rounds, so at 3 the budget cannot
+    # be crossed by any unit whose boundary is not already near the type limit.
+    # ONE unit and one path, so this is a worked example, not a corpus claim.
+    #
+    # WHAT WOULD SETTLE IT, and it is cheap: re-run one such unit at
+    # --shrink-rounds 3 / 8 / 16 and read where the reason lands. Three outcomes,
+    # each a different fact: it certifies (the budget was the whole story), or the
+    # reason moves to `refuted with no single-coordinate cut available` (a METHOD
+    # property, which is what EXECUTION_PLAN's T1 criterion 3 asks for), or it
+    # stays in the budget cell at 16 (bisection is the story and the repair is a
+    # better cut, not a bigger budget). Until that is run, no number derived from
+    # the budget cell may be read as a property of the method.
+    ap.add_argument("--shrink-rounds", type=int, default=3,
+                    help="how many refutations one region may absorb. BELOW the "
+                         "driver's own default of 4, and the value is UNARGUED "
+                         "-- see the comment above this flag for what it costs "
+                         "and the three-arm run that would settle it.")
+    ap.add_argument("--refine-rounds", type=int, default=2,
+                    help="BELOW the driver's own default of 3, and unargued. "
+                         "Fewer refine rounds means the span handed to "
+                         "certification is coarser, so the shrink loop starts "
+                         "further from the boundary and the budget above binds "
+                         "sooner -- the two flags are not independent.")
+    ap.add_argument("--probes", type=int, default=8,
+                    help="HALF the driver's own default of 16, and unargued. "
+                         "Resolution per refine round divides by (probes+1), so "
+                         "this compounds with --refine-rounds above.")
     ap.add_argument("--skip-bracket", action="store_true",
                     help="the geometric bracket is the binding cost on real "
                          "input -- 258 probes per coordinate per direction. "
@@ -508,6 +551,23 @@ def main():
                    "--probes", str(args.probes),
                    "--refine-rounds", str(args.refine_rounds),
                    "--shrink-rounds", str(args.shrink_rounds),
+                   # ---- THIS 180 IS THE PER-ESBMC-RUN BUDGET, AND IT IS THE
+                   # ---- ONE THAT GOVERNS THE LARGEST FAILURE BUCKET ----
+                   #
+                   # `--timeout` on THIS sweep is the whole-driver budget (600s,
+                   # and its help text argues for that value). The driver's own
+                   # `--timeout` is per ESBMC INVOCATION, and it is what makes
+                   # `round_failure_reason` emit "no outer-box round finished, so
+                   # nothing was measured for this path (a BUDGET outcome)" --
+                   # 43 of the 91 non-certification reasons on the partial sweep,
+                   # the single largest bucket in `certify_summary.py`'s table.
+                   #
+                   # The `min(..., 180)` cap is UNARGUED. It is also invisible:
+                   # the record below stores `unit_timeout_s` = the 600, so an
+                   # artefact reader can see the budget that did NOT produce that
+                   # bucket and cannot see the one that did. Recorded as its own
+                   # field now -- deliberately NOT folded into `unit_timeout_s`,
+                   # which is a different quantity and is quoted as such.
                    "--timeout", str(min(args.timeout, 180)),
                    "--memlimit", f"{memlimit}g", "--workdir", uwd]
             if args.level0:
@@ -575,6 +635,15 @@ def main():
                         "refine_rounds": args.refine_rounds,
                         "shrink_rounds": args.shrink_rounds,
                         "unit_timeout_s": args.timeout,
+                        # The per-ESBMC-RUN budget, which is NOT `unit_timeout_s`
+                        # and is what "no outer-box round finished" counts. See
+                        # the comment at the `--timeout` argument above: without
+                        # this field the largest failure bucket in the summary
+                        # has no budget recorded anywhere in the artefact.
+                        # Records written before this field existed carry no
+                        # value for it, and the summary says so rather than
+                        # substituting `unit_timeout_s`.
+                        "run_timeout_s": min(args.timeout, 180),
                         # Which binary produced this record. Read on resume; a
                         # file whose records came from another build is refused
                         # rather than continued.

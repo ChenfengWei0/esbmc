@@ -123,8 +123,10 @@ def main():
         print("summarise a filtered file. This is a refusal rather than a")
         print("warning because a warning above a table gets quoted as a table.")
         return 1
+    cfg_map = {}
     if configs:
         cfg = next(iter(configs))
+        cfg_map = dict(zip(CONFIG_KEYS, cfg))
         print("configuration (identical for all "
               f"{sum(len(v) for v in configs.values())} record(s)): "
               + ", ".join(f"{k}={v}" for k, v in zip(CONFIG_KEYS, cfg)))
@@ -210,8 +212,43 @@ def main():
             # the failure, not its instance. The full text stays in the JSONL.
             head = text.split(";")[0].strip()
             why[head] = why.get(head, 0) + 1
+    # ---- A BUDGET-SHAPED REASON CARRIES ITS BUDGET, IN THE TABLE ----
+    #
+    # The configuration is printed at the top of this report, and that is not
+    # enough: THIS table is the thing that gets quoted, and `shrink round budget
+    # exhausted x N` reads as a property of the method when it is a property of
+    # a number `certify_all.py` chose (3, below the driver's own default of 4,
+    # and unargued -- see the comment on that flag). The same applies to the two
+    # reasons that name a round rather than a region.
+    #
+    # Annotated rather than filtered: the count is real and belongs here. What
+    # must not survive is quoting it WITHOUT the budget it was produced under.
+    #
+    # EACH REASON IS LABELLED WITH THE BUDGET ITS OWN BRANCH READS, never with a
+    # nearby one. The first draft of this table labelled "no outer-box round
+    # finished" with `refine_rounds`, which is wrong and would have been quoted:
+    # that reason is emitted by `round_failure_reason` when the ESBMC run hit the
+    # driver's PER-RUN timeout, and `certify_all.py` sets that to
+    # `min(--timeout, 180)` -- a different quantity from `unit_timeout_s`, which
+    # is the whole-driver budget. Labelling it with the round count would have
+    # told a reader to raise a knob that has nothing to do with it.
+    BUDGET_SHAPED = {
+        "shrink round budget exhausted": "shrink_rounds",
+        "no outer-box round finished, so nothing was measured for this path":
+            "run_timeout_s",
+    }
     for k in sorted(why, key=lambda x: -why[x]):
-        print(f"  {why[k]:>5}  {k}")
+        note = ""
+        for head, field in BUDGET_SHAPED.items():
+            if k.startswith(head):
+                v = cfg_map.get(field)
+                note = (f"   [BUDGET OUTCOME at {field}={v} -- not a property "
+                        f"of the method; do not quote this count without it]"
+                        if v is not None else
+                        "   [BUDGET OUTCOME; the budget could NOT be read from "
+                        "these records, so this count is uninterpretable]")
+                break
+        print(f"  {why[k]:>5}  {k}{note}")
     if not why:
         print("  (none)")
 
