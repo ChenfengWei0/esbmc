@@ -1007,8 +1007,37 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
     _wall = time.time() - _t0
     n_probe = sum(len(c.get("values", [])) or (probes + 2) for c in spec_coords)
-    kind = ("level-0" if values_by_coord else
-            ("geometric-bracket" if geometric else "linear-refine"))
+    # ---- THE ROUND'S NAME IS DERIVED FROM WHAT THE ROUND IS, NOT FROM A
+    # ---- FIELD THAT HAPPENS TO CORRELATE WITH IT ----
+    #
+    # This read `"level-0" if values_by_coord else ...`, and `values_by_coord`
+    # only says "some coordinates carry an explicit value list instead of a
+    # ladder" -- which is TRUE of a geometric or a refine round the moment
+    # `equality_coords` has found an equality-type coordinate, because those
+    # keep their handful of sibling values in every later round ("so these skip
+    # the geometric ladder").
+    #
+    # MEASURED on farming/startFarming, whose two state coordinates are
+    # equality-type for all 26 paths: the driver printed `level-0` THREE TIMES
+    # -- 23.7s with ~9 candidates, 180.0s with ~1037 candidates immediately
+    # followed by `[outer-box] ROUND MEASURED NOTHING` and an empty `[bracket]`,
+    # then 119.9s with ~9 again. By candidate count and by what follows it, the
+    # middle round IS the geometric bracket wearing level-0's name, and the
+    # third is the refine round. P05_Hole/pick, which has no equality-type
+    # coordinate, prints the three names correctly -- so the defect is invisible
+    # on exactly the units simple enough to check by eye.
+    #
+    # It is not cosmetic. certify_all.py's parse_driver reads these prefixes on
+    # purpose ("so the sweep cannot disagree with the tool about what was
+    # measured"), and per-round cost attribution is what decides whether a
+    # KILLED unit was a budget outcome or a defect -- the question
+    # killed_triage.py exists to answer.
+    #
+    # `geometric` and `spans` are the round's own inputs and cannot be true of
+    # another round: level 0 passes neither, the bracket passes `geometric`, and
+    # the refine round passes `spans`.
+    kind = ("geometric-bracket" if geometric else
+            ("linear-refine" if spans else "level-0"))
     print(f"[round] {kind}: {_wall:.1f}s wall, {len(spec_coords)} coordinate(s),"
           f" ~{n_probe} candidate value(s) per direction, {len(paths)} path(s)")
     print("[round] " + round_accounting(log))
