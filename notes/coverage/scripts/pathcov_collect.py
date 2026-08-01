@@ -346,30 +346,63 @@ def one_run(tag, cmd, timeout, workdir):
 
 
 def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
-            fresh=False, max_tx=1, focus_with=()):
+            fresh=False, max_tx=1, focus_with=(), scope="single", adhoc=None):
     # ---- THE LADDER'S TWO AXES, AND WHY THEY ARE NOT A PLAIN PRODUCT ----
     #
-    # `--focus-function` controls WIDTH (which functions the dispatcher may
-    # offer); `--solidity-max-tx` controls DEPTH (how many transactions the
-    # harness drives). They are not independent, and one cell is already ruled
-    # out by measurement: under a SINGLE-name focus, no tx bound reaches
-    # cross-function state, because the other functions are not in the dispatcher
-    # for a later transaction to call (INVOCATION_DECISIONS rows 1-2, measured on
-    # poc/Tiny.sol: focus/tx1 60% -> whole/tx1 75% -> whole/tx2 100%).
+    # They are LENGTH x ALPHABET, and that is now read out of the source rather
+    # than inferred from the option table.
     #
-    # What single-focus + tx>=2 DOES buy is the unit calling ITSELF again, which
-    # is not nothing (`pull` writes state with no precondition) and is not the
-    # same as width. So the informative design is a 2x2 factorial -- width off/on
-    # crossed with depth 1/2 -- plus a depth extension, which separates width
-    # from depth and gives their interaction. `focus_with` is the middle cell:
-    # {unit} plus the functions that write what the unit reads, i.e. the cheap
-    # approximation of whole-contract for benchmarks where whole does not finish.
-    flat_rel, primary, _solc, project = base.BENCHES[bench_key]
+    # `--solidity-max-tx N` is the LENGTH of the call sequence: `emit_tx_driver`
+    # (solidity_convert_contract.cpp:672-688) copies the transaction body N times
+    # straight-line, each copy `_sol_per_tx_reseed(); _ESBMC_Nondet_Extcall_C();`.
+    #
+    # `--focus-function a,b` is the ALPHABET of that sequence: it filters which
+    # `if (nondet) { f(...); return; }` arms the dispatcher body carries
+    # (`get_unbound_function`, solidity_convert_constructor.cpp:346-453).
+    #
+    # ⚠ THE `return` IS THE WHOLE POINT, and it is why this is not a nested loop.
+    # `then.copy_to_operands(then_expr, return_expr)` at :445-446, with the
+    # comment "construct return; to avoid fall-through" at :316-317, means the
+    # dispatcher RETURNS as soon as one arm is taken. So ONE TRANSACTION IS
+    # EXACTLY ONE ENTRY CALL, and the reachable call sequences are the words of
+    # length <= N over the focus alphabet.
+    #
+    # (The doc comment at solidity_convert_contract.cpp:712-729 draws the harness
+    # as `while(nondet){ if(nondet)A(); if(nondet)B(); }` and OMITS the return,
+    # which reads as "several calls per transaction" and is what this file used
+    # to say below. The contrast that settles it is `build_bound_drive_helper`,
+    # solidity_convert_constructor.cpp:645, which deliberately does NOT append a
+    # return -- so that helper's loop really can call several per iteration.)
+    #
+    # Everything measured follows from that shape and no longer needs a second
+    # explanation: a SINGLE-name focus is an alphabet of size one, so every word
+    # is f^k and no tx bound reaches cross-function state (INVOCATION_DECISIONS
+    # rows 1-2, poc/Tiny.sol: focus/tx1 60% -> whole/tx1 75% -> whole/tx2 100%;
+    # note whole/tx1 is NOT 100%, which is exactly the return).
+    #
+    # `focus_with` is the middle cell: alphabet = {unit} + the functions that
+    # WRITE what the unit reads, i.e. the cheap approximation of whole-contract
+    # for benchmarks where whole does not finish. It only buys anything at
+    # max_tx >= 2, because a word of length 1 cannot contain both letters.
     sflags, sreason = solver_flags_for(bench_key, solver_override)
     print(f"  [solver] {' '.join(sflags) if sflags else '(none)'} -- {sreason}",
           flush=True)
-    flat = INPUTS / flat_rel
-    solast = INPUTS / (flat_rel + ".solast")
+    if adhoc is not None:
+        # AD-HOC TARGET: a hand-written PoC rather than a corpus benchmark.
+        # R6 requires every investigation to start from a minimal reproduction,
+        # and until now this collector could only be pointed at the six locked
+        # BENCHES entries -- so the ladder it exposes had no cheap subject and
+        # the only tx=2 measurement in the project was made by hand.
+        flat = Path(adhoc[0]).resolve()
+        primary = adhoc[1]
+        project = None
+        solast = Path(str(flat) + ".solast")
+        if not solast.exists():
+            solast = flat.with_suffix(".solast")
+    else:
+        flat_rel, primary, _solc, project = base.BENCHES[bench_key]
+        flat = INPUTS / flat_rel
+        solast = INPUTS / (flat_rel + ".solast")
     if not solast.exists():
         sys.exit(f"missing AST: {solast} (run collect.py first, it generates it)")
 
@@ -400,14 +433,20 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # operator does not know where the data went, and this file's own rule is
     # that two configurations must be distinguishable BY NAME in every later
     # table.
-    if (max_tx != 1 or focus_with) and not out_suffix:
+    # THE GATE CELL IS `scope=single, max_tx=1` AND NOTHING ELSE.
+    # `scope` joins the two conditions that were already here, because it is a
+    # third way to be a non-gate cell and the directory rule has to cover every
+    # one of them or it covers none.
+    if (max_tx != 1 or focus_with or scope != "single") and not out_suffix:
         sys.exit(
-            f"{bench_key}: refusing to write a LADDER cell (max-tx={max_tx}, "
+            f"{bench_key}: refusing to write a LADDER cell (scope={scope}, "
+            f"max-tx={max_tx}, "
             f"focus-with={','.join(focus_with) or 'none'}) into the gate's own "
             f"directory {OUT / bench_key}.\n"
             f"The unsuffixed directory holds the collection every gate row is "
             f"computed from, and a collection rewrites its index.json wholesale. "
             f"Pass --out-suffix (e.g. --out-suffix __tx{max_tx}"
+            + (f"__{scope}" if scope != "single" else "")
             + ("__focusset" if focus_with else "") + ").")
     out_dir = OUT / (bench_key + out_suffix)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -539,11 +578,24 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             fh.write(json.dumps(rec) + "\n")
 
     if whole:
-        # Pair-1 analogue: one run, no focus. Kept available because it is the
-        # only configuration in which cross-function state can be established
-        # inside a single transaction (each dispatch guard is independent), and
-        # therefore the only one whose U's mean "no witness" rather than "this
-        # function was never offered to the dispatcher".
+        # Pair-1 analogue: one run, no focus, i.e. the FULL alphabet.
+        #
+        # ⚠ THE JUSTIFICATION THAT USED TO STAND HERE IS FALSE AND IS REPLACED
+        # RATHER THAN DELETED. It read: "the only configuration in which
+        # cross-function state can be established inside a single transaction
+        # (each dispatch guard is independent)". The guards are NOT independent
+        # -- each arm ends in a `return` (solidity_convert_constructor.cpp:445),
+        # so one transaction is exactly one entry call and NO configuration
+        # establishes cross-function state inside a single transaction. The
+        # measurement said so before the source did: poc/Tiny.sol whole/tx=1 is
+        # 75%, not 100%, and only whole/tx=2 reaches 100%.
+        #
+        # What is true, and is why this branch exists: dropping the focus makes
+        # the alphabet the whole contract, so a U here means "no witness within
+        # this bound" rather than "that function was never offered to the
+        # dispatcher". At max_tx=1 that is still only length-one words, so a
+        # state-guarded path stays unreachable; the width is only redeemable at
+        # max_tx >= 2.
         tag = "whole"
         if tag in done:
             runs.append(done[tag])
@@ -577,6 +629,26 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
         # callables (only the two library ones, which the `k == "library"`
         # escape hatch let through) and reported "2/2 run(s) produced a report",
         # which reads like a complete collection.
+        if project is None:
+            # AN AD-HOC TARGET HAS NO PROJECT TREE, AND THE SCOPE RULE LIVES
+            # THERE. `enumerate_own_callable_functions` decides which functions
+            # are units by asking whether their flat block came from a
+            # project-own file (METHODOLOGY 3), which is the authoritative rule
+            # and the one collect.py's own Pair 2 uses. A PoC has no such tree.
+            #
+            # Refused rather than approximated with a second enumerator: two
+            # implementations of one scope rule is the defect this file already
+            # documents twice (the `project_own_contract_names` truncation that
+            # silently ran 2 of aqua's 8 callables while printing "2/2 run(s)
+            # produced a report"). A quiet fallback here would be the same
+            # failure with a new name.
+            sys.exit(
+                f"--sol/--contract is an AD-HOC target with no project tree, "
+                f"so the per-method scope rule cannot be applied and "
+                f"--scope {scope} is unavailable for it. Use --scope whole "
+                f"(the ad-hoc target's purpose is the LENGTH axis, which needs "
+                f"no unit enumeration), or add the contract to collect.py's "
+                f"BENCHES if it is a real benchmark.")
         todo = list(base.enumerate_own_callable_functions(flat, project))
         for i, (cname, fname, ckind) in enumerate(todo, 1):
             tag = f"{cname}__{fname}"
@@ -684,6 +756,17 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
         "flatInput": str(flat),
         "config": {
             "mode": "whole" if whole else "per-method",
+            # THE WIDTH AXIS AS A NAME, beside the two values it is computed
+            # from. `mode` collapses `single` and `set` into "per-method", which
+            # is fine for a human reading the table and wrong for anything
+            # deciding whether a row belongs to the gate: the gate cell is
+            # scope=single AND max_tx=1, and a `set` run has the same `mode`
+            # string as a `single` one.
+            "scope": scope,
+            # Whether this row came from a corpus benchmark or a hand-written
+            # minimal reproduction. A PoC row is not a corpus row and no table
+            # may mix them; recorded rather than inferred from the key's prefix.
+            "adhocTarget": None if adhoc is None else str(flat),
             # RECORDED FROM THE ARGUMENT, not from a literal. It used to be a
             # hardcoded 1 beside a hardcoded flag; the two agreed only because
             # neither could change. `branch_gate.assert_gate_config` reads THIS
@@ -738,8 +821,37 @@ def main():
                          "'--z3 --tuple-node-flattener'. Overrides the "
                          "per-benchmark ENCODER_EXCEPTIONS table; whichever "
                          "applies is printed and recorded in index.json")
+    ap.add_argument("--scope", choices=("single", "set", "whole"),
+                    default="single",
+                    help="WIDTH axis, i.e. the ALPHABET of the call sequence: "
+                         "'single' passes --focus-function <unit> (one name, "
+                         "the GATE cell); 'set' passes --focus-function "
+                         "<unit>,<--focus-with names> ; 'whole' passes no "
+                         "--focus-function at all. Requires --out-suffix for "
+                         "anything but 'single'. NOTE the alphabet only buys "
+                         "reach at --max-tx >= 2: one transaction is EXACTLY "
+                         "one entry call (each dispatcher arm ends in a "
+                         "`return`, solidity_convert_constructor.cpp:445), so a "
+                         "length-one word cannot contain two letters however "
+                         "wide the alphabet is.")
+    ap.add_argument("--sol", default="",
+                    help="AD-HOC TARGET: a flat .sol outside BENCHES (its "
+                         "<file>.solast must sit beside it). Requires "
+                         "--contract and --scope whole. Exists so the ladder "
+                         "has a MINIMAL subject: R6 requires a <80-line "
+                         "reproduction before any investigation, and until now "
+                         "this collector could only be pointed at the six "
+                         "locked corpus entries.")
+    ap.add_argument("--contract", default="",
+                    help="contract name for --sol (the --contract value ESBMC "
+                         "is given)")
     ap.add_argument("--max-tx", type=int, default=1,
-                    help="DEPTH axis: --solidity-max-tx. Default 1, which is "
+                    help="DEPTH axis, i.e. the LENGTH of the call sequence: "
+                         "--solidity-max-tx. ⚠ ESBMC's OWN DEFAULT IS 2, not 1 "
+                         "and not unbounded: --solidity-path-coverage is absent "
+                         "from get_tx_bound's `unbounded_modes` "
+                         "(solidity_convert_contract.cpp:623-655), so passing "
+                         "nothing gives 2. This script defaults to 1, which is "
                          "the GATE cell and the only value the gate table may "
                          "read. This was a hardcoded literal until now, so the "
                          "tx ladder had no command-line entry at all and has "
@@ -765,20 +877,52 @@ def main():
                          "for a later transaction to call. Requires "
                          "--out-suffix.")
     a = ap.parse_args()
-    if a.list or not a.bench:
+    if a.list or not (a.bench or a.sol):
         for k in base.BENCHES:
             print(k)
         return 0
-    if a.bench not in base.BENCHES:
-        sys.exit(f"unknown bench: {a.bench}")
-    if a.whole and not a.out_suffix:
-        sys.exit("--whole needs --out-suffix (e.g. --out-suffix __whole): "
-                 "writing it into the per-method directory rewrites that "
-                 "collection's index.json and leaves its reports unreadable")
+
+    # `--whole` is kept as an alias of `--scope whole` rather than removed:
+    # it is what every existing invocation and every recorded command line in
+    # this tree says, and silently changing the spelling of a configuration is
+    # how a later table stops matching the command that produced it.
+    scope = "whole" if a.whole else a.scope
     focus_with = tuple(s for s in
                        (x.strip() for x in a.focus_with.split(",")) if s)
-    idx = collect(a.bench, a.whole, a.timeout, a.goals, a.out_suffix,
-                  a.solver_flags.split(), a.fresh, a.max_tx, focus_with)
+    if scope == "set" and not focus_with:
+        sys.exit("--scope set needs --focus-with: without extra names the "
+                 "alphabet is {unit} and the run is byte-identical to "
+                 "--scope single, which would file the same measurement under "
+                 "two different configuration names")
+    if scope != "set" and focus_with:
+        sys.exit(f"--focus-with is only meaningful with --scope set; under "
+                 f"--scope {scope} the names would be "
+                 + ("appended to a focus this run does not pass"
+                    if scope == "whole" else "silently ignored"))
+
+    adhoc = None
+    if a.sol:
+        if not a.contract:
+            sys.exit("--sol needs --contract (ESBMC scopes path coverage by "
+                     "--contract; without it the run has no scope_contract and "
+                     "the covered-set fingerprint is a different one)")
+        if scope != "whole":
+            sys.exit(f"--sol supports only --scope whole, not {scope}; see the "
+                     f"refusal in collect() for why a second scope rule is not "
+                     f"written here")
+        p = Path(a.sol).resolve()
+        if not p.exists():
+            sys.exit(f"--sol: no such file: {p}")
+        adhoc = (str(p), a.contract)
+        # The key is the row's name in every later table, so it says out loud
+        # that the row is a PoC and which file it came from.
+        a.bench = "poc__" + p.stem
+    elif a.bench not in base.BENCHES:
+        sys.exit(f"unknown bench: {a.bench}")
+
+    idx = collect(a.bench, scope == "whole", a.timeout, a.goals, a.out_suffix,
+                  a.solver_flags.split(), a.fresh, a.max_tx, focus_with,
+                  scope, adhoc)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "
