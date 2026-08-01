@@ -1,4 +1,50 @@
-# D30 — st1inch's zero has a source-level mechanism: a 30-deep chain of 256-bit `mul`/`div` in the CONSTRUCTOR, on every query
+# D30 — ⛔ WITHDRAWN. The mechanism proposed here was REFUTED by its own pre-registered falsifier the same day.
+
+> **STATUS: WITHDRAWN 2026-08-01, by `exp_chain_sweep.py`.** The prediction below
+> about the solver sweep held; the MECHANISM did not, and those are different
+> claims. The note is kept in full, unedited below this block, because what it
+> got right about the source is still true and because a withdrawn explanation is
+> worth more on the record than a deleted one.
+>
+> **THE MEASUREMENT THAT KILLED IT.** A generated 20-line contract — an
+> owner-gated four-line setter identical at every cell, behind a constructor
+> chain of `T_k = (T_{k-1} * T_{k-1}) / 1e18` whose DEPTH is the only variable:
+>
+> | chain depth | paths | F | solve band |
+> |---|---|---|---|
+> | 3 (control) | 4 | **4** | 0.002-0.003 s |
+> | 15 | 4 | **4** | 0.002-0.003 s |
+> | 30 | 4 | **4** | 0.002-0.003 s |
+>
+> The control fired (4/4 at depth 3), so the fixture measured something. And a
+> 30-deep chain of 256-bit `mul`/`div` in the constructor costs the setter
+> **nothing at all**.
+>
+> ⇒ **"The constructor chain is what makes st1inch's claims undecidable" is
+> FALSE.** The script pre-registered exactly this outcome as "D30 is WITHDRAWN
+> rather than softened", and that is what happens.
+>
+> **THE MOST LIKELY REASON THE PoC DOES NOT REPRODUCE, stated as the next thing
+> to check and not as a new explanation**: `setFeeReceiver` never reads any
+> `T_k`, so the per-claim slicer removes the whole chain — which is exactly what
+> row 4 of `INVOCATION_DECISIONS` says slicing does (things survive by DATA
+> DEPENDENCY, because the guards that build `tr` read them). If that is right,
+> then st1inch's 1526 assignments are kept alive by something its
+> `setFeeReceiver` DOES depend on, and finding that is the open question. It is
+> NOT established here, and this project has just been reminded what happens when
+> a plausible mechanism is written up before it is tested.
+>
+> **What survives, because it was read rather than inferred**: the source really
+> is a 30-entry hand-unrolled exponentiation-by-squaring table; `_votingPowerAt`
+> really does have ~2^30 complete paths from thirty independent `if`s; and that
+> really is why D29 found it withdrawn from seven of twelve degraded units. Those
+> are facts about the code. What is refuted is the leap from them to "this is why
+> the solver gives no verdict".
+
+<details>
+<summary>The withdrawn note, unedited</summary>
+
+# (withdrawn) st1inch's zero has a source-level mechanism: a 30-deep chain of 256-bit `mul`/`div` in the CONSTRUCTOR, on every query
 
 **Written 2026-08-01, BEFORE the solver sweep's result was read.** The prediction
 at the bottom is therefore a prediction. Source read out of
@@ -110,3 +156,5 @@ candidates worth naming, none of them attempted here:
 initialised from a concrete constructor argument has NOT been checked, and
 `state_mutability`/`unsettable_coords` in the stage-2 driver already treat
 `immutable` specially for a different reason. Nothing here licenses assuming it.
+
+</details>
