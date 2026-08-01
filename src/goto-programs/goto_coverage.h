@@ -705,6 +705,35 @@ public:
   // NEITHER must say so rather than silently run unbounded.
   static std::string claim_budget_mechanism;
 
+  // ---- --path-cov-arith-resolve: THE CHAIN REJECTS THIS COUNTEREXAMPLE ----
+  //
+  // A witnessed path whose model violates an enabled arithmetic check describes
+  // an execution the EVM does not have: the chain reverts with Panic 0x11
+  // (overflow) or 0x12 (division by zero) where the model wraps or returns
+  // bvudiv's total-function value. The emitted Foundry case then asserts a
+  // NORMAL exit for a transaction that reverts, and is RED on the unmodified
+  // contract -- measured, three times across the PoC set.
+  //
+  // `arith_revert_only_paths` holds the paths for which the re-solve came back
+  // UNSAT, i.e. the ones PROVEN reachable only by overflowing. That is a
+  // DECIDED property of the path and it gets its own cell: folding it into U
+  // would file a proof under "we could not decide", which is the exact failure
+  // the U-reason tokens exist to prevent. Keyed like all_claims.
+  //
+  // The three counters are the COST, and they are printed rather than inferred.
+  // Nobody knew, when this was designed, whether the re-solve would fire on
+  // three claims or three thousand; a mechanism whose price is unmeasured is
+  // one nobody can decide to keep.
+  static std::set<std::pair<std::string, std::string>> arith_revert_only_paths;
+  static std::atomic<size_t> arith_resolve_queries;   // re-solves attempted
+  static std::atomic<size_t> arith_resolve_replaced;  // better witness found
+  static std::atomic<size_t> arith_resolve_ms;        // wall time, ms
+  // How many arithmetic-check claims the equation carried at all. Printed even
+  // when it is ZERO, and especially then: zero means no check was enabled or
+  // none reached this unit, and without the number a run that re-solved nothing
+  // is indistinguishable from a run that had nothing to re-solve.
+  static std::atomic<size_t> arith_conditions_seen;
+
   // Signal-safe snapshot for path coverage, mirroring branch coverage's
   // (branch_cov_active / total_branch_atomic / live_reached). Written at the
   // end of instrumentation and in the per-claim job; read ONLY by the signal

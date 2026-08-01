@@ -954,6 +954,53 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
   if (cmdline.isset("solidity-path-coverage"))
     options.set_option("solidity-path-coverage-enabled", true);
 
+  // ---- --path-cov-arith-resolve: REFUSE rather than silently do nothing ----
+  //
+  // The mechanism re-solves a witnessed path claim with goto_check's own
+  // arithmetic conditions assumed. Those conditions only EXIST if a check was
+  // enabled, so without one there is nothing to assume and the flag would be a
+  // no-op that looks like a fix. This tool has already shipped a function that
+  // was never called and a guard that was always true; a third mechanism whose
+  // absence is invisible is not acceptable.
+  //
+  // The dependency is stated rather than papered over. Setting the check
+  // options from here would have to survive whatever the Solidity
+  // standard-checks expansion does to them afterwards, and a mechanism that
+  // depends on option-application ORDER is one that breaks the day the order
+  // changes -- silently, in the direction of doing nothing.
+  if (cmdline.isset("path-cov-arith-resolve"))
+  {
+    if (!cmdline.isset("solidity-path-coverage"))
+    {
+      log_error("--path-cov-arith-resolve is only meaningful with "
+                "--solidity-path-coverage: it re-solves a COMPLETE PATH claim, "
+                "and no other mode emits one.");
+      abort();
+    }
+    if (
+      !cmdline.isset("overflow-check") && !cmdline.isset("div-by-zero-check") &&
+      !cmdline.isset("unsigned-overflow-check"))
+    {
+      log_error(
+        "--path-cov-arith-resolve needs the conditions it is supposed to "
+        "assume, and no arithmetic check is enabled. Add --overflow-check "
+        "and/or --div-by-zero-check. Refusing rather than running: with no "
+        "check enabled goto_check emits no overflow / division-by-zero claim, "
+        "so this flag would re-solve nothing and report a clean run -- "
+        "indistinguishable from the defect being fixed.");
+      abort();
+    }
+    options.set_option("path-cov-arith-resolve", true);
+    log_status(
+      "--path-cov-arith-resolve: a witnessed path whose counterexample "
+      "violates an enabled arithmetic check will be re-solved ONCE with that "
+      "check's own condition assumed. A non-wrapping witness replaces the "
+      "wrapping one; if none exists the path is reachable only through a "
+      "checked-arithmetic revert, which is counted in its own cell and NOT "
+      "folded into U. The cost -- claims re-solved and seconds spent -- is "
+      "printed at the end of the run rather than left to be inferred.");
+  }
+
   config.options = options;
 }
 

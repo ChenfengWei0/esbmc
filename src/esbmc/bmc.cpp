@@ -41,6 +41,21 @@
 #include <atomic>
 #include <nlohmann/json.hpp>
 
+// ---- DEFINED HERE, and deliberately ----
+//
+// These five are written and read ONLY by this file: the re-solve happens in
+// multi_property_check's job loop and the numbers are printed by
+// report_coverage, both below. goto_coverage.cpp neither sets nor reads them.
+// Putting the definitions beside their only users follows the precedent
+// immediately below (goto_functionst's four statics live here for the same
+// reason) and means a reader who finds one finds all of them.
+std::set<std::pair<std::string, std::string>>
+  goto_coveraget::arith_revert_only_paths;
+std::atomic<size_t> goto_coveraget::arith_resolve_queries{0};
+std::atomic<size_t> goto_coveraget::arith_resolve_replaced{0};
+std::atomic<size_t> goto_coveraget::arith_resolve_ms{0};
+std::atomic<size_t> goto_coveraget::arith_conditions_seen{0};
+
 std::unordered_set<std::string> goto_functionst::reached_claims;
 std::unordered_multiset<std::string> goto_functionst::reached_mul_claims;
 std::mutex goto_functionst::reached_claims_mutex;
@@ -1263,6 +1278,42 @@ void report_coverage(
       goto_coveraget::claim_budget_mechanism.empty()
         ? std::string("no enforcement")
         : goto_coveraget::claim_budget_mechanism);
+    // ---- WHAT THE ARITHMETIC RE-SOLVE COST, AND WHAT IT BOUGHT ----
+    //
+    // Printed on EVERY path-coverage run, including when the mechanism is off
+    // and when it never fired. "The flag was on" and "it fired N times" are
+    // separate statements, and a mechanism whose price is unmeasured is one
+    // nobody can decide to keep -- nobody knew, when this was designed, whether
+    // it would fire on three claims or three thousand.
+    //
+    // `conditions seen` is printed even at ZERO and especially then: zero means
+    // no arithmetic check was enabled, or none reached these units, and without
+    // it a run that re-solved nothing looks exactly like a run that had nothing
+    // to re-solve.
+    if (options.get_bool_option("path-cov-arith-resolve"))
+      log_result(
+        // `took the constrained witness` counts SAT re-solves, NOT wraps
+        // fixed: a path whose original witness already satisfied every check
+        // re-solves to an equally good one and is counted here too. Measured on
+        // D10_WrapNotPanic, 3 of 3 -- and only ONE of those three was wrapping.
+        // Naming it "replaced by a non-wrapping one" would have let a reader
+        // infer three defects fixed from one.
+        "Arithmetic Re-solve: {} condition(s) seen, {} claim(s) re-solved in "
+        "{}s, {} took the constrained witness (this counts SAT re-solves, not "
+        "wraps fixed -- a path whose witness was already fine is counted too), "
+        "{} path(s) PROVEN reachable only through a checked-arithmetic revert",
+        goto_coveraget::arith_conditions_seen.load(std::memory_order_relaxed),
+        goto_coveraget::arith_resolve_queries.load(std::memory_order_relaxed),
+        goto_coveraget::arith_resolve_ms.load(std::memory_order_relaxed) /
+          1000.0,
+        goto_coveraget::arith_resolve_replaced.load(std::memory_order_relaxed),
+        goto_coveraget::arith_revert_only_paths.size());
+    else
+      log_result(
+        "Arithmetic Re-solve: OFF (--path-cov-arith-resolve). A witnessed "
+        "path whose counterexample wraps or divides by zero is emitted as a "
+        "normal-exit test and is RED on the unmodified contract");
+
     if (total == 0)
       log_result("No complete path enumerated");
     else
@@ -1630,6 +1681,29 @@ void report_coverage(
             "and a plain early `return` compile to the same shape, so this is "
             "either a revert or a normal early exit";
         claim_entry["witnessed_in_earlier_round"] = prior && !covered;
+
+        // PROVEN reachable only through a checked-arithmetic revert. Emitted
+        // beside `status: F` rather than instead of it: the path IS feasible
+        // and a witness exists, it is just a witness the chain reaches through
+        // a Panic. A consumer that renders this path as a bare call asserting a
+        // normal exit produces a RED test, which is the single outcome this
+        // pipeline must never produce -- so the flag is published rather than
+        // left to be inferred from the values.
+        if (goto_coveraget::arith_revert_only_paths.count(
+              {claim_msg, claim_loc}))
+        {
+          claim_entry["arith_revert_only"] = true;
+          claim_entry["arith_revert_only_reason"] =
+            "the re-solve of this claim under the enabled arithmetic check "
+            "conditions is UNSAT, which PROVES that no input reaches this path "
+            "without violating a checked operation. On chain the path is "
+            "therefore reached through a Panic revert (0x11 overflow / 0x12 "
+            "division by zero), NOT through the normal exit this entry's "
+            "exit_kind reports -- exit_kind classifies the MODEL, and the "
+            "model has no Panic. Render with vm.expectRevert, or do not render "
+            "it at all; a bare call asserting a normal exit is red on the "
+            "unmodified contract";
+        }
 
         // path_id == enc(pi): the integer encoding the path's whole decision
         // sequence (tr accumulator). Text before ":path:" is the function.
@@ -2213,6 +2287,25 @@ void report_coverage(
         report["summary"]["U_reasons"] = ur;
       }
       report["summary"]["revert_exit_paths"] = nRevert;
+      // Its own cell beside F/I/U, never folded into any of them: "this path
+      // needs an overflow" is a DECIDED property, and the cost of deciding it
+      // travels with it so a reader can tell a run that measured this from a
+      // run that did not ask.
+      report["summary"]["arith_resolve"]["enabled"] =
+        options.get_bool_option("path-cov-arith-resolve");
+      report["summary"]["arith_resolve"]["conditions_seen"] =
+        goto_coveraget::arith_conditions_seen.load(std::memory_order_relaxed);
+      report["summary"]["arith_resolve"]["claims_resolved"] =
+        goto_coveraget::arith_resolve_queries.load(std::memory_order_relaxed);
+      report["summary"]["arith_resolve"]["seconds"] =
+        goto_coveraget::arith_resolve_ms.load(std::memory_order_relaxed) /
+        1000.0;
+      // SAT re-solves, not wraps fixed. See the stdout line for why the
+      // distinction is worth a key name this long.
+      report["summary"]["arith_resolve"]["took_constrained_witness"] =
+        goto_coveraget::arith_resolve_replaced.load(std::memory_order_relaxed);
+      report["summary"]["arith_revert_only_paths"] =
+        goto_coveraget::arith_revert_only_paths.size();
       report["summary"]["bound"]["max_tx"] = max_tx.empty() ? "default" : max_tx;
       report["summary"]["bound"]["unwind"] =
         unwind_s.empty() ? "default" : unwind_s;
@@ -3455,6 +3548,166 @@ smt_convt::resultt bmct::multi_property_check(
         std::lock_guard lock(result_mutex);
         final_result = solver_result;
         return;
+      }
+
+      // ---- THE CHAIN REJECTS THIS COUNTEREXAMPLE: RE-SOLVE ONCE ----
+      //
+      // MEASURED, and it is why this exists: `D10_WrapNotPanic.add` is
+      // `require(amt > 0); bal += amt;` and the witness comes back
+      // `amt = 2^256-1`, `bal: 500 -> 499`, classified `exit_kind: normal`, and
+      // emitted as a bare call asserting a normal exit. `forge test` answers
+      // `[FAIL: panic: arithmetic underflow or overflow (0x11)]`. The `require`
+      // is load-bearing -- without it the solver picks 0 and the test is green
+      // -- so the defect is not "the solver likes extremes": NOTHING in the
+      // formula distinguishes a wrapping member of the path's domain from a
+      // non-wrapping one, and once the cheap value is excluded the choice is
+      // unconstrained.
+      //
+      // WHY THIS ORDER (solve as before, then re-solve only a WITNESSED path).
+      // The alternative -- assume no-overflow on the FIRST solve -- pays one
+      // extra query on every path that comes back UNSAT, which on st1inch is
+      // the 69 `bounded-holds`. Witnessed paths are single digits per unit, so
+      // paying there is the cheap side. It also needs no way to ask "did this
+      // model wrap": preferring a non-wrapping witness whenever one exists is
+      // strictly stronger than detecting the wrap first, and it removes the
+      // only step that would have re-derived arithmetic OUTSIDE the model --
+      // a second implementation of an arithmetic the model already performs is
+      // free to disagree with it, which is the geometric ladder's own wrap
+      // defect.
+      //
+      // THE PATH CONSTRAINT IS CARRIED FOR FREE, and that closes the hole in
+      // the original proposal. The query IS this path's claim
+      // `assert(!(tr == enc && cnt == depth))`, so every SAT model is already
+      // on this path and adding a conjunct cannot move it to another one. The
+      // hole was real, but it belonged to the `assume(no overflow);
+      // assert(false)` FORM of the re-solve, not to this architecture.
+      // Consequently the UNSAT of this query is exactly the proof that the
+      // path is reachable ONLY by overflowing -- free, from the same query.
+      std::unique_ptr<smt_convt> arith_solver;
+      std::unique_ptr<symex_target_equationt> arith_eq;
+      if (
+        is_path_cov && options.get_bool_option("path-cov-arith-resolve") &&
+        !options.get_bool_option("smt-during-symex") &&
+        claim.claim_property == "instrumented assertion")
+      {
+        arith_eq = std::make_unique<symex_target_equationt>(eq);
+        claim_slicer rclaim(i, false, is_goto_cov, ns);
+        rclaim.run(arith_eq->SSA_steps);
+
+        // WHICH STEPS, decided on the MACHINE FIELD goto_check sets, never on
+        // the comment prose. `add_guarded_claim` stamps
+        // `location.property()`, and two different producers share the value
+        // `overflow` -- `overflow_check` writes "arithmetic overflow on ..."
+        // while `cast_overflow_check` writes "Narrowing cast overflow on ..."
+        // and is ON BY DEFAULT for Solidity. A text match would have to know
+        // both sentences and would silently miss the next one.
+        //
+        // THE GUARD HAS TO BE FOLDED IN BY HAND. `convert_internal_step`
+        // (symex_target_equation.cpp) uses an ASSUME's `cond` and IGNORES its
+        // `guard` -- assumes join the assumption chain unconditionally. So
+        // converting the assert as-is would assume "no overflow" even on symex
+        // branches where the operation never executes, which can exclude a
+        // legitimate witness of this path and report a FALSE
+        // "reachable only by overflowing". `implies(guard, cond)` is what
+        // makes the assumption say what the assert said.
+        size_t n_arith = 0;
+        for (auto &st : arith_eq->SSA_steps)
+        {
+          if (!st.is_assert() || !st.source.is_set)
+            continue;
+          const std::string prop =
+            st.source.pc->location.property().as_string();
+          if (prop != "overflow" && prop != "division-by-zero")
+            continue;
+          st.type = goto_trace_stept::ASSUME;
+          st.cond = is_nil_expr(st.guard) ? st.cond
+                                          : implies2tc(st.guard, st.cond);
+          st.ignore = false;
+          ++n_arith;
+        }
+        goto_coveraget::arith_conditions_seen.fetch_add(
+          n_arith, std::memory_order_relaxed);
+
+        // Nothing to assume => nothing to re-solve. Not an error: a unit with
+        // no checked operation on this path is the common case, and paying a
+        // query to learn that would make the mechanism cost something on every
+        // contract instead of on the ones it helps.
+        if (n_arith > 0)
+        {
+          // The conversion must happen BEFORE this slice. symex_slicet::run
+          // skips `ignore`d steps outright, so an arithmetic condition left as
+          // an ignored ASSERT contributes no symbols to `depends` and the
+          // assignments defining its OPERANDS are then free to be sliced away
+          // -- after which asserting it would reference symbols the formula no
+          // longer constrains and the solver would satisfy it by choosing
+          // them. An answer about nothing.
+          if (!options.get_bool_option("no-slice"))
+          {
+            symex_slicet rslicer(options);
+            rslicer.run(arith_eq->SSA_steps);
+          }
+          arith_solver =
+            std::unique_ptr<smt_convt>(create_solver("", ns, options));
+          const fine_timet ra_start = current_time();
+          const smt_convt::resultt ra =
+            run_decision_procedure(*arith_solver, *arith_eq);
+          const fine_timet ra_stop = current_time();
+          goto_coveraget::arith_resolve_queries.fetch_add(
+            1, std::memory_order_relaxed);
+          goto_coveraget::arith_resolve_ms.fetch_add(
+            (size_t)(ra_stop - ra_start), std::memory_order_relaxed);
+
+          if (ra == smt_convt::P_SATISFIABLE)
+          {
+            // A witness of THIS path that satisfies every enabled arithmetic
+            // check. Everything downstream -- the trace, the payload harvest,
+            // the Foundry case -- is built from this model instead.
+            // SWAP the step lists rather than assign the equation:
+            // symex_target_equationt holds `const namespacet &`, so its copy
+            // ASSIGNMENT is implicitly deleted (copy construction, used above,
+            // is fine). Both equations name the same namespace, so exchanging
+            // the only member that differs is exactly the intended effect and
+            // is O(1).
+            local_eq.SSA_steps.swap(arith_eq->SSA_steps);
+            solver_ptr = arith_solver.get();
+            goto_coveraget::arith_resolve_replaced.fetch_add(
+              1, std::memory_order_relaxed);
+            log_status(
+              "--path-cov-arith-resolve: '{}' had a counterexample the chain "
+              "rejects; re-solved under {} arithmetic condition(s) and took "
+              "the non-wrapping witness instead",
+              prettify_solidity_expr(claim.claim_msg),
+              n_arith);
+          }
+          else if (ra == smt_convt::P_UNSATISFIABLE)
+          {
+            // NOT a failure of the re-solve. It is a PROOF: no input reaches
+            // this path without violating a checked operation, so on chain the
+            // path is reachable only through a Panic revert. Its own cell, and
+            // never folded into U -- a U says "we could not decide" and this
+            // was decided.
+            {
+              std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+              goto_coveraget::arith_revert_only_paths.emplace(
+                claim.claim_msg, claim.claim_loc);
+            }
+            log_status(
+              "--path-cov-arith-resolve: '{}' is reachable ONLY by violating a "
+              "checked arithmetic operation -- the re-solve under {} "
+              "condition(s) is UNSAT, which PROVES it. On chain this path is "
+              "reached through a Panic revert, so its witness is kept but the "
+              "path must not be emitted as a normal-exit test",
+              prettify_solidity_expr(claim.claim_msg),
+              n_arith);
+          }
+          else
+            log_warning(
+              "--path-cov-arith-resolve: the re-solve of '{}' returned neither "
+              "sat nor unsat, so the original (possibly chain-rejected) "
+              "witness is kept unchanged. This is NOT a proof that the path "
+              "needs an overflow",
+              prettify_solidity_expr(claim.claim_msg));
+        }
       }
 
       bool is_compact_trace = true;

@@ -917,6 +917,24 @@ const struct group_opt_templ all_cmd_options[] = {
       "an uncapped run's. This is a bound on cost, not a way around it: raising "
       "--memlimit or the outer timeout routes AROUND a query that does not "
       "finish, this one refuses to pay for it"},
+     {"path-cov-arith-resolve",
+      NULL,
+      "When a complete path's counterexample is a value the CHAIN REJECTS -- a "
+      "wrapping add, a division by zero -- re-solve THAT ONE claim with the "
+      "verifier's own arithmetic-check conditions ASSUMED, and prefer the "
+      "non-wrapping witness when one exists. MEASURED: three of the RED tests "
+      "in the PoC set are exactly this, two Panic 0x11 and one Panic 0x12, and "
+      "the emitted case asserts a NORMAL exit for an execution that reverts on "
+      "chain. The alternative that was decided and then overturned (lowering "
+      "checked arithmetic to a two-exit branch) costs 2^k paths, and k is 29 on "
+      "one real contract's constructor against a 10000-path per-unit cap; this "
+      "costs at most ONE extra query per WITNESSED path that carries a checked "
+      "operation, and witnessed paths are single digits per unit. If the "
+      "re-solve is UNSAT the path is reachable only by overflowing, which is a "
+      "DECIDED property and gets its own count -- it is never folded into U. "
+      "Requires --solidity-path-coverage, and requires --overflow-check and/or "
+      "--div-by-zero-check to have produced the conditions in the first place; "
+      "without either it REFUSES rather than silently doing nothing"},
      {"path-cov-certify",
       boost::program_options::value<std::string>()->value_name("file"),
       "Run the CERTIFICATION QUERY instead of path enumeration: given a JSON "

@@ -1,8 +1,33 @@
 # Entry condition 3: the model wraps, so the counterexample is a value the chain rejects
 
-**Status: PREMISE TESTED, AND IT FAILED. The capability is NOT already in the
-tool; (c) requires the C++ change designed below.** See "The premise experiment"
-at the end for the 12 cells and what each one rules out.
+**Status: IMPLEMENTED as `--path-cov-arith-resolve`, must-flip pair PASSING.**
+
+The premise experiment (12 cells, at the end of this file) showed the capability
+was NOT already in the tool, so the design below was implemented. Measured on the
+build that carries it:
+
+    D10_WrapNotPanic  off: amt = 0xFF..FF   -> bal 500 -> 499     WRAPS
+                       on: amt = 0xFF..FE0B -> bal 0xFF..FF       saturates exactly
+    Tiny2             the same flip on `deposit`
+    cost               D10 3 claims re-solved in 0.008s; Tiny2 8 in 0.024s
+
+**One fact from the source would have been got backwards if guessed**, and it is
+the one that decides soundness: `convert_internal_step`
+(`symex_target_equation.cpp:764-772`) uses an ASSUME's `cond` and **never its
+`guard`** — assumes join the assumption chain unconditionally. Converting
+`goto_check`'s assert as-is would assume "no overflow" even on symex branches
+where the operation never executes, which can exclude a legitimate witness of the
+path and report a FALSE "this path is reachable only by overflowing". The
+conversion therefore folds the guard in by hand: `cond := implies(guard, cond)`.
+
+**What the two new regressions pin, and what they do not.**
+`solidity_path_cov_arith_resolve_fires` / `_off` are mutually exclusive by
+construction — neither one's regex can match the other's run — so flipping the
+flag flips both. They pin that the mechanism FIRES. They do **not** pin that the
+witness changed, because that lives in `cov-report.json` and the harness matches
+program output only. The value-level check is
+`notes/coverage/scripts/arith_resolve_verify.py`, which compares `entry + amt`
+against the published `final_state` rather than re-deriving the arithmetic.
 
 Decision context: **C1 was overturned by its own measured cost** (lowering
 checked arithmetic to a two-exit branch is `2^k`, and `arith_exponent.py` measured
