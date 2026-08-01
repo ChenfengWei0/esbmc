@@ -79,6 +79,33 @@ RE_PIN_PAYABLE = re.compile(r"^\[env\] msg\.value NOT pinned: this unit is PAYAB
 RE_PIN_UNKNOWN = re.compile(r"^\[env\] msg\.value NOT auto-pinned")
 
 
+def binary_identity():
+    """Who produced a record: HEAD, whether src/ was dirty, and the binary's
+    own mtime.
+
+    HEAD alone lies in exactly the situation this project is always in -- an
+    uncommitted fix means two different binaries share one commit -- so the
+    mtime and the dirty flag are both load-bearing. Same three fields
+    pathcov_collect.py records, on purpose: a record here and a record there
+    have to be comparable when someone asks which build a number came from.
+    """
+    def _sh(argv):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True,
+                                  cwd=ESBMC_ROOT, timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    try:
+        mtime = int(os.stat(ESBMC).st_mtime)
+    except OSError:
+        mtime = 0
+    return {
+        "head": _sh(["git", "rev-parse", "--short", "HEAD"]),
+        "srcDirty": bool(_sh(["git", "status", "--porcelain", "--", "src/"])),
+        "binaryMtime": mtime,
+    }
+
+
 def _killpg(proc):
     """Kill a subprocess's whole process GROUP, tolerating a dead one.
 
@@ -280,10 +307,15 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("benchmarks", nargs="*", default=[],
                     help="which to sweep; default is every one that has ever "
-                         "produced a witnessed path (st1inch is EXCLUDED by "
-                         "default -- all 22 of its runs were killed by the 180s "
-                         "bound and its enumeration side is empty, which is "
-                         "measured, not assumed)")
+                         "produced a witnessed path. st1inch is EXCLUDED by "
+                         "default, and the REASON has changed: it used to be "
+                         "that all 22 of its runs were killed. They are not any "
+                         "more -- the current collection is 21/22 with reports. "
+                         "It is excluded now because all 128 of its claims are "
+                         "U (59 solver-unknown, 69 bounded-holds, 0 "
+                         "unit-not-entered), so there is no witnessed path for "
+                         "stage 2 to generalise. Measured, not assumed, and "
+                         "worth re-checking whenever the solver side moves")
     ap.add_argument("--out", default=os.path.join(ESBMC_ROOT, "notes",
                                                   "coverage", "certify",
                                                   "results.jsonl"))
@@ -348,8 +380,39 @@ def main():
           flush=True)
     write_lock = threading.Lock()
 
+    ident = binary_identity()
+
+    # --redo MUST TRUNCATE, NOT APPEND. It only ever cleared the skip set, and
+    # records are appended -- so a --redo left the OLD record for every unit in
+    # the file next to the new one, two rows with one (benchmark, unit) key and
+    # different numbers. Which one a reader gets is then a property of its
+    # parsing order, and this project has already been bitten by one fact kept
+    # in two places. The previous file is moved aside rather than deleted: it
+    # is a measurement, just one of a build that no longer exists.
+    if args.redo and os.path.exists(args.out):
+        keep = args.out + ".superseded"
+        os.replace(args.out, keep)
+        print(f"[sweep] --redo: moved the previous results to {keep} rather "
+              f"than appending beside them; two records with one "
+              f"(benchmark, unit) key would be read by parsing order")
+
+    # RESUMING ACROSS A DIFFERENT BINARY IS THE TRAP THIS FEATURE SETS, and it
+    # is the same one pathcov_collect.py already refuses. Resuming means "skip
+    # this unit and keep its record", which is right for an interrupted sweep
+    # and wrong after a fix: every unit prints `already recorded`, the file is
+    # rewritten to look current, and the analysis quotes the OLD build's
+    # numbers under the NEW build's name. Nothing says so.
+    #
+    # MEASURED, not hypothetical: run immediately after a frontend fix, this
+    # sweep reported all 65 units already recorded and exited clean.
+    #
+    # Refused rather than auto-cleared -- deleting someone's sweep because a
+    # timestamp moved is its own way to lose data. Records written before this
+    # check existed carry no `binary` field at all and are treated as foreign,
+    # which is the safe reading: they came from a build nobody recorded.
     done = set()
     if os.path.exists(args.out) and not args.redo:
+        stale = []
         with open(args.out) as f:
             for line in f:
                 try:
@@ -357,6 +420,24 @@ def main():
                 except ValueError:
                     continue
                 done.add((r.get("benchmark"), r.get("unit")))
+                if r.get("binary") != ident:
+                    stale.append((r.get("benchmark"), r.get("unit"),
+                                  r.get("binary")))
+        if stale:
+            shown = stale[:5]
+            print(f"[sweep] REFUSING to resume: {len(stale)} of {len(done)} "
+                  f"record(s) in {args.out} were produced by a DIFFERENT binary "
+                  f"than the one on disk now.")
+            print(f"  now:  {ident}")
+            for b, u, was in shown:
+                print(f"  was:  {b}/{u} -> {was}")
+            if len(stale) > len(shown):
+                print(f"  ... and {len(stale) - len(shown)} more")
+            print("Resuming would skip those units and keep their records, so "
+                  "the table would quote the old build's numbers under the new "
+                  "build's name. Re-run with --redo to re-measure, or move the "
+                  "file aside to keep it.")
+            return 1
         if done:
             print(f"[sweep] {len(done)} unit(s) already recorded in "
                   f"{args.out}; they are SKIPPED. Pass --redo to re-run them")
@@ -481,7 +562,11 @@ def main():
                         "probes": args.probes,
                         "refine_rounds": args.refine_rounds,
                         "shrink_rounds": args.shrink_rounds,
-                        "unit_timeout_s": args.timeout})
+                        "unit_timeout_s": args.timeout,
+                        # Which binary produced this record. Read on resume; a
+                        # file whose records came from another build is refused
+                        # rather than continued.
+                        "binary": ident})
             with open(os.path.join(uwd, "driver.log"), "w") as f:
                 f.write(out)
             # ONE WRITER AT A TIME. Two processes appending to the same JSONL
