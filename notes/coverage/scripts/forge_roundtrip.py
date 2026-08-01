@@ -124,7 +124,7 @@ def run(cmd, timeout, cwd=None):
 
 
 def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
-               max_tx):
+               max_tx, scope="focus"):
     """One esbmc run per callable, each in its own CWD (the emitted filename is
     hardcoded), each renamed so the suite can hold all of them at once."""
     callables = base.enumerate_own_callable_functions(flat, project)
@@ -195,18 +195,34 @@ def emit_tests(bench, flat, solast, primary, project, proj, timeout, journal,
         # possibly different tests. That is the correct trade -- a slightly
         # different suite whose denominator is its own, over a suite whose
         # denominator came from somewhere else.
+        # THE CELL, and why it is an argument rather than a constant.
+        # INVOCATION_DECISIONS.md prints two settled command lines --
+        # whole-contract at --solidity-max-tx 2 (the ARTEFACT question: what can
+        # this method reach) and --focus-function at 1 (the GATE question: how
+        # does it compare against a baseline measured to run at one
+        # transaction) -- and forbids quoting a run of one into the other table.
+        # This script measures the DELIVERABLE with forge, so which question it
+        # answers has to be chosen rather than inherited.
+        #
+        # `focus` stays the default so every recorded number reproduces. What it
+        # costs is stated there and not hidden here: a focused run cannot reach
+        # cross-function state at ANY transaction bound, because every
+        # transaction is another call to the same entry.
         cmd = [str(ESBMC), str(solast), "--sol", str(flat),
                "--solidity-path-coverage", "--solidity-max-tx", str(max_tx),
                "--generate-foundry-testcase", "--cov-report-json",
                "--memlimit", "8g", "--result-only",
-               "--contract", primary, "--focus-function", fname]
+               "--contract", primary]
+        if scope == "focus":
+            cmd += ["--focus-function", fname]
         print(f"  [{i}/{len(callables)}] {tag}", flush=True)
         rc, out, wall = run(cmd, timeout, cwd=str(cwd))
         (cwd / "run.log").write_text(out)
 
         produced = sorted(cwd.glob("*.cov.t.sol"))
         rec = {"tag": tag, "exitCode": rc, "wallSeconds": round(wall, 2),
-               "killed": rc == -1, "emitted": [p.name for p in produced]}
+               "killed": rc == -1, "emitted": [p.name for p in produced],
+               "cell": {"scope": scope, "maxTx": max_tx}}
         # The collector's own classification, printed rather than inferred
         # later. "no test emitted" has at least four distinct causes and they
         # are not interchangeable.
@@ -314,6 +330,14 @@ def main():
     # emitter change moves that. Raising it is the measurement that separates
     # "our tests are weak" from "one transaction cannot get there".
     ap.add_argument("--max-tx", type=int, default=1)
+    ap.add_argument("--scope", choices=("focus", "whole"), default="focus",
+                    help="focus passes --focus-function per callable (with "
+                         "--max-tx 1 this is the GATE cell); whole drops it and "
+                         "lets the dispatcher choose (with --max-tx 2 this is "
+                         "the ARTEFACT cell, the only configuration measured to "
+                         "reach cross-function state). Printed with the result, "
+                         "because one cell's run may not be quoted into the "
+                         "other's table.")
     a = ap.parse_args()
     if a.bench not in base.BENCHES:
         sys.exit(f"unknown bench: {a.bench}")
@@ -343,7 +367,7 @@ def main():
         journal.unlink()
     print(f"=== {a.bench}: emitting tests ===", flush=True)
     tests, recs = emit_tests(a.bench, flat, solast, primary, project, proj,
-                             a.timeout, journal, a.max_tx)
+                             a.timeout, journal, a.max_tx, a.scope)
     emitted = len(tests)
     print(f"=== emitted {emitted} test file(s) from {len(recs)} run(s) ===",
           flush=True)
@@ -501,6 +525,11 @@ def main():
     print()
     print("=" * 78)
     print(f"{a.bench}: FORGE coverage of the GENERATED suite")
+    cell = ("ARTEFACT" if (a.scope, a.max_tx) == ("whole", 2) else
+            "GATE" if (a.scope, a.max_tx) == ("focus", 1) else "UNNAMED")
+    print(f"CELL {cell}: scope={a.scope} --solidity-max-tx={a.max_tx}"
+          + ("   -- neither settled command line, so this table belongs to no "
+             "comparison" if cell == "UNNAMED" else ""))
     print("=" * 78)
     tot_c = tot_ours = 0
     for f in sorted(canon):
