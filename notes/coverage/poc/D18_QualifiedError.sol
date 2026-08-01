@@ -1,104 +1,173 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// DOES A QUALIFIED CUSTOM-ERROR REVERT STILL PRUNE ITS PATH?
+// A QUALIFIED CUSTOM-ERROR REVERT VANISHES IN CONSTRUCTOR SCOPE.
 //
-// WHY THIS FILE EXISTS. `solidity_convert_expr.cpp:688-695` turns a MemberAccess
-// call into `code_skipt()` when the referenced declaration is an
-// `EventDefinition` OR an `ErrorDefinition`:
+// THE MECHANISM, read out of the source rather than guessed.
 //
-//     if (!func_ref.empty() && func_ref.contains("nodeType") &&
-//         (func_ref["nodeType"] == "EventDefinition" ||
-//          func_ref["nodeType"] == "ErrorDefinition"))
-//     { new_expr = code_skipt(); return false; }
+// `solidity_convert_expr.cpp:688-695` turns a MemberAccess call into
+// `code_skipt()` when the referenced declaration is an `EventDefinition` OR an
+// `ErrorDefinition`. The unqualified spelling `revert Err(x)` never reaches that
+// line -- it goes to `expr.cpp:2982-3008` and calls the `#sol_error` function
+// whose body is `__ESBMC_assume(false)`, and THAT is what makes the path go
+// away.
 //
-// The UNQUALIFIED spelling `revert Err(x)` takes a different route entirely
-// (`solidity_convert_expr.cpp:2982-3008`) and calls the error function whose
-// body is `__ESBMC_assume(false)` -- which is what makes the path go away. The
-// QUALIFIED spelling `revert L.Err(x)` / `revert C.Err(x)` hits the skip.
+// Path coverage does not leave this to chance in general: `--solidity-path-
+// coverage` sets `solidity-path-coverage-enabled` (esbmc_parseoptions.cpp:955),
+// which is the third disjunct of the single assignment to
+// `uses_revert_observation` (solidity_convert.cpp:225-231), so the flag is TRUE
+// on every run of this pipeline. With it true, `solidity_convert_stmt.cpp:
+// 1203-1210` builds a rollback block and NEVER CONVERTS `errorCall` at all --
+// both spellings become the same thing and the drop is unreachable.
 //
-// If the skip really does replace the assume, then a path that reverts on chain
-// survives enumeration AS A NORMAL EXIT -- and this pipeline renders exactly
-// that as a Foundry test asserting the call succeeds. That is a RED test on the
-// unmodified contract, which is the only way this pipeline produces a wrong
-// deliverable at all.
+// EXCEPT THAT THE ROLLBACK BUILDER CAN DECLINE, AND THEN STMT FALLS THROUGH TO
+// LINE 1213, which is `get_expr(stmt["errorCall"])` -- the drop. It declines in
+// exactly the scope where a constructor sits: `solidity_convert_modifier.cpp:206`
+// sets `current_function_revert_observable = !is_event_or_err && !is_ctor`, and a
+// constructor is not an external entry so it has no `_sol_save_this` snapshot
+// either, so both terms of the bail-out at :952-955 hold.
 //
-// THE EXPECTATION IS DIFFERENTIAL, ON PURPOSE. The severity of the drop is
-// conditional on `uses_revert_observation`, whose value under path coverage was
-// NOT established when this file was written -- and a prediction that depends on
-// an unknown is not a prediction. So the expectation below compares the two
-// spellings against EACH OTHER and needs no knowledge of the flag:
+// SO THE DEFECT IS SCOPED, AND THE SCOPE IS THE WHOLE FINDING. That is why this
+// file crosses TWO dimensions rather than one:
 //
-//     `guardQualified` and `guardPlain` are the same function twice, differing
-//     ONLY in whether the error name is qualified. They MUST report the same
-//     path count and the same exit kinds. If they do not, the drop is live.
+//     WHERE the revert is  :  constructor / external function
+//     HOW the error is named:  unqualified / library-qualified / contract-qualified
 //
-// This also means the file answers something whichever way the flag goes: if
-// the two agree, the skip is being compensated for somewhere downstream and
-// that place is worth finding; if they disagree, the difference IS the defect
-// and the report names it without further argument.
+// A file that tested only the function row -- which is what the first version of
+// this file did -- would have reported "the two spellings agree" and been read as
+// evidence that something downstream compensates. It would have been a true
+// observation of the cell that cannot fail.
 //
-// EXPECTED, stated before running:
-//   guardPlain      2 paths -- one normal exit (x != 7), one revert (x == 7)
-//   guardQualified  2 paths -- IDENTICAL kinds to guardPlain
-//   guardContract   2 paths -- IDENTICAL again; a CONTRACT qualifier reaches the
-//                   same line by a different route (TypeMemberCall) and is here
-//                   so that "library" is not confused with "qualified"
+// WHY IT PRODUCES A RED TEST RATHER THAN A MISSING PATH. Nothing downstream sees
+// it. The exit census recognises three revert artifacts -- a `#sol_error` call,
+// a revert mark, a rollback restore (`goto_coverage.cpp:5769-5782`) -- and a
+// dropped qualified error produces NONE of them. But a constructor does get an
+// epilogue, so `saw_epilogue` is set, so the exit lands in neither
+// `rollback_exits` nor `undetermined_exits` and is classified NORMAL. It is then
+// filed in `normal_exit_paths` and the emitter renders a case asserting the
+// DEPLOYMENT SUCCEEDS. On chain that deployment reverts.
 //
-// WHAT A DEFECT LOOKS LIKE, and it will not look like a crash: `guardQualified`
-// reporting 2 paths BOTH with exit_kind normal, or reporting 1 path, while
-// `guardPlain` reports one normal and one revert. Same count, wrong kinds is the
-// worse of the two, because a path count that matches is what a reader checks.
+// The undetermined census cannot catch it either: that census counts MISSING
+// evidence, and this path has affirmative evidence that happens to be wrong.
 //
-// THE CONTROL AGAINST OVER-READING: `noError` has the same branch shape and no
-// custom error at all. If IT also disagrees with `guardPlain`, the difference is
-// not about errors and this file is measuring something else.
+// ---- EXPECTED, WRITTEN BEFORE RUNNING ----
+//
+// Run each contract separately:
+//   esbmc D18_QualifiedError.solast --sol D18_QualifiedError.sol \
+//         --contract <name> --solidity-path-coverage --cov-report-json \
+//         --solidity-max-tx 1
+//
+//   contract              predicted exits   predicted kinds
+//   D18_CtorPlain         3                 1 revert, 2 normal
+//   D18_CtorLibQual       4                 0 revert, 4 normal   <- the defect
+//   D18_CtorContractQual  4                 0 revert, 4 normal   <- other route
+//   D18_FnPlain           3                 1 revert, 2 normal   } must be
+//   D18_FnLibQual         3                 1 revert, 2 normal   } IDENTICAL
+//
+// TWO SYMPTOMS IN ONE PAIR, and the second matters more. The count is too high
+// by one because the `x == 0` arm has no terminator, so the DFS runs on into the
+// second `if` and forks again -- that is what the second `if` is FOR. And the
+// exit kind is wrong, which is the half that ships a red test. A reader checks
+// the count; the count being wrong too is luck, not design.
+//
+// THE FUNCTION ROW IS THE NEGATIVE CONTROL AND IT MUST SHOW NO DIFFERENCE.
+// If `D18_FnLibQual` also diverges from `D18_FnPlain`, then the operative factor
+// is not the constructor scope and the reading above is wrong -- the drop would
+// be unconditional and the rollback analysis a red herring.
+//
+// `D18_CtorContractQual` is separate from `D18_CtorLibQual` because a contract
+// qualifier reaches `expr.cpp:693` through a DIFFERENT ExpressionT
+// (TypeMemberCall via `solidity_grammar.cpp:956-957`, versus LibraryMemberCall
+// via :942-945). "Qualified" and "library" are two properties and only one of
+// them is under test.
 
 library L18 {
     error LibSaysNo(uint256 got);
 }
 
-contract D18_Other {
-    error OtherSaysNo(uint256 got);
+contract D18_ErrHolder {
+    error HolderSaysNo(uint256 got);
 }
 
-contract D18_QualifiedError {
+// ---------------- constructor row: the cell predicted to be LIVE ----------
+
+contract D18_CtorPlain {
     error LocalSaysNo(uint256 got);
 
-    uint256 public tag;
+    uint256 public v;
 
-    // UNQUALIFIED -- the spelling that is known to lower to `assume(false)`.
-    function guardPlain(uint256 x) external {
-        if (x == 7) {
+    constructor(uint256 x) {
+        if (x == 0) {
             revert LocalSaysNo(x);
         }
-        tag = 1;
+        if (x > 10) {
+            v = 1;
+        } else {
+            v = 2;
+        }
     }
+}
 
-    // LIBRARY-QUALIFIED -- reaches expr.cpp:688 via LibraryMemberCall.
-    function guardQualified(uint256 x) external {
-        if (x == 7) {
+contract D18_CtorLibQual {
+    uint256 public v;
+
+    constructor(uint256 x) {
+        if (x == 0) {
             revert L18.LibSaysNo(x);
         }
-        tag = 2;
-    }
-
-    // CONTRACT-QUALIFIED -- reaches the same line via TypeMemberCall. Separate
-    // from the library case because "qualified" and "library" are two different
-    // properties and only one of them is the one under test.
-    function guardContract(uint256 x) external {
-        if (x == 7) {
-            revert D18_Other.OtherSaysNo(x);
+        if (x > 10) {
+            v = 1;
+        } else {
+            v = 2;
         }
-        tag = 3;
     }
+}
 
-    // CONTROL: same branch, no custom error, so the revert cannot be the cause
-    // of any difference this function shows.
-    function noError(uint256 x) external {
-        if (x == 7) {
-            revert("plain-string");
+contract D18_CtorContractQual {
+    uint256 public v;
+
+    constructor(uint256 x) {
+        if (x == 0) {
+            revert D18_ErrHolder.HolderSaysNo(x);
         }
-        tag = 4;
+        if (x > 10) {
+            v = 1;
+        } else {
+            v = 2;
+        }
+    }
+}
+
+// ---------------- function row: the negative control, predicted DEAD ------
+
+contract D18_FnPlain {
+    error LocalSaysNo(uint256 got);
+
+    uint256 public v;
+
+    function run(uint256 x) external {
+        if (x == 0) {
+            revert LocalSaysNo(x);
+        }
+        if (x > 10) {
+            v = 1;
+        } else {
+            v = 2;
+        }
+    }
+}
+
+contract D18_FnLibQual {
+    uint256 public v;
+
+    function run(uint256 x) external {
+        if (x == 0) {
+            revert L18.LibSaysNo(x);
+        }
+        if (x > 10) {
+            v = 1;
+        } else {
+            v = 2;
+        }
     }
 }
