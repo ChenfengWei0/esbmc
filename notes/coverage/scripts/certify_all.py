@@ -488,7 +488,19 @@ def main():
             i, unit = item
             uwd = os.path.join(wd, unit)
             os.makedirs(uwd, exist_ok=True)
-            cmd = [sys.executable, DRIVER,
+            # `-u`: UNBUFFERED. The driver's stdout is a PIPE, so Python block-
+            # buffers it and a KILLED run loses whatever is still in the buffer.
+            # This sweep's expected ending IS a kill, so that is the common case
+            # rather than the exotic one, and the loss lands precisely on the
+            # runs that died EARLY -- the ones whose first rounds are the only
+            # thing that would have said why. MEASURED on this corpus: five of
+            # the six KILLED units kept their logs only because their output had
+            # already overflowed the buffer (aqua.ship 15418 lines, farming.
+            # rescueFunds 1192, ...), while EscrowDst/cancel came back with two
+            # lines and no evidence. Same fix in certify_poc.py, applied in the
+            # same change: one of these two learning it and the other not is how
+            # a fixed defect comes back under a different sweep's name.
+            cmd = [sys.executable, "-u", DRIVER,
                    "--esbmc", ESBMC,
                    "--sol", os.path.join(INPUTS, sol),
                    "--ast", os.path.join(INPUTS, sol + ".solast"),

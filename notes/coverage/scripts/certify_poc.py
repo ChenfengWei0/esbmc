@@ -170,7 +170,20 @@ def main():
                 continue
             uwd = Path(a.workdir) / sol.stem / unit
             uwd.mkdir(parents=True, exist_ok=True)
-            cmd = [sys.executable, str(DRIVER), "--esbmc", str(ESBMC),
+            # `-u`: UNBUFFERED, and it is not cosmetic. The driver's stdout is a
+            # PIPE here, so Python block-buffers it, and a run this sweep KILLS
+            # loses whatever is still in that buffer -- which is EVERYTHING for a
+            # unit whose whole output is under one buffer. MEASURED on this
+            # corpus: of the six KILLED units, five have logs (aqua.ship 15418
+            # lines, EscrowDst.publicWithdraw 1441, EscrowDst.withdraw 1279,
+            # farming.rescueFunds 1192, farming.startFarming 117) because their
+            # output overflowed the buffer long before the kill, while
+            # EscrowDst/cancel -- and P06_Product, P11_Inner and P13_Exits on the
+            # PoC set -- came back with two lines and no evidence at all. So the
+            # loss is silent and it lands exactly on the SHORT runs, i.e. on the
+            # units that died EARLY, i.e. on the ones whose first rounds are the
+            # only thing that would have said why.
+            cmd = [sys.executable, "-u", str(DRIVER), "--esbmc", str(ESBMC),
                    "--sol", str(sol), "--ast", str(solast),
                    "--contract", sol.stem, "--unit", unit, "--focus",
                    "--level0", "--memlimit", a.memlimit,
