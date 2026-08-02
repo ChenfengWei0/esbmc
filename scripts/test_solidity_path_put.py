@@ -453,6 +453,186 @@ def test_the_ladder_widens_every_named_loop():
     return bad
 
 
+# ---------------------------------------------------------------------------
+# The unit's OWN RETURN VALUE as an oracle
+# ---------------------------------------------------------------------------
+#
+# WHAT WOULD LOOK IDENTICAL IF THIS WERE BROKEN, which is what each case below
+# is built to separate:
+#
+#   * the rungs never rendered at all  -> no assertion, and a PUT that looks
+#     exactly like one whose unit returns nothing. Cases 1/3/6 fail on absence.
+#   * the rungs rendered UNCONDITIONALLY -> an assertion certified about a
+#     value the execution never produced, because every return rung carries
+#     `|| !retset` and can hold for want of a returned value. Case 2 is the
+#     must-flip: the SAME rows with `retlive` HOLDS instead of REFUTED must
+#     produce nothing, and must say why.
+#   * the binding spliced into a `try`/`catch` or an expectRevert call -> the
+#     R0 exit-kind expectation, which this whole lifting route exists to
+#     preserve, replaced by a different statement. Cases 5 and 7.
+
+RETLIVE = "a value IS returned on this path (REFUTED == yes)"
+
+
+def _ret_put(ladder_rows, rettypes, layout=None):
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT if layout is None else layout,
+        ladder_rows=ladder_rows, notes=notes, rettypes=rettypes)
+    return "\n".join(put or []), stats, notes
+
+
+def test_return_rung_is_bound_and_asserted():
+    """A HOLDS return rung, with `retlive` REFUTED: BIND and ASSERT."""
+    text, stats, _n = _ret_put(
+        LADDER + [("return", RETLIVE, "REFUTED"),
+                  ("return", "return != 0", "HOLDS")],
+        [("", "uint256")])
+    bad = 0
+    bad += check("uint256 _put_ret = c0.setDiscount(" in text,
+                 "the call is bound to a typed local")
+    bad += check("assertTrue(uint256(_put_ret) != 0" in text,
+                 "the HOLDS rung becomes an assertion")
+    bad += check(stats["return_asserts"] == 1 and stats["state_asserts"] == 2,
+                 f"the two oracle sources are counted apart: {stats['asserts']} "
+                 f"= {stats['state_asserts']} state + "
+                 f"{stats['return_asserts']} return")
+    bad += check("over the unit's OWN RETURN" in text,
+                 "the header says the oracle has a return-value half")
+    return bad
+
+
+def test_a_retlive_that_HOLDS_kills_every_return_rung():
+    """THE MUST-FLIP. Same rows, `retlive` HOLDS: nothing may be emitted.
+
+    `retlive` asserts `!retset`, so HOLDS means NO execution of this path was
+    shown to reach a return -- and every other return rung, which all carry
+    `|| !retset`, is then holding for want of a returned value. Rendering one
+    would assert something about a value that was never produced. The two
+    inputs differ in ONE token, so a renderer that ignored the witness would
+    pass the case above and fail here.
+    """
+    text, stats, _n = _ret_put(
+        LADDER + [("return", RETLIVE, "HOLDS"),
+                  ("return", "return != 0", "HOLDS")],
+        [("", "uint256")])
+    bad = 0
+    bad += check("_put_ret" not in text,
+                 "no binding is emitted")
+    bad += check(stats["return_asserts"] == 0,
+                 f"no return assertion: {stats['return_asserts']}")
+    bad += check(any("retlive" in s and "VACUOUSLY" in s
+                     for s in stats["oracle_skipped"]),
+                 f"and the drop NAMES the witness: {stats['oracle_skipped']}")
+    return bad
+
+
+def test_a_bool_return_uses_assertTrue_not_a_cast():
+    """`uint256(<bool>)` is not a Solidity conversion; the rung shape differs."""
+    text, stats, _n = _ret_put(
+        LADDER + [("return", RETLIVE, "REFUTED"),
+                  ("return", "return == true", "HOLDS")],
+        [("", "bool")])
+    bad = 0
+    bad += check("bool _put_ret = c0.setDiscount(" in text,
+                 "the local is declared bool")
+    bad += check("assertTrue(_put_ret," in text and "uint256(_put_ret)"
+                 not in text,
+                 "asserted directly, with no uint256 cast")
+    bad += check(stats["return_asserts"] == 1,
+                 f"one return assertion: {stats['return_asserts']}")
+    return bad
+
+
+def test_a_tuple_return_is_not_bound_and_says_so():
+    """Two declared return values cannot go into one local."""
+    text, stats, _n = _ret_put(
+        LADDER + [("return", RETLIVE, "REFUTED"),
+                  ("return", "return != 0", "HOLDS")],
+        [("", "uint248"), ("", "uint8")])
+    bad = 0
+    bad += check("_put_ret" not in text, "nothing is bound")
+    bad += check(any("2 return value(s)" in s
+                     for s in stats["oracle_skipped"]),
+                 f"the drop names the count: {stats['oracle_skipped']}")
+    return bad
+
+
+def test_an_unbindable_return_type_is_reported():
+    """A type this emitter cannot cast is DROPPED by name, never guessed."""
+    _t, stats, _n = _ret_put(
+        LADDER + [("return", RETLIVE, "REFUTED"),
+                  ("return", "return != 0", "HOLDS")],
+        [("", "string memory")])
+    return check(any("string memory" in s for s in stats["oracle_skipped"]),
+                 f"the drop names the type: {stats['oracle_skipped']}")
+
+
+def test_bind_return_refuses_the_exit_kind_shapes():
+    """`try`/`catch` and an already-bound call are the two shapes that must
+    survive untouched.
+
+    Tested on `bind_return` directly rather than through a captured emitted
+    file: the property is the guard, and the fixture above has only the bare
+    shape. Constructed input, and labelled as such.
+    """
+    from solidity_path_put import bind_return  # noqa: E402
+    bad = 0
+    ln, why = bind_return("    try c0.f(1) { } catch { }", "f", "uint256", "_r")
+    bad += check(ln is None and "try" in (why or ""),
+                 f"a try/catch statement is refused: {why}")
+    ln, why = bind_return("    uint256 z = c0.f(1);", "f", "uint256", "_r")
+    bad += check(ln is None and "already binds" in (why or ""),
+                 f"an already-bound call is refused: {why}")
+    ln, why = bind_return("    c0.f(1);", "f", "uint256", "_r")
+    bad += check(ln == "    uint256 _r = c0.f(1);",
+                 f"a bare asserted call IS bound: {ln}")
+    return bad
+
+
+def test_a_return_only_oracle_still_reaches_the_test():
+    """No state rung at all: the return assertions must still be written.
+
+    This is the guard that used to read `if post_reads:` -- equivalent only
+    while every assertion came from a state rung. A unit whose only surviving
+    rung is a return rung has no post-read, and the header would have
+    announced assertions the body did not contain.
+    """
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return", "return in [1, 9]", "HOLDS")],
+        [("", "uint256")])
+    bad = 0
+    bad += check(stats["state_asserts"] == 0,
+                 "no state rung was supplied")
+    bad += check(stats["return_asserts"] == 2,
+                 f"the interval rung is two assertions: "
+                 f"{stats['return_asserts']}")
+    bad += check("assertGe(uint256(_put_ret), 1" in text
+                 and "assertLe(uint256(_put_ret), 9" in text,
+                 "and both are in the emitted body")
+    return bad
+
+
+def test_a_refuted_return_rung_is_never_asserted():
+    """REFUTED is the ladder working, not an oracle."""
+    text, stats, _n = _ret_put(
+        LADDER + [("return", RETLIVE, "REFUTED"),
+                  ("return", "return == 0", "REFUTED"),
+                  ("return", "return != 0", "HOLDS")],
+        [("", "uint256")])
+    bad = 0
+    bad += check("assertEq(uint256(_put_ret), 0" not in text,
+                 "the REFUTED rung produces no assertion")
+    bad += check(stats["return_asserts"] == 1,
+                 f"only the HOLDS one survives: {stats['return_asserts']}")
+    return bad
+
+
 def main():
     bad = 0
     for t in (test_both_truncation_shapes_are_read,
@@ -467,7 +647,15 @@ def main():
               test_env_agreement_emits_when_the_preamble_matches,
               test_env_disagreement_refuses,
               test_env_value_pin_disagreement_refuses,
-              test_uncomparable_env_quantity_is_disclosed_not_ignored):
+              test_uncomparable_env_quantity_is_disclosed_not_ignored,
+              test_return_rung_is_bound_and_asserted,
+              test_a_retlive_that_HOLDS_kills_every_return_rung,
+              test_a_bool_return_uses_assertTrue_not_a_cast,
+              test_a_tuple_return_is_not_bound_and_says_so,
+              test_an_unbindable_return_type_is_reported,
+              test_bind_return_refuses_the_exit_kind_shapes,
+              test_a_return_only_oracle_still_reaches_the_test,
+              test_a_refuted_return_rung_is_never_asserted):
         print(f"--- {t.__name__}")
         bad += t()
     if bad:

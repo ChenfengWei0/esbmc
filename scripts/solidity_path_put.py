@@ -67,8 +67,12 @@ WHAT A PUT CONTAINS, and where each part comes from:
   5. the R0 exit-kind expectation -- the concrete case's own call statement
      shape, preserved.
   6. the assertion oracle -- the surviving (HOLDS) rungs of
-     `--path-cov-assert`, read through `vm.load` at the slot solc itself
-     reports.
+     `--path-cov-assert`.  Two sources, and they are read differently: a
+     POST-STATE rung through `vm.load` at the slot solc itself reports, and a
+     RETURN-VALUE rung by binding the call's own result to a local.  A return
+     rung is emitted only when the ladder's `retlive` witness came back
+     REFUTED -- that is the tool saying some execution of this path actually
+     reaches a return, without which every return rung holds vacuously.
 
 READING STATE WITHOUT A GETTER.  The ladder names state variables, not
 getters, and most are private.  The slot is NOT guessed: it comes from
@@ -486,6 +490,110 @@ def rung_assertions(text, pre, post, label):
 
 
 # ---------------------------------------------------------------------------
+# The unit's OWN RETURN VALUE as an oracle
+# ---------------------------------------------------------------------------
+#
+# WHY IT COMES THROUGH THE LADDER AND NOT OUT OF THE REPORT. The counterexample
+# payload carries `return_value`, and asserting THAT would be wrong: it is the
+# value at ONE point, while this PUT `bound()`s its parameters across the whole
+# region and runs 256 of them. On aqua the PUT fuzzes `maker`/`app`/`token`
+# across the entire address space and the payload names one triple, so a point
+# value asserted here is RED. Only a rung the verifier judged HOLDS over the
+# ASSUMED region may become an assertion -- the same contract the state rungs
+# satisfy, which is why the return value is a rung (`--path-cov-assert`,
+# `<rung>_return`) rather than a field copied across.
+#
+# THE `retlive` GATE IS NOT OPTIONAL. Every return rung carries `|| !retset` so
+# that it reads "IF a value was returned, THEN ...", which means the whole
+# family can HOLD for want of a returned value. `retlive` asserts `!retset` and
+# is REFUTED exactly when some execution of this path does return one. Anything
+# other than REFUTED there and the other rungs say nothing -- so they are
+# dropped, by name, rather than rendered.
+RETURN_VAR = "return"
+RETLIVE_PREFIX = "a value IS returned on this path"
+
+
+def return_kind(sol_type):
+    """(declared type for the local, uint256-cast template) or None.
+
+    A WHITELIST, for the same reason `coord_expressible` is one on the tool
+    side: the assertion is built by casting the bound value to uint256, and a
+    type this does not know either fails to compile or -- worse -- compiles
+    with a different meaning. `bool` has no cast at all and is asserted with
+    assertTrue/assertFalse; that is why the second element is None for it.
+    """
+    t = (sol_type or "").strip()
+    if t == "bool":
+        return ("bool", None)
+    m = re.match(r"^uint(\d+)?$", t)
+    if m:
+        return (f"uint{m.group(1) or 256}", "uint256({v})")
+    m = re.match(r"^bytes(\d+)$", t)
+    if m:
+        return (t, "uint256({v})")
+    if t in ("address", "address payable"):
+        return (t, "uint256(uint160({v}))")
+    return None
+
+
+def return_rung_assertions(text, kind, var, label):
+    """forge-std lines for one HOLDS return rung, or None if not renderable.
+
+    A text whose family does not match the declared type is NOT rendered.
+    That case means the tool typed the ghost from the goto model and this
+    script typed the local from the AST and the two disagree; rendering
+    anyway would assert something neither of them said.
+    """
+    decl_t, tou = kind
+    lit = json.dumps(label)
+    if decl_t == "bool":
+        if text == "return == false":
+            return [f"    assertFalse({var}, {lit});"]
+        if text == "return == true":
+            return [f"    assertTrue({var}, {lit});"]
+        return None
+    v = tou.format(v=var)
+    if text == "return == 0":
+        return [f"    assertEq({v}, 0, {lit});"]
+    if text == "return != 0":
+        return [f"    assertTrue({v} != 0, {lit});"]
+    m = re.match(r"^return in \[(\d+), (\d+)\]$", text)
+    if m:
+        return [f"    assertGe({v}, {m.group(1)}, {lit});",
+                f"    assertLe({v}, {m.group(2)}, {lit});"]
+    return None
+
+
+def bind_return(call_line, unit, decl_type, var):
+    """(rewritten call line, None) or (None, reason it may not be bound).
+
+    ONLY a bare asserted call statement is bound. The other shapes the emitter
+    writes are the R0 EXIT-KIND EXPECTATION itself -- `try`/`catch` for a
+    rollback revert, a bare call under `vm.expectRevert()` for a custom-error
+    one -- and that expectation is preserved here BY CONSTRUCTION, by touching
+    only the argument list. Splicing a binding into either would replace an
+    assertion about how the transaction ends with a different statement, which
+    is exactly the failure this whole lifting route exists to avoid.
+    """
+    stripped = call_line.lstrip()
+    indent = call_line[:len(call_line) - len(stripped)]
+    if stripped.startswith("try "):
+        return None, ("the emitted call is a `try`/`catch` statement -- that "
+                      "shape IS this path's exit-kind expectation, and a "
+                      "reverting execution has no return value to assert")
+    key = "." + unit + "("
+    k = stripped.find(key)
+    if k < 0:
+        return None, "the call statement could not be located for binding"
+    if "=" in stripped[:k]:
+        return None, "the emitted call already binds its result"
+    if not stripped.rstrip().endswith(";"):
+        return None, ("the emitted call is not a simple statement, so a "
+                      "binding cannot be placed in front of it")
+    return indent + f"{decl_type} {var} = " + stripped, None
+
+
+# ---------------------------------------------------------------------------
 # Storage layout (from solc, via forge) -- never guessed
 # ---------------------------------------------------------------------------
 
@@ -590,23 +698,24 @@ def _load_ast(ast_path):
     return json.loads(txt[txt.index("{"):])
 
 
-def function_params(ast_path, contract, unit, arity=None):
-    """[(name, solidity_type)] in SOURCE ORDER for `contract.unit`.
+def _decl_list(node, key):
+    """[(name, solidity_type)] for a FunctionDefinition's `parameters` or
+    `returnParameters`, in SOURCE ORDER."""
+    out = []
+    for p in ((node.get(key) or {}).get("parameters") or []):
+        ty = ((p.get("typeDescriptions") or {}).get("typeString") or "")
+        out.append((p.get("name") or "", ty))
+    return out
 
-    Source order is what makes a positional rewrite of the emitted call legal,
-    and it is the same order the emitter itself fills arguments in
-    (foundry.cpp:1288 iterates the declared parameters).  Read from the AST
-    rather than from the emitted text, so the two agree by construction on the
-    only fact they share.
+
+def _function_defs(ast_path, contract, unit):
+    """The FunctionDefinition nodes named `unit` visible in `contract`,
+    BASE-FIRST, so the LAST one is the most-derived declaration.
 
     INHERITANCE IS NOT OPTIONAL: a unit of the contract under test is
     routinely DECLARED on a base (`BaseEscrow.rescueFunds` under
     `--contract EscrowSrc`).  The C3 linearisation is walked in reverse so the
     most-derived declaration wins, exactly as the compiler resolves it.
-
-    `arity` disambiguates overloads: two functions of one name are two units,
-    and picking the wrong one would rename arguments across signatures.
-    Returns None when the name is ambiguous and `arity` does not separate it.
     """
     ast = _load_ast(ast_path)
     by_id, target = {}, None
@@ -633,29 +742,65 @@ def function_params(ast_path, contract, unit, arity=None):
     if not scopes:
         scopes = [ast]
 
-    cands = []
+    defs = []
     for sc in scopes:
         for n in sc.get("nodes", []) or []:
             if (isinstance(n, dict) and n.get("nodeType") == "FunctionDefinition"
                     and n.get("name") == unit):
-                ps = []
-                for p in ((n.get("parameters") or {}).get("parameters") or []):
-                    ty = ((p.get("typeDescriptions") or {}).get("typeString")
-                          or "")
-                    ps.append((p.get("name") or "", ty))
-                cands.append(ps)
-    if not cands:
+                defs.append(n)
+    return defs
+
+
+def _select_def(defs, arity):
+    """The one declaration an `arity`-argument call resolves to, or None.
+
+    SHARED between the parameter reader and the return-type reader ON PURPOSE.
+    Two overloads of one name are two units with two signatures AND two return
+    types; a second copy of this selection could pick a different one, and the
+    symptom would be a return value bound at the wrong type on a call whose
+    arguments were rewritten from the right one -- i.e. one fact kept in two
+    ledgers, which this project has already paid for once.
+    """
+    if not defs:
         return None
-    if len(cands) == 1:
-        return cands[-1]
+    if len(defs) == 1:
+        return defs[-1]
     if arity is not None:
-        fit = [c for c in cands if len(c) == arity]
+        fit = [d for d in defs if len(_decl_list(d, "parameters")) == arity]
         if len(fit) == 1:
             return fit[0]
         # Same arity twice: most-derived wins (scopes walked base-first).
         if fit:
             return fit[-1]
-    return cands[-1]
+    return defs[-1]
+
+
+def function_params(ast_path, contract, unit, arity=None):
+    """[(name, solidity_type)] in SOURCE ORDER for `contract.unit`.
+
+    Source order is what makes a positional rewrite of the emitted call legal,
+    and it is the same order the emitter itself fills arguments in
+    (foundry.cpp:1288 iterates the declared parameters).  Read from the AST
+    rather than from the emitted text, so the two agree by construction on the
+    only fact they share.
+
+    `arity` disambiguates overloads: two functions of one name are two units,
+    and picking the wrong one would rename arguments across signatures.
+    """
+    d = _select_def(_function_defs(ast_path, contract, unit), arity)
+    return None if d is None else _decl_list(d, "parameters")
+
+
+def function_returns(ast_path, contract, unit, arity=None):
+    """[(name, solidity_type)] of the DECLARED return parameters, or None.
+
+    An empty list is a real answer -- the unit returns nothing -- and is not
+    the same as None, which means the declaration could not be read at all.
+    The caller must not collapse them: "returns nothing" drops the return
+    rungs silently and correctly, "could not read" has to be reported.
+    """
+    d = _select_def(_function_defs(ast_path, contract, unit), arity)
+    return None if d is None else _decl_list(d, "returnParameters")
 
 
 # `bound()` on a coordinate needs a type this script can cast in both
@@ -1016,7 +1161,7 @@ def bound_lines(pname, kind, width, lo, hi, holes):
 
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
-              unwind=None):
+              unwind=None, rettypes=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -1157,10 +1302,75 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         store_lines += slot_write_lines("address(c0)", slot, off, nb, val)
         stored.append(f"{name} := {val}")
 
-    # --- the oracle --------------------------------------------------------
+    # --- the oracle: the unit's OWN RETURN VALUE ----------------------------
+    #
+    # Done BEFORE the state rungs because it can rewrite `new_call`, and after
+    # the state stores because it does not depend on them.
+    ret_rows = [(t, v) for var, t, v in ladder_rows if var == RETURN_VAR]
+    ret_asserts, ret_skipped = [], []
+    if ret_rows:
+        live = [v for t, v in ret_rows if t.startswith(RETLIVE_PREFIX)]
+        holds = [t for t, v in ret_rows
+                 if v == "HOLDS" and not t.startswith(RETLIVE_PREFIX)]
+        why = None
+        if not live:
+            why = ("this ladder carries return rungs but NO `retlive` witness, "
+                   "so a HOLDS among them cannot be told apart from holding "
+                   "for want of a returned value")
+        elif any(v != "REFUTED" for v in live):
+            why = (f"the `retlive` witness came back {live[0]}, not REFUTED -- "
+                   f"no execution of this path was shown to reach a return, so "
+                   f"every other return rung holds VACUOUSLY")
+        elif not holds:
+            why = ("no return rung HOLDS over the certified region (the "
+                   "value varies across it), which is a measurement, not a "
+                   "failure")
+        elif rettypes is None:
+            why = ("the unit's declared return type could not be read from "
+                   "the AST, so no local can be declared to bind the value")
+        elif len(rettypes) != 1:
+            why = (f"the unit declares {len(rettypes)} return value(s); only a "
+                   f"single scalar can be bound to one local here")
+        elif any("vm.expectRevert" in ln for ln in body[:call_i]):
+            why = ("the emitted case arms `vm.expectRevert()` before this "
+                   "call -- the transaction is expected to revert, so there "
+                   "is no returned value for the test to read")
+        if why is None:
+            rk = return_kind(rettypes[0][1])
+            if rk is None:
+                why = (f"the declared return type `{rettypes[0][1]}` is not one "
+                       f"this emitter can bind and cast")
+        if why is None:
+            var_name = "_put_ret"
+            while any(var_name in ln for ln in body):
+                var_name += "_"
+            bound_call, berr = bind_return(new_call, unit, rk[0], var_name)
+            if berr is not None:
+                why = berr
+            else:
+                new_call = bound_call
+                for t in holds:
+                    a = return_rung_assertions(t, rk, var_name, f"return: {t}")
+                    if a is None:
+                        ret_skipped.append(
+                            f"return: {t} (rung shape not renderable for a "
+                            f"declared `{rettypes[0][1]}` return)")
+                        continue
+                    ret_asserts += a
+                if not ret_asserts:
+                    # Every HOLDS rung was unrenderable, so the binding buys
+                    # nothing and would leave an unused local (a solc warning
+                    # on a test nobody asked to be noisy). Put the call back.
+                    new_call, _ = rewrite_call_args(call_line, unit, repl)
+        if why is not None:
+            ret_skipped.append(f"all return rungs DROPPED: {why}")
+
+    # --- the oracle: post-state --------------------------------------------
     pre_reads, post_reads, asserts, oracle_skipped = [], [], [], []
     seen_vars = []
     for var, text, verdict in ladder_rows:
+        if var == RETURN_VAR:
+            continue          # handled above; it has no storage slot by design
         if verdict != "HOLDS":
             continue
         if var not in layout:
@@ -1182,6 +1392,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
             continue
         asserts += a
+    oracle_skipped += ret_skipped
 
     fname = f"test_put_{contract}_{unit}_path{enc}"
     sig_txt = ", ".join(f"{t} {n}" for t, n in sig)
@@ -1239,11 +1450,18 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"  // unliftable type, so this PUT is a single "
                    f"deterministic point of the")
         out.append(f"  // region rather than a fuzz test over it.")
-    if asserts:
-        out.append(f"  // ORACLE: {len(asserts)} assertion(s) from the "
-                   f"surviving rungs of")
-        out.append(f"  // --path-cov-assert, read through vm.load at the slot "
-                   f"solc reports.")
+    if asserts or ret_asserts:
+        out.append(f"  // ORACLE: {len(asserts) + len(ret_asserts)} "
+                   f"assertion(s) from the surviving (HOLDS) rungs of")
+        out.append(f"  // --path-cov-assert -- {len(asserts)} over POST-STATE, "
+                   f"read through vm.load at")
+        out.append(f"  // the slot solc reports, and {len(ret_asserts)} over "
+                   f"the unit's OWN RETURN")
+        out.append(f"  // VALUE, bound from the call below. A return rung is "
+                   f"emitted only when the")
+        out.append(f"  // ladder's `retlive` witness was REFUTED, i.e. only "
+                   f"when this path was")
+        out.append(f"  // shown to reach a return at all.")
     else:
         out.append(f"  // ORACLE: none emitted (see the run's report); the "
                    f"exit-kind")
@@ -1293,13 +1511,21 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     for ln in body[head_end:call_i]:
         out.append(ln)
     out.append(new_call)
-    if post_reads:
-        out += post_reads
-        out += asserts
+    # NOT `if post_reads:`. That guard was equivalent while every assertion
+    # came from a state rung -- a var with no post-read produced no assert
+    # either -- and it stops being equivalent the moment the RETURN VALUE can
+    # be an oracle on its own: a unit whose only surviving rung is a return
+    # rung has no post-read at all, and the guard would have dropped its
+    # assertions while the header above still announced them.
+    out += post_reads
+    out += asserts
+    out += ret_asserts
     for ln in body[call_i + 1:]:
         out.append(ln)
     out.append("  }")
-    stats = {"fuzz_params": len(sig), "lifted": lifted, "asserts": len(asserts),
+    stats = {"fuzz_params": len(sig), "lifted": lifted,
+             "asserts": len(asserts) + len(ret_asserts),
+             "state_asserts": len(asserts), "return_asserts": len(ret_asserts),
              "oracle_skipped": oracle_skipped,
              "state_stored": stored, "state_skipped": state_skipped,
              "env_unchecked": env_unchecked}
@@ -1652,26 +1878,36 @@ def main():
     print(f"[put] step 3: storage layout — {len(layout)} readable scalar "
           f"slot(s): {', '.join(sorted(layout))}")
 
-    # ---- 4. declared parameters ------------------------------------------
-    params = None
+    # ---- 4. declared parameters, and the declared RETURN type -------------
+    #
+    # Both come from _select_def with the SAME arity, so an overload cannot be
+    # resolved one way for the arguments and another way for the return value.
+    params, rettypes = None, None
     if a.ast:
         _n, args0 = rewrite_call_args(
             emitted.lines[case[3][0] + 1:case[3][1]][
                 find_unit_call(emitted.lines[case[3][0] + 1:case[3][1]],
                                a.unit) or 0],
             a.unit, {})
-        params = function_params(a.ast, a.contract, a.unit,
-                                 len(args0) if args0 is not None else None)
+        arity = len(args0) if args0 is not None else None
+        params = function_params(a.ast, a.contract, a.unit, arity)
+        rettypes = function_returns(a.ast, a.contract, a.unit, arity)
     if params is None:
         print("[put] WARNING: declared parameters unavailable (no --ast, or "
               "the name did not resolve); no argument can be lifted")
+    if rettypes is None:
+        print("[put] WARNING: the declared return type is unavailable, so no "
+              "return-value rung can be bound even if one HOLDS")
+    else:
+        print(f"[put]   declared return: "
+              f"{', '.join(t for _n2, t in rettypes) or '(none)'}")
 
     # ---- 5. build ---------------------------------------------------------
     put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
                            region, holes, pins, params, emitted, case,
                            layout, rows, notes,
                            cell=(cell_name, cell_rule),
-                           unwind=unwind_applied)
+                           unwind=unwind_applied, rettypes=rettypes)
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
@@ -1704,7 +1940,9 @@ def main():
     print(f"[put] WROTE {dest}")
     print(f"[put]   fuzz parameters : {stats['fuzz_params']} "
           f"({', '.join(stats['lifted']) or 'none'})")
-    print(f"[put]   oracle asserts  : {stats['asserts']}")
+    print(f"[put]   oracle asserts  : {stats['asserts']} "
+          f"({stats['state_asserts']} post-state, "
+          f"{stats['return_asserts']} return value)")
     for s in stats["oracle_skipped"]:
         print(f"[put]     rung dropped: {s}")
     for s in stats["state_stored"]:
