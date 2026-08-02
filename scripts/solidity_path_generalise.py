@@ -78,7 +78,14 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
     whole-contract it exceeds a 900s budget and produces nothing, focused on one
     method it finishes in seconds.
     """
-    cmd = [esbmc]
+    # ABSOLUTE, like every other path argument here. This runs with `cwd` set
+    # to the workdir -- the emitted report's filename is fixed, so it must --
+    # and a relative `--esbmc build/src/esbmc/esbmc` therefore resolves against
+    # the workdir and raises FileNotFoundError before a single query is issued.
+    # `--sol` and the AST were already absolutised; the binary was the one path
+    # that was not, and it is the one the caller is most likely to type
+    # relatively.
+    cmd = [os.path.abspath(esbmc) if os.sep in esbmc else esbmc]
     if ast:
         cmd.append(os.path.abspath(ast))
     cmd += ["--sol", os.path.abspath(sol), "--contract", contract,
@@ -2094,6 +2101,149 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     return v, nb, wit, punches, unexp, why
 
 
+def resolve_scope(scope, focus_flag, unit):
+    """(scope label for the record, --focus-function argument or None).
+
+    THE ALPHABET, NOT THE LENGTH. `--solidity-max-tx N` is how many entry calls
+    a transaction sequence may make; `--focus-function` is which entries it may
+    choose from. Until now this driver could only say "just this unit" or
+    "everything", and the middle -- a SET -- is the configuration that matters:
+    a unit whose interesting paths sit behind another unit's writes needs that
+    other unit in the alphabet and nothing else.
+
+    THE SPELLING IS MEASURED, not assumed, and only one of the two obvious ones
+    works. On Tiny.sol at --solidity-max-tx 2:
+
+      --focus-function deposit,withdraw          8 path claims (F 3 + F 5),
+                                                 identical to no focus at all
+      --focus-function deposit --focus-function withdraw
+                                                 ERROR: option
+                                                 '--focus-function' cannot be
+                                                 specified more than once
+      --focus-function withdraw                  5 claims, F 3 + 2
+                                                 bounded-holds -- the
+                                                 state-guarded paths are
+                                                 unreachable under a
+                                                 single-entry alphabet, which
+                                                 is what Tiny.sol exists to
+                                                 show
+      --focus-function nosuchunit                exit 6, "is not a
+                                                 public/external function of
+                                                 contract 'Tiny'"
+
+    The last cell is the negative control that makes the first meaningful: a
+    comma list parsed as ONE name would land there, not on 8 claims.
+
+    DEFAULTS ARE UNCHANGED. With neither flag the answer is `whole`/None, which
+    is what `--focus` absent has always produced.
+    """
+    if scope is not None and focus_flag:
+        raise SystemExit(
+            "[scope] --scope and --focus are two spellings of one decision, "
+            "and accepting both would make the recorded `scope` depend on "
+            "which this function reads first -- one fact in two ledgers, which "
+            "is the defect this project keeps paying for. Pass exactly one.")
+    if scope is None:
+        return ("focus" if focus_flag else "whole"), (unit if focus_flag
+                                                      else None)
+    s = scope.strip()
+    if s == "whole":
+        return "whole", None
+    if s == "focus":
+        return "focus", unit
+    names = [n.strip() for n in s.split(",") if n.strip()]
+    if not names:
+        raise SystemExit(
+            f"[scope] --scope {scope!r} names no unit. Use 'whole', 'focus', "
+            f"or a comma-separated list of public/external function names.")
+    if unit not in names:
+        # The unit being generalised MUST be in its own alphabet. Otherwise the
+        # dispatcher can never enter it, every one of its paths comes back
+        # unit-not-entered, and the run reports "no witnessed path" -- which
+        # reads as a property of the contract rather than of the command line.
+        raise SystemExit(
+            f"[scope] --scope names {', '.join(names)}, which does not include "
+            f"the unit being generalised ('{unit}'). The dispatcher could then "
+            f"never enter it, so every path would come back unwitnessed and "
+            f"the run would report that as a property of the contract. Add it "
+            f"to the set.")
+    return "focus:" + ",".join(names), ",".join(names)
+
+
+# ---- ONE DIRECTORY, ONE CONFIGURATION ---------------------------------------
+#
+# `enumerate_paths` already names this hazard in its own comment and cannot fix
+# it from where it stands:
+#
+#   "The one that is NOT caught is the same unit re-run in the same workdir
+#    under DIFFERENT flags -- another --max-tx, --focus on instead of off, a
+#    rebuilt binary. Then the filter matches, the old (enc, depth, ce) triples
+#    flow into the bracket, the refine rounds and every certification query, and
+#    the whole result is about a configuration nobody asked for. Nothing
+#    downstream could notice: an enc is just an integer."
+#
+# MEASURED that it is not hypothetical: pointing two runs at one --workdir, one
+# at --max-tx 1 and one at --max-tx 2, both exited 0 and the second silently
+# overwrote the first's generalise-result.json. The tx=1 answer (3 enumerated
+# paths) and the tx=2 answer (5, two of them at a depth the tx=1 run cannot
+# produce) are different measurements, and afterwards the directory claims only
+# the later one -- with no record that it ever said anything else.
+#
+# THE BINARY IS PART OF THE CONFIGURATION. A rebuilt esbmc changes what an enc
+# means as surely as a different --max-tx does, and this project has already
+# hung old-build numbers on a new build's name without anything objecting. Its
+# size and mtime are cheap and change on every rebuild.
+CONFIG_FIELDS = ("contract", "unit", "path_function", "max_tx", "scope",
+                 "esbmc", "esbmc_size", "esbmc_mtime")
+
+
+def run_config(args, scope_label):
+    """The fields that change WHAT IS MEASURED, as a comparable dict."""
+    esbmc = args.esbmc
+    try:
+        st = os.stat(esbmc)
+        size, mtime = st.st_size, int(st.st_mtime)
+    except OSError:
+        size, mtime = None, None
+    return {"contract": args.contract, "unit": args.unit,
+            "path_function": args.path_function, "max_tx": args.max_tx,
+            "scope": scope_label, "esbmc": os.path.abspath(esbmc),
+            "esbmc_size": size, "esbmc_mtime": mtime}
+
+
+def stamp_workdir(cwd, cfg):
+    """Refuse to reuse a directory that holds another configuration's output.
+
+    Fails CLOSED. The alternative -- warn and continue -- leaves the stale
+    artefacts on disk under the new configuration's name, which is the exact
+    state this check exists to make impossible.
+    """
+    path = os.path.join(cwd, "run-config.json")
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                old = json.load(f)
+        except (OSError, ValueError):
+            old = None
+        if old is not None:
+            diff = [k for k in CONFIG_FIELDS if old.get(k) != cfg.get(k)]
+            if diff:
+                lines = "\n".join(
+                    f"    {k}: previously {old.get(k)!r}, now {cfg.get(k)!r}"
+                    for k in diff)
+                raise SystemExit(
+                    f"[workdir] REFUSING to reuse {cwd}: it holds the output "
+                    f"of a DIFFERENT configuration.\n{lines}\n"
+                    f"  A path identity (enc, depth) means something different "
+                    f"under each, and every artefact here -- cov-report.json, "
+                    f"outer.json, cert.json, generalise-result.json -- is "
+                    f"overwritten in place, so a mixed directory yields a "
+                    f"result whose provenance cannot be stated. Point --workdir "
+                    f"somewhere else, or delete this one on purpose.")
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2, sort_keys=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2163,6 +2313,21 @@ def main():
                          "any source whose pragma pins a solc this machine "
                          "does not have -- every flattened benchmark input "
                          "does.")
+    ap.add_argument("--scope", default=None, metavar="whole|focus|a,b,c",
+                    help="which entries the harness dispatcher may call -- the "
+                         "ALPHABET of the transaction sequence, where --max-tx "
+                         "is its LENGTH. `whole` lets it call anything (the "
+                         "default, and what --focus absent has always meant); "
+                         "`focus` narrows it to --unit; a comma-separated list "
+                         "narrows it to that SET, which is the case neither of "
+                         "the other two covers and the one that matters for a "
+                         "unit whose interesting paths sit behind another "
+                         "unit's writes. MEASURED on Tiny.sol at --max-tx 2: "
+                         "`--scope withdraw` witnesses 3 paths and leaves 2 "
+                         "bounded-holds, `--scope deposit,withdraw` witnesses "
+                         "all 8, identically to `whole`. Mutually exclusive "
+                         "with --focus, which is the older spelling of "
+                         "`--scope focus`.")
     ap.add_argument("--focus", action="store_true",
                     help="narrow the harness dispatcher to --unit. Does NOT "
                          "change the enumeration (verified by comparing "
@@ -2293,9 +2458,20 @@ def main():
 
     cwd = args.workdir or tempfile.mkdtemp(prefix="pathgen-")
     os.makedirs(cwd, exist_ok=True)
-    print(f"[workdir] {cwd}")
 
-    focus = args.unit if args.focus else None
+    # Resolved BEFORE the directory is stamped: the scope is part of what makes
+    # two runs incomparable, so it has to be in the stamp rather than checked
+    # after the first query has already overwritten the previous run's report.
+    scope_label, focus = resolve_scope(args.scope, args.focus, args.unit)
+    stamp_workdir(cwd, run_config(args, scope_label))
+    print(f"[workdir] {cwd}")
+    print(f"[scope] {scope_label}"
+          + (f" — dispatcher restricted to {focus}" if focus else
+             " — every entry may be dispatched")
+          + f", --solidity-max-tx {args.max_tx}. The scope is the ALPHABET of "
+            f"the call sequence and max-tx is its LENGTH; both are recorded in "
+            f"run-config.json and in the result, because a run of one "
+            f"configuration may not be quoted into another's table")
     paths, refused, caveats = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
         args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
@@ -3301,6 +3477,12 @@ def main():
         "unit": args.unit,
         "path_function": args.path_function,
         "max_tx": args.max_tx,
+        # THE ALPHABET TRAVELS WITH THE LENGTH. A region measured under one
+        # scope may not be quoted into another's table, and until this field
+        # existed the artefact recorded only half of the configuration -- so
+        # two results that disagree because one was focused and one was not
+        # looked like two results that simply disagree.
+        "scope": scope_label,
         # The slice every region below is a statement ABOUT. A region quoted
         # without its pins is a region quoted wrong.
         "pins": {n: str(v) for n, v in sorted(pins.items())},
