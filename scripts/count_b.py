@@ -135,14 +135,39 @@ def main():
                          len(params), widths, g1, g2, g3, g4))
 
     print(f"{'project':<12} {'put':<44} {'par':>3} {'wide':>5} {'asrt':>5} "
-          f"{'green':>6}  B")
-    print("-" * 92)
+          f"{'green':>6}  B    first failing gate")
+    print("-" * 112)
     nB = 0
     for proj, fn, name, npar, widths, g1, g2, g3, g4 in rows:
         isB = bool(g1 and g2 and g3 >= 1 and g4 is True)
         nB += 1 if isB else 0
+        # ---- WHICH GATE, AND ONLY WHAT THIS SCRIPT CAN SEE --------------------
+        #
+        # `no` in a column of `no`s reads as one kind of failure, and they are
+        # not one kind. Two of the four gates fail for reasons NO change to this
+        # pipeline can lift -- a unit the contract declares with no arguments can
+        # never have a fuzz parameter -- while the others are about how far the
+        # region search and the ladder got. Collapsing them inflates the
+        # denominator of any conversion rate quoted off this table.
+        #
+        # ⛔ The reason is NOT diagnosed here beyond what the emitted text shows.
+        # `par == 0` is read off the PUT's own signature, which is a fact; WHY
+        # the unit has no parameter (a parameterless view, versus a region that
+        # bounded none of them) is not in this file and is not guessed.
+        why = ""
+        if not isB:
+            if not g1:
+                why = ("gate1: the PUT takes no parameter -- a deterministic "
+                       "point, not a fuzz test")
+            elif not g2:
+                why = "gate2: every bound() is a single value"
+            elif g3 < 1:
+                why = "gate3: no assert* over post-state or the return value"
+            elif g4 is not True:
+                why = ("gate4: the SUITE is not green" if g4 is False
+                       else "gate4: this file produced no suite result")
         print(f"{proj:<12} {name[:44]:<44} {npar:>3} {str(g2):>5} {g3:>5} "
-              f"{str(g4):>6}  {'YES' if isB else 'no'}")
+              f"{str(g4):>6}  {'YES' if isB else 'no':<4} {why}")
     print()
     print(f"B = {nB}   (of {len(rows)} emitted PUT file(s) inspected)")
     print()
