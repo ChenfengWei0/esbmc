@@ -4844,23 +4844,26 @@ void goto_coveraget::solidity_path_coverage()
   // coordinate the box does not mention, so shrinking on the coordinates it does
   // mention never converges.
   //
-  // SCOPE, MEASURED: `state.<field>` resolves against the contract INSTANCE
-  // OBJECT's struct components, so it covers scalar state variables and nothing
-  // else. A mapping or dynamic array is NOT a field of that object — the
-  // frontend lowers those to contract-scope globals (`sol:@C@<C>@<name>`) — so
-  // `state.balances` does not resolve and this function returns false. The
-  // caller then aborts by name rather than dropping the coordinate, which is the
-  // right failure (a dropped bound would certify a WIDER region than the one
-  // asked for), but it does mean the commonest real guard shape,
-  // `balances[msg.sender] >= amt`, is NOT yet supported. Supporting it needs a
-  // coordinate that denotes a SLOT, i.e. a key expression, which is a design
-  // question and not a lookup change.
+  // SCOPE: `state.<field>` resolves against the contract INSTANCE OBJECT's
+  // struct components, so it covers scalar state variables. A mapping or
+  // dynamic array is NOT a field of that object — the frontend lowers those to
+  // contract-scope globals (`sol:@C@<C>@<name>`) — so `state.balances` does not
+  // resolve. A FOURTH shape, `state.<m>[<key>]`, names ONE SLOT of such a store
+  // and IS resolved; see the branch below for what that buys and what it still
+  // cannot say.
   //
   // Guessing between the kinds was rejected: a contract with a parameter and a
   // state variable of the same name would silently bound the wrong one, and
   // "silently bounds the wrong thing" is the failure this whole layer exists to
   // avoid.
-  auto resolve_coord =
+  //
+  // A `std::function` rather than a plain lambda ONLY so the slot branch can
+  // resolve its own KEY through this same function. The alternative was a second
+  // copy of the parameter/environment lookups inside that branch, which is the
+  // one-fact-two-ledgers shape this file has already paid for elsewhere.
+  std::function<bool(const symbolt *, const std::string &, expr2tc &)>
+    resolve_coord;
+  resolve_coord =
     [&](const symbolt *fsym, const std::string &name, expr2tc &out) -> bool {
     if (
       name.rfind("msg.", 0) == 0 || name.rfind("tx.", 0) == 0 ||
@@ -4879,6 +4882,120 @@ void goto_coveraget::solidity_path_coverage()
     if (name.rfind("state.", 0) == 0)
     {
       const std::string field = name.substr(6);
+
+      // ---- `state.<m>[<key>]`: ONE SLOT of a mapping / dynamic array ----
+      //
+      // WHY THIS IS HERE AND NOT IN THREE PLACES. The certify query, the
+      // outer-box ladder and the stage-3 assertion ladder all resolve their
+      // coordinates through THIS function, so the single refusal
+      //     "a mapping or a dynamic array does not resolve"
+      // fired in all three at once.
+      //
+      // MEASURED, on notes/coverage/poc/P28_MapMin.sol `take` (whole contract,
+      // --solidity-max-tx 2): the ONLY quantity separating path 15 from its
+      // sibling is the slot `bal[k]`. The driver duly pinned it, stage 2
+      // DROPPED the pin ("the certification query cannot express it") and then
+      // reported the region as
+      //     NOT CERTIFIED -- refuted with no single-coordinate cut available
+      // -- a verdict about the coordinate set, not about the region. Every
+      // downstream consumer read it as the latter.
+      //
+      // WHAT IT DOES NOT DO, stated because the gap is easy to misread as
+      // closed: this names ONE slot at ONE key. Quantifying over keys
+      // (`forall k. bal[k] <= total`) is not a coordinate in the sense of
+      // Definition 6 -- a region is a product of per-coordinate SETS -- and is
+      // not attempted. A single named slot IS such a coordinate: it is a
+      // scalar with an interval, exactly like a scalar state variable.
+      const size_t ob = field.find('[');
+      if (ob != std::string::npos && field.size() > ob + 1 &&
+          field.back() == ']')
+      {
+        const std::string mname = field.substr(0, ob);
+        const std::string kname = field.substr(ob + 1, field.size() - ob - 2);
+        if (mname.empty() || kname.empty())
+          return false;
+        // WHICH CONTRACT: the unit's own, from its mangled id. Falling back to
+        // scope_contract only when there is no unit symbol -- the substring
+        // test resolve_coord uses for the contract OBJECT is wrong here for the
+        // reason path_cov_contract_object records (`Escrow` matches
+        // `EscrowSrc`), and reading the wrong contract's store would build a
+        // bound on a quantity nothing wrote.
+        const std::string own =
+          fsym != nullptr ? contract_of(fsym->id.as_string()) : scope_contract;
+        if (own.empty())
+          return false;
+        // The frontend lowers a mapping / dynamic array to a CONTRACT-SCOPE
+        // GLOBAL `sol:@C@<C>@<name>#<id>` -- which is exactly why the struct
+        // walk below cannot see it. Same scan, and the same `@F@` exclusion,
+        // that the stage-3 ladder's SECOND SCAN uses to build `store_syms`.
+        const std::string cpfx = "sol:@C@" + own + "@";
+        const symbolt *store = nullptr;
+        cov_context->foreach_operand([&](const symbolt &s) {
+          if (store != nullptr)
+            return;
+          const std::string id = s.id.as_string();
+          if (id.rfind(cpfx, 0) != 0 || id.find("@F@") != std::string::npos)
+            return;
+          std::string nm = id.substr(cpfx.size());
+          const size_t hash = nm.find('#');
+          if (hash != std::string::npos)
+            nm = nm.substr(0, hash);
+          if (nm == mname)
+            store = &s;
+        });
+        if (store == nullptr)
+          return false;
+        const type2tc mt = migrate_type(store->type);
+        if (!is_array_type(mt))
+          return false;
+        const type2tc et = to_array_type(mt).subtype;
+
+        // ---- THE KEY: A LITERAL OR A NAME, AND BOTH ARE NEEDED ----
+        //
+        // Stage 2 takes its key from a COUNTEREXAMPLE, so the spec it writes is
+        // `state.bal[0xFFFF...FFFF]`; a hand-written spec naturally says
+        // `state.bal[k]` for a parameter, and `state.m[msg.sender]` is the
+        // guard shape the paragraph above names as the commonest real one. A
+        // name is resolved by recursing into THIS function, so all three cost
+        // one branch rather than three lookups.
+        //
+        // HEX NEEDS ITS `0x`. Testing "is every character a hex digit" without
+        // the prefix would read a PARAMETER named `abc` as the number 0xabc --
+        // a perfectly well-formed bound on a slot nobody named, which is the
+        // silent-wrong-quantity failure this whole layer exists to avoid.
+        expr2tc kexpr;
+        bool klit = false;
+        BigInt kval;
+        if (kname.rfind("0x", 0) == 0 || kname.rfind("0X", 0) == 0)
+        {
+          klit = kname.size() > 2;
+          for (size_t i = 2; i < kname.size(); ++i)
+            if (isxdigit((unsigned char)kname[i]) == 0)
+              klit = false;
+          if (klit)
+            kval = BigInt(kname.c_str() + 2, 16);
+        }
+        else
+        {
+          klit = true;
+          for (char c : kname)
+            if (c < '0' || c > '9')
+              klit = false;
+          if (klit)
+            kval = string2integer(kname);
+        }
+        if (klit)
+          // uint256 because that is the widest key Solidity has; the SMT layer
+          // resizes an index to the array's own domain width, so a narrower
+          // key (an `address`) is not mis-indexed by carrying the wider type.
+          kexpr = constant_int2tc(get_uint_type(256), kval);
+        else if (!resolve_coord(fsym, kname, kexpr))
+          return false;
+
+        out = index2tc(et, symbol2tc(mt, store->id), kexpr);
+        return true;
+      }
+
       // The contract instance object. Same symbol family the counterexample
       // harvest reads `final_state` from, so a coordinate named here and a
       // value reported there refer to the same thing by construction.
@@ -7019,9 +7136,10 @@ void goto_coveraget::solidity_path_coverage()
             "the name does not resolve to an input of this unit. Name a "
             "parameter, an environment value (`msg.value` ...), or a state "
             "variable at entry (`state.<field>`); note that `state.<field>` "
-            "reaches the contract object's own components only, so a mapping "
-            "or a dynamic array does not resolve, and a field access such as "
-            "`immutables.taker` is not a coordinate shape at all";
+            "reaches the contract object's own components only, so a WHOLE "
+            "mapping or dynamic array does not resolve -- name ONE SLOT of it "
+            "as `state.<name>[<key>]` instead, where <key> is a decimal, an "
+            "0x-prefixed hex literal, a parameter, or `msg.sender`";
         else
           coord_expressible(cexpr->type, why);
         if (!why.empty())
@@ -7614,9 +7732,12 @@ void goto_coveraget::solidity_path_coverage()
           why =
             "the name does not resolve to an input of this unit. Name a "
             "parameter of this unit, an environment value as `msg.value` / "
-            "`tx.origin` / `block.timestamp`, or a state variable at entry as "
+            "`tx.origin` / `block.timestamp`, a state variable at entry as "
             "`state.<field>` (which reaches the contract object's own "
-            "components only — a mapping or a dynamic array does not resolve)";
+            "components only — a WHOLE mapping or dynamic array does not "
+            "resolve), or ONE SLOT of such a store as `state.<name>[<key>]` "
+            "with <key> a decimal, an 0x-prefixed hex literal, a parameter of "
+            "this unit, or `msg.sender`";
         else
           coord_expressible(bs->type, why);
         if (!why.empty())
@@ -7975,9 +8096,12 @@ void goto_coveraget::solidity_path_coverage()
           why =
             "the name does not resolve to an input of this unit. Name a "
             "parameter, an environment value as `msg.value` / `tx.origin` / "
-            "`block.timestamp`, or a state variable at entry as `state.<field>` "
+            "`block.timestamp`, a state variable at entry as `state.<field>` "
             "(which reaches the contract object's own components only -- a "
-            "mapping or a dynamic array does not resolve)";
+            "WHOLE mapping or dynamic array does not resolve), or ONE SLOT of "
+            "such a store as `state.<name>[<key>]` with <key> a decimal, an "
+            "0x-prefixed hex literal, a parameter of this unit, or "
+            "`msg.sender`";
         else
           coord_expressible(bs->type, why);
         if (!why.empty())
@@ -8264,6 +8388,26 @@ void goto_coveraget::solidity_path_coverage()
       for (const auto &v : assert_vars)
         named_wanted.insert(v.name);
 
+      // ---- A SLOT ENTRY MUST NOT TURN THE COMPONENT LOOP INTO A WHITELIST --
+      //
+      // `vars` is a whitelist over the contract object's COMPONENTS. A slot
+      // (`m[k]`) names something that loop can never reach, so a spec that
+      // asks only for slots would otherwise silence every scalar rung and the
+      // return rungs as well -- and the caller would have to list every
+      // component by name to get them back. It cannot: the component set is
+      // the goto model's, and the driver reads solc's storage layout, which is
+      // a DIFFERENT set (a constant/immutable is a component with no slot; a
+      // mapping is a slot with no component). Making the driver reconcile two
+      // sets that disagree by construction is how a name ends up listed that
+      // the ladder then refuses by name.
+      //
+      // So the whitelist is over the NON-SLOT entries only. With no slot named
+      // this is bit-identical to what it was.
+      bool comp_vars_present = false;
+      for (const auto &v : assert_vars)
+        if (v.name.find('[') == std::string::npos)
+          comp_vars_present = true;
+
       // ---- The antecedent, and the ladder ----
       const expr2tc not_this_path = or2tc(
         notequal2tc(tr, constant_int2tc(utype, BigInt(assert_enc))),
@@ -8333,7 +8477,7 @@ void goto_coveraget::solidity_path_coverage()
         for (const auto &v : assert_vars)
           if (v.name == vname)
             spec = &v;
-        if (!assert_vars.empty() && spec == nullptr)
+        if (comp_vars_present && spec == nullptr)
           continue; // an explicit `vars` list is a whitelist
         if (spec != nullptr)
           named_seen.insert(vname);
@@ -8810,7 +8954,7 @@ void goto_coveraget::solidity_path_coverage()
       const size_t emitted_before_return = emitted;
       {
         const bool ret_wanted =
-          assert_vars.empty() ||
+          !comp_vars_present ||
           std::any_of(
             assert_vars.begin(), assert_vars.end(), [](const assert_vart &v) {
               return v.name == "return" || v.name.rfind("return.", 0) == 0;

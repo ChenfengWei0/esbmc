@@ -645,34 +645,70 @@ def bind_return(call_line, unit, decl_type, var):
 # Storage layout (from solc, via forge) -- never guessed
 # ---------------------------------------------------------------------------
 
+# Key types whose mapping slot is `keccak256(abi.encode(key, slot))`.
+#
+# A WHITELIST, for the reason every other whitelist in this pipeline is one.
+# Solidity computes a mapping slot as `keccak256(h(k) . p)` where h PADS a
+# VALUE type to 32 bytes -- which is exactly what `abi.encode` does -- but
+# CONCATENATES a `string`/`bytes` key unpadded, which is `abi.encodePacked`.
+# Using the wrong one produces a perfectly well-formed read of a slot nothing
+# wrote, i.e. a green assertion about an unrelated quantity. Rather than encode
+# both rules, the dynamic-key case is refused by name.
+MAP_KEY_OK = re.compile(r"^(?:u?int(?:\d+)?|address|bool|bytes(?:[12]?\d|3[0-2])?)$")
+
+
 def storage_layout(project, contract):
-    """{var: (slot, offset_bytes, size_bytes)} for the contract's own storage.
+    """({var: (slot, off, size)}, {map: (slot, key_type, value_size)}, err).
 
     Read from `forge inspect <C> storageLayout --json`, i.e. from solc.  A
-    variable the layout does not mention has NO storage slot: it is a
-    `constant` (baked into the code) or an `immutable` (baked into the
-    deployed bytecode).  Returning it absent rather than guessing a slot is
-    what lets the caller DROP its rungs with a reason instead of emitting a
-    read of the wrong slot -- which would be a green-looking assertion about
-    a quantity nothing wrote.
+    variable in NEITHER dict has NO storage slot: it is a `constant` (baked
+    into the code) or an `immutable` (baked into the deployed bytecode).
+    Returning it absent rather than guessing a slot is what lets the caller
+    DROP its rungs with a reason instead of emitting a read of the wrong slot
+    -- which would be a green-looking assertion about a quantity nothing wrote.
+
+    THE SECOND DICT IS NOT THE FIRST ONE WIDENED. A mapping has no readable
+    slot OF ITS OWN -- the number solc reports for it is the `p` that goes into
+    the hash, not a word holding a value -- so putting it in `out` would let
+    every existing caller `vm.load` it and get the zero word back. It is a
+    different KIND of address and it gets a different table.
     """
     p = subprocess.run(["forge", "inspect", contract, "storageLayout",
                         "--json"], cwd=project, capture_output=True, text=True)
     if p.returncode != 0:
-        return None, (f"forge inspect failed (rc={p.returncode}): "
-                      f"{p.stdout + p.stderr}")
+        return None, None, (f"forge inspect failed (rc={p.returncode}): "
+                            f"{p.stdout + p.stderr}")
     try:
         j = json.loads(p.stdout)
     except ValueError as e:
-        return None, f"forge inspect produced no JSON: {e}"
+        return None, None, f"forge inspect produced no JSON: {e}"
     types = j.get("types") or {}
-    out = {}
+    out, maps = {}, {}
     for e in j.get("storage") or []:
         ty = types.get(e.get("type")) or {}
+        enc = ty.get("encoding")
+        if enc == "mapping":
+            kt = (types.get(ty.get("key")) or {}).get("label") or ""
+            vt = types.get(ty.get("value")) or {}
+            # The VALUE must itself be a plain inplace scalar. A nested mapping
+            # (`encoding == "mapping"`) or a struct value needs a second hash
+            # or a member offset, and guessing either reads the wrong word.
+            if (vt.get("encoding") != "inplace"
+                    or vt.get("members") is not None
+                    or vt.get("numberOfBytes") is None):
+                continue
+            if not MAP_KEY_OK.match(kt.strip()):
+                continue
+            try:
+                maps[e["label"]] = (int(e["slot"]), kt.strip(),
+                                    int(vt["numberOfBytes"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            continue
         # Only INPLACE value types can be read/written as a masked slot word.
-        # A mapping has no slot of its own to read; a `bytes`/`string` slot
-        # holds a length-or-payload encoding, not the value.
-        if ty.get("encoding") != "inplace":
+        # A `bytes`/`string` slot holds a length-or-payload encoding, not the
+        # value.
+        if enc != "inplace":
             continue
         nb = ty.get("numberOfBytes")
         if nb is None or ty.get("members") is not None:
@@ -681,7 +717,7 @@ def storage_layout(project, contract):
             out[e["label"]] = (int(e["slot"]), int(e["offset"]), int(nb))
         except (KeyError, TypeError, ValueError):
             continue
-    return out, None
+    return out, maps, None
 
 
 # MASKS ARE DECIMAL, NEVER HEX, and that is not a style choice.
@@ -704,10 +740,16 @@ def _mask_lit(v):
     return str(v)
 
 
-def slot_read_expr(addr, slot, off, nbytes):
-    """A uint256-valued expression reading one packed storage variable."""
+def slot_read_expr_at(addr, slot_expr, off, nbytes):
+    """A uint256-valued read of one packed variable at a slot EXPRESSION.
+
+    Split out from `slot_read_expr` so a mapping slot -- whose address is a
+    hash, not a literal -- reuses the SAME masking. Two copies of the shift and
+    mask arithmetic is how the packed case comes to be right in one place and
+    wrong in the other.
+    """
     mask = (1 << (8 * nbytes)) - 1
-    inner = f"uint256(vm.load({addr}, bytes32(uint256({slot}))))"
+    inner = f"uint256(vm.load({addr}, {slot_expr}))"
     if off:
         inner = f"({inner} >> {8 * off})"
     if nbytes < 32:
@@ -715,26 +757,72 @@ def slot_read_expr(addr, slot, off, nbytes):
     return inner
 
 
-def slot_write_lines(addr, slot, off, nbytes, value_expr, indent="    "):
-    """Read-modify-write of one packed storage variable.
+def slot_read_expr(addr, slot, off, nbytes):
+    """A uint256-valued expression reading one packed storage variable."""
+    return slot_read_expr_at(addr, f"bytes32(uint256({slot}))", off, nbytes)
+
+
+def map_slot_expr(key_expr, slot):
+    """The bytes32 storage slot of `m[key]` for a mapping declared at `slot`.
+
+    Solidity: `keccak256(h(k) . p)` with h padding a VALUE-type key to 32
+    bytes, which is what `abi.encode` does. `abi.encodePacked` would NOT --
+    it is the rule for a dynamic key -- and those are refused in
+    `storage_layout` rather than encoded here.
+    """
+    return f"keccak256(abi.encode({key_expr}, uint256({slot})))"
+
+
+# `bal[k]` is not an identifier, and a local named after it would not compile.
+def _slot_ident(var):
+    return re.sub(r"[^0-9A-Za-z_]", "_", var).strip("_")
+
+
+def slot_write_lines_at(addr, slot_expr, off, nbytes, value_expr,
+                        indent="    "):
+    """Read-modify-write of one packed variable at a slot EXPRESSION.
+
+    Split out from `slot_write_lines` for the same reason `slot_read_expr_at`
+    was: a MAPPING slot's address is a keccak hash rather than a literal, and
+    two copies of the shift/mask arithmetic is how the packed case comes to be
+    right in one place and wrong in the other.
 
     RMW rather than a whole-word store: several state variables share a slot
     whenever they pack (solc's layout reports offset/numberOfBytes precisely
     so this is decidable, not guessed), and a whole-word store would silently
     zero its neighbours -- which is a change to the entry state nobody asked
-    for and which the region says nothing about.
+    for and which the region says nothing about. A mapping value occupies the
+    whole word, so there the RMW degenerates to a plain store; keeping ONE code
+    path is worth more than saving those two lines.
     """
     mask = (1 << (8 * nbytes)) - 1
     s = _mask_lit(mask << (8 * off))
     return [
         f"{indent}{{",
-        f"{indent}  uint256 _w = uint256(vm.load({addr}, "
-        f"bytes32(uint256({slot}))));",
+        f"{indent}  uint256 _w = uint256(vm.load({addr}, {slot_expr}));",
         f"{indent}  _w = (_w & ~uint256({s})) | "
         f"((uint256({value_expr}) & {_mask_lit(mask)}) << {8 * off});",
-        f"{indent}  vm.store({addr}, bytes32(uint256({slot})), bytes32(_w));",
+        f"{indent}  vm.store({addr}, {slot_expr}, bytes32(_w));",
         f"{indent}}}",
     ]
+
+
+def slot_write_lines(addr, slot, off, nbytes, value_expr, indent="    "):
+    """Read-modify-write of one packed storage variable at a literal slot."""
+    return slot_write_lines_at(
+        addr, f"bytes32(uint256({slot}))", off, nbytes, value_expr, indent)
+
+
+# A key written as a LITERAL has no Solidity type until it is given one, and
+# `abi.encode(0xFF..FF)` does not compile ("Cannot perform ABI encoding for
+# type rational_const"). A key that is a declared PARAMETER already has one and
+# must NOT be re-cast: `uint256(someAddress)` is a compile error, while
+# `abi.encode(someAddress)` is exactly the 32-byte padding Solidity hashes.
+_KEY_LIT_RE = re.compile(r"^(?:0[xX][0-9a-fA-F]+|[0-9]+)$")
+
+
+def key_expr_typed(text):
+    return f"uint256({text})" if _KEY_LIT_RE.match(text.strip()) else text
 
 
 # ---------------------------------------------------------------------------
@@ -1209,7 +1297,7 @@ def bound_lines(pname, kind, width, lo, hi, holes):
 
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
-              unwind=None, rettypes=None):
+              unwind=None, rettypes=None, maps=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -1265,6 +1353,14 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
 
     new_call, _ = rewrite_call_args(call_line, unit, repl)
 
+    # What each declared parameter is called IN THE PUT. A lifted coordinate is
+    # the fuzz local, a pinned one keeps the emitter's own literal -- and a
+    # mapping-slot oracle has to index with whichever it is, or the pre-read and
+    # the call disagree about which entry they are talking about.
+    key_expr_of = {}
+    for idx, (pname, _pt) in enumerate(params):
+        key_expr_of[pname] = repl.get(idx, args[idx].strip())
+
     # --- entry-state coordinates: ESTABLISHED with vm.store -----------------
     #
     # A PINNED state coordinate is established here too, and it is not a
@@ -1298,6 +1394,50 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         if not name.startswith("state."):
             continue
         v = name[6:]
+        # ---- A MAPPING SLOT PIN, `state.<m>[<key>]` -------------------------
+        #
+        # ESBMC resolves this shape as a certification COORDINATE, so a region
+        # can now be a statement about one slot's entry value -- which is what
+        # makes a mapping-guarded path (`require(bal[k] >= v)`) certifiable at
+        # all. The test therefore has to ESTABLISH it, exactly as it does for a
+        # scalar `state.<v>` pin.
+        #
+        # MEASURED, and it is why this branch exists rather than the pin simply
+        # being dropped: on P28_MapMin.take the pin fell through to the
+        # `v not in layout` arm below and was reported
+        #     "no storage slot: ... it is a constant/immutable"
+        # -- a sentence that is FALSE for a mapping (solc reports its slot; what
+        # it does not report is a slot holding a value). The PUT happened to be
+        # green anyway, because the emitted preamble's own `put(...)` call had
+        # established the same value by luck. A pin that is satisfied by
+        # coincidence and reported as unestablishable is the shape of defect
+        # this file already carries three comments about.
+        m_pin = re.match(r"^([A-Za-z_]\w*)\[(.+)\]$", v)
+        if m_pin:
+            mname, kname = m_pin.group(1), m_pin.group(2)
+            if not maps or mname not in maps:
+                state_skipped.append(
+                    f"{name} (`{mname}` is not a mapping solc's layout reports "
+                    f"with a value-type key and a scalar value, so its slot "
+                    f"address cannot be computed; a guessed one would write a "
+                    f"word the contract never reads)")
+                continue
+            if lo != hi:
+                # Same rule as a wide scalar state bound: the entry state is not
+                # havoc'd, so a wide bound constrained nothing in the query and
+                # the rungs were proved about ONE entry value. Establishing a
+                # fuzz-chosen one would test entry states the proof never saw.
+                state_skipped.append(
+                    f"{name} in [{lo}, {hi}] (width > 1, DROPPED: the entry "
+                    f"state is not havoc'd, so this bound constrained nothing "
+                    f"in the query)")
+                continue
+            mslot, _kt, vnb = maps[mname]
+            kexpr = key_expr_typed(key_expr_of.get(kname, kname))
+            store_lines += slot_write_lines_at(
+                "address(c0)", map_slot_expr(kexpr, mslot), 0, vnb, str(lo))
+            stored.append(f"{name} := {lo}")
+            continue
         if v not in layout:
             state_skipped.append(
                 f"{name} (no storage slot: solc's layout does not list it, so "
@@ -1480,6 +1620,50 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         if var == RETURN_VAR or var.startswith(RETURN_VAR + "."):
             continue
         if verdict != "HOLDS":
+            continue
+        # ---- A MAPPING SLOT, `m[k]` ----------------------------------------
+        #
+        # Not in `layout` and never will be: the number solc reports for a
+        # mapping is the `p` that goes into the hash, not a word holding a
+        # value. It gets its own table and its own address arithmetic.
+        #
+        # WHAT A `post == pre` ON A SLOT IS. When the unit does not touch that
+        # entry the rung holds, and the assertion it renders is a FRAME
+        # CONDITION -- "this call leaves that balance alone" -- which is a real
+        # post-condition rather than a restatement of the input. It is weaker
+        # than a delta rung and the header below says which is which, so a
+        # reader is never left to infer strength from the fact that something
+        # was asserted.
+        m_slot = re.match(r"^([A-Za-z_]\w*)\[(.+)\]$", var)
+        if m_slot:
+            mname, kname = m_slot.group(1), m_slot.group(2)
+            if not maps or mname not in maps:
+                oracle_skipped.append(
+                    f"{var} (`{mname}` is not a mapping solc's layout reports "
+                    f"with a value-type key and a scalar value, so the slot "
+                    f"address cannot be computed; a guessed one would read a "
+                    f"word nothing wrote)")
+                continue
+            mslot, _ktype, vnb = maps[mname]
+            kexpr = key_expr_of.get(kname)
+            if kexpr is None:
+                oracle_skipped.append(
+                    f"{var} (the key `{kname}` is not a declared parameter of "
+                    f"this unit, so the PUT has no expression for it)")
+                continue
+            ident = _slot_ident(var)
+            if var not in seen_vars:
+                seen_vars.append(var)
+                rd = slot_read_expr_at(
+                    "address(c0)", map_slot_expr(kexpr, mslot), 0, vnb)
+                pre_reads.append(f"    uint256 _pre_{ident} = {rd};")
+                post_reads.append(f"    uint256 _post_{ident} = {rd};")
+            a = rung_assertions(text, f"_pre_{ident}", f"_post_{ident}",
+                                f"{var}: {text}")
+            if a is None:
+                oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
+                continue
+            asserts += a
             continue
         if var not in layout:
             msg = (f"{var} (no storage slot: solc's layout does not list it, "
@@ -1826,8 +2010,79 @@ def main():
         return 1
     print(f"[put]   concrete case: {case[1]} in contract {emitted.blocks[case[0]][0]}")
 
-    # ---- 2. the assertion ladder -----------------------------------------
-    print("[put] step 2: post-state assertion ladder over the certified region")
+    # ---- 2a. storage layout and declared parameters ------------------------
+    #
+    # READ BEFORE THE LADDER, not after it as they used to be. The ladder now
+    # has to be TOLD which mapping slots to judge -- the tool deliberately
+    # refuses to sweep every mapping with every parameter, because a rung about
+    # a slot the unit never touches holds and would be rendered as an oracle
+    # nobody chose -- and the two facts needed to name a slot are exactly these:
+    # which mappings solc reports, and what this unit's parameters are called.
+    # Neither depends on the ladder, so the move changes nothing else.
+    layout, maps, err = storage_layout(a.forge_project, a.contract)
+    if layout is None:
+        print(f"[put] REFUSED: {err}. Without solc's storage layout a state "
+              f"read would be a GUESSED slot, and a green assertion about the "
+              f"wrong slot is worse than no assertion")
+        return 1
+    print(f"[put] step 2a: storage layout — {len(layout)} readable scalar "
+          f"slot(s): {', '.join(sorted(layout)) or 'none'}; "
+          f"{len(maps)} mapping(s) with a value-type key: "
+          f"{', '.join(sorted(maps)) or 'none'}")
+
+    # Both come from _select_def with the SAME arity, so an overload cannot be
+    # resolved one way for the arguments and another way for the return value.
+    params, rettypes = None, None
+    if a.ast:
+        _n, args0 = rewrite_call_args(
+            emitted.lines[case[3][0] + 1:case[3][1]][
+                find_unit_call(emitted.lines[case[3][0] + 1:case[3][1]],
+                               a.unit) or 0],
+            a.unit, {})
+        arity = len(args0) if args0 is not None else None
+        params = function_params(a.ast, a.contract, a.unit, arity)
+        rettypes = function_returns(a.ast, a.contract, a.unit, arity)
+    if params is None:
+        print("[put] WARNING: declared parameters unavailable (no --ast, or "
+              "the name did not resolve); no argument can be lifted")
+    if rettypes is None:
+        print("[put] WARNING: the declared return type is unavailable, so no "
+              "return-value rung can be bound even if one HOLDS")
+    else:
+        print(f"[put]   declared return: "
+              f"{', '.join(t for _n2, t in rettypes) or '(none)'}")
+
+    # ---- WHICH SLOTS TO ASK ABOUT, and why the DRIVER chooses --------------
+    #
+    # `m[p]` for every mapping whose KEY TYPE matches a declared parameter's
+    # type. That is a policy, it is the driver's to make, and it is recorded on
+    # the emitted test rather than buried: the tool refuses to make it, because
+    # a default sweep inside the verifier would emit rungs about slots the unit
+    # never touches with nothing naming the choice.
+    #
+    # The proposal is CHEAP AND JUDGED. A slot the unit does not write yields
+    # `post == pre`, which is a frame condition rather than a strong oracle;
+    # one it does write yields the sign and delta rungs. Which of the two a
+    # given slot produced is visible in the table, so over-proposing costs
+    # candidates, never correctness.
+    def _norm_ty(t):
+        t = (t or "").strip()
+        for suf in (" payable", " memory", " calldata", " storage"):
+            t = t.replace(suf, "")
+        return {"uint": "uint256", "int": "int256"}.get(t, t)
+
+    slot_vars = []
+    for mname in sorted(maps):
+        ktype = maps[mname][1]
+        for pname, ptype in (params or []):
+            if pname and _norm_ty(ptype) == _norm_ty(ktype):
+                slot_vars.append(f"{mname}[{pname}]")
+    if slot_vars:
+        print(f"[put]   mapping slots proposed to the ladder: "
+              f"{', '.join(slot_vars)}")
+
+    # ---- 2b. the assertion ladder -----------------------------------------
+    print("[put] step 2b: post-state assertion ladder over the certified region")
     spec = {"unit": a.unit, "enc": a.enc, "depth": a.depth,
             "region": [{"name": n, "lo": str(lo), "hi": str(hi)}
                        | ({"holes": [str(h) for h in holes[n]]}
@@ -1835,6 +2090,12 @@ def main():
                        for n, (lo, hi) in region.items()]
                       + [{"name": n, "lo": str(v), "hi": str(v)}
                          for n, v in pins.items()]}
+    # ⛔ ONLY when a slot is proposed. `vars` is a whitelist over the contract
+    # object's COMPONENTS, and writing an empty-but-present list is refused by
+    # the tool by name (N1) -- correctly, since it would emit no candidate and
+    # print VERIFICATION SUCCESSFUL for a ladder it never built.
+    if slot_vars:
+        spec["vars"] = [{"name": s} for s in slot_vars]
     with open(os.path.join(assert_dir, "spec.json"), "w") as f:
         json.dump(spec, f)
     out2, rc2, w2 = run_esbmc(
@@ -1995,46 +2256,17 @@ def main():
                        "ladder_refusal": refusal, "notes": notes}, f, indent=2)
         return 2
 
-    # ---- 3. storage layout, from solc ------------------------------------
-    layout, err = storage_layout(a.forge_project, a.contract)
-    if layout is None:
-        print(f"[put] REFUSED: {err}. Without solc's storage layout a state "
-              f"read would be a GUESSED slot, and a green assertion about the "
-              f"wrong slot is worse than no assertion")
-        return 1
-    print(f"[put] step 3: storage layout — {len(layout)} readable scalar "
-          f"slot(s): {', '.join(sorted(layout))}")
-
-    # ---- 4. declared parameters, and the declared RETURN type -------------
+    # ---- 3. build ---------------------------------------------------------
     #
-    # Both come from _select_def with the SAME arity, so an overload cannot be
-    # resolved one way for the arguments and another way for the return value.
-    params, rettypes = None, None
-    if a.ast:
-        _n, args0 = rewrite_call_args(
-            emitted.lines[case[3][0] + 1:case[3][1]][
-                find_unit_call(emitted.lines[case[3][0] + 1:case[3][1]],
-                               a.unit) or 0],
-            a.unit, {})
-        arity = len(args0) if args0 is not None else None
-        params = function_params(a.ast, a.contract, a.unit, arity)
-        rettypes = function_returns(a.ast, a.contract, a.unit, arity)
-    if params is None:
-        print("[put] WARNING: declared parameters unavailable (no --ast, or "
-              "the name did not resolve); no argument can be lifted")
-    if rettypes is None:
-        print("[put] WARNING: the declared return type is unavailable, so no "
-              "return-value rung can be bound even if one HOLDS")
-    else:
-        print(f"[put]   declared return: "
-              f"{', '.join(t for _n2, t in rettypes) or '(none)'}")
-
-    # ---- 5. build ---------------------------------------------------------
+    # The storage layout and the declared parameters were read at step 2a, in
+    # front of the ladder, because the ladder has to be told which mapping
+    # slots to judge.
     put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
                            region, holes, pins, params, emitted, case,
                            layout, rows, notes,
                            cell=(cell_name, cell_rule),
-                           unwind=unwind_applied, rettypes=rettypes)
+                           unwind=unwind_applied, rettypes=rettypes,
+                           maps=maps)
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
