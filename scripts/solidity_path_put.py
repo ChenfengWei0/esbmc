@@ -1174,15 +1174,68 @@ def env_disagreements(body, call_i, call_line, region, pins):
     instead of being invisible, which is the failure this whole block exists to
     stop repeating.
     """
-    want = {}
+    want, ranged = {}, {}
     for n, (lo, hi) in region.items():
-        if n.startswith(ENV_PREFIXES) and lo == hi:
+        if not n.startswith(ENV_PREFIXES):
+            continue
+        if lo == hi:
             want[n] = lo
+        else:
+            # ---- A WIDE ENVIRONMENT COORDINATE MUST NOT VANISH -------------
+            #
+            # This function only ever looked at `lo == hi`, and an environment
+            # coordinate is in NEITHER of build_put's other two loops: the
+            # parameter loop iterates the unit's DECLARED parameters (msg.sender
+            # is not one) and the entry-state loop requires a `state.` prefix.
+            # So a wide one fell through all three and was dropped without a
+            # word -- which is verbatim the defect the comment above this
+            # function describes, fixed at the time only for the width-one case.
+            #
+            # It was unreachable until now: a region can only carry a wide
+            # environment coordinate if one was promoted with `--env-coord`,
+            # and nothing in this pipeline passed that flag. The two undriven
+            # farming units measured today are refused on exactly `msg.sender`
+            # and `block.timestamp` -- "[NOT a bounded coordinate]" on every
+            # path -- so promoting them is the named repair, and it opens this.
+            ranged[n] = (lo, hi)
     for n, v in pins.items():
         if n.startswith(ENV_PREFIXES) and n not in want:
             want[n] = v
     obs = observed_env(body, call_i, call_line)
     refusals, unchecked = [], []
+    # A RANGE IS NOT ESTABLISHED, IT IS CHECKED FOR MEMBERSHIP. The test runs
+    # under whatever single value the emitter's preamble sets; the region says
+    # the path holds across an interval. Those are compatible exactly when that
+    # one value lies inside the interval -- then the test is one point of a
+    # wider certified claim, which is weaker than the region and is SAID so.
+    # Outside it, the test walks an execution the region never spoke about, and
+    # that is the same refusal a width-one disagreement gets.
+    for n, (lo, hi) in sorted(ranged.items()):
+        if n not in obs:
+            unchecked.append(
+                f"{n} in [{lo}, {hi}] is NOT CHECKED: this driver can compare "
+                f"only msg.sender and msg.value against the emitted preamble")
+            continue
+        got, ev = obs[n]
+        if got is None:
+            refusals.append(
+                f"{n} is certified over [{lo}, {hi}] and the emitted case "
+                + (f"sets it with `{ev}`, which this driver cannot read as a "
+                   f"value" if ev else "never sets it")
+                + ", so the test is not known to run inside the certified range")
+            continue
+        if got < lo or got > hi:
+            refusals.append(
+                f"{n} is certified over [{lo}, {hi}] but the emitted case sets "
+                f"it to {got} (`{ev}`), which is OUTSIDE that range. The test "
+                f"would walk an execution the region never spoke about")
+            continue
+        unchecked.append(
+            f"{n} is certified over [{lo}, {hi}] and this test exercises the "
+            f"single value {got} (`{ev}`), which is inside it. The PUT is "
+            f"therefore ONE POINT of that part of the region, not a fuzz over "
+            f"it -- an environment quantity is not a call argument, so it "
+            f"cannot be bound() into the signature")
     for n, v in sorted(want.items()):
         if n not in obs:
             unchecked.append(

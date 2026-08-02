@@ -898,6 +898,70 @@ def test_the_oracle_side_refuses_the_same_key():
     return bad
 
 
+# --- a WIDE environment coordinate is a range the test cannot establish -----
+#
+# Reachable only via `--env-coord`, which promotes an environment quantity from
+# a pin to a free coordinate. Before that flag was ever passed, every
+# environment coordinate in a region was width-one and this branch could not be
+# entered; a wide one fell through the parameter loop (msg.sender is not a
+# declared parameter), the entry-state loop (no `state.` prefix) AND the
+# width-one check, and vanished with nothing on the emitted test.
+#
+# The fixture's preamble pranks `address(uint160(0))`, so the observed sender
+# is 0 in every case below and only the RANGE moves.
+def _env_range_put(region_extra):
+    em, case = make_case()
+    notes = []
+    region = {"bps": (0, 250), "u": (0, (1 << 160) - 1)}
+    region.update(region_extra)
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region=region, holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=LADDER, notes=notes)
+    return put, stats, notes
+
+
+def test_a_wide_env_coordinate_containing_the_sender_is_disclosed():
+    """0 is inside [0, 100]: the test is ONE POINT of a wider certified claim,
+    which is weaker than the region and has to say so on the test itself."""
+    put, stats, _n = _env_range_put({"msg.sender": (0, 100)})
+    bad = 0
+    bad += check(put is not None, "a PUT is still produced")
+    ev = stats["env_unchecked"]
+    bad += check(any("ONE POINT" in s for s in ev),
+                 f"the range is disclosed, not silently dropped: {ev}")
+    bad += check(any("[0, 100]" in s and "single value 0" in s for s in ev),
+                 "and it names both the range and the value exercised")
+    bad += check(any("ONE POINT" in ln for ln in put),
+                 "the disclosure is ON the emitted test, not only in stats")
+
+
+    return bad
+
+
+def test_a_wide_env_coordinate_excluding_the_sender_REFUSES():
+    """MUST FLIP. 0 is outside [5, 100], so the test walks an execution the
+    region never spoke about -- the same refusal a width-one disagreement gets,
+    rather than a disclosure."""
+    put, stats, notes = _env_range_put({"msg.sender": (5, 100)})
+    bad = 0
+    bad += check(put is None, "emission is REFUSED")
+    bad += check(any("OUTSIDE that range" in n for n in notes),
+                 f"and the refusal says why: {notes}")
+    return bad
+
+
+def test_a_width_one_env_coordinate_is_unchanged():
+    """The pre-existing path must behave exactly as before: 0 == 0 agrees, so
+    the PUT emits and nothing is reported unchecked."""
+    put, stats, _n = _env_range_put({"msg.sender": (0, 0)})
+    bad = 0
+    bad += check(put is not None, "an agreeing width-one env coordinate emits")
+    bad += check(stats["env_unchecked"] == [],
+                 f"and reports nothing unchecked: {stats['env_unchecked']}")
+    return bad
+
+
 def main():
     bad = 0
     for t in (test_both_truncation_shapes_are_read,
@@ -930,7 +994,10 @@ def main():
               test_a_slot_pin_keyed_by_a_parameter_is_established,
               test_a_slot_pin_keyed_by_a_literal_is_established,
               test_a_slot_pin_keyed_by_msg_sender_is_REFUSED,
-              test_the_oracle_side_refuses_the_same_key):
+              test_the_oracle_side_refuses_the_same_key,
+              test_a_wide_env_coordinate_containing_the_sender_is_disclosed,
+              test_a_wide_env_coordinate_excluding_the_sender_REFUSES,
+              test_a_width_one_env_coordinate_is_unchanged):
         print(f"--- {t.__name__}")
         bad += t()
     if bad:
