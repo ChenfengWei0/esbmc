@@ -1408,9 +1408,46 @@ def main():
     print(f"[put] {a.contract}.{a.unit} enc={a.enc} depth={a.depth}")
     print(f"[put] CELL {cell_name}: {cell_rule}")
     print("[put] step 1: emit the concrete suite (preamble source of truth)")
+    # ---- THE THREE FLAGS AN EMITTING RUN MUST CARRY ----
+    #
+    # `notes/coverage/INVOCATION_DECISIONS.md` (row 6, amended) states it and
+    # this driver did not do it:
+    #
+    #   "Add THREE flags when the run is meant to EMIT TESTS:
+    #    --overflow-check --div-by-zero-check --path-cov-arith-resolve.
+    #    Without them a witnessed path whose counterexample wraps or divides by
+    #    zero is rendered as a bare call asserting a NORMAL exit, and is RED on
+    #    the unmodified contract -- measured three times across the PoC set."
+    #
+    # MEASURED AGAIN HERE, which is why the flags are now unconditional. Two of
+    # the three PUTs still failing after the entry-state fix are exactly this:
+    #
+    #   D10_WrapNotPanic.add path 7   FAIL panic 0x11 (0x11 = arithmetic
+    #   D20_FalseRevertOnly.addGate 6 FAIL panic 0x11  overflow)
+    #
+    # Both are paths the PoC exists to isolate: reachable ONLY by wrapping, so
+    # on chain the transaction reverts with Panic(0x11) and a bare call
+    # asserting a normal exit cannot be green. With the checks enabled the
+    # re-solve either finds a NON-wrapping witness for the same path (and the
+    # case becomes green) or proves there is none -- `arith_revert_only` -- and
+    # the emitter REFUSES the case, so this driver finds no concrete case to
+    # lift and refuses the PUT rather than shipping a red one. Both outcomes are
+    # correct; emitting a red test is the only one that is not.
+    #
+    # `--path-cov-arith-resolve` refuses to run unless a check is enabled, so
+    # the three travel together and cannot be half-copied into a silent no-op.
+    #
+    # ⚠ THE LADDER RUN DELIBERATELY DOES NOT GET THEM. Its result is a
+    # HOLDS/REFUTED table over the certified region, and adding goto_check
+    # claims there would put non-path claims into a solve loop whose whole
+    # output is per-candidate verdicts. The emission run and the assertion run
+    # answer different questions and carry different flags; that asymmetry is
+    # the point, not an oversight.
     out1, rc1, w1 = run_esbmc(
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
-        ["--generate-foundry-testcase", "--cov-report-json"] + a.esbmc_arg,
+        ["--generate-foundry-testcase", "--cov-report-json",
+         "--overflow-check", "--div-by-zero-check",
+         "--path-cov-arith-resolve"] + a.esbmc_arg,
         emit_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
     produced = sorted(f for f in os.listdir(emit_dir)
                       if f.endswith(".cov.t.sol"))
