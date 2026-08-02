@@ -564,8 +564,14 @@ def return_rung_assertions(text, kind, var, label):
     return None
 
 
-def bind_return(call_line, unit, decl_type, var):
+def bind_return_lhs(call_line, unit, lhs):
     """(rewritten call line, None) or (None, reason it may not be bound).
+
+    `lhs` is the whole left-hand side -- `uint256 _put_ret` for a scalar, or a
+    destructuring pattern `(uint248 _put_ret0, )` for a tuple. ONE
+    implementation for both shapes: the guards below are about the STATEMENT,
+    not about what is being bound, and a second copy would be a second place
+    for the try/catch refusal to be forgotten.
 
     ONLY a bare asserted call statement is bound. The other shapes the emitter
     writes are the R0 EXIT-KIND EXPECTATION itself -- `try`/`catch` for a
@@ -590,7 +596,12 @@ def bind_return(call_line, unit, decl_type, var):
     if not stripped.rstrip().endswith(";"):
         return None, ("the emitted call is not a simple statement, so a "
                       "binding cannot be placed in front of it")
-    return indent + f"{decl_type} {var} = " + stripped, None
+    return indent + lhs + " = " + stripped, None
+
+
+def bind_return(call_line, unit, decl_type, var):
+    """The scalar case of `bind_return_lhs`."""
+    return bind_return_lhs(call_line, unit, f"{decl_type} {var}")
 
 
 # ---------------------------------------------------------------------------
@@ -1306,12 +1317,25 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     #
     # Done BEFORE the state rungs because it can rewrite `new_call`, and after
     # the state stores because it does not depend on them.
-    ret_rows = [(t, v) for var, t, v in ladder_rows if var == RETURN_VAR]
+    # TWO SHAPES, ONE TABLE. A scalar return is the candidate `return`; a tuple
+    # is one candidate PER MEMBER, `return.0`, `return.1`, ... in declaration
+    # order -- which is the order solc gives them and therefore the order a
+    # destructuring `(a, b) = f(...)` binds them in. The `retlive` witness is
+    # shared and always sits on the bare `return`.
+    ret_rows_all = [(var, t, v) for var, t, v in ladder_rows
+                    if var == RETURN_VAR or var.startswith(RETURN_VAR + ".")]
     ret_asserts, ret_skipped = [], []
-    if ret_rows:
-        live = [v for t, v in ret_rows if t.startswith(RETLIVE_PREFIX)]
-        holds = [t for t, v in ret_rows
-                 if v == "HOLDS" and not t.startswith(RETLIVE_PREFIX)]
+    if ret_rows_all:
+        live = [v for var, t, v in ret_rows_all
+                if var == RETURN_VAR and t.startswith(RETLIVE_PREFIX)]
+        # member index (None == the whole value) -> the texts that HOLD
+        holds = {}
+        for var, t, v in ret_rows_all:
+            if t.startswith(RETLIVE_PREFIX) or v != "HOLDS":
+                continue
+            idx = None if var == RETURN_VAR else int(var.split(".", 1)[1])
+            holds.setdefault(idx, []).append(t)
+        lhs, plan = None, []
         why = None
         if not live:
             why = ("this ladder carries return rungs but NO `retlive` witness, "
@@ -1328,35 +1352,77 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         elif rettypes is None:
             why = ("the unit's declared return type could not be read from "
                    "the AST, so no local can be declared to bind the value")
-        elif len(rettypes) != 1:
-            why = (f"the unit declares {len(rettypes)} return value(s); only a "
-                   f"single scalar can be bound to one local here")
         elif any("vm.expectRevert" in ln for ln in body[:call_i]):
             why = ("the emitted case arms `vm.expectRevert()` before this "
                    "call -- the transaction is expected to revert, so there "
                    "is no returned value for the test to read")
+        elif None in holds and len(holds) > 1:
+            why = ("the table carries BOTH a whole-value rung and per-member "
+                   "rungs for one unit. A return is one shape or the other, "
+                   "and guessing which the table means is how a value gets "
+                   "bound at the wrong arity")
+        elif None in holds and len(rettypes) != 1:
+            why = (f"the ladder reports a whole-value rung but the unit "
+                   f"declares {len(rettypes)} return value(s)")
+        elif None not in holds and max(holds) >= len(rettypes):
+            why = (f"the ladder names member {max(holds)} but the unit "
+                   f"declares only {len(rettypes)} return value(s)")
+
         if why is None:
-            rk = return_kind(rettypes[0][1])
-            if rk is None:
-                why = (f"the declared return type `{rettypes[0][1]}` is not one "
-                       f"this emitter can bind and cast")
+            base = "_put_ret"
+            while any(base in ln for ln in body):
+                base += "_"
+            if None in holds:
+                rk = return_kind(rettypes[0][1])
+                if rk is None:
+                    why = (f"the declared return type `{rettypes[0][1]}` is "
+                           f"not one this emitter can bind and cast")
+                else:
+                    lhs = f"{rk[0]} {base}"
+                    plan = [(None, rk, base)]
+            else:
+                # A member with no HOLDS rung, or one this emitter cannot cast,
+                # gets an EMPTY slot rather than a named local: `(uint248 a, )`
+                # is a legal destructuring and an unused named local is a solc
+                # warning on a test nobody asked to be noisy.
+                slots = []
+                for i, (_nm, ty) in enumerate(rettypes):
+                    rk = return_kind(ty)
+                    if i in holds and rk is not None:
+                        vn = f"{base}{i}"
+                        slots.append(f"{rk[0]} {vn}")
+                        plan.append((i, rk, vn))
+                        continue
+                    if i in holds and rk is None:
+                        ret_skipped.append(
+                            f"return.{i} (declared `{ty}`, which this emitter "
+                            f"cannot bind and cast; its rungs are dropped and "
+                            f"the OTHER members are still asserted)")
+                    slots.append("")
+                if not plan:
+                    why = ("no member carrying a HOLDS rung has a type this "
+                           "emitter can bind")
+                else:
+                    lhs = "(" + ", ".join(slots) + ")"
+
         if why is None:
-            var_name = "_put_ret"
-            while any(var_name in ln for ln in body):
-                var_name += "_"
-            bound_call, berr = bind_return(new_call, unit, rk[0], var_name)
+            bound_call, berr = bind_return_lhs(new_call, unit, lhs)
             if berr is not None:
                 why = berr
             else:
                 new_call = bound_call
-                for t in holds:
-                    a = return_rung_assertions(t, rk, var_name, f"return: {t}")
-                    if a is None:
-                        ret_skipped.append(
-                            f"return: {t} (rung shape not renderable for a "
-                            f"declared `{rettypes[0][1]}` return)")
-                        continue
-                    ret_asserts += a
+                for idx, rk, vn in plan:
+                    label_var = (RETURN_VAR if idx is None
+                                 else f"{RETURN_VAR}.{idx}")
+                    for t in holds[idx]:
+                        a = return_rung_assertions(t, rk, vn,
+                                                   f"{label_var}: {t}")
+                        if a is None:
+                            ret_skipped.append(
+                                f"{label_var}: {t} (rung shape not renderable "
+                                f"for its declared type)")
+                            continue
+                        ret_asserts += a
                 if not ret_asserts:
                     # Every HOLDS rung was unrenderable, so the binding buys
                     # nothing and would leave an unused local (a solc warning
@@ -1369,8 +1435,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     pre_reads, post_reads, asserts, oracle_skipped = [], [], [], []
     seen_vars = []
     for var, text, verdict in ladder_rows:
-        if var == RETURN_VAR:
-            continue          # handled above; it has no storage slot by design
+        # `return` AND `return.<k>`. Skipping only the bare name filed every
+        # tuple MEMBER row as a state variable with no storage slot -- a wrong
+        # LABEL on a right value, and the same class of defect as publishing a
+        # tuple member as `state_written_value_unavailable`. Neither has a slot
+        # BY DESIGN; they are not state at all.
+        if var == RETURN_VAR or var.startswith(RETURN_VAR + "."):
+            continue
         if verdict != "HOLDS":
             continue
         if var not in layout:

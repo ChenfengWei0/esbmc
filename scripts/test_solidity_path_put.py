@@ -548,8 +548,12 @@ def test_a_bool_return_uses_assertTrue_not_a_cast():
     return bad
 
 
-def test_a_tuple_return_is_not_bound_and_says_so():
-    """Two declared return values cannot go into one local."""
+def test_a_whole_value_rung_on_a_tuple_unit_is_refused():
+    """A WHOLE-value rung against a two-member declaration: refuse.
+
+    That combination means the table and the AST disagree about the shape, and
+    binding it either way would pick an arity nobody stated.
+    """
     text, stats, _n = _ret_put(
         LADDER + [("return", RETLIVE, "REFUTED"),
                   ("return", "return != 0", "HOLDS")],
@@ -559,6 +563,114 @@ def test_a_tuple_return_is_not_bound_and_says_so():
     bad += check(any("2 return value(s)" in s
                      for s in stats["oracle_skipped"]),
                  f"the drop names the count: {stats['oracle_skipped']}")
+    return bad
+
+
+def test_per_member_rungs_destructure_in_declaration_order():
+    """`return.0` / `return.1` bind through a destructuring pattern.
+
+    ORDER IS THE PROPERTY. Member 0 is declared `uint248` and member 1 `uint8`,
+    and the two rungs assert DIFFERENT bounds, so a plan that swapped them
+    would produce `uint8 _put_ret0` and an assertion of 2 against the member
+    that holds 22 -- which is why the types and the bounds are both checked
+    against their own index rather than merely counted.
+    """
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return.0", "return in [22, 22]", "HOLDS"),
+         ("return.1", "return in [2, 2]", "HOLDS")],
+        [("", "uint248"), ("", "uint8")])
+    bad = 0
+    bad += check("(uint248 _put_ret0, uint8 _put_ret1) = c0.setDiscount("
+                 in text,
+                 "a destructuring pattern in declaration order is emitted")
+    bad += check("assertGe(uint256(_put_ret0), 22" in text
+                 and "assertLe(uint256(_put_ret0), 22" in text,
+                 "member 0's bound is asserted on member 0")
+    bad += check("assertGe(uint256(_put_ret1), 2" in text
+                 and "assertLe(uint256(_put_ret1), 2" in text,
+                 "member 1's bound is asserted on member 1")
+    bad += check(stats["return_asserts"] == 4,
+                 f"two interval rungs = four assertions: "
+                 f"{stats['return_asserts']}")
+    return bad
+
+
+def test_a_member_with_no_rung_gets_an_EMPTY_slot():
+    """Only the members that carry a HOLDS rung are named.
+
+    An unused named local is a solc warning on every emitted test; an empty
+    slot is a legal destructuring and says exactly what happened -- this
+    member was not asserted on.
+    """
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return.1", "return != 0", "HOLDS")],
+        [("", "uint248"), ("", "uint8")])
+    bad = 0
+    bad += check("(, uint8 _put_ret1) = c0.setDiscount(" in text,
+                 f"member 0 is an empty slot")
+    bad += check("_put_ret0" not in text, "and gets no local at all")
+    bad += check(stats["return_asserts"] == 1,
+                 f"one assertion: {stats['return_asserts']}")
+    return bad
+
+
+def test_a_member_index_beyond_the_declaration_refuses():
+    """`return.2` on a two-member unit: the table and the AST disagree."""
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return.2", "return != 0", "HOLDS")],
+        [("", "uint248"), ("", "uint8")])
+    bad = 0
+    bad += check("_put_ret" not in text, "nothing is bound")
+    bad += check(any("member 2" in s and "only 2 return value(s)" in s
+                     for s in stats["oracle_skipped"]),
+                 f"the drop names both numbers: {stats['oracle_skipped']}")
+    return bad
+
+
+def test_an_unbindable_member_does_not_cost_the_others():
+    """One bad member is dropped BY NAME; the rest are still asserted."""
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return.0", "return != 0", "HOLDS"),
+         ("return.1", "return != 0", "HOLDS")],
+        [("", "uint256"), ("", "string memory")])
+    bad = 0
+    bad += check("(uint256 _put_ret0, ) = c0.setDiscount(" in text,
+                 "the good member is bound and the bad one is an empty slot")
+    bad += check(stats["return_asserts"] == 1,
+                 f"only the good member is asserted: "
+                 f"{stats['return_asserts']}")
+    bad += check(any("return.1" in s and "string memory" in s
+                     for s in stats["oracle_skipped"]),
+                 f"the bad member is named: {stats['oracle_skipped']}")
+    # MUST NOT FIRE. A member row is not a state variable, and filing it as one
+    # ("no storage slot ... constant/immutable") is a wrong LABEL on a right
+    # value -- the same class of defect as publishing a tuple member as
+    # `state_written_value_unavailable`. Found by reading this very list.
+    bad += check(not any("no storage slot" in s
+                         for s in stats["oracle_skipped"]),
+                 f"no member row is filed as a missing state variable: "
+                 f"{stats['oracle_skipped']}")
+    return bad
+
+
+def test_a_retlive_that_HOLDS_kills_member_rungs_too():
+    """THE MUST-FLIP, on the tuple side. One token, and nothing is emitted."""
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "HOLDS"),
+         ("return.0", "return != 0", "HOLDS"),
+         ("return.1", "return != 0", "HOLDS")],
+        [("", "uint248"), ("", "uint8")])
+    bad = 0
+    bad += check("_put_ret" not in text, "no binding is emitted")
+    bad += check(stats["return_asserts"] == 0,
+                 f"no return assertion: {stats['return_asserts']}")
+    bad += check(any("retlive" in s and "VACUOUSLY" in s
+                     for s in stats["oracle_skipped"]),
+                 f"and the drop NAMES the witness: {stats['oracle_skipped']}")
     return bad
 
 
@@ -651,7 +763,12 @@ def main():
               test_return_rung_is_bound_and_asserted,
               test_a_retlive_that_HOLDS_kills_every_return_rung,
               test_a_bool_return_uses_assertTrue_not_a_cast,
-              test_a_tuple_return_is_not_bound_and_says_so,
+              test_a_whole_value_rung_on_a_tuple_unit_is_refused,
+              test_per_member_rungs_destructure_in_declaration_order,
+              test_a_member_with_no_rung_gets_an_EMPTY_slot,
+              test_a_member_index_beyond_the_declaration_refuses,
+              test_an_unbindable_member_does_not_cost_the_others,
+              test_a_retlive_that_HOLDS_kills_member_rungs_too,
               test_an_unbindable_return_type_is_reported,
               test_bind_return_refuses_the_exit_kind_shapes,
               test_a_return_only_oracle_still_reaches_the_test,

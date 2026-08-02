@@ -5375,6 +5375,28 @@ void goto_coveraget::solidity_path_coverage()
     expr2tc ret_ghost, retset_ghost;
     irep_idt ret_ghost_id, retset_ghost_id;
     bool has_ret_ghost = false;
+    // ONE retset for the whole unit, whatever shape its return has. Created
+    // lazily by whichever pass finds a return first, so the scalar hook and the
+    // tuple hook below cannot each make their own -- two "was a value
+    // returned" flags is one fact in two ledgers, and the ladder's witness
+    // would then be about whichever one it happened to read.
+    auto ensure_retset = [&]() {
+      if (!is_nil_expr(retset_ghost))
+        return;
+      symbolt ssym;
+      ssym.type = bool_typet();
+      ssym.name = "__ESBMC_path_retset$" + i2string(ghost_counter++);
+      ssym.id = "path_cov::" + id2string(ssym.name);
+      ssym.lvalue = true;
+      ssym.static_lifetime = false;
+      ssym.is_extern = false;
+      symbolt *pssym;
+      cov_context->move(ssym, pssym);
+      retset_ghost = symbol2tc(migrate_type(pssym->type), pssym->id);
+      retset_ghost_id = pssym->id;
+      if (protect_ce_symbols)
+        config.no_slice_names.insert(retset_ghost_id.as_string());
+    };
     {
       Forall_goto_program_instructions (rit, goto_program)
       {
@@ -5401,18 +5423,7 @@ void goto_coveraget::solidity_path_coverage()
           cov_context->move(rsym, prsym);
           ret_ghost = symbol2tc(migrate_type(prsym->type), prsym->id);
           ret_ghost_id = prsym->id;
-
-          symbolt ssym;
-          ssym.type = bool_typet();
-          ssym.name = "__ESBMC_path_retset$" + i2string(ghost_counter++);
-          ssym.id = "path_cov::" + id2string(ssym.name);
-          ssym.lvalue = true;
-          ssym.static_lifetime = false;
-          ssym.is_extern = false;
-          symbolt *pssym;
-          cov_context->move(ssym, pssym);
-          retset_ghost = symbol2tc(migrate_type(pssym->type), pssym->id);
-          retset_ghost_id = pssym->id;
+          ensure_retset();
 
           // ---- EXEMPT BOTH FROM SLICING, OR THE WHOLE THING IS DEAD ----
           //
@@ -5431,10 +5442,7 @@ void goto_coveraget::solidity_path_coverage()
           // a run that is not harvesting a payload keeps slicing exactly what it
           // sliced before.
           if (protect_ce_symbols)
-          {
             config.no_slice_names.insert(ret_ghost_id.as_string());
-            config.no_slice_names.insert(retset_ghost_id.as_string());
-          }
           has_ret_ghost = true;
         }
         // A unit has ONE return type, so a second RETURN of a different type
@@ -5460,6 +5468,127 @@ void goto_coveraget::solidity_path_coverage()
         rf.function = rit->location.get_function();
         goto_program.insert_swap(rit++, rf);
         --rit;
+      }
+    }
+
+    // ---- TUPLE RETURNS: ONE GHOST PER MEMBER ----
+    //
+    // MEASURED on notes/coverage/poc/P27_TupleReturn.sol: a unit declared
+    // `returns (uint256, uint256)` emits NO RETURN INSTRUCTION AT ALL. It
+    // lowers to
+    //     ASSIGN tuple_instance$42.mem0 = 11;
+    //     ASSIGN tuple_instance$42.mem1 = 12;
+    // and falls through to END_FUNCTION -- so the pass above, which hooks the
+    // RETURN, sees nothing, and every tuple-returning unit had no return
+    // candidate whatever. On the corpus that is not an edge case: aqua's two
+    // value-returning units are exactly this shape.
+    //
+    // THE INSTANCE IS TIED TO THIS UNIT BY ITS OWN AST NODE ID. `two_scalars#42`
+    // owns `tuple_instance$42`, which is the same key bmc.cpp's counterexample
+    // harvest uses, so the two cannot drift and an INLINED CALLEE's tuple --
+    // which carries the callee's node id -- cannot be mistaken for this unit's.
+    // Matching the name as a plain substring would do exactly that, and would
+    // also let `tuple_instance$4` answer for `tuple_instance$42`; hence the
+    // explicit end-of-id test below.
+    //
+    // The ghost is assigned AFTER the member write, not before it: it is the
+    // written value that is the return value.
+    std::map<unsigned long, expr2tc> ret_member_ghosts;
+    std::map<unsigned long, irep_idt> ret_member_ids;
+    std::map<unsigned long, std::string> ret_member_refused;
+    if (!has_ret_ghost)
+    {
+      const std::string uid0 = f_it->first.as_string();
+      const size_t hash0 = uid0.rfind('#');
+      const std::string want =
+        hash0 == std::string::npos
+          ? std::string()
+          : "sol:@C@" + contract_of(uid0) + "@tuple_instance$" +
+              uid0.substr(hash0 + 1);
+      if (!want.empty())
+      {
+        Forall_goto_program_instructions (tit, goto_program)
+        {
+          if (!tit->is_assign() || !is_code_assign2t(tit->code))
+            continue;
+          if (tit->location.property().as_string() == "skipped")
+            continue;
+          const expr2tc &lhs = to_code_assign2t(tit->code).target;
+          if (!is_member2t(lhs) || !is_symbol2t(to_member2t(lhs).source_value))
+            continue;
+          const std::string bid =
+            to_symbol2t(to_member2t(lhs).source_value).thename.as_string();
+          if (bid.rfind(want, 0) != 0)
+            continue;
+          const std::string tail = bid.substr(want.size());
+          if (!tail.empty() && tail[0] != '#')
+            continue;
+          const std::string mem = to_member2t(lhs).member.as_string();
+          if (mem.rfind("mem", 0) != 0)
+            continue;
+          char *endp = nullptr;
+          const unsigned long k = strtoul(mem.c_str() + 3, &endp, 10);
+          if (endp == nullptr || *endp != '\0')
+            continue;
+          const type2tc mt = lhs->type;
+          if (
+            !is_unsignedbv_type(mt) && !is_signedbv_type(mt) &&
+            !is_bool_type(mt))
+          {
+            // NAMED, not skipped. A member absent from the table would read as
+            // "measured and unconstrained", the same misreading the whole-unit
+            // refusal exists to prevent -- one member down.
+            ret_member_refused[k] =
+              "member " + std::to_string(k) +
+              " is not a scalar the ghost can hold (aggregate / dynamic type), "
+              "so no candidate is formed for it";
+            continue;
+          }
+          if (ret_member_ghosts.count(k) == 0)
+          {
+            symbolt msym;
+            msym.type = migrate_type_back(mt);
+            msym.name = "__ESBMC_path_ret" + i2string((unsigned)k) + "$" +
+                        i2string(ghost_counter++);
+            msym.id = "path_cov::" + id2string(msym.name);
+            msym.lvalue = true;
+            msym.static_lifetime = false;
+            msym.is_extern = false;
+            symbolt *pm;
+            cov_context->move(msym, pm);
+            ret_member_ghosts[k] = symbol2tc(migrate_type(pm->type), pm->id);
+            ret_member_ids[k] = pm->id;
+            // Same slicing exemption, and for the same measured reason: nothing
+            // downstream reads these unless a rung does, and the report side
+            // does not.
+            if (protect_ce_symbols)
+              config.no_slice_names.insert(pm->id.as_string());
+            ensure_retset();
+          }
+          // Plain list insert AFTER the write. `tit` keeps naming the original
+          // instruction (insert_swap would move its CONTENT and make the
+          // iterator name the new one -- the self-loop the ABI gate produced
+          // once already), and the loop's own increment then steps onto the
+          // inserted ASSIGN, which is `skipped` and matches nothing here.
+          goto_programt::instructiont ma;
+          ma.type = ASSIGN;
+          ma.code = code_assign2tc(
+            ret_member_ghosts[k],
+            ret_member_ghosts[k]->type == mt
+              ? lhs
+              : typecast2tc(ret_member_ghosts[k]->type, lhs));
+          ma.location = tit->location;
+          ma.location.property("skipped");
+          ma.function = tit->location.get_function();
+          goto_program.instructions.insert(std::next(tit), ma);
+          goto_programt::instructiont mf;
+          mf.type = ASSIGN;
+          mf.code = code_assign2tc(retset_ghost, gen_true_expr());
+          mf.location = tit->location;
+          mf.location.property("skipped");
+          mf.function = tit->location.get_function();
+          goto_program.instructions.insert(std::next(tit), mf);
+        }
       }
     }
 
@@ -5524,6 +5653,32 @@ void goto_coveraget::solidity_path_coverage()
         rini.function = efn;
         goto_program.insert_swap(entry++, rini);
         --entry;
+      }
+      // The same DECL + zero for every TUPLE MEMBER ghost. Zero is not a value
+      // claim here either -- `retset` is the only thing that says whether any
+      // of them means anything.
+      for (const auto &[k, g] : ret_member_ghosts)
+      {
+        goto_programt::instructiont mdcl;
+        mdcl.type = DECL;
+        mdcl.code = code_decl2tc(g->type, ret_member_ids[k]);
+        mdcl.location = eloc;
+        mdcl.location.property("skipped");
+        mdcl.function = efn;
+        goto_program.insert_swap(entry++, mdcl);
+        --entry;
+        goto_programt::instructiont mini;
+        mini.type = ASSIGN;
+        mini.code = code_assign2tc(g, gen_zero(g->type));
+        mini.location = eloc;
+        mini.location.property("skipped");
+        mini.function = efn;
+        goto_program.insert_swap(entry++, mini);
+        --entry;
+      }
+      // ONE retset, declared when EITHER shape produced a ghost.
+      if (!is_nil_expr(retset_ghost))
+      {
         goto_programt::instructiont sdcl;
         sdcl.type = DECL;
         sdcl.code = code_decl2tc(retset_ghost->type, retset_ghost_id);
@@ -8368,7 +8523,7 @@ void goto_coveraget::solidity_path_coverage()
           assert_vars.empty() ||
           std::any_of(
             assert_vars.begin(), assert_vars.end(), [](const assert_vart &v) {
-              return v.name == "return";
+              return v.name == "return" || v.name.rfind("return.", 0) == 0;
             });
         const assert_vart *rspec = nullptr;
         for (const auto &v : assert_vars)
@@ -8413,15 +8568,27 @@ void goto_coveraget::solidity_path_coverage()
           }
         }
 
-        if (!has_ret_ghost && has_tuple_instance)
+        // Only when NEITHER shape produced a ghost. A tuple whose members ARE
+        // scalars now has one ghost per member and is not refused; a tuple of
+        // aggregates still is, and so is any other shape the instrumenter
+        // cannot materialise.
+        if (!has_ret_ghost && ret_member_ghosts.empty() && has_tuple_instance)
           path_cov_refused_coords["return"] =
-            "the unit returns a value, but no scalar return ghost could be "
-            "built for it. A tuple / struct / dynamic return emits no RETURN "
-            "instruction carrying a single renderable operand, so there is "
-            "nothing at the exit to assert about. Its absence from this table "
+            "the unit returns a value, but no return ghost could be built for "
+            "it. A tuple return emits no RETURN instruction carrying a single "
+            "renderable operand, and not one of its members is a scalar the "
+            "per-member ghosts can hold either, so there is nothing at the "
+            "exit to assert about. Its absence from this table "
             "is a REFUSAL, not a measurement that the value is unconstrained";
+        // A tuple SOME of whose members are unusable: the usable ones get
+        // rungs, and the rest are named one by one. A partially-covered tuple
+        // reported as if it were fully covered is the same misreading as a
+        // wholly absent row, one member down.
+        for (const auto &[k, why] : ret_member_refused)
+          path_cov_refused_coords["return." + std::to_string(k)] = why;
 
-        if (has_ret_ghost && ret_wanted)
+        const bool any_ret = has_ret_ghost || !ret_member_ghosts.empty();
+        if (any_ret && ret_wanted)
         {
           // ---- THE RETURN-VALUE NON-VACUITY WITNESS ----
           //
@@ -8447,24 +8614,33 @@ void goto_coveraget::solidity_path_coverage()
             "a value IS returned on this path (REFUTED == yes)",
             no_ret);
 
-          if (is_bool_type(ret_ghost->type))
-          {
-            // No constant_int2tc on a bool, and no ordering: the same rule the
-            // state side documents at (F). The two-point domain makes the
-            // equality pair exhaustive, which is all a bool return needs.
-            emit_rung(
-              "return",
-              "reteq0",
-              "return == false",
-              or2tc(no_ret, equality2tc(ret_ghost, gen_false_expr())));
-            emit_rung(
-              "return",
-              "retne0",
-              "return == true",
-              or2tc(no_ret, equality2tc(ret_ghost, gen_true_expr())));
-          }
-          else
-          {
+          // ONE emitter for both shapes. A scalar return and a tuple MEMBER
+          // differ only in which ghost they read and what the candidate is
+          // called; writing the rung set twice is how the two would come to
+          // disagree about which rungs exist -- and a member silently missing
+          // one rung reads, downstream, exactly like a member on which that
+          // rung was REFUTED.
+          auto emit_value_rungs = [&](
+                                    const std::string &vname,
+                                    const expr2tc &g,
+                                    const assert_vart *sp) {
+            if (is_bool_type(g->type))
+            {
+              // No constant_int2tc on a bool, and no ordering: the same rule
+              // the state side documents at (F). The two-point domain makes
+              // the equality pair exhaustive, which is all a bool needs.
+              emit_rung(
+                vname,
+                "reteq0",
+                "return == false",
+                or2tc(no_ret, equality2tc(g, gen_false_expr())));
+              emit_rung(
+                vname,
+                "retne0",
+                "return == true",
+                or2tc(no_ret, equality2tc(g, gen_true_expr())));
+              return;
+            }
             // The zero pair is emitted with NO spec and is the rung that
             // actually pays: a view function read on a freshly deployed
             // contract returns 0 over the whole region, and `assertEq(v, 0)` is
@@ -8472,54 +8648,72 @@ void goto_coveraget::solidity_path_coverage()
             // Necessarily opposite whenever a value was returned, so a run in
             // which BOTH hold is a run in which none of them was reached --
             // which `retlive` reports directly.
-            const type2tc rt = ret_ghost->type;
+            const type2tc rt = g->type;
             emit_rung(
-              "return",
+              vname,
               "reteq0",
               "return == 0",
-              or2tc(no_ret, equality2tc(ret_ghost, gen_zero(rt))));
+              or2tc(no_ret, equality2tc(g, gen_zero(rt))));
             emit_rung(
-              "return",
+              vname,
               "retne0",
               "return != 0",
-              or2tc(no_ret, notequal2tc(ret_ghost, gen_zero(rt))));
+              or2tc(no_ret, notequal2tc(g, gen_zero(rt))));
 
-            if (rspec != nullptr && rspec->has_abs)
+            if (sp != nullptr && sp->has_abs)
             {
               for (const auto &[what, dec] :
                    std::vector<std::pair<std::string, std::string>>{
-                     {"abs_lo", rspec->abs_lo}, {"abs_hi", rspec->abs_hi}})
+                     {"abs_lo", sp->abs_lo}, {"abs_hi", sp->abs_hi}})
               {
                 std::string tmax;
                 if (path_cov_fits_type(rt, dec, tmax))
                   continue;
                 log_error(
                   "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the "
-                  "\"return\" {} value {} does not fit the unit's own return "
+                  "\"{}\" {} value {} does not fit the unit's own return "
                   "type (admissible range [0, {}]). The bound is built as a "
                   "constant of that type, so an out-of-range decimal WRAPS and "
                   "the candidate asserted would not be the candidate written "
                   "here",
                   uid,
+                  vname,
                   what,
                   dec,
                   tmax);
                 exit(1);
               }
               emit_rung(
-                "return",
+                vname,
                 "retabs",
-                "return in [" + rspec->abs_lo + ", " + rspec->abs_hi + "]",
+                "return in [" + sp->abs_lo + ", " + sp->abs_hi + "]",
                 or2tc(
                   no_ret,
                   and2tc(
                     greaterthanequal2tc(
-                      ret_ghost,
-                      constant_int2tc(rt, string2integer(rspec->abs_lo))),
+                      g, constant_int2tc(rt, string2integer(sp->abs_lo))),
                     lessthanequal2tc(
-                      ret_ghost,
-                      constant_int2tc(rt, string2integer(rspec->abs_hi))))));
+                      g, constant_int2tc(rt, string2integer(sp->abs_hi))))));
             }
+          };
+
+          if (has_ret_ghost)
+            emit_value_rungs("return", ret_ghost, rspec);
+          // Members are named `return.<k>` in DECLARATION order, which is the
+          // order solc gives them and therefore the order a destructuring
+          // `(a, b) = f(...)` binds them in. The index is part of the name and
+          // not of the rung TEXT, so the emitter's text parser is the same one
+          // for both shapes and the member identity lives in exactly one place.
+          for (const auto &[k, g] : ret_member_ghosts)
+          {
+            const std::string mv = "return." + std::to_string(k);
+            const assert_vart *msp = nullptr;
+            for (const auto &v : assert_vars)
+              if (v.name == mv)
+                msp = &v;
+            if (msp != nullptr)
+              named_seen.insert(mv);
+            emit_value_rungs(mv, g, msp);
           }
         }
       }
