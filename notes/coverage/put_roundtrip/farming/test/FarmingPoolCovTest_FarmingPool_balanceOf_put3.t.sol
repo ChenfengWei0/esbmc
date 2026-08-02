@@ -64,8 +64,10 @@ contract FarmingPoolCovTest_FarmingPool_balanceOf_put3 is Test {
   // CERTIFIED REGION (stage 2), certified by an independent
   // `assume(box); assert(tr == pi)` query, not by the subtraction:
   //   account in [0, 1461501637330902918203684832716283019655932542975]
+  //   state._balances[account] in [0, 0]
+  //   state._balances[msg.sender] in [0, 0]
   //   state._distributor in [0, 0]
-  //   state._owner in [1, 1461501637330902918203684832716283019655932542975]
+  //   state._owner in [0, 1461501637330902918203684832716283019655932542975]
   //   state._totalSupply in [0, 0]
   //   PIN msg.value == 0
   //   PIN state._MAX_BALANCE == 100000000000000000000000000000000   [NOT ESTABLISHED -- see the dropped-bound line]
@@ -81,11 +83,17 @@ contract FarmingPoolCovTest_FarmingPool_balanceOf_put3 is Test {
   // shown to reach a return at all.
   //   rung DROPPED: _MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)
   //   entry-state bound DROPPED: state._MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)
-  //   entry-state bound DROPPED: state._owner in [1, 1461501637330902918203684832716283019655932542975] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)
+  //   entry-state bound DROPPED: state._balances[msg.sender] (the key `msg.sender` is an ENVIRONMENT quantity, not a declared parameter. Inside a Foundry test `msg.sender` is whoever called the test, while the unit sees the test contract (or the pranked address) as its caller -- so the slot written here and the slot the unit reads would be different words, and a `post == pre` rung over an untouched slot would stay GREEN while establishing nothing)
+  //   entry-state bound DROPPED: state._owner in [0, 1461501637330902918203684832716283019655932542975] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)
   function test_put_FarmingPool_balanceOf_path3(address account) public {
     account = address(uint160(bound(uint256(uint160(account)), 0, 1461501637330902918203684832716283019655932542975)));
     // entry state the certified region names, ESTABLISHED (not assumed):
-    //   state._distributor := 0; state._totalSupply := 0
+    //   state._balances[account] := 0; state._distributor := 0; state._totalSupply := 0
+    {
+      uint256 _w = uint256(vm.load(address(c0), keccak256(abi.encode(account, uint256(2)))));
+      _w = (_w & ~uint256(115792089237316195423570985008687907853269984665640564039457584007913129639935)) | ((uint256(0) & 115792089237316195423570985008687907853269984665640564039457584007913129639935) << 0);
+      vm.store(address(c0), keccak256(abi.encode(account, uint256(2))), bytes32(_w));
+    }
     {
       uint256 _w = uint256(vm.load(address(c0), bytes32(uint256(1))));
       _w = (_w & ~uint256(1461501637330902918203684832716283019655932542975)) | ((uint256(0) & 1461501637330902918203684832716283019655932542975) << 0);
