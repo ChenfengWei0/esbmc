@@ -39,11 +39,12 @@ contract AquaCovTest_Aqua_dock_put12 is Test {
   // literal: the region is a statement about THAT slice, and generalising
   // over them would be a claim the certification never made.
   // FUZZ COORDINATES: app
-  // ORACLE: NONE, AND NEITHER IS THE EXIT KIND. Not one rung HOLDS over
-  // the certified region, and the emitter could not confirm this path's
-  // exit, so the call below is REVERT-TOLERANT (`try {} catch {}`). This
-  // PUT walks the path and checks NOTHING: it is GREEN whatever the call
-  // does, including reverting. It is a reachability witness, not a test.
+  // ORACLE: NONE, AND NEITHER IS THE EXIT KIND. EVERY RUNG THAT HOLDS WAS DROPPED:
+  // 3 rung(s) HOLD over the certified region and not one could be rendered as an assertion. WHY differs per rung and is on the `rung DROPPED` line(s) below -- read those rather than this count,
+  // and the emitter could not confirm this path's exit, so the call below
+  // is REVERT-TOLERANT (`try {} catch {}`). This PUT walks the path and
+  // checks NOTHING: it is GREEN whatever the call does, including
+  // reverting. It is a reachability witness, not a test.
   //   rung DROPPED: _DOCKED (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)
   function test_put_Aqua_dock_path12(address app) public {
     app = address(uint160(bound(uint256(uint160(app)), 0, 1461501637330902918203684832716283019655932542974)));

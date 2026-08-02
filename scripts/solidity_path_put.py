@@ -2002,11 +2002,23 @@ def no_oracle_reason(ladder_rows):
             if d == "HOLDS"
             and not (v == RETURN_VAR and t.startswith(RETLIVE_PREFIX))]
     if held:
+        # ⛔ THIS LINE DOES NOT SAY WHY, and an earlier draft did. It ended
+        # "This is NOT 'the region supports no oracle'", which is a claim about
+        # the REGION made from a count of RENDERINGS, and it is false whenever
+        # the rungs were dropped for VACUITY rather than for a rendering gap.
+        #
+        # MEASURED on aqua safeBalances enc=14, in the run that emitted it:
+        # `return.0: return == 0 HOLDS` AND `return.0: return != 0 HOLDS` --
+        # both, which no real execution admits -- with the `retlive` witness
+        # HOLDS, i.e. no execution of that path reaches a return at all. For
+        # that file the region really does support no oracle, and the line
+        # would have denied it. The per-rung reasons below distinguish the two
+        # cases; a summary line cannot, so it does not try.
         return ("EVERY RUNG THAT HOLDS WAS DROPPED",
                 f"{len(held)} rung(s) HOLD over the certified region and not "
-                f"one could be rendered as an assertion -- the reason for each "
-                f"is on a `rung DROPPED` line below. This is NOT 'the region "
-                f"supports no oracle'")
+                f"one could be rendered as an assertion. WHY differs per rung "
+                f"and is on the `rung DROPPED` line(s) below -- read those "
+                f"rather than this count")
     return ("NOT ONE RUNG HOLDS",
             "no candidate held over the certified region, so there is nothing "
             "to render")
