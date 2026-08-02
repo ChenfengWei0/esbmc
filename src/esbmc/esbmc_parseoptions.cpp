@@ -34,6 +34,10 @@ extern "C"
 #include <clang-c-frontend/clang_c_language.h>
 #include <util/config.h>
 #include <util/filesystem.h>
+// The ONE parser for --focus-function's value; --path-cov-instrument-only is
+// validated as a SUBSET of it here, with the same matcher the frontend
+// dispatcher and the path-coverage pass use, so the three cannot disagree.
+#include <util/focus_function.h>
 #include <csignal>
 #include <cstdlib>
 #include <limits>
@@ -4301,6 +4305,63 @@ bool esbmc_parseoptionst::process_goto_program(
       // pass keeps having no command-line dependency of its own.
       if (cmdline.isset("focus-function"))
         tmp.focus_function = cmdline.getval("focus-function");
+      // ---- --path-cov-instrument-only: DISPATCH WIDE, INSTRUMENT NARROW ----
+      //
+      // The option above answers TWO questions with one value -- which entries
+      // the harness may CALL, and which units are MEASURED -- and a
+      // state-guarded path needs opposite answers to them: a second function in
+      // the dispatcher so the state can be established, and a denominator that
+      // does not move so the ladder's cells stay comparable. MEASURED on aqua:
+      // `--focus-function dock,ship` raised the instrumented set from dock's 63
+      // paths to 2796 (ship contributes 2733) and the run was killed at the
+      // 300 s outer timeout with no usable answer, at tx=1 and again at tx=2.
+      //
+      // THE SUBSET IS CHECKED, NOT ASSUMED. `util/focus_function.h` is right
+      // that the dispatcher filter and the instrumentation filter must not
+      // disagree; the direction it names -- dispatchable but uninstrumented --
+      // is what this option deliberately creates and it is the harmless one (a
+      // smaller, honestly-published denominator). The other direction is not:
+      // an instrumented unit the dispatcher cannot enter reports every path
+      // `unit-not-entered`, which reads as "nothing reaches this code" and
+      // means "nothing was asked to". So every name here must also be selected
+      // by --focus-function, and a name that is not REFUSES the run.
+      //
+      // An EMPTY --focus-function selects everything (focus_function.h), so
+      // `--path-cov-instrument-only dock` with no focus at all is legal and is
+      // the widest useful cell: the whole contract in the dispatcher, one
+      // unit's paths in the denominator.
+      if (cmdline.isset("path-cov-instrument-only"))
+      {
+        const std::string io = cmdline.getval("path-cov-instrument-only");
+        const std::vector<std::string> io_names = focus_function_names(io);
+        if (io_names.empty())
+        {
+          log_error(
+            "--path-cov-instrument-only was given the value '{}', which names "
+            "no function at all. Pass one or more unit names, separated by "
+            "commas or spaces.",
+            io);
+          return true;
+        }
+        std::string outside;
+        for (const auto &n : io_names)
+          if (!focus_function_selects(tmp.focus_function, n))
+            outside += (outside.empty() ? "" : ", ") + ("'" + n + "'");
+        if (!outside.empty())
+        {
+          log_error(
+            "--path-cov-instrument-only names {}, which --focus-function '{}' "
+            "does not select. An instrumented unit the dispatcher cannot enter "
+            "reports every one of its paths as 'unit-not-entered' -- a zero "
+            "that reads as 'nothing reaches this code' when it means 'nothing "
+            "was asked to'. Add the name to --focus-function, or drop "
+            "--focus-function entirely (an empty focus dispatches everything).",
+            outside,
+            tmp.focus_function);
+          return true;
+        }
+        tmp.instrument_only = io;
+      }
       // Cross-run persisted covered-set: a complete path already witnessed
       // (CE in hand) in an earlier escalation round is not re-instrumented,
       // so each round spends its budget only on paths still lacking a CE.

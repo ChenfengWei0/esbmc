@@ -4961,6 +4961,42 @@ void goto_coveraget::solidity_path_coverage()
         ++units_skipped_by_focus;
         continue;
       }
+
+      // ---- --path-cov-instrument-only: a SECOND, narrower filter ----
+      //
+      // Separate from the focus test above rather than folded into it, because
+      // the two answer different questions and their counters must stay apart:
+      // `units_skipped_by_focus` is "the harness cannot enter this unit", while
+      // this one is "the harness CAN enter it and we chose not to measure it".
+      // Collapsing them would make a run that deliberately narrowed its
+      // denominator indistinguishable from one that narrowed its alphabet, and
+      // the published path-coverage percentage means different things in the two
+      // cases.
+      //
+      // Same matcher as the focus test (`focus_selects_unit`) and the same
+      // stage-target exemption: a unit named by an active stage-2/3 spec is
+      // never skipped, or that mode would run with no assume and no assert and
+      // then blame the unit NAME at its route gate.
+      if (
+        !instrument_only.empty() && !stage_target &&
+        !focus_selects_unit(uid, instrument_only))
+      {
+        // Named on stdout, one line per unit, rather than counted into
+        // `units_skipped_by_focus`. The two skips are different facts and a
+        // reader must be able to tell them apart: that counter means "the
+        // harness cannot enter this unit", this line means "the harness CAN
+        // enter it and this run chose not to measure it". A run that
+        // deliberately narrowed its DENOMINATOR while widening its ALPHABET is
+        // the whole point of the option, and folding it into the other counter
+        // would make the published percentage unattributable.
+        log_status(
+          "--path-cov-instrument-only: '{}' is dispatchable (it is in the "
+          "--focus-function set) but NOT instrumented, so it contributes no "
+          "paths to the denominator. It can still run and establish state for "
+          "the units that are instrumented",
+          uid);
+        continue;
+      }
     }
 
     ++units_enumerated;

@@ -158,7 +158,8 @@ def solver_flags_for(bench_key, override):
     return [], "tool default (no solver flag passed)"
 
 
-def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1):
+def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
+              instrument_only=None):
     # `max_tx` IS A PARAMETER NOW, AND IT WAS A LITERAL `"1"` BEFORE.
     #
     # The docstring at the top of this file argues at length for 1 -- correctly,
@@ -192,6 +193,20 @@ def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1):
         cmd += ["--contract", primary]
     if focus:
         cmd += ["--focus-function", focus]
+    if instrument_only:
+        # THE ALPHABET AND THE DENOMINATOR ARE TWO DIFFERENT SETS.
+        #
+        # `--focus-function` decides which entries the harness may CALL;
+        # `--path-cov-instrument-only` decides which units are ENUMERATED, i.e.
+        # what the published denominator is. Passing the second is what makes a
+        # `set` cell comparable with a `single` cell at all.
+        #
+        # MEASURED without it: `--focus-function dock,ship` instrumented 2796
+        # paths (dock 63 + ship 2733) instead of 63, and both the tx=1 and tx=2
+        # cells were killed at the 300 s outer timeout with no usable answer. So
+        # this is not a speed knob -- without it the widened-alphabet cell is
+        # neither affordable NOR comparable.
+        cmd += ["--path-cov-instrument-only", instrument_only]
     return cmd
 
 
@@ -346,7 +361,8 @@ def one_run(tag, cmd, timeout, workdir):
 
 
 def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
-            fresh=False, max_tx=1, focus_with=(), scope="single", adhoc=None):
+            fresh=False, max_tx=1, focus_with=(), scope="single", adhoc=None,
+            only=()):
     # ---- THE LADDER'S TWO AXES, AND WHY THEY ARE NOT A PLAIN PRODUCT ----
     #
     # They are LENGTH x ALPHABET, and that is now read out of the source rather
@@ -437,10 +453,11 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # `scope` joins the two conditions that were already here, because it is a
     # third way to be a non-gate cell and the directory rule has to cover every
     # one of them or it covers none.
-    if (max_tx != 1 or focus_with or scope != "single") and not out_suffix:
+    if (max_tx != 1 or focus_with or scope != "single" or only) and \
+            not out_suffix:
         sys.exit(
             f"{bench_key}: refusing to write a LADDER cell (scope={scope}, "
-            f"max-tx={max_tx}, "
+            f"max-tx={max_tx}, only={','.join(only) or 'all'}, "
             f"focus-with={','.join(focus_with) or 'none'}) into the gate's own "
             f"directory {OUT / bench_key}.\n"
             f"The unsuffixed directory holds the collection every gate row is "
@@ -650,6 +667,29 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                 f"no unit enumeration), or add the contract to collect.py's "
                 f"BENCHES if it is a real benchmark.")
         todo = list(base.enumerate_own_callable_functions(flat, project))
+        if only:
+            # ---- THE LADDER NEEDS ONE UNIT, NOT A BENCHMARK ----
+            #
+            # A tx ladder is three runs of ONE unit; without this filter the
+            # cheapest way to get them was to sweep every unit of the benchmark
+            # three times, which is a full-corpus run wearing a ladder's name.
+            #
+            # EVERY REQUESTED NAME MUST EXIST, and a miss is fatal rather than
+            # quiet (R8). A silent miss here is the worst shape this project
+            # has: `--only dcok` would run zero units, print "0/0 run(s)
+            # produced a report", and read as "this unit reaches nothing".
+            wanted = list(only)
+            have = {fn for _c, fn, _k in todo}
+            missing = [w for w in wanted if w not in have]
+            if missing:
+                sys.exit(
+                    f"{bench_key}: --only names {', '.join(missing)}, which "
+                    f"this benchmark's callable-unit enumeration does not "
+                    f"contain. It has: {', '.join(sorted(have))}.\n"
+                    f"Refused rather than run the ones that did match: a "
+                    f"partial ladder that prints a clean summary is how a typo "
+                    f"becomes a measurement.")
+            todo = [t for t in todo if t[1] in set(wanted)]
         for i, (cname, fname, ckind) in enumerate(todo, 1):
             tag = f"{cname}__{fname}"
             if tag in done:
@@ -741,8 +781,15 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # cleanly and verifies only B. The multi-name form (task #5) takes one
             # comma-separated string, same as `--contract`.
             focus_arg = ",".join([fname] + [f for f in focus_with if f != fname])
+            # A `set` cell widens the ALPHABET and must NOT widen the
+            # DENOMINATOR: the whole point is to compare it against the `single`
+            # cell of the same unit, and that comparison is meaningless if the
+            # two ran with different path totals. So the instrumented set is
+            # pinned to the unit itself whenever extra letters were added.
+            # `single` passes nothing, so its command line is byte-identical to
+            # what it always was.
             cmd = esbmc_cmd(solast, flat, primary, focus_arg, goals, sflags,
-                            max_tx)
+                            max_tx, fname if focus_with else None)
             rec, d = one_run(tag, cmd, timeout, out_dir / "work" / tag)
             rec["contract"], rec["function"], rec["kind"] = cname, fname, ckind
             record(rec)
@@ -763,6 +810,11 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # scope=single AND max_tx=1, and a `set` run has the same `mode`
             # string as a `single` one.
             "scope": scope,
+            # Which units this collection actually ran. Empty = all of them.
+            # A ladder row covers ONE unit and no table may read it as the
+            # benchmark's row, so the restriction travels with the data rather
+            # than living only in the shell history that produced it.
+            "onlyUnits": list(only),
             # Whether this row came from a corpus benchmark or a hand-written
             # minimal reproduction. A PoC row is not a corpus row and no table
             # may mix them; recorded rather than inferred from the key's prefix.
@@ -777,6 +829,13 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # The extra names added to every unit's focus set. Empty for the gate
             # and artefact cells; non-empty for the middle cell of the width axis.
             "focusWith": list(focus_with),
+            # Whether the DENOMINATOR was pinned to the unit while the ALPHABET
+            # was widened (--path-cov-instrument-only). It decides what the
+            # published path total MEANS: with it, a `set` cell's total is the
+            # unit's own and is comparable with the `single` cell of the same
+            # unit; without it the total is the union of every named unit's
+            # paths and the two cells answer different questions.
+            "instrumentOnlyUnit": bool(focus_with),
             "pathCovMaxGoals": goals,
             "memlimit": MEMLIMIT,
             # Written into the index so no later table can quote a row without
@@ -834,6 +893,16 @@ def main():
                          "`return`, solidity_convert_constructor.cpp:445), so a "
                          "length-one word cannot contain two letters however "
                          "wide the alphabet is.")
+    ap.add_argument("--only", default="",
+                    help="comma-separated FUNCTION names to run, instead of "
+                         "every callable unit of the benchmark. A tx ladder is "
+                         "three runs of ONE unit; without this the cheapest way "
+                         "to get them was to sweep the whole benchmark three "
+                         "times. Every name must exist or the run is refused "
+                         "(a typo that silently ran nothing would print "
+                         "'0/0 run(s) produced a report'). Requires "
+                         "--out-suffix, because a one-unit collection is not "
+                         "the benchmark's collection.")
     ap.add_argument("--sol", default="",
                     help="AD-HOC TARGET: a flat .sol outside BENCHES (its "
                          "<file>.solast must sit beside it). Requires "
@@ -900,6 +969,13 @@ def main():
                  + ("appended to a focus this run does not pass"
                     if scope == "whole" else "silently ignored"))
 
+    only = tuple(s for s in (x.strip() for x in a.only.split(",")) if s)
+    if only and scope == "whole":
+        sys.exit("--only selects UNITS to focus on, and --scope whole passes "
+                 "no --focus-function at all, so there is nothing to select; "
+                 "the whole-contract run is one run over every unit by "
+                 "construction")
+
     adhoc = None
     if a.sol:
         if not a.contract:
@@ -922,7 +998,7 @@ def main():
 
     idx = collect(a.bench, scope == "whole", a.timeout, a.goals, a.out_suffix,
                   a.solver_flags.split(), a.fresh, a.max_tx, focus_with,
-                  scope, adhoc)
+                  scope, adhoc, only)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "

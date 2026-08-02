@@ -150,6 +150,19 @@ const struct group_opt_templ all_cmd_options[] = {
      "instrumented, so the reported denominator is these units' own path count "
      "rather than the whole contract's. Requires --contract when the source "
      "declares more than one contract."},
+    {"path-cov-instrument-only",
+     boost::program_options::value<std::string>()->value_name("name[,name...]"),
+     "Under --solidity-path-coverage, ENUMERATE AND INSTRUMENT only these "
+     "units, while --focus-function keeps deciding which entries the harness "
+     "may CALL. Must be a subset of the --focus-function set, and the run is "
+     "refused otherwise: an instrumented unit the dispatcher cannot enter "
+     "reports every path 'unit-not-entered', which reads as 'nothing reaches "
+     "this code' and actually means 'nothing was asked to'. Use it when a "
+     "state-guarded path needs a second function in the dispatcher purely to "
+     "establish state -- adding that function to --focus-function alone also "
+     "adds ITS paths to the denominator (measured on aqua: dock's 63 became "
+     "2796 once ship was named, and the run no longer finished), which makes "
+     "the tx ladder's cells incomparable as well as unaffordable."},
     {"no-visibility",
      NULL,
      "Force to verify every function, even if it's an unreachable "

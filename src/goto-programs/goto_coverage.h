@@ -974,6 +974,55 @@ public:
   // whole contract's expansion and degradation cost.
   std::string focus_function = "";
 
+  // ---- --path-cov-instrument-only: DISPATCH WIDE, INSTRUMENT NARROW ----
+  //
+  // Set from --path-cov-instrument-only; empty when unset, and then this
+  // narrowing does not exist and behaviour is bit-identical to before.
+  //
+  // WHY IT IS A SECOND OPTION AND NOT A CHANGE TO THE FIRST. `--focus-function`
+  // answers two different questions with one value, and they are only the same
+  // question by coincidence:
+  //
+  //   * WHICH ENTRIES THE HARNESS MAY CALL -- the dispatcher alphabet
+  //     (solidity_convert_constructor.cpp's `get_unbound_function`);
+  //   * WHICH UNITS ARE ENUMERATED AND INSTRUMENTED -- the published
+  //     denominator (the narrowing just above).
+  //
+  // A state-guarded path needs the first to be WIDE (someone has to establish
+  // the state; one transaction is exactly one entry call, so a second letter in
+  // the alphabet is the only way another unit ever runs) and the second to stay
+  // NARROW (the unit under test is one unit, and its denominator must not move
+  // or the ladder's cells stop being comparable).
+  //
+  // MEASURED, and this option exists because of it. aqua `dock` at
+  // `--focus-function dock,ship`: `dock` alone enumerates 63 paths, `ship`
+  // enumerates 2733, and the run instrumented 2796 and was killed at the 300 s
+  // outer timeout with no usable answer -- twice, at tx=1 and tx=2. The
+  // widening that was supposed to buy ONE extra caller bought the widest unit
+  // in the contract as well.
+  //
+  // ---- THE DIRECTION THAT IS SAFE, AND THE ONE THAT IS NOT ----
+  //
+  // `util/focus_function.h` argues that the dispatcher filter and the
+  // instrumentation filter must not disagree, and it is right about the
+  // direction it names: a unit the dispatcher CAN enter but nothing
+  // instruments is an invisible zero in the numerator. This option is the
+  // OPPOSITE containment and it is checked, not assumed:
+  //
+  //     instrument_only  SUBSET OF  focus_function
+  //
+  // so every instrumented unit is still enterable. The dispatch site REFUSES a
+  // value that is not a subset rather than silently intersecting -- an
+  // instrumented unit the harness cannot enter would report every one of its
+  // paths `unit-not-entered`, which reads as "nothing reaches this code" and is
+  // actually "nothing was asked to".
+  //
+  // What it does NOT change: the expansion loop, the ABI gate, Phase-1 `tr`
+  // accounting, both censuses. Same reasoning as the focus narrowing above --
+  // the instrumented unit's body, and therefore every `enc`, every depth and
+  // every stable path id, stays bit-identical to a whole-contract run's.
+  std::string instrument_only = "";
+
   // Does `--focus-function focus` select the unit `unit_id`?
   //
   // ONE matcher, used by both the instrumentation narrowing and
