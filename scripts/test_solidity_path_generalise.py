@@ -1773,6 +1773,29 @@ for _f in os.listdir(_d):
     os.unlink(os.path.join(_d, _f))
 os.rmdir(_d)
 
+# ---- THE REFUSAL LIST IS SHARED, NOT COPIED --------------------------------
+#
+# Stage 2 forwards extra ESBMC flags now, and stage 4 already did. Two drivers
+# with two copies of "which flags are safe" is one fact in two ledgers, and the
+# way that fails here is specific: a flag added to one list stays accepted by
+# the other, so the same run is refused at one stage and forwarded at the next.
+# The generaliser imports the put script's list; this pins that it is the SAME
+# OBJECT rather than an equal-looking duplicate.
+import solidity_path_put as _spp  # noqa: E402
+import solidity_path_generalise as _spg  # noqa: E402
+
+check("esbmcarg-the-refusal-list-is-one-object",
+      _spg.STRATEGY_FLAGS_REFUSED is _spp.STRATEGY_FLAGS_REFUSED, True)
+check("esbmcarg-the-checker-is-one-object",
+      _spg.check_esbmc_args is _spp.check_esbmc_args, True)
+# MUST FLIP, on the shared checker as the generaliser sees it: a strategy flag
+# is refused with a reason, an unwinding flag is not.
+check("esbmcarg-a-strategy-flag-is-refused",
+      _spg.check_esbmc_args(["--k-induction"]) is None, False)
+check("esbmcarg-unwindset-passes",
+      _spg.check_esbmc_args(["--unwindset", "55:512,56:512"]), None)
+check("esbmcarg-no-extra-args-passes", _spg.check_esbmc_args([]), None)
+
 if FAILURES:
     print("FAILED:")
     for f in FAILURES:

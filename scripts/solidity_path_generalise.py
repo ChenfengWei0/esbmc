@@ -56,11 +56,21 @@ import sys
 import tempfile
 import time
 
+# ONE LIST, NOT TWO. `solidity_path_put.py` already decides which extra ESBMC
+# flags a driver may forward and which it refuses, with the reason per flag and
+# a written argument for why the refusal is a refusal-to-guess rather than a
+# current measurement. Copying that list here would be the same fact in two
+# ledgers -- the defect this project keeps paying for -- so it is imported.
+# No cycle: that module imports only the standard library.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from solidity_path_put import (STRATEGY_FLAGS_REFUSED,  # noqa: E402,F401
+                               check_esbmc_args)
+
 UINT256_MAX = (1 << 256) - 1
 
 
 def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
-        memlimit="8g"):
+        memlimit="8g", esbmc_args=()):
     """One ESBMC invocation. Returns its combined output.
 
     `ast` names a PREBUILT .solast, passed positionally with --sol still naming
@@ -94,6 +104,27 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
     if focus:
         cmd += ["--focus-function", focus]
     cmd += extra
+    # ---- THE CALLER'S OWN FLAGS, LAST ----
+    #
+    # This exists because the tool's OWN refusal names a repair this driver had
+    # no way to apply. MEASURED on farming/approve: the certification query came
+    # back UNDECIDED-TRUNCATED and said
+    #
+    #   "Re-run this path with a larger --unwind, or --unwindset/--unwindsetname
+    #    on the loop(s) named, to get a verdict"
+    #
+    # and then named them (loop 55 and loop 56, both `_str_assign`,
+    # src/c2goto/library/solidity/solidity_string.c). Without a passthrough the
+    # only possible response to a named one-line repair was to record the
+    # refusal -- which is exactly the gap `solidity_path_put.py` closed at
+    # stage 4 and stage 2 still had.
+    #
+    # LAST on the command line on purpose, so a caller can override a default
+    # this driver set; and applied to EVERY invocation (enumeration, every
+    # outer-box round, every certification query), because a bound that differs
+    # between the round that measured a region and the query that certifies it
+    # is two measurements wearing one name.
+    cmd += list(esbmc_args)
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
                            timeout=timeout)
@@ -291,7 +322,8 @@ def coord_values(c):
 
 
 def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
-                    ast=None, focus=None, memlimit="8g", path_function=None):
+                    ast=None, focus=None, memlimit="8g", path_function=None,
+                    esbmc_args=()):
     """Step 1. Returns (paths, refused) where paths = [(enc, depth, ce)]."""
     # FRESHNESS, BY REMOVAL -- the same guard `certify` already has, and this is
     # the step that needed it more.
@@ -321,7 +353,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     if os.path.exists(report):
         os.remove(report)
     log = run(esbmc, sol, contract, ["--cov-report-json"], max_tx, timeout, cwd,
-              ast=ast, focus=focus, memlimit=memlimit)
+              ast=ast, focus=focus, memlimit=memlimit, esbmc_args=esbmc_args)
     if not os.path.exists(report):
         # Do NOT let this surface as a FileNotFoundError about a JSON file.
         # ESBMC has already said what went wrong -- a solc version mismatch, a
@@ -1270,7 +1302,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
                 max_tx, timeout, cwd, spans=None, geometric=False,
                 ast=None, focus=None, memlimit="8g", values_by_coord=None,
                 extra_values=None, type_ranges=None,
-                claim_budget=0):
+                claim_budget=0, esbmc_args=()):
     """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned).
 
     `values_by_coord` overrides the ladder for the coordinates it names, which
@@ -1349,7 +1381,8 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     # measure. ("did not finish" above is deliberately not called "too slow".)
     _t0 = time.time()
     log = run(esbmc, sol, contract, ["--path-cov-outer-box", path],
-              max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
+              max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit,
+              esbmc_args=esbmc_args)
     _wall = time.time() - _t0
     n_probe = sum(len(c.get("values", [])) or (probes + 2) for c in spec_coords)
     # ---- THE ROUND'S NAME IS DERIVED FROM WHAT THE ROUND IS, NOT FROM A
@@ -2361,7 +2394,7 @@ def split_on_cut(box, coord, lo, hi):
 
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g",
-            holes=None):
+            holes=None, esbmc_args=()):
     """Step 5. Returns (verdict, suggested_box_or_None, witness).
 
     `holes` is Definition 5's punched set, and it must reach the query or the
@@ -2400,7 +2433,8 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
         os.remove(stale)
     log = run(esbmc, sol, contract,
               ["--path-cov-certify", path, "--cov-report-json"],
-              max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit)
+              max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit,
+              esbmc_args=esbmc_args)
     v = verdict(log)
     # REFUSED IS NOT UNKNOWN. A query the tool declined to attempt because one
     # coordinate cannot be expressed is a fact about the SPEC, and it is fixable
@@ -2841,8 +2875,43 @@ def main():
                     help="coord=value, e.g. state.bal=50. Pinned coordinates "
                          "are NOT generalised; every region reported is a "
                          "statement about that slice and carries the pin.")
+    ap.add_argument("--esbmc-arg", action="append", default=[], metavar="ARG",
+                    help="pass one extra argument straight to EVERY ESBMC "
+                         "invocation this driver makes -- enumeration, every "
+                         "outer-box round and every certification query. "
+                         "Repeatable, and each token is a separate "
+                         "--esbmc-arg (use `--esbmc-arg=--unwindset` "
+                         "`--esbmc-arg=55:512,56:512`; the `=` form is needed "
+                         "whenever the value itself starts with a dash, or "
+                         "argparse reads it as the next option).\n"
+                         "WHY: the tool's own refusal names repairs this "
+                         "driver could not apply. UNDECIDED-TRUNCATED says "
+                         "'Re-run this path with a larger --unwind, or "
+                         "--unwindset/--unwindsetname on the loop(s) named' "
+                         "and then names them -- measured on farming/approve, "
+                         "loops 55 and 56 in _str_assign. Stage 4 "
+                         "(solidity_path_put.py) closed this gap; stage 2 had "
+                         "not.\n"
+                         "APPLIED TO EVERY INVOCATION on purpose: a bound that "
+                         "differs between the round that measured a region and "
+                         "the query that certifies it is two measurements "
+                         "wearing one name.\n"
+                         "⛔ STRATEGY FLAGS ARE REFUSED, by the same list "
+                         "solidity_path_put.py uses -- imported, not copied, "
+                         "so the two drivers cannot drift about which flags "
+                         "are safe.")
     ap.add_argument("--workdir", default=None)
     args = ap.parse_args()
+
+    # Checked BEFORE the workdir is stamped and before any query is issued: a
+    # refusal that arrives after the enumeration has run has already spent the
+    # expensive part.
+    refusal = check_esbmc_args(args.esbmc_arg)
+    if refusal:
+        raise SystemExit("[esbmc-arg] " + refusal)
+    if args.esbmc_arg:
+        print(f"[esbmc-arg] passing to EVERY ESBMC invocation: "
+              f"{' '.join(args.esbmc_arg)}")
 
     pins = {}
     for p in args.pin:
@@ -2868,7 +2937,7 @@ def main():
     paths, refused, caveats = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
         args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
-        path_function=args.path_function)
+        path_function=args.path_function, esbmc_args=args.esbmc_arg)
     if not paths:
         # ⛔ THE OLD TEXT HERE ASSERTED A RESULT AND WAS WRONG ON REAL INPUT.
         # It said "That is a result, not an error ... (The report was checked:
@@ -3200,7 +3269,8 @@ def main():
         (l0_boxes, _, _, _, l0_failure, _, tr_new, unres) = outer_round(
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, values_by_coord=cand,
-            ast=args.ast, focus=focus, memlimit=args.memlimit)
+            ast=args.ast, focus=focus, memlimit=args.memlimit,
+            esbmc_args=args.esbmc_arg)
         unresolvable.update(unres)
         # Level 0 lays no ladder, but it DOES publish every coordinate's type
         # range -- so the geometric bracket that follows can be bounded by the
@@ -3296,7 +3366,8 @@ def main():
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
             values_by_coord=eq_values, extra_values=cand,
-            type_ranges=type_ranges, claim_budget=args.claim_budget)
+            type_ranges=type_ranges, claim_budget=args.claim_budget,
+            esbmc_args=args.esbmc_arg)
         type_ranges.update(tr_new)
         unresolvable.update(unres)
         print(f"[bracket] {brackets}")
@@ -3331,7 +3402,7 @@ def main():
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
             values_by_coord=eq_values, extra_values=cand,
-            type_ranges=type_ranges)
+            type_ranges=type_ranges, esbmc_args=args.esbmc_arg)
         type_ranges.update(tr_new)
         unresolvable.update(unres)
         last_failure = round_failure or last_failure
@@ -3453,7 +3524,8 @@ def main():
                     args.esbmc, args.sol, args.contract, args.unit,
                     enc, depth, box, ce, pins, args.max_tx,
                     args.timeout, cwd, ast=args.ast, focus=focus,
-                    memlimit=args.memlimit, holes=holes)
+                    memlimit=args.memlimit, holes=holes,
+                    esbmc_args=args.esbmc_arg)
                 # ---- A COORDINATE THE QUERY CANNOT EXPRESS: DROP AND RETRY ----
                 #
                 # Not a shrink round. The tool declined to ATTEMPT the query, so
