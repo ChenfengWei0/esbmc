@@ -8339,6 +8339,191 @@ void goto_coveraget::solidity_path_coverage()
         }
       }
 
+      // ---- THE UNIT'S OWN RETURN VALUE IS A CANDIDATE TOO ----
+      //
+      // WHY IT HAS TO GO THROUGH THE LADDER, rather than straight from the
+      // report into an assertEq. The report's `return_value` is the value on
+      // ONE counterexample point. The test the emitter writes fuzzes the whole
+      // region, so a point value asserted directly is RED across the fuzz runs
+      // -- measured on aqua, whose PUT fuzzes `maker`/`app`/`token` over the
+      // entire address space while the payload names one triple. Only a rung
+      // the verifier judged HOLDS over the ASSUMED region may become an
+      // assertion, which is exactly the contract the state rungs above already
+      // satisfy.
+      //
+      // RESERVED NAME. The candidate is called `return`, which is a Solidity
+      // KEYWORD and therefore cannot be the name of a state variable -- so the
+      // whitelist below and `path_cov_refused_coords` can hold it beside real
+      // variables with no possibility of collision, and the rung keys
+      // (`reteq0_return` ...) cannot collide with a state rung (`eq_<var>`).
+      //
+      // SCALARS ONLY, and the gap is NAMED rather than silent: a tuple return
+      // emits no RETURN instruction at all (measured on
+      // notes/coverage/poc/P27_TupleReturn.sol), so no ghost exists for it. A
+      // non-void unit with no ghost is recorded as a REFUSAL, because an absent
+      // row in this table otherwise reads as "no assertion was needed".
+      const size_t emitted_before_return = emitted;
+      {
+        const bool ret_wanted =
+          assert_vars.empty() ||
+          std::any_of(
+            assert_vars.begin(), assert_vars.end(), [](const assert_vart &v) {
+              return v.name == "return";
+            });
+        const assert_vart *rspec = nullptr;
+        for (const auto &v : assert_vars)
+          if (v.name == "return")
+            rspec = &v;
+        if (rspec != nullptr)
+          named_seen.insert("return");
+
+        // ---- "DOES THIS UNIT RETURN SOMETHING?" IS NOT ANSWERED BY ITS TYPE
+        //
+        // MEASURED on P27_TupleReturn.two_scalars (`returns (uint256,
+        // uint256)`): `to_code_type(fsym->type).return_type().id()` reads
+        // `empty` -- byte for byte what a void unit reads -- and
+        // `#sol_ast_return_sites` is 0 as well, which is why the AST-half
+        // census above does not fire on it either. Both of the obvious tests
+        // would therefore call a tuple-returning unit VOID and record no
+        // refusal at all.
+        //
+        // The positive evidence is the frontend's own lowering: a tuple return
+        // writes into a contract-scope `tuple_instance$<node-id>` object keyed
+        // by THIS unit's AST node id (`two_scalars#42` owns
+        // `tuple_instance$42`). That is the same key bmc.cpp's harvest uses to
+        // tie a tuple to its unit, so the two cannot drift; and being keyed on
+        // the node id, an inlined callee's tuple cannot be mistaken for this
+        // unit's.
+        bool has_tuple_instance = false;
+        {
+          const size_t hash = uid.rfind('#');
+          if (hash != std::string::npos)
+          {
+            const std::string want = "sol:@C@" + own_contract +
+                                     "@tuple_instance$" + uid.substr(hash + 1);
+            cov_context->foreach_operand([&](const symbolt &s) {
+              const std::string id = s.id.as_string();
+              if (id.rfind(want, 0) != 0)
+                return;
+              // `tuple_instance$4` must not answer for `tuple_instance$42`.
+              const std::string rest = id.substr(want.size());
+              if (rest.empty() || rest[0] == '#')
+                has_tuple_instance = true;
+            });
+          }
+        }
+
+        if (!has_ret_ghost && has_tuple_instance)
+          path_cov_refused_coords["return"] =
+            "the unit returns a value, but no scalar return ghost could be "
+            "built for it. A tuple / struct / dynamic return emits no RETURN "
+            "instruction carrying a single renderable operand, so there is "
+            "nothing at the exit to assert about. Its absence from this table "
+            "is a REFUSAL, not a measurement that the value is unconstrained";
+
+        if (has_ret_ghost && ret_wanted)
+        {
+          // ---- THE RETURN-VALUE NON-VACUITY WITNESS ----
+          //
+          // Every rung below carries `|| !retset` so that it says "IF a value
+          // was returned on this execution, THEN ...". Without that, a path
+          // reaching this exit WITHOUT executing a RETURN reads the entry
+          // initialisation 0 and `return == 0` HOLDS -- an assertion certified
+          // about a value the execution never produced. (This is the same
+          // failure the retset ghost was added for on the report side, arriving
+          // through the ladder instead.)
+          //
+          // The price of that guard is that the whole family can hold
+          // VACUOUSLY, so the guard needs its own witness: `retlive` asserts
+          // `!retset` and is REFUTED exactly when some execution of this path
+          // does return a value. A driver that sees `retlive` anything other
+          // than REFUTED must discard every other `ret*` rung of this run --
+          // they hold for want of a returned value, not because the value is
+          // constrained.
+          const expr2tc no_ret = gen_not_expr(retset_ghost);
+          emit_rung(
+            "return",
+            "retlive",
+            "a value IS returned on this path (REFUTED == yes)",
+            no_ret);
+
+          if (is_bool_type(ret_ghost->type))
+          {
+            // No constant_int2tc on a bool, and no ordering: the same rule the
+            // state side documents at (F). The two-point domain makes the
+            // equality pair exhaustive, which is all a bool return needs.
+            emit_rung(
+              "return",
+              "reteq0",
+              "return == false",
+              or2tc(no_ret, equality2tc(ret_ghost, gen_false_expr())));
+            emit_rung(
+              "return",
+              "retne0",
+              "return == true",
+              or2tc(no_ret, equality2tc(ret_ghost, gen_true_expr())));
+          }
+          else
+          {
+            // The zero pair is emitted with NO spec and is the rung that
+            // actually pays: a view function read on a freshly deployed
+            // contract returns 0 over the whole region, and `assertEq(v, 0)` is
+            // a real post-condition rather than a restatement of the input.
+            // Necessarily opposite whenever a value was returned, so a run in
+            // which BOTH hold is a run in which none of them was reached --
+            // which `retlive` reports directly.
+            const type2tc rt = ret_ghost->type;
+            emit_rung(
+              "return",
+              "reteq0",
+              "return == 0",
+              or2tc(no_ret, equality2tc(ret_ghost, gen_zero(rt))));
+            emit_rung(
+              "return",
+              "retne0",
+              "return != 0",
+              or2tc(no_ret, notequal2tc(ret_ghost, gen_zero(rt))));
+
+            if (rspec != nullptr && rspec->has_abs)
+            {
+              for (const auto &[what, dec] :
+                   std::vector<std::pair<std::string, std::string>>{
+                     {"abs_lo", rspec->abs_lo}, {"abs_hi", rspec->abs_hi}})
+              {
+                std::string tmax;
+                if (path_cov_fits_type(rt, dec, tmax))
+                  continue;
+                log_error(
+                  "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the "
+                  "\"return\" {} value {} does not fit the unit's own return "
+                  "type (admissible range [0, {}]). The bound is built as a "
+                  "constant of that type, so an out-of-range decimal WRAPS and "
+                  "the candidate asserted would not be the candidate written "
+                  "here",
+                  uid,
+                  what,
+                  dec,
+                  tmax);
+                exit(1);
+              }
+              emit_rung(
+                "return",
+                "retabs",
+                "return in [" + rspec->abs_lo + ", " + rspec->abs_hi + "]",
+                or2tc(
+                  no_ret,
+                  and2tc(
+                    greaterthanequal2tc(
+                      ret_ghost,
+                      constant_int2tc(rt, string2integer(rspec->abs_lo))),
+                    lessthanequal2tc(
+                      ret_ghost,
+                      constant_int2tc(rt, string2integer(rspec->abs_hi))))));
+            }
+          }
+        }
+      }
+
       // A named variable that matched nothing: the ladder is short and nothing
       // would say so.
       for (const auto &w : named_wanted)
@@ -8357,8 +8542,9 @@ void goto_coveraget::solidity_path_coverage()
 
       log_status(
         "--path-cov-assert: unit '{}' -- assumed {} region bound(s) ({} hole(s) "
-        "punched) at entry and emitted {} candidate assertion(s) over {} state "
-        "variable(s) at path enc={} depth={}'s OWN exit. Every candidate "
+        "punched) at entry and emitted {} candidate assertion(s), {} of them "
+        "over the unit's own RETURN VALUE and the rest over {} state "
+        "variable(s), at path enc={} depth={}'s OWN exit. Every candidate "
         "carries the antecedent `tr != {} || cnt != {}`, so at any other exit "
         "and on any other execution it is vacuous -- which is what lets the "
         "whole ladder be judged in ONE run instead of one query per candidate",
@@ -8366,6 +8552,7 @@ void goto_coveraget::solidity_path_coverage()
         bounds_emitted,
         holes_emitted,
         emitted,
+        emitted - emitted_before_return,
         vars_emitted,
         assert_enc,
         assert_depth,
@@ -8639,13 +8826,23 @@ void goto_coveraget::solidity_path_coverage()
   // ---- N1, entry condition (b): every eligible variable was REFUSED ----
   if (assert_on && path_cov_assert_candidates.empty())
   {
+    // NAME AND REASON, not just the name. This gate is the LAST thing printed
+    // on such a run -- it exits before solving, so the per-candidate table and
+    // the "carry NO candidate" warning that normally carry the reasons are
+    // never reached. A bare list of names then leaves the reader to guess which
+    // of several different refusals applied to which name, and the refusals are
+    // not interchangeable: "a mapping lowered to a contract-scope global" and
+    // "the unit returns a tuple, which materialises no single value" need
+    // different fixes.
     std::string refused;
     for (const auto &rc : path_cov_refused_coords)
-      refused += (refused.empty() ? "" : "; ") + rc.first;
+      refused +=
+        (refused.empty() ? "" : "; ") + rc.first + " (" + rc.second + ")";
     log_error(
       "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: NOT ONE candidate "
-      "assertion could be formed. Every state variable of this contract was "
-      "refused{}{}. Zero assertions means nothing is checked, and the run would "
+      "assertion could be formed. Every candidate this ladder could have formed "
+      "was refused{}{}. Zero assertions means nothing is checked, and the run "
+      "would "
       "print VERIFICATION SUCCESSFUL with exit 0 -- the same output a fully "
       "successful ladder produces. A contract whose state is entirely mappings "
       "or dynamic arrays is the common case: those are lowered to "

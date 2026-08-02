@@ -1,0 +1,12 @@
+CORE
+contract.sol
+--contract TupleRet --solidity-path-coverage --solidity-max-tx 1 --path-cov-assert spec.json
+^WARNING: --path-cov-assert: 2 state variable\(s\) carry NO candidate and appear in NO row below: return \(the unit returns a value, but no scalar return ghost could be built for it
+A tuple / struct / dynamic return emits no RETURN instruction carrying a single renderable operand
+Its absence from this table is a REFUSAL, not a measurement that the value is unconstrained
+^--path-cov-assert: region NON-VACUITY witnessed
+^--path-cov-assert: total: post == pre  HOLDS$
+^--path-cov-assert: total: post != pre  REFUTED
+^--path-cov-assert: ladder summary -- 6 candidate\(s\): 3 HOLDS, 3 REFUTED, 0 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)
+\A(?!(.|\n)*^--path-cov-assert: return: )
+\A(?!(.|\n)*^--path-cov-assert: unit '[^']*' -- assumed 2 region bound\(s\) \(0 hole\(s\) punched\) at entry and emitted [0-9]+ candidate assertion\(s\), [1-9])

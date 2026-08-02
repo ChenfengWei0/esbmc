@@ -8,4 +8,7 @@ contract.sol
 ^--path-cov-assert: bal: post <= pre  HOLDS$
 ^--path-cov-assert: bal: post > pre  REFUTED
 ^--path-cov-assert: bal: post < pre  REFUTED
-^--path-cov-assert: ladder summary -- 6 candidate\(s\): 3 HOLDS, 3 REFUTED, 0 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)
+^--path-cov-assert: return: a value IS returned on this path \(REFUTED == yes\)  REFUTED
+^--path-cov-assert: return: return == 0  HOLDS$
+^--path-cov-assert: return: return != 0  REFUTED
+^--path-cov-assert: ladder summary -- 9 candidate\(s\): 4 HOLDS, 5 REFUTED, 0 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)

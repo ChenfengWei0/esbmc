@@ -1,0 +1,3 @@
+{ "unit": "two", "enc": 3, "depth": 1,
+  "region": [ { "name": "a", "lo": "0", "hi": "10" },
+              { "name": "state.total", "lo": "0", "hi": "100" } ] }
