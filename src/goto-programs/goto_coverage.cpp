@@ -8224,6 +8224,12 @@ void goto_coveraget::solidity_path_coverage()
       // components alone would let them VANISH from the report. In this mode an
       // absent variable reads as "no assertion was needed", i.e. as
       // "unchanged".
+      //
+      // The symbols are also KEPT, not merely named: the whole mapping has no
+      // scalar post-state, but ONE SLOT of it does, and the slot ladder below
+      // needs exactly this lookup. Recording them in one place is what stops
+      // that ladder from growing a second, differently-filtered scan.
+      std::map<std::string, const symbolt *> store_syms;
       {
         const std::string cpfx = "sol:@C@" + own_contract + "@";
         cov_context->foreach_operand([&](const symbolt &s) {
@@ -8240,11 +8246,17 @@ void goto_coveraget::solidity_path_coverage()
             std::find(comp_names.begin(), comp_names.end(), nm) !=
             comp_names.end())
             return;
+          store_syms.emplace(nm, &s);
           path_cov_refused_coords[nm] =
             "a mapping or dynamic array: the frontend lowers it to a "
             "contract-scope global, not a component of the contract object, so "
             "no scalar post-state candidate can be formed for it. Its absence "
-            "from the table is a REFUSAL, not a measurement";
+            "from the table is a REFUSAL, not a measurement. A SINGLE SLOT of "
+            "it is a scalar and can be asserted about: name it in \"vars\" as "
+            "`" +
+            nm +
+            "[<key>]`, where <key> is a parameter of this unit, an environment "
+            "value or `state.<field>`";
         });
       }
 
@@ -8491,6 +8503,284 @@ void goto_coveraget::solidity_path_coverage()
                   d, constant_int2tc(vt, string2integer(spec->delta_lo))),
                 lessthanequal2tc(
                   d, constant_int2tc(vt, string2integer(spec->delta_hi))))));
+        }
+      }
+
+      // ---- MAPPING SLOTS AS OBSERVABLES ----
+      //
+      // The loop above can only ever reach a COMPONENT of the contract object,
+      // and a mapping is not one. That is where every mapping-valued contract
+      // stopped, by name: `NOT ONE candidate assertion could be formed`,
+      // because the only state those contracts have is a mapping.
+      //
+      // What is inexpressible is the WHOLE mapping. ONE SLOT of it is an
+      // ordinary scalar, and at THIS layer it is literally an array index --
+      // MEASURED on notes/coverage/poc/P28_MapMin.sol with
+      // --goto-functions-only, where `bal[k] = v` lowers to
+      //
+      //     ASSIGN bal[k]=v;
+      //     ASSIGN bal[k]=bal[k] - v;
+      //
+      // with `bal` the contract-scope global recorded in `store_syms` above and
+      // `k` the unit's own parameter. No hashing, no slot arithmetic, nothing
+      // to reimplement: the rungs, the pre-snapshot and the antecedent are byte
+      // for byte the ones the component loop emits.
+      //
+      // ⛔ ONLY A NAMED SLOT, never a default sweep. Which key a unit's oracle
+      // is about is a fact about the unit; walking every mapping with every
+      // parameter as a key would emit rungs about slots the unit never touches.
+      // Those HOLD -- correctly, and vacuously as far as the unit is concerned
+      // -- and would be rendered downstream as an `assertEq(post, pre)` on an
+      // unrelated entry, which is an oracle that can never fail.
+      //
+      // ---- THE KEY IS SNAPSHOTTED AT ENTRY, AND THAT IS NOT OPTIONAL ----
+      //
+      // The pre-read happens at entry and the post-read at the exit. A
+      // parameter may be reassigned in between, so reading the key LIVE at the
+      // exit would compare slot `bal[k_entry]` with slot `bal[k_exit]` -- two
+      // different slots, reported as one variable's before and after. Both
+      // reads therefore index with the same entry ghost. This is the same
+      // reason the outer-box batch snapshots its coordinates.
+      for (const auto &v : assert_vars)
+      {
+        const size_t ob = v.name.find('[');
+        if (ob == std::string::npos || v.name.empty() || v.name.back() != ']')
+          continue; // not a slot spelling; the component loop owns this name
+        const std::string mname = v.name.substr(0, ob);
+        const std::string kname =
+          v.name.substr(ob + 1, v.name.size() - ob - 2);
+        if (mname.empty() || kname.empty())
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: \"vars\" "
+            "names '{}', which is not a well-formed slot. The shape is "
+            "`<mapping>[<key>]` with both parts non-empty",
+            uid,
+            v.name);
+          exit(1);
+        }
+        named_seen.insert(v.name);
+
+        auto sit = store_syms.find(mname);
+        if (sit == store_syms.end())
+        {
+          // NAMED, and the available stores are listed. "It does not exist"
+          // and "it is a component, so drop the brackets" need different
+          // fixes, and a bare refusal sends the reader to the spelling in
+          // both cases.
+          std::string avail;
+          for (const auto &[n, s] : store_syms)
+            avail += (avail.empty() ? "" : ", ") + n;
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: \"vars\" "
+            "names the slot '{}', but '{}' is not a contract-scope store of "
+            "contract '{}'. The stores available are: {}. A SCALAR state "
+            "variable is a component of the contract object and is named "
+            "WITHOUT brackets",
+            uid,
+            v.name,
+            mname,
+            own_contract,
+            avail.empty() ? "<none>" : avail);
+          exit(1);
+        }
+
+        const type2tc mt = migrate_type(sit->second->type);
+        if (!is_array_type(mt))
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: '{}' is a "
+            "contract-scope store but does not lower to an ARRAY, so `{}` "
+            "denotes no slot. Refused rather than skipped: a dropped candidate "
+            "reads in the table as a variable nothing needed to be asserted "
+            "about",
+            uid,
+            mname,
+            v.name);
+          exit(1);
+        }
+        const type2tc et = to_array_type(mt).subtype;
+
+        // Same two-gate split as the component loop at (F): the whitelist is
+        // the EQUALITY gate, and the ordering rungs additionally require a
+        // non-bool. Collapsing them builds `>=` on a bool operand, which is a
+        // SIGABRT in smt_conv rather than a comparison.
+        std::string ewhy;
+        const bool eq_ok = coord_expressible(et, ewhy);
+        const bool iv_ok = eq_ok && !is_bool_type(et);
+        if (!eq_ok)
+        {
+          path_cov_refused_coords[v.name] =
+            "the mapping's VALUE type cannot carry a candidate: " + ewhy;
+          continue;
+        }
+
+        expr2tc kexpr;
+        std::string kwhy;
+        if (!resolve_coord(fsym, kname, kexpr))
+          kwhy =
+            "the key does not resolve to an input of this unit. Name a "
+            "parameter, an environment value as `msg.sender` / `msg.value`, or "
+            "a state variable at entry as `state.<field>`";
+        else
+          coord_expressible(kexpr->type, kwhy);
+        if (!kwhy.empty())
+        {
+          // REFUSE THE LADDER, the certify disposition. A slot whose key could
+          // not be built is not a weaker observable, it is a different one:
+          // there is no expression to read, so continuing would silently drop
+          // the candidate the spec asked for.
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the slot "
+            "'{}' names the key '{}', which cannot be expressed: {}",
+            uid,
+            v.name,
+            kname,
+            kwhy);
+          exit(1);
+        }
+
+        // The key ghost, then the slot's entry snapshot. Both plain list
+        // inserts before `entry`, never insert_swap -- insert_swap moves the
+        // instruction's CONTENT and the iterator would end up naming the new
+        // instruction, which is how the ABI gate acquired a self-loop once.
+        symbolt ksym;
+        ksym.type = migrate_type_back(kexpr->type);
+        ksym.name = "__ESBMC_key$" + i2string(ghost_counter++);
+        ksym.id = "path_cov::" + id2string(ksym.name);
+        ksym.lvalue = true;
+        ksym.static_lifetime = false;
+        ksym.is_extern = false;
+        symbolt *pk;
+        cov_context->move(ksym, pk);
+        expr2tc key_v = symbol2tc(migrate_type(pk->type), pk->id);
+        {
+          goto_programt::instructiont kd;
+          kd.type = DECL;
+          kd.code = code_decl2tc(kexpr->type, pk->id);
+          kd.location = entry->location;
+          kd.location.property("skipped");
+          kd.function = entry->location.get_function();
+          goto_program.instructions.insert(entry, kd);
+          goto_programt::instructiont ka;
+          ka.type = ASSIGN;
+          ka.code = code_assign2tc(key_v, kexpr);
+          ka.location = entry->location;
+          ka.location.property("skipped");
+          ka.function = entry->location.get_function();
+          goto_program.instructions.insert(entry, ka);
+        }
+
+        // The slot itself, read through the ENTRY key on both sides.
+        expr2tc marr = symbol2tc(mt, sit->second->id);
+        expr2tc live = index2tc(et, marr, key_v);
+
+        symbolt ssym;
+        ssym.type = migrate_type_back(et);
+        ssym.name = "__ESBMC_pre$" + i2string(ghost_counter++);
+        ssym.id = "path_cov::" + id2string(ssym.name);
+        ssym.lvalue = true;
+        ssym.static_lifetime = false;
+        ssym.is_extern = false;
+        symbolt *ps;
+        cov_context->move(ssym, ps);
+        expr2tc pre_v = symbol2tc(migrate_type(ps->type), ps->id);
+        {
+          goto_programt::instructiont pd;
+          pd.type = DECL;
+          pd.code = code_decl2tc(et, ps->id);
+          pd.location = entry->location;
+          pd.location.property("skipped");
+          pd.function = entry->location.get_function();
+          goto_program.instructions.insert(entry, pd);
+          goto_programt::instructiont pa;
+          pa.type = ASSIGN;
+          pa.code = code_assign2tc(pre_v, live);
+          pa.location = entry->location;
+          pa.location.property("skipped");
+          pa.function = entry->location.get_function();
+          goto_program.instructions.insert(entry, pa);
+        }
+        ++vars_emitted;
+
+        // The equality PAIR, always, for the reason the component loop states:
+        // the two are necessarily opposite, so a run in which BOTH hold is a
+        // run in which the exit read is not observing this unit's writes --
+        // which on a slot is the failure to watch for, since an entry ghost
+        // holding the wrong key would produce exactly that.
+        emit_rung(v.name, "eq", "post == pre", equality2tc(live, pre_v));
+        emit_rung(v.name, "ne", "post != pre", notequal2tc(live, pre_v));
+        if (!iv_ok)
+        {
+          path_cov_refused_coords[v.name + " [ordering/interval rungs]"] =
+            "the mapping's value type is a BOOLEAN -- a two-point domain has "
+            "no ordering to measure. The equality rungs ARE emitted for it";
+          continue;
+        }
+        emit_rung(
+          v.name, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
+        emit_rung(v.name, "le", "post <= pre", lessthanequal2tc(live, pre_v));
+        emit_rung(v.name, "gt", "post > pre", greaterthan2tc(live, pre_v));
+        emit_rung(v.name, "lt", "post < pre", lessthan2tc(live, pre_v));
+
+        auto slot_fits = [&](const char *what, const std::string &dec) {
+          std::string tmax;
+          if (path_cov_fits_type(et, dec, tmax))
+            return;
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: slot '{}' "
+            "{} value {} does not fit the mapping's value type (admissible "
+            "range [0, {}]). The bound is built as a constant of that type, so "
+            "an out-of-range decimal WRAPS and the candidate asserted would not "
+            "be the candidate written here",
+            uid,
+            v.name,
+            what,
+            dec,
+            tmax);
+          exit(1);
+        };
+        if (v.has_abs)
+        {
+          slot_fits("abs_lo", v.abs_lo);
+          slot_fits("abs_hi", v.abs_hi);
+          emit_rung(
+            v.name,
+            "abs",
+            "post in [" + v.abs_lo + ", " + v.abs_hi + "]",
+            and2tc(
+              greaterthanequal2tc(
+                live, constant_int2tc(et, string2integer(v.abs_lo))),
+              lessthanequal2tc(
+                live, constant_int2tc(et, string2integer(v.abs_hi)))));
+        }
+        if (v.has_delta)
+        {
+          slot_fits("delta_lo", v.delta_lo);
+          slot_fits("delta_hi", v.delta_hi);
+          // The direction conjunct is not decoration, for the reason the
+          // component loop records: the value type is unsigned, so `post - pre`
+          // WRAPS on a decrease and a bare window HOLDS on every decreasing
+          // path.
+          const expr2tc d = v.delta_dir == "inc" ? sub2tc(et, live, pre_v)
+                                                 : sub2tc(et, pre_v, live);
+          const expr2tc dir = v.delta_dir == "inc"
+                                ? greaterthanequal2tc(live, pre_v)
+                                : greaterthanequal2tc(pre_v, live);
+          emit_rung(
+            v.name,
+            "delta",
+            (v.delta_dir == "inc" ? std::string("post - pre in [")
+                                  : std::string("pre - post in [")) +
+              v.delta_lo + ", " + v.delta_hi + "] with " +
+              (v.delta_dir == "inc" ? "post >= pre" : "pre >= post"),
+            and2tc(
+              dir,
+              and2tc(
+                greaterthanequal2tc(
+                  d, constant_int2tc(et, string2integer(v.delta_lo))),
+                lessthanequal2tc(
+                  d, constant_int2tc(et, string2integer(v.delta_hi))))));
         }
       }
 
