@@ -818,6 +818,86 @@ def test_a_refuted_return_rung_is_never_asserted():
     return bad
 
 
+# --- a mapping-slot KEY must be an expression the TEST can evaluate ---------
+#
+# `bal` is declared `mapping(address => uint256)` at slot 2. Only the key
+# changes across the three cases below.
+SLOT_MAPS = {"bal": (2, "address", 32)}
+
+
+def _slot_pin_put(pins, ladder=None):
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins=pins, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=ladder if ladder is not None else LADDER,
+        notes=notes, maps=SLOT_MAPS)
+    return "\n".join(put or []), stats
+
+
+def test_a_slot_pin_keyed_by_a_parameter_is_established():
+    """The working direction, so the refusal below is not vacuously right."""
+    text, stats = _slot_pin_put({"state.bal[u]": 7})
+    bad = 0
+    bad += check(stats["state_stored"] == ["state.bal[u] := 7"],
+                 f"the slot pin is established: {stats['state_stored']}")
+    bad += check("keccak256(abi.encode(u, uint256(2)))" in text,
+                 "the slot address is hashed from the FUZZ parameter")
+    return bad
+
+
+def test_a_slot_pin_keyed_by_a_literal_is_established():
+    """A literal key needs its uint256 cast: abi.encode of a rational_const
+    does not compile."""
+    text, stats = _slot_pin_put({"state.bal[255]": 7})
+    bad = 0
+    bad += check(stats["state_stored"] == ["state.bal[255] := 7"],
+                 f"the literal-keyed pin is established: "
+                 f"{stats['state_stored']}")
+    bad += check("keccak256(abi.encode(uint256(255), uint256(2)))" in text,
+                 "the literal key is cast before abi.encode")
+    return bad
+
+
+def test_a_slot_pin_keyed_by_msg_sender_is_REFUSED():
+    """THE POINT. Inside a Foundry test `msg.sender` is whoever called the
+    TEST, while the unit sees the test contract (or the pranked address). A
+    store at the test's own sender writes a word the unit never reads -- and
+    because a frame-condition slot's rungs are `post == pre`, the test would be
+    GREEN while establishing nothing.
+
+    Reachable only since the stage-2 driver learned to PROPOSE
+    `state.<m>[msg.sender]` as a coordinate, which is why it is pinned now.
+    """
+    text, stats = _slot_pin_put({"state.bal[msg.sender]": 7})
+    bad = 0
+    bad += check(stats["state_stored"] == [],
+                 f"nothing is stored: {stats['state_stored']}")
+    bad += check(any("ENVIRONMENT quantity" in s
+                     for s in stats["state_skipped"]),
+                 f"and the reason names the hazard: {stats['state_skipped']}")
+    bad += check("vm.store(address(c0), keccak256" not in text,
+                 "no hashed vm.store reaches the emitted body")
+    return bad
+
+
+def test_the_oracle_side_refuses_the_same_key():
+    """One fact, one place: the ORACLE side used to refuse a non-parameter key
+    while the WRITING side accepted it. Both go through `slot_key_expr` now."""
+    text, stats = _slot_pin_put(
+        {}, ladder=[("bal[msg.sender]", "post == pre", "HOLDS")])
+    bad = 0
+    bad += check(any("ENVIRONMENT quantity" in s
+                     for s in stats["oracle_skipped"]),
+                 f"the rung is dropped with the same reason: "
+                 f"{stats['oracle_skipped']}")
+    bad += check("_pre_bal_msg_sender" not in text,
+                 "and no read of the wrong slot is emitted")
+    return bad
+
+
 def main():
     bad = 0
     for t in (test_both_truncation_shapes_are_read,
@@ -846,7 +926,11 @@ def main():
               test_an_unbindable_return_type_is_reported,
               test_bind_return_refuses_the_exit_kind_shapes,
               test_a_return_only_oracle_still_reaches_the_test,
-              test_a_refuted_return_rung_is_never_asserted):
+              test_a_refuted_return_rung_is_never_asserted,
+              test_a_slot_pin_keyed_by_a_parameter_is_established,
+              test_a_slot_pin_keyed_by_a_literal_is_established,
+              test_a_slot_pin_keyed_by_msg_sender_is_REFUSED,
+              test_the_oracle_side_refuses_the_same_key):
         print(f"--- {t.__name__}")
         bad += t()
     if bad:

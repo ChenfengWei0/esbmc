@@ -1209,6 +1209,54 @@ def env_disagreements(body, call_i, call_line, region, pins):
     return refusals, unchecked
 
 
+def slot_key_expr(kname, key_expr_of):
+    """(expression, None) or (None, refusal) for a mapping-slot KEY.
+
+    ONE implementation for BOTH sides, and that is the whole reason it exists.
+    The oracle side refused a key that is not a declared parameter; the ENTRY-
+    STATE PIN side fell back to the raw text. Two answers to one question, and
+    the permissive one was on the side that WRITES.
+
+    WHY THE PERMISSIVE SIDE IS WRONG, specifically for `msg.sender`. Inside a
+    Foundry test function `msg.sender` is whoever called the TEST -- forge's
+    default sender -- while the contract under test sees `address(this)` as its
+    caller unless a `vm.prank` sits immediately above the call. So a pin on
+    `state.<m>[msg.sender]` would `vm.store` at
+    `keccak256(abi.encode(<the test's sender>, p))` while the unit reads
+    `keccak256(abi.encode(<the caller>, p))`: a perfectly well-formed write to a
+    slot the contract never reads.
+
+    AND IT WOULD NOT SHOW UP AS A FAILURE. The rungs a frame-condition slot
+    produces are `post == pre`, which hold trivially when nothing writes either
+    word -- so the emitted test is GREEN while establishing none of the entry
+    state its own header claims. That is the exact shape this file already
+    carries three comments about, and it became REACHABLE the moment the stage-2
+    driver learned to propose `state.<m>[msg.sender]` as a coordinate.
+
+    Refusing is not a yield loss that could have been avoided by being cleverer:
+    the address that will be `msg.sender` during the call is decided by the
+    emitter's own preamble (a prank, or the test contract itself), and the
+    region names a quantity in the VERIFIER's namespace. Making the two agree is
+    a separate change with its own evidence; guessing here is not.
+    """
+    k = (kname or "").strip()
+    if k in key_expr_of:
+        return key_expr_typed(key_expr_of[k]), None
+    if _KEY_LIT_RE.match(k):
+        return key_expr_typed(k), None
+    if k.startswith(ENV_PREFIXES):
+        return None, (
+            f"the key `{k}` is an ENVIRONMENT quantity, not a declared "
+            f"parameter. Inside a Foundry test `msg.sender` is whoever called "
+            f"the test, while the unit sees the test contract (or the pranked "
+            f"address) as its caller -- so the slot written here and the slot "
+            f"the unit reads would be different words, and a `post == pre` "
+            f"rung over an untouched slot would stay GREEN while establishing "
+            f"nothing")
+    return None, (f"the key `{k}` is not a declared parameter of this unit, so "
+                  f"the PUT has no expression for it")
+
+
 CALL_LINE_RE_TMPL = r"^(\s*)(try )?(\w+)\.{unit}\("
 
 
@@ -1433,7 +1481,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                     f"in the query)")
                 continue
             mslot, _kt, vnb = maps[mname]
-            kexpr = key_expr_typed(key_expr_of.get(kname, kname))
+            kexpr, kerr = slot_key_expr(kname, key_expr_of)
+            if kerr is not None:
+                state_skipped.append(f"{name} ({kerr})")
+                continue
             store_lines += slot_write_lines_at(
                 "address(c0)", map_slot_expr(kexpr, mslot), 0, vnb, str(lo))
             stored.append(f"{name} := {lo}")
@@ -1645,11 +1696,12 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                     f"word nothing wrote)")
                 continue
             mslot, _ktype, vnb = maps[mname]
-            kexpr = key_expr_of.get(kname)
-            if kexpr is None:
-                oracle_skipped.append(
-                    f"{var} (the key `{kname}` is not a declared parameter of "
-                    f"this unit, so the PUT has no expression for it)")
+            # SAME decision as the entry-state pin above, through the same
+            # function: the two used to answer differently, and the WRITING side
+            # was the permissive one. See `slot_key_expr`.
+            kexpr, kerr = slot_key_expr(kname, key_expr_of)
+            if kerr is not None:
+                oracle_skipped.append(f"{var} ({kerr})")
                 continue
             ident = _slot_ident(var)
             if var not in seen_vars:
