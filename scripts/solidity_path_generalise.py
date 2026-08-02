@@ -604,6 +604,199 @@ def declared_struct_fields(ast_path):
     return out
 
 
+def _ast_root(ast_path):
+    """The solc AST object, or None. Same read every other AST reader here does."""
+    if not ast_path or not os.path.exists(ast_path):
+        return None
+    try:
+        txt = open(ast_path).read()
+        return json.loads(txt[txt.index("{"):])
+    except (OSError, ValueError):
+        return None
+
+
+def _chain_nodes(ast, contract):
+    """The ContractDefinition nodes of `contract` and its bases, base-first.
+
+    Same C3 linearisation `function_mutability` follows, and scoped for the same
+    measured reason: every benchmark input is a FLATTENED source carrying dozens
+    of contracts, so a bare state-variable name collides across them routinely.
+    An unscoped read here is worse than a wrong mutability, because a mapping
+    name taken from some OTHER contract produces a coordinate the tool cannot
+    resolve -- and an unresolvable coordinate makes the outer-box round report
+    that it measured nothing.
+
+    Falls back to the WHOLE AST when the contract is not found, which is what
+    every other reader in this file does; the caller says so on stdout.
+    """
+    by_id, target = {}, None
+
+    def index(n):
+        nonlocal target
+        if isinstance(n, dict):
+            if n.get("nodeType") == "ContractDefinition":
+                if n.get("id") is not None:
+                    by_id[n["id"]] = n
+                if n.get("name") == contract:
+                    target = n
+            for v in n.values():
+                index(v)
+        elif isinstance(n, list):
+            for v in n:
+                index(v)
+
+    index(ast)
+    if target is None:
+        return None
+    chain = target.get("linearizedBaseContracts") or [target.get("id")]
+    return [by_id[c] for c in reversed(chain) if c in by_id]
+
+
+def _type_string(n):
+    return ((n or {}).get("typeDescriptions") or {}).get("typeString") or ""
+
+
+def mapping_state_vars(ast_path, contract=None):
+    """Mapping state variables of this contract, as {name: (key_ts, value_ts)}.
+
+    READ FROM THE SOURCE, not from the counterexample payload -- and that is the
+    whole point of this function rather than a convenience.
+
+    WHAT THE PAYLOAD DOES AND DOES NOT GIVE, both measured, because the first
+    version of this comment claimed the payload "never" carries a mapping slot
+    and that is false:
+
+      * SlotMin: it DOES carry one -- `state.bal[0xFF..FF]` arrives as a free
+        coordinate with no help from this function. The key is the LITERAL the
+        counterexample happened to land on.
+      * farming/balanceOf and farming/deposit: it carries none at all.
+        `_balances` appears in neither the free coordinates nor the refused
+        list.
+
+    So the payload can only ever offer a slot at a key some counterexample
+    already picked. The slot a guard actually reads -- `_balances[account]`,
+    following the PARAMETER for every account rather than one address -- is not
+    a payload name under any circumstances, because the payload is a list of
+    values and that coordinate is a function of an input. That one is reachable
+    only by proposing it, which is what this function exists to do.
+
+    ONLY A VALUE-TYPE KEY AND A SCALAR VALUE are returned. A nested mapping or a
+    struct value is refused for the same reason the storage-layout side refuses
+    it -- a second hash or a member offset -- and the caller reports each
+    refusal by name rather than dropping it silently.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return {}, []
+    nodes = _chain_nodes(ast, contract) if contract else None
+    if nodes is None:
+        nodes = [ast]
+    out, refused = {}, []
+
+    def walk(n):
+        if isinstance(n, dict):
+            if (n.get("nodeType") == "VariableDeclaration"
+                    and n.get("stateVariable") and n.get("name")):
+                tn = n.get("typeName") or {}
+                if tn.get("nodeType") == "Mapping":
+                    vt = tn.get("valueType") or {}
+                    kt = tn.get("keyType") or {}
+                    nm = n["name"]
+                    if vt.get("nodeType") != "ElementaryTypeName":
+                        refused.append(
+                            f"{nm} (value is {_type_string(vt) or 'non-scalar'};"
+                            f" a nested mapping needs a second hash and a struct"
+                            f" needs a member offset)")
+                    elif kt.get("nodeType") != "ElementaryTypeName":
+                        refused.append(
+                            f"{nm} (key is {_type_string(kt) or 'non-scalar'},"
+                            f" not a value type)")
+                    else:
+                        out.setdefault(nm, (_type_string(kt), _type_string(vt)))
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    for node in nodes:
+        walk(node)
+    return out, refused
+
+
+def unit_params(ast_path, contract, unit):
+    """This unit's parameters, as [(name, typeString)] in declaration order.
+
+    The KEY of a proposed slot has to be something the query can express, and
+    `resolve_coord` accepts a literal, a parameter of the unit, or `msg.sender`.
+    A parameter is the interesting one: `_balances[account]` is the slot the
+    guard actually reads, and no literal can stand in for it.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return []
+    nodes = _chain_nodes(ast, contract) if contract else None
+    if nodes is None:
+        nodes = [ast]
+    found = []
+
+    def walk(n):
+        if isinstance(n, dict):
+            if (n.get("nodeType") == "FunctionDefinition"
+                    and n.get("name") == unit):
+                ps = ((n.get("parameters") or {}).get("parameters") or [])
+                found.append([(p.get("name"), _type_string(p))
+                              for p in ps if p.get("name")])
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    for node in nodes:
+        walk(node)
+    # Most-derived last, because `_chain_nodes` walks base-first and an override
+    # is what the compiler resolves the call to.
+    return found[-1] if found else []
+
+
+def propose_slot_coords(maps, params, limit):
+    """Slot coordinate names to add, plus a line per candidate NOT added.
+
+    A slot is proposed only where the KEY has a name the query can express and
+    whose type MATCHES the mapping's declared key type. Type-matching is not
+    pedantry: `bal[someUint]` on a `mapping(address => ...)` resolves to a
+    different slot than the guard reads, and the region would then be certified
+    about a quantity no execution touches.
+
+    BUDGETED, and the budget is the caller's flag rather than a constant. Ladder
+    cost is MULTIPLICATIVE in the coordinate count -- the same reason
+    environment quantities are never made free coordinates here -- so proposing
+    every (mapping x parameter) pair on a real contract would make the round
+    unaffordable to buy a coordinate nothing may need. Whatever the budget cuts
+    is named, never dropped silently.
+    """
+    cand, skipped = [], []
+    for m in sorted(maps):
+        kt, _vt = maps[m]
+        keys = [p for p, pt in params if pt == kt]
+        if kt == "address":
+            keys.append("msg.sender")
+        if not keys:
+            skipped.append(
+                f"state.{m}[...] (this unit has no parameter of the key type "
+                f"'{kt}', and the key type is not address so msg.sender does "
+                f"not apply)")
+            continue
+        for k in keys:
+            cand.append(f"state.{m}[{k}]")
+    if limit and len(cand) > limit:
+        skipped += [f"{c} (over the --slot-coords budget of {limit})"
+                    for c in cand[limit:]]
+        cand = cand[:limit]
+    return cand, skipped
+
+
 def lowering_artifacts(coords, declared):
     """Struct-field coordinates the SOURCE never declared.
 
@@ -1451,7 +1644,30 @@ def unresolvable_coords(log):
     STRONGER, not wider. It is still announced, because it changes what the
     region is a statement about.
     """
-    return sorted(set(re.findall(r"has no input named '([^']+)'", log)))
+    # ---- TWO WORDINGS, AND THE ONE THIS MATCHED IS NOT THE ONE EMITTED ----
+    #
+    # MEASURED, on a hand-built outer-box spec naming `state.nosuch[k]`. The
+    # tool refuses it twice and loudly:
+    #
+    #   WARNING: --path-cov-outer-box: unit '<id>' — REFUSING coordinate
+    #   'state.nosuch[k]': the name does not resolve to an input of this unit
+    #   WARNING: --path-cov-outer-box: 1 coordinate(s) were REFUSED and appear
+    #   in NO box below: state.nosuch[k] (...)
+    #
+    # Neither sentence contains "has no input named", which is all this function
+    # looked for -- so it returned nothing, `round_failure_reason` reported no
+    # cause, and the refused coordinate vanished from the run with NOTHING on
+    # screen. The regions printed afterwards simply do not mention it, which
+    # reads as "unconstrained" and is exactly the silent-disappearance condition
+    # the coordinate accounting exists to prevent.
+    #
+    # This is the detector-wired-to-the-wrong-branch failure in its usual shape:
+    # a check that can never fire looks identical, from outside, to a check that
+    # never had anything to report. The older wording is kept because an older
+    # binary still emits it, and a driver that stops recognising a message it
+    # used to handle is the same defect pointing the other way.
+    return sorted(set(re.findall(r"has no input named '([^']+)'", log))
+                  | set(re.findall(r"REFUSING coordinate '([^']+)'", log)))
 
 
 def round_failure_reason(log):
@@ -1474,11 +1690,30 @@ def round_failure_reason(log):
     pattern this file keeps running into.
     """
     unresolved = unresolvable_coords(log)
-    if unresolved:
+    # ---- A REFUSED COORDINATE IS NOT THE SAME AS A ROUND THAT MEASURED
+    # ---- NOTHING, AND SAYING SO WOULD BE A FALSE REPORT ----
+    #
+    # The tool states the distinction itself: "No probe is emitted for it and no
+    # bound is attributed to it; the remaining coordinates are measured as
+    # usual." So a round that refuses one name out of five still produces boxes,
+    # brackets and regions for the other four.
+    #
+    # This branch predates the detector actually firing -- while
+    # `unresolvable_coords` matched only a wording the tool no longer emits, the
+    # condition was unreachable and its overreach could not show. Repairing the
+    # detector without repairing this would have turned a silent miss into a
+    # confident falsehood printed on every run with one refused coordinate,
+    # which is the worse of the two.
+    #
+    # The presence of an OUTER box line is the direct evidence that the round
+    # measured something, read off the same log rather than inferred from the
+    # coordinate count. Where there is none, the original reading stands.
+    if unresolved and not BOX_RE.search(log):
         return ("the outer-box round rejected coordinate(s) "
                 + ", ".join(unresolved)
-                + " as unresolvable, so nothing was measured (a "
-                  "COORDINATE-SUPPORT gap, not a property of the path)")
+                + " as unresolvable and produced no box at all, so nothing was "
+                  "measured (a COORDINATE-SUPPORT gap, not a property of the "
+                  "path)")
     if "[run] TIMEOUT after" in log:
         return ("no outer-box round finished, so nothing was measured for "
                 "this path (a BUDGET outcome, not a property of the path)")
@@ -2444,6 +2679,45 @@ def main():
     ap.add_argument("--path-function", default=None,
                     help="disambiguate overloads: the exact mangled "
                          "path_function to generalise.")
+    ap.add_argument("--slot-coords", type=int, default=0, metavar="N",
+                    help="propose up to N MAPPING SLOTS as free coordinates, "
+                         "read from solc's own declaration: for each mapping "
+                         "state variable with a value-type key and a scalar "
+                         "value, one coordinate `state.<m>[<k>]` per parameter "
+                         "of this unit whose type matches the key type (plus "
+                         "msg.sender on an address key).\n"
+                         "WHY IT HAS TO BE PROPOSED RATHER THAN HARVESTED: the "
+                         "coordinate set is otherwise exactly the counterexample "
+                         "payload's key set, and a payload can only offer a slot "
+                         "at a key some counterexample already picked. MEASURED "
+                         "both ways -- SlotMin's payload DOES carry "
+                         "`state.bal[0xFF..FF]`, a literal key, while farming's "
+                         "carries no `_balances` slot at all. Neither can ever "
+                         "give `_balances[account]`, the slot the guard reads "
+                         "for EVERY account: the payload is a list of values and "
+                         "that coordinate is a function of an input.\n"
+                         "DEFAULT 0, i.e. OFF, so every existing number is "
+                         "reproduced verbatim -- the same house rule --level0, "
+                         "--max-holes and --max-region-pieces follow. It is a "
+                         "budget rather than a switch because ladder cost is "
+                         "MULTIPLICATIVE in the coordinate count, which is the "
+                         "same reason environment quantities are never free "
+                         "coordinates here.\n"
+                         "A proposed slot carries NO counterexample value (the "
+                         "payload has none), which is sound: the ladder is laid "
+                         "over its full type range and every check that reads a "
+                         "CE skips a coordinate it has none for. VERIFIED "
+                         "against the tool, not assumed -- an outer-box round on "
+                         "a slot coordinate with no `ce` entry resolves it, "
+                         "publishes its TYPE RANGE, and returns it in the "
+                         "bracket and the region.")
+    ap.add_argument("--slot-coord", action="append", default=[], metavar="EXPR",
+                    help="add ONE slot coordinate by name, e.g. "
+                         "state.bal[msg.sender]. Always honoured, independently "
+                         "of the --slot-coords budget: naming it is the explicit "
+                         "request the budget exists to ration. A name the tool "
+                         "cannot resolve is refused by the tool and reported, "
+                         "not silently dropped.")
     ap.add_argument("--pin", action="append", default=[],
                     help="coord=value, e.g. state.bal=50. Pinned coordinates "
                          "are NOT generalised; every region reported is a "
@@ -2660,6 +2934,55 @@ def main():
               "be checked: an immutable or constant coordinate would be "
               "generalised over as if a test could set it. Pass --ast to have "
               "them pinned instead")
+
+    # ---- MAPPING SLOTS: PROPOSED from the source, never harvested ----
+    #
+    # Everything above derives `coords` from the counterexample payload, which
+    # can only ever offer a slot at a key some counterexample already picked --
+    # MEASURED both ways: SlotMin's payload carries `state.bal[0xFF..FF]` and
+    # farming's carries no `_balances` slot at all.
+    #
+    # A PARAMETER-keyed slot is a different thing and is not a payload name
+    # under any circumstances: the payload is a list of values, and
+    # `_balances[account]` is a function of an input. Until this block existed
+    # the tool's support for that shape was dead code from the driver's side --
+    # it fired for a hand-written spec and for the three regressions, and could
+    # not fire on any driver-generated run. Off by default, because the ladder
+    # cost is multiplicative in the coordinate count.
+    slot_added = []
+    if args.slot_coords or args.slot_coord:
+        maps, map_refused = mapping_state_vars(args.ast, args.contract)
+        params = unit_params(args.ast, args.contract, args.unit)
+        proposed, skipped = propose_slot_coords(maps, params, args.slot_coords)
+        if not args.slot_coords:
+            proposed, skipped = [], []
+        # An explicit --slot-coord is not rationed and not type-checked here:
+        # the caller named it, and the tool is the arbiter of whether it
+        # resolves. Duplicates are dropped so the ladder is not laid twice.
+        for c in args.slot_coord:
+            if c not in proposed:
+                proposed.append(c)
+        slot_added = [c for c in proposed if c not in coords]
+        coords = sorted(set(coords) | set(slot_added))
+        if slot_added:
+            print("[coords] MAPPING SLOT(s) proposed from solc's declaration "
+                  "(a payload can only offer a slot at a key some "
+                  "counterexample already picked, so a PARAMETER-keyed one can "
+                  "enter no other way): " + ", ".join(sorted(slot_added))
+                  + ". Each is laid over its FULL type range -- there is no "
+                    "counterexample value for a slot, so no known member of the "
+                    "domain constrains it, and the C2 membership check simply "
+                    "has nothing to say about it")
+        if skipped:
+            print("[coords] slot candidate(s) NOT proposed: "
+                  + "; ".join(skipped))
+        if map_refused:
+            print("[coords] mapping(s) whose SHAPE has no slot coordinate: "
+                  + "; ".join(map_refused))
+        if not slot_added:
+            print("[coords] NO mapping slot was added. This is a statement "
+                  "about the source and the budget, not about the tool: see "
+                  "the lines above for each candidate's reason")
 
     # ---- C5: coordinate accounting, before any region is measured ----
     #

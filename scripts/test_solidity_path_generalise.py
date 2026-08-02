@@ -58,6 +58,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       function_mutability,
                                       unexpressible_coords,
                                       unresolvable_coords,
+                                      mapping_state_vars,
+                                      unit_params,
+                                      propose_slot_coords,
                                       brackets_for)
 
 FAILURES = []
@@ -1517,6 +1520,155 @@ check("S7-geometric-signed-is-symmetric",
 check("S7-geometric-signed-keeps-both-endpoints",
       (geometric_values(100, -100)[0], geometric_values(100, -100)[-1]),
       (-100, 100))
+
+# --- MAPPING SLOTS: the outer-box refusal wording the reader did not know ---
+#
+# MEASURED on a hand-built outer-box spec naming `state.nosuch[k]`. The tool
+# refuses it twice and loudly, and NEITHER sentence contains "has no input
+# named" -- the only phrase `unresolvable_coords` looked for. So the refusal was
+# invisible to the driver: nothing printed, and the regions below simply did not
+# mention the coordinate, which reads as "unconstrained".
+#
+# That is the detector-on-the-wrong-branch failure again. It stayed harmless
+# only because nothing ever ASKED for a coordinate the tool could refuse; the
+# slot proposal is what makes it reachable, so it is repaired in the same change.
+_OUTER_REFUSED_NEW = (
+    "WARNING: --path-cov-outer-box: unit 'sol:@C@SlotMin@F@take#53' — REFUSING "
+    "coordinate 'state.nosuch[k]': the name does not resolve to an input of "
+    "this unit. Name a parameter, an environment value (`msg.value` ...), or a "
+    "state variable at entry (`state.<field>`); note that `state.<field>` "
+    "reaches the contract object's own components only, so a WHOLE mapping or "
+    "dynamic array does not resolve -- name ONE SLOT of it as "
+    "`state.<name>[<key>]` instead")
+check("slot-the-current-outer-box-refusal-is-read",
+      unresolvable_coords(_OUTER_REFUSED_NEW), ["state.nosuch[k]"])
+# MUST FLIP: the OLD wording must still be read, or a driver upgrade silently
+# stops recognising a message an older binary still emits.
+check("slot-the-older-outer-box-wording-is-still-read",
+      unresolvable_coords(_OUTER_REFUSED), ["state._DOCKED"])
+# ...and the certify branch's sentence must STILL not be read as an outer-box
+# one, which is the pairing the earlier block pins in the other direction.
+check("slot-the-certify-refusal-is-still-not-an-outer-box-one",
+      unresolvable_coords(_CERT_REFUSED), [])
+
+# A REFUSED COORDINATE IS NOT A ROUND THAT MEASURED NOTHING. The tool says so
+# itself: "the remaining coordinates are measured as usual". Repairing the
+# detector above without this would print a confident falsehood on every run
+# carrying one refused name -- worse than the silent miss it replaces.
+_BOX_LINE = ("--path-cov-outer-box: path enc=15 depth=3 OUTER box (D_path is "
+             "CONTAINED in it): v in [1, 9], k in [0, 9]\n[run] EXIT 1\n")
+check("slot-a-refusal-beside-a-box-is-not-measured-nothing",
+      round_failure_reason(_OUTER_REFUSED_NEW + "\n" + _BOX_LINE), None)
+# MUST FLIP: with NO box in the log the original reading stands.
+_r = round_failure_reason(_OUTER_REFUSED_NEW + "\n[run] EXIT 1\n")
+check("slot-a-refusal-with-no-box-at-all-still-reports-the-gap",
+      _r is not None and "state.nosuch[k]" in _r, True)
+
+# --- proposing a slot from solc's declaration ---
+#
+# A payload can only ever offer a slot at a key some counterexample already
+# picked -- MEASURED both ways: SlotMin's payload carries `state.bal[0xFF..FF]`
+# while farming's carries no `_balances` slot at all. Neither can give
+# `_balances[account]`, the slot a guard reads for EVERY account, because the
+# payload is a list of values and that coordinate is a function of an input.
+_MAPS = {
+    "nodeType": "SourceUnit",
+    "nodes": [
+        {"nodeType": "ContractDefinition", "name": "Other", "id": 1,
+         "linearizedBaseContracts": [1],
+         "nodes": [{"nodeType": "VariableDeclaration", "name": "ghost",
+                    "stateVariable": True,
+                    "typeName": {"nodeType": "Mapping",
+                                 "keyType": {"nodeType": "ElementaryTypeName",
+                                             "typeDescriptions": {
+                                                 "typeString": "address"}},
+                                 "valueType": {"nodeType": "ElementaryTypeName",
+                                               "typeDescriptions": {
+                                                   "typeString": "uint256"}}}}]},
+        {"nodeType": "ContractDefinition", "name": "Pool", "id": 2,
+         "linearizedBaseContracts": [2],
+         "nodes": [
+             {"nodeType": "VariableDeclaration", "name": "_balances",
+              "stateVariable": True,
+              "typeName": {"nodeType": "Mapping",
+                           "keyType": {"nodeType": "ElementaryTypeName",
+                                       "typeDescriptions": {
+                                           "typeString": "address"}},
+                           "valueType": {"nodeType": "ElementaryTypeName",
+                                         "typeDescriptions": {
+                                             "typeString": "uint256"}}}},
+             {"nodeType": "VariableDeclaration", "name": "_allowance",
+              "stateVariable": True,
+              "typeName": {"nodeType": "Mapping",
+                           "keyType": {"nodeType": "ElementaryTypeName",
+                                       "typeDescriptions": {
+                                           "typeString": "address"}},
+                           "valueType": {"nodeType": "Mapping"}}},
+             {"nodeType": "VariableDeclaration", "name": "_total",
+              "stateVariable": True,
+              "typeName": {"nodeType": "ElementaryTypeName",
+                           "typeDescriptions": {"typeString": "uint256"}}},
+             {"nodeType": "FunctionDefinition", "name": "balanceOf",
+              "parameters": {"parameters": [
+                  {"name": "account",
+                   "typeDescriptions": {"typeString": "address"}}]}},
+             {"nodeType": "FunctionDefinition", "name": "deposit",
+              "parameters": {"parameters": [
+                  {"name": "amount",
+                   "typeDescriptions": {"typeString": "uint256"}}]}},
+         ]},
+    ],
+}
+_fd4, _p4 = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd4, "w") as _f4:
+    json.dump(_MAPS, _f4)
+
+_m, _mref = mapping_state_vars(_p4, "Pool")
+check("slot-a-value-type-key-with-a-scalar-value-is-offered",
+      _m.get("_balances"), ("address", "uint256"))
+# A plain scalar state variable is not a mapping and must not appear.
+check("slot-a-scalar-state-variable-is-not-a-mapping", "_total" in _m, False)
+# A NESTED mapping is refused with its reason, not dropped silently -- the same
+# shape the storage-layout side refuses, and the reason names the mechanism.
+check("slot-a-nested-mapping-is-refused-by-name",
+      [r.split(" ")[0] for r in _mref], ["_allowance"])
+# SCOPED. Another contract's mapping must not be offered: on a FLATTENED input
+# that name would produce a coordinate the tool cannot resolve, and (before the
+# reader above was fixed) it vanished with nothing on screen.
+check("slot-a-foreign-contract-mapping-is-not-offered", "ghost" in _m, False)
+check("slot-the-foreign-mapping-is-visible-to-its-own-contract",
+      "ghost" in mapping_state_vars(_p4, "Other")[0], True)
+
+check("slot-the-units-parameters-are-read-in-order",
+      unit_params(_p4, "Pool", "balanceOf"), [("account", "address")])
+
+# THE KEY'S TYPE MUST MATCH. `_balances[amount]` on a mapping(address => ...)
+# resolves to a different slot than the guard reads, so the region would be
+# certified about a quantity no execution touches.
+check("slot-a-matching-parameter-becomes-the-key",
+      propose_slot_coords({"_balances": ("address", "uint256")},
+                          [("account", "address")], 4)[0],
+      ["state._balances[account]", "state._balances[msg.sender]"])
+# MUST FLIP: a parameter of the WRONG type is not used, and msg.sender is still
+# offered because the key type is address.
+check("slot-a-mismatched-parameter-is-not-used",
+      propose_slot_coords({"_balances": ("address", "uint256")},
+                          [("amount", "uint256")], 4)[0],
+      ["state._balances[msg.sender]"])
+# ...and on a NON-address key with no matching parameter there is nothing to
+# propose at all, with the reason named rather than an empty list.
+_c, _s = propose_slot_coords({"bal": ("uint256", "uint256")},
+                             [("who", "address")], 4)
+check("slot-no-usable-key-proposes-nothing", _c, [])
+check("slot-and-says-why", "no parameter of the key type" in _s[0], True)
+# The budget is a cap, and what it cuts is NAMED -- a silent truncation would
+# read as "there was nothing else to propose".
+_c2, _s2 = propose_slot_coords({"bal": ("uint256", "uint256")},
+                               [("a", "uint256"), ("b", "uint256")], 1)
+check("slot-the-budget-caps-the-proposal", _c2, ["state.bal[a]"])
+check("slot-the-budget-names-what-it-cut",
+      "over the --slot-coords budget" in _s2[0], True)
+os.unlink(_p4)
 
 if FAILURES:
     print("FAILED:")
