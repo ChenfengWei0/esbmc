@@ -133,6 +133,12 @@ def main():
                          "must never share a table: on a real contract 'not "
                          "certified' mixes the method's limits with the "
                          "contract's difficulty, while a PoC is one shape.")
+    ap.add_argument("--forge-only", action="store_true",
+                    help="do NOT emit anything: read the put.json each region "
+                         "already produced, run `forge test` per project, and "
+                         "print the five-gate B table. Costs no esbmc run, so "
+                         "B can be re-measured after a forge/solc change or "
+                         "after a PUT is edited by hand.")
     ap.add_argument("--max-tx", type=int, default=1)
     ap.add_argument("--auto-unwind", type=int, default=0,
                     help="passed to the driver: on an UNDECIDED-TRUNCATED "
@@ -228,13 +234,23 @@ def main():
                "--auto-unwind", str(args.auto_unwind)]
         for n, v in pins.items():
             cmd += ["--pin", f"{n}={v}"]
+        j = os.path.join(wd, "put.json")
+        if args.forge_only:
+            # RE-READ, never re-emit. The B gate has to be re-runnable without
+            # two esbmc invocations per region, or it is a number nobody checks
+            # between sweeps -- which is how it came to be assembled by hand in
+            # the first place. A region with no put.json is rc=1 here, i.e. it
+            # never produced a PUT, which is exactly what the table should say.
+            rec = json.load(open(j)) if os.path.exists(j) else {}
+            rc = 0 if rec.get("file") else 1
+            results.append((bench, unit, enc, rc, rec, proj, region))
+            continue
         print(f"\n--- {bench}.{unit} enc={enc} ---")
         p = subprocess.run(cmd, capture_output=True, text=True)
         sys.stdout.write(p.stdout)
         sys.stdout.write(p.stderr)
-        j = os.path.join(wd, "put.json")
         rec = json.load(open(j)) if os.path.exists(j) else {}
-        results.append((bench, unit, enc, p.returncode, rec))
+        results.append((bench, unit, enc, p.returncode, rec, proj, region))
 
     print("\n" + "=" * 84)
     print("STAGE 4: certified region -> PUT with oracle")
@@ -254,7 +270,7 @@ def main():
     print(f"{'benchmark':<28}{'unit':<16}{'enc':>5}{'rc':>4}"
           f"{'fuzz':>6}{'asserts':>9}  outcome")
     n_put = n_fuzz = n_oracle = n_both = 0
-    for bench, unit, enc, rc, rec in results:
+    for bench, unit, enc, rc, rec, _proj, _region in results:
         st = rec.get("stats") or {}
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
         if rc == 0:
@@ -279,7 +295,110 @@ def main():
     print("  certified region as an established entry state and the oracle --")
     print("  but it is ONE point of the region, not a fuzz test over it, and")
     print("  the two must not be added together.")
+    print()
+    print("  ⚠ NONE of the four counters above is B. They are properties of the")
+    print("  EMITTED TEXT; B additionally requires the test to be GREEN on the")
+    print("  unmodified contract, which only forge can say. See the gate below.")
+
+    b_report(results)
     return 0
+
+
+# ---- THE FIVE GATES, IN ONE PLACE, RUN BY THE SCRIPT ----
+#
+# WORKORDER's deliverable B is a CONJUNCTION of five conditions, and until now
+# this script printed three of them (emitted / fuzz / oracle) while the other two
+# -- bound width and `forge test` green -- were checked by hand, in a different
+# command, and written into a message. That is the proxy-instead-of-deliverable
+# shape: every number this script printed was true and none of them was B, so the
+# B that got quoted was assembled by a human across two runs and could not be
+# re-derived by re-running anything.
+#
+# MEASURED, and it is why this is not cosmetic: on the corpus, four of the seven
+# emitted PUTs (aqua dock/push/rawBalances/safeBalances) carry FUZZ PARAMETERS and
+# are GREEN, and all four have ZERO assertions -- their body is `try { ... } catch
+# {}`, which cannot fail whatever the contract does. Counting "emitted + fuzz +
+# green" would have reported 7; B is at most 3.
+#
+# WIDTH IS READ FROM THE REGION THIS SCRIPT ALREADY PARSED, not re-derived: a
+# coordinate whose certified interval is a single point (lo == hi) is established,
+# not fuzzed, so a `bound(x, v, v)` is a constant wearing a fuzz parameter's type.
+# At least ONE fuzzed coordinate must have hi > lo or gate 2 fails.
+def b_report(results):
+    print()
+    print("=" * 84)
+    print("DELIVERABLE B — all five WORKORDER gates, per PUT")
+    print("=" * 84)
+
+    # forge, once per project, and the verdict per TEST FUNCTION. Running it per
+    # row would recompile the benchmark flat once per region (70-180 KB each),
+    # and a per-row run cannot see a failure caused by two PUTs sharing a project.
+    verdicts = {}
+    for proj in sorted({r[5] for r in results if r[5]}):
+        p = subprocess.run(["forge", "test", "--json"], cwd=proj,
+                           capture_output=True, text=True)
+        try:
+            data = json.loads(p.stdout)
+        except json.JSONDecodeError:
+            # NAMED, not swallowed. A project that does not compile makes every
+            # one of its rows UNKNOWN, and an UNKNOWN must never read as a pass.
+            print(f"  [forge] {os.path.basename(proj)}: could NOT parse `forge "
+                  f"test --json` output -- every row in this project is UNKNOWN "
+                  f"below, which is NOT a pass. First 200 chars of stderr: "
+                  f"{p.stderr[:200]!r}")
+            continue
+        for suite in data.values():
+            for name, res in (suite.get("test_results") or {}).items():
+                verdicts[name.split("(")[0]] = res.get("status")
+
+    print(f"{'benchmark':<24}{'unit':<16}{'enc':>4}  "
+          f"{'1.fuzz':>7}{'2.width':>8}{'3.assert':>9}{'4.green':>8}"
+          f"{'5.corpus':>9}  B")
+    b = 0
+    for bench, unit, enc, rc, rec, proj, region in results:
+        st = rec.get("stats") or {}
+        fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
+        # Gate 1 counts the parameters the emitter actually wrote. Gate 2 asks
+        # whether ANY certified interval is wider than a point -- a PUT whose
+        # every bound is [v, v] explores one input however many `runs:` forge
+        # reports.
+        g1 = rc == 0 and fz > 0
+        g2 = any(hi > lo for lo, hi in region.values())
+        g3 = ar > 0
+        # The PUT's own test function, named by the emitter as
+        # `test_put_<CONTRACT>_<unit>_path<enc>`; the concrete `test_cov_*` cases
+        # in the same file are NOT the deliverable and must not decide this gate.
+        #
+        # THE CONTRACT, never the benchmark key. The first version of this line
+        # built the name from `bench.split('_')[-1]`, which is 'Aqua' for
+        # `aqua_Aqua` and 'farming' for `farming` -- so every farming row looked
+        # up `test_put_farming_...` against an emitter that wrote
+        # `test_put_FarmingPool_...` and came back '?'. A matcher that cannot
+        # match is a gate that never fires, and it fails in the direction that
+        # LOOKS like caution ('unknown') while actually reporting nothing.
+        contract = BENCHES[bench][1] if bench in BENCHES else bench
+        want = f"test_put_{contract}_{unit}_path{enc}"
+        status = verdicts.get(want)
+        g4 = status == "Success"
+        # Gate 5 is a property of the INPUT, not of the run: a hand-written PoC
+        # satisfies every other gate and is still not B. Rows reaching this table
+        # from the corpus sweep are corpus by construction; the PoC sweep sets
+        # `is_poc` and is reported in its own table, so this is recorded rather
+        # than inferred -- and it stays visible so a future shared table cannot
+        # silently mix them.
+        g5 = bench in BENCHES
+        ok = g1 and g2 and g3 and g4 and g5
+        b += 1 if ok else 0
+        def m(x, unknown=False):
+            return "?" if unknown else ("yes" if x else "NO")
+        print(f"{bench:<24}{unit:<16}{enc:>4}  "
+              f"{m(g1):>7}{m(g2):>8}{m(g3):>9}"
+              f"{m(g4, status is None):>8}{m(g5):>9}  "
+              + ("**B**" if ok else ""))
+    print()
+    print(f"  B = {b} of {len(results)} emitted PUT(s)")
+    print("  A row failing gate 4 with '?' was never seen by forge -- that is an")
+    print("  UNKNOWN, not a failure, and it is not counted toward B either.")
 
 
 if __name__ == "__main__":
