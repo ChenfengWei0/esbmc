@@ -55,7 +55,35 @@ def put_body(text, start):
 
 
 def forge_green(project):
-    """{test file name: True/False} from one real `forge test` run."""
+    """{test file name: True/False} from one real `forge test` run.
+
+    ⛔ A RUN THAT PRODUCED NO SUITE AT ALL IS A MEASUREMENT FAILURE, NOT A
+    COLUMN OF FALSES. It is raised here rather than returned, because every
+    caller of this function reads a missing entry as "not green" and would
+    report `B = 0` -- a number, from a run that measured nothing.
+
+    MEASURED, twice, and it is why this guard exists. WORKORDER §7 gives the
+    daily acceptance as
+
+        forge test --match-path 'bench/**/test/*.t.sol' -vv
+
+    and from the repository root that prints
+
+        Nothing to compile
+
+    and exits 0. The root is not a Foundry project -- there is no foundry.toml
+    above `bench/FeeVault` -- so forge compiles nothing, runs nothing, matches
+    nothing, and reports success. A green acceptance that inspected zero tests
+    is indistinguishable, from its exit code, from a green acceptance that
+    inspected all of them. That is the empty-set-reads-as-no-restriction shape
+    this project has already been bitten by from the other direction.
+
+    THE RULING, made here because the acceptance has to be executable: B is
+    measured PER FORGE PROJECT -- `count_b.py <project> [...]` -- and each
+    project must yield at least one suite. WORKORDER is authoritative and is not
+    edited; what is recorded is that its §7 command, run from the root, is not
+    an executable form of it.
+    """
     p = subprocess.run(["forge", "test", "-vv"], cwd=project,
                        capture_output=True, text=True, timeout=1800)
     out = p.stdout + p.stderr
@@ -67,6 +95,13 @@ def forge_green(project):
         m = re.match(r"Suite result: (\w+)\.", line.strip())
         if m:
             res[cur] = (m.group(1) == "ok")
+    if not res:
+        raise SystemExit(
+            f"FATAL: `forge test` in {project} produced NO suite result at "
+            f"all, so gate 4 was not measured for any file. This is a failure "
+            f"of the RUN, and it must not be reported as `B = 0` -- an "
+            f"un-run gate and a failed gate are different facts. forge said:\n"
+            + out)
     return res, out
 
 
