@@ -1882,22 +1882,25 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         # a GREEN test whose header says it asserts the exit kind, over a body
         # that tolerates any outcome, is a gate that can never fire while
         # reading exactly like one that can.
+        headline, why = no_oracle_reason(ladder_rows)
         if exit_kind_asserted(
                 list(body[:call_i]) + [new_call] + list(body[call_i + 1:])):
-            out.append(f"  // ORACLE: none emitted (see the run's report); the "
-                       f"exit-kind")
-            out.append(f"  // expectation below is still an assertion.")
+            out.append(f"  // ORACLE: none emitted -- {headline}:")
+            out.append(f"  // {why}.")
+            out.append(f"  // The exit-kind expectation below is still an "
+                       f"assertion.")
         else:
-            out.append(f"  // ORACLE: NONE, AND NEITHER IS THE EXIT KIND. Not "
-                       f"one rung HOLDS over")
-            out.append(f"  // the certified region, and the emitter could not "
-                       f"confirm this path's")
-            out.append(f"  // exit, so the call below is REVERT-TOLERANT "
-                       f"(`try {{}} catch {{}}`). This")
-            out.append(f"  // PUT walks the path and checks NOTHING: it is "
-                       f"GREEN whatever the call")
-            out.append(f"  // does, including reverting. It is a reachability "
-                       f"witness, not a test.")
+            out.append(f"  // ORACLE: NONE, AND NEITHER IS THE EXIT KIND. "
+                       f"{headline}:")
+            out.append(f"  // {why},")
+            out.append(f"  // and the emitter could not confirm this path's "
+                       f"exit, so the call below")
+            out.append(f"  // is REVERT-TOLERANT (`try {{}} catch {{}}`). This "
+                       f"PUT walks the path and")
+            out.append(f"  // checks NOTHING: it is GREEN whatever the call "
+                       f"does, including")
+            out.append(f"  // reverting. It is a reachability witness, not a "
+                       f"test.")
     for s in oracle_skipped:
         out.append(f"  //   rung DROPPED: {s}")
     for s in state_skipped:
@@ -1962,6 +1965,51 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              "state_stored": stored, "state_skipped": state_skipped,
              "env_unchecked": env_unchecked}
     return out, stats
+
+
+def no_oracle_reason(ladder_rows):
+    """(headline, detail) for a PUT that renders no assertion.
+
+    TWO REASONS, AND THEY WERE BEING REPORTED AS ONE. The header said "Not one
+    rung HOLDS over the certified region" whenever zero assertions were
+    RENDERED, and rendering is downstream of holding: a rung that HOLDS is
+    dropped when its variable has no storage slot (a constant/immutable, where
+    the assertion would be a compile-time tautology), when its shape has no
+    renderer, or when a mapping key cannot be expressed in the test.
+
+    MEASURED on aqua `dock` enc=12, which is what exposed it. The ladder came
+    back 3 HOLDS / 3 REFUTED --
+
+      _DOCKED: post == pre  HOLDS      _DOCKED: post != pre  REFUTED
+      _DOCKED: post >= pre  HOLDS      _DOCKED: post > pre   REFUTED
+      _DOCKED: post <= pre  HOLDS      _DOCKED: post < pre   REFUTED
+
+    -- and all three HOLDS were then dropped because solc's layout does not
+    list `_DOCKED`. The emitted file nonetheless said not one rung holds, which
+    is false, and it is false in the direction that HIDES WORK THAT SUCCEEDED:
+    "the prover found nothing" and "the prover found three things this emitter
+    cannot render" call for opposite next actions -- more budget in the first
+    case, a renderer in the second.
+
+    That is the same defect this file just removed one layer up (a header
+    claiming an assertion over a body that asserts nothing), found while
+    verifying that fix. The `retlive` witness is excluded from the count on
+    purpose: a HOLDS there means NO execution reached a return, so counting it
+    as a rung that held would report the absence of a return value as a
+    rendering failure.
+    """
+    held = [(v, t) for v, t, d in ladder_rows
+            if d == "HOLDS"
+            and not (v == RETURN_VAR and t.startswith(RETLIVE_PREFIX))]
+    if held:
+        return ("EVERY RUNG THAT HOLDS WAS DROPPED",
+                f"{len(held)} rung(s) HOLD over the certified region and not "
+                f"one could be rendered as an assertion -- the reason for each "
+                f"is on a `rung DROPPED` line below. This is NOT 'the region "
+                f"supports no oracle'")
+    return ("NOT ONE RUNG HOLDS",
+            "no candidate held over the certified region, so there is nothing "
+            "to render")
 
 
 def exit_kind_asserted(body_lines):

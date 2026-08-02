@@ -58,7 +58,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                build_put, check_esbmc_args, cell_of,
-                               exit_kind_asserted,
+                               exit_kind_asserted, no_oracle_reason,
                                truncated_loops, unwindset_args)
 
 
@@ -1000,9 +1000,101 @@ def test_an_asserted_body_still_counts_as_an_assertion():
     return bad
 
 
+def test_dropped_rungs_are_not_reported_as_no_rung_holding():
+    """MUST FLIP. "Not one rung HOLDS" was printed whenever zero assertions were
+    RENDERED, and rendering is downstream of holding.
+
+    MEASURED on aqua `dock` enc=12, which is what exposed it: the ladder came
+    back 3 HOLDS / 3 REFUTED on `_DOCKED`, all three HOLDS were then dropped
+    because solc's layout does not list `_DOCKED` (a constant/immutable, where
+    the assertion would be a compile-time tautology), and the emitted file said
+    not one rung holds.
+
+    The direction of the error is what makes it worth a test: it HIDES WORK
+    THAT SUCCEEDED. "the prover found nothing" and "the prover found three
+    things this emitter cannot render" call for opposite next actions.
+    """
+    em, case = make_case()
+    notes = []
+    dock_ladder = [("_DOCKED", "post == pre", "HOLDS"),
+                   ("_DOCKED", "post != pre", "REFUTED"),
+                   ("_DOCKED", "post >= pre", "HOLDS"),
+                   ("_DOCKED", "post <= pre", "HOLDS"),
+                   ("_DOCKED", "post > pre", "REFUTED"),
+                   ("_DOCKED", "post < pre", "REFUTED")]
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=dock_ladder, notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(stats["asserts"] == 0,
+                 f"the fixture reproduces the zero-oracle case: "
+                 f"{stats['asserts']}")
+    bad += check("EVERY RUNG THAT HOLDS WAS DROPPED" in text,
+                 "the header says the rungs held and could not be rendered")
+    bad += check("NOT ONE RUNG HOLDS" not in text,
+                 "and does NOT claim nothing held")
+    bad += check("3 rung(s) HOLD" in text,
+                 f"the count is the number that HELD, not the number of rows")
+    bad += check(any("_DOCKED" in s and "compile-time tautology" in s
+                     for s in stats["oracle_skipped"]),
+                 f"the per-rung reason is still printed: "
+                 f"{stats['oracle_skipped']}")
+    return bad
+
+
+def test_a_ladder_where_nothing_held_still_says_so():
+    """THE NEGATIVE CONTROL. If the headline were hard-wired to the dropped
+    wording it would pass the case above and be wrong on every genuinely empty
+    ladder -- which is the more common one. Same unit, same layout, only the
+    verdicts change."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT,
+        ladder_rows=[("owner", "post != pre", "REFUTED"),
+                     ("owner", "post > pre", "REFUTED")],
+        notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(stats["asserts"] == 0, "no assertion is rendered")
+    bad += check("NOT ONE RUNG HOLDS" in text,
+                 "an all-REFUTED ladder says nothing held")
+    bad += check("EVERY RUNG THAT HOLDS WAS DROPPED" not in text,
+                 "and does not claim rungs were dropped")
+    return bad
+
+
+def test_the_retlive_witness_is_not_counted_as_a_rung_that_held():
+    """`retlive` HOLDS means NO execution reached a return, so counting it would
+    report the ABSENCE of a return value as a rendering failure -- and would
+    print "1 rung(s) HOLD" for a ladder in which nothing useful held."""
+    bad = 0
+    h, _w = no_oracle_reason([("return", RETLIVE, "HOLDS")])
+    bad += check(h == "NOT ONE RUNG HOLDS",
+                 f"a lone retlive HOLDS is not a rung that held: {h}")
+    h, _w = no_oracle_reason([("return", RETLIVE, "HOLDS"),
+                              ("bal", "post == pre", "HOLDS")])
+    bad += check(h == "EVERY RUNG THAT HOLDS WAS DROPPED",
+                 f"but a real rung beside it still counts: {h}")
+    h, w = no_oracle_reason([("return", RETLIVE, "REFUTED"),
+                             ("bal", "post == pre", "HOLDS")])
+    bad += check("1 rung(s) HOLD" in w,
+                 f"and the count excludes the witness: {w}")
+    return bad
+
+
 def main():
     bad = 0
-    for t in (test_a_revert_tolerant_body_is_NOT_called_an_assertion,
+    for t in (test_dropped_rungs_are_not_reported_as_no_rung_holding,
+              test_a_ladder_where_nothing_held_still_says_so,
+              test_the_retlive_witness_is_not_counted_as_a_rung_that_held,
+              test_a_revert_tolerant_body_is_NOT_called_an_assertion,
               test_an_asserted_body_still_counts_as_an_assertion,
               test_both_truncation_shapes_are_read,
               test_the_ladder_widens_every_named_loop,
