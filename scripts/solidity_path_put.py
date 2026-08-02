@@ -1111,14 +1111,49 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 f"it is a constant/immutable and no test can set it)")
             continue
         slot, off, nb = layout[v]
-        if lo == hi:
-            val = str(lo)
-        else:
-            var = "s_" + v.lstrip("_")
-            sig.append(("uint256", var))
-            pre_lines += bound_lines(var, "uint", 256, lo, hi,
-                                     sorted(holes.get(name, ())))
-            val = var
+        if lo != hi:
+            # ---- A WIDE `state.<v>` BOUND MAY NOT BECOME A FUZZ COORDINATE ----
+            #
+            # THE ENTRY STATE IS NEVER HAVOC'D, and the tool says so in its own
+            # words on every run: the ladder's summary line ends "HOLDS is
+            # BOUNDED-holds: true for every input of the region under THIS
+            # exploration (tx/unwind bound, POST-CONSTRUCTOR ENTRY STATE)". So a
+            # region bound on a state variable is ASSUMED against a value the
+            # constructor already fixed. When the bound spans the whole type --
+            # and `state.tag in [0, 2^256-1]` is exactly that -- the assume
+            # constrains NOTHING, and the rung was proved about ONE entry state.
+            #
+            # Lifting it into a fuzz parameter and establishing it with
+            # `vm.store` explores 2^256 entry states the query never saw. That
+            # is not a weaker test, it is a WRONG one, and it produced the
+            # outcome this pipeline exists never to produce -- a PUT that is RED
+            # on the unmodified contract:
+            #
+            #   D11_Bytes32Equality.takeBytes32 path 7
+            #     ladder:  tag: post > pre   HOLDS      (pre = ctor's 0, post = 12)
+            #     emitted: s_tag = bound(s_tag, 0, 2^256-1); vm.store(tag, s_tag)
+            #     forge:   FAIL  tag: post >= pre: 12 < 75354922222753616806807...
+            #
+            # Three of the seven PoC PUTs failed this way, all with the same
+            # shape. So the bound is DROPPED and reported: the contract keeps the
+            # entry state the proof was about, and the PUT says out loud that the
+            # region claimed more than the test establishes. Yield, not
+            # soundness, is what is given up.
+            #
+            # Lifting it becomes correct the day the query havocs entry state --
+            # then the proof and the test would be about the same set. Until
+            # then, `lo == hi` is the only state bound a test may establish,
+            # because that is the one case where storing the value cannot move
+            # the entry state away from the one that was checked.
+            state_skipped.append(
+                f"{name} in [{lo}, {hi}] (width > 1, DROPPED: the entry state "
+                f"is not havoc'd, so this bound constrained nothing in the "
+                f"query -- the rungs were proved about the constructor's own "
+                f"value. Establishing a fuzz-chosen value here would test "
+                f"entry states the proof never covered, which is how this PUT "
+                f"came back RED on the unmodified contract)")
+            continue
+        val = str(lo)
         store_lines += slot_write_lines("address(c0)", slot, off, nb, val)
         stored.append(f"{name} := {val}")
 

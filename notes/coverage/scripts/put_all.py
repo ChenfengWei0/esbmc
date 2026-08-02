@@ -180,7 +180,32 @@ def main():
         else:
             flat_name, contract = BENCHES[bench]
             flat = os.path.join(INPUTS, flat_name)
-        ast = flat + ".solast"
+        # ---- TWO AST NAMING CONVENTIONS, AND ONLY ONE IS RIGHT PER SOURCE ----
+        #
+        # The corpus flats are named `<x>.flat.sol` and their AST is generated
+        # ALONGSIDE as `<x>.flat.sol.solast` -- suffix APPENDED. The PoC set uses
+        # `Path.with_suffix('.solast')` (certify_poc.py), i.e. the extension is
+        # REPLACED: `D09_ValueGate.solast`, not `D09_ValueGate.sol.solast`.
+        #
+        # Appending for both cost the entire first PoC stage-4 sweep: all seven
+        # certified regions came back `exit=6 0.0s emitted=[]`, which reads like
+        # an emitter that produced nothing and is actually
+        #
+        #     ERROR: failed to open input file .../D09_ValueGate.sol.solast
+        #
+        # -- esbmc dying on the command line before it verified anything. The
+        # refusal message the driver prints for that outcome ("This is an
+        # EMISSION outcome, not a property of the region") is correct and was
+        # still misleading, because the emission never ran.
+        #
+        # The PoC branch follows certify_poc.py's convention rather than
+        # inventing a third: whichever file stage 2 generated is the one stage 4
+        # must read, or the two stages are looking at different ASTs.
+        ast = (os.path.splitext(flat)[0] + ".solast") if is_poc \
+            else (flat + ".solast")
+        if not os.path.exists(ast):
+            print(f"  SKIP {bench}.{unit} enc={enc}: no AST at {ast}")
+            continue
         region, holes, pins = parse_certified(text)
         if not region and not pins:
             print(f"  SKIP {bench}.{unit} enc={enc}: the recorded region "
