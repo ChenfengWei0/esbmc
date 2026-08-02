@@ -398,9 +398,48 @@ def main():
                          "limit would turn a scheduling decision into a "
                          "measurement change -- units would start dying of the "
                          "limit instead of the problem.")
+    # ---- THE TWO FLAGS THAT MAKE AN ARM RECORDABLE INSTEAD OF HAND-RUN ----
+    #
+    # MEASURED, and it is why these exist: the four
+    # `FarmingPoolCovTest_FarmingPool_transfer_put*.t.sol` on disk are green under
+    # forge at `runs: 256`, and NO cert file contains a row for unit `transfer` --
+    # all three sweeps were walked row by row and each reports "no row for unit
+    # 'transfer'". Those regions came from `solidity_path_generalise.py` run by
+    # hand with `--env-coord msg.sender`, because this sweep had no way to pass
+    # that flag. The artefact survived; the input that produced it did not, so
+    # "B = 4" could not be re-derived by re-running anything.
+    #
+    # That is the failure `put_all.py --cert` was added to prevent, one stage
+    # earlier: an ARM whose results cannot be written into a file of their own is
+    # an arm that has to be hand-run, and a hand-run measurement is one nobody
+    # can repeat. Same house rule as `--cert` there -- point the sweep at its own
+    # input and its own output, and record the flag ON EVERY ROW so two arms can
+    # never be summed by accident.
+    ap.add_argument("--env-coord", default=None,
+                    help="passed to the driver: promote ONE environment quantity "
+                         "(e.g. msg.sender, block.timestamp) to a FREE coordinate "
+                         "instead of a pin. Recorded on every row, because a "
+                         "region certified with an environment coordinate free is "
+                         "a different statement from one certified with it "
+                         "pinned, and the two must never share a table. ⚠ Use "
+                         "--out to give this arm its OWN file: writing it into "
+                         "results.jsonl would put two arms under one "
+                         "(benchmark, unit) key.")
+    ap.add_argument("--unit", action="append", default=[],
+                    help="sweep only these unit names (repeatable). Without it "
+                         "the whole benchmark is swept, which for a re-measure of "
+                         "ONE unit means paying for every other unit first and "
+                         "risking the budget before reaching it.")
     ap.add_argument("--redo", action="store_true")
     ap.add_argument("--workdir", default="/tmp/certify_all")
     args = ap.parse_args()
+
+    # A --unit that matches nothing must FAIL, not sweep everything. R8: iterate
+    # the EXPECTED names, not the found ones; a typo that silently widens the
+    # sweep back to the whole benchmark is the "missing input silently rewrites
+    # the scope" shape -- an empty filter reads as "no restriction" when it means
+    # "the restriction was lost".
+    want_units = set(args.unit)
 
     names = args.benchmarks or [b for b in BENCHMARKS if b != "st1inch_St1inch"]
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
@@ -522,6 +561,20 @@ def main():
             continue
         pairs, killed_in_roundtrip = got
         units = [m for _, m in pairs]
+        if want_units:
+            missing = sorted(want_units - set(units))
+            if missing:
+                # HARD FAIL on a name that is not there. Dropping it would sweep
+                # the units that DID match and print a table that looks complete,
+                # which is how a scope silently becomes a different scope.
+                print(f"[sweep] {bench}: --unit named {missing}, which the "
+                      f"round-trip's emit.jsonl does not list. Its units are: "
+                      f"{', '.join(units)}. Refusing rather than sweeping the "
+                      f"subset that happened to match")
+                return 1
+            units = [u for u in units if u in want_units]
+            print(f"[sweep] {bench}: --unit restricts this sweep to "
+                  f"{len(units)} of the benchmark's units")
         print(f"[sweep] {bench}: {len(units)} unit(s) from the round-trip's "
               f"emit.jsonl: {', '.join(units)}")
         if killed_in_roundtrip:
@@ -588,6 +641,8 @@ def main():
                 cmd.append("--level0")
             if args.skip_bracket:
                 cmd.append("--skip-bracket")
+            if args.env_coord:
+                cmd += ["--env-coord", args.env_coord]
             t1 = time.time()
             # ---- KILL THE PROCESS GROUP, NOT THE CHILD ----
             #
@@ -645,6 +700,14 @@ def main():
                         # shared only a benchmark name.
                         "skip_bracket": bool(args.skip_bracket),
                         "level0": bool(args.level0),
+                        # NOT omitted when unset. `None` here means "this arm
+                        # ran with every environment quantity pinned or dropped",
+                        # which is a DIFFERENT measurement from msg.sender being
+                        # free -- and an absent key would read as "no arm
+                        # information", i.e. as the thing certify_arms.py prints
+                        # as MIXED. A recorded null is a fact; a missing field is
+                        # an unknown.
+                        "env_coord": args.env_coord,
                         "probes": args.probes,
                         "refine_rounds": args.refine_rounds,
                         "shrink_rounds": args.shrink_rounds,
