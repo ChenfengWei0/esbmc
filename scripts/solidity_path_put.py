@@ -394,11 +394,48 @@ def truncated_loops(log):
 
 
 def unwindset_args(loops, k):
-    """`--unwindset <id>:<k>` for every named loop, as a flat argv list."""
-    out = []
-    for lid, _f, _l, _fn in sorted(loops):
-        out += ["--unwindset", f"{lid}:{k}"]
-    return out
+    """ONE `--unwindset` carrying a comma-separated `<id>:<k>` list.
+
+    NOT one flag per loop, and that is MEASURED rather than stylistic:
+
+      ERROR: option '--unwindset' cannot be specified more than once
+
+    esbmc rejects the repeat outright, in 0.0s, before any analysis. So every
+    widened attempt this driver has ever made died on the command line, and the
+    retry loop in main() had never once run a widened query -- a whole feature
+    wired up, printing confident progress lines, and never connected. The
+    comma-separated form is accepted: verified on aqua `dock` with
+    `--unwindset 1:8,62:8,64:8`, whose log then shows all three loops unwinding
+    to iteration 7 and "Not unwinding ... iteration 8".
+
+    The ids are DEDUPED too. The two truncation reports name the same loop with
+    different function spellings (`dock` from one, `dock;` from the other), so
+    the union carried loop 1 and loop 62 twice.
+    """
+    ids = sorted({lid for lid, _f, _l, _fn in loops})
+    if not ids:
+        return []
+    return ["--unwindset", ",".join(f"{lid}:{k}" for lid in ids)]
+
+
+def attempt_is_usable(rows, blocker):
+    """Did a widened re-run actually produce a LADDER to read?
+
+    A separate, named predicate because the alternative -- letting the retry's
+    parse result overwrite the state unconditionally -- silently DELETED the
+    refusal it was trying to lift.
+
+    MEASURED, on aqua `dock` with --auto-unwind 3 before this existed: the
+    attempt died on the command line (exit 64, 0.0s), `parse_ladder` of an
+    error message returned `rows=[] summary=None refusal=None blocker=None`,
+    that None replaced the "truncated" blocker, the UNDECIDED-TRUNCATED gate in
+    main() therefore did NOT fire, and the driver emitted an oracle-free PUT
+    and exited 0. A crashed retry turned a correct refusal into a green run.
+
+    `blocker is None and not rows` is exactly "this run said nothing at all",
+    which is the one answer that must never be read as "nothing to object to".
+    """
+    return bool(rows) or blocker is not None
 
 
 def parse_ladder(log):
@@ -1825,18 +1862,37 @@ def main():
         print(f"[put]   auto-unwind {attempt}/{a.auto_unwind}: the tool named "
               f"loop(s) {named}; re-running with --unwindset at {k}")
         extra = unwindset_args(loops, k)
-        out2, rc2b, w2b = run_esbmc(
+        out2b, rc2b, w2b = run_esbmc(
             a.esbmc, a.sol, a.ast, a.contract, a.unit,
             ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
              "--cov-report-json"] + a.esbmc_arg + extra,
             assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
-        rows, summary, refusal, blocker = parse_ladder(out2)
+        rows_b, summary_b, refusal_b, blocker_b = parse_ladder(out2b)
+        # ---- AN ATTEMPT THAT PRODUCED NO LADDER MAY NOT REPLACE THE STATE ---
+        #
+        # See `attempt_is_usable`. Adopting unconditionally is what let a
+        # crashed retry (exit 64 on a rejected command line) overwrite
+        # blocker="truncated" with None, walk straight past the gate below, and
+        # ship an oracle-free PUT with exit 0. The refusal the retry was trying
+        # to LIFT is the thing it deleted.
+        usable = attempt_is_usable(rows_b, blocker_b)
         unwind_attempts.append({"attempt": attempt, "k": k,
                                 "loops": [list(x) for x in sorted(loops)],
                                 "shapes": shapes, "exit": rc2b,
                                 "wall_s": round(w2b, 1),
-                                "blocker_after": blocker,
-                                "rows_after": len(rows)})
+                                "adopted": usable,
+                                "blocker_after": blocker_b if usable else None,
+                                "rows_after": len(rows_b) if usable else 0})
+        if not usable:
+            print(f"[put]     exit={rc2b} {w2b:.1f}s  NO LADDER: this attempt "
+                  f"produced neither a candidate row nor a RESULT token, so it "
+                  f"is not a measurement of anything. The PREVIOUS verdict "
+                  f"stands and the widening is abandoned -- re-running at "
+                  f"{k * 2} would fail the same way. See "
+                  f"{os.path.join(assert_dir, 'run.log')}")
+            break
+        out2, rows, summary, refusal, blocker = (
+            out2b, rows_b, summary_b, refusal_b, blocker_b)
         print(f"[put]     exit={rc2b} {w2b:.1f}s  blocker={blocker} "
               f"rows={len(rows)}")
         # ⛔ NOT folded into `a.esbmc_arg`. Doing that was the first version

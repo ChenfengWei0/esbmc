@@ -56,8 +56,8 @@ import tempfile
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
-from solidity_path_put import (EmittedFile, build_put,   # noqa: E402
-                               check_esbmc_args, cell_of,
+from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
+                               build_put, check_esbmc_args, cell_of,
                                truncated_loops, unwindset_args)
 
 
@@ -440,16 +440,89 @@ def test_both_truncation_shapes_are_read():
 
 
 def test_the_ladder_widens_every_named_loop():
-    """--unwindset per named loop, and only the symex side."""
+    """ONE --unwindset naming every loop, and only the symex side.
+
+    ---- WHAT THIS TEST USED TO PIN, AND WHY THAT WAS BACKWARDS ----
+
+    It required one `--unwindset` FLAG PER LOOP:
+
+        ["--unwindset", "1:512", "--unwindset", "62:512", "--unwindset",
+         "64:512"]
+
+    That command line does not run. MEASURED, on the real binary:
+
+        ERROR: option '--unwindset' cannot be specified more than once
+
+    in 0.0s, before any analysis. So this test was green while standing behind
+    a command line esbmc rejects outright, and the whole auto-unwind path had
+    never once executed a widened query -- it printed its progress line, got
+    exit 64, and moved on. A pure-function test that pins the SHAPE of an
+    argument list can only be as good as one real invocation of it, and there
+    had not been one.
+
+    The accepted form is a single flag with a comma-separated list, verified on
+    aqua `dock`: `--unwindset 1:8,62:8,64:8` makes all three loops unwind to
+    iteration 7 and report "Not unwinding ... iteration 8".
+    """
     loops, _ = truncated_loops(TRUNC_SHAPE_1)
     got = unwindset_args(loops, 512)
-    want = ["--unwindset", "1:512", "--unwindset", "62:512",
-            "--unwindset", "64:512"]
-    bad = check(got == want, f"one --unwindset per loop, sorted: {got}")
-    bad += check("--unwind" not in got or all(
-        g != "--unwind" for g in got),
-        "the ENUMERATION bound (--unwind) is never touched: widening it would "
-        "change the goal set, i.e. what is being measured")
+    bad = check(got == ["--unwindset", "1:512,62:512,64:512"],
+                f"ONE --unwindset naming every loop: {got}")
+    bad += check(got.count("--unwindset") == 1,
+                 "the flag appears exactly once -- esbmc rejects a repeat "
+                 "outright, which is what made every previous attempt a no-op")
+    bad += check(all(g != "--unwind" for g in got),
+                 "the ENUMERATION bound (--unwind) is never touched: widening "
+                 "it would change the goal set, i.e. what is being measured")
+    # The two reports spell the same loop's function differently (`dock` and
+    # `dock;`), so the union carries duplicates. A duplicated id inside the
+    # list is not rejected by esbmc, but it is still two answers to one
+    # question written into one argument.
+    dup = [(62, "notes/x.sol", 2258, "dock"),
+           (62, "notes/x.sol", 2258, "dock;"),
+           (64, "/lib/string.c", 298, "__memset_impl")]
+    bad += check(unwindset_args(dup, 8) == ["--unwindset", "62:8,64:8"],
+                 "a loop named twice under two function spellings is widened "
+                 "ONCE")
+    # MUST NOT FIRE: no named loop means no flag at all, not `--unwindset ""`.
+    bad += check(unwindset_args([], 8) == [],
+                 "no named loop produces no flag, not an empty argument")
+    return bad
+
+
+def test_a_retry_that_produced_no_ladder_is_not_adopted():
+    """A crashed widening attempt must not overwrite the verdict it was
+    trying to lift.
+
+    THIS IS THE BRANCH THAT HAD NEVER FIRED, and its absence is what turned a
+    correct refusal into a green run. MEASURED, on aqua `dock` with
+    --auto-unwind 3 before the fix:
+
+      * the attempt died on the command line (exit 64, 0.0s);
+      * `parse_ladder` of an error message returns rows=[] blocker=None;
+      * that None replaced blocker="truncated";
+      * main()'s UNDECIDED-TRUNCATED gate therefore did not fire;
+      * the driver emitted an oracle-free PUT and exited 0.
+
+    Every one of those steps is individually reasonable, which is why the
+    predicate is named and tested rather than left inline. BOTH directions are
+    required: a predicate that always says "unusable" would freeze the ladder
+    at its first verdict and look exactly like this one from outside.
+    """
+    bad = 0
+    # UNUSABLE: the shape a rejected command line produces.
+    bad += check(attempt_is_usable([], None) is False,
+                 "no rows and no RESULT token is NOT a measurement")
+    # USABLE: a run that reached a verdict.
+    bad += check(attempt_is_usable([("bal", "post == pre", "HOLDS")], None),
+                 "a run that produced candidate rows IS adopted")
+    # USABLE: a run that still truncated -- that IS an answer, and adopting it
+    # is what lets the next attempt double k.
+    bad += check(attempt_is_usable([], "truncated"),
+                 "a run that answered UNDECIDED-TRUNCATED again IS adopted, "
+                 "so the ladder can widen further rather than stopping")
+    bad += check(attempt_is_usable([], "vacuous"),
+                 "a run that answered VACUOUS IS adopted")
     return bad
 
 
@@ -749,6 +822,7 @@ def main():
     bad = 0
     for t in (test_both_truncation_shapes_are_read,
               test_the_ladder_widens_every_named_loop,
+              test_a_retry_that_produced_no_ladder_is_not_adopted,
               test_a_widened_ladder_says_which_half_it_applies_to,
               test_the_cell_is_named_and_an_unsettled_one_says_so,
               test_the_emitted_test_carries_its_cell,
