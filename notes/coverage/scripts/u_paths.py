@@ -34,6 +34,37 @@ only some of them would have a complement nobody can check.
 whether a path needs a second transaction, a wider unwind, or is dead code is a
 reading of the contract, and this script's job is to make that reading cheap by
 saying exactly which paths to read.
+
+---- THE tx=2 ARM, AND THE TWO THINGS IT CORRECTED IN MY OWN ATTRIBUTION ----
+
+The attribution above was published from READING the U list. Running the whole
+funnel at --solidity-max-tx 2 tested it, and the test is clean because the
+DENOMINATOR DID NOT MOVE -- unlike the unwind experiment, `paths_total` is 332 in
+both arms, so this is a like-for-like comparison:
+
+    tx=1   paths 332 -> F 299 -> rendered 295 -> GREEN 285 of 289   RED 1
+    tx=2   paths 332 -> F 310 -> rendered 306 -> GREEN 296 of 300   RED 1
+
+Per contract, +11, and the split is exactly along the predicted causes:
+
+    RECOVERED   Tiny 6->8   Tiny3 5->7   F02_SetterFocus 9->11
+                P20_Tx2Attribution 5->7   P09_TimeLock 5->7   P04_Chain2 7->8
+    UNCHANGED   P15_Loop 6->6   P23_LibraryUsing 6->6   (the unwind group)
+                P19_ReturnShapes 20->20                  (the extcall group)
+                D26 19->19   P16_Mapping 1->1            (unattributed / crash)
+
+CORRECTION 1. P09_TimeLock's two paths were attributed to an ENVIRONMENT guard
+(block.timestamp). They are tx-bound: tx=2 witnesses both. The environment group
+is EMPTY, not two.
+
+CORRECTION 2. P04_Chain2 was counted as two tx-bound paths; only ONE recovers at
+tx=2. `use:path:15` sits behind a chain that needs THREE transactions
+(open -> fund -> use), so it is tx-bound at a bound this arm did not reach.
+
+So the corrected split of the 26 `bounded-holds` is 11 tx-bound (not 10), 12
+unwind-bound, 1 external-call return, 1 needing tx>=3, 1 unattributed -- and 0
+environment. The published number was wrong in the direction that made the tool
+look worse on the environment axis and better on the transaction axis.
 """
 
 import argparse
