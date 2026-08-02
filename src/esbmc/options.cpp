@@ -1089,6 +1089,19 @@ const struct group_opt_templ all_cmd_options[] = {
       "`Path Status: F 0, I 0, U 8`, tripping the tool's own invariant because a "
       "witnessed path had been filed as undecided with no reason token. Ignored "
       "without --solidity-path-coverage"},
+     {"path-cov-max-claim-solves",
+      boost::program_options::value<int>()->value_name("N"),
+      "Override how many times ONE claim key may be handed to the solver under "
+      "--solidity-path-coverage (default: the transaction bound, since one "
+      "assert instruction is reached at most once per transaction). Exceeding "
+      "it aborts: a higher count means the same claim is instrumented at more "
+      "than one site, so the path gets several independent chances to be "
+      "witnessed and every figure published about it is the result of all of "
+      "them. It exists so the REFUSAL can be exercised -- with a sound "
+      "instrumentation the ceiling is never reached, so a check armed only "
+      "from the transaction count could never be shown to fire, and this pass "
+      "has already shipped a guard that was always true and a function that "
+      "was never called"},
      {"double-assign-check",
       NULL,
       "Check for duplicate SSA symbol assignments"},

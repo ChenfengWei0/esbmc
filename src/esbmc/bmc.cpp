@@ -65,6 +65,69 @@ std::mutex goto_functionst::reached_mul_claims_mutex;
 std::set<std::string> goto_functionst::truncated_loops;
 std::mutex goto_functionst::truncated_loops_mutex;
 
+// ---- HOW OFTEN ONE CLAIM KEY WAS DECIDED, AND WHETHER IT CHANGED ITS MIND ----
+//
+// File-local for the same reason as the block above: the counting happens in
+// multi_property_check's job loop and the printing in report_coverage, both in
+// this file, and nothing else reads them.
+//
+// `Verdicts Preserved` already watches ONE direction -- a decision replaced by
+// a non-decision. Its own header says a non-zero value "also means the same
+// claim key was solved more than once". The converse is false, and that is the
+// hole: MEASURED on notes/coverage/poc/P28_MapMin.sol, --solidity-max-tx 2,
+// 4 instrumented paths and 8 VCCs, the key `take:path:15` was solved twice and
+// got BOTH verdicts --
+//
+//     take:path:15   solved 2x   verdicts PASSED then FAILED
+//     Verdicts Preserved: 0
+//
+// -- while the counter that is supposed to notice read zero, because the second
+// solve DID return a verdict. A decision was contradicted and nothing recorded
+// it.
+//
+// WHY THAT PARTICULAR CONTRADICTION IS NOT AN ERROR. The two solves are two
+// INSTANCES of one path: the transaction body is emitted once per transaction,
+// so the same assert instruction is reached once per transaction, and a path
+// guarded by state that only an earlier transaction can establish holds in tx 1
+// and is refuted in tx 2. The path's verdict is the DISJUNCTION over its
+// instances, which is exactly what the existing rule computes (F is final, and
+// P upgrades to F). Aborting on it -- the literal reading of "one key, two
+// verdicts, therefore fatal" -- would abort every multi-transaction run for
+// doing the one thing a multi-transaction harness exists to do.
+//
+// SO THE FATAL IS THE MULTIPLICITY, NOT THE DISAGREEMENT. One key may be
+// decided at most once per transaction. More than that is not the disjunction,
+// it is the duplicate instrumentation the write site's own comment calls "a
+// SECOND defect ... not fixed here": the same claim emitted at more than one
+// site, paying for solves that buy nothing and giving one path several chances
+// to be witnessed. That is checkable against a number the run already knows.
+namespace
+{
+std::mutex path_cov_solve_count_mutex;
+std::map<std::string, size_t> path_cov_solve_count;
+// A DECIDED verdict replaced by a DIFFERENT decided verdict (today only
+// P -> F). Legitimate, and counted rather than silent: it is the event
+// `Verdicts Preserved` cannot see, and a run in which it never happens must be
+// distinguishable from one in which it happened forty times.
+std::atomic<size_t> path_cov_verdict_upgrades{0};
+// Solves of a key beyond its first. Bounded above by (transactions - 1) per
+// key when the instrumentation is sound.
+std::atomic<size_t> path_cov_extra_solves{0};
+// The largest multiplicity seen, and the key that had it. Printed so the line
+// is a measurement rather than a pass/fail.
+size_t path_cov_max_solves = 0;
+std::string path_cov_max_solves_key;
+// How many times one key MAY be decided. Set once, from the transaction bound,
+// before the job loop starts. 0 means the check is not armed (not a path
+// coverage run).
+size_t path_cov_allowed_solves = 0;
+// Where the ceiling came from. The refusal message must not say "this run
+// explores N transaction(s)" when N is an override -- that sentence would be
+// FALSE on exactly the runs the override exists to produce, and a diagnostic
+// that misstates the run is worse than none.
+std::string path_cov_allowed_solves_origin;
+} // namespace
+
 bmct::bmct(
   goto_functionst &funcs,
   optionst &opts,
@@ -1328,6 +1391,39 @@ void report_coverage(
       "returned no verdict kept its decision. Non-zero also means the same "
       "claim key was solved more than once, which is a separate defect",
       goto_coveraget::verdicts_preserved.load(std::memory_order_relaxed));
+
+    // ---- THE OTHER DIRECTION, which the line above cannot see ----
+    //
+    // `Verdicts Preserved` fires only when the LATER solve returned no verdict.
+    // A later solve that returns a DIFFERENT verdict passes it silently, and
+    // that is the common case: measured on a 20-line contract at
+    // --solidity-max-tx 2, one key was solved twice and got PASSED then FAILED
+    // while `Verdicts Preserved` read 0.
+    //
+    // Printed unconditionally, zeros included, and as three separate numbers
+    // because they answer three different questions: how much solving was
+    // repeated, how often a decision was superseded, and what the worst key
+    // was. A single "duplicates: N" would let "no duplication" and "the
+    // counter was never wired" look the same.
+    log_result(
+      "Claim Multiplicity: {} extra solve(s) beyond the first across all "
+      "keys; worst key '{}' decided {} time(s); ceiling {}; {} decided "
+      "verdict(s) superseded by a different decided verdict. Repetition is "
+      "EXPECTED and is not bounded by this run's tx/unwind: one instantiation "
+      "per transaction, one per re-entry level, and one per caller for a "
+      "public unit another unit calls internally. The path's answer is the "
+      "disjunction over them. The number to read is SUPERSEDED: non-zero means "
+      "one key's instantiations disagreed, so what this run reports for that "
+      "path depended on which was solved first",
+      path_cov_extra_solves.load(std::memory_order_relaxed),
+      path_cov_max_solves_key.empty()
+        ? std::string("(none)")
+        : prettify_solidity_expr(path_cov_max_solves_key),
+      path_cov_max_solves,
+      path_cov_allowed_solves == 0
+        ? std::string("not enforced (--path-cov-max-claim-solves unset)")
+        : std::to_string(path_cov_allowed_solves),
+      path_cov_verdict_upgrades.load(std::memory_order_relaxed));
 
     if (total == 0)
       log_result("No complete path enumerated");
@@ -3170,6 +3266,109 @@ smt_convt::resultt bmct::multi_property_check(
       if (step.is_assert() && !step.ignore)
         queued.insert(step.comment);
     goto_coveraget::claims_in_solve_loop.swap(queued);
+
+    // ---- ARM THE PER-KEY MULTIPLICITY CHECK ----
+    //
+    // The ceiling is the number of transactions the harness executes, because
+    // that is how many times one assert instruction can be reached. The rule
+    // that produces it is get_tx_bound() in the Solidity frontend: an explicit
+    // --solidity-max-tx wins, and path coverage's default is 2. `0` is NOT
+    // unbounded here -- coverage rewrites the dispatcher back-edge to a SKIP,
+    // leaving exactly one transaction -- so it maps to 1, not to "no limit".
+    //
+    // --path-cov-max-claim-solves overrides it, and exists so the REFUSAL can
+    // be exercised: with a sound instrumentation the ceiling is never reached,
+    // so a check armed only from the transaction count could never be shown to
+    // fire, and an unfireable check is the shape this pass has already shipped.
+    size_t tx = 2;
+    const std::string mt = options.get_option("solidity-max-tx");
+    if (!mt.empty())
+    {
+      const long v = std::stol(mt);
+      tx = v <= 0 ? 1 : (size_t)v;
+    }
+    // ---- THE TRANSACTION COUNT IS NOT THE WHOLE CEILING ----
+    //
+    // An external call is modelled as nondet RE-ENTRY into the contract's own
+    // dispatcher, so one instrumented assert is instantiated once per re-entry
+    // level, and the level count is `--unwind`. MEASURED on st1inch, 22 unit
+    // logs (notes/coverage/D33): the five units that call out
+    // (safeTransferFrom / safeTransfer / Address.sendValue) have a VCC/path
+    // ratio of exactly 4.00 against `--unwind 4`, while the fifteen that do not
+    // sit at 1.00. That is the documented behaviour of the re-entry model, not
+    // duplicate instrumentation, and a ceiling of `tx` alone would abort every
+    // one of those units.
+    //
+    // So the ceiling is tx x unwind: a sound upper bound on how many times one
+    // assert INSTRUCTION can be reached. It is deliberately loose. The precise
+    // duplication D33 names -- a constructor that calls a public unit, giving
+    // the unit's body two identities under one claim key -- sits well inside
+    // this bound and is NOT what this check is for; it is addressed by taking
+    // the deployment out of the unit query (--path-cov-fixture). What this
+    // catches is gross duplication, and what makes the D33 case visible is the
+    // superseded-verdict counter below, which is exactly its harm: the reported
+    // reason depends on which instantiation was solved first.
+    size_t unwind = 4;
+    const std::string uw = options.get_option("unwind");
+    if (!uw.empty())
+    {
+      const long v = std::stol(uw);
+      if (v > 0)
+        unwind = (size_t)v;
+    }
+    // ---- AND THE BOUNDS ARE STILL NOT A CEILING. NOT ENFORCED BY DEFAULT ----
+    //
+    // `tx x unwind` was the second attempt and it is also wrong, which is what
+    // decided this. MEASURED on
+    // regression/esbmc-solidity/solidity_path_cov_residual_unit_call_obstacle
+    // at `--solidity-max-tx 1 --unwind 1`, i.e. a derived ceiling of 1: the key
+    // `c:path:2` is solved TWICE and the run is legitimate. `c` is a public
+    // unit that units `a` and `b` also call internally, and the depth bound
+    // leaves those calls unexpanded, so `c`'s body is instantiated once as its
+    // own dispatched entry and once inside each caller. That is the recorded
+    // unit-body double identity (notes/coverage/D33), it is not a defect of
+    // this run, and the count it produces is NOT any of the run's bounds -- it
+    // is a property of the call graph and of which calls the depth bound
+    // expanded.
+    //
+    // So a sound ceiling is not derivable from tx and unwind, and a check that
+    // aborts on a derived one turns two green regressions red. It is therefore
+    // NOT enforced unless the caller states a ceiling explicitly with
+    // --path-cov-max-claim-solves: an assertion the caller owns, on a
+    // configuration the caller knows the shape of. The derived number is still
+    // computed and printed, as context for reading the multiplicity, and is
+    // labelled as not enforced so it cannot be mistaken for a bound that held.
+    size_t allowed = 0; // 0 = measure, do not refuse
+    const size_t derived_ceiling = tx * unwind;
+    std::string origin =
+      "this run explores " + std::to_string(tx) + " transaction(s) at unwind " +
+      std::to_string(unwind) +
+      ", but neither bounds how often one assert instruction is instantiated: "
+      "a public unit called internally by another unit is instantiated once "
+      "per caller as well";
+    const std::string cap = options.get_option("path-cov-max-claim-solves");
+    if (!cap.empty())
+    {
+      allowed = (size_t)std::stoul(cap);
+      origin = "--path-cov-max-claim-solves set the ceiling to " +
+               std::to_string(allowed) +
+               "; nothing is enforced without it, because tx x unwind (" +
+               std::to_string(derived_ceiling) +
+               " here) is not a bound on instantiations";
+      log_status(
+        "--path-cov-max-claim-solves {}: one claim key may be decided at most "
+        "{} time(s) this run, and the run is REFUSED beyond that. Without this "
+        "option nothing is enforced: tx {} x unwind {} = {} is context, not a "
+        "bound -- a public unit called internally by another unit is "
+        "instantiated once per caller too",
+        allowed,
+        allowed,
+        tx,
+        unwind,
+        derived_ceiling);
+    }
+    path_cov_allowed_solves = allowed;
+    path_cov_allowed_solves_origin = origin;
   }
 
   // Reorder so user-source claims solve before c2goto/library claims. Walk
@@ -3613,6 +3812,50 @@ smt_convt::resultt bmct::multi_property_check(
       // the numbers right; fixing the duplication also makes them cheaper. They
       // are separate, and folding them into one change would leave neither
       // testable on its own.
+      // ---- HOW MANY TIMES HAS THIS KEY BEEN DECIDED? ----
+      //
+      // Counted before the verdict is merged, so the count is of SOLVES and not
+      // of changes: a key solved three times with the same answer each time is
+      // still duplicate work, and a rule that only noticed disagreements would
+      // report it as clean.
+      //
+      // The ceiling is the transaction bound: the transaction body is emitted
+      // once per transaction, so one assert instruction is reached at most once
+      // per transaction. Exceeding it means the claim is instrumented at more
+      // than one site -- the duplicate instrumentation the comment below calls
+      // a second defect -- and that is fatal rather than counted, because every
+      // number this run publishes about that path is then the result of several
+      // independent chances to witness it.
+      {
+        std::lock_guard lk(path_cov_solve_count_mutex);
+        const size_t n = ++path_cov_solve_count[claim_sig];
+        if (n > 1)
+          path_cov_extra_solves.fetch_add(1, std::memory_order_relaxed);
+        if (n > path_cov_max_solves)
+        {
+          path_cov_max_solves = n;
+          path_cov_max_solves_key = claim_sig;
+        }
+        if (path_cov_allowed_solves > 0 && n > path_cov_allowed_solves)
+        {
+          log_error(
+            "--solidity-path-coverage: INTERNAL DEFECT — claim key '{}' has "
+            "now been handed to the solver {} times, and at most {} is "
+            "allowed ({}). One assert instruction is reached at most once "
+            "per transaction, so a higher count means the SAME claim is "
+            "instrumented at more than one site. That is not a cost problem: "
+            "the path gets several independent chances to be witnessed and "
+            "every figure published about it is the result of all of them. "
+            "Refusing rather than reporting, because a coverage number "
+            "computed from duplicated claims cannot be corrected afterwards",
+            prettify_solidity_expr(claim_sig),
+            n,
+            path_cov_allowed_solves,
+            path_cov_allowed_solves_origin);
+          abort();
+        }
+      }
+
       auto it_o = goto_coveraget::claim_outcome.find(claim_sig);
       if (it_o == goto_coveraget::claim_outcome.end())
         goto_coveraget::claim_outcome.emplace(claim_sig, verdict);
@@ -3630,7 +3873,19 @@ smt_convt::resultt bmct::multi_property_check(
           1, std::memory_order_relaxed);
       }
       else
+      {
+        // A DECIDED verdict is being replaced by a DIFFERENT decided one -- in
+        // practice only P -> F, the legitimate upgrade: this path holds in one
+        // transaction and is refuted in a later one, and the path's answer is
+        // the disjunction. Counted here because it is precisely the event
+        // `Verdicts Preserved` cannot observe (that counter fires only when the
+        // later solve returns NO verdict), and because a silent overwrite and a
+        // reasoned upgrade look identical from outside.
+        if (
+          (it_o->second == 'P' || it_o->second == 'F') && verdict != it_o->second)
+          path_cov_verdict_upgrades.fetch_add(1, std::memory_order_relaxed);
         it_o->second = verdict;
+      }
     }
 
     // This claim now HAS a verdict. Counted here rather than at the bottom of
