@@ -29,6 +29,12 @@ REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 NOTES = os.path.abspath(os.path.join(HERE, "..", ".."))
 INPUTS = os.path.join(NOTES, "coverage", "inputs")
 CERT = os.path.join(NOTES, "coverage", "certify", "results.jsonl")
+# The PoC set's own stage-2 sweep. Two files rather than one because they are
+# two different questions: on a real contract "not certified" mixes the
+# method's limits with the contract's difficulty, while a PoC is one shape and
+# nothing else. Which file a row came from therefore travels with the row.
+POC_CERT = os.path.join(NOTES, "coverage", "certify", "poc_results.jsonl")
+POC_SRC = os.path.join(NOTES, "coverage", "poc")
 OUT = os.path.join(NOTES, "coverage", "put_roundtrip")
 ESBMC = os.path.join(REPO, "build", "src", "esbmc", "esbmc")
 PUT = os.path.join(REPO, "scripts", "solidity_path_put.py")
@@ -82,8 +88,19 @@ def parse_certified(text):
     return region, holes, pins
 
 
-def ensure_project(bench, flat):
-    proj = os.path.join(OUT, bench)
+def ensure_project(name, flat, shared=None):
+    """The forge project a PUT is written into.
+
+    `shared` names ONE project every source is copied into, instead of one
+    project per source. The corpus keeps a project per benchmark, because a
+    benchmark's flat is 70-180 KB and compiling four of them for every test run
+    is the cost of a mistake. The PoC set is the opposite case: 35 contracts of
+    ~1-8 KB whose whole point is to be measured TOGETHER, and one project means
+    ONE `forge test` produces the whole table rather than 35 that have to be
+    added up by hand -- and a total added up by hand is a total nobody can
+    re-run.
+    """
+    proj = os.path.join(OUT, shared or name)
     for d in ("src", "test", "lib"):
         os.makedirs(os.path.join(proj, d), exist_ok=True)
     with open(os.path.join(proj, "foundry.toml"), "w") as f:
@@ -107,33 +124,62 @@ def main():
                          "Default `focus`, which with --max-tx 1 is the GATE "
                          "cell -- the one every PUT in this directory was "
                          "produced in before it was an argument.")
+    ap.add_argument("--poc", action="store_true",
+                    help="read the PoC SET's stage-2 sweep "
+                         "(certify/poc_results.jsonl) instead of the corpus's, "
+                         "and write every PUT into ONE shared forge project so "
+                         "a single `forge test` produces the whole table. The "
+                         "two sweeps answer different questions and their rows "
+                         "must never share a table: on a real contract 'not "
+                         "certified' mixes the method's limits with the "
+                         "contract's difficulty, while a PoC is one shape.")
     ap.add_argument("--max-tx", type=int, default=1)
     ap.add_argument("--auto-unwind", type=int, default=0,
                     help="passed to the driver: on an UNDECIDED-TRUNCATED "
                          "ladder, widen the loops the tool NAMED and retry, up "
                          "to N times. aqua `dock` is the recorded case.")
     args = ap.parse_args()
-    if not os.path.exists(CERT):
-        sys.exit(f"no certify sweep at {CERT}")
+    cert_path = POC_CERT if args.poc else CERT
+    if not os.path.exists(cert_path):
+        sys.exit(f"no certify sweep at {cert_path}")
     rows = []
-    for line in open(CERT):
+    for line in open(cert_path):
         line = line.strip()
         if not line:
             continue
         r = json.loads(line)
         if r.get("bucket") != "CERTIFIED":
             continue
+        # WHICH SWEEP A ROW CAME FROM IS READ OFF THE ROW, not off the flag.
+        # certify_poc.py keys its records on `poc`, certify_all.py on
+        # `benchmark`. Detecting it here means pointing --cert at the wrong file
+        # cannot silently produce rows resolved against the wrong sources; it
+        # produces a row this loop refuses by name.
+        key = r.get("benchmark") or r.get("poc")
+        is_poc = "poc" in r
         for enc, text in (r.get("certified") or {}).items():
-            rows.append((r["benchmark"], r["unit"], int(enc), text))
+            rows.append((key, is_poc, r["unit"], int(enc), text))
 
-    print(f"=== {len(rows)} CERTIFIED region(s) recorded by stage 2 ===")
+    print(f"=== {len(rows)} CERTIFIED region(s) recorded by stage 2 "
+          f"({os.path.basename(cert_path)}) ===")
     results = []
-    for bench, unit, enc, text in rows:
-        if bench not in BENCHES:
+    for bench, is_poc, unit, enc, text in rows:
+        if is_poc:
+            # certify_poc.py runs the driver with `--contract <stem>`, so the
+            # contract name IS the file stem; resolving it any other way would
+            # be a second convention that can disagree with the sweep's.
+            flat = os.path.join(POC_SRC, bench + ".sol")
+            contract = bench
+            if not os.path.exists(flat):
+                print(f"  SKIP {bench}.{unit} enc={enc}: no PoC source at "
+                      f"{flat}")
+                continue
+        elif bench not in BENCHES:
             print(f"  SKIP {bench}.{unit} enc={enc}: unknown benchmark key")
             continue
-        flat_name, contract = BENCHES[bench]
-        flat = os.path.join(INPUTS, flat_name)
+        else:
+            flat_name, contract = BENCHES[bench]
+            flat = os.path.join(INPUTS, flat_name)
         ast = flat + ".solast"
         region, holes, pins = parse_certified(text)
         if not region and not pins:
@@ -141,7 +187,7 @@ def main():
                   f"parsed EMPTY, which is a PARSER failure, not an empty "
                   f"region -- refusing to emit a PUT over nothing")
             continue
-        proj = ensure_project(bench, flat)
+        proj = ensure_project(bench, flat, shared="poc" if is_poc else None)
         wd = os.path.join(OUT, "_wd", f"{bench}__{unit}__{enc}")
         os.makedirs(wd, exist_ok=True)
         cmd = [sys.executable, PUT, "--esbmc", ESBMC, "--sol", flat,
