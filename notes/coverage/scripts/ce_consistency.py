@@ -119,6 +119,49 @@ def lookup(name, claim, allow_inputs=True):
     return None, None
 
 
+def written_on_this_path(name, claim):
+    """Did this path WRITE the state variable `name` before the decision?
+
+    ---- WHY A DECISION ON A WRITTEN STATE VARIABLE IS NOT JUDGEABLE ----
+
+    `entry_storage` binds the value at ENTRY. A decision that reads a state
+    variable the same path has already assigned reads a LATER version, and the
+    payload publishes no per-decision snapshot, so binding it to the entry value
+    judges a different quantity that happens to share a name.
+
+    MEASURED, and it was this checker's only DISAGREE across the whole PoC set:
+
+        contract D16_OnlyByOverflow {
+            uint256 public bal;                 // constructor sets 500
+            function add(uint256 amt) external {
+                bal += amt;                     //  <-- written HERE
+                if (bal < 500) { flag = 1; }    //  <-- decision reads the NEW bal
+            }
+        }
+
+        add:path:6   inputs {amt: 2^256-4}   entry_storage.bal 500
+                     -> bal wraps to 496, `bal < 500` is TRUE, the `if` body IS
+                        the edge taken, and the payload is CORRECT.
+
+    Evaluated against the entry 500 the guard comes out the other way, and the
+    checker reported the payload as not walking its own path -- failing the gate
+    that stands between the funnel's numbers and being quotable. The payload was
+    right and the reader was binding the wrong version: the same shape as every
+    other reader-side defect in this tree.
+
+    ⚠ ONE-SIDED, AND THAT IS DELIBERATE. `entry != final` PROVES the variable was
+    written, so refusing there is sound. `entry == final` does NOT prove it was
+    never written -- a path may write it and write it back -- so this returns
+    False there and the decision is still judged. The refusal covers the case we
+    can establish, and does not pretend to cover the one we cannot.
+    """
+    entry = claim.get("entry_storage") or {}
+    final = claim.get("final_state") or {}
+    if name not in entry or name not in final:
+        return False
+    return str(entry[name]) != str(final[name])
+
+
 def evaluate(pred, claim, allow_inputs=True):
     """Return (True/False, None) if decidable, else (None, reason)."""
     core, nots = strip_nots(pred)
@@ -133,21 +176,26 @@ def evaluate(pred, claim, allow_inputs=True):
             op = FLIP[op]
         else:
             name, op, lit = m.group(1), m.group(2), m.group(3)
-        val, _ = lookup(name, claim, allow_inputs)
+        val, where = lookup(name, claim, allow_inputs)
         if val is None:
             return None, f"payload does not bind `{name}`"
+        if where == "entry_storage" and written_on_this_path(name, claim):
+            return None, f"state variable `{name}` is written on this path"
         rhs = as_int(lit)
     else:
         m = CMP_NN.match(core)
         if not m:
             return None, f"unparsed predicate `{core}`"
         ln, op, rn = m.group(1), m.group(2), m.group(3)
-        val, _ = lookup(ln, claim, allow_inputs)
-        rhs, _ = lookup(rn, claim, allow_inputs)
+        val, lwhere = lookup(ln, claim, allow_inputs)
+        rhs, rwhere = lookup(rn, claim, allow_inputs)
         if val is None:
             return None, f"payload does not bind `{ln}`"
         if rhs is None:
             return None, f"payload does not bind `{rn}`"
+        for nm, wh in ((ln, lwhere), (rn, rwhere)):
+            if wh == "entry_storage" and written_on_this_path(nm, claim):
+                return None, f"state variable `{nm}` is written on this path"
     res = {"==": val == rhs, "!=": val != rhs, ">": val > rhs,
            "<": val < rhs, ">=": val >= rhs, "<=": val <= rhs}[op]
     if nots % 2:
@@ -253,6 +301,20 @@ def main():
                                   "report publishes no argument mapping, so "
                                   "this checker cannot bind it and must not "
                                   "guess from the caller's payload")
+                    elif why and why.startswith("state variable"):
+                        # ITS OWN BUCKET, because it is a different fact from
+                        # every other refusal here: the payload DOES bind the
+                        # name, and binds it correctly -- for ENTRY. The
+                        # decision reads a later version and the report
+                        # publishes no per-decision snapshot. Folded into
+                        # "payload does not bind", a fix that made the report
+                        # publish those snapshots would be invisible.
+                        note_skip("the decision reads a state variable this "
+                                  "path WRITES before it; `entry_storage` "
+                                  "binds the entry version and the report "
+                                  "publishes no per-decision snapshot, so this "
+                                  "checker cannot bind the version the guard "
+                                  "sees")
                     elif why and why.startswith("payload does not bind"):
                         note_skip("payload does not bind a name the decision "
                                   "reads")

@@ -189,6 +189,31 @@ def main():
                    "--level0", "--memlimit", a.memlimit,
                    "--timeout", str(min(a.timeout, 180)),
                    "--workdir", str(uwd)]
+            # ---- THE ENVIRONMENT IS A COORDINATE OR IT IS A HOLE ----
+            #
+            # MEASURED, and it is why the first six PoCs of this sweep all came
+            # back 0 certified / 3 not. With `--pin-env` off the certification
+            # query leaves msg.sender, block.number, block.timestamp and eleven
+            # more FREE. The refutation then returns a witness that differs from
+            # the path's counterexample ONLY on one of them --
+            //
+            #     enc=7: refuted with no single-coordinate cut available; the
+            #     witness differs on: msg.sender (path=0, witness=4294967295)
+            #     [NOT a bounded coordinate]
+            #
+            # -- and there is no coordinate to cut, so certification cannot
+            # succeed. On the paths where a bounded coordinate does exist the
+            # shrink loop halves it round after round chasing a difference that
+            # does not live there, and exits with the budget exhausted.
+            #
+            # PINNING IS NOT CHEATING and evaluation_skeleton.md says so in the
+            # locked wording: a pinned environment quantity is a coordinate with
+            # admission rate 1, and it goes into the admission-rate distribution
+            # as exactly that. What is forbidden is mixing pinned and unpinned
+            # numbers in ONE reported figure -- so this is an argument, it is
+            # recorded per record, and the two settings are never summed.
+            if a.pin_env:
+                cmd.append("--pin-env")
             t0 = time.time()
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, text=True,
