@@ -384,6 +384,125 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     return uniq, sorted(refused), extraction_caveats(witnessed)
 
 
+# ---- WHY THERE IS NO WITNESS, READ FROM THE REPORT RATHER THAN ASSUMED -------
+#
+# Every U claim carries a `u_reason`, and the two families below need OPPOSITE
+# readings. Splitting them is not presentation: one family says the run looked
+# and found nothing under its bound, the other says the run never found out.
+#
+# MEASURED, St1inch.balanceOf, the run that motivated this. The driver printed
+#
+#     no witnessed path for this unit; nothing to generalise. That is a result,
+#     not an error ... (The report was checked: it holds no F claim for any
+#     unit, so this really is the empty case and not a failed match.)
+#
+# while its own report said:
+#
+#     paths_total 3, covered 0, U 3, claims_abandoned_over_budget 2
+#     u_reason: claim-budget-exceeded 2, bounded-holds 1
+#
+# Two of the three claims were ABANDONED because each hit the per-claim solver
+# budget. Calling that "a result" is the failure-as-result pattern this file
+# names in six other places, committed by the one branch that also asserts it
+# has checked. The check it performed is real but answers a different question
+# (are there F claims for OTHER units), and its parenthetical overstates it.
+#
+# ONLY `bounded-holds` IS IN THE SECOND FAMILY, and the line is drawn there on
+# purpose. It is the one token that means the solver ANSWERED and there is no
+# witness within the bound. Every other token names something the run did not
+# do -- ran out of budget, never reached the solver, was refused at
+# instrumentation, or was never entered because of the scope the CALLER chose.
+# Those are all repairable from outside, so reporting them in the words of a
+# result hides the repair.
+U_NEVER_FOUND_OUT = {
+    "claim-budget-exceeded":
+        "the per-claim solver budget ran out (--path-cov-claim-timeout, "
+        "default 120s); the claim was abandoned, not decided",
+    "not-solved-this-run":
+        "the claim was never handed to the solver in this run",
+    "run-died-before-solving":
+        "the run died before this claim reached the solver",
+    "solver-unknown":
+        "the solver answered `unknown`",
+    "named-obstacle":
+        "instrumentation named an obstacle on this claim, so it was never put "
+        "to the solver",
+    "unit-not-entered":
+        "the dispatcher never entered this unit under the current scope, so "
+        "the path was never attempted -- a --scope/--focus outcome, i.e. a "
+        "property of the command line",
+}
+U_LOOKED_AND_FOUND_NONE = {
+    "bounded-holds":
+        "no counterexample exists WITHIN THE BOUND this run used. ⛔ That is "
+        "NOT a statement that the path is unreachable -- a deeper --max-tx or "
+        "--unwind may witness it",
+}
+
+
+def empty_enumeration_reason(cwd, unit):
+    """(fatal, text) for an enumeration that witnessed nothing.
+
+    `fatal` is True when at least one of this unit's claims was ABANDONED rather
+    than decided. The distinction is the whole point: a budget outcome must not
+    be reported in the words of a result, because every downstream reader --
+    including the corpus sweep's own tables -- counts "no witnessed path" as a
+    property of the contract.
+
+    Reads the report the enumeration just wrote, in `cwd`. Nothing is re-run and
+    nothing is inferred from the absence of a line: the per-claim `u_reason`
+    field is read directly, and it was CHECKED to be populated on a real report
+    before this was written, rather than assumed to exist.
+
+    An unreadable report, or one carrying no claim for this unit at all, is
+    itself reported as fatal-unknown rather than silently becoming the benign
+    branch -- "we could not tell" and "we looked and there was nothing" are the
+    two readings this function exists to keep apart.
+    """
+    report = os.path.join(cwd, "cov-report.json")
+    try:
+        with open(report) as f:
+            rep = json.load(f)
+    except (OSError, ValueError) as e:
+        return True, (f"and the reason CANNOT BE READ: {report} is missing or "
+                      f"unparseable ({e}). This is not the empty case -- it is "
+                      f"an unknown one")
+    mine = [c for c in rep.get("claims", []) if claim_unit(c) == unit]
+    if not mine:
+        return True, ("and the report holds NO claim for this unit at all, so "
+                      "nothing was even attempted for it. That is a scope or "
+                      "wiring question, not a property of the contract")
+    tally = {}
+    for c in mine:
+        tally[c.get("u_reason") or "(no u_reason field)"] = tally.get(
+            c.get("u_reason") or "(no u_reason field)", 0) + 1
+    abandoned = sorted(r for r in tally if r in U_NEVER_FOUND_OUT)
+    looked = sorted(r for r in tally if r in U_LOOKED_AND_FOUND_NONE)
+    unknown = sorted(r for r in tally
+                     if r not in U_NEVER_FOUND_OUT
+                     and r not in U_LOOKED_AND_FOUND_NONE)
+    lines = [f"{len(mine)} claim(s) for this unit, none witnessed:"]
+    for r in sorted(tally):
+        why = (U_NEVER_FOUND_OUT.get(r) or U_LOOKED_AND_FOUND_NONE.get(r)
+               or "this driver does not know this reason token")
+        lines.append(f"    {tally[r]}x {r} -- {why}")
+    if abandoned or unknown:
+        n = sum(tally[r] for r in abandoned + unknown)
+        head = (f"⛔ and it is NOT a result: {n} of {len(mine)} claim(s) were "
+                f"ABANDONED or left undecided rather than answered, so the "
+                f"empty witness set is an outcome of the BUDGET and the RUN, "
+                f"not a property of this unit. Raising "
+                f"--path-cov-claim-timeout, or reducing what each claim has to "
+                f"solve, changes this number. Do not record it as coverage.")
+        return True, head + "\n  " + "\n  ".join(lines)
+    head = (f"and every one of this unit's claims was DECIDED: nothing was "
+            f"abandoned. The witness set is genuinely empty for this bound and "
+            f"scope -- which is still not a reachability claim, see below.")
+    return False, head + "\n  " + "\n  ".join(lines) + (
+        "\n  " + f"(reasons in the 'looked' family: {', '.join(looked)})"
+        if looked else "")
+
+
 def state_mutability(ast_path):
     """Each state variable's Solidity mutability, read from the solc AST.
 
@@ -2751,12 +2870,21 @@ def main():
         args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
         path_function=args.path_function)
     if not paths:
-        print("[enumerate] no witnessed path for this unit; nothing to "
-              "generalise. That is a result, not an error: a path with no "
-              "counterexample has no known member of its domain to keep, so "
-              "there is nothing to grow a region around. (The report was "
-              "checked: it holds no F claim for any unit, so this really is "
-              "the empty case and not a failed match.)")
+        # ⛔ THE OLD TEXT HERE ASSERTED A RESULT AND WAS WRONG ON REAL INPUT.
+        # It said "That is a result, not an error ... (The report was checked:
+        # it holds no F claim for any unit, so this really is the empty case)".
+        # The check it referred to is `enumerate_paths`'s wiring check, which
+        # only asks whether OTHER units have F claims; it never looks at why
+        # THIS unit's claims came back U. On St1inch.balanceOf two of three
+        # claims had been abandoned at the per-claim budget and the sentence
+        # above reported that as a property of the contract.
+        fatal, why = empty_enumeration_reason(cwd, args.unit)
+        print(f"[enumerate] no witnessed path for this unit, {why}")
+        if not fatal:
+            print("  A path with no counterexample has no known member of its "
+                  "domain to keep, so there is nothing to grow a region "
+                  "around. ⛔ Still not a reachability statement: it is bounded "
+                  "by this run's --max-tx, --unwind and scope.")
         return 1
     print(f"[enumerate] {len(paths)} witnessed path(s): "
           + ", ".join(f"enc={e} depth={d}" for e, d, _ in paths))

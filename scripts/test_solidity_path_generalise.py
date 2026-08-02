@@ -61,6 +61,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       mapping_state_vars,
                                       unit_params,
                                       propose_slot_coords,
+                                      empty_enumeration_reason,
                                       brackets_for)
 
 FAILURES = []
@@ -1669,6 +1670,108 @@ check("slot-the-budget-caps-the-proposal", _c2, ["state.bal[a]"])
 check("slot-the-budget-names-what-it-cut",
       "over the --slot-coords budget" in _s2[0], True)
 os.unlink(_p4)
+
+# ---- AN EMPTY WITNESS SET IS NOT AUTOMATICALLY A RESULT ---------------------
+#
+# The driver used to print, whenever nothing was witnessed:
+#
+#   no witnessed path for this unit; nothing to generalise. That is a result,
+#   not an error ... (The report was checked: it holds no F claim for any unit,
+#   so this really is the empty case and not a failed match.)
+#
+# MEASURED on St1inch.balanceOf. The report it had just written said
+# `claims_abandoned_over_budget: 2` and carried `u_reason` values
+# `claim-budget-exceeded` twice and `bounded-holds` once -- so two of three
+# claims were never decided at all, and the sentence above reported that as a
+# property of the contract while asserting it had checked.
+#
+# The fixture below is that report's SHAPE, field for field, taken from the real
+# file rather than paraphrased -- the keys were printed off disk first, because
+# this driver has already been wired to a field (`claim["function"]`) that is
+# always empty on complete-path claims.
+
+
+def _report(tmpdir, claims):
+    with open(os.path.join(tmpdir, "cov-report.json"), "w") as f:
+        json.dump({"claims": claims, "partial": False}, f)
+    return tmpdir
+
+
+def _claim(pid, reason, unit="balanceOf"):
+    return {"condition": f"{unit}:path:{pid}", "status": "U",
+            "path_id": pid, "path_depth": 1, "u_reason": reason,
+            "function": "", "bounded_holds": reason == "bounded-holds"}
+
+
+_d = tempfile.mkdtemp(prefix="emptyenum-")
+
+# 1. THE REAL CASE. Two abandoned, one decided -> fatal, and the text must say
+#    so in words that cannot be read as a coverage result.
+_report(_d, [_claim(2, "claim-budget-exceeded"),
+             _claim(6, "bounded-holds"),
+             _claim(7, "claim-budget-exceeded")])
+_fatal_abandon, _txt_abandon = empty_enumeration_reason(_d, "balanceOf")
+check("emptyenum-abandoned-claims-are-not-a-result", _fatal_abandon, True)
+check("emptyenum-and-it-names-the-token",
+      "claim-budget-exceeded" in _txt_abandon, True)
+check("emptyenum-and-it-counts-them",
+      "2 of 3 claim(s) were ABANDONED" in _txt_abandon, True)
+check("emptyenum-and-it-names-the-repair",
+      "--path-cov-claim-timeout" in _txt_abandon, True)
+
+# 2. THE NEGATIVE CONTROL, and it is the one that matters: with the SAME unit,
+#    the SAME count of claims and only the reason token changed, the answer must
+#    flip. Without this the check above would also pass on a function that
+#    returned True unconditionally.
+_report(_d, [_claim(2, "bounded-holds"),
+             _claim(6, "bounded-holds"),
+             _claim(7, "bounded-holds")])
+_fatal_bh, _txt_bh = empty_enumeration_reason(_d, "balanceOf")
+check("emptyenum-all-bounded-holds-IS-a-decided-outcome", _fatal_bh, False)
+check("emptyenum-the-two-branches-say-different-things",
+      _txt_abandon == _txt_bh, False)
+check("emptyenum-only-the-abandoned-branch-refuses",
+      ("NOT a result" in _txt_abandon, "NOT a result" in _txt_bh),
+      (True, False))
+# ...and even the benign branch must not be readable as "unreachable". That is
+# a WORKORDER rule, not a nicety.
+check("emptyenum-bounded-holds-still-disclaims-unreachability",
+      "NOT a statement that the path is unreachable" in _txt_bh, True)
+
+# 3. SCOPE. `unit-not-entered` means the dispatcher never called the unit, which
+#    is a property of the command line. It must land on the refusing side.
+_report(_d, [_claim(2, "unit-not-entered")])
+check("emptyenum-unit-not-entered-is-a-command-line-outcome",
+      empty_enumeration_reason(_d, "balanceOf")[0], True)
+
+# 4. A TOKEN THIS DRIVER DOES NOT KNOW fails CLOSED. The alternative -- treating
+#    an unrecognised reason as benign -- is how a new ESBMC token would silently
+#    become "no coverage here", which is the failure `verdict()` above already
+#    refuses for certification verdicts.
+_report(_d, [_claim(2, "some-token-from-a-newer-esbmc")])
+_fatal_new, _txt_new = empty_enumeration_reason(_d, "balanceOf")
+check("emptyenum-an-unknown-reason-token-fails-closed", _fatal_new, True)
+check("emptyenum-and-says-it-does-not-know-it",
+      "does not know this reason token" in _txt_new, True)
+
+# 5. NO CLAIM FOR THIS UNIT AT ALL is not the empty case either -- nothing was
+#    attempted, which is a scope or wiring question.
+_report(_d, [_claim(2, "bounded-holds", unit="someOtherUnit")])
+check("emptyenum-no-claim-for-the-unit-is-not-the-empty-case",
+      empty_enumeration_reason(_d, "balanceOf")[0], True)
+
+# 6. AN UNREADABLE REPORT must not become the benign branch. "We could not tell"
+#    and "we looked and found nothing" are the two readings this whole function
+#    exists to keep apart.
+_d_empty = tempfile.mkdtemp(prefix="emptyenum-none-")
+_fatal_missing, _txt_missing = empty_enumeration_reason(_d_empty, "balanceOf")
+check("emptyenum-a-missing-report-is-unknown-not-empty", _fatal_missing, True)
+check("emptyenum-and-says-which", "CANNOT BE READ" in _txt_missing, True)
+os.rmdir(_d_empty)
+
+for _f in os.listdir(_d):
+    os.unlink(os.path.join(_d, _f))
+os.rmdir(_d)
 
 if FAILURES:
     print("FAILED:")

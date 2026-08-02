@@ -12,8 +12,13 @@ WHAT IT MEASURES, and why each column is here rather than derived later:
   * the OUTCOME BUCKET per unit, kept apart on purpose. "certified 0 of 4" and
     "the run was killed" are different findings and collapsing them is the
     failure-as-result pattern this repository keeps running into. The buckets
-    are CERTIFIED / NOT-CERTIFIED-with-reason / NO-COORDINATE / KILLED / CRASHED,
-    and a unit lands in exactly one.
+    are CERTIFIED / NOT-CERTIFIED-with-reason / NO-COORDINATE / KILLED / CRASHED
+    / NO-PATH / NO-WITNESS-UNDECIDED / NO-WITNESS-UNKNOWN, and a unit lands in
+    exactly one. The last three were ONE bucket until St1inch.balanceOf came
+    back with two of three claims abandoned at the per-claim budget and was
+    filed as NO-PATH -- i.e. as a property of the contract. See the comment on
+    RE_NO_WITNESS_REFUSED for what that also implies about the default st1inch
+    exclusion argued below.
   * the coordinate funnel per unit -- free, pinned, refused, dropped -- read off
     the driver's own lines rather than recomputed here, so the sweep cannot
     disagree with the tool about what was measured.
@@ -77,6 +82,40 @@ RE_NOTCERT = re.compile(r"^  enc=(\d+): NOT CERTIFIED — (.*?); this path falls
 RE_PIN_FIRED = re.compile(r"^\[env\] msg\.value PINNED to 0")
 RE_PIN_PAYABLE = re.compile(r"^\[env\] msg\.value NOT pinned: this unit is PAYABLE")
 RE_PIN_UNKNOWN = re.compile(r"^\[env\] msg\.value NOT auto-pinned")
+# ---- "NO WITNESSED PATH" IS TWO DIFFERENT FINDINGS AND THIS FILE COLLAPSED
+# ---- THEM, IN THE ONE FUNCTION WHOSE DOCSTRING PROMISES IT DOES NOT ----
+#
+# `bucket()` returns NO-PATH whenever `witnessed is None`, and that is the state
+# the driver reaches for BOTH of:
+#
+#   * every claim of the unit was DECIDED and none was witnessed -- a result
+#     about this unit under this bound;
+#   * some claim was ABANDONED at the per-claim budget, or never reached the
+#     solver, or the dispatcher never entered the unit -- outcomes of the RUN
+#     and the COMMAND LINE.
+#
+# MEASURED, St1inch.balanceOf: 3 claims, 2 `claim-budget-exceeded`, 1
+# `bounded-holds`. Under the old reading that unit is a NO-PATH row, i.e. a
+# property of the contract.
+#
+# It is not hypothetical for the corpus either. THE DEFAULT EXCLUSION OF
+# st1inch, argued in the `benchmarks` help below, rests on the same collapse:
+# "all 128 of its claims are U (59 solver-unknown, 69 bounded-holds ...) so
+# there is no witnessed path for stage 2 to generalise." 59 solver-unknown is
+# the solver giving up, not a measurement of the contract -- so 59 of the 128
+# support the exclusion only under the reading this fix rejects. The help text
+# already says the claim is "worth re-checking whenever the solver side moves";
+# what it did not say is that the two halves of that 128 mean opposite things.
+#
+# The driver now prints which of the two it is, so this reads its verdict rather
+# than re-deriving one. Anchored to the driver's own prefix, same as every
+# pattern above it.
+RE_NO_WITNESS_REFUSED = re.compile(
+    r"^\[enumerate\] no witnessed path for this unit, ⛔ and it is NOT a "
+    r"result: (.*)$")
+RE_NO_WITNESS_DECIDED = re.compile(
+    r"^\[enumerate\] no witnessed path for this unit, and every one of this "
+    r"unit's claims was DECIDED")
 
 
 def binary_identity():
@@ -248,11 +287,22 @@ def parse_driver(out):
     """The driver's own report, as a record. Nothing is inferred."""
     rec = {"witnessed": None, "coords": [], "pins": None,
            "no_coordinate_reason": None, "certified": {}, "not_certified": {},
-           "msg_value_pin": "not seen"}
+           "msg_value_pin": "not seen",
+           # None means the driver printed NEITHER verdict -- an older driver,
+           # or a run that died before reaching the branch. Deliberately not
+           # defaulted to either side: a missing field is an unknown, and this
+           # sweep already makes that distinction for `env_coord`.
+           "empty_witness_verdict": None, "empty_witness_reason": None}
     for line in out.splitlines():
         m = RE_WITNESSED.match(line)
         if m:
             rec["witnessed"] = int(m.group(1))
+        m = RE_NO_WITNESS_REFUSED.match(line)
+        if m:
+            rec["empty_witness_verdict"] = "REFUSED"
+            rec["empty_witness_reason"] = m.group(1)
+        elif RE_NO_WITNESS_DECIDED.match(line):
+            rec["empty_witness_verdict"] = "DECIDED"
         if RE_PIN_FIRED.match(line):
             rec["msg_value_pin"] = "fired"
         elif RE_PIN_PAYABLE.match(line):
@@ -298,6 +348,18 @@ def bucket(rec, rc, out):
     if rec["certified"]:
         return "CERTIFIED"
     if rec["witnessed"] is None:
+        # NO-PATH is reserved for the case the driver says was DECIDED. An
+        # abandoned or undecided claim gets its own bucket, because a reader
+        # summing NO-PATH rows is counting units the method cannot address, and
+        # a unit whose claims were dropped at the budget is not one of those.
+        v = rec.get("empty_witness_verdict")
+        if v == "REFUSED":
+            return "NO-WITNESS-UNDECIDED"
+        if v is None:
+            # The driver printed neither verdict. Older records and dead runs
+            # land here, and they must not be silently promoted into NO-PATH:
+            # every NO-PATH row is supposed to mean the run answered.
+            return "NO-WITNESS-UNKNOWN"
         return "NO-PATH"
     return "NOT-CERTIFIED"
 
