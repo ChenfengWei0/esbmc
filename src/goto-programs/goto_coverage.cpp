@@ -657,6 +657,63 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
            k == path_cov_certify_nonvacuous_key;
   };
 
+  // ---- THE AUDIT AND THE SHRINK SUGGESTION MUST LOOK IN THE SAME PLACES ----
+  //
+  // This check used to be `ce->second.inputs.empty()` -- ONE of the three maps a
+  // witness can live in. `witness_of` below looks in `inputs`, `env` AND
+  // `entry_storage`, with the harvest's name normalisation (`msg.sender` is
+  // stored `msg_sender`, `state.bal` is stored `bal`). So a refutation whose
+  // witness is an ENVIRONMENT coordinate was found by the suggestion printer and
+  // NOT by the audit, and the audit aborted the run.
+  //
+  // MEASURED on FarmingPool.exit with `--env-coord msg.sender`, one run, in this
+  // order:
+  //     PUNCH SUGGESTION  ... add msg.sender != 219152383 to the box's `holes`
+  //     SHRINK SUGGESTION ... retry with msg.sender in [1, 219152382]
+  //     ERROR: INTERNAL DEFECT -- 1 certification claim(s) were REFUTED but
+  //            carry no witness input: ...exit#6694:path:8105#exit0
+  //     SIGABRT
+  // 36 of that unit's 37 paths died this way, and the run threw away the usable
+  // cut it had just printed two lines above.
+  //
+  // THE GATE IS NOT WEAKENED. What is owed is a witness naming a coordinate the
+  // BOX ACTUALLY BOUNDS -- a refutation that names nothing the box constrains is
+  // still unusable and still aborts. Only the set of places searched changes, so
+  // that the audit and the shrink agree about what "has a witness" means.
+  auto names_a_bounded_coordinate = [&](const path_ce_t &c) {
+    for (const auto &coord : path_cov_certify_box_names)
+    {
+      std::string env = coord, bare = coord;
+      for (auto &ch : env)
+        if (ch == '.')
+          ch = '_';
+      if (coord.rfind("state.", 0) == 0)
+        bare = coord.substr(6);
+      for (const auto &[n, val] : c.inputs)
+        if (n == coord || n == bare)
+          return true;
+      for (const auto &[n, val] : c.env)
+        if (n == env || n == coord)
+          return true;
+      for (const auto &[n, val] : c.entry_storage)
+        if (n == bare || n == coord)
+          return true;
+      // A struct parameter is stored ONCE under its base name, so `p.field` is
+      // named by an entry keyed `p`. Same allowance witness_of makes below; not
+      // making it here would re-create the split this comment is about, one
+      // coordinate kind over.
+      const size_t d = coord.find('.');
+      if (d != std::string::npos)
+      {
+        const std::string b0 = coord.substr(0, d);
+        for (const auto &[n, val] : c.inputs)
+          if (n == b0)
+            return true;
+      }
+    }
+    return false;
+  };
+
   std::vector<std::string> witnessless;
   {
     std::lock_guard lock(claim_outcome_mutex);
@@ -669,7 +726,7 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
       if (v == claim_outcome.end() || v->second != 'F')
         continue; // not a refutation: nothing is owed
       auto ce = path_ce.find(sig);
-      if (ce == path_ce.end() || ce->second.inputs.empty())
+      if (ce == path_ce.end() || !names_a_bounded_coordinate(ce->second))
         witnessless.push_back(key.first);
     }
   }
