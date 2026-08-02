@@ -208,6 +208,12 @@ static nlohmann::json path_ce_to_json(
   j["entry_storage"] = pairs_to_json(ce.entry_storage);
   j["final_state"] = pairs_to_json(ce.final_state);
   j["state_written_unrendered"] = ce.state_written_unrendered;
+  // BOTH halves, and both unconditionally. A carried-over `F` that lost its
+  // return value would be indistinguishable from a unit that returns nothing --
+  // the same two-ledger split this file already pays for elsewhere, one field
+  // later.
+  j["return_value"] = ce.return_value;
+  j["return_value_known"] = ce.return_value_known;
   j["entry_storage_known"] = ce.entry_storage_known;
   j["dropped_internal"] = ce.dropped_internal;
   j["sliced"] = ce.sliced;
@@ -233,6 +239,10 @@ static goto_coveraget::path_ce_t path_ce_from_json(const nlohmann::json &j)
        j.value("state_written_unrendered", nlohmann::json::array()))
     ce.state_written_unrendered.push_back(s.get<std::string>());
   ce.entry_storage_known = j.value("entry_storage_known", false);
+  ce.return_value = j.value("return_value", std::string());
+  // Defaults FALSE: a file written by a build that did not persist this field
+  // must come back "unknown", never "this unit returns nothing".
+  ce.return_value_known = j.value("return_value_known", false);
   ce.dropped_internal = j.value("dropped_internal", (size_t)0);
   ce.sliced = j.value("sliced", true);
   ce.compact_trace = j.value("compact_trace", true);
@@ -5320,6 +5330,139 @@ void goto_coveraget::solidity_path_coverage()
       }
     }
 
+    // ---- MATERIALISE THE UNIT'S OWN RETURN VALUE ----
+    //
+    // MEASURED before this existed, on notes/coverage/poc/P19_ReturnShapes.sol
+    // unit `tern_lit` (GATE cell, --verbosity coverage:9): bmc.cpp's harvest
+    // classified 208 assignments and NOT ONE was the unit's return. The reason
+    // is visible in the goto dump: the dispatcher calls a unit with NO lvalue
+    // (`FUNCTION_CALL: tern_lit(&obj, NONDET, NONDET)`) and the RETURN carries
+    // an EXPRESSION, never a write to a symbol. So the value does not exist as
+    // an assignment anywhere -- the rival explanation, "it is written but after
+    // the harvest's break", is refuted by the same dump.
+    //
+    // A SEPARATE PASS, not a branch inside the Phase-1 loop above. That loop's
+    // insertion ORDER is what pairs each snapshot with the DFS fan-out, and
+    // interleaving another insertion with it would be a change to the decision
+    // accounting rather than to the payload.
+    //
+    // ORDERING IS THE WHOLE POINT AND IT IS NOT INCIDENTAL. This pass inserts
+    // immediately before the RETURN; Phase 2 then inserts this path's asserts
+    // immediately before the RETURN as well, so the final order is
+    // ASSIGN, ASSERT(s), RETURN -- verified against the dump above, where the
+    // Phase-1 tr/cnt updates likewise sit in front of the Phase-2 asserts. It
+    // has to be this way round: bmc.cpp's harvest STOPS at this path's own
+    // assert, so a write placed after it would never be seen. That is exactly
+    // why binding the value at the call site instead would not have been enough.
+    //
+    // THIS ADDS NO DECISION. The inserted ASSIGN carries property("skipped")
+    // like every other ghost write here, the DFS does not fan out on it, and no
+    // `enc` or depth changes -- so DECISION_SET_VERSION must NOT be bumped for
+    // it (bumping would discard every existing covered set for nothing). The
+    // check that this held is that the enumerated path count is unchanged.
+    //
+    // SCALARS ONLY, deliberately. A tuple / struct / dynamic return has no single
+    // renderable value; the ghost is simply not created, `return_value_known`
+    // stays false, and the report says the value is UNKNOWN rather than claiming
+    // the unit returns nothing.
+    // TWO ghosts, not one, and the second is not optional. MEASURED with only
+    // the value ghost: `tern_lit`'s REVERT path (enc=2, which never reaches a
+    // RETURN) reported `return_value_known=true, return_value="0"` -- the entry
+    // initialisation, published as if the unit had returned it. "Was a value
+    // returned on this execution" is a runtime fact and has to be recorded at
+    // runtime; it cannot be recovered from the value, because 0 is also a
+    // perfectly good return value.
+    expr2tc ret_ghost, retset_ghost;
+    irep_idt ret_ghost_id, retset_ghost_id;
+    bool has_ret_ghost = false;
+    {
+      Forall_goto_program_instructions (rit, goto_program)
+      {
+        if (!rit->is_return() || !is_code_return2t(rit->code))
+          continue;
+        const expr2tc rv = to_code_return2t(rit->code).operand;
+        if (is_nil_expr(rv))
+          continue;
+        const type2tc rt = rv->type;
+        if (
+          !is_unsignedbv_type(rt) && !is_signedbv_type(rt) &&
+          !is_bool_type(rt))
+          continue;
+        if (!has_ret_ghost)
+        {
+          symbolt rsym;
+          rsym.type = migrate_type_back(rt);
+          rsym.name = "__ESBMC_path_ret$" + i2string(ghost_counter++);
+          rsym.id = "path_cov::" + id2string(rsym.name);
+          rsym.lvalue = true;
+          rsym.static_lifetime = false;
+          rsym.is_extern = false;
+          symbolt *prsym;
+          cov_context->move(rsym, prsym);
+          ret_ghost = symbol2tc(migrate_type(prsym->type), prsym->id);
+          ret_ghost_id = prsym->id;
+
+          symbolt ssym;
+          ssym.type = bool_typet();
+          ssym.name = "__ESBMC_path_retset$" + i2string(ghost_counter++);
+          ssym.id = "path_cov::" + id2string(ssym.name);
+          ssym.lvalue = true;
+          ssym.static_lifetime = false;
+          ssym.is_extern = false;
+          symbolt *pssym;
+          cov_context->move(ssym, pssym);
+          retset_ghost = symbol2tc(migrate_type(pssym->type), pssym->id);
+          retset_ghost_id = pssym->id;
+
+          // ---- EXEMPT BOTH FROM SLICING, OR THE WHOLE THING IS DEAD ----
+          //
+          // MEASURED, and it is why this is here rather than assumed
+          // unnecessary: with the ghosts written and correctly ordered, the
+          // report still came back `return_value_known=false` on every path,
+          // while the SAME run under --no-slice reported 20 and 10. The symex
+          // slicer works backwards from the claim, and a path claim's guard is
+          // `tr != enc || cnt != depth` -- it mentions the accumulators and
+          // nothing else. `tr`/`cnt` therefore survive for free and these two do
+          // not: nothing downstream reads them, so they are dead by the slicer's
+          // own (correct) reckoning.
+          //
+          // Registered only under `protect_ce_symbols`, the same condition the
+          // block above uses for the contract object / stores / environment, so
+          // a run that is not harvesting a payload keeps slicing exactly what it
+          // sliced before.
+          if (protect_ce_symbols)
+          {
+            config.no_slice_names.insert(ret_ghost_id.as_string());
+            config.no_slice_names.insert(retset_ghost_id.as_string());
+          }
+          has_ret_ghost = true;
+        }
+        // A unit has ONE return type, so a second RETURN of a different type
+        // means the model disagrees with the source. Cast rather than assume:
+        // an unexpected shape becomes a value to look at, not an abort.
+        goto_programt::instructiont ra;
+        ra.type = ASSIGN;
+        ra.code = code_assign2tc(
+          ret_ghost,
+          ret_ghost->type == rt ? rv : typecast2tc(ret_ghost->type, rv));
+        ra.location = rit->location;
+        ra.location.property("skipped");
+        ra.function = rit->location.get_function();
+        goto_program.insert_swap(rit++, ra);
+        --rit;
+        // Immediately after the value and before the RETURN, so the two are set
+        // by the same execution or by neither.
+        goto_programt::instructiont rf;
+        rf.type = ASSIGN;
+        rf.code = code_assign2tc(retset_ghost, gen_true_expr());
+        rf.location = rit->location;
+        rf.location.property("skipped");
+        rf.function = rit->location.get_function();
+        goto_program.insert_swap(rit++, rf);
+        --rit;
+      }
+    }
+
     // DECL tr and initialise `tr = 1` at function entry (in that order),
     // both before the original first instruction.
     {
@@ -5358,6 +5501,50 @@ void goto_coveraget::solidity_path_coverage()
       cini.function = efn;
       goto_program.insert_swap(entry++, cini);
       --entry;
+      // The return-value ghost, declared and zeroed alongside tr/cnt. The zero
+      // is NOT a value claim: a path that reverts before reaching any RETURN
+      // leaves it at 0, and `return_value_known` in the payload is the only
+      // thing that says whether a reported 0 means anything. Without the DECL
+      // the assignment above would reference an undeclared symbol.
+      if (has_ret_ghost)
+      {
+        goto_programt::instructiont rdcl;
+        rdcl.type = DECL;
+        rdcl.code = code_decl2tc(ret_ghost->type, ret_ghost_id);
+        rdcl.location = eloc;
+        rdcl.location.property("skipped");
+        rdcl.function = efn;
+        goto_program.insert_swap(entry++, rdcl);
+        --entry;
+        goto_programt::instructiont rini;
+        rini.type = ASSIGN;
+        rini.code = code_assign2tc(ret_ghost, gen_zero(ret_ghost->type));
+        rini.location = eloc;
+        rini.location.property("skipped");
+        rini.function = efn;
+        goto_program.insert_swap(entry++, rini);
+        --entry;
+        goto_programt::instructiont sdcl;
+        sdcl.type = DECL;
+        sdcl.code = code_decl2tc(retset_ghost->type, retset_ghost_id);
+        sdcl.location = eloc;
+        sdcl.location.property("skipped");
+        sdcl.function = efn;
+        goto_program.insert_swap(entry++, sdcl);
+        --entry;
+        // FALSE at entry is the whole point: a path that reverts before any
+        // RETURN keeps it false, and the harvest then publishes UNKNOWN instead
+        // of the initialisation value. Without this the revert path of
+        // P19_ReturnShapes.tern_lit reported a returned `0`.
+        goto_programt::instructiont sini;
+        sini.type = ASSIGN;
+        sini.code = code_assign2tc(retset_ghost, gen_false_expr());
+        sini.location = eloc;
+        sini.location.property("skipped");
+        sini.function = efn;
+        goto_program.insert_swap(entry++, sini);
+        --entry;
+      }
     }
 
     goto_program.compute_target_numbers();

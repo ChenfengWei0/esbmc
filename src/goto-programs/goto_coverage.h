@@ -566,6 +566,33 @@ public:
     // state AT THE REVERT POINT, not the EVM post-state (on-chain every write
     // in the reverted transaction is undone). Reported, never silently used.
     bool revert_pre_rollback = false;
+    // ---- THE UNIT'S OWN RETURN VALUE ON THIS PATH ----
+    //
+    // MEASURED before this field existed, on notes/coverage/poc/
+    // P19_ReturnShapes.sol unit `tern_lit` with --verbosity coverage:9: the
+    // harvest classified 208 assignments and NOT ONE of them was the unit's
+    // return. Every `return_value$` symbol it did see belongs to the C library
+    // (_nondet_uint, _sol_per_tx_reseed, _ESBMC_get_unique_address).
+    //
+    // The cause is not that the value is harvested and dropped for want of a
+    // bucket -- that is the extcall_returns story and it does not apply here.
+    // The value NEVER EXISTS as an assignment: the dispatcher calls a unit with
+    // no lvalue (`FUNCTION_CALL: tern_lit(&obj, NONDET, NONDET)`) and the RETURN
+    // instruction carries an EXPRESSION, not a write to any symbol. The rival
+    // explanation, "it is written but after the harvest's break", is REFUTED by
+    // the same goto dump.
+    //
+    // So the instrumenter materialises it into a ghost at the RETURN site,
+    // placed BEFORE the path asserts precisely so it falls inside the harvest's
+    // window (the walk stops at this path's own assert).
+    //
+    // `return_value_known` is a SEPARATE flag and it is mandatory. A `void`
+    // unit, an aggregate return the instrumenter does not render, and a path
+    // that reverts without reaching a RETURN all leave the string empty, and an
+    // empty string alone would read as "this unit returns nothing" -- a claim
+    // about the contract made out of an absence in the harvest.
+    std::string return_value;
+    bool return_value_known = false;
   };
   static std::map<std::string, path_ce_t> path_ce;
 

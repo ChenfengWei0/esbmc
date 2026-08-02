@@ -1923,6 +1923,31 @@ void report_coverage(
           }
           else
             claim_entry["final_state"] = fin;
+          // ---- THE UNIT'S OWN RETURN VALUE, BESIDE THE POST-STATE ----
+          //
+          // Never inside `final_state`: a return value is not state, and a
+          // consumer that asserted it as state would assert the wrong thing
+          // about the wrong object. This is the field the PUT emitter needs to
+          // turn `c0.f(args);` into `assertEq(c0.f(args), v);`.
+          //
+          // `return_value_known` is emitted in BOTH directions. Absent, or an
+          // empty string on its own, would read as "this unit returns nothing"
+          // -- a claim about the CONTRACT manufactured out of an absence in the
+          // harvest. The three ways to be unknown are genuinely different and
+          // the reason names all of them.
+          claim_entry["return_value_known"] = ce.return_value_known;
+          if (ce.return_value_known)
+            claim_entry["return_value"] = ce.return_value;
+          else
+            claim_entry["ce_extraction"]["return_value_unavailable_reason"] =
+              "no scalar return value was captured on this path. THREE "
+              "different situations produce this and the field does not say "
+              "which: (a) the unit returns nothing; (b) it returns an "
+              "aggregate, tuple or dynamic type, which the instrumenter does "
+              "not materialise because there is no single renderable value; "
+              "(c) this path exits without reaching a RETURN at all, which is "
+              "the normal shape of a revert. An absent value means UNKNOWN, "
+              "never 'this unit returns nothing'";
           // State this path WROTE but whose value is not renderable (mapping /
           // dynamic-array stores). Listed so "absent from final_state" is never
           // read as "unchanged".
@@ -4144,6 +4169,30 @@ smt_convt::resultt bmct::multi_property_check(
           // path_entry_ghost is stored under, so it must not be truncated the
           // way fn_scope is.
           std::string fn_id_full;
+          // ---- WHERE A TUPLE RETURN LIVES, AND WHY IT NEEDS ITS OWN KEY ----
+          //
+          // MEASURED on notes/coverage/poc/P27_TupleReturn.sol: a Solidity
+          // function returning `(uint256, uint256)` emits NO `RETURN`
+          // instruction at all. The frontend lowers it to per-member writes
+          //
+          //     ASSIGN tuple_instance$42.mem0 = 11;
+          //     ASSIGN tuple_instance$42.mem1 = 12;
+          //
+          // and falls straight to END_FUNCTION. So the return-value GHOST, which
+          // hooks the RETURN instruction, cannot see a tuple by construction --
+          // and the values were instead landing in the contract-scope-store
+          // branch below and being published as
+          // `state_written_value_unavailable`, i.e. as a state variable named
+          // `tuple_instance$42.mem0` that the path supposedly wrote. That is a
+          // wrong LABEL on a right value, which is worse than a missing one.
+          //
+          // The instance is named with the FUNCTION'S OWN AST NODE ID, so it can
+          // be tied to this path's unit exactly rather than by matching the
+          // string `tuple_instance` anywhere: `two_scalars#42` owns
+          // `tuple_instance$42` and `mixed_width#65` owns `tuple_instance$65`
+          // (both verified in the same dump). Without that tie an internal
+          // callee inlined into this unit would donate its own tuple.
+          std::string tuple_want;
           {
             const auto p = claim.claim_msg.rfind(":path:");
             if (p != std::string::npos)
@@ -4156,6 +4205,9 @@ smt_convt::resultt bmct::multi_property_check(
               const auto hash = fn_id.find('#', fpos == std::string::npos
                                                   ? 0
                                                   : fpos + 3);
+              if (hash != std::string::npos && !contract_scope.empty())
+                tuple_want =
+                  contract_scope + "tuple_instance$" + fn_id.substr(hash + 1);
               if (hash != std::string::npos)
                 fn_id.erase(hash);
               fn_scope = fn_id + "@";
@@ -4221,6 +4273,20 @@ smt_convt::resultt bmct::multi_property_check(
                                   : std::string();
           };
           std::set<std::string> unrendered_seen;
+          // The unit's own return value and the runtime record that a RETURN
+          // actually executed. Accumulated locally and combined after the walk,
+          // for the same reason the environment is: the pair that belongs in the
+          // payload is the one in force when the walk stopped at this path's own
+          // assert, and a half-updated pair published mid-walk would pair one
+          // path's flag with another's value.
+          std::string ret_value;
+          bool ret_flag = false;
+          // A TUPLE return, member index -> value. Keyed on the INDEX rather
+          // than the name so `mem10` cannot sort between `mem1` and `mem2`,
+          // which a lexicographic map would do silently and which would publish
+          // the members of the tuple in the wrong order -- a wrong value wearing
+          // the right shape.
+          std::map<unsigned long, std::string> ret_members;
           for (const auto &st : w.trace.steps)
           {
             // Stop at THIS path's own violated assert. The harness runs
@@ -4316,6 +4382,54 @@ smt_convt::resultt bmct::multi_property_check(
               ++ce.dropped_internal;
               continue;
             }
+            // ---- THE UNIT'S OWN RETURN VALUE ----
+            //
+            // Materialised by the instrumenter at the RETURN site
+            // (goto_coverage.cpp, "MATERIALISE THE UNIT'S OWN RETURN VALUE"),
+            // because it exists nowhere else: the dispatcher calls a unit with
+            // no lvalue and the RETURN carries an expression, so before that
+            // change no trace step held the value at all -- measured, 208
+            // classified assignments on P19_ReturnShapes.tern_lit and not one of
+            // them was the return.
+            //
+            // Taken HERE, ahead of the classification below, for the same reason
+            // the extcall symbols are: that classification has exactly three
+            // outcomes -- parameter -> inputs, environment -> env, otherwise
+            // dropped -- and a ghost is none of the first two, so it would be
+            // filed as harness plumbing.
+            //
+            // A non-constant model value is left UNKNOWN rather than rendered:
+            // `final_state` already shipped an unevaluated expression string
+            // once ("0xFFFF... / 0") and a consumer parsing this as an integer
+            // would refuse it, or worse, print it into a test.
+            // The FLAG is checked first and is the only thing that authorises
+            // publishing a value. MEASURED with the value alone: tern_lit's
+            // revert path (enc=2, which never reaches a RETURN) published the
+            // entry initialisation as `return_value: "0"`. 0 is also a real
+            // return value, so nothing about the value itself can separate the
+            // two cases -- only a runtime record of "a RETURN executed" can.
+            if (
+              is_symbol2t(st.lhs) &&
+              to_symbol2t(st.lhs).thename.as_string().find(
+                "__ESBMC_path_retset$") != std::string::npos)
+            {
+              if (is_constant_expr(st.value))
+                ret_flag = !is_false(st.value);
+              continue;
+            }
+            if (
+              is_symbol2t(st.lhs) &&
+              to_symbol2t(st.lhs).thename.as_string().find(
+                "__ESBMC_path_ret$") != std::string::npos)
+            {
+              // Last write before this path's own assert wins, matching how the
+              // environment is harvested. A non-constant model value is left
+              // alone rather than rendered: `final_state` already shipped an
+              // unevaluated expression string once ("0xFFFF... / 0").
+              if (is_constant_expr(st.value))
+                ret_value = from_expr(ns, "", st.value);
+              continue;
+            }
             // Mapping / dynamic-array state: these do NOT live in the contract
             // object, so the `this->` test below never sees them and they would
             // be discarded as harness noise — leaving a reader to infer the
@@ -4324,6 +4438,62 @@ smt_convt::resultt bmct::multi_property_check(
             // (an infinite-array store), record the NAME so the write is still
             // visible rather than silently lost.
             const std::string bid = base_sym_id(st.lhs);
+            // A member of THIS unit's tuple instance is the unit's own return
+            // value, and it must be claimed BEFORE the contract-scope branch
+            // below -- that branch's test (`sol:@C@...` with no `@F@`) is true
+            // of the tuple instance, which is how these values were being
+            // published as unrenderable contract state.
+            //
+            // No runtime flag is needed here, unlike the scalar case. The
+            // members are written only on a path that actually returns (the
+            // revert arm of P27's `two_scalars` jumps straight past them), so
+            // the presence of the write IS the runtime evidence the flag
+            // supplies for a RETURN.
+            if (
+              !tuple_want.empty() && bid == tuple_want && is_member2t(st.lhs) &&
+              is_constant_expr(st.value))
+            {
+              const irep_idt &memid = to_member2t(st.lhs).member;
+              const std::string mem = memid.as_string();
+              // PROJECT. A tuple member write is lowered as a WHOLE-OBJECT
+              // update, exactly like the `this->x = v` case a few lines below,
+              // so the model hands back the ENTIRE tuple struct. MEASURED
+              // without this projection on P27_TupleReturn.two_scalars:
+              //     mem0 -> "{ .mem0=11, .mem1=0 }"
+              //     mem1 -> "{ .mem0=11, .mem1=12 }"
+              // i.e. every member reporting the whole aggregate, and the
+              // rendered "tuple" being a pair of structs rather than a pair of
+              // values. On the unequal-width unit it additionally exposed the
+              // struct's `anon_pad$2` padding member.
+              expr2tc mv = st.value;
+              if (is_constant_struct2t(mv))
+              {
+                const struct_type2t &sty = to_struct_type(mv->type);
+                for (size_t i = 0; i < sty.member_names.size(); ++i)
+                  if (sty.member_names[i] == memid)
+                  {
+                    mv = to_constant_struct2t(mv).datatype_members[i];
+                    break;
+                  }
+              }
+              if (
+                mem.rfind("mem", 0) == 0 && is_constant_expr(mv) &&
+                !is_constant_struct2t(mv) && !is_constant_array2t(mv))
+              {
+                char *endp = nullptr;
+                const unsigned long k =
+                  strtoul(mem.c_str() + 3, &endp, 10);
+                if (endp != nullptr && *endp == '\0')
+                {
+                  ret_members[k] = from_expr(ns, "", mv);
+                  continue;
+                }
+              }
+              // A member whose name is not `mem<N>` is NOT silently folded in:
+              // falling through leaves it to the branch below, which reports it
+              // as written-and-unrenderable. Publishing it as part of the tuple
+              // would put an unknown component in a value a test asserts on.
+            }
             if (
               !contract_scope.empty() && bid.rfind(contract_scope, 0) == 0 &&
               bid.find("@F@") == std::string::npos)
@@ -4590,6 +4760,31 @@ smt_convt::resultt bmct::multi_property_check(
           }
           for (const auto &[n, v] : last_state)
             ce.final_state.emplace_back(n, v);
+          // BOTH conditions. The flag says a RETURN executed on this path; the
+          // non-empty string says its value came back from the model as a
+          // constant. Either one alone would publish something the other
+          // contradicts.
+          if (ret_flag && !ret_value.empty())
+          {
+            ce.return_value = ret_value;
+            ce.return_value_known = true;
+          }
+          // A tuple return, rendered in MEMBER ORDER as `(v0, v1, ...)`. A unit
+          // returns either a single value or a tuple, never both, so the two
+          // arms cannot fight over the field; the `else if` says so rather than
+          // leaving a last-writer-wins that would silently prefer one shape.
+          else if (!ret_members.empty())
+          {
+            std::string t = "(";
+            bool first = true;
+            for (const auto &[k, v] : ret_members)
+            {
+              t += (first ? "" : ", ") + v;
+              first = false;
+            }
+            ce.return_value = t + ")";
+            ce.return_value_known = true;
+          }
           // Published after the walk, for the same reason `final_state` is: the
           // value that belongs in the report is the one in force when the unit
           // ran, and that is only known once the walk has stopped at this path's
