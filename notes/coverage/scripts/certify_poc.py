@@ -109,6 +109,23 @@ def main():
                          "forbidden is summing pinned and unpinned numbers into "
                          "ONE figure, so run it as a second arm and report the "
                          "two separately.")
+    ap.add_argument("--skip-bracket", action="store_true", dest="skip_bracket",
+                    help="pass --skip-bracket to the driver: refine from each "
+                         "coordinate's full type range instead of paying for the "
+                         "geometric bracket first. THIS SWEEP COULD NOT PASS IT "
+                         "AT ALL until now, which mattered: on the 90s run every "
+                         "one of the 34 KILLED units stopped at exactly 90.0-90.1 "
+                         "s while eight CERTIFIED units finished at 84.9-88.8 s, "
+                         "i.e. the bucket is a WALL and not a spread of "
+                         "difficulty. MEASURED on the minimal pair Tiny (certifies "
+                         "at 85s) vs Tiny2 (= Tiny plus a `require`, killed at "
+                         "90s): Tiny2.deposit spends 96.6 s of its ~100 s inside "
+                         "the bracket, and --skip-bracket returns BYTE-IDENTICAL "
+                         "regions in about 4 s. Whether that holds across the set "
+                         "is what this flag exists to measure -- run it as a "
+                         "SECOND ARM and compare regions, never just counts, "
+                         "because a unit that becomes decided with a DIFFERENT "
+                         "region is the bracket earning its cost.")
     ap.add_argument("--redo", action="store_true")
     ap.add_argument("--workdir", default="/tmp/certify_poc")
     a = ap.parse_args()
@@ -228,6 +245,8 @@ def main():
             # recorded per record, and the two settings are never summed.
             if a.pin_env:
                 cmd.append("--pin-env")
+            if a.skip_bracket:
+                cmd.append("--skip-bracket")
             t0 = time.time()
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, text=True,
@@ -247,9 +266,32 @@ def main():
                 ca._killpg(p)
             wall = time.time() - t0
             rec = ca.parse_driver(out)
+            # ---- THE LADDER CONFIGURATION TRAVELS WITH THE RECORD ----
+            #
+            # It did not, and the cost was concrete. The 95-unit sweep recorded
+            # `wall_s` but nothing about the budget or the ladder, so a reader
+            # could see 34 units stopping at 90.0 s and could NOT see that the
+            # per-unit budget WAS 90 -- the wall had to be inferred from the
+            # values clustering. Worse, a reader with a default-reading bug prints
+            # `skip_bracket: false` for a record that never carried the key, i.e.
+            # manufactures a positive claim that the bracket ran. Recording it
+            # makes "absent" impossible for future rows and the third state
+            # explicit for old ones.
+            #
+            # certify_all.py has carried these fields for a while; this sweep is
+            # the other reader of the same fact and did not. Same shape as the
+            # emit flags reaching solidity_path_put.py but not poc_funnel.py.
             rec.update({"poc": sol.stem, "unit": unit,
                         "bucket": ca.bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
+                        "unit_timeout_s": a.timeout,
+                        # The per-ESBMC-RUN budget, capped at 180 above, which is
+                        # NOT the per-unit budget and is quoted as its own number.
+                        "run_timeout_s": min(a.timeout, 180),
+                        "skip_bracket": bool(a.skip_bracket),
+                        "pin_env": bool(a.pin_env),
+                        "level0": True,      # always passed by this sweep
+                        "memlimit": a.memlimit,
                         "binary": ident})
             (uwd / "driver.log").write_text(out)
             with out_path.open("a") as fh:
