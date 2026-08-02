@@ -43,22 +43,54 @@ def main():
     def subject(r):
         return r.get("benchmark") or r.get("poc") or "?"
 
+    # ---- THE FIELD NAMES ARE THE SWEEP'S, NOT GUESSES ----
+    #
+    # The first version of this script read `seconds` and `reason`, neither of
+    # which exists, got None for every row, and I published "the sweep records no
+    # reason or timing -- a recording gap in certify_all.py". That was a claim
+    # about the sweep derived from a bug in the reader, and the sweep in fact
+    # records wall_s, exit, unit_timeout_s, run_timeout_s, memlimit_gib and the
+    # whole ladder configuration on EVERY row. Read the writer before describing
+    # what it writes.
+    #
+    # `run_timeout_s` is deliberately printed beside `wall_s`: it is the PER-ESBMC
+    # budget (min(timeout,180)) rather than the per-unit one, and certify_all's
+    # own comment says it is the budget that produces the largest failure bucket.
     buckets, by_subject = {}, {}
-    print(f"{'subject':<30}{'unit':<22}{'bucket':<16}{'regions':>8}"
-          f"{'secs':>7}  reason")
+    print(f"{'subject':<26}{'unit':<20}{'bucket':<16}{'regions':>8}"
+          f"{'wall_s':>8}{'unit_to':>8}{'run_to':>7}{'skipbr':>7}  not-certified reason")
     for r in sorted(rows, key=lambda r: (subject(r), r.get("unit") or "")):
         b = r.get("bucket") or "?"
         buckets[b] = buckets.get(b, 0) + 1
         by_subject.setdefault(subject(r), {}).setdefault(b, 0)
         by_subject[subject(r)][b] += 1
         n = len(r.get("certified") or {})
-        secs = r.get("seconds")
-        reason = (r.get("reason") or r.get("error") or "")
-        if isinstance(reason, str) and len(reason) > 150:
-            reason = reason[:150] + f" ...[{len(reason)} chars]"
-        print(f"{subject(r):<30}{(r.get('unit') or ''):<22}{b:<16}{n:>8}"
-              f"{(round(secs) if isinstance(secs, (int, float)) else '-'):>7}"
-              f"  {reason}")
+        nc = r.get("not_certified") or {}
+        # One representative reason, and the count, so a unit whose paths failed
+        # for DIFFERENT reasons is visible as such rather than collapsed to the
+        # first one.
+        reasons = sorted({str(v) for v in nc.values()}) if isinstance(nc, dict) \
+            else []
+        rtxt = ""
+        if reasons:
+            rtxt = f"[{len(nc)} path(s), {len(reasons)} distinct] {reasons[0]}"
+            if len(rtxt) > 160:
+                rtxt = rtxt[:160] + f" ...[{len(reasons[0])} chars]"
+        w = r.get("wall_s")
+        # ABSENT IS NOT FALSE. The first version printed `'yes' if
+        # r.get('skip_bracket') else 'no'`, so a sweep whose records do not carry
+        # the key at all -- certify_poc.py writes wall_s but not the ladder
+        # configuration -- came out as a solid column of "no", i.e. as a positive
+        # claim that the bracket RAN. That is the same always-false-reader shape
+        # as reading a missing field and calling it a recording gap, twice in one
+        # sitting, so the third state is explicit here.
+        sb = ("-" if "skip_bracket" not in r
+              else ("yes" if r["skip_bracket"] else "no"))
+        print(f"{subject(r):<26}{(r.get('unit') or ''):<20}{b:<16}{n:>8}"
+              f"{(round(w) if isinstance(w, (int, float)) else '-'):>8}"
+              f"{str(r.get('unit_timeout_s', '-')):>8}"
+              f"{str(r.get('run_timeout_s', '-')):>7}"
+              f"{sb:>7}  {rtxt}")
 
     print()
     print(f"  {len(rows)} unit record(s)")
@@ -77,6 +109,29 @@ def main():
           "driver's per-unit timeout expired, and on a PoC-sized contract that "
           "points at the ladder's own cost or at one shape blowing up -- not at "
           "the contract being hard.")
+    print("  Compare wall_s against unit_to: a unit killed at wall_s == unit_to "
+          "hit the per-UNIT budget, and one that stopped well short of it did "
+          "not -- those two need opposite repairs and the counts alone cannot "
+          "tell them apart.")
+    # THE CLUSTER IS THE FINDING, and it is computed rather than eyeballed: a
+    # KILLED bucket whose wall times are all one value is a WALL, and the
+    # certified units sitting just under it say how close the wall is.
+    kw = sorted({r.get("wall_s") for r in rows
+                 if r.get("bucket") == "KILLED" and r.get("wall_s") is not None})
+    cw = sorted((r.get("wall_s") for r in rows
+                 if r.get("bucket") == "CERTIFIED"
+                 and isinstance(r.get("wall_s"), (int, float))), reverse=True)
+    if kw:
+        print()
+        print(f"  KILLED wall_s values: {kw}"
+              + ("   <-- ONE VALUE: this is a WALL, not a spread of difficulty"
+                 if len(kw) == 1 else ""))
+        if cw:
+            near = [w for w in cw if kw and w >= kw[0] - 10]
+            print(f"  slowest CERTIFIED wall_s: {cw[:8]}")
+            print(f"  {len(near)} unit(s) CERTIFIED within 10s of that wall -- "
+                  f"they are the same difficulty as the killed ones and differ "
+                  f"only in finishing first")
     return 0
 
 
