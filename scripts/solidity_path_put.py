@@ -1860,9 +1860,44 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                    f"when this path was")
         out.append(f"  // shown to reach a return at all.")
     else:
-        out.append(f"  // ORACLE: none emitted (see the run's report); the "
-                   f"exit-kind")
-        out.append(f"  // expectation below is still an assertion.")
+        # ---- DO NOT PROMISE AN ASSERTION THE BODY DOES NOT CARRY ----
+        #
+        # This line used to be unconditional, and it was FALSE exactly when it
+        # mattered. "the exit-kind expectation below is still an assertion" is
+        # only true when the emitter wrote the call BARE (`[asserted] path exits
+        # normally`), armed `vm.expectRevert()`, or emitted the non-payable
+        # value-gate's `assertFalse`. When the exit was not confirmed the
+        # emitter writes `[revert-tolerant] outcome not asserted` and wraps the
+        # call in `try {} catch {}` -- which asserts nothing at all.
+        #
+        # MEASURED on the aqua round-trip, three files for three:
+        #   dock_put12, push_put14, safeBalances_put14
+        # each carry "ORACLE: none emitted ... still an assertion" over a
+        # try/catch body with ZERO assert statements. The one file that does not
+        # carry the line (rawBalances_put7) is the one that does assert. The
+        # correlation is exact, which is what makes it a wrong claim rather than
+        # a stale comment.
+        #
+        # This matters more than a red test would. A red test announces itself;
+        # a GREEN test whose header says it asserts the exit kind, over a body
+        # that tolerates any outcome, is a gate that can never fire while
+        # reading exactly like one that can.
+        if exit_kind_asserted(
+                list(body[:call_i]) + [new_call] + list(body[call_i + 1:])):
+            out.append(f"  // ORACLE: none emitted (see the run's report); the "
+                       f"exit-kind")
+            out.append(f"  // expectation below is still an assertion.")
+        else:
+            out.append(f"  // ORACLE: NONE, AND NEITHER IS THE EXIT KIND. Not "
+                       f"one rung HOLDS over")
+            out.append(f"  // the certified region, and the emitter could not "
+                       f"confirm this path's")
+            out.append(f"  // exit, so the call below is REVERT-TOLERANT "
+                       f"(`try {{}} catch {{}}`). This")
+            out.append(f"  // PUT walks the path and checks NOTHING: it is "
+                       f"GREEN whatever the call")
+            out.append(f"  // does, including reverting. It is a reachability "
+                       f"witness, not a test.")
     for s in oracle_skipped:
         out.append(f"  //   rung DROPPED: {s}")
     for s in state_skipped:
@@ -1927,6 +1962,34 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              "state_stored": stored, "state_skipped": state_skipped,
              "env_unchecked": env_unchecked}
     return out, stats
+
+
+def exit_kind_asserted(body_lines):
+    """Does this PUT body actually assert anything about how the call exits?
+
+    The emitter marks its own decision in the text it writes, and there are
+    exactly three shapes that carry an assertion:
+
+      * `// [asserted] path exits normally; a revert fails the test` -- the call
+        is BARE, and its bareness IS the assertion;
+      * `// [asserted] value sent to a NON-PAYABLE entry: the call must fail`,
+        which is followed by an `assertFalse`;
+      * `vm.expectRevert();` armed before the call.
+
+    and exactly one that carries none:
+
+      * `// [revert-tolerant] outcome not asserted` with the call wrapped in
+        `try {} catch {}`.
+
+    A separate function, and not two lines inlined at the one call site, because
+    it has TWO answers and both have to be pinned. A predicate whose false arm
+    is never exercised is indistinguishable from one that is hard-wired -- this
+    workspace has shipped that shape before -- so `test_solidity_path_put.py`
+    drives both directions rather than the one the current corpus happens to
+    produce.
+    """
+    txt = "\n".join(body_lines)
+    return "[asserted]" in txt or "vm.expectRevert()" in txt
 
 
 # ---------------------------------------------------------------------------

@@ -58,6 +58,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                build_put, check_esbmc_args, cell_of,
+                               exit_kind_asserted,
                                truncated_loops, unwindset_args)
 
 
@@ -962,9 +963,48 @@ def test_a_width_one_env_coordinate_is_unchanged():
     return bad
 
 
+def test_a_revert_tolerant_body_is_NOT_called_an_assertion():
+    """MUST FLIP. The no-oracle header used to promise "the exit-kind
+    expectation below is still an assertion" unconditionally, and a
+    revert-tolerant body asserts nothing at all. Measured on the aqua
+    round-trip: dock_put12, push_put14 and safeBalances_put14 all carried the
+    promise over a `try {} catch {}` with zero assert statements."""
+    body = ["    // [revert-tolerant] outcome not asserted",
+            "    try c0.safeBalances(maker, app) {} catch {}"]
+    bad = 0
+    bad += check(exit_kind_asserted(body) is False,
+                 "a try/catch body does NOT assert the exit kind")
+    return bad
+
+
+def test_an_asserted_body_still_counts_as_an_assertion():
+    """The NEGATIVE CONTROL, and the reason the predicate is a function. If only
+    the false arm were ever exercised, a predicate hard-wired to False would
+    pass the check above and be indistinguishable from a working one. All three
+    shapes the emitter uses to carry an assertion must read as True."""
+    bad = 0
+    bare = ["    // [asserted] path exits normally; a revert fails the test",
+            "    c0.setDiscount(u, bps);"]
+    gate = ["    // [asserted] value sent to a NON-PAYABLE entry: the call "
+            "must fail",
+            "    assertFalse(ok3, \"value sent to a non-payable entry must "
+            "revert\");"]
+    rev = ["    vm.expectRevert();",
+           "    c0.pull(x);"]
+    bad += check(exit_kind_asserted(bare) is True,
+                 "a BARE call asserts the exit kind")
+    bad += check(exit_kind_asserted(gate) is True,
+                 "the non-payable value gate asserts the exit kind")
+    bad += check(exit_kind_asserted(rev) is True,
+                 "an armed vm.expectRevert asserts the exit kind")
+    return bad
+
+
 def main():
     bad = 0
-    for t in (test_both_truncation_shapes_are_read,
+    for t in (test_a_revert_tolerant_body_is_NOT_called_an_assertion,
+              test_an_asserted_body_still_counts_as_an_assertion,
+              test_both_truncation_shapes_are_read,
               test_the_ladder_widens_every_named_loop,
               test_a_retry_that_produced_no_ladder_is_not_adopted,
               test_a_widened_ladder_says_which_half_it_applies_to,
