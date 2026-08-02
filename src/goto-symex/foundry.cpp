@@ -1531,14 +1531,43 @@ foundry_generator::test_case foundry_generator::reconstruct(
     return f.size() >= 4 && f.compare(f.size() - 4, 4, ".sol") == 0;
   };
   // A step is an ambient/library helper (excluded from user-level block.timestamp
-  // read detection) iff it is NOT in a user `.sol` source. All user
-  // contract/ctor/modifier/init code lives in a `.sol` file; the ambient model
-  // (`initialize` / `_sol_per_tx_reseed` and their internal block.timestamp
-  // reads) lives in the C library. `location.function()` returns the bare short
-  // name for BOTH a user `initialize()` and the library one, so the file — not
-  // the function name — is the reliable discriminator.
+  // read detection) iff it is in a KNOWN source that is not a user `.sol` file.
+  // The ambient model (`initialize` / `_sol_per_tx_reseed` and their internal
+  // block.timestamp reads) lives in the C library, and `location.function()`
+  // returns the bare short name for BOTH a user `initialize()` and the library
+  // one — so the file, not the function name, is the discriminator.
+  //
+  // ---- AN EMPTY FILE IS UNKNOWN, NOT "LIBRARY" ----
+  //
+  // This used to be a bare `!step_in_sol(step)`, resting on the stated premise
+  // that "all user contract/ctor/modifier/init code lives in a `.sol` file".
+  // That premise is FALSE, and the counterexample is the commonest ownership
+  // idiom there is: `address public owner = msg.sender;` — a STATE-VARIABLE
+  // INITIALIZER, with no explicit constructor.
+  //
+  // MEASURED on bench/FeeVault, printed by the ctor-sender probe below:
+  //
+  //   foundry ctor-sender probe: file='' fn='' env_helper=1
+  //     predicate_matched=1 names=[c:@msg_sender]
+  //
+  // The name predicate MATCHES (so SSA renaming was never the problem), the
+  // deploy-time sender IS recovered (have_ctor_sender=1) — and the step carries
+  // NO file at all, so the `.sol` test called it a library helper and the whole
+  // read-detection block was skipped. ctor_reads_msg_sender stayed 0,
+  // ctor_needs_deployer stayed 0, no `vm.startPrank` was emitted around
+  // `new FeeVault()`, and the emitted case then pranked the counterexample's
+  // sender against an `owner` still holding the TEST CONTRACT. `test_cov_0`
+  // reverts on the UNMODIFIED contract — the single outcome this generator
+  // exists never to produce.
+  //
+  // Absence of a file is not evidence of provenance. The library steps this
+  // exclusion was built for have a NON-EMPTY, non-`.sol` file (that is exactly
+  // why the file beat the function name as a discriminator), so admitting the
+  // empty case cannot re-admit them.
   auto is_env_helper_step =
     [&](const symex_target_equationt::SSA_stept &step) -> bool {
+    if (step.source.pc->location.file().as_string().empty())
+      return false;
     return !step_in_sol(step);
   };
 
@@ -1888,6 +1917,64 @@ foundry_generator::test_case foundry_generator::reconstruct(
         pending_block_timestamp = expr2tc();
         pending_msg_sender = expr2tc();
         continue;
+      }
+    }
+
+    // ---- WHY A CTOR-TIME msg.sender READ WAS OR WAS NOT SEEN ----
+    //
+    // MEASURED on bench/FeeVault: reads_sender=0 with sender_dirty=0 and
+    // have_ctor_sender=1 -- the deploy-time value IS recovered, the ctor is
+    // simply never seen to READ it, and `address public owner = msg.sender;`
+    // plainly does. Two candidates survive that measurement and they need
+    // different fixes:
+    //
+    //   (a) the step is EXCLUDED as an env helper, because a state-variable
+    //       initializer is lowered somewhere whose location file does not end
+    //       in `.sol` -- then is_env_helper_step is the wrong test here;
+    //   (b) the step IS considered, but the RHS symbol is SSA-RENAMED
+    //       (`msg_sender?1!0&0#2`) while is_env_global compares the trailing
+    //       segment to exactly "msg_sender" -- then the name test is the bug.
+    //
+    // Picking between them by reading the code is exactly the move this project
+    // has been burned by; so this prints, for every PRE-SEGMENT step that
+    // mentions a sender-ish symbol at all, the file/function it came from, the
+    // raw symbol name, and whether the existing predicate matched it. Whichever
+    // candidate is true is then visible rather than argued.
+    if (segs.empty())
+    {
+      std::vector<std::string> senderish;
+      std::function<void(const expr2tc &)> scan = [&](const expr2tc &e) {
+        if (!e)
+          return;
+        if (is_symbol2t(e))
+        {
+          const std::string n = to_symbol2t(e).thename.as_string();
+          if (n.find("msg_sender") != std::string::npos)
+            senderish.push_back(n);
+        }
+        e->foreach_operand([&](const expr2tc &s) { scan(s); });
+      };
+      if (step.is_assignment())
+        scan(step.rhs);
+      if (step.is_assume() || step.is_assert())
+        scan(step.cond);
+      if (!senderish.empty())
+      {
+        std::string names;
+        for (const auto &n : senderish)
+          names += (names.empty() ? "" : " | ") + n;
+        log_debug(
+          "solidity",
+          "foundry ctor-sender probe: file='{}' fn='{}' env_helper={} "
+          "predicate_matched={} names=[{}]",
+          step.source.pc->location.file().as_string(),
+          step.source.pc->location.function().as_string(),
+          is_env_helper_step(step) ? 1 : 0,
+          reads_global(step.is_assignment() ? step.rhs : step.cond,
+                       "msg_sender")
+            ? 1
+            : 0,
+          names);
       }
     }
 
@@ -2449,7 +2536,37 @@ foundry_generator::test_case foundry_generator::reconstruct(
     std::string dbg = "foundry attribution: refuted={" + out_claims + "} segs=[";
     for (const auto &s : segs)
       dbg += s.contract + "." + (s.method.empty() ? "<none>" : s.method) + " ";
-    dbg += "] callable={";
+    // ---- THE CTOR-TIME SENDER DECISION, PRINTED ----
+    //
+    // A call gets `vm.prank` when the body reads msg.sender OR the ctor needs a
+    // deployer; the setUp `vm.startPrank` around `new C()` comes from
+    // ctor_needs_deployer ALONE. When the first fires and the second does not,
+    // the emitted case calls under the counterexample's sender while `owner`
+    // still holds the TEST CONTRACT -- and an `onlyOwner` require reverts on the
+    // UNMODIFIED contract, which is the one outcome this generator exists never
+    // to produce.
+    //
+    // MEASURED on bench/FeeVault (`address public owner = msg.sender;`, no
+    // explicit constructor): both emitted cases carry `vm.prank(...)` and
+    // neither setUp carries `vm.startPrank`, so `test_cov_0` is RED. Which of
+    // the two inputs to ctor_needs_deployer was false -- the ctor never seen to
+    // READ msg.sender, or the read seen but marked DIRTY by a shadowing write --
+    // is not recoverable from the emitted file, and the two need different
+    // fixes. So the decision is printed beside the attribution it belongs to,
+    // rather than inferred from the artifact afterwards.
+    dbg += "] ctor_env={reads_sender=";
+    dbg += ctor_reads_msg_sender ? "1" : "0";
+    dbg += " sender_shadowed=";
+    dbg += ctor_sender_shadowed ? "1" : "0";
+    dbg += " sender_dirty=";
+    dbg += ctor_sender_dirty ? "1" : "0";
+    dbg += " needs_deployer=";
+    dbg += ctor_needs_deployer ? "1" : "0";
+    dbg += " have_ctor_sender=";
+    dbg += ctor_msg_sender ? "1" : "0";
+    dbg += " reads_ts=";
+    dbg += ctor_reads_timestamp ? "1" : "0";
+    dbg += "} callable={";
     for (const auto &kv : dispatcher_callable(ns, ctor_ts_contract))
       dbg += kv.first + " ";
     dbg += "} emitted=[";
