@@ -133,6 +133,16 @@ def main():
                          "must never share a table: on a real contract 'not "
                          "certified' mixes the method's limits with the "
                          "contract's difficulty, while a PoC is one shape.")
+    ap.add_argument("--cert", default=None,
+                    help="read the certified regions from THIS file instead of "
+                         "the default for --poc / the corpus. Needed the moment "
+                         "a sweep has more than one ARM: the --skip-bracket arm "
+                         "writes poc_results_skipbracket.jsonl and produced 32 "
+                         "certified units the bracketed arm reports as KILLED, "
+                         "and without this flag stage 4 could only ever be run "
+                         "on whichever arm happens to own the default filename. "
+                         "The arm a table came from is printed with it, because "
+                         "two arms' PUT counts must never be summed.")
     ap.add_argument("--forge-only", action="store_true",
                     help="do NOT emit anything: read the put.json each region "
                          "already produced, run `forge test` per project, and "
@@ -145,7 +155,7 @@ def main():
                          "ladder, widen the loops the tool NAMED and retry, up "
                          "to N times. aqua `dock` is the recorded case.")
     args = ap.parse_args()
-    cert_path = POC_CERT if args.poc else CERT
+    cert_path = args.cert or (POC_CERT if args.poc else CERT)
     if not os.path.exists(cert_path):
         sys.exit(f"no certify sweep at {cert_path}")
     rows = []
@@ -166,8 +176,25 @@ def main():
         for enc, text in (r.get("certified") or {}).items():
             rows.append((key, is_poc, r["unit"], int(enc), text))
 
+    # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
+    #
+    # Without this, running stage 4 on a second arm writes its PUTs over the
+    # first arm's, in the same forge project and the same `_wd/<bench>__<unit>__
+    # <enc>` directory, and `--forge-only` then reports arm 2's tests under
+    # whichever arm the reader has in mind. Two ledgers for one fact, with no
+    # line anywhere saying they diverged. The suffix is derived from the cert
+    # file's own name so it cannot drift from the input it describes.
+    arm = ""
+    default_cert = POC_CERT if args.poc else CERT
+    if os.path.abspath(cert_path) != os.path.abspath(default_cert):
+        arm = "__" + os.path.splitext(os.path.basename(cert_path))[0]
+
     print(f"=== {len(rows)} CERTIFIED region(s) recorded by stage 2 "
           f"({os.path.basename(cert_path)}) ===")
+    if arm:
+        print(f"=== ARM {arm[2:]}: PUTs go to their OWN project and workdir, so "
+              f"this table does not overwrite or get confused with another "
+              f"arm's. Two arms' PUT counts must never be summed. ===")
     results = []
     for bench, is_poc, unit, enc, text in rows:
         if is_poc:
@@ -218,8 +245,9 @@ def main():
                   f"parsed EMPTY, which is a PARSER failure, not an empty "
                   f"region -- refusing to emit a PUT over nothing")
             continue
-        proj = ensure_project(bench, flat, shared="poc" if is_poc else None)
-        wd = os.path.join(OUT, "_wd", f"{bench}__{unit}__{enc}")
+        proj = ensure_project(bench + arm, flat,
+                              shared=("poc" + arm) if is_poc else None)
+        wd = os.path.join(OUT, "_wd", f"{bench}__{unit}__{enc}{arm}")
         os.makedirs(wd, exist_ok=True)
         cmd = [sys.executable, PUT, "--esbmc", ESBMC, "--sol", flat,
                "--ast", ast, "--contract", contract, "--unit", unit,
@@ -281,6 +309,15 @@ def main():
             outcome = os.path.basename(rec.get("file", ""))
         elif rc == 2:
             outcome = "REFUSED: " + str(rec.get("refused"))
+        elif args.forge_only:
+            # NOT "REFUSED". In --forge-only nothing was run, so a missing
+            # put.json means this region has NEVER BEEN THROUGH STAGE 4 -- most
+            # often because stage 2 certified it after the last emit sweep. The
+            # earlier wording reported the emitter's verdict for a run that did
+            # not happen, which is the same "prints a state it no longer has"
+            # shape this file catches elsewhere, and it made 20 fresh regions
+            # look like 20 refusals.
+            outcome = "NOT EMITTED YET (no put.json; re-run without --forge-only)"
         else:
             outcome = "REFUSED (see log above)"
         print(f"{bench:<28}{unit:<16}{enc:>5}{rc:>4}{fz:>6}{ar:>9}  {outcome}")
