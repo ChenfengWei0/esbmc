@@ -207,9 +207,26 @@ def main():
         ast = wd / f"{sol.stem}.solast"
         ast.write_text(out)
 
+        # ---- THE THREE FLAGS AN EMITTING RUN MUST CARRY ----
+        #
+        # INVOCATION_DECISIONS.md row 6: without them a witnessed path whose
+        # counterexample wraps or divides by zero is rendered as a bare call
+        # asserting a NORMAL exit, and is RED on the unmodified contract.
+        #
+        # THERE ARE TWO EMITTERS AND THE FIX ONLY REACHED ONE. Commit 4e1cbee1b7
+        # added these to `scripts/solidity_path_put.py`, measured the D10/D20
+        # `test_cov_*` cases going from panic 0x11 to green, and said so. This
+        # script builds its OWN esbmc command and did not get them, so the funnel
+        # re-run on that same HEAD came back BYTE-IDENTICAL -- 334 -> 301 -> 300
+        # -> 280 of 294, with the same 11 RED, including exactly the D10, Tiny2,
+        # P18 and D20 cases the other project had already turned green. A fix
+        # applied to one of two readers of the same fact reads as "measured, no
+        # effect" and is actually "not wired here".
         cmd = [str(ESBMC), str(ast), "--sol", str(sol),
                "--solidity-path-coverage", "--cov-report-json",
                "--generate-foundry-testcase", "--memlimit", a.memlimit,
+               "--overflow-check", "--div-by-zero-check",
+               "--path-cov-arith-resolve",
                "--contract", cname, "--solidity-max-tx", a.tx]
         t0 = time.time()
         rc, out = sh(cmd, cwd=str(wd), timeout=a.timeout)
