@@ -52,15 +52,11 @@ contract FeeVaultCovTest_1_FeeVault_setDiscount_put6 is Test {
   // CELL GATE -- --focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach
   // CERTIFIED REGION (stage 2), certified by an independent
   // `assume(box); assert(tr == pi)` query, not by the subtraction:
-  //   bps in [3856, 65535]
-  //   state.deposits[msg.sender] in [0, 0]
-  //   state.deposits[u] in [0, 0]
-  //   state.feeReceiver in [0, 297476417124140630613410305865313051018915640]
-  //   state.owner in [0, 297476417124140630613410305865313051018915640]
-  //   u in [0, 1461501637330902918203684832716283019655932542975]
+  //   bps in [251, 65535]
+  //   state.feeReceiver in [0, 4294967295]
+  //   state.owner in [0, 4294967295]
+  //   u in [0, 1461501637330902918203684832716283019655932542974]
   //   PIN msg.value == 0
-  //   PIN state.feeBps == 250   [NOT ESTABLISHED -- see the dropped-bound line]
-  //   PIN state.maxFee == 100000000000000000   [NOT ESTABLISHED -- see the dropped-bound line]
   // Arguments the region does NOT bound keep the counterexample's own
   // literal: the region is a statement about THAT slice, and generalising
   // over them would be a claim the certification never made.
@@ -73,21 +69,11 @@ contract FeeVaultCovTest_1_FeeVault_setDiscount_put6 is Test {
   // shown to reach a return at all.
   //   rung DROPPED: feeBps (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)
   //   rung DROPPED: maxFee (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)
-  //   entry-state bound DROPPED: state.deposits[msg.sender] (the key `msg.sender` is an ENVIRONMENT quantity, not a declared parameter. Inside a Foundry test `msg.sender` is whoever called the test, while the unit sees the test contract (or the pranked address) as its caller -- so the slot written here and the slot the unit reads would be different words, and a `post == pre` rung over an untouched slot would stay GREEN while establishing nothing)
-  //   entry-state bound DROPPED: state.feeBps (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)
-  //   entry-state bound DROPPED: state.feeReceiver in [0, 297476417124140630613410305865313051018915640] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)
-  //   entry-state bound DROPPED: state.maxFee (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)
-  //   entry-state bound DROPPED: state.owner in [0, 297476417124140630613410305865313051018915640] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)
+  //   entry-state bound DROPPED: state.feeReceiver in [0, 4294967295] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)
+  //   entry-state bound DROPPED: state.owner in [0, 4294967295] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)
   function test_put_FeeVault_setDiscount_path6(address u, uint16 bps) public {
-    u = address(uint160(bound(uint256(uint160(u)), 0, 1461501637330902918203684832716283019655932542975)));
-    bps = uint16(bound(uint256(bps), 3856, 65535));
-    // entry state the certified region names, ESTABLISHED (not assumed):
-    //   state.deposits[u] := 0
-    {
-      uint256 _w = uint256(vm.load(address(c0), keccak256(abi.encode(u, uint256(2)))));
-      _w = (_w & ~uint256(115792089237316195423570985008687907853269984665640564039457584007913129639935)) | ((uint256(0) & 115792089237316195423570985008687907853269984665640564039457584007913129639935) << 0);
-      vm.store(address(c0), keccak256(abi.encode(u, uint256(2))), bytes32(_w));
-    }
+    u = address(uint160(bound(uint256(uint160(u)), 0, 1461501637330902918203684832716283019655932542974)));
+    bps = uint16(bound(uint256(bps), 251, 65535));
     // pre-state for the oracle, at this path's own entry
     uint256 _pre_owner = (uint256(vm.load(address(c0), bytes32(uint256(0)))) & 1461501637330902918203684832716283019655932542975);
     uint256 _pre_feeReceiver = (uint256(vm.load(address(c0), bytes32(uint256(1)))) & 1461501637330902918203684832716283019655932542975);
