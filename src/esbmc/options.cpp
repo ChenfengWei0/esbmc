@@ -996,6 +996,30 @@ const struct group_opt_templ all_cmd_options[] = {
       "is therefore NOT the result — the per-candidate HOLDS / REFUTED / "
       "no-verdict table is. Mutually exclusive with --path-cov-certify and "
       "--path-cov-outer-box"},
+     {"path-cov-fixture",
+      boost::program_options::value<std::string>()->value_name("file"),
+      "Replace the DEPLOYMENT of --contract with a recorded concrete state. "
+      "JSON: {contract, skip_constructor, state:{name:value}} where each value "
+      "is a decimal or 0x-hex literal for a scalar state variable (integer / "
+      "address / bool). With skip_constructor the constructor call is not "
+      "emitted into the entry function at all, and the named state variables "
+      "are assigned before the transaction driver runs. WHY IT IS NOT A LOOP "
+      "BOUND: the constructor and the unit under test are forced to share one "
+      "--unwind, because the path enumeration's loop bound and the symex unwind "
+      "bound must agree. MEASURED on two PoC contracts whose constructor pushes "
+      "to a dynamic array inside a struct: at the pass's own default bound of 4 "
+      "the library memcpy is truncated, symex produces `Generated 0 VCC(s)`, "
+      "not one of the 3 instrumented path claims reaches the solver and the "
+      "process aborts -- while at --unwind 64 the SAME query witnesses 3 of 3 "
+      "paths in 0.4s. Raising the shared bound pays for it in the unit's "
+      "enumeration, which is exponential in loop iterations; removing the "
+      "deployment from the query separates the two numbers instead. It is also "
+      "what makes an emitted test replayable: a symbolically-constructed entry "
+      "state is not something a Foundry test can reproduce, a recorded concrete "
+      "one is. A named file that cannot be read, cannot be parsed, or names a "
+      "state variable the contract does not have is a HARD FAILURE -- an "
+      "ignored fixture would silently run the ordinary symbolic deployment "
+      "while the report claimed a concrete one"},
      {"solidity-path-coverage",
       NULL,
       "Solidity complete-path coverage (entry->exit path coverage for test "

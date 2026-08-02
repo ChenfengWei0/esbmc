@@ -1,0 +1,7 @@
+{
+  "contract": "Depl",
+  "skip_constructor": true,
+  "state": {
+    "owner": "0x00000000000000000000000000000000000000c0"
+  }
+}
