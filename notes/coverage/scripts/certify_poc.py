@@ -95,6 +95,20 @@ def main():
                     help="per DRIVER invocation, i.e. one unit's whole loop")
     ap.add_argument("--memlimit", default="8g")
     ap.add_argument("--out", default=str(OUT))
+    ap.add_argument("--pin-env", action="store_true", dest="pin_env",
+                    help="pin the environment (msg.sender, block.*, ...) to the "
+                         "path's own counterexample values. OFF by default and "
+                         "that default is the locked evaluation rule -- but "
+                         "MEASURED: with it off the certification query leaves "
+                         "14 environment quantities free, the refutation comes "
+                         "back differing only on one of them, there is no "
+                         "bounded coordinate to cut, and the D-series PoCs all "
+                         "report 0 certified / 3 not. A pinned environment "
+                         "quantity is a coordinate with admission rate 1 and "
+                         "goes into the distribution as exactly that; what is "
+                         "forbidden is summing pinned and unpinned numbers into "
+                         "ONE figure, so run it as a second arm and report the "
+                         "two separately.")
     ap.add_argument("--redo", action="store_true")
     ap.add_argument("--workdir", default="/tmp/certify_poc")
     a = ap.parse_args()
@@ -196,7 +210,7 @@ def main():
             # query leaves msg.sender, block.number, block.timestamp and eleven
             # more FREE. The refutation then returns a witness that differs from
             # the path's counterexample ONLY on one of them --
-            //
+            #
             #     enc=7: refuted with no single-coordinate cut available; the
             #     witness differs on: msg.sender (path=0, witness=4294967295)
             #     [NOT a bounded coordinate]
