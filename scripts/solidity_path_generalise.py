@@ -2375,7 +2375,7 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
       * a first suggestion naming a PINNED coordinate returned None and ended
         the path, even where other differing coordinates were cuttable.
 
-    The four outcomes, kept apart because they call for opposite actions:
+    The five outcomes, kept apart because they call for opposite actions:
 
       "no-payload"  the refutation carried no counterexample. NOT "no
                     difference" -- a missing harvest.
@@ -2397,6 +2397,15 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
                     implemented; the second is the one that is easy to miss,
                     and a one-value interval reached by cutting is exactly the
                     shape it exists to stop.
+      "no-retreat"  [coord, ...] -- they DIFFER, no cut is available, and the
+                    retreat cannot be taken either, because x_pi's value on
+                    every such coordinate lies OUTSIDE this piece. A piece from
+                    S3's split excludes x_pi by construction, so pinning at
+                    x_pi would REPLACE the piece with a point outside it rather
+                    than narrow it. Kept apart from "coords-gate" because that
+                    one means the two AGREE everywhere, which is a claim about
+                    ESBMC's harvest; this is a claim about S3's bookkeeping,
+                    and merging them files one as the other.
     """
     usable, untrusted, _only_path, _only_wit = divergence_pairs(
         ce, wit, ranges, assumed_hs)
@@ -2445,10 +2454,50 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
         return "pin", retreat
     # Differences exist and none of them yields a cut: the refutation cannot be
     # answered on any coordinate it points at. THE FIRST TRIGGER.
+    #
+    # ---- x_pi HAS TO BE INSIDE THE PIECE, AND ON A SPLIT PIECE IT IS NOT ----
+    #
+    # §Certification's retreat "pins the coordinate to the value x_pi gives
+    # it". That presupposes x_pi is a member of the set being pinned. On a
+    # piece produced by S3's split it is not, BY CONSTRUCTION: the discarded
+    # side of a cut becomes a piece precisely because it excludes the
+    # counterexample the kept side holds. Pinning there does not narrow the
+    # piece, it REPLACES it with a point lying outside it -- and since every
+    # piece of one path retreats to the SAME x_pi value, all of them collapse
+    # onto one set and the shrink budget is spent several times over on it.
+    #
+    # MEASURED, farming/deposit enc=3622 and enc=3623, three runs out of three
+    # (the recorded arm, the --claim-budget arm, and that arm's control):
+    # pieces 2, 3 and 4 each print
+    #     [retreat piece N] PINNED amount==1157920892...639934 at its x_pi value
+    # with byte-identical |R| and then run byte-identical walks. Piece 2's own
+    # amount interval at that moment is [1, 3]; the value pinned into it is
+    # ~1.16e77.
+    #
+    # ⚠ C3 CANNOT CATCH THIS, and that is worth stating because the invariant
+    # looks like it should. Pinning a coordinate to one value makes |R|
+    # SMALLER, and C3 is a size check -- a set leaving its own piece is
+    # invisible to it. The guard has to live here, where the value is chosen.
+    #
+    # The CUT branch above has carried exactly this test all along
+    # (`lo <= wv <= hi and lo <= pv <= hi`); only the retreat was missing it.
     fallback = {n: pv for n, pv, _wv in usable
-                if n in box and n not in pins and box[n][0] != box[n][1]}
+                if n in box and n not in pins and box[n][0] != box[n][1]
+                and box[n][0] <= pv <= box[n][1]}
     if fallback:
         return "pin", fallback
+    # ⛔ NOT "coords-gate". That kind means y and x_pi AGREE on every
+    # coordinate, which is a statement about what the model can express; this
+    # is the opposite -- they DO differ, and the differences all sit on
+    # coordinates whose x_pi value this piece does not contain. Reporting it as
+    # the coordinate gate would file an S3 bookkeeping outcome as an ESBMC
+    # harvesting gap, which is the one confusion those two buckets exist to
+    # prevent.
+    outside = sorted(n for n, pv, _wv in usable
+                     if n in box and n not in pins
+                     and not (box[n][0] <= pv <= box[n][1]))
+    if outside:
+        return "no-retreat", outside
     return "coords-gate", None
 
 
@@ -4194,6 +4243,36 @@ def main():
                             "against this path's counterexample, so no cut is "
                             "derivable -- this is not the agree-on-everything "
                             "case"
+                            + divergence_text(ce, last_wit,
+                                              set(last_wit_box) | set(pins),
+                                              caveats, _rng, _ahs))
+                        break
+                    if kind == "no-retreat":
+                        # THE RETREAT DOES NOT APPLY TO THIS PIECE.
+                        #
+                        # Reported as its own reason and NOT as the coordinate
+                        # gate, because the two say opposite things about where
+                        # the limitation is. The gate means the witness and
+                        # x_pi agree on everything the payload carries, i.e.
+                        # ESBMC did not harvest the separating quantity. This
+                        # means they DIFFER, and the differences sit on
+                        # coordinates whose x_pi value this piece was built to
+                        # exclude -- a fact about S3's split, not about the
+                        # model. Filing it as the gate would inflate the
+                        # harvesting bucket with our own bookkeeping.
+                        reason = (
+                            "refuted, and §Certification's retreat does not "
+                            "apply to this PIECE: every coordinate the "
+                            "refutation points at ("
+                            + ", ".join(payload)
+                            + ") has its x_pi value OUTSIDE this piece's own "
+                              "interval. A piece produced by a split excludes "
+                              "x_pi by construction, so pinning at x_pi would "
+                              "not narrow the piece -- it would replace it "
+                              "with a point that is not in it, and every piece "
+                              "of this path would collapse onto the same set. "
+                              "⛔ This is NOT the coordinate gate: the witness "
+                              "and x_pi DO differ here"
                             + divergence_text(ce, last_wit,
                                               set(last_wit_box) | set(pins),
                                               caveats, _rng, _ahs))
