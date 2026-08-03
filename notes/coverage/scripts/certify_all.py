@@ -216,8 +216,20 @@ def available_gib():
     return None
 
 
-def job_memlimit_gib(jobs, reserve_frac=0.60, floor_gib=4):
+def job_memlimit_gib(jobs, reserve_frac=0.60, floor_gib=4, want_gib=8):
     """Per-job `--memlimit`, or a refusal string. NEVER a silent degradation.
+
+    `want_gib` is the caller's request. It used to be the literal 8 below, with
+    no way to ask for anything else at --jobs 1 -- so the one number every
+    single-job run on this corpus was made under lived nowhere but in this
+    function, which is the same "a limit is a line nobody read" shape the
+    driver's own --memlimit help complains about.
+
+    STILL CHECKED AGAINST THE MACHINE, at every jobs count. A request that does
+    not fit is REFUSED rather than quietly reduced, for the reason below: a
+    silently smaller limit turns a scheduling decision into a measurement
+    change. That check used to be skipped entirely at --jobs 1, which was safe
+    only because the 8 was hardcoded and small.
 
     THE RULE THIS REPLACES, AND WHY IT IS SAFE TO REPLACE IT. The project rule
     has been "never run esbmc concurrently -- it exhausted the machine once and
@@ -238,25 +250,37 @@ def job_memlimit_gib(jobs, reserve_frac=0.60, floor_gib=4):
     the problem, which would turn a parallelism decision into a measurement
     change.
     """
-    if jobs <= 1:
-        return 8, None
     avail = available_gib()
     if avail is None:
         return None, ("cannot read MemAvailable from /proc/meminfo, so the "
-                      "memory budget for parallel jobs cannot be computed. "
-                      "Refusing to guess -- run with --jobs 1")
+                      "memory budget cannot be computed. Refusing to guess")
     budget = avail * reserve_frac
-    per = int(budget // jobs)
-    if per < floor_gib:
+    # THE REQUEST IS CHECKED, AND IT IS THE REQUEST THAT IS RETURNED. Dividing
+    # the budget by `jobs` would silently hand a single job the whole 60% of
+    # MemAvailable, i.e. a limit nobody asked for -- the mirror of the silent
+    # shrink this function refuses in the other direction.
+    if want_gib * jobs > budget:
         return None, (
-            f"--jobs {jobs} does not fit: MemAvailable is {avail:.1f} GiB, the "
-            f"budget is {reserve_frac:.0%} of that = {budget:.1f} GiB, which is "
-            f"{per} GiB per job and below the {floor_gib} GiB floor. Below the "
-            f"floor a unit starts dying of the memory limit rather than of the "
-            f"problem, which would make this a measurement change and not a "
-            f"scheduling one. Use --jobs {max(1, int(budget // floor_gib))} or "
-            f"fewer")
-    return per, None
+            f"--memlimit {want_gib}g x --jobs {jobs} = {want_gib * jobs} GiB "
+            f"does not fit: MemAvailable is {avail:.1f} GiB and the budget is "
+            f"{reserve_frac:.0%} of that = {budget:.1f} GiB. Refusing rather "
+            f"than shrinking the limit, because a silently smaller limit makes "
+            f"units die of the limit instead of the problem -- a measurement "
+            f"change dressed as a scheduling one. Use --memlimit "
+            f"{max(floor_gib, int(budget // max(1, jobs)))}g or fewer --jobs")
+    if want_gib < floor_gib:
+        return None, (
+            f"--memlimit {want_gib}g is below the {floor_gib} GiB floor, under "
+            f"which a real benchmark unit starts dying of the limit rather "
+            f"than of the problem")
+    # THE REQUEST IS WHAT IS RETURNED, at every jobs count. The old code handed
+    # back `budget // jobs`, which is the largest limit that FITS and not the
+    # one anyone asked for -- so raising --jobs silently raised or lowered the
+    # per-run memory bound as a side effect of a scheduling decision, and two
+    # sweeps run at different --jobs were two measurements wearing one name.
+    # The fit check above has already refused anything that does not fit, so
+    # there is nothing left to negotiate here.
+    return want_gib, None
 
 
 def units_of(bench):
@@ -486,6 +510,28 @@ def main():
                          "exact region from level 0 plus refinement. ONE shape, "
                          "so this is offered rather than made default.")
     ap.add_argument("--level0", action="store_true", default=True)
+    ap.add_argument("--memlimit-gib", type=int, default=8, metavar="N",
+                    help="per-ESBMC-process memory limit, in GiB. DEFAULT 8, "
+                         "the value that used to be hardcoded for --jobs 1 and "
+                         "could not be asked for otherwise -- so every "
+                         "single-job number on this corpus was made under a "
+                         "limit that lived in one function and in no record's "
+                         "flags.\n"
+                         "CHECKED, NOT TRUSTED: N x --jobs must fit inside 60%% "
+                         "of measured MemAvailable or the sweep REFUSES. It "
+                         "never silently shrinks, because a unit that dies of "
+                         "the limit instead of the problem is a measurement "
+                         "change wearing a scheduling decision's clothes.\n"
+                         "⚠ RAISING IT IS NOT A FIX FOR THE CURRENT FAILURES. "
+                         "MEASURED on results_pieces_corpus.jsonl, every row "
+                         "read: not one non-completion has a memory "
+                         "signature -- every `exit` is 1 (FAILED) or 124 "
+                         "(timeout), never -9/-6/134 -- and the round that was "
+                         "traced in detail died on `[run] TIMEOUT after 180s` "
+                         "with 77.1s of solving done and nothing hung. The "
+                         "budget that binds is --run-timeout. This buys "
+                         "headroom so memory stops being a candidate "
+                         "explanation, not throughput.")
     ap.add_argument("--jobs", type=int, default=1,
                     help="how many units to certify CONCURRENTLY. Default 1, "
                          "which is the historical behaviour.\n"
@@ -667,7 +713,7 @@ def main():
     # THE MEMORY BOUND IS COMPUTED AND PRINTED BEFORE ANY RUN, and a failure to
     # fit is a refusal. Printed even at --jobs 1, so the number a sweep ran
     # under is in its own log rather than in whoever's memory launched it.
-    memlimit, refusal = job_memlimit_gib(args.jobs)
+    memlimit, refusal = job_memlimit_gib(args.jobs, want_gib=args.memlimit_gib)
     if refusal:
         print(f"[sweep] REFUSING --jobs {args.jobs}: {refusal}")
         return 1
