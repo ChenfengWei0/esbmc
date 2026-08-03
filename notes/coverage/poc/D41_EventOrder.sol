@@ -250,6 +250,47 @@ pragma solidity ^0.8.20;
 //   so the capture point is local to the same component rather than a new
 //   earlier stage. Record the emit as the expansion consumes it.
 //
+// ---- THE CALL IS NOT DELETED, AND MY CENSUS COULD NOT HAVE SEEN IT ----
+//
+// `sol_path_inlinet::expand_here` ends with
+//
+//     target->type = LOCATION;
+//     target->code = expr2tc();
+//
+// It does NOT delete the call it expands. The instruction SURVIVES in place,
+// carrying its original location; only its TYPE and code change. So by census
+// time an emit is a LOCATION, and the first three versions of the census -- all
+// filtered on `is_function_call()` -- could not have seen it however well the
+// stamp worked. Third detector error of the same family in this one
+// investigation: right question, wrong observable.
+//
+// Re-run with the filter removed and the instruction type reported:
+//
+//     D41_NoEvent  : 27 instruction(s), NONE carrying an emit stamp
+//     D41_EventAB  : 35 instruction(s), NONE carrying an emit stamp
+//     D41_EventBA  : 35 instruction(s), NONE carrying an emit stamp
+//
+// 35 against 27, so the emit contributes EIGHT instructions and there is
+// plenty of material to hang a marker on. The stamp is still absent.
+//
+// ⇒ FINAL ANSWER FOR THIS CARRIER: an extra irep field on a Solidity
+//   statement's LOCATION does not survive goto conversion. The conversion
+//   builds the instruction's location from the standard fields (file, line,
+//   function), not by copying the irep. Consistent with something that should
+//   have carried more weight earlier: `sol_abi_value_gate` and
+//   `sol_path_inlined`, the two precedents cited for this whole approach, are
+//   BOTH set on the GOTO instruction from inside goto_coverage -- neither is
+//   set in the front end. There was no precedent for a front-end location
+//   stamp because there is no such path.
+//
+// ⇒ REMAINING UNTRIED CARRIER: the callee SYMBOL itself. Symbols live in the
+//   symbol table and are not rebuilt by goto conversion, so a flag set on the
+//   event's symbol at declaration should still be readable when the pass looks
+//   up the callee of a FUNCTION_CALL -- which is BEFORE expand_here turns it
+//   into a LOCATION. That also puts the discriminator exactly where the
+//   information is (the AST said EventDefinition) instead of inferring it from
+//   an empty body. Untried, and not claimed to work.
+//
 // ⇒ A SEPARATE COST FALLS OUT, not previously recorded: an event is being
 //   treated as an internal function and CHARGED TO THE EXPANSION BUDGET (call
 //   depth bound 4). A contract with several events therefore spends, on
