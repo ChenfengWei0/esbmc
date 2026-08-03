@@ -81,10 +81,36 @@ pragma solidity ^0.8.20;
 //     GOTO program, but nothing carries that fact into the report, and the plan
 //     inferred an observable from a lowering.
 //
-// SCOPE, stated because it bounds the claim: these runs produced no Foundry
-// emission section at all (zero lines mentioning Foundry in any of the three
-// logs), so this measures the REPORT channel only. The emitter side is untested
-// here and this file must not be quoted for it.
+// SCOPE of the runs above: they were made WITHOUT the emission flag and so
+// produced no Foundry section at all. They measure the REPORT channel only.
+//
+// ---- THE EMITTER SIDE, MEASURED SEPARATELY. SAME ANSWER. ----
+//
+// Re-run identically plus `--generate-foundry-testcase`. Positive control is
+// much stronger here because each cell prints its own census, and all three are
+// the same:
+//
+//     Path Exits: normal 2, revert 1, undetermined 0
+//     Path Status: F 3, I 0, U 0
+//     Generated Foundry coverage test with 3 case(s)
+//     Foundry: 2 call(s) emitted bare (exit census confirmed normal; ...)
+//
+// The three generated tests are 36 lines each. After erasing the contract name,
+// the COMPLETE diff between any two of them is three comment lines carrying the
+// mangled unit id:
+//
+//     // claim: sol:@C@CONTRACT@F@run#23:path:7     (NoEvent)
+//     // claim: sol:@C@CONTRACT@F@run#62:path:7     (EventAB)
+//     // claim: sol:@C@CONTRACT@F@run#101:path:7    (EventBA)
+//
+// `#23`/`#62`/`#101` is the AST node id of the function, i.e. contract identity
+// again. No `Alpha`, no `Beta`, no `vm.expectEmit`, no `vm.recordLogs` in any of
+// the three. A generated test for a unit that emits two events is byte-identical
+// to one for a unit that emits none.
+//
+// ==> The event rung needs NEW MECHANISM AT BOTH LAYERS, not just a field. The
+//     report cannot carry the observation and the emitter would have nothing to
+//     render from if it could.
 //
 // ---- MY FIRST INSTRUMENT WAS CONFOUNDED AND SAID (iii). KEPT, NOT REPLACED. ----
 //
