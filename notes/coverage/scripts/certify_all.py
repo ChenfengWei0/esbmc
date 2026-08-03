@@ -487,6 +487,50 @@ def main():
                          "--out to give this arm its OWN file: writing it into "
                          "results.jsonl would put two arms under one "
                          "(benchmark, unit) key.")
+    # ---- THE PUNCH ARM, AND WHY ITS ABSENCE PRODUCED A FALSE ZERO ----
+    #
+    # MEASURED, and it is the reason these exist: not one line of this file
+    # mentioned holes, and the driver's `--max-holes` defaults to 0. So the
+    # corpus sweep could not ADMIT a hole into any region, whatever the
+    # contracts do -- and the recorded corpus result, 0 of 7 certified regions
+    # carrying a hole, is a fact about this command line and NOT about the
+    # corpus. That is the always-empty-channel shape: a detector that cannot
+    # fire reports the same 0 as one that fired and found nothing.
+    #
+    # The two flags are coupled and are exposed together on purpose. A punch is
+    # only reachable when the loop is allowed to keep both sides of a cut
+    # (`copy_holes`, driver: "needs both --max-region-pieces > 1 and
+    # --max-holes > 0"), so offering the second without the first would be a
+    # switch that still cannot fire -- the same failure one flag further in.
+    #
+    # WHY IT MATTERS RATHER THAN BEING TIDINESS: a side cut discards the whole
+    # side that does not hold this path's counterexample, so WHICH side survives
+    # is decided by a value the solver picked. Measured on one address
+    # coordinate, the same region came out [256, 2^160-1] or [0, 254] depending
+    # only on the sibling's witness -- a factor of 5.7e45 -- while a punch gives
+    # [0, 2^160-1] \ {v} either way.
+    #
+    # Both DEFAULT to the driver's own defaults, so an unflagged sweep is
+    # byte-identical to every sweep already recorded. Both are written onto
+    # every row, same house rule as --env-coord: an arm whose configuration is
+    # not in its records is an arm whose numbers cannot be re-derived.
+    #
+    # ⚠ Use --out to give the punch arm its OWN file. Writing it into
+    # results.jsonl would put two arms under one (benchmark, unit) key, which is
+    # the one-fact-two-ledgers failure this file already refuses for --redo.
+    ap.add_argument("--max-holes", type=int, default=0,
+                    help="passed to the driver: per coordinate, how many values "
+                         "the region may PUNCH OUT before falling back to a side "
+                         "cut. 0 (the driver's default, and every recorded "
+                         "sweep's value) means NO region can carry a hole, so a "
+                         "hole count taken from such a sweep measures this flag "
+                         "and not the corpus. Needs --max-region-pieces > 1 to "
+                         "have any effect.")
+    ap.add_argument("--max-region-pieces", type=int, default=1,
+                    help="passed to the driver: how many boxes one path's region "
+                         "may be split into. 1 (the driver's default) throws the "
+                         "non-counterexample side of every cut away, and is also "
+                         "the setting under which --max-holes cannot fire.")
     ap.add_argument("--unit", action="append", default=[],
                     help="sweep only these unit names (repeatable). Without it "
                          "the whole benchmark is swept, which for a re-measure of "
@@ -698,7 +742,16 @@ def main():
                    # field now -- deliberately NOT folded into `unit_timeout_s`,
                    # which is a different quantity and is quoted as such.
                    "--timeout", str(min(args.timeout, 180)),
-                   "--memlimit", f"{memlimit}g", "--workdir", uwd]
+                   "--memlimit", f"{memlimit}g", "--workdir", uwd,
+                   # ALWAYS PASSED, not passed-only-when-non-default. A flag
+                   # that appears on the command line only sometimes is a
+                   # command line that cannot be read back off the record: the
+                   # row would say max_holes=0 for both "we asked for 0" and
+                   # "we never asked", which is the distinction this arm exists
+                   # to make. The defaults equal the driver's, so an unflagged
+                   # sweep is byte-identical in behaviour to every recorded one.
+                   "--max-holes", str(args.max_holes),
+                   "--max-region-pieces", str(args.max_region_pieces)]
             if args.level0:
                 cmd.append("--level0")
             if args.skip_bracket:
@@ -770,6 +823,15 @@ def main():
                         # as MIXED. A recorded null is a fact; a missing field is
                         # an unknown.
                         "env_coord": args.env_coord,
+                        # THE PUNCH ARM'S CONFIGURATION, on every row. A hole
+                        # count read off rows that do not carry these two is a
+                        # count whose denominator is unknown: `max_holes: 0`
+                        # means no region COULD carry a hole, and a reader who
+                        # cannot see that reads the 0 as a property of the
+                        # contracts. Recorded as values rather than omitted when
+                        # default, for the same reason `env_coord: null` is.
+                        "max_holes": args.max_holes,
+                        "max_region_pieces": args.max_region_pieces,
                         "probes": args.probes,
                         "refine_rounds": args.refine_rounds,
                         "shrink_rounds": args.shrink_rounds,
