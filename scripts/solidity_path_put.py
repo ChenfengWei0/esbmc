@@ -1593,6 +1593,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         return None, None
 
     lifted, repl, sig, pre_lines = [], {}, [], []
+    # coordinate -> how many values the EMITTED test leaves it. See the floor
+    # test below; `lifted` alone cannot answer it.
+    rendered_width = {}
     used = {b[0] for b in emitted.blocks}
 
     # The environment the emitted case runs under must be the one certified.
@@ -1617,6 +1620,12 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             pre_lines += pre_add
             lifted.append("msg.sender")
             used.add(sig_add[1])
+            # `sig_add` is produced only on the `hi > lo` branch of
+            # establish_env_sender, so this is the fuzzed sender; the width-one
+            # branch rewrites the prank to a constant and renders one value.
+            if "msg.sender" in region:
+                _slo, _shi = region["msg.sender"]
+                rendered_width["msg.sender"] = _shi - _slo + 1
 
     env_refusals, env_unchecked = env_disagreements(
         body, call_i, call_line, region, pins,
@@ -1642,6 +1651,61 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                  sorted(holes.get(pname, ())))
         repl[idx] = var
         lifted.append(pname)
+        # HOW MANY VALUES THIS RENDERED COORDINATE MAY TAKE. Recorded per
+        # coordinate rather than inferred from `lifted` being non-empty, because
+        # a coordinate whose region is a POINT is still rendered -- `bound(x, 0,
+        # 0)` is a real line in the emitted tests -- and "rendered" and "free to
+        # vary" are the two things the floor test below must not confuse.
+        rendered_width[pname] = (hi - lo + 1) - len(
+            [h for h in holes.get(pname, ()) if lo <= h <= hi])
+
+    # ---- §From a Region to a Test: THE FLOOR TEST IS ON THE RENDERED SET ----
+    #
+    # Verbatim from the method:
+    #
+    #     A test is parameterized when at least one coordinate IT RENDERS is
+    #     left more than one value to take. A region wider than a point does not
+    #     settle this on its own, since the coordinates the omission rule leaves
+    #     out are not rendered and a region can be wide only on those. Where no
+    #     rendered coordinate takes more than one value, what the path receives
+    #     is the concrete replay test of Section enum, whatever the width of
+    #     R_pi.
+    #
+    # WHAT THIS FILE TESTED INSTEAD: whether `lifted` is non-empty, i.e. whether
+    # ANY coordinate was rendered at all. Those differ exactly where it matters,
+    # because a coordinate whose region is a POINT is still rendered -- the
+    # emitted tests carry `bound(uint256(uint160(distributor_)), 0, 0)` as a
+    # real line -- and nothing in the parameter loop above ever looked at the
+    # width. So a region wide ONLY on coordinates the emitter drops (every
+    # `state.<v>` bound of width > 1 is dropped by the entry-state branch below,
+    # and says so) would be emitted as a PUT whose every fuzz parameter is
+    # pinned to one value: a concrete replay with `bound()` syntax over it,
+    # counted as a parameterized test.
+    #
+    # NOT HYPOTHETICAL. farming.setDistributor enc=12 renders `distributor_`
+    # over [0, 0] and DROPS `state._owner in [1, 821886975]` as too wide to
+    # establish. It survives only because `msg.sender` is also rendered and IS
+    # wide. Remove the sender coordinate -- which is what every arm without
+    # `--env-coord msg.sender` does -- and the same region renders one value on
+    # everything while the box stays wide.
+    #
+    # The concrete replay test the method points to is not built here: the
+    # emitter has already written it into this same file (`test_cov_*`), so the
+    # correct action is to emit no PUT and say why.
+    if not any(w > 1 for w in rendered_width.values()):
+        widths = ", ".join(f"{n}={w}" for n, w in sorted(rendered_width.items()))
+        notes.append(
+            "NOT PARAMETERIZED, per §From a Region to a Test: no coordinate "
+            "this test RENDERS is left more than one value to take"
+            + (f" (rendered widths: {widths})" if widths
+               else " (no coordinate is rendered at all)")
+            + ". A region wider than a point does not settle this on its own -- "
+              "the coordinates the omission rule leaves out are not rendered, "
+              "and a region can be wide only on those. What this path receives "
+              "is the concrete replay test the emitter already wrote into this "
+              "file; a PUT here would be that same replay with bound() syntax "
+              "over it, counted as a parameterized test")
+        return None, None
 
     new_call, _ = rewrite_call_args(call_line, unit, repl)
 
