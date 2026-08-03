@@ -37,9 +37,57 @@ pragma solidity ^0.8.20;
 ///     coordinate here, the shape is not reproduced, and this file is the
 ///     wrong isolation rather than a result.
 ///
+/// ✅ MEASURED AT LAST -- `probe` had never been run. This file recorded results
+/// for `ctrl` and `ctrlU256` while the unit it was WRITTEN for sat at
+/// "EXPECTED", and _runs/ holds no B1/B2/B3 directory at all. It is the FIRST
+/// of the two branches above, and the two units were run back to back in one
+/// script (run_b2_probe.sh), bracket ON, so they are comparable:
+///
+///   probe   3 witnessed (enc=2 ABI gate, enc=6/7 the pair)
+///           [coords] FREE: amount, msg.sender, state.tag      <- NO `token`
+///           [refine 1] ... UNSEPARATED=[6, 7]
+///           enc=6 and enc=7 regions BYTE-IDENTICAL, |R| identical
+///           both -> REFERRED TO THE COORDINATE GATE
+///           0 certified / 3 not          exit=1
+///
+///   ctrl    3 witnessed, same shape
+///           [coords] FREE: amount, msg.sender, state.tag, token
+///           [refine 2] ... UNSEPARATED=[7]
+///           enc=6: token in [101, 2^160-1]
+///           enc=7: token in [0, 100]      <- the true boundary is 100
+///           2 certified / 1 not          exit=0
+///
+/// ONE VARIABLE: where the branched-on bool comes from. Same contract, same
+/// command line, same `if (ok) / else` body. When `ok` is a function of a
+/// PAYLOAD coordinate the two paths certify into disjoint regions; when `ok` is
+/// the success bit of a low-level `call` the payload cannot see it and the pair
+/// is unseparated. That is farming/deposit's three pairs (enc 26/27, 246/247,
+/// 3622/3623, all splitting at safeTransferFrom:532 on `!success`) in twelve
+/// lines.
+///
+/// ⚠ `token` DISAPPEARS ENTIRELY in `probe`, and that is worth more than the
+/// verdict: it is the SAME `address token` parameter in both units, and it is a
+/// free coordinate in `ctrl` and absent from `probe`'s payload. Used only inside
+/// the assembly block, it is not harvested at all -- so the call's TARGET is
+/// missing as well as its result.
+///
+/// ⚠ THREE LIMITS ON WHAT THIS PROVES, stated because none of them is visible
+/// in the numbers above:
+///   (1) The `ctrl` line recorded further down this file is `1 certified / 2
+///       not`, and this run gives `2 / 1`. Three commits landed in between (the
+///       retreat guard, --state-struct-fields, and threading it to the witness
+///       side). Both are exit=0 and the control clears in both, but the two
+///       numbers are NOT one measurement and must never be quoted as a series.
+///   (2) `probe`'s gate verdict is the WEAK form -- the witness differs on
+///       block.number and block.timestamp, both marked `[NOT a bounded
+///       coordinate]` -- while farming/deposit's is the STRONG form ("agrees on
+///       EVERY scalar quantity in the payload"). Same mechanism, more noise.
+///   (3) Nothing here shows that HARVESTING the success bit would certify these
+///       paths. It shows the pair is inseparable while it is missing.
+///
 /// NEGATIVE CONTROL, `ctrl`: identical body with the external call removed and
 /// the branch put on the parameter. It must certify; if it does not, the run
-/// measured the harness.
+/// measured the harness. It certified (above).
 ///
 /// ⛔ THE FIRST VERSION OF `ctrl` COULD NOT PASS BY CONSTRUCTION, and its run is
 /// struck. It branched on `(uint160(token) & 1) == 1`. A region is a PRODUCT OF
