@@ -3476,10 +3476,20 @@ public:
       const irep_idt fid = to_symbol2t(call.function).thename;
       const symbolt *cs = sol_ns.get_context().find_symbol(fid);
       if (cs != nullptr && cs->type.get_bool("sol_event"))
+      {
+        // CARRY THE IDENTITY ONTO THE SURVIVING INSTRUCTION. `target` is not
+        // deleted below -- it becomes a LOCATION and stays in place, in
+        // program order -- so a stamp written here is exactly where the path
+        // walk will step over it. This is the pattern that WORKS on this side
+        // of the pipeline (`sol_path_inlined`, three lines further down,
+        // stamps GOTO instruction locations the same way); the front-end
+        // equivalent was measured not to survive goto conversion.
+        target->location.set("sol_emit_name", id2string(fid));
         log_status(
           "--solidity-path-coverage: EXPANDING AN EMIT: {} at {}",
           id2string(fid),
           target->location.as_string());
+      }
     }
 
     goto_programt tmp2;
@@ -6015,6 +6025,43 @@ void goto_coveraget::solidity_path_coverage()
     const bool unit_has_lost_decision = !lost_decision_locs.empty();
     if (unit_has_lost_decision)
       ++obstacle_units;
+
+    // ---- R0 EVENT RUNG: the emits this unit carries, IN PROGRAM ORDER ----
+    //
+    // `expand_here` stamps `sol_emit_name` on the instruction that used to be
+    // the emit call. That instruction is not deleted -- it becomes a LOCATION
+    // and stays in place -- so walking the unit here recovers the sequence at
+    // exactly the position the path walk will meet it.
+    //
+    // ⛔ DO NOT ADD an is_function_call() filter. By this point an emit is a
+    // LOCATION, and three earlier versions of this census read zero for
+    // precisely that reason while the stamp was working.
+    //
+    // This is still the OBSERVATION half. Nothing is written into a path's
+    // identity yet, deliberately: an always-empty channel and a contract that
+    // emits nothing render identically, so the sequence is proven visible here
+    // before any consumer is built on it.
+    {
+      std::vector<std::string> ev;
+      forall_goto_program_instructions (li, goto_program)
+      {
+        const irep_idt nm = li->location.get("sol_emit_name");
+        if (!nm.empty())
+          ev.push_back(id2string(nm));
+      }
+      if (!ev.empty())
+      {
+        std::string seq;
+        for (const auto &e : ev)
+          seq += (seq.empty() ? "" : " -> ") + e;
+        log_status(
+          "--solidity-path-coverage: unit '{}' emits {} event(s), in program "
+          "order: {}",
+          id2string(f_it->first),
+          ev.size(),
+          seq);
+      }
+    }
 
     // Fold one decision into the running id. `site` is the decision's SOURCE
     // location and `sub` its operand index within that site (several folded

@@ -311,6 +311,27 @@ pragma solidity ^0.8.20;
 // This is the channel R0's event rung needs. It is a probe, not yet a recorder:
 // nothing is written into the path identity or the report yet.
 //
+// ---- AND THE SEQUENCE SURVIVES EXPANSION, IN PROGRAM ORDER ----
+//
+// `expand_here` now also stamps `sol_emit_name` on the instruction that used to
+// be the call. That instruction is NOT deleted -- it becomes a LOCATION and
+// stays in place -- so the sequence is still there, in position, when the path
+// walk runs. Measured on the far side of expansion:
+//
+//   D41_NoEvent   no sequence line                                  <- control
+//   D41_EventAB   emits 2 event(s): ...Alpha#28 -> ...Beta#32
+//   D41_EventBA   emits 2 event(s): ...Beta#71  -> ...Alpha#67
+//
+// The two orders differ, the control is silent, and both the at-expansion probe
+// and the after-expansion sequence are printed together so that one appearing
+// without the other would be visible.
+//
+// ⇒ That is the last missing link before the recorder. The observation exists,
+//   is identified, is ordered, and is readable at the point where a path's
+//   identity is built. What remains is bookkeeping: append (name, position) to
+//   the current prefix beside note_decision / dec_table, and publish an
+//   `events` array next to `decisions` in the report.
+//
 // ⇒ SUPERSEDED: the callee SYMBOL was listed here as untried. Symbols live in the
 //   symbol table and are not rebuilt by goto conversion, so a flag set on the
 //   event's symbol at declaration should still be readable when the pass looks
