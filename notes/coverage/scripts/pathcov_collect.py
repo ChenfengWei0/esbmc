@@ -159,7 +159,7 @@ def solver_flags_for(bench_key, override):
 
 
 def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
-              instrument_only=None):
+              instrument_only=None, unwind=None):
     # `max_tx` IS A PARAMETER NOW, AND IT WAS A LITERAL `"1"` BEFORE.
     #
     # The docstring at the top of this file argues at length for 1 -- correctly,
@@ -181,6 +181,33 @@ def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
         "--path-cov-max-goals", str(goals),
         "--memlimit", MEMLIMIT,
     ] + list(solver_flags)
+    if unwind is not None:
+        # ---- THE CALL-DEPTH BOUND IS THIS FLAG, AND IT WAS NEVER PASSED ----
+        #
+        # The pass prints "expanded N internal call(s) into their calling unit
+        # (call depth bound = U)" and U is `path_cov_unwind`, i.e. --unwind. It
+        # defaults to 4 ("no --unwind given; bounding symbolic execution at 4 to
+        # match the path enumeration's own loop bound"), and this collector had
+        # no way to move it -- so every corpus row was produced at 4 and the
+        # bound was invisible in the data.
+        #
+        # WHY IT MATTERS FOR THE GATE, measured on the current collection: the
+        # ONE benchmark that clears the branch-coverage gate is the only one
+        # with NOTHING truncated by this bound.
+        #     aqua        0/6  runs truncated, 0 sites past the bound   PASS
+        #     EscrowDst   4/4                  8                        FAIL
+        #     EscrowSrc   6/6                 20                        FAIL
+        #     farming    12/12                42                        FAIL
+        # A call site past the bound is a callee whose decisions never join the
+        # caller's path identity, so they cannot appear in the numerator.
+        #
+        # IT CANNOT INFLATE THE GATE. The denominator is the canonical in-scope
+        # decision set, which is a property of the SOURCE and does not move; a
+        # larger bound can only let more of those same decisions be walked. The
+        # comparison stays honest as long as the value TRAVELS WITH THE ROW,
+        # which is why it is recorded in index.json below rather than only
+        # appearing in a shell history.
+        cmd += ["--unwind", str(unwind)]
     if primary:
         # scope_contract. NOTE the asymmetry with the baseline, which passes
         # --coverage-whole-unit and then excludes contracts one by one: the
@@ -362,7 +389,7 @@ def one_run(tag, cmd, timeout, workdir):
 
 def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             fresh=False, max_tx=1, focus_with=(), scope="single", adhoc=None,
-            only=()):
+            only=(), unwind=None):
     # ---- THE LADDER'S TWO AXES, AND WHY THEY ARE NOT A PLAIN PRODUCT ----
     #
     # They are LENGTH x ALPHABET, and that is now read out of the source rather
@@ -453,16 +480,24 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # `scope` joins the two conditions that were already here, because it is a
     # third way to be a non-gate cell and the directory rule has to cover every
     # one of them or it covers none.
-    if (max_tx != 1 or focus_with or scope != "single" or only) and \
-            not out_suffix:
+    # `unwind` joins the list for the same reason max_tx is on it: it is a
+    # CONFIGURATION, the gate's directory holds exactly one configuration, and a
+    # collection rewrites its index.json wholesale. A deeper-bound run landing
+    # there would replace the gate's collection with one the gate is not
+    # entitled to read, and the operator would discover it as "the gate is
+    # broken" rather than as "I overwrote it".
+    if (max_tx != 1 or focus_with or scope != "single" or only
+            or unwind is not None) and not out_suffix:
         sys.exit(
             f"{bench_key}: refusing to write a LADDER cell (scope={scope}, "
-            f"max-tx={max_tx}, only={','.join(only) or 'all'}, "
+            f"max-tx={max_tx}, unwind={unwind if unwind is not None else 'default'}, "
+            f"only={','.join(only) or 'all'}, "
             f"focus-with={','.join(focus_with) or 'none'}) into the gate's own "
             f"directory {OUT / bench_key}.\n"
             f"The unsuffixed directory holds the collection every gate row is "
             f"computed from, and a collection rewrites its index.json wholesale. "
             f"Pass --out-suffix (e.g. --out-suffix __tx{max_tx}"
+            + (f"__unwind{unwind}" if unwind is not None else "")
             + (f"__{scope}" if scope != "single" else "")
             + ("__focusset" if focus_with else "") + ").")
     out_dir = OUT / (bench_key + out_suffix)
@@ -620,7 +655,8 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             rec, d = one_run(tag,
                              esbmc_cmd(solast, flat,
                                        None if pkind == "library" else primary,
-                                       None, goals, sflags, max_tx),
+                                       None, goals, sflags, max_tx,
+                                       unwind=unwind),
                              timeout, out_dir / "work" / tag)
             record(rec)
             if d is not None:
@@ -789,7 +825,8 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # `single` passes nothing, so its command line is byte-identical to
             # what it always was.
             cmd = esbmc_cmd(solast, flat, primary, focus_arg, goals, sflags,
-                            max_tx, fname if focus_with else None)
+                            max_tx, fname if focus_with else None,
+                            unwind=unwind)
             rec, d = one_run(tag, cmd, timeout, out_dir / "work" / tag)
             rec["contract"], rec["function"], rec["kind"] = cname, fname, ckind
             record(rec)
@@ -826,6 +863,12 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # table, so a literal here would let a ladder cell present itself as
             # the gate cell.
             "solidityMaxTx": max_tx,
+            # The CALL-DEPTH BOUND, which is --unwind. `null` means the
+            # flag was NOT passed and the tool chose its own 4; that is a
+            # different fact from "we asked for 4", and the two must not
+            # be written the same way -- a row that cannot say which is a
+            # row whose truncation numbers have no bound recorded.
+            "unwind": unwind,
             # The extra names added to every unit's focus set. Empty for the gate
             # and artefact cells; non-empty for the middle cell of the width axis.
             "focusWith": list(focus_with),
@@ -914,6 +957,21 @@ def main():
     ap.add_argument("--contract", default="",
                     help="contract name for --sol (the --contract value ESBMC "
                          "is given)")
+    ap.add_argument("--unwind", type=int, default=None,
+                    help="the CALL-DEPTH BOUND, i.e. --unwind. The pass prints "
+                         "'expanded N internal call(s) ... (call depth bound = "
+                         "U)' and U is this value; unset, the tool picks 4. A "
+                         "call site deeper than the bound is a callee whose "
+                         "decisions never join the caller's path identity, so "
+                         "they cannot enter the gate's numerator. MEASURED on "
+                         "the current corpus: the one benchmark that CLEARS "
+                         "the branch-coverage gate (aqua) is the only one with "
+                         "nothing truncated by this bound, while EscrowSrc, "
+                         "EscrowDst and farming are truncated on EVERY run (up "
+                         "to 42 sites past it). Requires --out-suffix, and is "
+                         "recorded in index.json -- a truncation count whose "
+                         "bound is not in the row is a number nobody can "
+                         "interpret.")
     ap.add_argument("--max-tx", type=int, default=1,
                     help="DEPTH axis, i.e. the LENGTH of the call sequence: "
                          "--solidity-max-tx. ⚠ ESBMC's OWN DEFAULT IS 2, not 1 "
@@ -998,7 +1056,7 @@ def main():
 
     idx = collect(a.bench, scope == "whole", a.timeout, a.goals, a.out_suffix,
                   a.solver_flags.split(), a.fresh, a.max_tx, focus_with,
-                  scope, adhoc, only)
+                  scope, adhoc, only, a.unwind)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "
