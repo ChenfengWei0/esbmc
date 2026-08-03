@@ -75,7 +75,33 @@ BENCHMARKS = {
 # a change in its wording shows up as a missing field rather than as a wrong
 # number -- the sweep must never infer a value it did not see.
 RE_WITNESSED = re.compile(r"^\[enumerate\] (\d+) witnessed path\(s\)")
-RE_COORDS = re.compile(r"^\[coords\] ([^\[]+?)(?:\s+\[pinned: (.*)\])?$")
+# ---- TWO SPELLINGS, AND THE OLD ONE WAS BROKEN BY A COORDINATE'S OWN NAME ----
+#
+# `[^\[]+?` cannot cross a `[`, and a mapping-slot coordinate IS
+# `state._balances[msg.sender]`. So the moment --slot-coord was used the real
+# coordinate line stopped matching at all, `pins` came back null, and the LAST
+# `[coords]` line that happened to match -- a prose sentence about a mapping
+# shape -- was recorded as the coordinate list. MEASURED,
+# results_slotcoord_deposit.jsonl row 1:
+#
+#   "coords": ["mapping(s) whose SHAPE has no slot coordinate: _allowances
+#              (value is mapping(address => uint256); ...)"], "pins": null
+#
+# The driver now marks the real line `FREE:`, so it is identified by what it IS
+# rather than by a whitelist of prose prefixes to exclude -- a whitelist that is
+# open at the bottom and that this is the second entry to fall through. The old
+# spelling is still read, because a reader that stops recognising a message it
+# used to handle is the same defect pointing the other way; it is tried only
+# when no FREE line was seen.
+RE_COORDS_FREE = re.compile(
+    r"^\[coords\] FREE: (.+?)(?:   \[pinned: (.*)\])?$")
+# The legacy form is anchored on the driver's own three-space `   [pinned: `
+# separator instead of on "no `[` anywhere", so a bracketed coordinate name
+# parses on OLD logs too. ⚠ That makes the exclusion whitelist below fully
+# load-bearing for the legacy path -- it is the only thing separating the
+# coordinate line from prose -- which is why the marked form exists and why
+# `coords_line` records which of the two produced a row.
+RE_COORDS = re.compile(r"^\[coords\] (.+?)(?:   \[pinned: (.*)\])?$")
 RE_NO_COORD = re.compile(r"^\[coords\] NO GENERALISABLE COORDINATE — (.*)$")
 RE_CERT = re.compile(r"^  enc=(\d+)(?: piece \d+/\d+)?: (.*)$")
 # ---- A PATH SPLIT INTO PIECES WAS RECORDED AS ZERO CERTIFIED ----
@@ -344,6 +370,11 @@ def units_of(bench):
 def parse_driver(out):
     """The driver's own report, as a record. Nothing is inferred."""
     rec = {"witnessed": None, "coords": [], "pins": None,
+           # WHICH spelling the coordinate list was read from. `None` means no
+           # coordinate line was recognised at all, which must not read as
+           # "this unit has no coordinates" -- the state that produced a prose
+           # sentence in the coords field once already.
+           "coords_line": None,
            "no_coordinate_reason": None, "certified": {}, "not_certified": {},
            "msg_value_pin": "not seen",
            # None means the driver printed NEITHER verdict -- an older driver,
@@ -371,14 +402,31 @@ def parse_driver(out):
         if m:
             rec["no_coordinate_reason"] = m.group(1)
             continue
-        m = RE_COORDS.match(line)
-        if m and not line.startswith(("[coords] DROPPED", "[coords] NOT ",
-                                      "[coords] no --ast", "[coords] every",
-                                      "[coords] UNSUPPORTED",
-                                      "[coords] ACCOUNTING")):
+        # THE MARKED LINE WINS AND IS UNAMBIGUOUS. Once one has been seen the
+        # fallback is never consulted again on this log, so a later prose line
+        # cannot overwrite the real list -- which is exactly how the slot-coord
+        # row came to hold a sentence.
+        m = RE_COORDS_FREE.match(line)
+        if m:
             rec["coords"] = [c.strip() for c in m.group(1).split(",")
                              if c.strip()]
             rec["pins"] = m.group(2)
+            rec["coords_line"] = "FREE"
+            continue
+        m = RE_COORDS.match(line)
+        if m and rec.get("coords_line") != "FREE" and not line.startswith(
+                ("[coords] DROPPED", "[coords] NOT ",
+                 "[coords] no --ast", "[coords] every",
+                 "[coords] UNSUPPORTED", "[coords] ACCOUNTING",
+                 # Added when the whitelist failed. Kept because logs written by
+                 # a driver without the FREE marker still have to parse.
+                 "[coords] MAPPING SLOT", "[coords] mapping(s)",
+                 "[coords] slot candidate", "[coords] NO mapping slot",
+                 "[coords] the outer-box rounds refused")):
+            rec["coords"] = [c.strip() for c in m.group(1).split(",")
+                             if c.strip()]
+            rec["pins"] = m.group(2)
+            rec["coords_line"] = "legacy"
         m = RE_NOTCERT.match(line)
         if m:
             rec["not_certified"][m.group(1)] = m.group(2)

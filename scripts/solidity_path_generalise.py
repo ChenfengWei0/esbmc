@@ -1352,6 +1352,40 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             geo[c] = sorted(set(vals + extra), key=int)
             spec_coords.append({"name": c, "values": None})
         else:
+            if spans is None:
+                # ---- A LEVEL-0 ROUND HAS NOTHING TO ASK ABOUT THIS ONE ----
+                #
+                # Level 0's candidate list is "the values the SIBLINGS' own
+                # counterexamples take here" (proposition 9), so a coordinate no
+                # counterexample mentions has no candidate and does not appear
+                # in `values_by_coord`. With `geometric` false and `spans` None
+                # this fell into the line below and died with
+                # `TypeError: 'NoneType' object is not subscriptable`.
+                #
+                # MEASURED, farming/deposit with
+                # `--slot-coord state._balances[msg.sender] --level0`: a
+                # PROPOSED mapping slot carries no counterexample value by
+                # construction -- the driver says so itself two lines earlier
+                # ("there is no counterexample value for a slot") -- so every
+                # such run crashed after enumeration, at 59s, with 7 witnessed
+                # paths and NO region attempted. The slot feature was verified
+                # against a hand-written outer-box spec and against three
+                # regressions, and never once through this branch, which
+                # `--level0` makes the DEFAULT path for the corpus sweep.
+                #
+                # Refused by name rather than skipped silently: a coordinate
+                # dropped from a round is unconstrained in it, and the caller
+                # decides that, not this function.
+                raise SystemExit(
+                    f"[round] a LEVEL-0 round was asked about coordinate "
+                    f"'{c}', which has no candidate list. Level 0's candidates "
+                    f"are the values the siblings' own counterexamples take, so "
+                    f"a coordinate no counterexample mentions -- a PROPOSED "
+                    f"mapping slot is the case that exists -- has none, and "
+                    f"there is no span to fall back on either. The caller must "
+                    f"leave such a coordinate out of the level-0 round and say "
+                    f"that it did; guessing a range here would measure a "
+                    f"coordinate nobody asked about")
             lo, hi = spans[c]
             spec = {"name": c, "lo": str(lo), "hi": str(hi)}
             if extra:
@@ -2810,6 +2844,27 @@ def main():
                          "is given up. Per piece, not per path: with "
                          "--max-region-pieces above 1 the first piece would "
                          "otherwise spend the whole path's budget.")
+    ap.add_argument("--no-witness-check", dest="witness_check",
+                    action="store_false", default=True,
+                    help="do NOT put §Certification's single-point query on a "
+                         "path whose region collapsed to its witness.\n"
+                         "⛔ ON BY DEFAULT, and unlike --level0 / --max-holes / "
+                         "--max-region-pieces this is not a policy knob. Path "
+                         "enumeration deliberately keeps the compiler-inserted "
+                         "arithmetic and bounds checks OUT of a path's identity; "
+                         "certification turns them back on. A witness that trips "
+                         "one was therefore never asked about, and the concrete "
+                         "replay test built from it reverts on the real "
+                         "contract. The method: 'A witness that fails it "
+                         "receives no test and is reported with the path.' This "
+                         "is the only route by which the pipeline can deliver a "
+                         "RED test.\n"
+                         "COST: one query per path that did not certify. Every "
+                         "quantity in it is fixed, which is why the method calls "
+                         "the answer a matter of evaluation rather than a second "
+                         "search. Pass this flag to reproduce a recorded arm, "
+                         "which had no such query, and accept that its concrete "
+                         "replay tests are uncleared.")
     ap.add_argument("--cut-policy", choices=("spec", "tool"), default="spec",
                     help="how a refutation's cut is chosen.\n"
                          "`spec` (DEFAULT) follows §Certification: every "
@@ -3450,7 +3505,20 @@ def main():
                 "falls back to its concrete counterexample test. Widening the "
                 "ladder or the shrink budget cannot change it")
         return 1
-    print(f"[coords] {', '.join(coords)}"
+    # ---- `FREE:` IS A MARKER, NOT DECORATION ----
+    #
+    # certify_all matched this line as "any [coords] line without a [pinned:
+    # suffix", minus a WHITELIST of prose prefixes to exclude. A whitelist of
+    # exclusions is open at the bottom, and it opened: the slot-coordinate lines
+    # added since are not on it, so the sweep recorded
+    # `coords: ["mapping(s) whose SHAPE has no slot coordinate: _allowances
+    # (...)"]` -- one prose sentence where the coordinate list belongs.
+    # MEASURED on results_slotcoord_deposit.jsonl, first row.
+    # The marker makes the real line identifiable by what it IS rather than by
+    # what the other lines are not. The older spelling still parses, because a
+    # reader that stops recognising a message it used to handle is the same
+    # defect pointing the other way.
+    print(f"[coords] FREE: {', '.join(coords)}"
           + (f"   [pinned: {pins}]" if pins else ""))
 
     # ---- LEVEL 0: is the real constraint an EQUALITY? ----
@@ -3478,11 +3546,39 @@ def main():
     type_ranges = {}
     if args.level0:
         cand = level0_candidates(paths, coords)
+        # ---- LEVEL 0 CAN ONLY ASK ABOUT COORDINATES A WITNESS NAMES ----
+        #
+        # Its candidates are the values the siblings' own counterexamples take,
+        # so a coordinate no counterexample mentions has no question to put. A
+        # PROPOSED mapping slot is exactly that -- the driver announces it two
+        # lines above ("there is no counterexample value for a slot") -- and
+        # before this the round was handed the coordinate anyway and died with
+        # a TypeError on `spans[c]`, after enumeration and before any region.
+        #
+        # Left OUT and SAID SO. A coordinate absent from a round is
+        # unconstrained in that round, and level 0's only output is which
+        # coordinates are equality-type; a coordinate it never asked about
+        # simply is not one, which is the correct answer rather than a gap.
+        l0_coords = [c for c in coords if c in cand]
+        l0_skipped = [c for c in coords if c not in cand]
+        if l0_skipped:
+            print("[level0] NOT asked about "
+                  + ", ".join(l0_skipped)
+                  + ": no witnessed counterexample gives a value there, so "
+                    "level 0 has no candidate to probe. They are NOT "
+                    "equality-type by this round's silence -- they were never "
+                    "asked -- and they descend to the ladder with their full "
+                    "type range, which is what a proposed mapping slot needs")
         (l0_boxes, _, _, _, l0_failure, _, tr_new, unres) = outer_round(
-            args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
-            args.probes, args.max_tx, args.timeout, cwd, values_by_coord=cand,
+            args.esbmc, args.sol, args.contract, args.unit, paths, l0_coords,
+            pins, args.probes, args.max_tx, args.timeout, cwd,
+            values_by_coord=cand,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
-            esbmc_args=args.esbmc_arg)
+            esbmc_args=args.esbmc_arg) if l0_coords else (
+            {}, {}, {}, set(),
+            "every coordinate was left out of level 0 (no counterexample names "
+            "any of them), so no level-0 round was issued at all",
+            {}, {}, [])
         unresolvable.update(unres)
         # Level 0 lays no ladder, but it DOES publish every coordinate's type
         # range -- so the geometric bracket that follows can be bounded by the
@@ -3650,6 +3746,10 @@ def main():
 
     # Certify every candidate, shrinking on the witness when refuted.
     ok, failed, ok_holes, ok_retreated = {}, {}, {}, {}
+    # §Certification's floor, per path: what the single-point query answered.
+    # A path absent from here was never asked (--no-witness-check), which is a
+    # DIFFERENT state from "asked and discharged" and must stay one.
+    witness_check = {}
     # Names the certify branch refused and the loop dropped. Accumulated across
     # paths because `pins` is global, so the drop is announced once but affects
     # every path after it.
@@ -4233,6 +4333,91 @@ def main():
                     f" (and {len(piece_fail) - 1} further piece(s) of this "
                     f"path also failed: "
                     + "; ".join(piece_fail[1:]) + ")")
+            # ---- §Certification's FLOOR: THE SINGLE POINT IS STILL A QUERY ----
+            #
+            # Verbatim from the method:
+            #
+            #     Where the rounds run out on every coordinate, R_pi = {x_pi},
+            #     and a region of one point leaves nothing for a test to range
+            #     over. That the witness follows pi needs no argument, since the
+            #     path domains are pairwise disjoint and x_pi lies in D_pi. THE
+            #     INSERTED CHECKS ARE ANOTHER MATTER, because the enumeration of
+            #     Section enum left them out and a witness may trip one. The same
+            #     question is therefore put on the single point, where every
+            #     quantity is fixed and the answer is a matter of evaluation. A
+            #     witness that fails it receives no test and is reported with the
+            #     path.
+            #
+            # THE DRIVER SKIPPED IT ENTIRELY and fell straight through to "this
+            # path falls back to its concrete counterexample test". That is not
+            # a missing refinement, it is the one route by which this method can
+            # deliver a RED test: enumeration deliberately keeps the
+            # compiler-inserted arithmetic and bounds checks OUT of a path's
+            # identity (§Decision Points), certification turns them back ON, and
+            # a witness that overflows was therefore never asked about. The
+            # concrete replay test built from it runs on the real contract and
+            # reverts.
+            #
+            # It is one query and every quantity in it is fixed, which is why
+            # the method calls the answer "a matter of evaluation" -- this is
+            # not a second search.
+            if args.witness_check:
+                point = {c: (ce[c], ce[c]) for c in coords if c in ce}
+                if not point:
+                    # NOT silently skipped. A path whose free coordinates carry
+                    # no counterexample value has no single point to put the
+                    # question on, and saying nothing here would make the
+                    # unchecked case indistinguishable from the checked one.
+                    witness_check[enc] = "NOT-PUT"
+                    failed[enc] += (
+                        " ⚠ The single-point check of §Certification was NOT "
+                        "put: none of this path's free coordinates carries a "
+                        "counterexample value, so there is no point to fix. "
+                        "Whether its witness trips a compiler-inserted check "
+                        "is therefore UNKNOWN, not clear")
+                else:
+                    wv, _wnb, _ww, _wp, _wunexp, wwhy = certify(
+                        args.esbmc, args.sol, args.contract, args.unit,
+                        enc, depth, point, ce, pins, args.max_tx,
+                        args.timeout, cwd, ast=args.ast, focus=focus,
+                        memlimit=args.memlimit, holes={},
+                        esbmc_args=args.esbmc_arg)
+                    witness_check[enc] = wv
+                    if wv == "SUCCESSFUL":
+                        print(f"[witness enc={enc}] the single point survives "
+                              f"the inserted checks, so the concrete replay "
+                              f"test stands")
+                        failed[enc] += (
+                            ". The single-point check of §Certification was PUT "
+                            "and DISCHARGED, so this path's witness satisfies "
+                            "the compiler-inserted checks and its concrete "
+                            "replay test stands")
+                    elif wv == "FAILED":
+                        # THE BRANCH THAT MUST REFUSE. This is the whole reason
+                        # the query exists, and reporting it as "not certified,
+                        # falls back to a concrete test" would ship the red test.
+                        print(f"[witness enc={enc}] ⛔ REFUTED at the single "
+                              f"point: this path gets NO test")
+                        failed[enc] += (
+                            ". ⛔ AND NO TEST IS EMITTED FOR IT. The "
+                            "single-point check of §Certification was put on "
+                            "{x_pi} and REFUTED, so this witness trips a "
+                            "compiler-inserted check that path enumeration "
+                            "left out of the path's identity. The concrete "
+                            "replay test built from it would run on the real "
+                            "contract and revert, so the path is reported "
+                            "instead of tested")
+                    else:
+                        print(f"[witness enc={enc}] single-point check "
+                              f"{wv}; the replay test is NOT cleared")
+                        failed[enc] += (
+                            f". The single-point check of §Certification came "
+                            f"back {wv}"
+                            + (f" ({wwhy})" if wwhy else "")
+                            + ", so whether this witness trips a "
+                              "compiler-inserted check is UNDECIDED. It is "
+                              "NOT cleared -- an undecided answer is not a "
+                              "discharged one")
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean
     # an input would have to walk two different paths. Reporting them and
@@ -4404,6 +4589,13 @@ def main():
         "not_certified": [
             {"enc": e, "depth": depth_by_enc.get(e), "verdict": "NOT_CERTIFIED",
              "reason": why,
+             # §Certification's floor. "SUCCESSFUL" clears this path's concrete
+             # replay test; "FAILED" means it gets NO test; anything else is
+             # undecided and clears nothing. A path MISSING from this map was
+             # never asked (--no-witness-check), which is not the same as any
+             # of the three -- so the key is emitted as null rather than
+             # omitted, and a consumer must not read null as "fine".
+             "witness_check": witness_check.get(e),
              "ce": {n: str(v) for n, v in sorted(ce_by_enc.get(e, {}).items())}}
             for e, why in sorted(failed.items())
         ],
