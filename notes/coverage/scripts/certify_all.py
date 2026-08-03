@@ -690,6 +690,67 @@ def main():
                          "dash. Recorded on every row, because a bound that differs "
                          "between two rows makes them two measurements wearing "
                          "one name.")
+    # ---- THE SLOT THE GUARD READS IS NOT A PAYLOAD NAME, EVER ----
+    #
+    # This sweep derives nothing; the driver derives `coords` from the
+    # counterexample payload, and a payload is a list of VALUES -- so it can
+    # only ever offer a mapping slot at a key some counterexample happened to
+    # pick. The slot a real guard reads follows a PARAMETER
+    # (`_balances[msg.sender]`, `allowance[owner][spender]`) and is a function
+    # of an input, so it cannot appear there at all. The driver says exactly
+    # this in `mapping_state_vars`, and offers --slot-coords to propose them
+    # from solc's own declarations instead.
+    #
+    # NOT PASSING IT WAS COSTING THE LARGEST REAL-REFUTATION BUCKET. MEASURED,
+    # farming/deposit: its guard is `_mint` then
+    # `balanceOf(msg.sender) > _MAX_BALANCE`, i.e. a relation between `amount`
+    # and the balance slot -- and the recorded coords for that unit are
+    # `amount, msg.sender, state._distributor, state._owner,
+    # state._totalSupply`, with NO `_balances`. The box therefore leaves the
+    # balance unconstrained, so for any interval on `amount` a witness exists
+    # at some other balance, and the shrink loop cuts on `amount` forever while
+    # the free variable is somewhere else. Its four shrink witnesses on
+    # `amount` are 1.12e77, 3, 5.79e76, 8.68e76 -- full-range scatter, not the
+    # geometric convergence a bisection on a real interval boundary produces.
+    #
+    # ⚠ COSTS QUERIES: ladder size is MULTIPLICATIVE in the coordinate count,
+    # and the corpus is already losing 48 paths to the per-invocation timeout.
+    # A budget rather than a switch for that reason, DEFAULT 0 so an unflagged
+    # sweep is byte-identical to every recorded one, and its own --out.
+    ap.add_argument("--slot-coords", type=int, default=0, metavar="N",
+                    help="propose up to N mapping slots as free coordinates "
+                         "(driver --slot-coords). Read from solc's "
+                         "declarations: one `state.<m>[<k>]` per parameter of "
+                         "the unit whose type matches the mapping's key type, "
+                         "plus msg.sender on an address key. DEFAULT 0 = OFF, "
+                         "which is what every recorded sweep ran with.")
+    ap.add_argument("--slot-coord", action="append", default=[], metavar="EXPR",
+                    help="name ONE slot coordinate explicitly, e.g. "
+                         "state._balances[msg.sender] (driver --slot-coord). "
+                         "Repeatable, and honoured independently of the "
+                         "--slot-coords budget.")
+    # ---- WHICH CUT RULE PRODUCED A ROW IS PART OF WHAT THE ROW MEASURED ----
+    #
+    # The driver's default moved from "apply the tool's first `retry with ...`
+    # suggestion, unread" to §Certification's rule -- keep the side of y_c that
+    # x_pi lies on, take the cut removing the FEWEST values, and pin what cannot
+    # be cut instead of losing the path. That changes the region a refutation
+    # leaves behind and therefore changes what "certified" counts.
+    #
+    # ⚠ EVERY ROW RECORDED BEFORE THIS FLAG EXISTED WAS MEASURED UNDER `tool`
+    # AND SAYS SO NOWHERE. That is precisely the shape this file already refuses
+    # for --env-coord, --max-holes and --esbmc-arg: an arm whose configuration
+    # is not in its records is an arm whose numbers cannot be re-derived. An
+    # ABSENT `cut_policy` key therefore means "this row predates the flag", i.e.
+    # `tool`, and must not be read as the current default.
+    ap.add_argument("--cut-policy", choices=("spec", "tool"), default="spec",
+                    help="passed to the driver. `spec` (default, and the "
+                         "driver's) follows §Certification; `tool` is the "
+                         "previous first-suggestion behaviour, kept so a "
+                         "recorded arm can be reproduced verbatim. Recorded on "
+                         "every row -- two rows measured under different cut "
+                         "rules are two measurements wearing one name. ⚠ Use "
+                         "--out to give each policy its OWN file.")
     ap.add_argument("--unit", action="append", default=[],
                     help="sweep only these unit names (repeatable). Without it "
                          "the whole benchmark is swept, which for a re-measure of "
@@ -957,6 +1018,17 @@ def main():
                 cmd.append("--skip-bracket")
             if args.env_coord:
                 cmd += ["--env-coord", args.env_coord]
+            # ALWAYS PASSED, like --max-holes above and for the same reason: a
+            # flag that only sometimes appears cannot be read back off the
+            # record. The defaults equal the driver's, so an unflagged sweep is
+            # byte-identical to every recorded one.
+            cmd += ["--slot-coords", str(args.slot_coords)]
+            for sc in args.slot_coord:
+                cmd += ["--slot-coord", sc]
+            # ALWAYS PASSED, same rule again: the row must be able to say which
+            # cut rule made it, and "the driver's default at the time" is not a
+            # value anyone can read back off an artefact.
+            cmd += ["--cut-policy", args.cut_policy]
             # `=` form, always -- see the comment at the flag. A value that
             # starts with a dash is the whole point of this flag and is the one
             # case the two-token form cannot pass.
@@ -1036,6 +1108,20 @@ def main():
                         # default, for the same reason `env_coord: null` is.
                         "max_holes": args.max_holes,
                         "max_region_pieces": args.max_region_pieces,
+                        # THE COORDINATE SET IS PART OF WHAT WAS MEASURED. A
+                        # region certified with the balance slot bounded is a
+                        # different statement from one certified with it
+                        # unconstrained -- and a reader who cannot see which
+                        # would read the second as a property of the contract.
+                        # Recorded as values, never omitted when default, for
+                        # the same reason env_coord: null is.
+                        "slot_coords": args.slot_coords,
+                        "slot_coord": list(args.slot_coord),
+                        # WHICH CUT RULE. An absent key means the row predates
+                        # the flag and was therefore measured under `tool`; it
+                        # must never be read as the current default. See the
+                        # comment at the flag.
+                        "cut_policy": args.cut_policy,
                         # THE EXTRA ESBMC ARGUMENTS TRAVEL WITH THE ROW, as a
                         # list and never omitted. `[]` means "we passed none",
                         # and an absent key means "this row predates the flag" --
