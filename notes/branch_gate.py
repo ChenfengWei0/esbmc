@@ -305,11 +305,12 @@ def canonical_in_scope(flat_path, project):
     file blocks. Same scope rule as collect.py, imported from it rather than
     restated, so the denominator here cannot drift from the locked one."""
     import collect as _c
-    by_file, blocks = ast_decisions.canonical_decisions(Path(flat_path))
+    by_file, blocks, owners = ast_decisions.canonical_decisions_owned(
+        Path(flat_path))
     own = sorted({m for _, _, m in blocks
                   if _c.is_project_own_marker(m, project)})
     return ({m: by_file.get(m, set()) for m in own
-             if len(by_file.get(m, set())) > 0}, blocks)
+             if len(by_file.get(m, set())) > 0}, blocks, owners)
 
 
 PATHCOV = HERE / "coverage" / "pathcov"
@@ -627,7 +628,8 @@ def main():
         cell = assert_gate_config(b, meta)
 
         lines, st = pathcov_reached_flat_lines(reports)
-        canon, blocks = canonical_in_scope(base["flat"], base["project"])
+        canon, blocks, owners = canonical_in_scope(base["flat"],
+                                                   base["project"])
         capped = per_file_capped(lines, canon, blocks)
         ours = sum(capped.values())
 
@@ -717,7 +719,7 @@ def main():
         print(f"| `{b}` | {denom} | {p1.get('esbmc')} | {bar} | {nat} | "
               f"{ours} | {verdict} |")
         notes.append((b, st, meta, killed, noreport, capped, canon,
-                      len(skipped), cell))
+                      len(skipped), cell, lines, base["flat"], owners))
 
     print("\n## What the product side actually saw\n")
     # `reports` is printed because it is the size of the numerator's input set.
@@ -735,7 +737,8 @@ def main():
           "unstated | skipped | no report | killed | F claims | "
           "F w/o sequence | steps | unrecorded | ABI-gate dropped |")
     print("|" + "---|" * 14)
-    for b, st, meta, killed, noreport, _c, _k, nskipped, cell in notes:
+    for b, st, meta, killed, noreport, _c, _k, nskipped, cell, _l, _f, _o \
+            in notes:
         print(f"| `{b}` | {cell} | {len(meta['runs'])} | {st['reports']} | "
               f"{st['partial_reports']} | {st['unstated_reports']} | "
               f"{nskipped} | {noreport} | "
@@ -762,7 +765,7 @@ def main():
           "bound | runs w/ a DEGRADED unit | max degraded units | "
           "short-circuit sites over cap |")
     print("|" + "---|" * 6)
-    for b, _st, meta, _k, _n, _c, _canon, _s, _cell in notes:
+    for b, _st, meta, _k, _n, _c, _canon, _s, _cell, _l, _f, _o in notes:
         runs = [r for r in meta["runs"] if not r.get("skipped")]
         rec = [r for r in runs if "depthBoundUnexpandedSites" in r]
         src = "journal"
@@ -787,10 +790,94 @@ def main():
               f"{max(sc)} |")
 
     print("\n## Per-file, ours (capped) vs that file's canonical decisions\n")
-    for b, _st, _m, _k, _n, capped, canon, _s, _cell in notes:
+    # EVERY SHORTFALL IS NAMED, not just counted.
+    #
+    # `9 / 12` is a gap nobody can act on: it says three decisions were missed
+    # and gives no way to ask WHICH, so the follow-up question ("is the gap a
+    # method limit or a budget?") can only be answered by re-deriving the sets
+    # by hand outside this file -- which is how a one-off reading becomes the
+    # published attribution. Both sets are already in hand here: `canon[f]` is
+    # the file's canonical decision lines and `lines` is what our F paths
+    # walked, so the shortfall is one set difference away.
+    #
+    # The line TEXT is quoted from the flat, because a bare flat line number is
+    # not identification either -- it cannot be checked against the source
+    # without the reader doing the lookup this function is already doing.
+    #
+    # THE CAP IS CHECKED RATHER THAN ASSUMED AWAY. `capped` is
+    # `min(|reached & canon|, |canon|)`, so `len(canon) - capped` equals the
+    # size of the named difference only while the min is not biting. If it ever
+    # does, the two disagree and the row says so instead of printing a list that
+    # silently fails to add up.
+    for b, _st, _m, _k, _n, capped, canon, _s, _cell, lines, flat, owners \
+            in notes:
         print(f"- `{b}`:")
+        try:
+            flat_lines = Path(flat).read_text(errors="replace").splitlines()
+        except OSError:
+            flat_lines = []
+        buckets = defaultdict(int)
         for f in sorted(canon):
-            print(f"    {capped.get(f, 0):>4} / {len(canon[f]):<4}  {f}")
+            got = capped.get(f, 0)
+            print(f"    {got:>4} / {len(canon[f]):<4}  {f}")
+            missing = sorted(canon[f] - lines)
+            if not missing:
+                continue
+            if len(missing) != len(canon[f]) - got:
+                print(f"           ⚠ the per-file cap is biting: "
+                      f"{len(canon[f]) - got} missing by count but "
+                      f"{len(missing)} by identity -- our reached set contains "
+                      f"canonical lines the count could not credit.")
+            for ln in missing:
+                src = (flat_lines[ln - 1].strip() if 0 < ln <= len(flat_lines)
+                       else "<flat unreadable>")
+                if len(src) > 74:
+                    src = src[:71] + "..."
+                who = owners.get(ln, "<owner unknown>")
+                buckets[_reach_bucket(who)] += 1
+                print(f"           - flat:{ln}  [{who}]  {src}")
+        if buckets:
+            print(f"      shortfall by enclosing definition: " +
+                  ", ".join(f"{k} {v}" for k, v in sorted(buckets.items())))
+
+
+# THE ONE DISTINCTION THE SHORTFALL LIST EXISTS TO MAKE.
+#
+# A missed decision is only a RESULT if the enumeration could have reached it.
+# Complete-path enumeration walks UNITS -- externally-callable functions
+# entered through the dispatcher -- so three of these buckets are scope, not
+# reach, and saying "9 / 12" without them invites the reader to price all three
+# as failures:
+#
+#   constructor -- runs once at deployment and is not a unit. Branch coverage
+#     instruments it; path coverage has no unit to enter it through. The
+#     baseline can therefore score decisions here that our side structurally
+#     cannot, and no budget or bound closes the gap.
+#   internal/private -- not a unit either; reached only inside a caller's path,
+#     so a miss here is really a miss of every caller.
+#   modifier -- textually its own definition, entered only through the units
+#     that apply it; a miss means those units were not measured.
+#   EXTERNAL/PUBLIC -- the real shortfall. A unit exists, the dispatcher can
+#     enter it, and we still did not walk this decision.
+#
+# The bucket is read off the AST's own `kind`/`visibility` fields, not guessed
+# from the source text.
+def _reach_bucket(owner_label):
+    # LIBRARY FIRST, BEFORE VISIBILITY IS LOOKED AT. A library's `external`
+    # function is still not a unit -- see the `contractKind` comment in
+    # ast_decisions._owner_label. Ordering this after the visibility tests
+    # would reinstate exactly the miscount that comment describes.
+    if "[library]" in owner_label or "[interface]" in owner_label:
+        return "library/interface(no-unit)"
+    if "(constructor," in owner_label:
+        return "constructor(no-unit)"
+    if "(modifier)" in owner_label:
+        return "modifier"
+    if ", internal)" in owner_label or ", private)" in owner_label:
+        return "internal(no-unit)"
+    if ", external)" in owner_label or ", public)" in owner_label:
+        return "EXTERNAL(real shortfall)"
+    return "unclassified"
 
     print("\n## Pair 1 (whole contract) vs Pair 2 (union of per-method runs)\n")
     print("| bench | P1 denom | P1 esbmc | P2 denom | P2 esbmc |")
