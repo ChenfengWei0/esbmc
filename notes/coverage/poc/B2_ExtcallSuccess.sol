@@ -201,4 +201,80 @@ contract B2_ExtcallSuccess {
             tag = amount + 2;
         }
     }
+
+    /// THIRD CONTROL, and it asks the question that decides whether the ESBMC
+    /// side is worth changing at all.
+    ///
+    /// `probe` vs `ctrl` established that the pair is inseparable while the
+    /// branched-on bool is missing from the payload, and separable when it is a
+    /// FUNCTION of a payload coordinate. Neither says what happens when the bool
+    /// ITSELF is the coordinate -- which is exactly what harvesting the success
+    /// bit would produce. Answering it here costs one twelve-line unit and no
+    /// C++ at all; getting it wrong the other way costs a full read of
+    /// src/goto-programs/goto_coverage.cpp (473816 bytes) to buy a coordinate
+    /// the loop then cannot use.
+    ///
+    /// ⚠ THERE IS A CONCRETE REASON TO EXPECT TROUBLE, and it is in the method
+    /// rather than in the tool. §Certification's retreat has TWO triggers, and
+    /// the second is "where cutting would leave that coordinate ONE value". A
+    /// bool has exactly two values, so EVERY cut on it leaves one -- the cut
+    /// branch of `refutation_response` is unreachable for this coordinate by
+    /// construction and the retreat fires instead. So the expected outcome is
+    /// not a cut but a PIN at x_pi, i.e. partial generalisation.
+    ///
+    /// THE THREE OUTCOMES, written before the run, because two of them are
+    /// "certified" and they do NOT mean the same thing:
+    ///   (a) both paths CERTIFIED with `ok` left ranging -- harvesting the
+    ///       success bit would fully generalise these paths.
+    ///   (b) both paths CERTIFIED with `ok` PINNED at x_pi ([retreat ...]
+    ///       PINNED ok==0/1, and `retreated` non-empty in
+    ///       generalise-result.json) -- harvesting still moves them OFF the
+    ///       coordinate gate and off the 0-certified count, but the emitted test
+    ///       is concrete on that coordinate. That is a real gain and a smaller
+    ///       one than (a), and reporting it as (a) would overclaim.
+    ///   (c) NOT certified even here -- then harvesting the bit cannot raise the
+    ///       rate on deposit's three pairs, the ESBMC-side repair is the wrong
+    ///       target, and the C++ read is cancelled a second time.
+    ///
+    /// ⛔ `state.tag` IS WRITTEN ON BOTH ARMS and is a free coordinate, so it is
+    /// NOT the discriminator here any more than it is in `probe` -- the only
+    /// difference from `probe` is where the bool comes from.
+    ///
+    /// ✅ MEASURED: 2 certified / 1 not, exit=0. Same script shape as probe/ctrl
+    /// (run_b2_bool.sh), bracket ON, driver at 79171e702f.
+    ///
+    ///     enc=6: amount in [0, 2^256-1], msg.sender in [0, 1.8043e46],
+    ///            ok in [1, 1], state.tag in [0, 2^256-1], msg.value == 0
+    ///     enc=7: amount in [0, 2^256-1], msg.sender in [0, 1.8043e46],
+    ///            ok in [0, 0], state.tag in [0, 2^256-1], msg.value == 0
+    ///
+    /// The 1 not-certified is enc=2, the ABI-gate path the msg.value auto-pin
+    /// excludes by design; its own verdict says "⛔ This is NOT a failure to
+    /// certify". So the SAME PAIR that gives 0 certified in `probe` gives 2 here.
+    /// Harvesting the success bit would move these paths off the coordinate gate.
+    ///
+    /// ⛔ MY PREDICTION ABOVE WAS WRONG ABOUT THE MECHANISM, and the log says so
+    /// plainly: there is NO `[retreat ...]` line and NO `[cut ...]` line. The
+    /// retreat's one-value trigger never fired because the refutation loop was
+    /// never entered. LEVEL 0 caught it first --
+    ///     [level0] enc=6 single-point on: ok==1
+    ///     [level0] enc=7 single-point on: ok==0
+    /// because level 0's candidate list is exactly "the values the SIBLINGS' own
+    /// counterexamples take here" (proposition 9), and for a bool those two
+    /// values ARE the whole type. Zero extra queries. The reasoning that
+    /// predicted the retreat was sound about the cut branch being unreachable
+    /// and wrong about which branch would run instead.
+    ///
+    /// OUTCOME IS BETWEEN (a) AND (b), and must be reported as such: `ok` comes
+    /// out as a POINT in each region, so a test is concrete on that coordinate --
+    /// but `amount` and `state.tag` stay at FULL RANGE and `msg.sender` at
+    /// 1.8e46, so the test is still parameterized on those. It is not the full
+    /// generalisation of (a) and it is better than a concrete replay.
+    function ctrlBool(uint256 amount, bool ok) external {
+        if (ok) {
+            tag = amount + 1;
+        } else {
+            tag = amount + 2;
+        }
+    }
 }
