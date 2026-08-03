@@ -40,6 +40,34 @@ pragma solidity ^0.8.20;
 /// inside its own certified interval, which is precisely why a side cut cannot
 /// substitute for a punch.
 ///
+/// ---- AND THE HOLE IS NOT GATED BY --max-holes ----
+///
+/// Two stage-2 cells differing only in the budget, both killed at the wall but
+/// both past the refine rounds, print the SAME line:
+///
+///   --max-holes 2 : ... holes={15: {'x': [42]}} UNSEPARATED=[6, 15]
+///   --max-holes 0 : ... holes={15: {'x': [42]}} UNSEPARATED=[6, 15]
+///
+/// So this hole does not come from the punch budget at all. It comes from the
+/// SUBTRACTION step: enc=6's region is the single point `x in [42,42]`, and a
+/// single-point sibling that is not this path's witness is punched out rather
+/// than side-cut. `--max-holes` budgets the OTHER source, punches proposed by a
+/// refuting witness during shrink. Practical consequence worth pinning: a
+/// DEFAULT run already produces punched regions wherever a sibling collapses to
+/// a point.
+///
+/// ⚠ WHAT IS STILL UNKNOWN, stated rather than guessed: whether any CORPUS unit
+/// ever presents this shape. A census over 3323 files / 480 MB under
+/// notes/coverage found ZERO logs carrying a `holes=` field AT ALL -- so the
+/// zero cannot distinguish "no corpus region has a hole" from "no corpus log
+/// records the field". The census script says NOT A RESULT and refuses to
+/// report the zero, which is the point of writing the guard. Answering it needs
+/// a stage-2 run on a corpus unit, and those exceed the run budget in force.
+///
+/// ⚠ SEPARATELY OBSERVED, not chased: the same command with a RELATIVE
+/// --workdir had ESBMC exit -6 (SIGABRT) on every round; with an absolute path,
+/// one variable changed, it runs. Recorded as an observation, not a diagnosis.
+///
 /// ⚠ DECODING NOTE, recorded because it cost a run. Reading `arm` directly gets
 /// the branch backwards. `enc=14`'s third decision is `!(x > 100)` on the
 /// fall-through arm, which by the polarity rule (`branch_claim` is FALSE on the
