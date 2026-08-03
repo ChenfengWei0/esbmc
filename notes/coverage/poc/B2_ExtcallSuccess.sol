@@ -99,6 +99,69 @@ pragma solidity ^0.8.20;
 /// unreachable is the always-refusing mirror of an always-true reader. `ctrl`
 /// now branches on an ORDER comparison, whose two sides are exactly two
 /// intervals.
+
+// ⛔ EVERYTHING BELOW IS `//` AND NOT `///` ON PURPOSE. It quotes ESBMC's
+// mangled symbol ids verbatim, and those contain `@`, which solc's NatSpec
+// parser reads as a documentation tag inside a `///` comment. Written as `///`
+// it fails the whole compile with "Documentation tag @C@<C>... not valid for
+// contracts" and leaves a ZERO-BYTE .solast -- which is what happened here once
+// and had to be restored from git.
+//
+// ✅ THE DROP SITE IS NOW MEASURED, NOT INFERRED, AND ESBMC'S OWN COUNTER NAMES
+// IT. `--verbosity coverage:9` was run on `probe` and `ctrlBool` back to back
+// on ONE .solast (run_harvest_verbose.sh; full stdout in
+// notes/coverage/certify/b2_harvest_verbose_driver.log, 2996 lines, AST stamp
+// at the end equals the one at the top). The classifier's feed prints one
+// `ce step:` line per assignment it considers:
+//
+//     ctrlBool  sym='sol:@C@B2_ExtcallSuccess@F@ctrlBool@amount#99' fn=''      stack[0]: <empty>
+//               sym='sol:@C@B2_ExtcallSuccess@F@ctrlBool@ok#101'    fn=''      stack[0]: <empty>
+//     probe     sym='sol:@C@B2_ExtcallSuccess@F@probe@amount#8'     fn=''      stack[0]: <empty>
+//               sym='sol:@C@B2_ExtcallSuccess@F@probe@ok#12'        fn='probe' stack[3]: probe#32 < Nondet_Extcall < Main
+//                                                                   nondet='nondet$symex::nondet40'
+//
+// So `ok` IS presented to the harvest in `probe`, with a mangled id of exactly
+// the `sol:@C@<C>@F@<f>@<name>` shape goto_coverage.h calls the input test, and
+// with a nondet source that the counterexample then resolves (`ok = 0` on
+// path:7, `ok = 1` on path:6, at line 107). Branch (b) of the pre-written
+// question -- "the value never reaches the classifier" -- is REFUTED.
+//
+// AND THE BUCKET IS A NUMBER, from the reports themselves
+// (b2_probe_harvest_cov-report.json, b2_ctrlBool_harvest_cov-report.json):
+//
+//     unit      path  inputs       harness_nondets_dropped
+//     ctrlBool  2/6/7 amount, ok   23 / 23 / 23
+//     probe     2     amount       23      <- revert, `ok` never assigned
+//     probe     6     amount       24      <- executes ok := call(...)
+//     probe     7     amount       24      <- executes ok := call(...)
+//
+// The counter moves by EXACTLY ONE, on EXACTLY the two paths that assign `ok`,
+// and `ok` is absent from `inputs` on exactly those two. That is the drop,
+// counted by the tool, not deduced by me. Reason (a) of
+// `extcall_returns_unavailable_reason` is confirmed FOR THIS SHAPE.
+//
+// probe's path:6 and path:7 payloads are byte-identical -- `inputs` both
+// {"amount": "0"}, same `entry_storage` {"tag":"0"}, same `env`,
+// `extcall_returns: []` -- differing ONLY in the `!ok` / `ok` decision step at
+// line 110. That is the corpus's UNSEPARATED shape reproduced in twelve lines.
+//
+// ⛔ WHAT IS STILL NOT MEASURED: the PREDICATE. The one field that differs
+// between the kept `amount` and the dropped `ok` is the frame (`fn=''` +
+// empty stack vs `fn='probe'` + 3-deep stack), but no line prints the predicate
+// itself, so "it keys on the frame" remains a hypothesis. What IS established
+// is the site: whatever increments `harness_nondets_dropped`.
+//
+// ⚠ AN OPEN QUESTION FOUND HERE AND DELIBERATELY NOT CALLED A DEFECT. The
+// second decision step's polarity does not line up across the pair, in BOTH
+// units, so it is systematic:
+//     path:6  final_state.tag=1 (the `then` arm), inputs ok=1
+//             -> decisions[1] = {arm: "fall-through", branch_claim: "!ok"}
+//     path:7  final_state.tag=2 (the `else` arm), inputs ok=0
+//             -> decisions[1] = {arm: "taken",       branch_claim: "ok"}
+// Under `IF !ok GOTO else` the first line is consistent and the second is not.
+// This does NOT disturb the identification of farming/deposit's three pairs
+// (enc 26/27, 246/247, 3622/3623): that rests on the two sides DIFFERING at one
+// index of this field, which holds whichever polarity convention is intended.
 contract B2_ExtcallSuccess {
     uint256 public tag;
 
