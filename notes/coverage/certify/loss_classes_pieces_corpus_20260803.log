@@ -50,17 +50,40 @@ THE CLASSES, LARGEST FIRST -- AND WHAT EACH ONE MEANS
               property of the path'. Raising the budget is the whole fix.
 
     15  (16.1%)  D_UNSEPARATED_payload_identical
-              ⛔ THE MODELLING CLASS. A counterwitness exists and the payload
-              cannot tell it apart from the path's own counterexample -- every
-              published scalar agrees. No coordinate can be cut because no
-              coordinate separates them. This is the class a missing bucket in the
-              CE harvest produces (bmc.cpp's three-outcome classification drops
-              anything that is neither a parameter nor the environment).
+              ⛔ THE MODELLING CLASS, AND IT IS THE EXTERNAL CALL'S SUCCESS BIT.
+              MEASURED on farming::deposit (4 of these 15 paths): its six non-gate
+              witnessed paths are THREE PAIRS -- (26,27) (246,247) (3622,3623) --
+              and each pair differs on EXACTLY ONE decision, the same one in all
+              three: `!success` vs `!(!success)` in safeTransferFrom at flat.sol
+              line 532, i.e. SafeERC20's `(bool success, ) = token.call(data)`.
+              Every one of those paths carries `extcall_returns: []`, so the
+              payloads are byte-identical and no coordinate can separate the pair.
+              ⚠ TWO DIFFERENT DROP SITES WEAR THIS ONE CLASS, and a repair at
+              either alone moves only half the corpus: (a) a result bound to a
+              named local or written in an assembly block IS harvested and then
+              falls off the end of bmc.cpp's three-outcome classification (`else
+              ++ce.dropped_internal`) -- this is the B2_ExtcallSuccess PoC shape;
+              (b) the low-level `(bool ok, ) = a.call(...)` destructuring, which
+              is what safeTransferFrom uses, never reaches that classification at
+              all because get_nondet_symbol returns nil and the step is skipped
+              earlier. The corpus needs (b); the PoC that priced the repair at
+              0->2 certified exercises (a).
 
     14  (15.1%)  C_PINS_empty_region
               lo > hi under the current pins: the region has no domain in this
-              slice, so certifying it would hold vacuously. A property of the PIN
-              SET (a configuration choice), not of the path.
+              slice, so certifying it would hold vacuously. A CORRECT REFUSAL, not
+              a failure, and it should be taken OUT of the denominator rather than
+              counted as a generalisation loss. MEASURED: all 14 sit on path enc=2
+              and nowhere else, enc=2 is certified ZERO times anywhere in the
+              corpus, and on farming::deposit enc=2 is `path_depth 1, exit revert,
+              revert_kind rollback` whose sole decision is the synthetic ABI gate
+              `msg.value == 0` taken FALSE -- its payload is the only witnessed
+              one with `msg.value: "1"`. Stage 2 pins msg.value to 0, so the path
+              has no satisfying assignment and every free coordinate comes back
+              empty. ⚠ That is also a stage-1/stage-2 configuration inconsistency:
+              stage 1 enumerates and witnesses a path that stage 2's own pin has
+              already decided cannot occur, costing one enumeration and one
+              outer-box round per unit.
 
     14  (15.1%)  B_BUDGET_shrink_exhausted
               a counterwitness WAS found and it DIFFERS on named coordinates, but
