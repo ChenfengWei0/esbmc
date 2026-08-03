@@ -52,8 +52,25 @@ CLASSES = [
         "A_BUDGET_no_round_finished",
         lambda m: m.startswith("no outer-box round finished"),
         "the outer-box round never completed, so NOTHING was measured for this "
-        "path. The generaliser says so itself: 'a BUDGET outcome, not a "
-        "property of the path'. Raising the budget is the whole fix.",
+        "path -- 'a BUDGET outcome, not a property of the path', in the "
+        "generaliser's own words. ⛔ BUT RAISING THE CLOCK IS MEASURED NOT TO "
+        "BE THE FIX, and an earlier version of this very line said it was. The "
+        "round is EMISSION-bound, not solve-bound: solidity_path_generalise.py "
+        "--help records a geometric bracket on EscrowSrc.withdraw that put "
+        "only 148 queries in front of the solver in 300s, of which 6.9s was "
+        "solving, while ~15000 claims were being instrumented -- and that "
+        "about half the wall clock is solving while the other half is "
+        "UNACCOUNTED work ESBMC does not timestamp, which nothing has yet "
+        "identified. The ladder is MULTIPLICATIVE in coords x values x paths x "
+        "2 directions, and the geometric bracket lays 258 values per "
+        "coordinate per direction while IGNORING --probes: for "
+        "EscrowDst::cancel (7 coordinates, 12 paths) that is ~43000 probes, so "
+        "the round cannot finish at any clock this project would accept. "
+        "MEASURED, arm 1, --run-timeout 180: level-0 finished in 33.1s, the "
+        "bracket and the refine round each ran to exactly the 180s cap and "
+        "reported ROUND MEASURED NOTHING with `[bracket] {}`. The tool's own "
+        "prescription is to SHRINK THE LADDER (--skip-bracket, a smaller "
+        "--probes) and see whether the round finishes, not to raise the clock.",
     ),
     (
         "B_BUDGET_shrink_exhausted",
@@ -85,24 +102,30 @@ CLASSES = [
         "D_UNSEPARATED_payload_identical",
         lambda m: "agrees with this path's counterexample on EVERY scalar"
         in m,
-        "⛔ THE MODELLING CLASS, AND IT IS THE EXTERNAL CALL'S SUCCESS BIT. "
-        "MEASURED on farming::deposit (4 of these 15 paths): its six non-gate "
-        "witnessed paths are THREE PAIRS -- (26,27) (246,247) (3622,3623) -- "
-        "and each pair differs on EXACTLY ONE decision, the same one in all "
-        "three: `!success` vs `!(!success)` in safeTransferFrom at flat.sol "
-        "line 532, i.e. SafeERC20's `(bool success, ) = token.call(data)`. "
-        "Every one of those paths carries `extcall_returns: []`, so the "
-        "payloads are byte-identical and no coordinate can separate the pair. "
-        "⚠ TWO DIFFERENT DROP SITES WEAR THIS ONE CLASS, and a repair at "
-        "either alone moves only half the corpus: (a) a result bound to a "
-        "named local or written in an assembly block IS harvested and then "
-        "falls off the end of bmc.cpp's three-outcome classification (`else "
-        "++ce.dropped_internal`) -- this is the B2_ExtcallSuccess PoC shape; "
-        "(b) the low-level `(bool ok, ) = a.call(...)` destructuring, which is "
-        "what safeTransferFrom uses, never reaches that classification at all "
-        "because get_nondet_symbol returns nil and the step is skipped "
-        "earlier. The corpus needs (b); the PoC that priced the repair at "
-        "0->2 certified exercises (a).",
+        "⛔ THE MODELLING CLASS, AND IT IS NOT ONE MECHANISM. Joining these "
+        "path ids to their decision arrays (scripts/ce_pair_diff.py) splits "
+        "the 15: aqua::pull 58,59,62,63 and farming::deposit 26,27,246,247 "
+        "are separated by `!success` vs `!(!success)` in SafeERC20's "
+        "safeTransferFrom, i.e. the low-level `(bool ok, ) = a.call(...)` "
+        "success bit -- 8 of 15. EscrowDst::rescueFunds 58,62 are separated by "
+        "`return_value$_computeAddress$1 != $address`, an INTERNAL call's "
+        "return -- 2 of 15. farming::withdraw's 12,13,252,253 and "
+        "farming::stopFarming's 119 are NOT ESTABLISHED (5 of 15) because the "
+        "only reports on disk for them have a stale env harvest. "
+        "⚠ THREE DROP SITES WEAR THIS ONE CLASS and a repair at any one alone "
+        "moves only part of it: (a) a result bound to a named local or written "
+        "in an assembly block IS harvested and falls off the end of bmc.cpp's "
+        "three-outcome classification (`else ++ce.dropped_internal`) -- the "
+        "B2_ExtcallSuccess PoC shape, and the one whose price of 0->2 "
+        "certified was measured; (b) the low-level destructuring, which never "
+        "reaches that classification because get_nondet_symbol's switch has no "
+        "member case and returns nil, so bmc.cpp skips the step with a bare "
+        "`continue` that counts nothing; (c) `return_value$...`, which is in "
+        "the trace and is named verbatim in the report's own `decisions`, and "
+        "which bmc.cpp then drops BY NAME as ESBMC bookkeeping alongside "
+        "`$address` and `_bind_cname` -- a filter that is simply too wide. "
+        "(c) also separates class-B pairs (rescueFunds 28,30 and withdraw "
+        "1804,1805), so it is worth more than the 2 paths counted here.",
     ),
     (
         "E_no_cut_witness_differs",
