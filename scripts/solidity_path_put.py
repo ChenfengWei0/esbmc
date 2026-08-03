@@ -1092,6 +1092,46 @@ class EmittedFile:
 # expectation hold by construction); re-deriving it would put the same fact in
 # two places. So the question is only whether the two agree, and a disagreement
 # REFUSES rather than annotates.
+#
+# ---- ...AND FOR `msg.sender` THAT IS NOW TOO WEAK, MEASURED -----------------
+#
+# The paragraph above is right about `block.timestamp` and about `msg.value`,
+# and it was right about `msg.sender` for exactly as long as no region could
+# carry a WIDE one. `--env-coord msg.sender` makes that reachable, and the
+# first two regions it produced were both REFUSED here:
+#
+#   farming.setDistributor enc=12
+#     msg.sender is certified over [821886974, 821919743] but the emitted case
+#     sets it to 2147483649 (`vm.prank(address(uint160(2147483649)));`), which
+#     is OUTSIDE that range
+#   farming.setDistributor enc=13
+#     msg.sender is certified at 821886973 but the emitted case sets it to
+#     2147483649
+#
+# The refusal is CORRECT -- the test really would walk an execution the region
+# never spoke about -- and it is also terminal: the preamble's sender comes
+# from the concrete counterexample of a DIFFERENT query, so it will essentially
+# never land inside a certified interval by chance. Checking alone therefore
+# converts every wide-sender region into nothing.
+#
+# `msg.sender` is the one environment quantity a Foundry test can CHOOSE. The
+# comment further down this file that says an environment quantity "cannot be
+# bound() into the signature" is true only of the CALL's argument list; the
+# test FUNCTION's signature is a different list, and `vm.prank` accepts an
+# arbitrary expression -- including a fuzz parameter. So for `msg.sender`, and
+# only for it, the driver now ESTABLISHES rather than checks:
+#
+#   width > 1  -> a fuzz parameter, bound() into the certified interval, and
+#                 the governing prank rewritten to use it. The PUT is then a
+#                 fuzz test OVER the certified sender range instead of one
+#                 point of it.
+#   width == 1 -> the governing prank rewritten to the certified value.
+#
+# `msg.value` is deliberately NOT done this way even though it is equally
+# choosable: it is written as a `{value: ...}` option on the call and changing
+# it changes whether a nonpayable unit reverts, i.e. it would move the R0
+# exit-kind expectation the preamble exists to make hold. Sender does not.
+# `tx.`/`block.` stay CHECKED because a test cannot set them at all.
 ENV_PREFIXES = ("msg.", "tx.", "block.")
 
 _PRANK_RE = re.compile(r"vm\.(?:start)?[Pp]rank\(")
@@ -1164,7 +1204,78 @@ def observed_env(body, call_i, call_line):
     return {"msg.sender": (sender, sender_ev), "msg.value": (value, value_ev)}
 
 
-def env_disagreements(body, call_i, call_line, region, pins):
+def establish_env_sender(body, call_i, region, pins, used):
+    """Rewrite the governing `vm.prank` so the test runs inside the certified
+    `msg.sender` slice, instead of refusing because it does not.
+
+    Returns `(body, call_i, established, sig_add, pre_add, note)`. `body` and
+    `call_i` come back unchanged, and `established` is None, when the region
+    says nothing about `msg.sender` -- the caller then behaves exactly as it
+    did before, so every existing PUT is reproduced verbatim.
+
+    WHICH PRANK IS "GOVERNING". The LAST one above the call, which is the same
+    rule `observed_env` reads by and the same one forge implements
+    (`vm.prank` sets the sender for the next call only). Deliberately identical
+    to the checker's rule rather than better than it: if the two disagreed
+    about which line matters, this function could rewrite one line while
+    `env_disagreements` cleared a different one, and the emitted test would be
+    refused-or-accepted on evidence about the wrong statement.
+
+    IF THERE IS NO PRANK AT ALL the sender is the test contract's own address,
+    which is a value nothing here chose and which the certified interval will
+    not contain except by accident -- so one is INSERTED. That shifts the call,
+    hence `call_i` is returned rather than assumed unchanged; forgetting it
+    would splice the new statement into the middle of the caller's later
+    `body[head_end:call_i]` slice.
+    """
+    lo = hi = None
+    if "msg.sender" in region:
+        lo, hi = region["msg.sender"]
+    elif "msg.sender" in pins:
+        lo = hi = pins["msg.sender"]
+    if lo is None:
+        return body, call_i, None, None, [], None
+
+    sig_add, pre_add = None, []
+    if hi > lo:
+        var = "p_msg_sender"
+        while var in used:
+            var += "_"
+        sig_add = ("address", var)
+        # Reuses the parameter path's own bounder, so a sender interval and an
+        # address ARGUMENT interval are rendered by one piece of code. 160 is
+        # the address width; a certified bound outside it would be a bound the
+        # coordinate's own type cannot hold, and bound_lines clamps in uint256
+        # before the cast exactly as it does for an address parameter.
+        pre_add = bound_lines(var, "address", 160, lo, hi, ())
+        prank = f"    vm.prank({var});"
+        note = (f"msg.sender in [{lo}, {hi}] is ESTABLISHED and FUZZED: the "
+                f"governing vm.prank now takes the bound() fuzz parameter "
+                f"`{var}`, so this PUT ranges over the certified sender "
+                f"interval rather than over one point of it")
+    else:
+        prank = f"    vm.prank(address(uint160({lo})));"
+        note = (f"msg.sender == {lo} is ESTABLISHED: the governing vm.prank "
+                f"was rewritten to the certified value. The emitted case's own "
+                f"sender came from a different query's counterexample and is "
+                f"not the value this region is a statement about")
+
+    new_body = list(body)
+    last = None
+    for i in range(min(call_i, len(new_body))):
+        if _PRANK_RE.search(new_body[i]):
+            last = i
+    if last is None:
+        new_body.insert(call_i, prank)
+        call_i += 1
+        note += " (no prank was present, so one was inserted)"
+    else:
+        note += f" (replacing `{new_body[last].strip()}`)"
+        new_body[last] = prank
+    return new_body, call_i, "msg.sender", sig_add, pre_add, note
+
+
+def env_disagreements(body, call_i, call_line, region, pins, established=()):
     """(refusals, unchecked) for every width-1 environment quantity certified.
 
     `refusals` is non-empty exactly when the emitted case is KNOWN to run
@@ -1177,6 +1288,14 @@ def env_disagreements(body, call_i, call_line, region, pins):
     want, ranged = {}, {}
     for n, (lo, hi) in region.items():
         if not n.startswith(ENV_PREFIXES):
+            continue
+        # ESTABLISHED, so there is nothing left to check: the caller rewrote
+        # the statement that decides this quantity, and comparing the rewritten
+        # line against the value it was rewritten to would be a tautology
+        # dressed as a verification. Skipped HERE rather than by deleting the
+        # coordinate from `region`, because `region` is also what the PUT's
+        # header prints and the reader must still see the certified bound.
+        if n in established:
             continue
         if lo == hi:
             want[n] = lo
@@ -1199,7 +1318,7 @@ def env_disagreements(body, call_i, call_line, region, pins):
             # path -- so promoting them is the named repair, and it opens this.
             ranged[n] = (lo, hi)
     for n, v in pins.items():
-        if n.startswith(ENV_PREFIXES) and n not in want:
+        if n.startswith(ENV_PREFIXES) and n not in want and n not in established:
             want[n] = v
     obs = observed_env(body, call_i, call_line)
     refusals, unchecked = [], []
@@ -1423,17 +1542,39 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                      f"{len(args)}; refusing to rewrite positionally")
         return None, None
 
+    lifted, repl, sig, pre_lines = [], {}, [], []
+    used = {b[0] for b in emitted.blocks}
+
     # The environment the emitted case runs under must be the one certified.
-    # Checked, not established -- see `env_disagreements`.
+    # `msg.sender` is ESTABLISHED (the one environment quantity a test can
+    # choose); everything else is CHECKED and a disagreement still refuses.
+    # See the long comment above ENV_PREFIXES for why the two are not treated
+    # alike, and in particular why msg.value is not established even though it
+    # is equally choosable.
+    #
+    # ORDER MATTERS: establishment rewrites the very line the check reads, so
+    # it has to happen first, and the rewritten body is what everything below
+    # -- the call rewrite, the head/pre-state slices, the emitted text -- must
+    # use. `call_i` can move, because a missing prank is inserted.
+    body, call_i, env_est, sig_add, pre_add, env_note = establish_env_sender(
+        body, call_i, region, pins, used)
+    call_line = body[call_i]
+    env_established = []
+    if env_est is not None:
+        env_established.append(env_note)
+        if sig_add is not None:
+            sig.append(sig_add)
+            pre_lines += pre_add
+            lifted.append("msg.sender")
+            used.add(sig_add[1])
+
     env_refusals, env_unchecked = env_disagreements(
-        body, call_i, call_line, region, pins)
+        body, call_i, call_line, region, pins,
+        established=({env_est} if env_est else ()))
     if env_refusals:
         notes.append("the emitted case does not run in the certified "
                      "environment slice: " + "; ".join(env_refusals))
         return None, None
-
-    lifted, repl, sig, pre_lines = [], {}, [], []
-    used = {b[0] for b in emitted.blocks}
     for idx, (pname, ptype) in enumerate(params):
         if pname not in region:
             continue                       # pinned: keep the emitter's literal
@@ -1907,6 +2048,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"  //   entry-state bound DROPPED: {s}")
     for s in env_unchecked:
         out.append(f"  //   environment NOT CHECKED: {s}")
+    for s in env_established:
+        # Printed on the test itself, not only in the driver log. A reader of
+        # the emitted file has to be able to see that the sender it runs under
+        # was CHOSEN to satisfy the region -- otherwise the rewritten prank
+        # looks like part of the reconstructed counterexample, which is the one
+        # thing it is not.
+        out.append(f"  //   environment ESTABLISHED: {s}")
     out.append(f"  function {fname}({sig_txt}) public {{")
     out += pre_lines
     # ---- WHAT MAY BE INSERTED BEFORE THE CALL, AND WHAT MAY NOT -----------

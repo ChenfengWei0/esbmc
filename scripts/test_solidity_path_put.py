@@ -243,12 +243,22 @@ def test_env_agreement_emits_when_the_preamble_matches():
     return bad
 
 
-def test_env_disagreement_refuses():
-    """`msg.sender in [1, 1]` against the SAME preamble: REFUSE.
+def test_env_sender_disagreement_is_ESTABLISHED_not_refused():
+    """`msg.sender in [1, 1]` against a preamble that pranks 0: REWRITE.
 
-    The emitted case pranks 0. Emitting would produce a test that runs under a
-    caller the certification never spoke about -- and it would look exactly like
-    the passing case above, which is why this is a refusal and not a note.
+    THIS TEST USED TO ASSERT THE OPPOSITE, and the change is deliberate rather
+    than a relaxation. Refusing was correct and it was also terminal: the
+    preamble's sender comes from a DIFFERENT query's counterexample, so it
+    essentially never lands inside a certified interval by chance, and checking
+    alone converted every sender region into nothing. Measured on
+    farming.setDistributor, both certified regions were refused on exactly
+    this.
+
+    `msg.sender` is the one environment quantity a Foundry test can CHOOSE, so
+    it is now established. What must NOT change is that the test then really
+    runs under the certified value, which is what the last two checks pin --
+    the new prank present AND the old one gone. Rewriting that leaves the
+    original line behind would be a test claiming a sender it does not use.
     """
     em, case = make_case()
     notes = []
@@ -259,10 +269,33 @@ def test_env_disagreement_refuses():
         holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
         ladder_rows=LADDER, notes=notes)
     bad = 0
-    bad += check(put is None, "a disagreeing environment REFUSES")
-    bad += check(any("msg.sender is certified at 1" in n and "sets it to 0" in n
-                     for n in notes),
-                 f"the refusal names both values: {notes}")
+    bad += check(put is not None,
+                 f"a disagreeing sender is now ESTABLISHED, not refused "
+                 f"(notes: {notes})")
+    if put is None:
+        return bad + 3
+    txt = "\n".join(put)
+    bad += check("vm.prank(address(uint160(1)));" in txt,
+                 "the governing prank is rewritten to the certified value")
+    # THE OLD PRANK MUST BE GONE FROM THE CODE, AND IS EXPECTED TO SURVIVE IN
+    # THE COMMENT. Two wrong versions of this check ran before this one, and
+    # both failed for reasons unrelated to the sender:
+    #   * `uint160(0)` -- also occurs inside the bound() of an address
+    #     PARAMETER whose certified interval starts at 0;
+    #   * the whole prank statement anywhere in the text -- the disclosure line
+    #     quotes it, on purpose, as "(replacing `...`)", which is exactly the
+    #     evidence a reader needs.
+    # So the check is scoped to STATEMENT lines. Comments are excluded rather
+    # than the quote being removed from the disclosure: a rewrite that does not
+    # say what it replaced is a rewrite nobody can audit.
+    code = [ln for ln in put if not ln.strip().startswith("//")]
+    bad += check(not any("vm.prank(address(uint160(0)));" in ln
+                         for ln in code),
+                 "and the emitted case's own prank is GONE from the CODE "
+                 "(it stays quoted in the disclosure, which is the point)")
+    bad += check(any("environment ESTABLISHED" in ln for ln in put),
+                 "the rewrite is disclosed on the test, so the prank is not "
+                 "mistaken for part of the reconstructed counterexample")
     return bad
 
 
@@ -922,44 +955,106 @@ def _env_range_put(region_extra):
     return put, stats, notes
 
 
-def test_a_wide_env_coordinate_containing_the_sender_is_disclosed():
-    """0 is inside [0, 100]: the test is ONE POINT of a wider certified claim,
-    which is weaker than the region and has to say so on the test itself."""
+def test_a_wide_env_coordinate_is_FUZZED_not_disclosed_as_one_point():
+    """A WIDE `msg.sender` becomes a fuzz parameter bound into the interval.
+
+    THIS TEST USED TO ASSERT THAT THE RANGE WAS MERELY DISCLOSED -- that the
+    PUT was one point of a wider certified claim and said so. The prose it
+    pinned was true and the outcome was weak: a region certified over 2^15
+    senders produced a test exercising one of them, and the reason given was
+    that "an environment quantity is not a call argument, so it cannot be
+    bound() into the signature". That is true of the CALL's argument list and
+    false of the test FUNCTION's, which is the list a fuzz parameter goes in.
+
+    Three separate things are pinned, because the failure modes are separate:
+    the parameter must EXIST, it must be BOUND to this interval (an unbounded
+    address parameter is a different and much weaker test), and the prank must
+    actually USE it (a bound parameter nothing reads is dead code beside an
+    unchanged prank).
+    """
     put, stats, _n = _env_range_put({"msg.sender": (0, 100)})
     bad = 0
     bad += check(put is not None, "a PUT is still produced")
-    ev = stats["env_unchecked"]
-    bad += check(any("ONE POINT" in s for s in ev),
-                 f"the range is disclosed, not silently dropped: {ev}")
-    bad += check(any("[0, 100]" in s and "single value 0" in s for s in ev),
-                 "and it names both the range and the value exercised")
-    bad += check(any("ONE POINT" in ln for ln in put),
-                 "the disclosure is ON the emitted test, not only in stats")
-
-
+    if put is None:
+        return bad + 3
+    txt = "\n".join(put)
+    bad += check("address p_msg_sender" in txt,
+                 "msg.sender is a FUZZ PARAMETER of the test function")
+    bad += check("bound(" in txt and ", 0, 100)" in txt,
+                 "and it is bound() into the certified interval")
+    bad += check("vm.prank(p_msg_sender);" in txt,
+                 "and the governing prank actually uses it")
     return bad
 
 
-def test_a_wide_env_coordinate_excluding_the_sender_REFUSES():
-    """MUST FLIP. 0 is outside [5, 100], so the test walks an execution the
-    region never spoke about -- the same refusal a width-one disagreement gets,
-    rather than a disclosure."""
+def test_a_wide_env_coordinate_EXCLUDING_the_sender_is_also_fuzzed():
+    """MUST FLIP, in the opposite direction from before.
+
+    0 is outside [5, 100]. This used to be the refusal case, and it was the
+    right answer while the preamble's sender was the only sender available.
+    Now the prank is rewritten, so whether the emitted case's own sender
+    happened to fall inside the interval is no longer a property of anything --
+    and a driver that still refused here would be refusing on evidence about a
+    line it had already replaced.
+
+    The interval is pinned as [5, 100] rather than only checking that a PUT
+    came out: a rewrite that bound the parameter to the WRONG interval would
+    produce a green test over the wrong senders, which is the failure this
+    whole file exists to stop.
+    """
     put, stats, notes = _env_range_put({"msg.sender": (5, 100)})
     bad = 0
-    bad += check(put is None, "emission is REFUSED")
-    bad += check(any("OUTSIDE that range" in n for n in notes),
-                 f"and the refusal says why: {notes}")
+    bad += check(put is not None,
+                 f"a sender interval that excludes the emitted case's own "
+                 f"sender is now fuzzed, not refused (notes: {notes})")
+    if put is None:
+        return bad + 1
+    bad += check(", 5, 100)" in "\n".join(put),
+                 "and it is bound to THAT interval, not to the old one")
     return bad
 
 
-def test_a_width_one_env_coordinate_is_unchanged():
-    """The pre-existing path must behave exactly as before: 0 == 0 agrees, so
-    the PUT emits and nothing is reported unchecked."""
+def test_a_width_one_env_coordinate_emits_at_the_certified_value():
+    """A width-one sender needs no fuzz parameter, and must still be the value
+    the region names rather than whatever the preamble happened to prank."""
     put, stats, _n = _env_range_put({"msg.sender": (0, 0)})
     bad = 0
     bad += check(put is not None, "an agreeing width-one env coordinate emits")
+    if put is None:
+        return bad + 2
+    txt = "\n".join(put)
     bad += check(stats["env_unchecked"] == [],
                  f"and reports nothing unchecked: {stats['env_unchecked']}")
+    bad += check("address p_msg_sender" not in txt,
+                 "a single point buys no fuzz parameter -- bound(x, v, v) is a "
+                 "constant wearing a fuzz parameter's type")
+    return bad
+
+
+def test_msg_value_is_still_CHECKED_and_still_refuses():
+    """THE OTHER HALF OF THE GATE MUST NOT HAVE MOVED.
+
+    `msg.sender` is now established; `msg.value` is not, and the reason is not
+    tidiness -- it is written as a `{value: ...}` option on the call, and
+    changing it changes whether a nonpayable unit reverts, i.e. it would move
+    the R0 exit-kind expectation the preamble exists to make hold.
+
+    Without this test, a later change that established every environment
+    quantity "for symmetry" would pass the whole suite. This is the check that
+    a relaxation of one branch did not silently become a relaxation of all of
+    them.
+    """
+    em, case = make_case()
+    notes = []
+    put, _stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={"msg.value": 7}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=LADDER, notes=notes)
+    bad = 0
+    bad += check(put is None, "a disagreeing msg.value still REFUSES")
+    bad += check(any("msg.value is certified at 7" in n for n in notes),
+                 f"and still names the quantity: {notes}")
     return bad
 
 
@@ -1107,8 +1202,9 @@ def main():
               test_pin_without_a_slot_is_reported_not_dropped,
               test_region_bound_still_wins_over_a_duplicate_pin,
               test_env_agreement_emits_when_the_preamble_matches,
-              test_env_disagreement_refuses,
+              test_env_sender_disagreement_is_ESTABLISHED_not_refused,
               test_env_value_pin_disagreement_refuses,
+              test_msg_value_is_still_CHECKED_and_still_refuses,
               test_uncomparable_env_quantity_is_disclosed_not_ignored,
               test_return_rung_is_bound_and_asserted,
               test_a_retlive_that_HOLDS_kills_every_return_rung,
@@ -1127,9 +1223,9 @@ def main():
               test_a_slot_pin_keyed_by_a_literal_is_established,
               test_a_slot_pin_keyed_by_msg_sender_is_REFUSED,
               test_the_oracle_side_refuses_the_same_key,
-              test_a_wide_env_coordinate_containing_the_sender_is_disclosed,
-              test_a_wide_env_coordinate_excluding_the_sender_REFUSES,
-              test_a_width_one_env_coordinate_is_unchanged):
+              test_a_wide_env_coordinate_is_FUZZED_not_disclosed_as_one_point,
+              test_a_wide_env_coordinate_EXCLUDING_the_sender_is_also_fuzzed,
+              test_a_width_one_env_coordinate_emits_at_the_certified_value):
         print(f"--- {t.__name__}")
         bad += t()
     if bad:
