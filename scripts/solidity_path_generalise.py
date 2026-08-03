@@ -4401,12 +4401,24 @@ def main():
                         failed[enc] += (
                             ". ⛔ AND NO TEST IS EMITTED FOR IT. The "
                             "single-point check of §Certification was put on "
-                            "{x_pi} and REFUTED, so this witness trips a "
-                            "compiler-inserted check that path enumeration "
-                            "left out of the path's identity. The concrete "
-                            "replay test built from it would run on the real "
-                            "contract and revert, so the path is reported "
-                            "instead of tested")
+                            "{x_pi} and REFUTED: some input satisfying every "
+                            "pinned coordinate does NOT walk this path. ⚠ TWO "
+                            "causes are possible and this verdict does not "
+                            "separate them, so neither may be quoted as the "
+                            "reason. (a) the witness trips a compiler-inserted "
+                            "check -- enumeration keeps those out of a path's "
+                            "identity and certification turns them on, which is "
+                            "why the method puts this query at all. (b) a "
+                            "quantity OUTSIDE the coordinate set is still free: "
+                            "the point pins only the free coordinates, and the "
+                            "method says of the rest that certification "
+                            "'quantifies over it: where varying it can lead "
+                            "away from π, that query is refuted'. On this unit "
+                            "the refused and unmodelled quantities include the "
+                            "mapping slots and any external-call return. Either "
+                            "way the path's own counterexample is not shown to "
+                            "walk it under the checks a real run performs, so "
+                            "no test is emitted")
                     else:
                         print(f"[witness enc={enc}] single-point check "
                               f"{wv}; the replay test is NOT cleared")
