@@ -943,6 +943,104 @@ def test_the_oracle_side_refuses_the_same_key():
 #
 # The fixture's preamble pranks `address(uint160(0))`, so the observed sender
 # is 0 in every case below and only the RANGE moves.
+TOLERANT_EMITTED = EMITTED.replace(
+    "    // [asserted] path exits normally; a revert fails the test\n"
+    "    c0.setDiscount(address(uint160(0)), 250);\n",
+    "    // [revert-tolerant] outcome not asserted\n"
+    "    try c0.setDiscount(address(uint160(0)), 250) {} catch {}\n")
+
+# A ladder carrying BOTH kinds of rung, so one test can show that the drop is
+# selective. If it dropped both, the branch would look like it fires while
+# actually being "emit no oracle under try/catch", which is a different and
+# much worse rule.
+MIXED_LADDER = [("owner", "post == pre", "HOLDS"),
+                ("feeReceiver", "post != pre", "HOLDS")]
+
+
+def _make_case_from(text):
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@FeeVault@F@setDiscount#61", 7)
+    assert case is not None, "fixture: the emitted case for enc=7 was not found"
+    return em, case
+
+
+def _mixed_put(emitted_text):
+    em, case = _make_case_from(emitted_text)
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=MIXED_LADDER, notes=notes)
+    return put, stats, notes
+
+
+def test_a_change_rung_is_DROPPED_on_a_revert_tolerant_call():
+    """MUST FLIP against the bare-call control below.
+
+    A revert leaves storage untouched, so a `post != pre` rung is FALSE on
+    exactly the outcome a `try {} catch {}` exists to tolerate. Measured on
+    farming.setDistributor enc=13, which emitted such a pair and came back
+
+        [FAIL: _distributor: post != pre; counterexample:
+         args=[0x...0064]]
+
+    on the UNMODIFIED contract -- the one outcome this pipeline must never
+    produce.
+
+    THE DROP MUST BE SELECTIVE. `post == pre` holds on a revert too, so it is
+    still emitted; a rule that dropped every rung under try/catch would be
+    "emit no oracle", which is worse than the bug.
+    """
+    put, stats, notes = _mixed_put(TOLERANT_EMITTED)
+    bad = 0
+    bad += check(put is not None, f"a PUT is still produced (notes: {notes})")
+    if put is None:
+        return bad + 3
+    # Asserted on the STATEMENT, not on the substring "post != pre": that text
+    # legitimately appears in the header (the certified ladder is printed) and
+    # in the drop reason (which quotes the rung it dropped). A first version of
+    # this check searched the whole text and failed for that reason -- the same
+    # comment-versus-code confusion the sender test already records.
+    bad += check(not any("assertTrue(_post_feeReceiver != _pre_feeReceiver"
+                         in ln for ln in put),
+                 "the change assertion is absent from the CODE")
+    bad += check(any("REVERT-TOLERANT" in s for s in stats["oracle_skipped"]),
+                 f"and the drop NAMES the reason: {stats['oracle_skipped']}")
+    bad += check(any("assertEq(_post_owner, _pre_owner" in ln for ln in put),
+                 "while the `post == pre` rung of the SAME ladder survives -- "
+                 "the drop is selective, not a blanket refusal")
+    return bad
+
+
+def test_the_same_change_rung_IS_asserted_on_a_bare_call():
+    """THE CONTROL. Identical ladder, identical region, call NOT wrapped.
+
+    Without this, the branch above would pass just as well if it dropped
+    change rungs unconditionally -- and the pipeline would silently lose every
+    "this path writes something" oracle it has.
+    """
+    put, stats, notes = _mixed_put(EMITTED)
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    if put is None:
+        return bad + 2
+    bad += check(any("assertTrue(_post_feeReceiver != _pre_feeReceiver" in ln
+                     for ln in put),
+                 "the change assertion IS rendered on a bare call")
+    bad += check(not any("REVERT-TOLERANT" in s
+                         for s in stats["oracle_skipped"]),
+                 f"and nothing is dropped for tolerance: "
+                 f"{stats['oracle_skipped']}")
+    return bad
+
+
 def _env_range_put(region_extra):
     em, case = make_case()
     notes = []
@@ -1223,6 +1321,8 @@ def main():
               test_a_slot_pin_keyed_by_a_literal_is_established,
               test_a_slot_pin_keyed_by_msg_sender_is_REFUSED,
               test_the_oracle_side_refuses_the_same_key,
+              test_a_change_rung_is_DROPPED_on_a_revert_tolerant_call,
+              test_the_same_change_rung_IS_asserted_on_a_bare_call,
               test_a_wide_env_coordinate_is_FUZZED_not_disclosed_as_one_point,
               test_a_wide_env_coordinate_EXCLUDING_the_sender_is_also_fuzzed,
               test_a_width_one_env_coordinate_emits_at_the_certified_value):

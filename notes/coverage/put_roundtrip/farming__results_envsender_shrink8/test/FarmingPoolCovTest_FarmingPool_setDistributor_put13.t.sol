@@ -93,13 +93,15 @@ contract FarmingPoolCovTest_FarmingPool_setDistributor_put13 is Test {
   // literal: the region is a statement about THAT slice, and generalising
   // over them would be a claim the certification never made.
   // FUZZ COORDINATES: distributor_
-  // ORACLE: 12 assertion(s) from the surviving (HOLDS) rungs of
-  // --path-cov-assert -- 12 over POST-STATE, read through vm.load at
+  // ORACLE: 10 assertion(s) from the surviving (HOLDS) rungs of
+  // --path-cov-assert -- 10 over POST-STATE, read through vm.load at
   // the slot solc reports, and 0 over the unit's OWN RETURN
   // VALUE, bound from the call below. A return rung is emitted only when the
   // ladder's `retlive` witness was REFUTED, i.e. only when this path was
   // shown to reach a return at all.
   //   rung DROPPED: _MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)
+  //   rung DROPPED: _distributor: post != pre (this rung asserts the state CHANGED, and the emitted call is REVERT-TOLERANT (`try {} catch {}`) because the exit kind could not be confirmed. A revert leaves storage untouched, so this assertion is FALSE on exactly the outcome the wrapper exists to tolerate -- it would produce a RED test on the unmodified contract. The `post == pre` rungs of the same ladder are unaffected: they hold on a revert too. DROPPED rather than emitted, and rather than the whole PUT being refused, because the unchanged rungs are still a sound (weaker) oracle over this region)
+  //   rung DROPPED: _distributor: post > pre (this rung asserts the state CHANGED, and the emitted call is REVERT-TOLERANT (`try {} catch {}`) because the exit kind could not be confirmed. A revert leaves storage untouched, so this assertion is FALSE on exactly the outcome the wrapper exists to tolerate -- it would produce a RED test on the unmodified contract. The `post == pre` rungs of the same ladder are unaffected: they hold on a revert too. DROPPED rather than emitted, and rather than the whole PUT being refused, because the unchanged rungs are still a sound (weaker) oracle over this region)
   //   entry-state bound DROPPED: state._MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)
   //   entry-state bound DROPPED: state._owner in [1, 821886972] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)
   //   environment ESTABLISHED: msg.sender == 821886973 is ESTABLISHED: the governing vm.prank was rewritten to the certified value. The emitted case's own sender came from a different query's counterexample and is not the value this region is a statement about (replacing `vm.prank(address(uint160(2147483649)));`)
@@ -132,9 +134,7 @@ contract FarmingPoolCovTest_FarmingPool_setDistributor_put13 is Test {
     assertEq(_post_totalSupply, _pre_totalSupply, "_totalSupply: post == pre");
     assertGe(_post_totalSupply, _pre_totalSupply, "_totalSupply: post >= pre");
     assertLe(_post_totalSupply, _pre_totalSupply, "_totalSupply: post <= pre");
-    assertTrue(_post_distributor != _pre_distributor, "_distributor: post != pre");
     assertGe(_post_distributor, _pre_distributor, "_distributor: post >= pre");
-    assertGt(_post_distributor, _pre_distributor, "_distributor: post > pre");
     assertEq(_post_owner, _pre_owner, "_owner: post == pre");
     assertGe(_post_owner, _pre_owner, "_owner: post >= pre");
     assertLe(_post_owner, _pre_owner, "_owner: post <= pre");

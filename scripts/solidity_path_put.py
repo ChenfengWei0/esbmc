@@ -497,6 +497,56 @@ def parse_ladder(log):
     return rows, summary, refusal, blocker
 
 
+CHANGE_UNDER_CATCH = (
+    "this rung asserts the state CHANGED, and the emitted call is "
+    "REVERT-TOLERANT (`try {} catch {}`) because the exit kind could not be "
+    "confirmed. A revert leaves storage untouched, so this assertion is FALSE "
+    "on exactly the outcome the wrapper exists to tolerate -- it would produce "
+    "a RED test on the unmodified contract. The `post == pre` rungs of the "
+    "same ladder are unaffected: they hold on a revert too. DROPPED rather "
+    "than emitted, and rather than the whole PUT being refused, because the "
+    "unchanged rungs are still a sound (weaker) oracle over this region")
+
+
+def rung_asserts_a_change(text):
+    """Does this rung claim the post-state DIFFERS from the pre-state?
+
+    ---- WHY THIS DISTINCTION IS LOAD-BEARING, MEASURED ----------------------
+    A revert leaves storage exactly as it was. So on a call the emitter could
+    not confirm exits normally -- one it wrapped in `try {} catch {}` -- every
+    "nothing changed" rung stays true whatever happens, and every "something
+    changed" rung is FALSE the moment the call reverts. The two are not equally
+    safe under the same wrapper, and until now both were rendered.
+
+    MEASURED, farming.setDistributor enc=13. The certified region is
+        msg.sender in [821886973, 821886973]
+        state._owner in [1, 821886972]        <- DROPPED, width > 1
+    -- two DISJOINT sets for a unit guarded by `onlyOwner`. The owner bound is
+    correctly dropped (the entry state is not havoc'd, so it constrained
+    nothing in the query), which leaves the constructor's owner = 1 against a
+    pranked sender of 821886973. On chain that call REVERTS, the try/catch
+    swallows it, `_distributor` never moves, and
+
+        assertTrue(_post_distributor != _pre_distributor, "post != pre")
+
+    fails at `distributor_ = 100`. The ladder was not wrong -- it answered
+    about a model whose entry state the test cannot reproduce -- but the
+    EMITTED TEST is unsound, and it is unsound in the direction that produces a
+    RED test on an unmodified contract, which is the one outcome this pipeline
+    must never produce.
+
+    The sibling enc=12 is the control: its surviving rungs are all `post ==
+    pre`, it is wrapped in the same try/catch, and it is GREEN. So the wrapper
+    alone is not the fault and the fix is not "never emit under try/catch".
+    """
+    if re.match(r"^post (!=|>|<) pre$", text):
+        return True
+    # A delta rung with a NON-ZERO lower bound says the value moved by at least
+    # that much, which is a change. `post - pre in [0, k]` does not.
+    m = re.match(r"^(?:post - pre|pre - post) in \[(\d+), \d+\]", text)
+    return bool(m) and int(m.group(1)) > 0
+
+
 # Rung text -> a renderer producing forge-std assertion lines.  `post`/`pre`
 # are the expression texts the caller has already built.
 def rung_assertions(text, pre, post, label):
@@ -1737,6 +1787,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
 
     # --- the oracle: the unit's OWN RETURN VALUE ----------------------------
     #
+    # Whether THIS path's call was emitted revert-tolerant. Read off the call
+    # the PUT will actually contain (`new_call`), not off the fixture's
+    # original line: the return-binding step below rewrites it, and a flag
+    # taken from the wrong one of the two would gate the rungs on a statement
+    # the test does not carry.
+    call_is_revert_tolerant = new_call.strip().startswith("try ")
+
     # Done BEFORE the state rungs because it can rewrite `new_call`, and after
     # the state stores because it does not depend on them.
     # TWO SHAPES, ONE TABLE. A scalar return is the candidate `return`; a tuple
@@ -1904,6 +1961,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                     "address(c0)", map_slot_expr(kexpr, mslot), 0, vnb)
                 pre_reads.append(f"    uint256 _pre_{ident} = {rd};")
                 post_reads.append(f"    uint256 _post_{ident} = {rd};")
+            if call_is_revert_tolerant and rung_asserts_a_change(text):
+                oracle_skipped.append(f"{var}: {text} ({CHANGE_UNDER_CATCH})")
+                continue
             a = rung_assertions(text, f"_pre_{ident}", f"_post_{ident}",
                                 f"{var}: {text}")
             if a is None:
@@ -1924,6 +1984,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             rd = slot_read_expr("address(c0)", slot, off, nb)
             pre_reads.append(f"    uint256 _pre_{var.lstrip('_')} = {rd};")
             post_reads.append(f"    uint256 _post_{var.lstrip('_')} = {rd};")
+        if call_is_revert_tolerant and rung_asserts_a_change(text):
+            oracle_skipped.append(f"{var}: {text} ({CHANGE_UNDER_CATCH})")
+            continue
         a = rung_assertions(text, f"_pre_{var.lstrip('_')}",
                             f"_post_{var.lstrip('_')}", f"{var}: {text}")
         if a is None:
