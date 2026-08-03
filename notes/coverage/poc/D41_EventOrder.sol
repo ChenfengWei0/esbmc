@@ -228,6 +228,36 @@ pragma solidity ^0.8.20;
 //   -- the other candidate -- does not help either, for the same reason: it
 //   addresses which call is an event, not whether any call survives.
 //
+// ---- AND THE TOOL NAMES THE COMPONENT ITSELF ----
+//
+// Diffing the three runs' logs, these two lines appear in the EMITTING
+// fixtures and are absent from the control:
+//
+//   --solidity-path-coverage: expanded 2 internal call(s) into their calling
+//     unit (call depth bound = 4), so a callee's decisions are part of its
+//     caller's path identity
+//   --solidity-path-coverage: 2 in-scope function(s) are internal/private and
+//     are therefore not units; they have no path set of their own and appear
+//     inside the paths of the units that call them
+//
+// The "2 internal calls" ARE the two events. So it is not a general inliner
+// somewhere upstream -- it is THE PATH PASS'S OWN internal-call expansion, and
+// because an event body is empty the expansion leaves nothing behind. Symex
+// bears this out: 240 assignments in the control against 242 in each emitting
+// fixture, i.e. the argument evaluation survives and the call does not.
+//
+// ⇒ GOOD NEWS FOR THE FIX: the expansion is inside goto_coverage, not upstream,
+//   so the capture point is local to the same component rather than a new
+//   earlier stage. Record the emit as the expansion consumes it.
+//
+// ⇒ A SEPARATE COST FALLS OUT, not previously recorded: an event is being
+//   treated as an internal function and CHARGED TO THE EXPANSION BUDGET (call
+//   depth bound 4). A contract with several events therefore spends, on
+//   inlining empty bodies, budget the pass needs for real callees -- and the
+//   pass already reports elsewhere that exceeding that bound is what makes a
+//   callee's decisions vanish from its caller's path identity. Not measured on
+//   a real contract here; recorded as a consequence worth measuring.
+//
 // THE CENSUS IS WHY THIS IS A MEASUREMENT AND NOT A BUG SHIPPED. It was written
 // BEFORE the recorder, deliberately, on the argument that a stamp which never
 // arrives would make the recorder silently record nothing -- and a fully wired,
