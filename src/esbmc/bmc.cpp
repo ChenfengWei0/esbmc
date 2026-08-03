@@ -1914,6 +1914,52 @@ void report_coverage(
               if (missing > 0)
                 claim_entry["decisions_unrecorded"] = missing;
             }
+
+            // ---- R0's EVENT RUNG: the emits this path walks, in order ----
+            //
+            // Read out of the published tables with exactly the same prefix
+            // walk as the decisions above, so the two fields cannot disagree
+            // about which path they describe. The inner map is keyed by program
+            // position, and std::map iterates it in ascending key order, which
+            // IS program order — that is the whole reason the recorder keys on
+            // position rather than appending.
+            //
+            // WRITTEN EVEN WHEN EMPTY, and that is the point of the field. R0
+            // is "same exit, same revert reason, SAME EVENTS IN THE SAME
+            // ORDER"; a generator can only assert the third rung if it can tell
+            // "this path emits nothing" apart from "nobody looked". An absent
+            // key here means recording was off; `[]` means it was on and the
+            // path emitted nothing recordable.
+            //
+            // ⚠ "nothing recordable" is not "nothing emitted". The qualified
+            // spelling `emit L.E(x)` is dropped in the front end and never
+            // reaches the goto program, so a consumer must not turn `[]` into
+            // an assertion that NO event fires. It may only assert the events
+            // that ARE listed, in the order listed.
+            {
+              auto ei = goto_coveraget::path_event_table.find(unit);
+              auto vi = goto_coveraget::path_event_index.find(unit);
+              if (
+                ei != goto_coveraget::path_event_table.end() &&
+                vi != goto_coveraget::path_event_index.end() &&
+                dp != goto_coveraget::path_decision_depth.end())
+              {
+                json evs = json::array();
+                for (uint64_t k = dp->second + 1; k-- > 0;)
+                {
+                  auto pit = vi->second.find(penc >> k);
+                  if (pit == vi->second.end())
+                    continue;
+                  for (const auto &[evpos, evid] : pit->second)
+                  {
+                    (void)evpos;
+                    if (evid < ei->second.size())
+                      evs.push_back(ei->second[evid]);
+                  }
+                }
+                claim_entry["events"] = evs;
+              }
+            }
           }
         }
 
@@ -2406,6 +2452,53 @@ void report_coverage(
           steps,
           holes,
           synth);
+      }
+
+      // ---- THE EVENT SEQUENCES, COUNTED THE SAME WAY AND FOR THE SAME REASON ----
+      //
+      // Counted from `claims_json`, i.e. from what was emitted, so "the rung
+      // exists" and "the rung fired on N paths" are one statement.
+      //
+      // THE THREE NUMBERS ARE NOT REDUNDANT, and the middle one is the whole
+      // point. `with_field` counts F claims carrying the array AT ALL;
+      // `with_events` counts those whose array is NON-EMPTY. A contract that
+      // emits nothing and a recorder that never fired both give
+      // `with_events = 0` — they are told apart only by `without_field`, which
+      // is 0 in the first case and nF in the second. Folding the two into one
+      // count is exactly how an always-empty channel passes for a working one.
+      {
+        size_t with_field = 0, with_events = 0, without_field = 0, evsteps = 0;
+        for (const auto &c : claims_json)
+        {
+          if (c.value("status", "") != "F")
+            continue;
+          if (!c.contains("events"))
+          {
+            ++without_field;
+            continue;
+          }
+          ++with_field;
+          const size_t n = c["events"].size();
+          evsteps += n;
+          if (n > 0)
+            ++with_events;
+        }
+        report["summary"]["event_sequences"]["paths_with_field"] = with_field;
+        report["summary"]["event_sequences"]["paths_without_field"] =
+          without_field;
+        report["summary"]["event_sequences"]["paths_with_events"] = with_events;
+        report["summary"]["event_sequences"]["event_steps"] = evsteps;
+        log_status(
+          "--solidity-path-coverage: EVENT SEQUENCES published for {} of {} "
+          "witnessed path(s), {} of them non-empty ({} emit(s) total). An "
+          "EMPTY array is a measurement (\"this path emits nothing "
+          "recordable\") and a MISSING field is not, so the two are counted "
+          "apart; and `recordable` excludes the qualified spelling `emit "
+          "L.E(x)`, which the front end drops",
+          with_field,
+          nF,
+          with_events,
+          evsteps);
       }
       // Every U's reason, with all slots present including the zeros — the
       // summary must never let a category vanish by simply not appearing.

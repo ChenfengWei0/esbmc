@@ -877,6 +877,37 @@ public:
   // unit id -> (prefix enc -> index into the table above).
   static std::map<std::string, std::map<uint64_t, uint32_t>> path_decision_index;
 
+  // ---- THE PER-PATH EMIT SEQUENCE (R0's event rung) ----
+  //
+  // Same two-level shape as the decisions above and for the same reason: the
+  // names are interned (a contract has tens of distinct events) and only the
+  // per-prefix keys are stored, so nothing per-path is copied into the DFS
+  // stack. That copy is what path_decision_table exists to avoid, measured on
+  // units of 2733 and 120166 paths.
+  //
+  // The INNER key is the emitting instruction's PROGRAM POSITION, not a list
+  // position, and that buys the two properties a vector cannot give:
+  //
+  //   IDEMPOTENCE  a prefix is re-walked once per branch explored beneath it,
+  //                so an appending scheme multiplies every event by the number
+  //                of paths under it. Assigning to a position overwrites the
+  //                same slot with the same value.
+  //   ORDER        several emits between two decisions come back in program
+  //                order rather than as an unordered set.
+  //
+  // ⚠ IT IS NOT A COMPLETE RECORD OF WHAT THE PATH EMITS. The qualified
+  // spelling `emit L.E(x)` becomes a code_skipt() in the front end
+  // (solidity_convert_expr.cpp) and reaches the goto program carrying nothing,
+  // so it is INVISIBLE here. A consumer must therefore never read an empty
+  // array as "this path emits no events" — only as "no unqualified emit was
+  // recorded on it".
+  //
+  // unit id -> interned event names.
+  static std::map<std::string, std::vector<std::string>> path_event_table;
+  // unit id -> (prefix enc -> (program position -> index into the table)).
+  static std::map<std::string, std::map<uint64_t, std::map<uint32_t, uint32_t>>>
+    path_event_index;
+
   // Item 2e: serialize covered_set to covered_set_outpath crash-safely
   // (write a .tmp then atomic rename). Called both incrementally as
   // each edge is witnessed P_SATISFIABLE (bmc.cpp) and once at run end,

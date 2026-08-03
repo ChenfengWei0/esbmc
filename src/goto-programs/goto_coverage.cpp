@@ -62,6 +62,10 @@ std::map<std::string, std::vector<goto_coveraget::path_decisiont>>
   goto_coveraget::path_decision_table;
 std::map<std::string, std::map<uint64_t, uint32_t>>
   goto_coveraget::path_decision_index;
+std::map<std::string, std::vector<std::string>>
+  goto_coveraget::path_event_table;
+std::map<std::string, std::map<uint64_t, std::map<uint32_t, uint32_t>>>
+  goto_coveraget::path_event_index;
 std::string goto_coveraget::covered_set_outpath;
 std::set<std::string> goto_coveraget::path_covered_ids;
 std::map<std::pair<std::string, std::string>, std::string>
@@ -6406,10 +6410,18 @@ void goto_coveraget::solidity_path_coverage()
               break;
             const size_t idx = to_insert.size() - 1;
             // R0 event rung: this COMPLETE path's emit sequence, recovered
-            // from the prefixes it walked. Printed rather than published for
-            // now -- the report field is the next step, and printing first is
-            // what makes an always-empty channel distinguishable from a
-            // contract that emits nothing.
+            // from the prefixes it walked. ALSO published, as the report's
+            // per-claim `events` array (bmc.cpp), which is what a generator
+            // reads; this line stays because it is the only view of the
+            // sequence for a run that dies before the report is written, and
+            // because a producer-side print that disagrees with the report
+            // would expose a publication bug that no consumer could see.
+            //
+            // Printed only when non-empty, unlike the report field: stdout is
+            // per path and a line saying "this path emitted nothing" on every
+            // path of every unit is noise. The distinction the empty array
+            // carries — recorded-and-empty vs never-recorded — lives in the
+            // report, where a consumer can act on it.
             {
               const auto evs = events_for(enc, depth);
               if (!evs.empty())
@@ -7222,6 +7234,15 @@ void goto_coveraget::solidity_path_coverage()
       const std::string uid_pub = f_it->first.as_string();
       path_decision_table[uid_pub] = std::move(dec_table);
       path_decision_index[uid_pub] = std::move(dec_index);
+      // Published UNCONDITIONALLY, including when this unit emitted nothing.
+      // An absent key and an empty table are the same thing to a consumer that
+      // only ever asks "is there an entry", but they are NOT the same fact: the
+      // first says the recorder never ran on this unit, the second says it ran
+      // and saw no emit. The report distinguishes them by always writing the
+      // array once the unit is here, so "no field" can only mean "recording was
+      // off", never "no events".
+      path_event_table[uid_pub] = std::move(ev_table);
+      path_event_index[uid_pub] = std::move(ev_index);
     }
 
     // ---- STAGE 2, step 1: the outer-box batch ----
