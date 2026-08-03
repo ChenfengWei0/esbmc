@@ -25,6 +25,21 @@ pragma solidity ^0.8.20;
 /// `state.d`) among its REFUSED coordinates, and the two paths' counterexamples
 /// then agree on `amount` and `msg.sender` -- the coordinate gate.
 ///
+/// ⛔ HOW TO RUN IT, and the first attempt got this wrong. Under `--focus
+/// --max-tx 1` NOTHING CAN WRITE `d.duration`: the dispatcher is restricted to
+/// the unit itself, so the field keeps its zero-value at entry, only the `else`
+/// side of `d.duration > 0` is reachable, and the driver witnesses TWO paths
+/// where ctrlParam witnesses three. With no sibling to separate from, the one
+/// live path certifies trivially -- and reading that as "the refused field is
+/// harmless" would be reading a run in which the discriminating object was
+/// never built. The measured tell is the path count, not the verdict:
+///     ctrlParam  3 witnessed paths   1 certified / 2 not
+///     ctrlPlain  2 witnessed paths   1 certified / 1 not
+///     probe      2 witnessed paths   1 certified / 1 not
+/// so ctrlPlain and probe are not comparable to ctrlParam either.
+/// REQUIRED: `--scope setDuration,probe --max-tx 2`, which is the only shape
+/// that buys a witness for state a different function has to write.
+///
 /// TWO NEGATIVE CONTROLS, because two different things could be responsible:
 ///   * `ctrlPlain` branches on a scalar state variable of the same type that is
 ///     NOT inside any struct. If this one also gets refused, the mapping in the

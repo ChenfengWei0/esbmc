@@ -40,6 +40,17 @@ pragma solidity ^0.8.20;
 /// NEGATIVE CONTROL, `ctrl`: identical body with the external call removed and
 /// the branch put on the parameter. It must certify; if it does not, the run
 /// measured the harness.
+///
+/// ⛔ THE FIRST VERSION OF `ctrl` COULD NOT PASS BY CONSTRUCTION, and its run is
+/// struck. It branched on `(uint160(token) & 1) == 1`. A region is a PRODUCT OF
+/// PER-COORDINATE SETS, each an interval minus a bounded number of holes
+/// (Definition 6), and "every odd address" is neither -- it is 2^159 disjoint
+/// points. So the control could only ever report `shrink round budget
+/// exhausted`, which it did (0 certified / 3 not), and it would have done so
+/// whatever the candidate did. A negative control whose expected outcome is
+/// unreachable is the always-refusing mirror of an always-true reader. `ctrl`
+/// now branches on an ORDER comparison, whose two sides are exactly two
+/// intervals.
 contract B2_ExtcallSuccess {
     uint256 public tag;
 
@@ -56,7 +67,7 @@ contract B2_ExtcallSuccess {
     }
 
     function ctrl(address token, uint256 amount) external {
-        bool ok = (uint160(token) & 1) == 1;
+        bool ok = uint160(token) > 100;
         if (ok) {
             tag = amount + 1;
         } else {
