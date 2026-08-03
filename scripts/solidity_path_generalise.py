@@ -197,8 +197,20 @@ def is_env(name):
     return name.startswith(ENV_PREFIXES)
 
 
-def struct_fields(text):
+def struct_fields(text, nested=False):
     """Top-level scalar fields of a rendered struct, as {field: int}.
+
+    `nested=True` additionally DESCENDS into aggregate-valued fields and returns
+    their scalar leaves under dotted names (`farmInfo.finished`). OFF by default,
+    so every recorded number reproduces byte for byte -- the paragraph below
+    argues the depth-1 rule and that argument is not withdrawn, it is made
+    optional. WHY IT HAS TO BE AVAILABLE AT ALL, measured on farming/deposit:
+    the whole payload for `_farm` is
+
+        { .farmInfo = { .finished = 0 } }
+
+    whose only depth-1 field is an aggregate, so the depth-1 rule returns NOTHING
+    and the coordinate set is empty for that state variable however it is wired.
 
     The report renders an aggregate as one string:
 
@@ -249,12 +261,47 @@ def struct_fields(text):
                     out[name] = parse_int(val)
                 except ValueError:
                     pass
+            elif nested and name and val.startswith("{"):
+                # DESCEND. The scanner above stops at the first ',' or '}',
+                # which is inside the nested aggregate, so the substring has to
+                # be re-cut by BRACE BALANCE rather than by that index -- using
+                # `val` here would hand the recursion a truncated string and it
+                # would silently return nothing, which is the always-empty
+                # channel this project keeps building by accident.
+                b, d2 = j + 1, 0
+                while b < n and text[b] != "{":
+                    b += 1
+                e = b
+                while e < n:
+                    if text[e] == "{":
+                        d2 += 1
+                    elif text[e] == "}":
+                        d2 -= 1
+                        if d2 == 0:
+                            break
+                    e += 1
+                for sub, sv in struct_fields(text[b:e + 1], nested=True).items():
+                    out[f"{name}.{sub}"] = sv
+                # RESUME AFTER the nested aggregate's closing brace, not ON it.
+                # ⛔ `i = e` loses every field that follows: the recursion
+                # consumed the nested `{` without the outer scanner counting it,
+                # so letting the loop see the matching `}` drops `depth` to 0 and
+                # every later `.field` is then read at the wrong depth and
+                # skipped. MEASURED the moment it was written -- the EscrowSrc
+                # rendering `{ .orderHash={ .data=nil }, .taker=0, .amount=0 }`
+                # came back EMPTY under nested=True while the depth-1 rule found
+                # taker and amount. The control that caught it is case 3 of
+                # check_state_struct_fields.py, which exists precisely because a
+                # richer parse that silently returns LESS is the shape this
+                # project keeps shipping.
+                i = e + 1
+                continue
             i = j
         i += 1
     return out
 
 
-def coord_values(c):
+def coord_values(c, state_structs=False):
     """This claim's counterexample as {coordinate: int}, plus what was refused.
 
     A coordinate must be a quantity a generated test can SET, and it can only be
@@ -317,13 +364,41 @@ def coord_values(c):
         try:
             ce["state." + n] = parse_int(v)
         except ValueError:
-            refused.append("state." + n)
+            # ---- THE DECOMPOSITION ABOVE REACHED ONE OF THE TWO SOURCES ----
+            #
+            # `inputs` has had struct_fields since the EscrowSrc measurement
+            # ("that refusal is what left every EscrowSrc unit with nothing to
+            # generalise"). `entry_storage` never did: a struct-valued STATE
+            # variable was refused whole, so a guard reading one of its scalar
+            # fields had no coordinate under any flag. One fact, two ledgers,
+            # and only one of them updated.
+            #
+            # MEASURED, farming/deposit: the payload's only aggregate is
+            # `_farm`, the refusal line reads
+            #     [coords] UNSUPPORTED, refused as coordinates (not scalar):
+            #              state._farm
+            # and six of the seven paths end at the coordinate gate saying the
+            # separating quantity "is not in the payload at all".
+            #
+            # OFF BY DEFAULT. Turning it on changes the coordinate set of every
+            # unit whose state holds a struct, which changes what every recorded
+            # region is a statement ABOUT -- the same house rule --level0,
+            # --max-holes and --max-region-pieces follow.
+            fields = struct_fields(v, nested=True) if state_structs else {}
+            for fn, fv in fields.items():
+                ce[f"state.{n}.{fn}"] = fv
+            if fields:
+                refused.append(
+                    f"state.{n} (aggregate; {len(fields)} scalar field(s) used "
+                    f"instead: " + ", ".join(sorted(fields)) + ")")
+            else:
+                refused.append("state." + n)
     return ce, refused
 
 
 def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     ast=None, focus=None, memlimit="8g", path_function=None,
-                    esbmc_args=()):
+                    esbmc_args=(), state_structs=False):
     """Step 1. Returns (paths, refused) where paths = [(enc, depth, ce)]."""
     # FRESHNESS, BY REMOVAL -- the same guard `certify` already has, and this is
     # the step that needed it more.
@@ -403,7 +478,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
 
     out, refused = [], set()
     for c in witnessed:
-        ce, ref = coord_values(c)
+        ce, ref = coord_values(c, state_structs=state_structs)
         refused.update(ref)
         out.append((int(c["path_id"]), int(c["path_depth"]), ce))
     # Same enc can appear once per transaction instance; keep one of each.
@@ -3216,6 +3291,38 @@ def main():
                          "solidity_path_put.py uses -- imported, not copied, "
                          "so the two drivers cannot drift about which flags "
                          "are safe.")
+    ap.add_argument("--state-struct-fields", action="store_true",
+                    help="decompose a STRUCT-VALUED STATE VARIABLE into its "
+                         "scalar leaves, as `state.<var>.<field>[.<field>...]`, "
+                         "instead of refusing the variable whole.\n"
+                         "WHY: `coord_values` has decomposed struct-valued "
+                         "PARAMETERS since the EscrowSrc measurement -- its own "
+                         "comment says the whole-argument refusal 'is what left "
+                         "every EscrowSrc unit with nothing to generalise' -- "
+                         "and entry_storage was never wired to the same "
+                         "function. One fact, two ledgers.\n"
+                         "It also DESCENDS into nested aggregates, which the "
+                         "depth-1 rule declines to do. That is not decoration: "
+                         "farming/deposit's entire `_farm` payload is "
+                         "`{ .farmInfo = { .finished = 0 } }`, whose only "
+                         "depth-1 field is itself an aggregate, so without the "
+                         "descent this flag would resolve zero coordinates on "
+                         "the very unit it was written for -- a flag that "
+                         "cannot fire looks exactly like one that fired and "
+                         "found nothing.\n"
+                         "OFF BY DEFAULT, same house rule as --level0, "
+                         "--max-holes, --max-region-pieces and --slot-coords: "
+                         "it changes the coordinate set of every unit whose "
+                         "state holds a struct, and therefore what every region "
+                         "measured under it is a statement ABOUT. Every "
+                         "recorded number reproduces verbatim without it.\n"
+                         "⛔ IT DOES NOT PROMISE THE MISSING QUANTITY. Only "
+                         "leaves the REPORT actually rendered can become "
+                         "coordinates; a field ESBMC did not render is still "
+                         "absent, and on farming/deposit `userInfo.checkpoint` "
+                         "and `farmInfo.duration` are exactly that case. "
+                         "Whether the coordinate gate moves is the measurement, "
+                         "not the claim.")
     ap.add_argument("--workdir", default=None)
     args = ap.parse_args()
 
@@ -3253,7 +3360,8 @@ def main():
     paths, refused, caveats = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
         args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
-        path_function=args.path_function, esbmc_args=args.esbmc_arg)
+        path_function=args.path_function, esbmc_args=args.esbmc_arg,
+        state_structs=args.state_struct_fields)
     if not paths:
         # ⛔ THE OLD TEXT HERE ASSERTED A RESULT AND WAS WRONG ON REAL INPUT.
         # It said "That is a result, not an error ... (The report was checked:
