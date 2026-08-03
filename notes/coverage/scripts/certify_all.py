@@ -78,6 +78,40 @@ RE_WITNESSED = re.compile(r"^\[enumerate\] (\d+) witnessed path\(s\)")
 RE_COORDS = re.compile(r"^\[coords\] ([^\[]+?)(?:\s+\[pinned: (.*)\])?$")
 RE_NO_COORD = re.compile(r"^\[coords\] NO GENERALISABLE COORDINATE — (.*)$")
 RE_CERT = re.compile(r"^  enc=(\d+)(?: piece \d+/\d+)?: (.*)$")
+# ---- A PATH SPLIT INTO PIECES WAS RECORDED AS ZERO CERTIFIED ----
+#
+# `RE_CERT` above expects `enc=12 piece 3/4:`. The driver has never printed
+# that. It prints
+#
+#     enc=12 piece 3 (1 of 2 certified): distributor_ in [0, 0], ...
+#
+# and then a UNION line, `enc=12: the region of this path is the UNION of the 2
+# boxes above`, which the caller EXCLUDES by name because it is prose and not a
+# region. So when --max-region-pieces > 1 actually splits a path, BOTH lines
+# miss and the unit is recorded with `certified: {}`.
+#
+# MEASURED, farming/setDistributor, and it is the whole reason this was found:
+# the driver's own last line says `5 certified region(s), 3 not certified, over
+# 5 witnessed path(s)` and lists five certified pieces under === CERTIFIED
+# REGIONS ===. certify_all's row for the same run says 0 certified. Verified by
+# running THIS module's parse_driver over that exact driver.log, not by reading
+# the regex: certified=[] against the driver's 5.
+#
+# That is the write-side/read-side split this project has paid for before -- the
+# piece arm has been able to produce pieces since 3f0395e60c and nothing
+# downstream could ever see one. A hole arm that reports 0 holes and a hole arm
+# whose reader cannot parse a hole print the same 0.
+#
+# KEYED `<enc>#<piece>`, deliberately NOT collapsed into `<enc>`: the pieces of
+# one path are DIFFERENT boxes, each certified by its own query, and a dict
+# keyed on enc alone would keep whichever came last and silently drop the rest.
+# Downstream readers that assume an integer key must FAIL on this, and put_all.py
+# is changed in the same commit to refuse it by name rather than crash in
+# int(enc) -- emitting one PUT per piece needs a naming dimension the emitter
+# does not have yet, and inventing one here would put two tests with the same
+# function name in one forge project.
+RE_CERT_PIECE = re.compile(
+    r"^  enc=(\d+) piece (\d+) \(\d+ of \d+ certified\): (.*)$")
 RE_NOTCERT = re.compile(r"^  enc=(\d+): NOT CERTIFIED — (.*?); this path falls")
 RE_PIN_FIRED = re.compile(r"^\[env\] msg\.value PINNED to 0")
 RE_PIN_PAYABLE = re.compile(r"^\[env\] msg\.value NOT pinned: this unit is PAYABLE")
@@ -325,6 +359,15 @@ def parse_driver(out):
         if m:
             rec["not_certified"][m.group(1)] = m.group(2)
             continue
+        # BEFORE RE_CERT, because a piece line also matches the plain form's
+        # `^  enc=(\d+)...: (.*)$` shape once the optional group fails -- it
+        # would be stored under the bare enc and the next piece would overwrite
+        # it, which is worse than missing it: one of N boxes reported as if it
+        # were the path's whole region.
+        m = RE_CERT_PIECE.match(line)
+        if m:
+            rec["certified"][f"{m.group(1)}#{m.group(2)}"] = m.group(3)
+            continue
         m = RE_CERT.match(line)
         if m and "NOT CERTIFIED" not in line and "the region of this path" \
                 not in line:
@@ -531,6 +574,76 @@ def main():
                          "may be split into. 1 (the driver's default) throws the "
                          "non-counterexample side of every cut away, and is also "
                          "the setting under which --max-holes cannot fire.")
+    # ---- THE DRIVER HAS THE REPAIR THE TOOL NAMES; THIS SWEEP COULD NOT REACH
+    # ---- IT ----
+    #
+    # `solidity_path_generalise.py --esbmc-arg` exists precisely for the
+    # UNDECIDED-TRUNCATED refusal, and its own help says so: "the tool's own
+    # refusal names repairs this driver could not apply ... Stage 4
+    # (solidity_path_put.py) closed this gap; stage 2 had not." It is closed at
+    # the driver. It was NOT closed here, so no CORPUS unit could ever be given
+    # the repair -- only a hand-run one, which is the measurement nobody can
+    # repeat.
+    #
+    # MEASURED, and it is not a corner: in results_envsender_shrink8.jsonl,
+    # farming/setDistributor certifies 2 paths and loses 3, and every one of the
+    # 3 carries UNDECIDED-TRUNCATED naming loop 55 and loop 56 in `_str_assign`
+    # plus the exact retry to run. ⛔ That is NOT "the region is vacuous" -- the
+    # tool says so in the same sentence -- so those 3 are currently filed as
+    # not-certified on a bound, not on the method.
+    #
+    # EMITTED IN THE `=` FORM, always. `["--esbmc-arg", "--unwindset"]` makes
+    # argparse read the value as the next OPTION and fail; the driver's help
+    # calls this out for exactly the value we need. Building the `=` form here
+    # means a caller never has to know that.
+    #
+    # ⚠ Use --out to give this arm its OWN file, same house rule as --env-coord
+    # and --max-holes: a region certified under a widened loop bound is a
+    # different statement from one certified under the default, and the two must
+    # never share a (benchmark, unit) key.
+    # ---- THE PER-ESBMC-RUN BUDGET STOPS BEING A CONSTANT NOBODY CAN REACH ----
+    #
+    # It was `min(args.timeout, 180)`, and the comment at the driver's --timeout
+    # below has said for a while that the 180 is UNARGUED and INVISIBLE: the row
+    # records `unit_timeout_s` (the 600/1500), so a reader sees the budget that
+    # did NOT produce the largest failure bucket and cannot reach the one that
+    # did.
+    #
+    # MEASURED, and it is why this is now a flag: farming/setDistributor run with
+    # the tool's own named repair (--unwindset 55:512,56:512) DECIDED the three
+    # UNDECIDED-TRUNCATED pieces -- they came back VACUOUS, a real verdict -- and
+    # in the same run the two paths that used to CERTIFY (enc 12, 13) produced
+    # NO RECORD AT ALL: absent from `certified` and from `not_certified` alike,
+    # with wall time DOWN from 773s to 684s against a 1500s unit budget. Widening
+    # a loop bound makes every query dearer, so that is the shape of a per-run
+    # budget being hit, not of a method failing -- and with the 180 hardcoded the
+    # two could not be told apart by any run.
+    #
+    # DEFAULT 180, so an unflagged sweep is byte-identical to every recorded one.
+    ap.add_argument("--run-timeout", type=int, default=180,
+                    help="per ESBMC INVOCATION, in seconds. NOT --timeout, "
+                         "which is the whole driver loop for one unit. This is "
+                         "the budget behind `no outer-box round finished, so "
+                         "nothing was measured for this path (a BUDGET "
+                         "outcome)`, the largest bucket in the summary. Default "
+                         "180, the value that used to be hardcoded. The "
+                         "effective value is min(--timeout, this) and is "
+                         "recorded on every row as run_timeout_s.")
+    ap.add_argument("--esbmc-arg", action="append", default=[],
+                    dest="esbmc_arg", metavar="ARG",
+                    help="pass one extra argument straight to EVERY ESBMC "
+                         "invocation the driver makes -- enumeration, every "
+                         "outer-box round AND the certification query. "
+                         "Repeatable, one token each, and ⚠ USE THE `=` FORM "
+                         "for any token starting with a dash: "
+                         "--esbmc-arg=--unwindset --esbmc-arg=55:512,56:512. "
+                         "Without the `=`, argparse reads the value as the "
+                         "next OPTION -- the same trap the driver's own help "
+                         "warns about, one level up, and the token this flag "
+                         "exists to pass is exactly one that starts with a "
+                         "dash. Recorded on every row, because a bound that differs "
+                         "between two rows makes them two measurements wearing "
+                         "one name.")
     ap.add_argument("--unit", action="append", default=[],
                     help="sweep only these unit names (repeatable). Without it "
                          "the whole benchmark is swept, which for a re-measure of "
@@ -724,6 +837,16 @@ def main():
                    "--probes", str(args.probes),
                    "--refine-rounds", str(args.refine_rounds),
                    "--shrink-rounds", str(args.shrink_rounds),
+                   # ---- THE PER-ESBMC-RUN BUDGET, NOW `--run-timeout` ----
+                   #
+                   # It was the literal 180 the comment below argues about. The
+                   # comment is kept verbatim because every word of it is still
+                   # true -- the quantity is still not the same as
+                   # `unit_timeout_s`, still governs the largest failure bucket,
+                   # and its DEFAULT is still unargued. What changed is that a
+                   # run can now name it, which is what makes "budget" and
+                   # "method" separable by a measurement instead of by opinion.
+                   #
                    # ---- THIS 180 IS THE PER-ESBMC-RUN BUDGET, AND IT IS THE
                    # ---- ONE THAT GOVERNS THE LARGEST FAILURE BUCKET ----
                    #
@@ -741,7 +864,7 @@ def main():
                    # bucket and cannot see the one that did. Recorded as its own
                    # field now -- deliberately NOT folded into `unit_timeout_s`,
                    # which is a different quantity and is quoted as such.
-                   "--timeout", str(min(args.timeout, 180)),
+                   "--timeout", str(min(args.timeout, args.run_timeout)),
                    "--memlimit", f"{memlimit}g", "--workdir", uwd,
                    # ALWAYS PASSED, not passed-only-when-non-default. A flag
                    # that appears on the command line only sometimes is a
@@ -758,6 +881,11 @@ def main():
                 cmd.append("--skip-bracket")
             if args.env_coord:
                 cmd += ["--env-coord", args.env_coord]
+            # `=` form, always -- see the comment at the flag. A value that
+            # starts with a dash is the whole point of this flag and is the one
+            # case the two-token form cannot pass.
+            for a in args.esbmc_arg:
+                cmd.append(f"--esbmc-arg={a}")
             t1 = time.time()
             # ---- KILL THE PROCESS GROUP, NOT THE CHILD ----
             #
@@ -832,6 +960,12 @@ def main():
                         # default, for the same reason `env_coord: null` is.
                         "max_holes": args.max_holes,
                         "max_region_pieces": args.max_region_pieces,
+                        # THE EXTRA ESBMC ARGUMENTS TRAVEL WITH THE ROW, as a
+                        # list and never omitted. `[]` means "we passed none",
+                        # and an absent key means "this row predates the flag" --
+                        # two different things, and the second one is what makes
+                        # an old row's bound unknown rather than default.
+                        "esbmc_args": list(args.esbmc_arg),
                         "probes": args.probes,
                         "refine_rounds": args.refine_rounds,
                         "shrink_rounds": args.shrink_rounds,
@@ -844,7 +978,7 @@ def main():
                         # Records written before this field existed carry no
                         # value for it, and the summary says so rather than
                         # substituting `unit_timeout_s`.
-                        "run_timeout_s": min(args.timeout, 180),
+                        "run_timeout_s": min(args.timeout, args.run_timeout),
                         # Which binary produced this record. Read on resume; a
                         # file whose records came from another build is refused
                         # rather than continued.

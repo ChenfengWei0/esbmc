@@ -174,6 +174,35 @@ def main():
         key = r.get("benchmark") or r.get("poc")
         is_poc = "poc" in r
         for enc, text in (r.get("certified") or {}).items():
+            # ---- A PIECE KEY IS REFUSED BY NAME, NOT CRASHED ON ----
+            #
+            # certify_all.py records a path that was split by
+            # --max-region-pieces as one entry PER PIECE, keyed `<enc>#<piece>`,
+            # because the pieces are different boxes each certified by its own
+            # query and a dict keyed on enc alone would keep only the last.
+            # Before that fix they were not recorded at all -- measured on
+            # farming/setDistributor, where the driver's own line says `5
+            # certified region(s)` and the row said 0.
+            #
+            # Stage 4 cannot consume one yet, and the obstacle is NAMING, not
+            # regions: the emitter builds both the file name and the test
+            # function name from the enc alone (`test_put_<C>_<unit>_path<enc>`),
+            # so two pieces of one path would be two identically-named tests in
+            # one forge project. That is a change to solidity_path_put.py, not
+            # to this loop, and it is not made silently here.
+            #
+            # ⛔ NOT skipped quietly. A skipped region is invisible in the B
+            # denominator, which is precisely how "0 certified" looked like a
+            # method result for as long as it did.
+            if "#" in str(enc):
+                print(f"  ⛔ REFUSED {key}.{r['unit']} enc={enc}: this is one "
+                      f"PIECE of a split region. It IS certified -- stage 2 "
+                      f"recorded it -- but the emitter names a PUT by enc "
+                      f"alone, so emitting the pieces of one path would write "
+                      f"two tests with the same function name into one forge "
+                      f"project. Needs a piece dimension in "
+                      f"solidity_path_put.py; NOT counted in B either way.")
+                continue
             rows.append((key, is_poc, r["unit"], int(enc), text))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
