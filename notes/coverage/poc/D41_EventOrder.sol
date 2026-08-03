@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+// DOES ANYTHING DOWNSTREAM OBSERVE AN EVENT, OR ITS ORDER?
+//
+// R0's remaining rung is "exit kind + revert reason + EVENTS AND THEIR ORDER".
+// Exit kind shipped. The event half has TWO project documents disagreeing about
+// whether it needs new mechanism, and they cannot both be right:
+//
+//   notes/r0-events-three-missing-layers.md : blocked at layer 1 -- there is no
+//     per-path event observation channel, `path_ce_t` has 13 fields and none can
+//     hold order, and a zero-argument event leaves no step at all.
+//   EXECUTION_PLAN.md (§10, 2026-08-01) : an EventDefinition is compiled to a
+//     real function symbol with an empty body, so an unqualified `emit` produces
+//     a FUNCTION_CALL instruction ==> "R0's event rung needs NO new mechanism
+//     for existence and order"; only the PAYLOAD is unreachable.
+//
+// A source reading settles neither, because D18 in this same directory is the
+// standing example of a correct source reading whose behavioural consequence was
+// refuted. So this is measured, not read.
+//
+// THREE CONTRACTS, ONE VARIABLE. Identical unit, identical branch, identical
+// state write. They differ ONLY in the emits placed before the branch:
+//
+//   D41_NoEvent   : no events                       <- POSITIVE CONTROL
+//   D41_EventAB   : emit Alpha(x); emit Beta(x);
+//   D41_EventBA   : emit Beta(x);  emit Alpha(x);   <- same SET, other ORDER
+//
+// THREE-WAY DISCRIMINATOR, and each outcome is a different answer for R0:
+//
+//   (i)   all three reports identical apart from the contract name
+//         ==> NO event channel reaches the report. The note is right, the plan's
+//             "needs no new mechanism" is wrong, and R0's event rung is blocked.
+//   (ii)  NoEvent differs from AB, and AB == BA
+//         ==> EXISTENCE is observable, ORDER is not. R0 ships half a rung.
+//   (iii) AB differs from BA
+//         ==> existence AND order are observable. The plan is right and the rung
+//             is cheap.
+//
+// WHY THE SET IS THE SAME IN AB AND BA: if the two contracts emitted different
+// events, any difference between their reports would be explained by the names
+// alone and could not distinguish (ii) from (iii). Holding the multiset fixed
+// and permuting only the sequence is what makes ORDER the single variable.
+//
+// POSITIVE CONTROL, and it is the reason any of the above may be read at all:
+// D41_NoEvent must enumerate paths and witness BOTH arms. If it reports zero
+// paths -- or if all three do -- then the discriminator never fired and outcome
+// (i) is indistinguishable from "the run did not work". That is the trap the
+// first D20 run and version 2 of D18 both fell into, in this same directory.
+//
+// The branch exists ONLY to give the unit more than one path; it touches no
+// event. The emits are unconditional and before it, so every path carries both.
+//
+// ---- EXPECTED, WRITTEN BEFORE RUNNING ----
+// All three: same paths_total, same F/U split, both arms of `x > 10` witnessed.
+// The prediction under test is that AB and BA are byte-identical apart from the
+// contract name -- i.e. outcome (i) or (ii), NOT (iii).
+//
+// ---- MEASURED 2026-08-03, current build. OUTCOME (i). ----
+//
+// Positive control fires: D41_NoEvent instruments 3 complete paths across 1
+// unit and both arms are witnessed (`run:path:7` and `run:path:6` both FAILED,
+// i.e. both refuted, i.e. both reached). So "no difference" below is a result
+// and not a dead run.
+//
+// All three reports carry 3 claims. Comparing them leaf by leaf, the COMPLETE
+// list of differing values is:
+//
+//     claims[*].decisions[*].line     62,63 -> 77,80 -> 94,97
+//     claims[*].path_function         ...@D41_NoEvent@F@run#23 -> ...#62 -> #101
+//
+// That is line numbers and the contract's own name. NOTHING ELSE DIFFERS. Two
+// unconditional emits contribute no path, no decision, no field, no counter.
+// AB and BA -- same event multiset, opposite sequence -- are indistinguishable.
+//
+// ==> The event half of R0 has NO observation channel reaching the report, for
+//     EXISTENCE let alone ORDER. r0-events-three-missing-layers.md is right.
+//     EXECUTION_PLAN.md's "needs no new mechanism for existence and order" is
+//     WRONG as a statement about what is observable downstream. Both can be
+//     reconciled: an EventDefinition may well become a function symbol in the
+//     GOTO program, but nothing carries that fact into the report, and the plan
+//     inferred an observable from a lowering.
+//
+// SCOPE, stated because it bounds the claim: these runs produced no Foundry
+// emission section at all (zero lines mentioning Foundry in any of the three
+// logs), so this measures the REPORT channel only. The emitter side is untested
+// here and this file must not be quoted for it.
+//
+// ---- MY FIRST INSTRUMENT WAS CONFOUNDED AND SAID (iii). KEPT, NOT REPLACED. ----
+//
+// v1 of the comparison asked only whether the three reports were EQUAL, plus a
+// token test for the strings "Event"/"emit". It answered "(iii): existence AND
+// order are observable" -- the exact opposite of the truth. Two faults, both in
+// the instrument, both guaranteed to fire with or without an event channel:
+//   1. the three contracts sit at different LINE NUMBERS in one file, and the
+//      emits push the branch down, so `src`/`line` differences are structural;
+//   2. the contract NAMES contain the substring "Event", so the token test is
+//      true even in the no-event control.
+// The repair was to print the differing VALUES instead of the fact that values
+// differ. A discriminator that cannot say WHY two things differ will happily
+// report a line number as a discovery.
+
+contract D41_NoEvent {
+    uint256 public v;
+
+    function run(uint256 x) external {
+        if (x > 10) {
+            v = 1;
+        } else {
+            v = 2;
+        }
+    }
+}
+
+contract D41_EventAB {
+    event Alpha(uint256 got);
+    event Beta(uint256 got);
+
+    uint256 public v;
+
+    function run(uint256 x) external {
+        emit Alpha(x);
+        emit Beta(x);
+        if (x > 10) {
+            v = 1;
+        } else {
+            v = 2;
+        }
+    }
+}
+
+contract D41_EventBA {
+    event Alpha(uint256 got);
+    event Beta(uint256 got);
+
+    uint256 public v;
+
+    function run(uint256 x) external {
+        emit Beta(x);
+        emit Alpha(x);
+        if (x > 10) {
+            v = 1;
+        } else {
+            v = 2;
+        }
+    }
+}
