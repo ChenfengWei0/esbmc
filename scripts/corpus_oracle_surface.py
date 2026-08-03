@@ -27,6 +27,21 @@ WHAT IS COUNTED, and why it is counted THIS way.
     exactly one variable, `_DOCKED`, and it is immutable -- which is why that
     contract's emitted tests carried no oracle at all while looking healthy.
 
+  THE UNIT'S OWN RETURN VALUE -- added after this gate was caught EXCLUDING A
+    CONTRACT THAT DEMONSTRABLY PRODUCES A DELIVERABLE. Before this column the
+    table read `aqua_Aqua:Aqua ... 0-arg 0 ... no-oracle-surface`, while
+    notes/coverage/put_roundtrip/aqua_Aqua__results_pieces_corpus emits
+    `test_put_Aqua_rawBalances_path7`, which is green on the unmodified
+    contract with two assertions, and whose own header says
+        ORACLE: ... 0 over POST-STATE ... and 2 over the unit's OWN RETURN VALUE
+    The gate counted only quantities a test reads by calling something ELSE
+    after the unit. When the unit under test IS a scalar-returning function,
+    its return value is read from the call itself and no key is invented --
+    the parameters are the fuzz coordinates, not a key. Counting `rawBalances`
+    as merely `keyed` therefore discarded a real oracle site.
+    ⛔ Mutability is NOT filtered here: a state-changing function's return
+    value is just as readable from the call as a view's.
+
 WHAT COUNTS AS SCALAR is not decided here. It is asked of `return_kind`, the
 same whitelist the emitter uses to bind and cast a value, so this table means
 "what THIS pipeline can read" rather than "what Solidity could in principle
@@ -134,15 +149,34 @@ def mapping_value_of(ts):
 
 
 def surface(node, by_id, rejected):
-    """(zero_arg, tautologies, key_taking, names) for one contract."""
+    """(zero_arg, tautologies, key_taking, own_return) for one contract."""
     zero, taut, keyed, names = [], [], [], []
+    own_ret = []
     seen = set()
+    seen_ret = set()
     for sc in scope_chain(node, by_id):
         for n in sc.get("nodes", []) or []:
             if not isinstance(n, dict):
                 continue
             nt = n.get("nodeType")
             nm = n.get("name") or ""
+            # ---- THE UNIT'S OWN RETURN VALUE ---------------------------------
+            # Collected in its own pass because it overlaps the two columns
+            # above on purpose: a scalar-returning `view` is BOTH something a
+            # later call can read AND an oracle when it is itself the unit.
+            # Folding it into either column would hide one of the two roles.
+            if nt == "FunctionDefinition" and n.get("kind") == "function":
+                if n.get("visibility") in ("public", "external"):
+                    rets = ((n.get("returnParameters") or {}).get("parameters")
+                            or [])
+                    if rets and all(is_scalar(type_string(r), rejected)
+                                    for r in rets):
+                        npar = len((n.get("parameters") or {})
+                                   .get("parameters") or [])
+                        sig = nm + "/" + str(npar)
+                        if sig not in seen_ret:
+                            seen_ret.add(sig)
+                            own_ret.append(nm + "()")
             if nt == "VariableDeclaration" and n.get("stateVariable"):
                 if n.get("visibility") != "public" or nm in seen:
                     continue
@@ -202,7 +236,10 @@ def surface(node, by_id, rejected):
     shadow = [z for z in zero if z.rstrip("()") in taut_names]
     zero = [z for z in zero if z.rstrip("()") not in taut_names]
     taut = taut + shadow
-    return zero, taut, keyed
+    # The same door, for the new column: a function that merely RETURNS a
+    # constant/immutable is a compile-time tautology however it is reached.
+    own_ret = [r for r in own_ret if r.rstrip("()") not in taut_names]
+    return zero, taut, keyed, own_ret
 
 
 def main():
@@ -223,20 +260,21 @@ def main():
                       f"disagree; refusing to print a table that quietly "
                       f"drops a row")
                 return 1
-            zero, taut, keyed = surface(node, by_id, rejected)
+            zero, taut, keyed, own_ret = surface(node, by_id, rejected)
             rows.append((bench, name, name == primary,
-                         node.get("contractKind"), zero, taut, keyed))
+                         node.get("contractKind"), zero, taut, keyed, own_ret))
 
     print(f"{'benchmark':<28} {'contract':<22} {'kind':<9} {'0-arg':>5} "
-          f"{'taut':>5} {'keyed':>5}  verdict")
-    print("-" * 96)
+          f"{'taut':>5} {'keyed':>5} {'ownret':>6}  verdict")
+    print("-" * 104)
     admitted = []
-    for bench, name, is_primary, kind, zero, taut, keyed in rows:
-        verdict = "has-oracle-surface" if zero else "no-oracle-surface"
+    for bench, name, is_primary, kind, zero, taut, keyed, own_ret in rows:
+        verdict = ("has-oracle-surface" if (zero or own_ret)
+                   else "no-oracle-surface")
         star = "*" if is_primary else " "
         print(f"{bench:<28} {star}{name:<21} {kind or '?':<9} {len(zero):>5} "
-              f"{len(taut):>5} {len(keyed):>5}  {verdict}")
-        if zero:
+              f"{len(taut):>5} {len(keyed):>5} {len(own_ret):>6}  {verdict}")
+        if zero or own_ret:
             admitted.append(f"{bench}:{name}")
 
     print()
@@ -249,10 +287,16 @@ def main():
     print("keyed = scalars reachable only once a mapping key or array index is "
           "supplied. NOT counted: supplying the key is separate work. This "
           "column is what that work would buy.")
+    print("ownret= public/external functions whose declared returns are ALL "
+          "scalar. When such a function IS the unit under test, its return "
+          "value is an oracle read from the call itself and no key is "
+          "invented -- the parameters are the fuzz coordinates. COUNTED as "
+          "surface; this column overlaps 0-arg/keyed on purpose.")
     print()
     print(f"ADMITTED TO THE DENOMINATOR ({len(admitted)} of {len(rows)}): "
           f"{', '.join(admitted) if admitted else '(none)'}")
-    excluded = [f"{b}:{n}" for b, n, _p, _k, z, _t, _y in rows if not z]
+    excluded = [f"{b}:{n}" for b, n, _p, _k, z, _t, _y, _r in rows
+                if not (z or _r)]
     print(f"EXCLUDED as no-oracle-surface ({len(excluded)}): "
           f"{', '.join(excluded) if excluded else '(none)'}")
     # ---- THE NAMES, NOT JUST THE COUNTS ----------------------------------
@@ -265,8 +309,8 @@ def main():
     # door. The only way to know is to read the names, so they are printed.
     print("PER-CONTRACT NAMES (a count nobody can check is not a "
           "measurement):")
-    for bench, name, _p, _k, zero, taut, keyed in rows:
-        if not (zero or taut or keyed):
+    for bench, name, _p, _k, zero, taut, keyed, own_ret in rows:
+        if not (zero or taut or keyed or own_ret):
             continue
         print(f"   {bench}:{name}")
         if zero:
@@ -275,6 +319,8 @@ def main():
             print(f"      taut  : {', '.join(taut)}")
         if keyed:
             print(f"      keyed : {', '.join(keyed)}")
+        if own_ret:
+            print(f"      ownret: {', '.join(own_ret)}")
     print()
     if rejected:
         print("TYPES THE EMITTER'S WHITELIST DECLINED (each one lowered some "
