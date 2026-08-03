@@ -195,12 +195,38 @@ pragma solidity ^0.8.20;
 // ARE in the program -- what does not survive the Solidity-to-GOTO conversion
 // is the stamp.
 //
-// ⇒ Marking the emit site in the front end is NOT the cheap step it looked
-//   like. Whatever rebuilds the statement into a FUNCTION_CALL instruction
-//   drops both carriers, and finding where is the next question. The remaining
-//   candidate from the earlier design -- stamping the callee SYMBOL -- is still
-//   open, and its discriminator problem (an event symbol is shape-identical to
-//   an interface stub) is unchanged.
+// One real hazard was found and fixed on the way, and it was NOT the cause.
+// `get_statement` ends with `new_expr.location() = loc`, a whole-object
+// assignment that replaces the location irep and discards anything set on it
+// earlier -- the file's own comments at the IfStatement and while cases
+// already name this trailing assignment as the hazard they work around. The
+// stamp was moved onto the expression and re-applied to the location after
+// that assignment. The census still counted zero.
+//
+// ---- THE ACTUAL CAUSE: THE CALL IS ALREADY GONE ----
+//
+// Attempt 3 made the census report `calls_seen` as well, so that "no stamped
+// call" could not hide two different causes behind one silence. All three
+// units, at the moment the path pass sees them:
+//
+//   unit 'sol:@C@D41_NoEvent@F@run#23'  : 2 function call(s), NONE stamped
+//   unit 'sol:@C@D41_EventAB@F@run#62'  : 2 function call(s), NONE stamped
+//   unit 'sol:@C@D41_EventBA@F@run#101' : 2 function call(s), NONE stamped
+//
+// THE SAME TWO CALLS IN ALL THREE -- including D41_NoEvent, which emits
+// nothing. The emitting units have no extra calls at all by then.
+//
+// ⇒ The emit calls are visible in --goto-functions-only and GONE by the time
+//   the path pass runs. An event body is empty, so they are inlined away
+//   (internal-call expansion, or a general cleanup) before the census. The
+//   stamp was never the problem: with a perfect stamp the recorder would still
+//   have had nothing to record, because at that point in the pipeline the emit
+//   is no longer a call.
+//
+// ⇒ REVISED DESIGN. The observation has to be captured BEFORE expansion, or
+//   expansion has to be taught to keep emit calls. Stamping the callee SYMBOL
+//   -- the other candidate -- does not help either, for the same reason: it
+//   addresses which call is an event, not whether any call survives.
 //
 // THE CENSUS IS WHY THIS IS A MEASUREMENT AND NOT A BUG SHIPPED. It was written
 // BEFORE the recorder, deliberately, on the argument that a stamp which never
