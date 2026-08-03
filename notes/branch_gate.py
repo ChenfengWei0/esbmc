@@ -314,6 +314,27 @@ def canonical_in_scope(flat_path, project):
 
 PATHCOV = HERE / "coverage" / "pathcov"
 
+# ---- READING A CELL OTHER THAN THE GATE'S -------------------------------
+#
+# Empty means the gate cell -- `pathcov/<bench>` -- and that is the default,
+# so an unflagged run is byte-identical to every run this file has ever made.
+# `--cell __unwind8` reads `pathcov/<bench>__unwind8` instead.
+#
+# WHY THIS IS NOT A BACK DOOR. The suffix does NOT relax
+# `assert_gate_config`: --solidity-max-tx must still be 1, for the reason
+# that function states at length (the locked baseline is measured to run at
+# one transaction and cannot be re-collected to match). What the suffix
+# admits is a different CALL-DEPTH bound, and every table below is stamped
+# with it -- the cell string carries `unwind=`, and a non-gate cell prints a
+# banner naming the asymmetry before any number appears.
+#
+# The asymmetry is real and is stated rather than hidden: the branch-coverage
+# baseline is LOCKED at whatever bound it was collected with, so a product row
+# at a deeper bound explores more than the thing it is compared against. That
+# was put to the operator as a decision and ruled admissible, on condition
+# that the bound travels with the table. This is that condition, implemented.
+CELL_SUFFIX = ""
+
 # THE GATE'S COMMENSURABILITY PREMISE, AS A RUNTIME CHECK RATHER THAN A NOTE.
 #
 # This gate compares our numerator against a LOCKED baseline. The comparison is
@@ -370,7 +391,18 @@ def assert_gate_config(bench, meta):
             f"a comparison. INVOCATION_DECISIONS.md prints TWO command lines for "
             f"exactly this reason -- whole-contract tx=2 is the ENUMERATION "
             f"line and may not be quoted into this table.")
-    return (f"mode={cfg.get('mode')} tx={tx} goals={cfg.get('pathCovMaxGoals')} "
+    # THE CALL-DEPTH BOUND IS PART OF THE CELL, and it is printed even when
+    # it is the tool default. `unwind=default` and `unwind=8` are different
+    # measurements; a row that does not say which is a row whose truncation
+    # column cannot be interpreted. A collection predating the recording
+    # carries no key at all and prints `unwind=UNRECORDED`, which is a third
+    # state and must not be read as the default.
+    if "unwind" not in cfg:
+        unw = "UNRECORDED"
+    else:
+        unw = "default" if cfg["unwind"] is None else str(cfg["unwind"])
+    return (f"mode={cfg.get('mode')} tx={tx} unwind={unw} "
+            f"goals={cfg.get('pathCovMaxGoals')} "
             f"solver={' '.join(cfg.get('solverFlags') or []) or 'default'}")
 
 
@@ -432,11 +464,12 @@ def pathcov_reports_for(bench):
     A file count that disagrees with the index is not a warning, because a
     numerator that includes runs the index never recorded is not a measurement.
     """
-    idx = PATHCOV / bench / "index.json"
+    cell_dir = PATHCOV / (bench + CELL_SUFFIX)
+    idx = cell_dir / "index.json"
     if not idx.exists():
         return None, []
     meta = json.loads(idx.read_text())
-    rdir = Path(meta.get("reportsDir", PATHCOV / bench / "reports"))
+    rdir = Path(meta.get("reportsDir", cell_dir / "reports"))
     files = sorted(rdir.glob("*.json"))
     expected = sum(1 for r in meta.get("runs", []) if r.get("reportPresent"))
     if len(files) != expected:
@@ -493,7 +526,7 @@ def truncation_from_logs(bench, runs):
     Returns [] when no log is readable, which the caller renders as `?` rather
     than as 0.
     """
-    work = PATHCOV / bench / "work"
+    work = PATHCOV / (bench + CELL_SUFFIX) / "work"
     out = []
     for r in runs:
         # Defence in depth: the caller already does this, and a reader of THIS
@@ -520,6 +553,27 @@ def truncation_from_logs(bench, runs):
 
 def main():
     print("# Branch-coverage gate\n")
+    if CELL_SUFFIX:
+        # BEFORE ANY NUMBER. A reader who scrolls to the verdict column and
+        # stops must not be able to mistake this for the gate row, so the
+        # warning cannot sit under the table.
+        print(f"> ⚠ **NOT THE GATE CELL.** This run reads "
+              f"`pathcov/<bench>{CELL_SUFFIX}`, a collection made at a "
+              f"different CALL-DEPTH bound.")
+        print(f">")
+        print(f"> The branch-coverage baseline is LOCKED and was collected at "
+              f"whatever bound it was collected at; it cannot be re-run to "
+              f"match. So a product row here explores DEEPER than the thing it "
+              f"is compared against, and the comparison is asymmetric in our "
+              f"favour. That asymmetry was put to the operator as a decision "
+              f"and ruled admissible on condition that the bound travels with "
+              f"the table -- it is in the `cell` column of the audit table "
+              f"below, on every row.")
+        print(f">")
+        print(f"> --solidity-max-tx is NOT relaxed by this flag and is still "
+              f"required to be 1. Two tables from two cells must never be "
+              f"summed, and a row from this one may not be quoted as the gate "
+              f"row.\n")
     print("Unit: canonical decision (METHODOLOGY 2), identified by flat line.")
     print("Bar:  the locked dataset's own `esbmcReached`, not `nativeReached`.")
     print("Ours: flat lines of the decisions walked by WITNESSED (F) paths, "
@@ -784,6 +838,14 @@ def main():
 
 
 if __name__ == "__main__":
+    for _a in sys.argv[1:]:
+        if _a.startswith("--cell="):
+            globals()["CELL_SUFFIX"] = _a.split("=", 1)[1]
+        elif _a == "--cell":
+            # Refused rather than silently reading the gate: a --cell with no
+            # value would produce a table labelled as an alternative cell and
+            # built from the default collection.
+            sys.exit("--cell needs a value, e.g. --cell=__unwind8")
     if "--self-test" in sys.argv:
         sys.exit(_self_test())
     sys.exit(main())
