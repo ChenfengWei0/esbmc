@@ -179,9 +179,40 @@ pragma solidity ^0.8.20;
 // permutes the order rather than changing the set: a recorder that captures
 // existence but drops order passes an existence test and fails this one.
 //
-// NOT STARTED. Steps 1-3 are C++ across two components and need a full rebuild;
-// the cost of that rebuild is the reason this is recorded as a design with its
-// prerequisite named rather than begun and left half-wired.
+// ---- STEP 1 WAS ATTEMPTED, TWO WAYS, AND NEITHER ARRIVES ----
+//
+// Built and measured, not reasoned about. The front end stamped the emit
+// STATEMENT in solidity_convert_stmt.cpp's EmitStatement case -- first on the
+// expression's LOCATION, then on both the location AND the expression irep --
+// and goto_coverage.cpp counted, per unit, FUNCTION_CALL instructions carrying
+// either stamp, reporting which carrier arrived.
+//
+//   attempt 1  location only          -> no emit-site line on any fixture
+//   attempt 2  location + code irep   -> no emit-site line on any fixture
+//
+// On all three contracts, including the two that emit. The logs differ by
+// exactly the two extra lines the extra calls produce (99 vs 101), so the calls
+// ARE in the program -- what does not survive the Solidity-to-GOTO conversion
+// is the stamp.
+//
+// ⇒ Marking the emit site in the front end is NOT the cheap step it looked
+//   like. Whatever rebuilds the statement into a FUNCTION_CALL instruction
+//   drops both carriers, and finding where is the next question. The remaining
+//   candidate from the earlier design -- stamping the callee SYMBOL -- is still
+//   open, and its discriminator problem (an event symbol is shape-identical to
+//   an interface stub) is unchanged.
+//
+// THE CENSUS IS WHY THIS IS A MEASUREMENT AND NOT A BUG SHIPPED. It was written
+// BEFORE the recorder, deliberately, on the argument that a stamp which never
+// arrives would make the recorder silently record nothing -- and a fully wired,
+// always-empty channel is indistinguishable from a contract that emits nothing.
+// That is exactly what happened, and it was caught in one rebuild instead of
+// after a path-recorder, a report field and a regression had been built on top.
+//
+// BOTH EDITS WERE REVERTED. A stamp that never fires and a census that can never
+// print are dead code, and leaving them in the tree is the failure this project
+// has recorded twice. The tree is back at the committed source; what is kept is
+// this measurement.
 //
 // ⚠ POSITIVE CONTROL for this dump: the three files are the same LENGTH
 // (753767) but are not byte-identical, so --contract does change the dump and
