@@ -139,6 +139,50 @@ pragma solidity ^0.8.20;
 //     lowering and wrong only in inferring an OBSERVABLE from it; the note was
 //     right about the channel. Both halves now have a measurement.
 //
+// ---- ONE HOP, BUT IT NEEDS A MARKER FIRST ----
+//
+// "Exactly one hop" is one step short, and the missing step is the thing that
+// would have made a naive implementation wrong. Read out of the front end:
+//
+//   solidity_convert_decl.cpp:1695  EventDefinition -> add_empty_body_node()
+//                                   then get_function_definition(), i.e. the
+//                                   SAME path an ordinary function takes
+//   solidity_convert_decl.cpp:1842  add_empty_body_node() gives the event an
+//                                   empty Block body
+//
+// So an event's symbol is a perfectly ordinary function symbol with an empty
+// body, and NOTHING marks it as an event. "Empty body" is not a discriminator:
+// an interface stub, an abstract override and a no-op setter are all empty, and
+// a recorder keyed on emptiness would file them as emitted events. That is the
+// always-true-reader shape, and it would have been invisible on this fixture
+// because D41 contains no interface and no abstract contract -- the fixture
+// would have gone green on a broken recorder.
+//
+// THE PRECEDENT FOR THE FIX ALREADY EXISTS IN THIS PIPELINE. The DFS already
+// reads a front-end stamp off a location:
+//
+//   goto_coverage.cpp:5906   d.synthetic_abi_gate = l.get_bool("sol_abi_value_gate");
+//
+// So the shape is: stamp the event's symbol/location `sol_event` in the front
+// end, and have the path walk read it. Decomposed:
+//
+//   1. front end   stamp EventDefinition-derived symbols
+//   2. path walk   on a FUNCTION_CALL whose callee carries the stamp, append
+//                  (name, position) to the current prefix -- alongside
+//                  note_decision / dec_table, which is the exact precedent for
+//                  a per-prefix interned table
+//   3. report      an `events` array per claim, beside `decisions`
+//   4. regression  THIS file: EventAB and EventBA reports must DIFFER, and
+//                  NoEvent must carry an empty array rather than no field
+//
+// Step 4's negative control is the one that matters, and it is why the fixture
+// permutes the order rather than changing the set: a recorder that captures
+// existence but drops order passes an existence test and fails this one.
+//
+// NOT STARTED. Steps 1-3 are C++ across two components and need a full rebuild;
+// the cost of that rebuild is the reason this is recorded as a design with its
+// prerequisite named rather than begun and left half-wired.
+//
 // ⚠ POSITIVE CONTROL for this dump: the three files are the same LENGTH
 // (753767) but are not byte-identical, so --contract does change the dump and
 // the comparison is between three different things. Had they been identical the
