@@ -1,0 +1,82 @@
+==============================================================================
+BINARY THAT PRODUCED THESE ROWS
+==============================================================================
+    45 row(s)  {"binaryMtime": 1785720609, "head": "a01ffdc4eb", "srcDirty": false}
+
+==============================================================================
+UNIT BUCKETS (stage-1 outcome, BEFORE any path can be generalised)
+==============================================================================
+    23  NO-WITNESS-UNKNOWN
+     9  CERTIFIED
+     8  NOT-CERTIFIED
+     5  KILLED
+  ----
+    45  units total
+
+  ⛔ NO-WITNESS-UNKNOWN and KILLED units contribute NO row to the
+     path table below. Their loss is at STAGE 1 and no amount of
+     generaliser work can reach them.
+
+==============================================================================
+UNCERTIFIED PATHS, BY UNIT AND BY REASON CLASS
+==============================================================================
+benchmark::unit                            A    B    C    D    E   wall_s  unit_to  run_to  refine  shrink  probes
+aqua_Aqua::rawBalances                     0    0    1    0    0    203.4     1200     180       2       8       8
+aqua_Aqua::safeBalances                    0    0    1    0    0    216.3     1200     180       2       8       8
+aqua_Aqua::dock                            0    0    1    0    0    215.8     1200     180       2       8       8
+aqua_Aqua::pull                            0    0    1    4    0    311.9     1200     180       2       8       8
+aqua_Aqua::push                            0    0    1    0    0    214.9     1200     180       2       8       8
+cross_chain_swap_EscrowDst::rescueFunds    0    5    1    2    0    613.1     1200     180       2       8       8
+cross_chain_swap_EscrowDst::cancel        12    0    0    0    0    415.3     1200     180       2       8       8
+farming::startFarming                     26    0    0    0    0    427.1     1200     180       2       8       8
+farming::stopFarming                       0    0    1    1    2    270.0     1200     180       2       8       8
+farming::farmed                            0    3    1    0    0    942.8     1200     180       2       8       8
+farming::setDistributor                    0    2    1    0    0    791.7     1200     180       2       8       8
+farming::distributor                       0    0    1    0    0    108.8     1200     180       2       8       8
+farming::decimals                          0    0    1    0    0    181.7     1200     180       2       8       8
+farming::farmInfo                          0    0    1    0    0    109.4     1200     180       2       8       8
+farming::deposit                           0    2    1    4    0    579.6     1200     180       2       8       8
+farming::withdraw                          0    2    1    4    0    824.3     1200     180       2       8       8
+farming::rescueFunds                      10    0    0    0    0    598.2     1200     180       2       8       8
+
+TOTAL                                     48   14   14   15    2
+
+==============================================================================
+THE CLASSES, LARGEST FIRST -- AND WHAT EACH ONE MEANS
+==============================================================================
+    48  (51.6%)  A_BUDGET_no_round_finished
+              the outer-box round never completed, so NOTHING was measured for
+              this path. The generaliser says so itself: 'a BUDGET outcome, not a
+              property of the path'. Raising the budget is the whole fix.
+
+    15  (16.1%)  D_UNSEPARATED_payload_identical
+              ⛔ THE MODELLING CLASS. A counterwitness exists and the payload
+              cannot tell it apart from the path's own counterexample -- every
+              published scalar agrees. No coordinate can be cut because no
+              coordinate separates them. This is the class a missing bucket in the
+              CE harvest produces (bmc.cpp's three-outcome classification drops
+              anything that is neither a parameter nor the environment).
+
+    14  (15.1%)  C_PINS_empty_region
+              lo > hi under the current pins: the region has no domain in this
+              slice, so certifying it would hold vacuously. A property of the PIN
+              SET (a configuration choice), not of the path.
+
+    14  (15.1%)  B_BUDGET_shrink_exhausted
+              a counterwitness WAS found and it DIFFERS on named coordinates, but
+              the shrink ran out of rounds before the region was cut. Also a
+              budget, but a strictly better position than A: the differing
+              coordinate is already named.
+
+     2  ( 2.2%)  E_no_cut_witness_differs
+              refuted, the witness DOES differ, but no SINGLE coordinate cut is
+              available -- the separation needs more than one coordinate at once.
+
+    93  uncertified paths total
+
+  witnessed paths : 113
+  certified paths : 10
+  uncertified     : 93
+  ⚠ certified + uncertified = 103, which is NOT the witnessed total 113. The difference is paths witnessed by stage 1 whose unit died before stage 2 recorded a verdict for them (see the KILLED bucket above).
+  generalisation rate = 10/113 = 8.8%
+
