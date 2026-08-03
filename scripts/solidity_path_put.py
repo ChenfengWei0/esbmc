@@ -1567,7 +1567,7 @@ def bound_lines(pname, kind, width, lo, hi, holes):
 
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
-              unwind=None, rettypes=None, maps=None):
+              unwind=None, rettypes=None, maps=None, piece_label=""):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -1995,7 +1995,24 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         asserts += a
     oracle_skipped += ret_skipped
 
-    fname = f"test_put_{contract}_{unit}_path{enc}"
+    # ---- ONE PATH, SEVERAL CERTIFIED BOXES: THE NAME HAS TO SAY WHICH -------
+    #
+    # `--max-region-pieces > 1` lets stage 2 certify a path as a UNION of boxes,
+    # each by its own query. Those are several regions and therefore several
+    # PUTs, and every one of them is about the SAME enc -- so a name built from
+    # the enc alone collides. The file name collides hardest: `newc` decides
+    # `test/<newc>.t.sol`, so piece 4 would OVERWRITE piece 3 and the sweep
+    # would report two emissions and leave one file.
+    #
+    # ⚠ The function name is NOT a Solidity-level collision -- two different
+    # test contracts may each declare `test_put_X_u_path12` and forge compiles
+    # both. It is an ACCOUNTING collision: put_all's B gate keys its verdict
+    # table on the test name across every suite, so the two pieces would share
+    # one cell and whichever forge reported last would decide both.
+    #
+    # So the label goes on BOTH, from ONE variable. Empty by default, which
+    # reproduces every existing name byte for byte.
+    fname = f"test_put_{contract}_{unit}_path{enc}{piece_label}"
     sig_txt = ", ".join(f"{t} {n}" for t, n in sig)
 
     out = []
@@ -2305,6 +2322,17 @@ def main():
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--memlimit", default="8g")
     ap.add_argument("--test-suffix", default="")
+    ap.add_argument("--piece", default=None, metavar="K",
+                    help="which PIECE of a split certified region this is. "
+                         "stage 2 may certify one path as a UNION of boxes "
+                         "(--max-region-pieces > 1), each by its own query; "
+                         "they are several regions about ONE enc, so without "
+                         "this the second one OVERWRITES the first's "
+                         "test/<contract>.t.sol and put_all's B gate keys both "
+                         "on the same test name. Appended as `p<K>` to the test "
+                         "function, the test contract and the file. Omit for an "
+                         "unsplit region -- every existing name is then "
+                         "reproduced byte for byte.")
     ap.add_argument("--auto-unwind", type=int, default=0, metavar="N",
                     help="on an UNDECIDED-TRUNCATED ladder, RE-RUN it up to N "
                          "times, widening every loop the tool NAMED with "
@@ -2700,12 +2728,17 @@ def main():
     # The storage layout and the declared parameters were read at step 2a, in
     # front of the ladder, because the ladder has to be told which mapping
     # slots to judge.
+    # ONE variable for the label, used by the function name, the test contract
+    # name and put.json's `test` field. Three call sites deriving it separately
+    # is how the emitted function and the name the B gate looks up come to
+    # disagree -- and a lookup that cannot match is a gate that never fires.
+    plabel = f"p{a.piece}" if a.piece else ""
     put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
                            region, holes, pins, params, emitted, case,
                            layout, rows, notes,
                            cell=(cell_name, cell_rule),
                            unwind=unwind_applied, rettypes=rettypes,
-                           maps=maps)
+                           maps=maps, piece_label=plabel)
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
@@ -2716,7 +2749,7 @@ def main():
     lines = list(emitted.lines)
     lines[cend:cend] = put
     txt = "\n".join(lines) + "\n"
-    newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{a.test_suffix}"
+    newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{plabel}{a.test_suffix}"
     txt = txt.replace(f"contract {cname} is Test", f"contract {newc} is Test")
     txt = re.sub(r'from "\./', 'from "../src/', txt)
     # Mocks are file-level contracts; two PUT files in one project would
@@ -2755,8 +2788,13 @@ def main():
     with open(os.path.join(a.workdir, "put.json"), "w") as f:
         json.dump({"contract": a.contract, "unit": a.unit, "enc": a.enc,
                    "depth": a.depth, "path_function": pf,
-                   "file": dest, "test": f"test_put_{a.contract}_{a.unit}"
-                                         f"_path{a.enc}",
+                   "file": dest,
+                   # The SAME `plabel` build_put used. A second derivation here
+                   # is how put.json comes to name a function the file does not
+                   # contain.
+                   "test": f"test_put_{a.contract}_{a.unit}"
+                           f"_path{a.enc}{plabel}",
+                   "piece": a.piece,
                    "region": {k: [str(v[0]), str(v[1])]
                               for k, v in region.items()},
                    "holes": {k: [str(x) for x in v] for k, v in holes.items()},

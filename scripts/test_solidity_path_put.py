@@ -1282,6 +1282,69 @@ def test_the_retlive_witness_is_not_counted_as_a_rung_that_held():
     return bad
 
 
+def test_a_piece_label_distinguishes_two_boxes_of_one_path():
+    """TWO CERTIFIED BOXES, ONE enc: the names must differ.
+
+    `--max-region-pieces > 1` lets stage 2 certify a path as a UNION of boxes,
+    each by its own query, so one enc yields SEVERAL regions and therefore
+    several PUTs. Measured on farming.setDistributor with the tool's own
+    --unwindset repair: enc 12 came back as 2 pieces and enc 13 as 3, five
+    certified regions for two paths.
+
+    WHAT BREAKS WITHOUT THE LABEL, and it is two different failures:
+
+      * put_all writes `test/<contract>.t.sol` from the same name, so piece 4
+        OVERWRITES piece 3 -- two emissions, one file, and a sweep that reports
+        both;
+      * put_all's B gate keys its forge verdict table on the TEST NAME across
+        every suite, so the two pieces share one cell and whichever forge
+        reported last decides both.
+
+    The second is why the FUNCTION name carries it and not only the file: two
+    contracts may legally declare the same function, so this is an accounting
+    collision rather than a compile error -- the kind that stays silent.
+
+    BOTH DIRECTIONS. An unlabelled call must produce the byte-identical old
+    name, or every PUT already on disk stops matching the gate's lookup.
+    """
+    em, case = make_case()
+    args = dict(region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+                holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+                layout=LAYOUT, ladder_rows=LADDER)
+    plain, _s1 = build_put("FeeVault", "setDiscount", 7, 2,
+                           "sol:@C@FeeVault@F@setDiscount#61", notes=[],
+                           **args)
+    p3, _s2 = build_put("FeeVault", "setDiscount", 7, 2,
+                        "sol:@C@FeeVault@F@setDiscount#61", notes=[],
+                        piece_label="p3", **args)
+    p4, _s3 = build_put("FeeVault", "setDiscount", 7, 2,
+                        "sol:@C@FeeVault@F@setDiscount#61", notes=[],
+                        piece_label="p4", **args)
+    bad = 0
+    tp, t3, t4 = ("\n".join(x or []) for x in (plain, p3, p4))
+    bad += check(
+        "function test_put_FeeVault_setDiscount_path7(" in tp,
+        "no label reproduces the existing name byte for byte")
+    bad += check(
+        "function test_put_FeeVault_setDiscount_path7p3(" in t3,
+        "piece 3 carries its label")
+    bad += check(
+        "function test_put_FeeVault_setDiscount_path7p4(" in t4,
+        "piece 4 carries its label")
+    # THE POINT: the two pieces must not collide. Asserted as a difference
+    # rather than as two literals, because a future label scheme that changed
+    # both spellings must still keep them apart.
+    bad += check(
+        "test_put_FeeVault_setDiscount_path7p3(" not in t4,
+        "and piece 4 does NOT carry piece 3's name -- one enc, two boxes, two "
+        "names")
+    # MUST NOT FIRE: the label may not leak into an unlabelled run.
+    bad += check(
+        "path7p" not in tp,
+        "an unlabelled run grows no suffix at all, not an empty one")
+    return bad
+
+
 def main():
     bad = 0
     for t in (test_dropped_rungs_are_not_reported_as_no_rung_holding,
@@ -1325,7 +1388,8 @@ def main():
               test_the_same_change_rung_IS_asserted_on_a_bare_call,
               test_a_wide_env_coordinate_is_FUZZED_not_disclosed_as_one_point,
               test_a_wide_env_coordinate_EXCLUDING_the_sender_is_also_fuzzed,
-              test_a_width_one_env_coordinate_emits_at_the_certified_value):
+              test_a_width_one_env_coordinate_emits_at_the_certified_value,
+              test_a_piece_label_distinguishes_two_boxes_of_one_path):
         print(f"--- {t.__name__}")
         bad += t()
     if bad:

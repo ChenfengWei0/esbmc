@@ -174,36 +174,34 @@ def main():
         key = r.get("benchmark") or r.get("poc")
         is_poc = "poc" in r
         for enc, text in (r.get("certified") or {}).items():
-            # ---- A PIECE KEY IS REFUSED BY NAME, NOT CRASHED ON ----
+            # ---- `<enc>` OR `<enc>#<piece>` --------------------------------
             #
-            # certify_all.py records a path that was split by
-            # --max-region-pieces as one entry PER PIECE, keyed `<enc>#<piece>`,
-            # because the pieces are different boxes each certified by its own
-            # query and a dict keyed on enc alone would keep only the last.
-            # Before that fix they were not recorded at all -- measured on
-            # farming/setDistributor, where the driver's own line says `5
-            # certified region(s)` and the row said 0.
+            # certify_all.py records a path split by --max-region-pieces as one
+            # entry PER PIECE: the pieces are different boxes, each certified by
+            # its own query, and the path's region is their union. They are
+            # therefore several regions about ONE enc, and each gets its own
+            # PUT.
             #
-            # Stage 4 cannot consume one yet, and the obstacle is NAMING, not
-            # regions: the emitter builds both the file name and the test
-            # function name from the enc alone (`test_put_<C>_<unit>_path<enc>`),
-            # so two pieces of one path would be two identically-named tests in
-            # one forge project. That is a change to solidity_path_put.py, not
-            # to this loop, and it is not made silently here.
+            # The piece travels all the way to the emitter's `--piece`, which
+            # puts it in the test function name, the test contract name and the
+            # file name. Without that, piece 4 OVERWRITES piece 3's .t.sol and
+            # the B gate below keys both on one test name -- so this is not
+            # cosmetic, it is what makes two boxes two measurements.
             #
-            # ⛔ NOT skipped quietly. A skipped region is invisible in the B
-            # denominator, which is precisely how "0 certified" looked like a
-            # method result for as long as it did.
-            if "#" in str(enc):
-                print(f"  ⛔ REFUSED {key}.{r['unit']} enc={enc}: this is one "
-                      f"PIECE of a split region. It IS certified -- stage 2 "
-                      f"recorded it -- but the emitter names a PUT by enc "
-                      f"alone, so emitting the pieces of one path would write "
-                      f"two tests with the same function name into one forge "
-                      f"project. Needs a piece dimension in "
-                      f"solidity_path_put.py; NOT counted in B either way.")
+            # Before certify_all could read a piece line at all these regions
+            # were recorded as `certified: {}`; measured on farming
+            # setDistributor, where the driver's own line said `5 certified
+            # region(s)` and the row said 0.
+            enc_s = str(enc)
+            base, _, piece = enc_s.partition("#")
+            try:
+                enc_i = int(base)
+            except ValueError:
+                print(f"  SKIP {key}.{r['unit']} enc={enc_s}: the certified key "
+                      f"is neither `<enc>` nor `<enc>#<piece>`, so this row "
+                      f"cannot be resolved to a path")
                 continue
-            rows.append((key, is_poc, r["unit"], int(enc), text))
+            rows.append((key, is_poc, r["unit"], enc_i, piece or None, text))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
     #
@@ -225,7 +223,13 @@ def main():
               f"this table does not overwrite or get confused with another "
               f"arm's. Two arms' PUT counts must never be summed. ===")
     results = []
-    for bench, is_poc, unit, enc, text in rows:
+    for bench, is_poc, unit, enc, piece, text in rows:
+        # The label every downstream name is built from, derived ONCE and in
+        # the same shape the emitter builds it (`p<K>`). Two derivations is how
+        # the gate below comes to look up a function the emitted file does not
+        # contain.
+        plabel = f"p{piece}" if piece else ""
+        encs = f"{enc}#{piece}" if piece else str(enc)
         if is_poc:
             # certify_poc.py runs the driver with `--contract <stem>`, so the
             # contract name IS the file stem; resolving it any other way would
@@ -233,11 +237,11 @@ def main():
             flat = os.path.join(POC_SRC, bench + ".sol")
             contract = bench
             if not os.path.exists(flat):
-                print(f"  SKIP {bench}.{unit} enc={enc}: no PoC source at "
+                print(f"  SKIP {bench}.{unit} enc={encs}: no PoC source at "
                       f"{flat}")
                 continue
         elif bench not in BENCHES:
-            print(f"  SKIP {bench}.{unit} enc={enc}: unknown benchmark key")
+            print(f"  SKIP {bench}.{unit} enc={encs}: unknown benchmark key")
             continue
         else:
             flat_name, contract = BENCHES[bench]
@@ -266,17 +270,17 @@ def main():
         ast = (os.path.splitext(flat)[0] + ".solast") if is_poc \
             else (flat + ".solast")
         if not os.path.exists(ast):
-            print(f"  SKIP {bench}.{unit} enc={enc}: no AST at {ast}")
+            print(f"  SKIP {bench}.{unit} enc={encs}: no AST at {ast}")
             continue
         region, holes, pins = parse_certified(text)
         if not region and not pins:
-            print(f"  SKIP {bench}.{unit} enc={enc}: the recorded region "
+            print(f"  SKIP {bench}.{unit} enc={encs}: the recorded region "
                   f"parsed EMPTY, which is a PARSER failure, not an empty "
                   f"region -- refusing to emit a PUT over nothing")
             continue
         proj = ensure_project(bench + arm, flat,
                               shared=("poc" + arm) if is_poc else None)
-        wd = os.path.join(OUT, "_wd", f"{bench}__{unit}__{enc}{arm}")
+        wd = os.path.join(OUT, "_wd", f"{bench}__{unit}__{enc}{plabel}{arm}")
         os.makedirs(wd, exist_ok=True)
         cmd = [sys.executable, PUT, "--esbmc", ESBMC, "--sol", flat,
                "--ast", ast, "--contract", contract, "--unit", unit,
@@ -289,6 +293,10 @@ def main():
                # argument here and it is printed with the result.
                "--scope", args.scope, "--max-tx", str(args.max_tx),
                "--auto-unwind", str(args.auto_unwind)]
+        # ONLY when this row IS a piece, so an unsplit region's command line is
+        # byte-identical to every one already recorded.
+        if piece:
+            cmd += ["--piece", str(piece)]
         for n, v in pins.items():
             cmd += ["--pin", f"{n}={v}"]
         j = os.path.join(wd, "put.json")
@@ -300,14 +308,15 @@ def main():
             # never produced a PUT, which is exactly what the table should say.
             rec = json.load(open(j)) if os.path.exists(j) else {}
             rc = 0 if rec.get("file") else 1
-            results.append((bench, unit, enc, rc, rec, proj, region))
+            results.append((bench, unit, enc, piece, rc, rec, proj, region))
             continue
-        print(f"\n--- {bench}.{unit} enc={enc} ---")
+        print(f"\n--- {bench}.{unit} enc={encs} ---")
         p = subprocess.run(cmd, capture_output=True, text=True)
         sys.stdout.write(p.stdout)
         sys.stdout.write(p.stderr)
         rec = json.load(open(j)) if os.path.exists(j) else {}
-        results.append((bench, unit, enc, p.returncode, rec, proj, region))
+        results.append((bench, unit, enc, piece, p.returncode, rec, proj,
+                        region))
 
     print("\n" + "=" * 84)
     print("STAGE 4: certified region -> PUT with oracle")
@@ -315,7 +324,7 @@ def main():
     # quoted into the branch-coverage gate table and a run of the GATE cell may
     # not be quoted as the method's reach, so the table has to say which it is
     # rather than leaving the reader to remember the flags.
-    cells = sorted({(r[4].get("cell") or {}).get("name", "UNRECORDED")
+    cells = sorted({(r[5].get("cell") or {}).get("name", "UNRECORDED")
                     for r in results})
     print(f"CELL: scope={args.scope} --solidity-max-tx={args.max_tx} "
           f"-> {', '.join(cells) if cells else 'no run recorded one'}"
@@ -324,10 +333,11 @@ def main():
         print("** MIXED CELLS IN ONE TABLE. These rows are not comparable and "
               "the table must not be quoted anywhere. **")
     print("=" * 84)
-    print(f"{'benchmark':<28}{'unit':<16}{'enc':>5}{'rc':>4}"
+    print(f"{'benchmark':<28}{'unit':<16}{'enc':>7}{'rc':>4}"
           f"{'fuzz':>6}{'asserts':>9}  outcome")
     n_put = n_fuzz = n_oracle = n_both = 0
-    for bench, unit, enc, rc, rec, _proj, _region in results:
+    for bench, unit, enc, piece, rc, rec, _proj, _region in results:
+        encs = f"{enc}#{piece}" if piece else str(enc)
         st = rec.get("stats") or {}
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
         if rc == 0:
@@ -349,7 +359,7 @@ def main():
             outcome = "NOT EMITTED YET (no put.json; re-run without --forge-only)"
         else:
             outcome = "REFUSED (see log above)"
-        print(f"{bench:<28}{unit:<16}{enc:>5}{rc:>4}{fz:>6}{ar:>9}  {outcome}")
+        print(f"{bench:<28}{unit:<16}{encs:>7}{rc:>4}{fz:>6}{ar:>9}  {outcome}")
     print()
     print(f"  PUTs emitted                     : {n_put} of {len(results)} "
           f"certified region(s)")
@@ -400,7 +410,7 @@ def b_report(results):
     # row would recompile the benchmark flat once per region (70-180 KB each),
     # and a per-row run cannot see a failure caused by two PUTs sharing a project.
     verdicts = {}
-    for proj in sorted({r[5] for r in results if r[5]}):
+    for proj in sorted({r[6] for r in results if r[6]}):
         p = subprocess.run(["forge", "test", "--json"], cwd=proj,
                            capture_output=True, text=True)
         try:
@@ -417,11 +427,18 @@ def b_report(results):
             for name, res in (suite.get("test_results") or {}).items():
                 verdicts[name.split("(")[0]] = res.get("status")
 
-    print(f"{'benchmark':<24}{'unit':<16}{'enc':>4}  "
+    print(f"{'benchmark':<24}{'unit':<16}{'enc':>7}  "
           f"{'1.fuzz':>7}{'2.width':>8}{'3.assert':>9}{'4.green':>8}"
           f"{'5.corpus':>9}  B")
     b = 0
-    for bench, unit, enc, rc, rec, proj, region in results:
+    for bench, unit, enc, piece, rc, rec, proj, region in results:
+        # SAME shape the emitter builds, and the reason it is here rather than
+        # inferred: a lookup that cannot match is a gate that never fires, and
+        # it fails in the direction that LOOKS like caution ('?') while
+        # reporting nothing. This file has already been bitten by exactly that,
+        # two lines down, when the name was built from the benchmark key.
+        plabel = f"p{piece}" if piece else ""
+        encs = f"{enc}#{piece}" if piece else str(enc)
         st = rec.get("stats") or {}
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
         # Gate 1 counts the parameters the emitter actually wrote. Gate 2 asks
@@ -443,7 +460,7 @@ def b_report(results):
         # match is a gate that never fires, and it fails in the direction that
         # LOOKS like caution ('unknown') while actually reporting nothing.
         contract = BENCHES[bench][1] if bench in BENCHES else bench
-        want = f"test_put_{contract}_{unit}_path{enc}"
+        want = f"test_put_{contract}_{unit}_path{enc}{plabel}"
         status = verdicts.get(want)
         g4 = status == "Success"
         # Gate 5 is a property of the INPUT, not of the run: a hand-written PoC
@@ -457,7 +474,7 @@ def b_report(results):
         b += 1 if ok else 0
         def m(x, unknown=False):
             return "?" if unknown else ("yes" if x else "NO")
-        print(f"{bench:<24}{unit:<16}{enc:>4}  "
+        print(f"{bench:<24}{unit:<16}{encs:>7}  "
               f"{m(g1):>7}{m(g2):>8}{m(g3):>9}"
               f"{m(g4, status is None):>8}{m(g5):>9}  "
               + ("**B**" if ok else ""))
