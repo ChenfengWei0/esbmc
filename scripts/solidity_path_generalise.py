@@ -2125,8 +2125,22 @@ def coordinate_accounting(payload, buckets):
     return sorted(set(payload) - set(where)), where
 
 
-def witness_values(cwd, unit):
+def witness_values(cwd, unit, state_structs=False):
     """The REFUTING input's payload, harvested from the certification run.
+
+    ⛔ `state_structs` MUST BE THREADED IN FROM THE SAME FLAG THAT DECOMPOSED THE
+    ENUMERATION PAYLOAD. Both sides go through `coord_values`, and reading the
+    two under different settings makes the driver compare a payload that has
+    `state.x.f` against one that never can. MEASURED, farming/deposit, the first
+    run with --state-struct-fields: every coordinate-gate verdict carried
+
+        NOTE: the two payloads do not carry the same keys, so the comparison
+        above covers only the shared ones -- only in this path's:
+        state._farm.farmInfo.finished
+
+    and that asymmetry was this function defaulting the flag OFF, not anything
+    ESBMC failed to render. Same shape as the defect that flag was written for:
+    one fact, and only one of its readers updated.
 
     The certification query already runs with --cov-report-json, so this costs
     nothing: the refutation's counterexample is on disk by the time the verdict
@@ -2149,7 +2163,7 @@ def witness_values(cwd, unit):
         return {}
     for c in rep.get("claims", []):
         if c.get("status") == "F" and claim_unit(c) == unit:
-            ce, _ = coord_values(c)
+            ce, _ = coord_values(c, state_structs=state_structs)
             return ce
     return {}
 
@@ -2715,7 +2729,7 @@ def split_on_cut(box, coord, lo, hi):
 
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g",
-            holes=None, esbmc_args=()):
+            holes=None, esbmc_args=(), state_structs=False):
     """Step 5. Returns (verdict, suggested_box_or_None, witness).
 
     `holes` is Definition 5's punched set, and it must reach the query or the
@@ -2793,7 +2807,7 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     # Harvested on every refutation, not only when the shrink fails: the caller
     # needs it in the budget-exhausted branch too, and by then this run's report
     # has been overwritten by the next one.
-    wit = witness_values(cwd, unit)
+    wit = witness_values(cwd, unit, state_structs=state_structs)
     # BOTH suggestions are returned; WHICH to apply is the caller's policy. The
     # tool prints both and says outright that neither is strictly better --
     # punching converges only where the excluded set is a few points, a side cut
@@ -4043,7 +4057,8 @@ def main():
                     enc, depth, box, ce, pins, args.max_tx,
                     args.timeout, cwd, ast=args.ast, focus=focus,
                     memlimit=args.memlimit, holes=holes,
-                    esbmc_args=args.esbmc_arg)
+                    esbmc_args=args.esbmc_arg,
+                    state_structs=args.state_struct_fields)
                 # ---- A COORDINATE THE QUERY CANNOT EXPRESS: DROP AND RETRY ----
                 #
                 # Not a shrink round. The tool declined to ATTEMPT the query, so
@@ -4108,7 +4123,20 @@ def main():
                         args.esbmc, args.sol, args.contract, args.unit,
                         enc, depth, box, ce, pins, args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
-                        memlimit=args.memlimit, holes=holes)
+                        memlimit=args.memlimit, holes=holes,
+                        # ⛔ THIS RE-QUERY DROPPED --esbmc-arg, and that
+                        # contradicts the flag's own stated rule: "APPLIED TO
+                        # EVERY INVOCATION on purpose: a bound that differs
+                        # between the round that measured a region and the query
+                        # that certifies it is two measurements wearing one
+                        # name." A path that hits the drop-and-retry branch was
+                        # silently re-certified under the DEFAULT unwind while
+                        # every other query used the caller's. Found while
+                        # threading state_structs through the same two call
+                        # sites; fixed here rather than left in a line this
+                        # commit already touches.
+                        esbmc_args=args.esbmc_arg,
+                        state_structs=args.state_struct_fields)
                 if reason is not None:
                     # Set only by the un-droppable-refusal branch above. Leaving
                     # the for-loop here is what keeps a refused query out of the
