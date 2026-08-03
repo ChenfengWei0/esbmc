@@ -1796,6 +1796,84 @@ check("esbmcarg-unwindset-passes",
       _spg.check_esbmc_args(["--unwindset", "55:512,56:512"]), None)
 check("esbmcarg-no-extra-args-passes", _spg.check_esbmc_args([]), None)
 
+# ---- §Certification's CUT RULE AND ITS RETREAT ------------------------------
+#
+# Four things the method states and the driver did not do. Each check below is
+# paired with the case that must NOT trigger it, because a rule that fires on
+# everything is the always-true-reader shape this project keeps hitting.
+from solidity_path_generalise import (cut_towards, coord_kept,  # noqa: E402
+                                      refutation_response)
+
+# 1. DIRECTION. "keeping the side of y_c on which x_{pi,c} lies removes y and
+#    keeps x_pi". Both directions, because a rule that only ever cuts upward
+#    would pass a one-sided test.
+check("cut-keeps-the-side-holding-x_pi-below", cut_towards(0, 100, 60, 10),
+      (0, 59))
+check("cut-keeps-the-side-holding-x_pi-above", cut_towards(0, 100, 60, 90),
+      (61, 100))
+check("cut-offers-nothing-where-they-agree", cut_towards(0, 100, 60, 60), None)
+
+# 2. FEWEST VALUES REMOVED, across candidates. This is the whole of correction
+#    4: the tool's first suggestion is not consulted at all.
+#    x_pi = {a: 10, b: 10}; witness differs on both.
+#      a: cut (0,59) removes 41 of 101
+#      b: cut (0,11) removes 89 of 101
+#    so `a` must be chosen. Reversing which coordinate is cheaper must reverse
+#    the answer -- otherwise the check would pass on "always take the first".
+_box2 = {"a": (0, 100), "b": (0, 100)}
+_ce2 = {"a": 10, "b": 10}
+check("cut-takes-the-fewest-values-removed",
+      refutation_response(_box2, {}, _ce2, {"a": 60, "b": 12}, {}),
+      ("cut", ("a", 0, 59, 41)))
+check("cut-and-the-choice-follows-the-numbers-not-the-order",
+      refutation_response(_box2, {}, _ce2, {"a": 12, "b": 60}, {}),
+      ("cut", ("b", 0, 59, 41)))
+
+# 3. THE RETREAT, trigger two: "where cutting would leave that coordinate one
+#    value". On [0,1] with x_pi = 0 and y = 1 the cut leaves exactly {0}, so
+#    the method pins rather than cutting.
+check("retreat-when-the-cut-would-leave-one-value",
+      refutation_response({"a": (0, 1)}, {}, {"a": 0}, {"a": 1}, {}),
+      ("pin", {"a": 0}))
+# ...and the SAME shape one value wider must still cut, or the check above is
+# just "this function always pins".
+check("retreat-does-not-fire-where-two-values-survive",
+      refutation_response({"a": (0, 2)}, {}, {"a": 0}, {"a": 2}, {}),
+      ("cut", ("a", 0, 1, 1)))
+
+# 4. THE RETREAT, trigger one: the coordinate cannot be cut at all because it
+#    is PINNED. The old `shrink_target` returned None here and the path died;
+#    the method pins what it points at and carries on with the others. `b` is
+#    cuttable and must be taken instead of the path ending.
+check("a-pinned-coordinate-no-longer-ends-the-path",
+      refutation_response({"b": (0, 100)}, {"msg.value": 0},
+                          {"msg.value": 0, "b": 10},
+                          {"msg.value": 5, "b": 60}, {"msg.value": 0}),
+      ("cut", ("b", 0, 59, 41)))
+
+# 5. THE COORDINATE GATE, correction 5. Agreement on every coordinate is a
+#    TERMINAL outcome and must not be retried.
+check("agreement-on-every-coordinate-goes-to-the-coords-gate",
+      refutation_response({"a": (0, 100)}, {}, {"a": 10}, {"a": 10}, {}),
+      ("coords-gate", None))
+# ...and the three states that must NOT collapse into it. An empty payload is a
+# missing harvest, and a difference contradicting the query's own bound is a
+# payload that could not be compared. Both read as "no difference" if merged.
+check("no-payload-is-not-the-coords-gate",
+      refutation_response({"a": (0, 100)}, {}, {"a": 10}, {}, {})[0],
+      "no-payload")
+check("an-untrusted-difference-is-not-the-coords-gate",
+      refutation_response({"a": (0, 100)}, {}, {"a": 10}, {"a": 900}, {},
+                          {"a": (0, 100)})[0],
+      "untrusted")
+
+# 6. |V_c| counts punctures, so "fewest values removed" cannot be gamed by a
+#    coordinate whose interval is mostly holes.
+check("coord-kept-subtracts-punctures", coord_kept(0, 9, (1, 2, 3)), 7)
+check("coord-kept-ignores-punctures-outside-the-interval",
+      coord_kept(0, 9, (1, 2, 99)), 8)
+check("coord-kept-of-an-inverted-interval-is-zero", coord_kept(9, 0, ()), 0)
+
 if FAILURES:
     print("FAILED:")
     for f in FAILURES:

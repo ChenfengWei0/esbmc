@@ -47,12 +47,26 @@ WIN: no new `.md` files at all (so most of §8's "compress these" is moot), and 
 full-benchmark runs.
 
 Its §2 declares the paper's Methodology frozen and names `VeriPUT.tex` as the
-authority. ⚠ **That file does not exist anywhere on this machine.**
-`/home/samson/workspace/VeriPUT/` is a directory holding
-`Datasets/ Motivation_Examples/ Results/ Scripts/ Tools/` and an EMPTY README —
-no `.tex`. So the frozen method cannot be read, and any claim that the
-implementation "matches the method" is currently uncheckable. Say so rather than
-assuming agreement.
+authority.
+
+⛔ **THIS ENTRY WAS FALSE AND COST A DESIGN DECISION.** It used to read "That
+file does not exist anywhere on this machine", on the strength of a search for
+the literal name `VeriPUT.tex` under `/home/samson/workspace/`. The paper is on
+this machine, under a different filename and outside the workspace:
+
+| file | KB | what it is |
+|---|---|---|
+| `/mnt/c/Users/Wei/Downloads/VeriPUT (6).tex` | 97 | **the authority.** `\title{VeriPUT: Verifier-Derived Parameterized Unit Tests…}`. §`sec:cert` Certification, §`sec:coords` Coordinates, §`sec:emit` From a Region to a Test, §`sec:oracle` assertion synthesis |
+| `/mnt/c/Users/Wei/Downloads/VeriPUT (5).tex` | 84 | the previous round |
+| `/mnt/c/Users/Wei/Downloads/main(2).tex` | 182 | ⚠ **a DIFFERENT paper** — VeriExploitX, "From Verifier Reports to Executable Exploits". Not this project's method |
+| `/home/samson/workspace/esbmc/notes/main(1).tex` | 99 | untracked copy, dated before `VeriPUT (6)` |
+
+The cost was not abstract: reading the driver instead of the paper produced the
+conclusion that partial generalisation "is not designed that way", when
+§`sec:cert` specifies it and calls it *the common outcome*. **The method is
+readable. Read it before asserting the implementation matches or does not match
+it**, and prefer the newest `VeriPUT (N).tex` — `main(N).tex` in the same folder
+is the other paper.
 
 ### 0.0.1 THE PAPER SIDE — none of it was in this index until now
 

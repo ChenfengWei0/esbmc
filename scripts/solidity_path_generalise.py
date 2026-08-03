@@ -2139,6 +2139,41 @@ def outside_assumed(name, value, ranges, holes=None):
     return value in set((holes or {}).get(name, ()))
 
 
+def divergence_pairs(path_ce, wit_ce, ranges=None, holes=None):
+    """The divergence as DATA: (usable, untrusted, only_path, only_wit).
+
+    `divergence_text` below computes exactly this and renders it to prose, and
+    for a long time prose was the only form it existed in. That is this
+    project's own "one fact in two ledgers, the second a regex over sentences"
+    shape waiting to happen: anything downstream that needs to know WHICH
+    quantity separated the two counterexamples -- and a retreat-to-a-pin policy
+    needs precisely that -- would have to re-parse the sentence this function
+    writes, and would silently stop matching the first time it is reworded.
+
+    `usable` holds the triples a policy may act on. `untrusted` holds those
+    whose witness value contradicts the bound the query itself assumed, and
+    they are returned SEPARATELY rather than dropped, because "there was no
+    difference" and "every difference we saw is unusable" are different
+    findings -- collapsing them is what manufactured an empty-divergence
+    reading out of a measurement problem once already.
+
+    An empty `wit_ce` returns four empty lists, which the caller must NOT read
+    as "no difference": it means the refutation carried no payload at all.
+    `divergence_text` keeps that distinction in its own first branch.
+    """
+    if not wit_ce:
+        return [], [], [], []
+    only_path = sorted(set(path_ce) - set(wit_ce))
+    only_wit = sorted(set(wit_ce) - set(path_ce))
+    diff_all = [(n, path_ce[n], wit_ce[n])
+                for n in sorted(set(path_ce) & set(wit_ce))
+                if path_ce[n] != wit_ce[n]]
+    untrusted = [t for t in diff_all
+                 if outside_assumed(t[0], t[2], ranges, holes)]
+    usable = [t for t in diff_all if t not in untrusted]
+    return usable, untrusted, only_path, only_wit
+
+
 def divergence_text(path_ce, wit_ce, bounded, caveats=None, ranges=None,
                     holes=None):
     """Name the quantity the refuting witness differs on. The point of this file.
@@ -2176,8 +2211,11 @@ def divergence_text(path_ce, wit_ce, bounded, caveats=None, ranges=None,
     # be dropped by the intersection and the message would still claim total
     # agreement. Overclaiming is the one thing this function must not do -- its
     # entire purpose is to say precisely what was and was not compared.
-    only_path = sorted(set(path_ce) - set(wit_ce))
-    only_wit = sorted(set(wit_ce) - set(path_ce))
+    # ONE COMPUTATION, TWO RENDERINGS. The triples come from
+    # `divergence_pairs` so a policy reading the data and this sentence
+    # describing it cannot disagree about what was compared.
+    diff, untrusted, only_path, only_wit = divergence_pairs(
+        path_ce, wit_ce, ranges, holes)
     asym = ""
     if only_path or only_wit:
         asym = ("; NOTE: the two payloads do not carry the same keys, so the "
@@ -2186,20 +2224,14 @@ def divergence_text(path_ce, wit_ce, bounded, caveats=None, ranges=None,
                    if only_path else "")
                 + (f" -- only in the witness's: {', '.join(only_wit)}"
                    if only_wit else ""))
-    diff_all = [(n, path_ce[n], wit_ce[n])
-                for n in sorted(set(path_ce) & set(wit_ce))
-                if path_ce[n] != wit_ce[n]]
-    # SPLIT OFF the differences whose witness value contradicts the bound this
-    # very query assumed. Reporting those as "the witness differs on X" is how a
-    # diagnosis went wrong: EscrowSrc.cancel was read as "the divergence lives in
-    # an unpinned msg.sender", giving that its own failure cell, when the sender
-    # WAS pinned and the reported value simply was not the entry-time one.
-    # They are not dropped -- an unexplained contradiction between the report and
-    # the query is worth saying out loud -- but they must not be offered as the
-    # discriminating quantity.
-    untrusted = [t for t in diff_all
-                 if outside_assumed(t[0], t[2], ranges, holes)]
-    diff = [t for t in diff_all if t not in untrusted]
+    # `untrusted` above holds the differences whose witness value contradicts
+    # the bound this very query assumed. Reporting those as "the witness differs
+    # on X" is how a diagnosis went wrong: EscrowSrc.cancel was read as "the
+    # divergence lives in an unpinned msg.sender", giving that its own failure
+    # cell, when the sender WAS pinned and the reported value simply was not the
+    # entry-time one. They are not dropped -- an unexplained contradiction
+    # between the report and the query is worth saying out loud -- but they must
+    # not be offered as the discriminating quantity.
     untrusted_note = ""
     if untrusted:
         def _assumed(n):
@@ -2259,8 +2291,139 @@ def divergence_text(path_ce, wit_ce, bounded, caveats=None, ranges=None,
             + asym + untrusted_note)
 
 
+def cut_towards(lo, hi, wv, pv):
+    """§Certification's cut: the side of `wv` on which `pv` lies.
+
+    Verbatim from the method:
+
+        On any coordinate where they do differ, keeping the side of y_c on
+        which x_{π,c} lies removes y and keeps x_π, so every such coordinate
+        offers a sound cut
+
+    So the DIRECTION is not a suggestion to be read off a log -- it is decided
+    by the two counterexamples, both of which this driver holds. Returns the
+    kept interval clamped to [lo, hi], or None where the two agree (no cut is
+    offered there).
+    """
+    if pv < wv:
+        return (lo, min(hi, wv - 1))
+    if pv > wv:
+        return (max(lo, wv + 1), hi)
+    return None
+
+
+def coord_kept(lo, hi, holes=()):
+    """How many values a coordinate's set admits. `region_size`, per coordinate."""
+    if hi < lo:
+        return 0
+    return (hi - lo + 1) - len([v for v in holes if lo <= v <= hi])
+
+
+def refutation_response(box, holes, ce, wit, pins, ranges=None,
+                        assumed_hs=None):
+    """What §Certification prescribes for THIS refutation. (kind, payload).
+
+    ⛔ THIS REPLACES READING THE TOOL'S SUGGESTION, and the two are not
+    equivalent. `shrink_target` takes the FIRST `retry with ...` line the tool
+    printed and applies it verbatim; the method says something else:
+
+        every such coordinate offers a sound cut, and VeriPUT takes the one
+        that removes the fewest values, leaving the region as wide as the
+        refutation allows.
+
+    Three differences follow, and each is a defect on its own:
+      * no SELECTION across candidates -- whichever coordinate the tool named
+        first was taken, with no comparison of how much each cut removes;
+      * no independent check that the kept side holds x_π. C2
+        (`ce_in_region`) runs only on a SUCCESSFUL verdict, so a cut that drops
+        the path's own counterexample is invisible on a path that never
+        certifies -- which is every path this branch is reached on;
+      * a first suggestion naming a PINNED coordinate returned None and ended
+        the path, even where other differing coordinates were cuttable.
+
+    The four outcomes, kept apart because they call for opposite actions:
+
+      "no-payload"  the refutation carried no counterexample. NOT "no
+                    difference" -- a missing harvest.
+      "untrusted"   every difference seen contradicts the bound this query
+                    itself assumed, so none is usable. Also NOT "no
+                    difference".
+      "coords-gate" y and x_π agree on every coordinate. §Certification:
+                    "they differ only on a quantity no test can set, and the
+                    path goes to the gate of Section coords instead of to
+                    another round." So this is a TERMINAL outcome, not a
+                    refutation to answer.
+      "cut"         (coord, lo, hi, removed) -- the sound cut removing the
+                    fewest values.
+      "pin"         {coord: value} -- §Certification's retreat: "Where a
+                    refutation cannot be answered by cutting the coordinate it
+                    points at, OR WHERE CUTTING WOULD LEAVE THAT COORDINATE ONE
+                    VALUE, VeriPUT pins the coordinate to the value x_π gives
+                    it and carries on with the others." Both triggers are
+                    implemented; the second is the one that is easy to miss,
+                    and a one-value interval reached by cutting is exactly the
+                    shape it exists to stop.
+    """
+    usable, untrusted, _only_path, _only_wit = divergence_pairs(
+        ce, wit, ranges, assumed_hs)
+    if not wit:
+        return "no-payload", None
+    if not usable:
+        return ("untrusted", untrusted) if untrusted else ("coords-gate", None)
+    best, retreat = None, {}
+    for name, pv, wv in usable:
+        if name in pins or name not in box:
+            # Not part of the region's own description: a pin is what the
+            # region is a statement ABOUT, and a name absent from the box is
+            # unconstrained. Neither offers a cut, and neither is a retreat --
+            # pinning an already-pinned coordinate changes nothing.
+            continue
+        lo, hi = box[name]
+        hs = tuple(holes.get(name, ()))
+        # BOTH points must lie in the interval being cut. `wv` outside it means
+        # the witness was not solved under this bound (the trust check should
+        # have caught it); `pv` outside it is a C2 violation, and cutting there
+        # could not "keep x_π" whichever side were taken.
+        if not (lo <= wv <= hi and lo <= pv <= hi):
+            continue
+        nb = cut_towards(lo, hi, wv, pv)
+        if nb is None:
+            continue
+        nlo, nhi = nb
+        before, after = coord_kept(lo, hi, hs), coord_kept(nlo, nhi, hs)
+        if after <= 0 or after >= before:
+            # A cut that removes nothing is not progress, and one that empties
+            # the coordinate is not sound. Neither is a retreat either.
+            continue
+        if after == 1:
+            # THE SECOND TRIGGER, stated in the method and easy to lose: a cut
+            # that leaves one value IS a pin, so make it one explicitly and
+            # carry on with the other coordinates rather than spending a round
+            # to arrive at the same place with a worse report.
+            retreat[name] = pv
+            continue
+        removed = before - after
+        if best is None or removed < best[0]:
+            best = (removed, name, nlo, nhi)
+    if best is not None:
+        return "cut", (best[1], best[2], best[3], best[0])
+    if retreat:
+        return "pin", retreat
+    # Differences exist and none of them yields a cut: the refutation cannot be
+    # answered on any coordinate it points at. THE FIRST TRIGGER.
+    fallback = {n: pv for n, pv, _wv in usable
+                if n in box and n not in pins and box[n][0] != box[n][1]}
+    if fallback:
+        return "pin", fallback
+    return "coords-gate", None
+
+
 def shrink_target(log, pins):
     """The cut a refutation suggests, as (coord, lo, hi), or None.
+
+    ⚠ KEPT FOR `--cut-policy tool`, which reproduces every recorded arm
+    verbatim. `refutation_response` above is what the METHOD specifies and is
+    the default; this reads the tool's first suggestion instead.
 
     A cut on a PINNED coordinate is refused. The pin is what the region is a
     statement ABOUT, so narrowing it silently swaps the slice the caller asked
@@ -2647,6 +2810,31 @@ def main():
                          "is given up. Per piece, not per path: with "
                          "--max-region-pieces above 1 the first piece would "
                          "otherwise spend the whole path's budget.")
+    ap.add_argument("--cut-policy", choices=("spec", "tool"), default="spec",
+                    help="how a refutation's cut is chosen.\n"
+                         "`spec` (DEFAULT) follows §Certification: every "
+                         "coordinate on which the witness and x_pi differ "
+                         "offers a sound cut -- keep the side of y_c that x_pi "
+                         "lies on -- and the one REMOVING THE FEWEST VALUES is "
+                         "taken. Where no coordinate can be cut, or where "
+                         "cutting would leave one value, that coordinate is "
+                         "PINNED at x_pi and the loop carries on with the "
+                         "others (partial generalisation, which the method "
+                         "calls the common outcome).\n"
+                         "`tool` is the PREVIOUS behaviour and is kept only so "
+                         "the recorded arms reproduce verbatim: it takes the "
+                         "FIRST `retry with ...` line the tool printed, applies "
+                         "it unread, makes no comparison across candidates, and "
+                         "gives the path up entirely when that first suggestion "
+                         "names a pinned coordinate.\n"
+                         "⛔ The default is NOT the conservative one here, and "
+                         "deliberately so. Everywhere else in this file a new "
+                         "policy is off by default because the method does not "
+                         "choose between the alternatives; here it does, and a "
+                         "default that keeps deviating from the frozen method "
+                         "IS the defect. Recorded numbers are reproduced with "
+                         "--cut-policy tool, not by leaving the deviation in "
+                         "place.")
     ap.add_argument("--max-region-pieces", type=int, default=1,
                     help="how many BOXES one path's region may be reported as. "
                          "A refutation's cut splits the box into the side the "
@@ -3461,7 +3649,7 @@ def main():
                  " and every region below holds for ALL their values"))
 
     # Certify every candidate, shrinking on the witness when refuted.
-    ok, failed, ok_holes = {}, {}, {}
+    ok, failed, ok_holes, ok_retreated = {}, {}, {}, {}
     # Names the certify branch refused and the loop dropped. Accumulated across
     # paths because `pins` is global, so the drop is announced once but affects
     # every path after it.
@@ -3587,6 +3775,11 @@ def main():
             # narrowing relation at all.
             prev_size = region_size(box, holes)
             reason = None
+            # PARTIAL GENERALISATION, per piece. Coordinates this piece gave up
+            # and pinned at their x_pi value rather than losing the whole path.
+            # Per piece and not per path: two pieces of one path are different
+            # sets and may retreat on different coordinates.
+            retreated = {}
             for _ in range(args.shrink_rounds):
                 v, nb, wit, punches, unexp, unknown_why = certify(
                     args.esbmc, args.sol, args.contract, args.unit,
@@ -3741,6 +3934,18 @@ def main():
                     # sibling pieces, and a stored region that changes after it
                     # was certified is a report about a query nobody issued.
                     ok_holes[(enc, piece_no)] = copy_holes(holes)
+                    # WHAT WAS GIVEN UP travels with what was certified. A
+                    # region reported without naming its retreated coordinates
+                    # reads as a full generalisation, and the emitter's
+                    # parameterized/concrete decision depends on the
+                    # difference.
+                    ok_retreated[(enc, piece_no)] = dict(retreated)
+                    if retreated:
+                        print(f"[certify {tag}] certified with "
+                              f"{len(retreated)} coordinate(s) PINNED at x_pi "
+                              f"(partial generalisation): "
+                              + ", ".join(f"{n}=={v}"
+                                          for n, v in sorted(retreated.items())))
                     break
                 if v == "VACUOUS":
                     # The box admits NO execution that walks this path. Neither
@@ -3854,6 +4059,83 @@ def main():
                           + ", ".join(f"{c} != {val}" for c, val in usable)
                           + f"  |R| {new_size}")
                     continue
+                # ---- §Certification DECIDES WHAT A REFUTATION MEANS --------
+                #
+                # `nb` above is the TOOL's first suggestion, applied unread.
+                # Under the default policy it is discarded and the cut is
+                # derived here from the two counterexamples, which is what the
+                # method specifies and what `refutation_response` documents.
+                if args.cut_policy == "spec":
+                    _rng = assumed_ranges(last_wit_box, pins)
+                    _ahs = assumed_holes(holes, pins)
+                    kind, payload = refutation_response(
+                        box, holes, ce, last_wit, pins, _rng, _ahs)
+                    if kind == "coords-gate":
+                        # NOT another round. The method routes this to the
+                        # coordinate gate and names the responsible quantity;
+                        # `divergence_text` is what names it, from the report's
+                        # own extraction caveats rather than by inference.
+                        reason = (
+                            "REFERRED TO THE COORDINATE GATE (method "
+                            "§Coordinates), not retried: the refuting witness "
+                            "and this path's counterexample agree on every "
+                            "coordinate, so what separates them is a quantity "
+                            "no test can set. §Certification sends such a path "
+                            "to the coordinate gate INSTEAD of to another "
+                            "shrink round, because no cut on any coordinate "
+                            "could answer it"
+                            + divergence_text(ce, last_wit,
+                                              set(last_wit_box) | set(pins),
+                                              caveats, _rng, _ahs))
+                        break
+                    if kind in ("untrusted", "no-payload"):
+                        reason = (
+                            "refuted, and the refutation could NOT be compared "
+                            "against this path's counterexample, so no cut is "
+                            "derivable -- this is not the agree-on-everything "
+                            "case"
+                            + divergence_text(ce, last_wit,
+                                              set(last_wit_box) | set(pins),
+                                              caveats, _rng, _ahs))
+                        break
+                    if kind == "pin":
+                        # PARTIAL GENERALISATION. The method: "A region with
+                        # some coordinates pinned and others left to range says
+                        # less than one in which all of them range, more than a
+                        # test at a single point, and it is the common
+                        # outcome." Applied to `box` and not to `pins`: `pins`
+                        # is global across paths and is the slice the CALLER
+                        # asked about, while this retreat is this path's own.
+                        applied = {n: v for n, v in payload.items()
+                                   if box.get(n) != (v, v)}
+                        if applied:
+                            for n, v in applied.items():
+                                box[n] = (v, v)
+                            retreated.update(applied)
+                            prev_size = region_size(box, holes)
+                            print(f"[retreat {tag}] PINNED "
+                                  + ", ".join(f"{n}=={v}"
+                                              for n, v in sorted(applied.items()))
+                                  + f" at its x_pi value and carrying on with "
+                                    f"the others  |R| {prev_size}")
+                            continue
+                        # Nothing moved: every coordinate the refutation points
+                        # at is already a point. There is no further retreat.
+                        reason = (
+                            "refuted, and every coordinate the refutation "
+                            "points at is ALREADY pinned at its x_pi value, so "
+                            "the retreat of §Certification has nothing left to "
+                            "give up"
+                            + divergence_text(ce, last_wit,
+                                              set(last_wit_box) | set(pins),
+                                              caveats, _rng, _ahs))
+                        break
+                    _c, _clo, _chi, _removed = payload
+                    nb = dict(box)
+                    nb[_c] = (_clo, _chi)
+                    print(f"[cut {tag}] {_c} -> [{_clo}, {_chi}], removing "
+                          f"{_removed} value(s) -- the fewest of the "
+                          f"coordinate(s) this refutation offers")
                 if nb is None or nb == box:
                     reason = (
                         "refuted with no single-coordinate cut available"
@@ -4084,9 +4366,26 @@ def main():
                 "piece": key[1],
                 "depth": depth_by_enc.get(key[0]),
                 "verdict": "CERTIFIED",
-                # `hi >= lo` and a width > 1 on at least one coordinate is what
-                # separates a PUT from a concrete replay with extra syntax. The
-                # consumer decides; the numbers are here to decide from.
+                # ⛔ THE OLD COMMENT HERE STATED THE FLOOR TEST WRONG, and the
+                # method says so outright. It read: "`hi >= lo` and a width > 1
+                # on at least one coordinate is what separates a PUT from a
+                # concrete replay". §From a Region to a Test:
+                #
+                #     A test is parameterized when at least one coordinate IT
+                #     RENDERS is left more than one value to take. A region
+                #     wider than a point does not settle this on its own, since
+                #     the coordinates the omission rule leaves out are not
+                #     rendered and a region can be wide only on those.
+                #
+                # So width over the whole box is NOT the test; width over the
+                # RENDERED set is, and the rendered set is the emitter's to
+                # decide. A box wide only on omitted coordinates would be
+                # emitted as a PUT under the old reading and is a concrete
+                # replay under the method's. That decision therefore stays with
+                # `solidity_path_put.py`, and what this file owes it is the
+                # numbers plus which coordinates were pinned by the retreat.
+                "retreated": {n: str(v) for n, v in
+                              sorted((ok_retreated.get(key) or {}).items())},
                 "box": [
                     {"name": n, "lo": str(lo), "hi": str(hi),
                      "holes": [str(h) for h in sorted(
