@@ -283,7 +283,35 @@ pragma solidity ^0.8.20;
 //   set in the front end. There was no precedent for a front-end location
 //   stamp because there is no such path.
 //
-// ⇒ REMAINING UNTRIED CARRIER: the callee SYMBOL itself. Symbols live in the
+// ---- THE SYMBOL CARRIER WORKS. EXISTENCE AND ORDER, AT THE CAPTURE POINT ----
+//
+// MEASURED, and both halves of the must-flip fired:
+//
+//   D41_NoEvent   0 emit expansion(s)                      <- control
+//   D41_EventAB   EXPANDING AN EMIT: ...@F@Alpha#28 at line 66
+//                 EXPANDING AN EMIT: ...@F@Beta#32  at line 66
+//   D41_EventBA   EXPANDING AN EMIT: ...@F@Beta#71  at line 72
+//                 EXPANDING AN EMIT: ...@F@Alpha#67 at line 72
+//
+// Two events each, in SOURCE ORDER, and the two orders differ -- which is the
+// whole reason this fixture permutes the sequence instead of changing the set.
+// The control shows none.
+//
+// WHAT MADE IT WORK, after four failures:
+//   * the flag is set on the event's SYMBOL at declaration
+//     (solidity_convert_decl.cpp, the EventDefinition branch), which is the
+//     last point where the AST still says EventDefinition. Symbols live in the
+//     symbol table and are NOT rebuilt by goto conversion, unlike a statement
+//     location's extra irep fields.
+//   * it is read inside `sol_path_inlinet::expand_here`, BEFORE the two lines
+//     that set `target->type = LOCATION` and clear the code. That is the only
+//     moment where the callee's identity AND its position in the caller are
+//     both in hand.
+//
+// This is the channel R0's event rung needs. It is a probe, not yet a recorder:
+// nothing is written into the path identity or the report yet.
+//
+// ⇒ SUPERSEDED: the callee SYMBOL was listed here as untried. Symbols live in the
 //   symbol table and are not rebuilt by goto conversion, so a flag set on the
 //   event's symbol at declaration should still be readable when the pass looks
 //   up the callee of a FUNCTION_CALL -- which is BEFORE expand_here turns it

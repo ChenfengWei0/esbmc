@@ -1697,6 +1697,20 @@ bool solidity_convertert::get_noncontract_defition(nlohmann::json &ast_node)
     add_empty_body_node(ast_node);
     if (get_function_definition(ast_node))
       return true;
+    // R0's event rung: mark the SYMBOL as an event, here, where the AST still
+    // says so. Everything downstream sees an ordinary function symbol with an
+    // empty body -- indistinguishable from an interface stub or an abstract
+    // override -- so this is the last point at which the fact exists.
+    //
+    // ON THE SYMBOL rather than on a statement location: MEASURED, an extra
+    // irep field on a Solidity statement's location does NOT survive goto
+    // conversion, which rebuilds the instruction location from file/line/
+    // function. Symbols are carried in the symbol table and are not rebuilt,
+    // so a consumer can look the callee up by name.
+    std::string ev_name, ev_id;
+    get_function_definition_name(ast_node, ev_name, ev_id);
+    if (symbolt *ev_sym = context.find_symbol(ev_id))
+      ev_sym->type.set("sol_event", true);
   }
   else if (node_type == "ContractDefinition" && ast_node["abstract"] == true)
   {

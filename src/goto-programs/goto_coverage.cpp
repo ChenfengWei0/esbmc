@@ -3436,9 +3436,13 @@ public:
     goto_functionst &_goto_functions,
     optionst &_options,
     const namespacet &_ns)
-    : goto_inlinet(_goto_functions, _options, _ns)
+    : goto_inlinet(_goto_functions, _options, _ns), sol_ns(_ns)
   {
   }
+
+  // Kept for the R0 event probe below: this is the only place that still has
+  // the callee's identity in hand.
+  const namespacet &sol_ns;
 
   // Splice `f`'s body over the FUNCTION_CALL at `target`. On return `target`
   // names the instruction FOLLOWING the spliced region, so a single pass
@@ -3454,6 +3458,29 @@ public:
     const code_function_call2t &call = to_code_function_call2t(target->code);
     const expr2tc lhs = call.ret;
     const std::vector<expr2tc> args = call.operands;
+
+    // ---- R0 EVENT RUNG, capture-point probe ----
+    //
+    // THIS is the moment: the callee is still named, the call is still a
+    // FUNCTION_CALL, and its position in the caller is `target`. One line
+    // below, `target->type = LOCATION` and the code is cleared, after which no
+    // consumer can tell an emit from any other erased call -- MEASURED, three
+    // censuses downstream all read zero.
+    //
+    // The discriminator is a flag the front end sets on the event's SYMBOL at
+    // declaration, because that is the last point where the AST still says
+    // EventDefinition; by here every event looks like an ordinary function
+    // with an empty body.
+    if (is_symbol2t(call.function))
+    {
+      const irep_idt fid = to_symbol2t(call.function).thename;
+      const symbolt *cs = sol_ns.get_context().find_symbol(fid);
+      if (cs != nullptr && cs->type.get_bool("sol_event"))
+        log_status(
+          "--solidity-path-coverage: EXPANDING AN EMIT: {} at {}",
+          id2string(fid),
+          target->location.as_string());
+    }
 
     goto_programt tmp2;
     tmp2.copy_from(f.body);
