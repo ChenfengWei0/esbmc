@@ -696,7 +696,10 @@ def main():
                          "ONE unit means paying for every other unit first and "
                          "risking the budget before reaching it.")
     ap.add_argument("--redo", action="store_true")
-    ap.add_argument("--workdir", default="/tmp/certify_all")
+    ap.add_argument("--workdir", default="/tmp/certify_all",
+                    help="scratch root. The ARM's own subdirectory is added "
+                         "under it automatically -- see below; pass this only "
+                         "to move the whole tree off /tmp.")
     args = ap.parse_args()
 
     # A --unit that matches nothing must FAIL, not sweep everything. R8: iterate
@@ -708,7 +711,34 @@ def main():
 
     names = args.benchmarks or [b for b in BENCHMARKS if b != "st1inch_St1inch"]
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    os.makedirs(args.workdir, exist_ok=True)
+
+    # ---- THE ARM OWNS ITS SCRATCH DIRECTORY, DERIVED FROM ITS --out ----
+    #
+    # The workdir was `<root>/<bench>/<unit>` with no arm component, so two
+    # runs of the SAME unit under different flags shared one directory and
+    # overwrote each other in place: cov-report.json, outer.json, cert.json and
+    # driver.log all have fixed names.
+    #
+    # MEASURED, today, twice on one unit: a --skip-bracket run and a
+    # --run-timeout 600 run of farming/startFarming both landed in
+    # /tmp/certify_all/farming/startFarming, and the second destroyed the
+    # first's driver.log -- the ONLY record of the per-round accounting that
+    # the first run's whole conclusion rested on. It survived because it
+    # happened to be copied out minutes earlier.
+    #
+    # It also blocks the obvious use of --jobs: two arms running concurrently
+    # would interleave writes to one directory, and `stamp_workdir`'s
+    # refusal cannot catch that -- it compares CONFIG_FIELDS, and neither
+    # --run-timeout nor --skip-bracket is one of them, so both runs read as the
+    # same configuration.
+    #
+    # Keyed on the --out STEM rather than on a new flag, because the house rule
+    # that every arm gets its own results file is already enforced everywhere
+    # (--env-coord, --max-holes, --esbmc-arg each say so in their help). Making
+    # that one decision govern the scratch tree too means an arm cannot be
+    # given its own file and still share a directory.
+    arm_dir = os.path.splitext(os.path.basename(args.out))[0]
+    os.makedirs(os.path.join(args.workdir, arm_dir), exist_ok=True)
 
     # THE MEMORY BOUND IS COMPUTED AND PRINTED BEFORE ANY RUN, and a failure to
     # fit is a refusal. Printed even at --jobs 1, so the number a sweep ran
@@ -809,7 +839,7 @@ def main():
                   + ", ".join(sorted(BENCHMARKS)))
             return 1
         sol, contract = BENCHMARKS[bench]
-        wd = os.path.join(args.workdir, bench)
+        wd = os.path.join(args.workdir, arm_dir, bench)
         os.makedirs(wd, exist_ok=True)
         print(f"\n########## {bench} ({contract}) ##########", flush=True)
         got, why = units_of(bench)
