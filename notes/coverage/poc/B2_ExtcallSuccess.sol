@@ -95,9 +95,56 @@ contract B2_ExtcallSuccess {
     /// `ctrlU256` is `ctrl` with the SAME boundary and the SAME body on a
     /// uint256 parameter instead of an address. If it separates and `ctrl` does
     /// not, the ladder being laid over uint256 for a narrower-typed coordinate
-    /// is the mechanism -- and that matters beyond this file, because
-    /// msg.sender is an address coordinate on every farming arm and is named in
-    /// the divergence of deposit's enc 3622/3623.
+    /// is the mechanism.
+    ///
+    /// ⛔ TWO THINGS I WROTE ABOUT THIS ARE STRUCK, both by reading the driver
+    /// rather than by another run:
+    ///
+    /// (a) "a mechanism nobody was looking for" is FALSE. It is already written
+    ///     down, beside TYPE_RANGE_RE in solidity_path_generalise.py: "laying
+    ///     probes over the whole 256-bit range on a 160-bit `address` puts most
+    ///     of them OUTSIDE the type, where they wrap and measure a different
+    ///     number." What is new is not the mechanism but that the repair reaches
+    ///     ONE reader and not the other: `type_ranges` clamps the ladder in the
+    ///     `geometric` branch of outer_round only, while the refine branch takes
+    ///     `spans[c]` and the skip-bracket fallback is `(0, UINT256_MAX)` with
+    ///     no clamp at all. One fact, two ledgers, one of them not updated.
+    ///
+    /// (b) "this reaches the corpus" was an INFERENCE, not a measurement, and it
+    ///     had a visible counter-indication I did not check: every PoC run here
+    ///     carried --skip-bracket, so the geometric round never ran and the
+    ///     clamp never applied; every farming arm was recorded with
+    ///     `skip_bracket: false`, so on the corpus the clamped round DID run.
+    ///     Whether an address coordinate still fails there is a separate
+    ///     measurement -- the bracket-ON re-run of `ctrl` and `ctrlU256` -- and
+    ///     until it lands nothing about msg.sender on the corpus follows from
+    ///     this file.
+    ///
+    /// ⛔ THAT RE-RUN HAS NOW LANDED AND IT REFUTES THE TYPE MECHANISM
+    /// OUTRIGHT. Same file, same command line, bracket ON (no --skip-bracket):
+    ///     ctrl      `uint160(token) > 100`  1 certified / 2 not  exit=0
+    ///     ctrlU256  `uint256 tokenNum > 100` 1 certified / 2 not  exit=0
+    /// IDENTICAL. The 0/3-against-1/2 differential that mechanism (3) of commit
+    /// 6250f8d90b rested on exists ONLY under --skip-bracket, and it is struck
+    /// as a mechanism for anything the corpus does. On the corpus the type
+    /// clamp DOES apply -- farming/deposit's own refine line reads
+    /// `'msg.sender': (0, 1461501637330902918203684832716283019655932542975)`,
+    /// i.e. 2^160-1, not 2^256-1 -- because --level0 publishes the type range
+    /// before the ladder is laid.
+    ///
+    /// WHAT BOTH BRACKET-ON RUNS DO SHOW, and it is the same thing twice: the
+    /// bracket LOCATED THE BOUNDARY and the span threw it away.
+    ///     [bracket] enc=6 `tokenNum lower in [64, 128)`   (true boundary: 100)
+    ///     [bracket] enc=7 `tokenNum upper in (64, 128]`
+    ///     [refine 1] spans={'tokenNum': (0, 2^256-1)}      <- the whole type
+    /// `brackets_for` unions the upper and lower brackets ACROSS ALL PATHS, so
+    /// enc=6's type-topping upper bracket swallows enc=7's tight [64, 128).
+    /// enc=7 then never certifies and its cut removes ONE value per round, four
+    /// times, out of 6.8e75. Same on `ctrl` at 8.597e46. The union is argued in
+    /// the code ("NOT per-path spans: those would multiply the claim count by
+    /// the path count"); what did not exist until these two runs is its COST,
+    /// measured, on a twelve-line contract whose boundary was already bracketed
+    /// to within a factor of two.
     function ctrlU256(uint256 tokenNum, uint256 amount) external {
         bool ok = tokenNum > 100;
         if (ok) {
