@@ -361,6 +361,41 @@ pragma solidity ^0.8.20;
 // emit. That second failure is invisible here, which is exactly the shape this
 // file exists to catch.
 //
+// ---- RESOLVED, AND THE CONSTRAINTS PINNED IT ----
+//
+// (b), with the inner container keyed by the instruction's PROGRAM POSITION:
+//
+//     map<prefix, map<position, interned event id>>
+//
+// Position as the inner key buys both missing properties at once. IDEMPOTENCE:
+// re-walking a prefix overwrites the same slot with the same value instead of
+// growing a list. ORDER WITHIN A PREFIX: several emits between two decisions
+// come back in program order. Names are interned, so the table is per distinct
+// event (tens) and only the position keys are per prefix -- (a)'s cost is
+// avoided entirely. A path's sequence is recovered afterwards from
+// enc>>depth ... enc, exactly as the decisions already are.
+//
+// MEASURED, per COMPLETE PATH:
+//
+//   D41_NoEvent   no per-path line                              <- control
+//   D41_EventAB   enc=6 depth=2 emits 2: Alpha#28 -> Beta#32
+//                 enc=7 depth=2 emits 2: Alpha#28 -> Beta#32
+//   D41_EventBA   enc=6 depth=2 emits 2: Beta#71  -> Alpha#67
+//                 enc=7 depth=2 emits 2: Beta#71  -> Alpha#67
+//
+// EXACTLY TWO PER PATH, not two times the number of paths. Both body paths
+// share the prefix the emits sit on, so an appending scheme would have shown
+// 4 -- the duplication this keying was designed against does not occur.
+//
+// And a correctness signal that was not designed for: enc=2, the ABI-gate
+// revert path at depth 1, reports NOTHING. It never reaches the emits, and the
+// per-path attribution knows that -- so this is genuinely per path, not a
+// per-unit constant pasted onto every path.
+//
+// What remains is publication: an `events` array beside `decisions` in the
+// report, and a regression pinning AB != BA with NoEvent carrying an EMPTY
+// array rather than no field.
+//
 // ⇒ SUPERSEDED: the callee SYMBOL was listed here as untried. Symbols live in the
 //   symbol table and are not rebuilt by goto conversion, so a flag set on the
 //   event's symbol at declaration should still be readable when the pass looks

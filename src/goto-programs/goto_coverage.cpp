@@ -5903,6 +5903,60 @@ void goto_coveraget::solidity_path_coverage()
     std::vector<path_decisiont> dec_table;
     std::map<std::string, uint32_t> dec_intern;
     std::map<uint64_t, uint32_t> dec_index;
+
+    // ---- R0 EVENT RUNG: per-prefix emit sequence ----
+    //
+    // Same prefix-keyed scheme the decisions use, and for the same reason: a
+    // path's sequence is recoverable afterwards from enc>>(depth-1) ... enc, so
+    // nothing has to be carried in the DFS stack. Carrying it there was the
+    // rejected alternative -- it would put a std::vector in a per-branch stack
+    // entry, which is exactly the cost dec_table/dec_intern were introduced to
+    // remove (the recorder they replaced stored a fresh string per prefix and
+    // had to be gated behind a single-unit spec; the units quoted are 2733 and
+    // 120166 paths).
+    //
+    // TWO PROPERTIES THE DECISION SCHEME DOES NOT NEED AND THIS ONE DOES:
+    //  * IDEMPOTENCE. dec_index ASSIGNS, so re-walking a prefix is harmless.
+    //    An event list would APPEND, and a prefix is re-walked once per branch
+    //    explored beneath it -- a naive append multiplies every event by the
+    //    number of paths under it. Keying the inner map by the instruction's
+    //    program POSITION makes a re-walk overwrite the same slot with the same
+    //    value instead of growing the list.
+    //  * ORDER WITHIN A PREFIX. Several emits can sit between two decisions, so
+    //    the inner container is ordered by that same position rather than being
+    //    a set.
+    // Names are interned: the table is per distinct event (tens), only the
+    // position keys are per prefix.
+    std::vector<std::string> ev_table;
+    std::map<std::string, uint32_t> ev_intern;
+    std::map<uint64_t, std::map<uint32_t, uint32_t>> ev_index;
+    // Program position of each instruction. Pointer identity is stable for the
+    // life of the program and iterators are not orderable, so one pass builds
+    // the total order the inner map is keyed by.
+    std::unordered_map<const goto_programt::instructiont *, uint32_t> ev_pos;
+    {
+      uint32_t n = 0;
+      forall_goto_program_instructions (pi, goto_program)
+        ev_pos[&*pi] = n++;
+    }
+    // Recover a complete path's emit sequence: every prefix it passed through,
+    // in order, and within each prefix every emit in program position order.
+    auto events_for = [&ev_index, &ev_table](
+                        uint64_t enc, uint64_t depth) {
+      std::vector<std::string> out;
+      for (uint64_t k = depth + 1; k-- > 0;)
+      {
+        auto it = ev_index.find(enc >> k);
+        if (it == ev_index.end())
+          continue;
+        for (const auto &[pos, id] : it->second)
+        {
+          (void)pos;
+          out.push_back(ev_table[id]);
+        }
+      }
+      return out;
+    };
     // The gate names ONE unit per mode, and the `outer_on` / `assert_on` guard
     // in front of each name is not decoration: with the mode off the spec name
     // is empty and `find("@F@" + "" + "#")` matches every unit in the program --
@@ -6351,6 +6405,27 @@ void goto_coveraget::solidity_path_coverage()
             if (!emit_exit(pc, enc, depth, false, idh))
               break;
             const size_t idx = to_insert.size() - 1;
+            // R0 event rung: this COMPLETE path's emit sequence, recovered
+            // from the prefixes it walked. Printed rather than published for
+            // now -- the report field is the next step, and printing first is
+            // what makes an always-empty channel distinguishable from a
+            // contract that emits nothing.
+            {
+              const auto evs = events_for(enc, depth);
+              if (!evs.empty())
+              {
+                std::string seq;
+                for (const auto &e : evs)
+                  seq += (seq.empty() ? "" : " -> ") + e;
+                log_status(
+                  "--solidity-path-coverage: path enc={} depth={} emits {} "
+                  "event(s): {}",
+                  enc,
+                  depth,
+                  evs.size(),
+                  seq);
+              }
+            }
             // An END_FUNCTION exit is never itself a source `return`: a bare
             // `return;` lowers to a JUMP to END_FUNCTION, so the marker sits on
             // the jump, not here. Such a path in a function WITH an epilogue
@@ -6396,6 +6471,19 @@ void goto_coveraget::solidity_path_coverage()
           rolled_back = true;
         if (is_epilogue_restore(pc))
           saw_epilogue = true;
+        // R0 event rung: record this emit against the prefix in effect, keyed
+        // by program position so a re-walk overwrites rather than appends.
+        {
+          const irep_idt ev_nm = pc->location.get("sol_emit_name");
+          if (!ev_nm.empty())
+          {
+            auto ins =
+              ev_intern.emplace(id2string(ev_nm), (uint32_t)ev_table.size());
+            if (ins.second)
+              ev_table.push_back(id2string(ev_nm));
+            ev_index[enc][ev_pos[&*pc]] = ins.first->second;
+          }
+        }
         // Custom-error revert exit: the DFS reached the `#sol_error` call
         // (guarded, straight-line, or via an unconditional GOTO). Emit the
         // identity assert HERE (upstream of the callee's ASSUME(false), so it is
