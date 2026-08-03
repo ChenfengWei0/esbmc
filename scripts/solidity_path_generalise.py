@@ -3480,10 +3480,54 @@ def main():
         holes = dict(region_holes.get(enc) or {})
         empty = empty_coords(box, holes)
         if empty:
+            # ---- THE PIN ATTRIBUTION IS NAMED ON THE OTHER BRANCH ONLY, AND
+            # ---- THIS IS THE BRANCH THAT ACTUALLY FIRES ON THE CORPUS ----
+            #
+            # The SUCCESSFUL branch below already runs exactly this check and
+            # already has the right sentence for it ("this path is EXCLUDED
+            # FROM THE SLICE by the pins ... for the ABI-value gate path under
+            # a non-payable unit this is exactly what auto-pinning msg.value
+            # costs"). A path whose region came back EMPTY never reaches it --
+            # it is `continue`d right here -- so on the corpus that detector
+            # fires ZERO times while the case it describes is the single most
+            # common non-certification reason.
+            #
+            # MEASURED, results_pieces_corpus.jsonl read row by row: 14 of the
+            # 113 witnessed paths carry this generic sentence, one per unit,
+            # always the shallowest enc, and every one of those units has
+            # `msg_value_pin: fired`. That is 12% of the denominator recorded
+            # as "could not certify" when the honest statement is "the driver's
+            # own auto-pin excluded it, by design, and said so when it applied
+            # the pin".
+            #
+            # THE CHECK IS A DISCRIMINATOR, NOT A RELABEL, and it has to be:
+            # the path's OWN counterexample is a known member of its domain, so
+            # a CE that violates a pin is PROOF the pin excluded this path,
+            # while a CE satisfying every pin leaves the original sentence
+            # standing untouched. Both outcomes are reachable on real input --
+            # the ABI-gate path takes the first, a region emptied by
+            # subtraction takes the second.
+            excluded_by_pin = ce_in_region(
+                {n: (pv, pv) for n, pv in pins.items()}, {}, ce)
+            if excluded_by_pin:
+                failed[enc] = (
+                    f"EXCLUDED FROM THE SLICE by the pins "
+                    f"({'; '.join(excluded_by_pin)}), which is why its region "
+                    f"came back EMPTY on {', '.join(empty)}. ⛔ This is NOT a "
+                    f"failure to certify: this path's own counterexample does "
+                    f"not satisfy the pins, so the path was never in the slice "
+                    f"being generalised. For the ABI-value gate path of a "
+                    f"non-payable unit that is exactly what auto-pinning "
+                    f"msg.value costs, and it is announced when the pin is "
+                    f"applied. Counting it against the certification rate "
+                    f"prices a stated design cost as a search result")
+                continue
             failed[enc] = (
                 f"region is EMPTY on {', '.join(empty)} (lo > hi) under the "
                 f"current pins, so this path has no domain in this slice; "
-                f"certifying it would hold vacuously")
+                f"certifying it would hold vacuously. The path's own "
+                f"counterexample DOES satisfy every pin, so the emptiness is "
+                f"not attributable to them -- it came out of the subtraction")
             continue
         if enc in warned:
             # Not fatal: certification is the arbiter. But say it, because a
