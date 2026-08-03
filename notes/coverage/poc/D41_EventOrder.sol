@@ -328,9 +328,38 @@ pragma solidity ^0.8.20;
 //
 // ⇒ That is the last missing link before the recorder. The observation exists,
 //   is identified, is ordered, and is readable at the point where a path's
-//   identity is built. What remains is bookkeeping: append (name, position) to
-//   the current prefix beside note_decision / dec_table, and publish an
-//   `events` array next to `decisions` in the report.
+//   identity is built.
+//
+// ---- THE RECORDER NEEDS ONE DESIGN DECISION, AND IT IS NOT OBVIOUS ----
+//
+// "Append it to the current prefix beside note_decision" is too glib. The two
+// candidate shapes both have a real problem, and the file itself rules one of
+// them out in advance:
+//
+//   (a) CARRY THE SEQUENCE IN THE DFS TUPLE. Mechanically easy -- the tuple is
+//       destructured in one place and pushed in three. But it puts a
+//       std::vector in a per-branch stack entry, copied at every fork, which is
+//       precisely the cost the existing design was built to avoid: dec_table /
+//       dec_intern exist because "the log-only recorder this replaces stored a
+//       fresh string per prefix, which is why it had to be gated behind a
+//       single-unit spec", and the numbers quoted there are a 2733-path unit
+//       and a 120166-path one. A vector per stack entry is strictly worse than
+//       the string it replaced.
+//
+//   (b) KEY BY THE enc PREFIX, like dec_index. Cheap, and it is what the
+//       decision recorder does -- but dec_index ASSIGNS (`dec_index[key] =
+//       idx`), which is idempotent, while an event list would APPEND. The same
+//       prefix is walked once per branch explored beneath it, so a naive
+//       append duplicates every event on every re-traversal, and several
+//       events can share one prefix so their order within it also has to be
+//       preserved. It needs a key that is idempotent per (prefix, instruction)
+//       AND retains program order -- not just a vector on the prefix.
+//
+// Not guessed at. Doing (a) would regress the property the surrounding code
+// documents; doing (b) carelessly gives a report that looks right on this
+// two-event fixture and multiplies events on any unit with a branch under the
+// emit. That second failure is invisible here, which is exactly the shape this
+// file exists to catch.
 //
 // ⇒ SUPERSEDED: the callee SYMBOL was listed here as untried. Symbols live in the
 //   symbol table and are not rebuilt by goto conversion, so a flag set on the
