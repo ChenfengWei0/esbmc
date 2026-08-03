@@ -56,9 +56,17 @@ contract B3_RefusedStructField {
     uint32 public plainDuration;
     uint256 public tag;
 
-    function setDuration(uint32 v) external {
+    /// ⛔ THE FIRST VERSION TOOK ONE PARAMETER AND WROTE BOTH FIELDS FROM IT:
+    ///     function setDuration(uint32 v) { d.duration = v; plainDuration = v; }
+    /// Under that setter the REFUSED field is exactly recoverable from a FREE
+    /// coordinate, so `probe` certified with regions IDENTICAL, value for
+    /// value, to `ctrlPlain`'s -- and reading that as "the refusal is harmless"
+    /// would be reading a discriminator whose two outcomes were made equal by
+    /// construction. The two fields are now written from INDEPENDENT
+    /// parameters, so no free coordinate determines d.duration.
+    function setDuration(uint32 v, uint32 w) external {
         d.duration = v;
-        plainDuration = v;
+        plainDuration = w;
     }
 
     function probe(uint256 amount) external {

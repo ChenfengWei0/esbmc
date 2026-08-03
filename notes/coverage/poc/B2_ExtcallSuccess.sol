@@ -74,4 +74,36 @@ contract B2_ExtcallSuccess {
             tag = amount + 2;
         }
     }
+
+    /// SECOND CONTROL, added because the first repair STILL failed and the
+    /// reason looks like the coordinate's TYPE rather than the branch.
+    ///
+    /// MEASURED, `ctrl` above, `uint160(token) > 100`: 0 certified / 3 not, and
+    /// `token`'s region came back IDENTICAL on both sides --
+    ///     token: (0, 1461501637330902918203684832716283019655932542975)
+    /// which is exactly 2^160 - 1, the full address range, on enc=6 AND enc=7.
+    /// Refinement separated NOTHING on the branch variable. The driver's span
+    /// for it is
+    ///     'token': (0, 115792089237316195423570985008687907853269984665640564039457584007913129639935)
+    /// i.e. the full uint256. So ~54 candidate values are spread over 2^256
+    /// while every value the coordinate can actually take lies below 2^160: the
+    /// fraction of the ladder that lands inside the type is 2^-96, and a
+    /// boundary at 100 is invisible to it. B1's `ctrl` has the same boundary at
+    /// 100 on a uint256 coordinate and DID separate (wrongly, at 6.8e75, but it
+    /// separated), so the branch is not what differs.
+    ///
+    /// `ctrlU256` is `ctrl` with the SAME boundary and the SAME body on a
+    /// uint256 parameter instead of an address. If it separates and `ctrl` does
+    /// not, the ladder being laid over uint256 for a narrower-typed coordinate
+    /// is the mechanism -- and that matters beyond this file, because
+    /// msg.sender is an address coordinate on every farming arm and is named in
+    /// the divergence of deposit's enc 3622/3623.
+    function ctrlU256(uint256 tokenNum, uint256 amount) external {
+        bool ok = tokenNum > 100;
+        if (ok) {
+            tag = amount + 1;
+        } else {
+            tag = amount + 2;
+        }
+    }
 }
