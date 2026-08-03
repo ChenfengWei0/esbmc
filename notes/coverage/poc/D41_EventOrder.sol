@@ -112,6 +112,39 @@ pragma solidity ^0.8.20;
 //     report cannot carry the observation and the emitter would have nothing to
 //     render from if it could.
 //
+// ---- BUT THE INFORMATION EXISTS ONE LAYER DOWN, ORDER AND ALL ----
+//
+// The two runs above measure the REPORT and the EMITTER. Neither tests the GOTO
+// program, and which layer is missing decides whether this rung is a field to
+// add or a front-end change. Dumped with --goto-functions-only:
+//
+//     7262: FUNCTION_CALL:  Alpha(x)      <- D41_EventAB, in source order
+//     7264: FUNCTION_CALL:  Beta(x)
+//     7317: FUNCTION_CALL:  Beta(x)       <- D41_EventBA, in ITS source order
+//     7319: FUNCTION_CALL:  Alpha(x)
+//     7719: Alpha (sol:@C@D41_EventAB@F@Alpha#28):
+//     7720: // 3403 ... line 63 function Alpha
+//     7721: END_FUNCTION // Alpha
+//
+// So EXECUTION_PLAN.md's source claim is CORRECT and now measured, not argued:
+// an EventDefinition is compiled to a real function symbol with an empty body,
+// and an unqualified `emit` becomes a FUNCTION_CALL instruction. The two
+// emission ORDERS are visibly different in the GOTO program.
+//
+// ==> Revised, and this is the actionable form: the observation is NOT missing
+//     from the program. It is present, per-unit, in source order. What is
+//     missing is exactly ONE HOP -- the path walk does not record FUNCTION_CALL
+//     steps into the path's identity, so nothing survives into the report, and
+//     the emitter is starved downstream of that. The plan was right about the
+//     lowering and wrong only in inferring an OBSERVABLE from it; the note was
+//     right about the channel. Both halves now have a measurement.
+//
+// ⚠ POSITIVE CONTROL for this dump: the three files are the same LENGTH
+// (753767) but are not byte-identical, so --contract does change the dump and
+// the comparison is between three different things. Had they been identical the
+// comparison would have been between three copies of one artefact and the
+// script says so before printing anything else.
+//
 // ---- MY FIRST INSTRUMENT WAS CONFOUNDED AND SAID (iii). KEPT, NOT REPLACED. ----
 //
 // v1 of the comparison asked only whether the three reports were EQUAL, plus a
