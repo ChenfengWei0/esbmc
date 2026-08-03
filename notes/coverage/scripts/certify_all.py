@@ -995,9 +995,36 @@ def main():
                 with open(args.out, "a") as f:
                     f.write(json.dumps(rec) + "\n")
                     f.flush()
+                # ---- THE DENOMINATOR IS `witnessed`, AND THIS LINE USED TO
+                # ---- HIDE THAT THE OTHER TWO DO NOT ADD UP TO IT ----
+                #
+                # `certified` and `not_certified` are the paths that reached a
+                # VERDICT. A witnessed path can be in NEITHER: the
+                # `--run-timeout` comment above records exactly that -- enc 12
+                # and 13 "produced NO RECORD AT ALL: absent from `certified` and
+                # from `not_certified` alike" when the per-run budget bound.
+                #
+                # So `certified / (certified + not)` is not the certification
+                # rate; it silently drops the paths the budget ate and reads
+                # HIGH. MEASURED on results_pieces_corpus.jsonl: 10 certified,
+                # 93 not, 113 witnessed -- 10/103 = 9.7% against the true
+                # 10/113 = 8.8%, and the 10 missing paths are the finding, not
+                # a rounding difference.
+                #
+                # The remainder is printed as its own term rather than left to
+                # subtraction, because a reader who has to do the arithmetic to
+                # notice a gap is a reader who will not notice it.
+                nw = rec.get("witnessed")
+                nc, nn = len(rec["certified"]), len(rec["not_certified"])
+                if nw is None:
+                    tally = f"{nc} certified / {nn} not / witnessed UNKNOWN"
+                else:
+                    gap = nw - nc - nn
+                    tally = (f"{nc} certified / {nn} not / {nw} witnessed"
+                             + (f" ⚠ {gap} path(s) reached NO verdict"
+                                if gap else ""))
                 print(f"  [{i}/{len(units)}] {unit}: {rec['bucket']}, "
-                      f"{len(rec['certified'])} certified / "
-                      f"{len(rec['not_certified'])} not, "
+                      f"{tally}, "
                       f"{len(rec['coords'])} free coordinate(s), "
                       f"msg.value pin {rec['msg_value_pin']}, {wall:.0f}s",
                       flush=True)
