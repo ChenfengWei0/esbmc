@@ -2062,6 +2062,73 @@ def test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain():
     return bad
 
 
+def test_source_R2_assignment_candidates_are_small_setter_queries():
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "x",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "ignored",
+             "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "setX",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}},
+                 {"id": 22, "name": "other",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "123:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 10,
+                                      "name": "x"},
+                     "rightHandSide": {"nodeType": "Identifier",
+                                       "referencedDeclaration": 21,
+                                       "name": "amount"}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "456:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 11,
+                                      "name": "ignored"},
+                     "rightHandSide": {"nodeType": "Identifier",
+                                       "referencedDeclaration": 22,
+                                       "name": "other"}}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "setX", [("amount", "uint256"), ("other", "uint256")],
+            {"x": (0, 0, 32), "ignored": (1, 0, 32)},
+            [("amount", "num", None)], arity=2, log=lambda _msg: None)
+        none, none_evidence = source_assignment_r2_specs(
+            path, "C", "setX", [("amount", "uint256"), ("other", "uint256")],
+            {"x": (0, 0, 32), "ignored": (1, 0, 32)},
+            [], arity=2, log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+    bad = 0
+    bad += check(len(specs) == 1, f"one small source spec: {specs}")
+    var = specs[0]["vars"][0] if specs else {}
+    bad += check(var.get("name") == "x",
+                 f"the assigned state variable is targeted: {var}")
+    bad += check(var.get("equals", [{}])[0].get("term") ==
+                 {"kind": "coord", "name": "amount"},
+                 f"the endpoint is the rendered parameter: {var}")
+    bad += check(specs[0].get("candidate_count") == 1 if specs else False,
+                 f"only the source assignment candidate is asked: {specs}")
+    bad += check(any("x: post == amount" in line for line in evidence),
+                 f"the source provenance is recorded: {evidence}")
+    bad += check(none == [],
+                 f"nothing is proposed when the parameter is not rendered: "
+                 f"{none}, {none_evidence}")
+    return bad
+
+
 def test_same_arity_overloads_use_the_exact_path_declaration():
     from solidity_path_put import (function_params, function_returns,  # noqa: E402
                                    overload_artifact_label,
@@ -4191,6 +4258,7 @@ def main():
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
+              test_source_R2_assignment_candidates_are_small_setter_queries,
               test_same_arity_overloads_use_the_exact_path_declaration,
               test_overload_persistence_keys_and_work_suffixes_are_distinct,
               test_structured_R2_term_renders_with_the_lifted_coordinate,

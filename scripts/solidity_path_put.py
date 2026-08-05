@@ -1080,6 +1080,122 @@ def source_r2_literals(ast_path, contract, unit, arity=None,
     return sorted(values, key=lambda value: (int(value), value)), evidence
 
 
+def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
+                               rendered_coords, arity=None,
+                               declaration_id=None, log=print):
+    """R2 specs for literal source assignments `stateVar = parameter`.
+
+    This is deliberately narrower than general expression mining.  It only
+    proposes a candidate when the target function body assigns one visible
+    state variable directly from one of the unit's parameters, and the PUT has
+    already rendered that parameter as a coordinate.  The candidate is still
+    proved by --path-cov-assert; the source only decides which small query to
+    ask first.
+    """
+    try:
+        target = _select_def(_function_defs(ast_path, contract, unit), arity,
+                             declaration_id)
+        ast = _load_ast(ast_path)
+    except (OSError, ValueError):
+        return [], ["R2 source assignments unavailable: AST is absent or "
+                    "unreadable"]
+    if target is None:
+        return [], ["R2 source assignments unavailable: target declaration "
+                    "missing"]
+    rendered = {name for name, _kind, _width in (rendered_coords or [])}
+    param_ids = {}
+    param_names = {name for name, _ty in (params or [])}
+    for p in ((target.get("parameters") or {}).get("parameters") or []):
+        name = p.get("name")
+        if name and p.get("id") is not None:
+            param_ids[p["id"]] = name
+
+    by_id, owner = {}, None
+
+    def index(n):
+        nonlocal owner
+        if isinstance(n, dict):
+            if n.get("nodeType") == "ContractDefinition":
+                if n.get("id") is not None:
+                    by_id[n["id"]] = n
+                if n.get("name") == contract:
+                    owner = n
+            for child in n.values():
+                index(child)
+        elif isinstance(n, list):
+            for child in n:
+                index(child)
+
+    index(ast)
+    scopes = []
+    if owner is not None:
+        chain = owner.get("linearizedBaseContracts") or [owner.get("id")]
+        scopes = [by_id[c] for c in reversed(chain) if c in by_id]
+    if not scopes:
+        scopes = [ast]
+    state_ids = {}
+    for scope in scopes:
+        for n in (scope.get("nodes") or []):
+            if (isinstance(n, dict) and
+                    n.get("nodeType") == "VariableDeclaration" and
+                    n.get("stateVariable") and n.get("name") and
+                    n.get("id") is not None):
+                state_ids[n["id"]] = n["name"]
+
+    entries, evidence, seen = [], [], set()
+
+    def identifier_ref(n):
+        if not isinstance(n, dict) or n.get("nodeType") != "Identifier":
+            return None
+        ref = n.get("referencedDeclaration")
+        return ref if isinstance(ref, int) else None
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("nodeType") == "Assignment" and n.get("operator") == "=":
+                lhs_ref = identifier_ref(n.get("leftHandSide"))
+                rhs_ref = identifier_ref(n.get("rightHandSide"))
+                state_name = state_ids.get(lhs_ref)
+                param_name = param_ids.get(rhs_ref)
+                key = (state_name, param_name)
+                if (state_name and param_name and key not in seen and
+                        state_name in (layout or {}) and
+                        param_name in param_names and param_name in rendered):
+                    seen.add(key)
+                    entries.append({
+                        "name": state_name,
+                        "equals": [{
+                            "id": f"src{len(entries)}",
+                            "term": {"kind": "coord", "name": param_name},
+                        }],
+                        "abs": [],
+                        "deltas": [],
+                    })
+                    evidence.append(
+                        f"R2 source assignment candidate "
+                        f"{state_name}: post == {param_name} from AST src "
+                        f"{n.get('src') or '?'}")
+            for child in n.values():
+                walk(child)
+        elif isinstance(n, list):
+            for child in n:
+                walk(child)
+
+    walk(target.get("body"))
+    if not entries:
+        return [], evidence
+    for line in evidence:
+        log(f"[put]   {line}")
+    return [{
+        "param": "source_assign",
+        "stage": 1,
+        "kind": "source-assign",
+        "depth": 0,
+        "candidate_count": len(entries),
+        "vars": entries,
+    }], evidence
+
+
 def _r2_direction(ladder_rows, log):
     verdicts = {}
     for var, text, verdict in ladder_rows or []:
@@ -5898,12 +6014,21 @@ def main():
             _rendered_coords.append(
                 (_sn, "id" if _nb == 20 else "num",
                  _nb if _nb == 20 else None))
-        _r2 = propose_r2_batch(
-            rows, params, source_literals=_source_literals,
-            depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,
-            rendered_coords=_rendered_coords,
-            term_budget=a.r2_term_budget,
-            candidate_budget=a.r2_candidate_budget, log=print)
+        _r2, _source_assignment_evidence = source_assignment_r2_specs(
+            a.ast, a.contract, a.unit, params, layout, _rendered_coords,
+            arity=len(params or []), declaration_id=declaration_id,
+            log=print)
+        if _r2:
+            print("[put]   typed R2 mechanical batch SKIPPED: source "
+                  "assignment candidate(s) give a smaller verifier query for "
+                  "the same setter oracle")
+        else:
+            _r2 = propose_r2_batch(
+                rows, params, source_literals=_source_literals,
+                depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,
+                rendered_coords=_rendered_coords,
+                term_budget=a.r2_term_budget,
+                candidate_budget=a.r2_candidate_budget, log=print)
         r2_term_lookup = r2_terms_from_specs(_r2)
         r2_requested = True
 

@@ -3081,3 +3081,40 @@ Notes:
 
 Do not rerun this POC unless explicitly reopened. Attempts 2 and 3 were not
 spent, but attempt 1 already achieved B=5/5.
+
+## 2026-08-06 source-assignment R2 fast path
+
+Code-level repair for the weak normal-setter oracle above:
+
+- `scripts/solidity_path_put.py` now has `source_assignment_r2_specs`.
+- It mines only the narrow source shape `stateVar = parameter` inside the
+  selected target function body.
+- It only proposes the candidate when:
+  - the left side is a visible state variable in the storage layout;
+  - the right side is one of the unit parameters;
+  - that parameter is already rendered as a PUT coordinate for this certified
+    region.
+- The source does not prove the oracle. It only asks a smaller, more semantic
+  R2 query first; ESBMC still has to certify the generated
+  `post(stateVar) == parameter` assertion.
+- When such a source assignment exists, the broad mechanical R2 batch is skipped
+  for that path because the setter oracle is the query we actually need and the
+  128-candidate mechanical batch was too expensive under attempt1.
+
+Validation:
+
+```sh
+python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py
+python3 scripts/test_solidity_path_put.py
+```
+
+Both passed (`140 test(s) ran`). A pure AST-level probe on the real
+`setMinLockPeriodRatio` `.solast` produced exactly:
+
+```text
+R2 source assignment candidate minLockPeriodRatio: post == minLockPeriodRatio_
+```
+
+This probe used no ESBMC attempt. The next simple owner-gated setter should
+therefore get a stronger normal-path R2 candidate without spending the 60s
+attempt on a broad blind R2 batch.
