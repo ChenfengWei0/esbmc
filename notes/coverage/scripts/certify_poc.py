@@ -91,6 +91,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default=None,
                     help="one PoC stem, e.g. D10_WrapNotPanic")
+    ap.add_argument("--unit", default=None,
+                    help="restrict the selected PoC to one unit")
+    ap.add_argument("--path-function", default=None,
+                    help="exact mangled identity for an overloaded --unit")
     ap.add_argument("--timeout", type=int, default=180,
                     help="per DRIVER invocation, i.e. one unit's whole loop")
     ap.add_argument("--memlimit", default="8g")
@@ -129,6 +133,8 @@ def main():
     ap.add_argument("--redo", action="store_true")
     ap.add_argument("--workdir", default="/tmp/certify_poc")
     a = ap.parse_args()
+    if a.path_function and not a.unit:
+        sys.exit("--path-function requires --unit")
 
     ident = ca.binary_identity()
     out_path = Path(a.out)
@@ -153,7 +159,9 @@ def main():
                 r = json.loads(line)
             except ValueError:
                 continue
-            done.add((r.get("poc"), r.get("unit")))
+            done.add(ca.certification_key(
+                r.get("poc"), r.get("unit"), r.get("path_function"),
+                a.path_function))
             if r.get("binary") != ident:
                 stale.append((r.get("poc"), r.get("unit"), r.get("binary")))
         if stale:
@@ -193,13 +201,20 @@ def main():
             print(f"[{i}/{len(sols)}] {sol.stem}: no public/external unit",
                   flush=True)
             continue
+        if a.unit:
+            units = [unit for unit in units if unit == a.unit]
+            if not units:
+                sys.exit(f"{sol.stem} has no public/external unit {a.unit!r}")
         print(f"[{i}/{len(sols)}] {sol.stem}: {len(units)} unit(s): "
               f"{', '.join(units)}", flush=True)
         for unit in units:
-            if (sol.stem, unit) in done:
+            requested_pf = a.path_function if a.path_function else None
+            if ca.certification_key(sol.stem, unit, requested_pf,
+                                    a.path_function) in done:
                 print(f"    {unit} — already recorded", flush=True)
                 continue
-            uwd = Path(a.workdir) / sol.stem / unit
+            uwd = (Path(a.workdir) / sol.stem /
+                   (unit + ca.path_function_artifact_suffix(a.path_function)))
             uwd.mkdir(parents=True, exist_ok=True)
             # `-u`: UNBUFFERED, and it is not cosmetic. The driver's stdout is a
             # PIPE here, so Python block-buffers it, and a run this sweep KILLS
@@ -220,6 +235,8 @@ def main():
                    "--level0", "--memlimit", a.memlimit,
                    "--timeout", str(min(a.timeout, 180)),
                    "--workdir", str(uwd)]
+            if a.path_function:
+                cmd += ["--path-function", a.path_function]
             # ---- THE ENVIRONMENT IS A COORDINATE OR IT IS A HOLE ----
             #
             # MEASURED, and it is why the first six PoCs of this sweep all came
@@ -282,6 +299,7 @@ def main():
             # the other reader of the same fact and did not. Same shape as the
             # emit flags reaching solidity_path_put.py but not poc_funnel.py.
             rec.update({"poc": sol.stem, "unit": unit,
+                        "path_function": ca.result_path_function(str(uwd)),
                         "bucket": ca.bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
                         "unit_timeout_s": a.timeout,

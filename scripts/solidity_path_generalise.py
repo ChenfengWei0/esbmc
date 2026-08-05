@@ -67,6 +67,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from solidity_path_put import (ESTABLISHABLE_ENV_COORDS,  # noqa: E402,F401
                                STRATEGY_FLAGS_REFUSED,
                                check_esbmc_args)
+from solidity_ast_dependencies import (  # noqa: E402,F401
+    SLOT_DEPENDENCY_POLICY, path_function_declaration_id,
+    unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
 
@@ -598,8 +601,9 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
         uniq.append((enc, depth, ce))
         members[enc] = vecs
     kept_decisions = {enc: path_decisions.get(enc, []) for enc, _, _ in uniq}
+    resolved_path_function = pfs[0] if len(pfs) == 1 else path_function
     return (uniq, sorted(refused), extraction_caveats(witnessed), members,
-            path_extras, kept_decisions)
+            path_extras, kept_decisions, resolved_path_function)
 
 
 def abi_gate_class(decisions):
@@ -1176,7 +1180,7 @@ def _struct_scalar_fields(root):
     return out
 
 
-def unit_params(ast_path, contract, unit):
+def unit_params(ast_path, contract, unit, declaration_id=None):
     """This unit's parameters, as [(name, typeString)] in declaration order.
 
     The KEY of a proposed slot has to be something the query can express, and
@@ -1195,7 +1199,9 @@ def unit_params(ast_path, contract, unit):
     def walk(n):
         if isinstance(n, dict):
             if (n.get("nodeType") == "FunctionDefinition"
-                    and n.get("name") == unit):
+                    and n.get("name") == unit
+                    and (declaration_id is None
+                         or n.get("id") == declaration_id)):
                 ps = ((n.get("parameters") or {}).get("parameters") or [])
                 found.append([(p.get("name"), _type_string(p))
                               for p in ps if p.get("name")])
@@ -1210,116 +1216,6 @@ def unit_params(ast_path, contract, unit):
     # Most-derived last, because `_chain_nodes` walks base-first and an override
     # is what the compiler resolves the call to.
     return found[-1] if found else []
-
-
-SLOT_DEPENDENCY_POLICY = "solc-reference-closure/1"
-
-
-def unit_state_dependencies(ast_path, contract, unit):
-    """State declarations reached from a unit, ordered by call distance.
-
-    solc resolves every identifier, member call, and modifier invocation to a
-    declaration id. Following those ids is both narrower and more complete than
-    matching source text: modifier guards and internal/library helpers remain
-    visible, while inherited state that the target never touches does not enter
-    the coordinate budget.
-
-    Returns ``(names, evidence)``. ``names`` is None when the AST or target
-    cannot be resolved, so production callers can fail closed instead of
-    silently falling back to the old all-mappings cross product.
-    """
-    ast = _ast_root(ast_path)
-    if ast is None:
-        return None, ["dependency walk unavailable: AST is absent or unreadable"]
-    nodes = _chain_nodes(ast, contract) if contract else None
-    if nodes is None:
-        return None, [f"dependency walk unavailable: contract {contract!r} "
-                      "was not found in the AST"]
-
-    by_id = {}
-
-    def index(n):
-        if isinstance(n, dict):
-            if isinstance(n.get("id"), int):
-                by_id[n["id"]] = n
-            for v in n.values():
-                index(v)
-        elif isinstance(n, list):
-            for v in n:
-                index(v)
-
-    index(ast)
-    state_by_id = {}
-    targets = []
-    for owner in nodes:
-        for declaration in owner.get("nodes", []) or []:
-            if (declaration.get("nodeType") == "VariableDeclaration"
-                    and declaration.get("stateVariable")
-                    and declaration.get("name")):
-                state_by_id[declaration["id"]] = declaration["name"]
-            if (declaration.get("nodeType") == "FunctionDefinition"
-                    and declaration.get("name") == unit
-                    and declaration.get("body") is not None):
-                targets.append(declaration)
-    if not targets:
-        return None, [f"dependency walk unavailable: no implemented function "
-                      f"named {unit!r} was found in contract {contract!r} or "
-                      "its linearized bases"]
-
-    callables = {
-        node_id: node for node_id, node in by_id.items()
-        if node.get("nodeType") in ("FunctionDefinition", "ModifierDefinition")
-        and node.get("body") is not None
-    }
-    best_callable_depth = {}
-    found = {}
-
-    def label(node):
-        kind = "modifier" if node.get("nodeType") == "ModifierDefinition" \
-            else "function"
-        return f"{kind} {node.get('name') or '<anonymous>'}#{node.get('id')}"
-
-    def visit(node, depth, chain):
-        node_id = node.get("id")
-        old_depth = best_callable_depth.get(node_id)
-        if old_depth is not None and old_depth <= depth:
-            return
-        best_callable_depth[node_id] = depth
-        next_calls = []
-
-        def scan(n):
-            if isinstance(n, dict):
-                ref = n.get("referencedDeclaration")
-                if ref in state_by_id:
-                    name = state_by_id[ref]
-                    candidate = (depth, tuple(chain), n.get("src") or "")
-                    if name not in found or candidate < found[name]:
-                        found[name] = candidate
-                if ref in callables and ref != node_id:
-                    next_calls.append(callables[ref])
-                for v in n.values():
-                    scan(v)
-            elif isinstance(n, list):
-                for v in n:
-                    scan(v)
-
-        scan(node.get("modifiers") or [])
-        scan(node.get("body"))
-        for callee in next_calls:
-            visit(callee, depth + 1, chain + [label(callee)])
-
-    for target in targets:
-        visit(target, 0, [label(target)])
-
-    ordered = sorted(found, key=lambda name: (found[name][0], name))
-    evidence = []
-    for name in ordered:
-        depth, chain, src = found[name]
-        evidence.append(
-            f"state.{name} dependency distance {depth}: "
-            + " -> ".join(chain)
-            + (f" at AST src {src}" if src else ""))
-    return ordered, evidence
 
 
 def propose_slot_coords(maps, params, limit, dependencies=None):
@@ -4607,7 +4503,7 @@ def main():
             f"run-config.json and in the result, because a run of one "
             f"configuration may not be quoted into another's table")
     (paths, refused, caveats, members, path_extras,
-     path_decisions) = enumerate_paths(
+     path_decisions, resolved_path_function) = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
         args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
         path_function=args.path_function, esbmc_args=args.esbmc_arg,
@@ -4616,6 +4512,7 @@ def main():
         enumeration_index=args.enumeration_index,
         enumeration_report=args.enumeration_report,
         scope_label=scope_label)
+    args.path_function = resolved_path_function
     if not paths:
         # ⛔ THE OLD TEXT HERE ASSERTED A RESULT AND WAS WRONG ON REAL INPUT.
         # It said "That is a result, not an error ... (The report was checked:
@@ -4633,6 +4530,8 @@ def main():
                   "around. ⛔ Still not a reachability statement: it is bounded "
                   "by this run's --max-tx, --unwind and scope.")
         return 1
+    query_unit = args.path_function or args.unit
+    print(f"[enumerate] exact query unit: {query_unit}")
     print(f"[enumerate] {len(paths)} witnessed path(s): "
           + ", ".join(f"enc={e} depth={d}" for e, d, _ in paths))
     abi_classes = {enc: abi_gate_class(path_decisions.get(enc))
@@ -4919,9 +4818,16 @@ def main():
     slot_added = []
     if args.slot_coords or args.slot_coord:
         maps, map_refused = mapping_state_vars(args.ast, args.contract)
-        params = unit_params(args.ast, args.contract, args.unit)
+        declaration_id = path_function_declaration_id(args.path_function)
+        if args.path_function and declaration_id is None:
+            raise SystemExit(
+                f"[coords] malformed path_function {args.path_function!r}: "
+                "expected a trailing #<solc-node-id>")
+        params = unit_params(args.ast, args.contract, args.unit,
+                             declaration_id=declaration_id)
         dependencies, dependency_evidence = unit_state_dependencies(
-            args.ast, args.contract, args.unit)
+            args.ast, args.contract, args.unit,
+            declaration_id=declaration_id)
         proposed, skipped = propose_slot_coords(
             maps, params, args.slot_coords,
             dependencies=[] if dependencies is None else dependencies)
@@ -5086,7 +4992,7 @@ def main():
                     "asked -- and they descend to the ladder with their full "
                     "type range, which is what a proposed mapping slot needs")
         (l0_boxes, _, _, _, l0_failure, _, tr_new, unres) = outer_round(
-            args.esbmc, args.sol, args.contract, args.unit, paths, l0_coords,
+            args.esbmc, args.sol, args.contract, query_unit, paths, l0_coords,
             pins, args.probes, args.max_tx, args.timeout, cwd,
             values_by_coord=cand,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
@@ -5232,7 +5138,7 @@ def main():
                 cand2 = dict(cand)
                 cand2.update(widened)
                 (b2, _, _, _, f2, _, tr2, unres2) = outer_round(
-                    args.esbmc, args.sol, args.contract, args.unit, paths,
+                    args.esbmc, args.sol, args.contract, query_unit, paths,
                     [c for c in coords if c in cand2], pins, args.probes,
                     args.max_tx, args.timeout, cwd, values_by_coord=cand2,
                     ast=args.ast, focus=focus, memlimit=args.memlimit,
@@ -5415,7 +5321,7 @@ def main():
     else:
         (_, brackets, regions, warned, round_failure, region_holes,
          tr_new, unres) = outer_round(
-            args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
+            args.esbmc, args.sol, args.contract, query_unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
             values_by_coord=eq_values, extra_values=probe_extra,
@@ -5453,7 +5359,7 @@ def main():
     for r in range(args.refine_rounds):
         (_, brackets, regions, warned, round_failure, region_holes,
          tr_new, unres) = outer_round(
-            args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
+            args.esbmc, args.sol, args.contract, query_unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
             values_by_coord=eq_values, extra_values=probe_extra,
@@ -5649,7 +5555,7 @@ def main():
             retreated = {}
             for _ in range(args.shrink_rounds):
                 v, nb, wit, punches, unexp, unknown_why = certify(
-                    args.esbmc, args.sol, args.contract, args.unit,
+                    args.esbmc, args.sol, args.contract, query_unit,
                     enc, depth, box, ce, dict(pins, **xpins), args.max_tx,
                     args.timeout, cwd, ast=args.ast, focus=focus,
                     memlimit=args.memlimit, holes=holes,
@@ -5722,7 +5628,7 @@ def main():
                             "was asked for. Re-querying")
                     prev_size = region_size(box, holes)
                     v, nb, wit, punches, unexp, unknown_why = certify(
-                        args.esbmc, args.sol, args.contract, args.unit,
+                        args.esbmc, args.sol, args.contract, query_unit,
                         enc, depth, box, ce, dict(pins, **xpins), args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
                         memlimit=args.memlimit, holes=holes,
@@ -6195,7 +6101,7 @@ def main():
                         "is therefore UNKNOWN, not clear")
                 else:
                     wv, _wnb, _ww, _wp, _wunexp, wwhy = certify(
-                        args.esbmc, args.sol, args.contract, args.unit,
+                        args.esbmc, args.sol, args.contract, query_unit,
                         enc, depth, point, ce, dict(pins, **xpins), args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
                         memlimit=args.memlimit, holes={},

@@ -50,6 +50,7 @@ below is a VERBATIM capture of the emitter's own output for this contract
 paraphrased one could drift from the parser it is here to exercise.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -1496,6 +1497,365 @@ def test_a_probe_THAT_NEVER_RAN_is_NOT_RUN_not_a_pass():
     bad += check(fuzz_prefilter_verdicts({"test_probe_0": "x"}, "")
                  == {"x": "NOT-RUN"},
                  "and an EMPTY forge output is all NOT-RUN, not all passing")
+    return bad
+
+
+def test_JSON_fuzz_filter_refutes_only_its_labeled_assertion():
+    from solidity_path_put import fuzz_prefilter_json_verdicts  # noqa: E402
+    payload = {"test/Probe.t.sol:Probe": {"test_results": {
+        "test_labeled(uint256)": {
+            "status": "Failure",
+            "reason": "VERIPUT_CANDIDATE_0 bal: post == amount: 9 != 0"},
+        "test_panic(uint256)": {
+            "status": "Failure",
+            "reason": "panic: arithmetic underflow or overflow (0x11)"},
+        "test_collision(uint256)": {
+            "status": "Failure",
+            "reason": "target reverted with VERIPUT_CANDIDATE_4 bal: "
+                      "post == amount: fake"},
+        "test_green(uint256)": {"status": "Success", "reason": None},
+    }}}
+    got = fuzz_prefilter_json_verdicts(
+        {"test_labeled": "VERIPUT_CANDIDATE_0 bal: post == amount",
+         "test_panic": "VERIPUT_CANDIDATE_1 bal: post == amount",
+         "test_green": "VERIPUT_CANDIDATE_2 bal: post == amount",
+         "test_absent": "VERIPUT_CANDIDATE_3 bal: post == amount",
+         "test_collision": "VERIPUT_CANDIDATE_4 bal: post == amount"},
+        json.dumps(payload))
+    bad = 0
+    bad += check(got["test_labeled"] == "REFUTED",
+                 f"the matching labeled failure is a CE: {got}")
+    bad += check(got["test_panic"] == "NOT-RUN",
+                 f"an unrelated panic cannot remove a candidate: {got}")
+    bad += check(got["test_green"] == "NOT-REFUTED",
+                 f"a pass is explicitly not a proof: {got}")
+    bad += check(got["test_absent"] == "NOT-RUN",
+                 f"an absent probe ran no candidate: {got}")
+    bad += check(got["test_collision"] == "NOT-RUN",
+                 f"a target revert merely containing the marker is not a "
+                 f"candidate assertion CE: {got}")
+    bad += check("HOLDS" not in got.values(),
+                 f"fuzz never produces a proof verdict: {got}")
+    return bad
+
+
+def test_R2_fuzz_filter_removes_only_concretely_refuted_candidates():
+    from solidity_path_put import (filter_r2_specs,  # noqa: E402
+                                   propose_r2_batch, r2_candidates)
+    specs = propose_r2_batch(
+        INC_ROWS, [("amount", "uint256")], source_literals=("0", "7"),
+        depth=1, var_bytes={"bal": 32},
+        rendered_coords=[("amount", "num", None)], term_budget=4,
+        log=lambda _line: None)
+    before = r2_candidates(specs)
+    verdicts = {candidate["key"]: "NOT-REFUTED" for candidate in before}
+    verdicts[before[0]["key"]] = "REFUTED"
+    verdicts[before[1]["key"]] = "NOT-RUN"
+    after = r2_candidates(filter_r2_specs(specs, verdicts))
+    after_keys = {candidate["key"] for candidate in after}
+    bad = 0
+    bad += check(len(after) == len(before) - 1,
+                 f"exactly one concrete CE is removed: {len(before)} -> "
+                 f"{len(after)}")
+    bad += check(before[0]["key"] not in after_keys,
+                 f"the REFUTED key is absent: {after_keys}")
+    bad += check(before[1]["key"] in after_keys,
+                 f"NOT-RUN remains for ESBMC: {after_keys}")
+    return bad
+
+
+def test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate():
+    from solidity_path_put import (propose_r2_batch,  # noqa: E402
+                                   r2_terms_from_specs,
+                                   r2_term_text)
+    got = propose_r2_batch(
+        INC_ROWS, [("amount", "uint256")], source_literals=("0", "7"),
+        depth=1, var_bytes={"bal": 32},
+        rendered_coords=[("amount", "num", None)], term_budget=96,
+        log=lambda _line: None)
+    bad = 0
+    bad += check(len(got) == 1, f"one path produces one R2 query: {got}")
+    if not got:
+        return bad + 1
+    entry = got[0]["vars"][0]
+    equality_terms = {r2_term_text(item["term"])
+                      for item in entry["equals"]}
+    delta_terms = {r2_term_text(item["lo"])
+                   for item in entry["deltas"]
+                   if r2_term_text(item["lo"]) == r2_term_text(item["hi"])}
+    bad += check("(pre + amount)" in equality_terms,
+                 f"post == pre + amount is asked: {sorted(equality_terms)}")
+    bad += check("(amount - 7)" in delta_terms,
+                 f"delta expressions use the same grammar: "
+                 f"{sorted(delta_terms)}")
+    lookup = r2_terms_from_specs(got)
+    bad += check("(pre + amount)" in lookup,
+                 f"the renderer receives the structured term: {lookup}")
+    return bad
+
+
+def test_typed_R2_term_budget_is_VISIBLE_not_a_second_query():
+    from solidity_path_put import propose_r2_batch  # noqa: E402
+    said = []
+    got = propose_r2_batch(
+        INC_ROWS, [("amount", "uint256")], source_literals=("0", "1", "2"),
+        depth=1, var_bytes={"bal": 32},
+        rendered_coords=[("amount", "num", None)], term_budget=3,
+        log=said.append)
+    bad = 0
+    bad += check(len(got) == 1, f"truncation still sends one batch: {got}")
+    bad += check(any("NOT ASKED" in line for line in said),
+                 f"the omitted suffix is named: {said}")
+    return bad
+
+
+def test_typed_R2_candidate_budget_caps_claims_and_shares_them():
+    from solidity_path_put import propose_r2_batch, r2_candidates  # noqa: E402
+    rows = INC_ROWS + [("other", text, verdict)
+                       for _var, text, verdict in INC_ROWS]
+    said = []
+    got = propose_r2_batch(
+        rows, [("amount", "uint256")], source_literals=("0", "7"),
+        depth=1, var_bytes={"bal": 32, "other": 32},
+        rendered_coords=[("amount", "num", None)], term_budget=96,
+        candidate_budget=7, log=said.append)
+    candidates = r2_candidates(got)
+    bad = 0
+    bad += check(len(candidates) == 7,
+                 f"the solver claim cap is exact: {len(candidates)}")
+    bad += check({candidate["var"] for candidate in candidates}
+                 == {"bal", "other"},
+                 f"round-robin prevents first-variable starvation: "
+                 f"{candidates}")
+    bad += check(any("NOT ASKED" in line and "candidate budget" in line
+                     for line in said),
+                 f"the omitted claim suffix is explicit: {said}")
+    return bad
+
+
+def test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps():
+    from solidity_path_put import propose_r2_batch, r2_candidates  # noqa: E402
+    rows = [(f"v{i:02d}", text, verdict) for i in range(50)
+            for _var, text, verdict in INC_ROWS]
+    got = propose_r2_batch(
+        rows, [("amount", "uint256")], source_literals=("0", "7"),
+        depth=1, var_bytes={f"v{i:02d}": 32 for i in range(50)},
+        rendered_coords=[("amount", "num", None)], term_budget=96,
+        candidate_budget=128, log=lambda _line: None)
+    candidates = r2_candidates(got)
+    represented = {candidate["var"] for candidate in candidates}
+    bad = 0
+    bad += check(len(candidates) == 128,
+                 f"the global cap remains exact: {len(candidates)}")
+    bad += check(represented == {f"v{i:02d}" for i in range(50)},
+                 f"every variable receives a first candidate: {represented}")
+    forge_prefix = {candidate["var"] for candidate in candidates[:50]}
+    bad += check(forge_prefix == {f"v{i:02d}" for i in range(50)},
+                 f"an independently smaller Forge cap is fair too: "
+                 f"{forge_prefix}")
+    return bad
+
+
+def test_skipped_forge_R2_accounting_is_complete_and_conservative():
+    from solidity_path_put import skipped_forge_r2_evidence  # noqa: E402
+    specs = [{"vars": [{"name": "bal", "equals": [{
+        "id": "e0", "term": {"kind": "literal", "value": "7"}}],
+                       "abs": [], "deltas": []}]}]
+    got = skipped_forge_r2_evidence(
+        specs, 128, "rollback path has no observable R2 post-state", 256)
+    bad = 0
+    bad += check(got["requested"] == got["not_run"] == 1,
+                 f"every skipped candidate is NOT-RUN: {got}")
+    bad += check(got["requested"] == (got["refuted"]
+                                      + got["not_refuted"]
+                                      + got["not_run"]),
+                 f"verdict counts conserve requested: {got}")
+    bad += check(got["selected"] == 1 and got["rendered"] == got["ran"] == 0,
+                 f"selection and execution counts stay distinct: {got}")
+    bad += check(got["candidates"][0]["verdict"] == "NOT-RUN",
+                 f"the per-candidate evidence agrees: {got}")
+    return bad
+
+
+def test_typed_R2_omits_bool_instead_of_counting_unanswered_claims():
+    from solidity_path_put import propose_r2_batch  # noqa: E402
+    said = []
+    got = propose_r2_batch(
+        [("flag", "post == pre", "REFUTED"),
+         ("flag", "post != pre", "HOLDS")],
+        [], source_literals=("0", "1"), var_bytes={"flag": 1},
+        rendered_coords=[], log=said.append)
+    bad = 0
+    bad += check(got == [], f"no structured bool claim is asked: {got}")
+    bad += check(any("ordering-capable unsigned scalar" in line
+                     for line in said),
+                 f"the omission is named rather than silent: {said}")
+    return bad
+
+
+def test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain():
+    from solidity_path_put import source_r2_literals  # noqa: E402
+    ast = {"nodeType": "SourceUnit", "nodes": [
+        {"nodeType": "ContractDefinition", "name": "Other", "id": 2,
+         "linearizedBaseContracts": [2], "nodes": [
+             {"nodeType": "VariableDeclaration", "id": 20, "name": "NO",
+              "constant": True, "value": {"nodeType": "Literal",
+                                             "kind": "number", "value": "99"}}]},
+        {"nodeType": "ContractDefinition", "name": "C", "id": 1,
+         "linearizedBaseContracts": [1], "nodes": [
+             {"nodeType": "VariableDeclaration", "id": 10, "name": "K",
+              "constant": True, "value": {"nodeType": "Literal",
+                                             "kind": "number", "value": "3"}},
+             {"nodeType": "FunctionDefinition", "id": 11, "name": "f",
+              "parameters": {"parameters": []},
+              "body": {"nodeType": "Block", "statements": [
+                  {"nodeType": "Literal", "kind": "number", "value": "7"}]}}
+         ]}
+    ]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        values, evidence = source_r2_literals(path, "C", "f", arity=0)
+    finally:
+        os.unlink(path)
+    bad = 0
+    bad += check(values == ["3", "7"],
+                 f"unit literal and own constant only: {values}")
+    bad += check(any("constant K" in line for line in evidence),
+                 f"constant provenance is retained: {evidence}")
+    return bad
+
+
+def test_same_arity_overloads_use_the_exact_path_declaration():
+    from solidity_path_put import (function_params, function_returns,  # noqa: E402
+                                   overload_artifact_label,
+                                   select_path_claim,
+                                   source_r2_literals)
+    def declaration(node_id, parameter, param_type, ret_type, literal):
+        return {
+            "nodeType": "FunctionDefinition", "id": node_id, "name": "f",
+            "parameters": {"parameters": [{
+                "name": parameter,
+                "typeDescriptions": {"typeString": param_type}}]},
+            "returnParameters": {"parameters": [{
+                "name": "out",
+                "typeDescriptions": {"typeString": ret_type}}]},
+            "body": {"nodeType": "Block", "statements": [{
+                "nodeType": "Literal", "kind": "number",
+                "value": literal}]}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            declaration(11, "amount", "uint256", "uint256", "7"),
+            declaration(12, "who", "address", "address", "9")]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        params = function_params(path, "C", "f", arity=1,
+                                 declaration_id=11)
+        returns = function_returns(path, "C", "f", arity=1,
+                                   declaration_id=11)
+        literals, _ = source_r2_literals(
+            path, "C", "f", arity=1, declaration_id=11)
+        artifact_label = overload_artifact_label(path, "C", "f", 11)
+    finally:
+        os.unlink(path)
+    report = {"claims": [
+        {"condition": "f:path:3", "path_id": 3,
+         "path_function": "sol:@C@C@F@f#11"},
+        {"condition": "f:path:3", "path_id": 3,
+         "path_function": "sol:@C@C@F@f#12"}]}
+    ambiguous, why = select_path_claim(report, "f", 3)
+    exact, exact_why = select_path_claim(
+        report, "f", 3, path_function="sol:@C@C@F@f#11")
+    bad = 0
+    bad += check(params == [("amount", "uint256")],
+                 f"parameters come from declaration 11: {params}")
+    bad += check(returns == [("out", "uint256")],
+                 f"returns come from declaration 11: {returns}")
+    bad += check(literals == ["7"],
+                 f"source atoms come from declaration 11: {literals}")
+    bad += check(artifact_label == "_pf11",
+                 f"overloaded artifact names carry the node id: "
+                 f"{artifact_label}")
+    bad += check(ambiguous is None and "multiple path functions" in why,
+                 f"legacy simple-name selection refuses ambiguity: {why}")
+    bad += check(exact is report["claims"][0] and exact_why is None,
+                 f"the exact mangled identity selects one claim: {exact}")
+    return bad
+
+
+def test_overload_persistence_keys_and_work_suffixes_are_distinct():
+    from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
+    notes_scripts = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "notes",
+        "coverage", "scripts")
+    sys.path.insert(0, notes_scripts)
+    import certify_all  # noqa: E402
+    first = "sol:@C@C@F@f#11"
+    second = "sol:@C@C@F@f#12"
+    bad = 0
+    bad += check(path_function_artifact_suffix(first) == "__pf11",
+                 "the workdir suffix carries declaration 11")
+    bad += check(path_function_artifact_suffix(second) == "__pf12",
+                 "the workdir suffix carries declaration 12")
+    key1 = certify_all.certification_key("bench", "f", first, first)
+    key2 = certify_all.certification_key("bench", "f", second, second)
+    bad += check(key1 != key2,
+                 f"overloads have independent resume keys: {key1}, {key2}")
+    legacy1 = certify_all.certification_key("bench", "f", first, None)
+    legacy2 = certify_all.certification_key("bench", "f", second, None)
+    bad += check(legacy1 == legacy2 == ("bench", "f", None),
+                 f"legacy simple-unit rows keep their old identity: "
+                 f"{legacy1}, {legacy2}")
+    return bad
+
+
+def test_structured_R2_term_renders_with_the_lifted_coordinate():
+    from solidity_path_put import rung_assertions  # noqa: E402
+    term = {"kind": "op", "op": "add", "lhs": {"kind": "pre"},
+            "rhs": {"kind": "coord", "name": "amount"}}
+    got = rung_assertions(
+        "post == (pre + amount)", "_pre_bal", "_post_bal", "bal: eq",
+        {"amount": "p_amount"}, {"amount": "p_amount"},
+        {"(pre + amount)": term})
+    return check(got == [
+        '    assertEq(_post_bal, (_pre_bal + p_amount), "bal: eq");'],
+        f"structured term uses the emitted identifier: {got}")
+
+
+def test_structured_R2_requires_a_successful_revert_tolerant_call():
+    from solidity_path_put import rung_asserts_a_change  # noqa: E402
+    bad = 0
+    bad += check(rung_asserts_a_change("post == (pre + amount)"),
+                 "post == expression is success-dependent")
+    bad += check(rung_asserts_a_change("post in [amount, amount]"),
+                 "absolute intervals are success-dependent")
+    bad += check(rung_asserts_a_change(
+        "post - pre in [amount, amount] with post >= pre"),
+        "a symbolic delta lower bound may be nonzero")
+    bad += check(not rung_asserts_a_change(
+        "post - pre in [0, amount] with post >= pre"),
+        "a literal-zero delta still holds on rollback")
+    return bad
+
+
+def test_oracle_mapping_candidates_share_the_dependency_filter():
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+    maps = {
+        "allow": (1, ("address", "address"), 32, 0, "allow", None),
+        "bal": (2, "address", 32, 0, "bal", None),
+    }
+    said = []
+    got = propose_slot_vars(
+        maps, [("who", "address")], dependencies=["bal"], log=said.append)
+    bad = 0
+    bad += check(got == ["bal[msg.sender]", "bal[who]"],
+                 f"only the dependency mapping reaches the oracle: {got}")
+    bad += check(any("allow" in line and "excluded" in line for line in said),
+                 f"the excluded mapping is named: {said}")
     return bad
 
 
@@ -3331,6 +3691,20 @@ def main():
               test_TWO_integer_parameters_produce_TWO_SEPARATE_queries,
               test_a_fuzz_REFUTATION_is_read_and_a_pass_is_NOT_a_proof,
               test_a_probe_THAT_NEVER_RAN_is_NOT_RUN_not_a_pass,
+              test_JSON_fuzz_filter_refutes_only_its_labeled_assertion,
+              test_R2_fuzz_filter_removes_only_concretely_refuted_candidates,
+              test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate,
+              test_typed_R2_term_budget_is_VISIBLE_not_a_second_query,
+              test_typed_R2_candidate_budget_caps_claims_and_shares_them,
+              test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,
+              test_skipped_forge_R2_accounting_is_complete_and_conservative,
+              test_typed_R2_omits_bool_instead_of_counting_unanswered_claims,
+              test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
+              test_same_arity_overloads_use_the_exact_path_declaration,
+              test_overload_persistence_keys_and_work_suffixes_are_distinct,
+              test_structured_R2_term_renders_with_the_lifted_coordinate,
+              test_structured_R2_requires_a_successful_revert_tolerant_call,
+              test_oracle_mapping_candidates_share_the_dependency_filter,
               test_an_R2_PASS_actually_runs_and_carries_the_proposed_vars,
               test_an_ABSOLUTE_row_is_MERGED_and_not_silently_dropped,
               test_the_CAP_pass_RUNS_when_stage_1_REFUTED_the_exact_delta,

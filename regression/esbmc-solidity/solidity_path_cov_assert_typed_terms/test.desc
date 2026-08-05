@@ -1,0 +1,12 @@
+CORE
+contract.sol
+--contract TypedTerms --solidity-path-coverage --solidity-max-tx 1 --path-cov-assert spec.json --memlimit 8g
+^--path-cov-assert: region NON-VACUITY witnessed
+^--path-cov-assert: bal: post == \(pre \+ 7\)  HOLDS
+^--path-cov-assert: bal: post == \(pre \+ amount\)  REFUTED
+^--path-cov-assert: bal: post == \(pre \+ 115792089237316195423570985008687907853269984665640564039457584007913129639935\)  REFUTED
+^--path-cov-assert: bal: post in \[\(pre \+ 7\), \(pre \+ 7\)\]  HOLDS
+^--path-cov-assert: bal: post - pre in \[7, 7\] with post >= pre  HOLDS
+^--path-cov-assert: wrapped: post == \(pre \+ 7\)  REFUTED
+^--path-cov-assert: ladder summary -- 18 candidate\(s\): 9 HOLDS, 9 REFUTED, 0 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)
+\A(?!(.|\n)*REFUSING THE LADDER)

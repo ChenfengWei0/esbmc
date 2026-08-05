@@ -98,9 +98,15 @@ import itertools
 import json
 import os
 import re
+import secrets
+import signal
 import subprocess
 import sys
 import time
+
+from solidity_ast_dependencies import (SLOT_DEPENDENCY_POLICY,
+                                        path_function_declaration_id,
+                                        unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
 
@@ -608,10 +614,19 @@ def rung_asserts_a_change(text):
     """
     if re.match(r"^post (!=|>|<) pre$", text):
         return True
+    # A value/interval tied to an input or arithmetic term is a postcondition
+    # of the successful call. On a swallowed revert `post == pre`; unless the
+    # candidate is literally that R1 equality, executing it unconditionally
+    # can make the generated test red on the unmodified contract.
+    if text.startswith("post == ") and text != "post == pre":
+        return True
+    if text.startswith("post in ["):
+        return True
     # A delta rung with a NON-ZERO lower bound says the value moved by at least
-    # that much, which is a change. `post - pre in [0, k]` does not.
-    m = re.match(r"^(?:post - pre|pre - post) in \[(\d+), \d+\]", text)
-    return bool(m) and int(m.group(1)) > 0
+    # that much, which is a change. A symbolic lower bound might be nonzero, so
+    # only a literal zero is safe to execute after a swallowed revert.
+    m = re.match(r"^(?:post - pre|pre - post) in \[([^,]+),", text)
+    return bool(m) and m.group(1).strip() != "0"
 
 
 # Rung text -> a renderer producing forge-std assertion lines.  `post`/`pre`
@@ -649,6 +664,8 @@ IDENTITY_TY = re.compile(r"^(address|contract\s|interface\s|enum\s)")
 # LOGGED with what it dropped: a silent truncation reads exactly like "there was
 # nothing more to ask", which is the one thing a yield number must never mean.
 R2_MAX_QUERIES = 6
+R2_TERM_BUDGET = 96
+R2_CANDIDATE_BUDGET = 128
 
 
 # How many bytes a value of this endpoint type occupies in storage. Used to
@@ -950,6 +967,302 @@ def propose_r2_specs(ladder_rows, params, log=None, var_bytes=None):
     return out
 
 
+def r2_term_text(term):
+    """Canonical, report-safe spelling of one structured R2 term."""
+    kind = term.get("kind")
+    if kind == "pre":
+        return "pre"
+    if kind == "coord":
+        return term["name"]
+    if kind == "literal":
+        return str(term["value"])
+    if kind == "op":
+        op = {"add": "+", "sub": "-", "mul": "*", "div": "/"}[
+            term["op"]]
+        return f"({r2_term_text(term['lhs'])} {op} " \
+               f"{r2_term_text(term['rhs'])})"
+    raise ValueError(f"unknown R2 term kind: {kind!r}")
+
+
+def source_r2_literals(ast_path, contract, unit, arity=None,
+                       declaration_id=None):
+    """Integer atoms from the target body and literal-valued constants."""
+    try:
+        target = _select_def(_function_defs(ast_path, contract, unit), arity,
+                             declaration_id)
+    except (OSError, ValueError):
+        return [], ["R2 source atoms unavailable: AST is absent or unreadable"]
+    if target is None:
+        return [], ["R2 source atoms unavailable: target declaration missing"]
+    try:
+        ast = _load_ast(ast_path)
+    except (OSError, ValueError):
+        return [], ["R2 source atoms unavailable: AST is absent or unreadable"]
+    values = set()
+    evidence = []
+
+    def numeric_literal(node):
+        if not isinstance(node, dict) or node.get("nodeType") != "Literal":
+            return None
+        if node.get("subdenomination"):
+            return None
+        value = str(node.get("value") or "")
+        if node.get("kind") == "number" and value.isdigit():
+            return value
+        return None
+
+    def collect(node, origin):
+        if isinstance(node, dict):
+            value = numeric_literal(node)
+            if value is not None:
+                values.add(value)
+                evidence.append(f"R2 integer atom {value} from {origin} at "
+                                f"AST src {node.get('src') or '?'}")
+            for child in node.values():
+                collect(child, origin)
+        elif isinstance(node, list):
+            for child in node:
+                collect(child, origin)
+
+    collect(target.get("body"), f"unit {unit}")
+
+    def constants(node):
+        if isinstance(node, dict):
+            if (node.get("nodeType") == "VariableDeclaration"
+                    and node.get("constant") and node.get("name")):
+                value = numeric_literal(node.get("value"))
+                if value is not None:
+                    values.add(value)
+                    evidence.append(f"R2 integer atom {value} from constant "
+                                    f"{node['name']}")
+            for child in node.values():
+                constants(child)
+        elif isinstance(node, list):
+            for child in node:
+                constants(child)
+
+    by_id, owner = {}, None
+
+    def index_contracts(node):
+        nonlocal owner
+        if isinstance(node, dict):
+            if node.get("nodeType") == "ContractDefinition":
+                if node.get("id") is not None:
+                    by_id[node["id"]] = node
+                if node.get("name") == contract:
+                    owner = node
+            for child in node.values():
+                index_contracts(child)
+        elif isinstance(node, list):
+            for child in node:
+                index_contracts(child)
+
+    index_contracts(ast)
+    if owner is not None:
+        chain = owner.get("linearizedBaseContracts") or [owner.get("id")]
+        for node_id in chain:
+            constants(by_id.get(node_id))
+    return sorted(values, key=lambda value: (int(value), value)), evidence
+
+
+def _r2_direction(ladder_rows, log):
+    verdicts = {}
+    for var, text, verdict in ladder_rows or []:
+        verdicts.setdefault(var, {})[text] = verdict
+    direction = {}
+    for var, rows in sorted(verdicts.items()):
+        ge, le = rows.get("post >= pre"), rows.get("post <= pre")
+        if ge == "HOLDS" and le == "REFUTED":
+            direction[var] = "inc"
+        elif le == "HOLDS" and ge == "REFUTED":
+            direction[var] = "dec"
+        elif ge == "REFUTED" and le == "REFUTED":
+            log(f"[put]   typed R2 delta omitted for {var}: both directions "
+                "occur in the certified region")
+        elif ge != "HOLDS" or le != "HOLDS":
+            log(f"[put]   typed R2 delta omitted for {var}: ordering did not "
+                f"decide (ge={ge}, le={le})")
+    return verdicts, direction
+
+
+def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
+                     var_bytes=None, rendered_coords=None,
+                     term_budget=R2_TERM_BUDGET,
+                     candidate_budget=R2_CANDIDATE_BUDGET, log=print):
+    """Build one typed depth-zero/one candidate batch for one certified path."""
+    if depth not in (0, 1):
+        raise ValueError("the implemented R2 grammar supports depth 0 or 1")
+    if term_budget < 1:
+        raise ValueError("R2 term budget must be positive")
+    if candidate_budget < 1:
+        raise ValueError("R2 candidate budget must be positive")
+    verdicts, direction = _r2_direction(ladder_rows, log)
+    allvars = []
+    for name in sorted(verdicts):
+        rows = verdicts[name]
+        if "post >= pre" not in rows or "post <= pre" not in rows:
+            log(f"[put]   typed R2 omitted for {name}: the R1 ladder emitted "
+                "no ordering pair, so this is not an ordering-capable "
+                "unsigned scalar")
+            continue
+        allvars.append(name)
+    if var_bytes is not None:
+        allvars = [name for name in allvars if name in var_bytes]
+    if not allvars:
+        log("[put]   typed R2 not proposed: no readable ladder candidate")
+        return []
+
+    if rendered_coords is None:
+        rendered_coords = [(name, kind, width)
+                           for name, kind, width in endpoint_candidates(params)]
+    coords = []
+    for name, kind, width in rendered_coords:
+        if name and kind in ("num", "id"):
+            coords.append((name, kind, width,
+                           {"kind": "coord", "name": name}))
+    literals = [{"kind": "literal", "value": str(value)}
+                for value in source_literals if str(value).isdigit()]
+
+    def dedup(terms):
+        out, seen = [], set()
+        for term in terms:
+            text = r2_term_text(term)
+            if text not in seen:
+                seen.add(text)
+                out.append(term)
+        return out
+
+    pre = {"kind": "pre"}
+    numeric_atoms = dedup([pre] + [term for _n, kind, _w, term in coords
+                                   if kind == "num"] + literals)
+    terms = list(numeric_atoms)
+    if depth == 1:
+        for lhs in numeric_atoms:
+            for rhs in numeric_atoms:
+                for op in ("add", "sub", "mul"):
+                    terms.append({"kind": "op", "op": op,
+                                  "lhs": lhs, "rhs": rhs})
+        nonzero_literals = [term for term in literals
+                            if int(term["value"]) != 0]
+        for lhs in numeric_atoms:
+            for rhs in nonzero_literals:
+                terms.append({"kind": "op", "op": "div",
+                              "lhs": lhs, "rhs": rhs})
+    terms = dedup(terms)
+    dropped = max(0, len(terms) - term_budget)
+    terms = terms[:term_budget]
+    if dropped:
+        log(f"[put]   typed R2 term budget kept {len(terms)} and named "
+            f"{dropped} mechanically generated term(s) as NOT ASKED")
+
+    zero = next((term for term in literals if term["value"] == "0"), None)
+    entries = []
+    for var in allvars:
+        width = None if var_bytes is None else var_bytes.get(var)
+        identity = [term for _name, kind, nbytes, term in coords
+                    if kind == "id" and (width is None or nbytes is None
+                                         or width == nbytes)]
+        equals = dedup(identity + [term for term in terms
+                                   if r2_term_text(term) != "pre"])
+        abs_ranges = [{"id": f"a{i}", "lo": term, "hi": term}
+                      for i, term in enumerate(numeric_atoms)
+                      if r2_term_text(term) != "pre"]
+        if zero is not None:
+            type_max = None if width is None else (1 << (8 * width)) - 1
+            abs_ranges += [
+                {"id": f"ac{i}", "lo": zero, "hi": term}
+                for i, term in enumerate(terms)
+                if r2_term_text(term) != "0"]
+            if type_max is not None:
+                abs_ranges = [item for item in abs_ranges
+                              if not (item["lo"] == zero
+                                      and item["hi"].get("kind") == "literal"
+                                      and int(item["hi"]["value"]) == type_max)]
+        deltas = []
+        if var in direction:
+            deltas = [{"id": f"d{i}", "dir": direction[var],
+                       "lo": term, "hi": term}
+                      for i, term in enumerate(terms)]
+            if zero is not None:
+                deltas += [
+                    {"id": f"dc{i}", "dir": direction[var],
+                     "lo": zero, "hi": term}
+                    for i, term in enumerate(terms)
+                    if r2_term_text(term) != "0"]
+        entry = {
+            "name": var,
+            "equals": [{"id": f"e{i}", "term": term}
+                       for i, term in enumerate(equals)],
+            "abs": abs_ranges,
+            "deltas": deltas,
+        }
+        entries.append(entry)
+    requested = sum(len(entry[kind]) for entry in entries
+                    for kind in ("equals", "abs", "deltas"))
+    if requested > candidate_budget:
+        variable_queues = []
+        for vi, entry in enumerate(entries):
+            kind_queues = [(kind, list(entry[kind]))
+                           for kind in ("equals", "abs", "deltas")
+                           if entry[kind]]
+            sequence = []
+            while kind_queues:
+                next_kind_queues = []
+                for kind, queue in kind_queues:
+                    sequence.append((kind, queue.pop(0)))
+                    if queue:
+                        next_kind_queues.append((kind, queue))
+                kind_queues = next_kind_queues
+            variable_queues.append((vi, sequence))
+            for kind in ("equals", "abs", "deltas"):
+                entry[kind] = []
+        kept = 0
+        while variable_queues and kept < candidate_budget:
+            next_variable_queues = []
+            for vi, queue in variable_queues:
+                if kept >= candidate_budget:
+                    next_variable_queues.append((vi, queue))
+                    continue
+                kind, candidate = queue.pop(0)
+                entries[vi][kind].append(candidate)
+                kept += 1
+                if queue:
+                    next_variable_queues.append((vi, queue))
+            variable_queues = next_variable_queues
+        starved = sum(not any(entry[kind]
+                              for kind in ("equals", "abs", "deltas"))
+                      for entry in entries)
+        log(f"[put]   typed R2 candidate budget kept {kept} and named "
+            f"{requested - kept} generated candidate(s) as NOT ASKED")
+        if starved:
+            log(f"[put]   typed R2 candidate budget is smaller than the "
+                f"variable set: {starved} variable(s) received no candidate "
+                "and are explicitly NOT ASKED")
+    entries = [entry for entry in entries
+               if any(entry[kind] for kind in ("equals", "abs", "deltas"))]
+    candidate_count = sum(len(entry[kind]) for entry in entries
+                          for kind in ("equals", "abs", "deltas"))
+    log(f"[put]   typed R2 proposed ONE query with {candidate_count} "
+        f"candidate(s), depth={depth}, over {len(entries)} variable(s)")
+    return [{"param": "batch", "stage": 1, "kind": "typed",
+             "depth": depth, "candidate_count": candidate_count,
+             "vars": entries}]
+
+
+def r2_terms_from_specs(specs):
+    """Canonical term lookup consumed by the Foundry renderer."""
+    out = {}
+    for spec in specs or []:
+        for var in spec.get("vars", []):
+            for item in var.get("equals", []):
+                out[r2_term_text(item["term"])] = item["term"]
+            for key in ("abs", "deltas"):
+                for item in var.get(key, []):
+                    out[r2_term_text(item["lo"])] = item["lo"]
+                    out[r2_term_text(item["hi"])] = item["hi"]
+    return out
+
+
 FORGE_RESULT_RE = re.compile(r"^\s*\[(PASS|FAIL[^\]]*)\]\s+(\w+)\s*\(")
 
 
@@ -996,6 +1309,156 @@ def fuzz_prefilter_verdicts(labels, forge_out):
     return out
 
 
+def forge_json_test_results(forge_out):
+    """Test-name keyed Forge JSON results, or an empty map on malformed data."""
+    try:
+        suites = json.loads(forge_out or "")
+    except (TypeError, ValueError):
+        suites = {}
+    seen = {}
+    if isinstance(suites, dict):
+        for suite in suites.values():
+            if not isinstance(suite, dict):
+                continue
+            for name, result in (suite.get("test_results") or {}).items():
+                if isinstance(result, dict):
+                    seen[name.split("(", 1)[0]] = result
+    return seen
+
+
+def fuzz_prefilter_json_verdicts(labels, forge_out):
+    """Classify Forge JSON without mistaking an unrelated failure for a CE.
+
+    ``labels`` maps each expected test function to its full unique assertion
+    label (random marker plus variable and candidate text).
+    A candidate is refuted only when Forge reports that test as a failure and
+    the failure reason contains that marker.  A pass is still not a proof, and
+    every absent, malformed, or unrelated failure remains NOT-RUN so it cannot
+    remove a verifier candidate.
+    """
+    seen = forge_json_test_results(forge_out)
+    out = {}
+    for name, label in labels.items():
+        result = seen.get(name)
+        if result is None:
+            out[name] = "NOT-RUN"
+        elif result.get("status") == "Success":
+            out[name] = "NOT-REFUTED"
+        elif (result.get("status") == "Failure"
+              and str(result.get("reason") or "").startswith(label + ":")):
+            out[name] = "REFUTED"
+        else:
+            out[name] = "NOT-RUN"
+    return out
+
+
+def r2_candidates(specs):
+    """Flatten specs fairly: one candidate per variable on each global lap."""
+    variable_queues = []
+    for si, spec in enumerate(specs or []):
+        for vi, var in enumerate(spec.get("vars", [])):
+            owner = var["name"]
+            kind_queues = []
+            for kind, prefix in (("equals", "post == "),
+                                 ("abs", "post in ")):
+                queue = []
+                for candidate in var.get(kind, []):
+                    if kind == "equals":
+                        text_ = prefix + r2_term_text(candidate["term"])
+                    else:
+                        text_ = (prefix + "[" + r2_term_text(candidate["lo"])
+                                 + ", " + r2_term_text(candidate["hi"]) + "]")
+                    queue.append({
+                        "key": f"s{si}:v{vi}:{kind}:{candidate['id']}",
+                        "var": owner,
+                        "text": text_,
+                    })
+                if queue:
+                    kind_queues.append(queue)
+            delta_queue = []
+            for candidate in var.get("deltas", []):
+                inc = candidate["dir"] == "inc"
+                text_ = (("post - pre" if inc else "pre - post") + " in ["
+                         + r2_term_text(candidate["lo"]) + ", "
+                         + r2_term_text(candidate["hi"]) + "] with "
+                         + ("post >= pre" if inc else "pre >= post"))
+                delta_queue.append({
+                    "key": f"s{si}:v{vi}:deltas:{candidate['id']}",
+                    "var": owner,
+                    "text": text_,
+                })
+            if delta_queue:
+                kind_queues.append(delta_queue)
+            queue = []
+            while kind_queues:
+                next_kind_queues = []
+                for kind_queue in kind_queues:
+                    queue.append(kind_queue.pop(0))
+                    if kind_queue:
+                        next_kind_queues.append(kind_queue)
+                kind_queues = next_kind_queues
+            if queue:
+                variable_queues.append(queue)
+    out = []
+    while variable_queues:
+        next_variable_queues = []
+        for queue in variable_queues:
+            out.append(queue.pop(0))
+            if queue:
+                next_variable_queues.append(queue)
+        variable_queues = next_variable_queues
+    return out
+
+
+def skipped_forge_r2_evidence(specs, candidate_budget, reason, fuzz_runs):
+    """Complete accounting for a Forge prefilter that issued no process."""
+    candidates = r2_candidates(specs)
+    return {
+        "requested": len(candidates),
+        "selected": min(len(candidates), candidate_budget),
+        "candidate_budget": candidate_budget,
+        "rendered": 0,
+        "ran": 0,
+        "refuted": 0,
+        "not_refuted": 0,
+        "not_run": len(candidates),
+        "timed_out": False,
+        "returncode": None,
+        "fuzz_runs": fuzz_runs,
+        "command": [],
+        "reason": reason,
+        "candidates": [{
+            "key": candidate["key"],
+            "var": candidate["var"],
+            "text": candidate["text"],
+            "verdict": "NOT-RUN",
+            "reason": reason,
+        } for candidate in candidates],
+    }
+
+
+def filter_r2_specs(specs, verdicts):
+    """Return specs without candidates that have a concrete Forge CE."""
+    filtered = json.loads(json.dumps(specs or []))
+    for si, spec in enumerate(filtered):
+        kept = 0
+        for vi, var in enumerate(spec.get("vars", [])):
+            for kind in ("equals", "abs", "deltas"):
+                values = var.get(kind, [])
+                var[kind] = [
+                    candidate for candidate in values
+                    if verdicts.get(
+                        f"s{si}:v{vi}:{kind}:{candidate['id']}") != "REFUTED"
+                ]
+                kept += len(var[kind])
+        spec["candidate_count"] = kept
+        spec["vars"] = [
+            var for var in spec.get("vars", [])
+            if any(var.get(kind) for kind in ("equals", "abs", "deltas"))
+        ]
+    return [spec for spec in filtered if spec.get("vars")]
+
+
 def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
     """Run one extra ladder query per proposed R2 spec; return the NEW rows.
 
@@ -1033,6 +1496,10 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
                     f"`{s['param']}`): stage 1 refuted the exact delta on no "
                     f"variable, so a cap would be asked about nothing")
                 continue
+        if not entries:
+            log(f"[put]   R2 pass {i + 1}/{len(specs)} NOT RUN: every "
+                "candidate in this batch was refuted by Forge")
+            continue
         spec = dict(base_spec)
         spec["vars"] = entries
         path = write_spec(f".r2_{s['param']}_s{stage}", spec)
@@ -1046,8 +1513,9 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
         # though the pass had come back empty. A request whose answer no reader
         # accepts is indistinguishable from a request never sent.
         fresh = [(v, t, d) for v, t, d in rows
-                 if t.startswith(("post in [", "post - pre in [",
-                                  "pre - post in ["))
+                 if (t.startswith(("post in [", "post - pre in [",
+                                   "pre - post in ["))
+                     or (t.startswith("post == ") and t != "post == pre"))
                  and (v, t) not in seen]
         for v, t, d in fresh:
             seen.add((v, t))
@@ -1079,7 +1547,8 @@ def _norm_ty(t):
 SLOT_VAR_BUDGET = 24
 
 
-def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print):
+def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
+                      dependencies=None):
     """The mapping slot names to ASK THE LADDER ABOUT, one key per level.
 
     Lifted out of `main()` because it was inline there, which is precisely why
@@ -1129,7 +1598,19 @@ def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print):
     truncation would silently undo the change.
     """
     out = []
-    for mname in sorted(maps):
+    if dependencies is None:
+        map_names = sorted(maps)
+    else:
+        rank = {name: pos for pos, name in enumerate(dependencies)}
+        map_names = sorted(
+            (name for name, spec in maps.items() if spec[4] in rank),
+            key=lambda name: (rank[maps[name][4]], name))
+        excluded = sorted({spec[4] for spec in maps.values()
+                           if spec[4] not in rank})
+        if excluded:
+            log(f"[put]   mapping candidates excluded by "
+                f"{SLOT_DEPENDENCY_POLICY}: {', '.join(excluded)}")
+    for mname in map_names:
         # A struct-valued mapping contributes one row PER FIELD, so the name
         # the ladder is asked about is `<map>[<param>].<field>` while the row
         # is keyed `<map>.<field>`. A scalar-valued one has member None and the
@@ -1240,6 +1721,12 @@ def antichain(rows, revert_tolerant=False):
     dominated = {}
     for var, texts in holds.items():
         d = set()
+        for text in texts:
+            if text.startswith("post == "):
+                term = text[len("post == "):]
+                exact = f"post in [{term}, {term}]"
+                if exact in texts:
+                    d.add(exact)
         for t in texts:
             for weaker in IMPLIED_BY.get(t, ()):
                 if weaker not in texts:
@@ -1260,7 +1747,29 @@ def antichain(rows, revert_tolerant=False):
     return kept, implied
 
 
-def rung_assertions(text, pre, post, label, idents=None, idents_abs=None):
+def render_r2_term(term, pre, idents):
+    """Render a verifier-certified term into Solidity, or return None."""
+    kind = term.get("kind")
+    if kind == "pre":
+        return pre
+    if kind == "coord":
+        return (idents or {}).get(term.get("name"))
+    if kind == "literal":
+        value = str(term.get("value", ""))
+        return value if value.isdigit() else None
+    if kind == "op":
+        lhs = render_r2_term(term.get("lhs", {}), pre, idents)
+        rhs = render_r2_term(term.get("rhs", {}), pre, idents)
+        op = {"add": "+", "sub": "-", "mul": "*", "div": "/"}.get(
+            term.get("op"))
+        if lhs is None or rhs is None or op is None:
+            return None
+        return f"({lhs} {op} {rhs})"
+    return None
+
+
+def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
+                    r2_terms=None):
     """Forge assertion lines for one rung, or None if it cannot be spelled.
 
     `idents` are the endpoints a DELTA bound may name -- arithmetic
@@ -1273,6 +1782,34 @@ def rung_assertions(text, pre, post, label, idents=None, idents_abs=None):
     if idents_abs is None:
         idents_abs = idents
     lit = json.dumps(label)
+
+    def structured(spelling, coord_table):
+        term = (r2_terms or {}).get(spelling)
+        return None if term is None else render_r2_term(
+            term, pre, coord_table)
+
+    if text.startswith("post == ") and text != "post == pre":
+        expr = structured(text[len("post == "):], idents_abs)
+        if expr is not None:
+            return [f"    assertEq({post}, {expr}, {lit});"]
+    m = re.match(r"^post in \[(.*), (.*)\]$", text)
+    if m:
+        lo = structured(m.group(1), idents_abs)
+        hi = structured(m.group(2), idents_abs)
+        if lo is not None and hi is not None:
+            return [f"    assertGe({post}, {lo}, {lit});",
+                    f"    assertLe({post}, {hi}, {lit});"]
+    m = re.match(r"^(post - pre|pre - post) in \[(.*), (.*)\] with "
+                 r"(post >= pre|pre >= post)$", text)
+    if m:
+        lo = structured(m.group(2), idents)
+        hi = structured(m.group(3), idents)
+        if lo is not None and hi is not None:
+            lhs, rhs = ((post, pre) if m.group(1) == "post - pre"
+                        else (pre, post))
+            return [f"    assertGe({lhs}, {rhs}, {lit});",
+                    f"    assertGe({lhs} - {rhs}, {lo}, {lit});",
+                    f"    assertLe({lhs} - {rhs}, {hi}, {lit});"]
     m = re.match(r"^post (==|!=|>=|<=|>|<) pre$", text)
     if m:
         op = m.group(1)
@@ -1969,7 +2506,7 @@ def _function_defs(ast_path, contract, unit):
     return defs
 
 
-def _select_def(defs, arity):
+def _select_def(defs, arity, declaration_id=None):
     """The one declaration an `arity`-argument call resolves to, or None.
 
     SHARED between the parameter reader and the return-type reader ON PURPOSE.
@@ -1981,6 +2518,10 @@ def _select_def(defs, arity):
     """
     if not defs:
         return None
+    if declaration_id is not None:
+        exact = [declaration for declaration in defs
+                 if declaration.get("id") == declaration_id]
+        return exact[0] if len(exact) == 1 else None
     if len(defs) == 1:
         return defs[-1]
     if arity is not None:
@@ -1993,7 +2534,8 @@ def _select_def(defs, arity):
     return defs[-1]
 
 
-def function_params(ast_path, contract, unit, arity=None):
+def function_params(ast_path, contract, unit, arity=None,
+                    declaration_id=None):
     """[(name, solidity_type)] in SOURCE ORDER for `contract.unit`.
 
     Source order is what makes a positional rewrite of the emitted call legal,
@@ -2005,11 +2547,13 @@ def function_params(ast_path, contract, unit, arity=None):
     `arity` disambiguates overloads: two functions of one name are two units,
     and picking the wrong one would rename arguments across signatures.
     """
-    d = _select_def(_function_defs(ast_path, contract, unit), arity)
+    d = _select_def(_function_defs(ast_path, contract, unit), arity,
+                    declaration_id)
     return None if d is None else _decl_list(d, "parameters")
 
 
-def function_returns(ast_path, contract, unit, arity=None):
+def function_returns(ast_path, contract, unit, arity=None,
+                     declaration_id=None):
     """[(name, solidity_type)] of the DECLARED return parameters, or None.
 
     An empty list is a real answer -- the unit returns nothing -- and is not
@@ -2017,8 +2561,50 @@ def function_returns(ast_path, contract, unit, arity=None):
     The caller must not collapse them: "returns nothing" drops the return
     rungs silently and correctly, "could not read" has to be reported.
     """
-    d = _select_def(_function_defs(ast_path, contract, unit), arity)
+    d = _select_def(_function_defs(ast_path, contract, unit), arity,
+                    declaration_id)
     return None if d is None else _decl_list(d, "returnParameters")
+
+
+def overload_artifact_label(ast_path, contract, unit, declaration_id):
+    """Disambiguate artifacts only when the source name is truly overloaded."""
+    if not ast_path or declaration_id is None:
+        return ""
+    try:
+        declarations = _function_defs(ast_path, contract, unit)
+    except (OSError, ValueError):
+        return ""
+    signatures = {
+        tuple(sol_type for _name, sol_type
+              in _decl_list(declaration, "parameters"))
+        for declaration in declarations
+    }
+    return f"_pf{declaration_id}" if len(signatures) > 1 else ""
+
+
+def select_path_claim(report, unit, enc, path_function=None):
+    """Select one complete-path claim, refusing ambiguous legacy identities."""
+    claims = [claim for claim in report.get("claims", [])
+              if str(claim.get("path_id")) == str(enc)]
+    if path_function:
+        claims = [claim for claim in claims
+                  if claim.get("path_function") == path_function]
+    else:
+        claims = [claim for claim in claims
+                  if ((claim.get("condition") or "").split(":", 1)[0]
+                      == unit)]
+    if not claims:
+        identity = path_function or unit
+        return None, f"no report claim matches {identity} enc={enc}"
+    path_functions = {claim.get("path_function") for claim in claims}
+    if len(path_functions) != 1 or None in path_functions:
+        return None, (f"enc={enc} under simple unit {unit!r} matches "
+                      f"multiple path functions: "
+                      f"{', '.join(sorted(str(p) for p in path_functions))}")
+    if len(claims) != 1:
+        return None, (f"{next(iter(path_functions))} enc={enc} appears "
+                      f"{len(claims)} times in the report")
+    return claims[0], None
 
 
 # `bound()` on a coordinate needs a type this script can cast in both
@@ -2916,7 +3502,8 @@ def rollback_exit_paths(log):
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
               unwind=None, rettypes=None, maps=None, piece_label="",
-              derived_by=None, rollback_exit=False):
+              derived_by=None, rollback_exit=False, r2_terms=None,
+              oracle_label_prefix=""):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -3005,6 +3592,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 rendered_width["msg.sender"] = (_shi - _slo + 1) - len(
                     {h for h in holes.get("msg.sender", ())
                      if _slo <= h <= _shi})
+            coord_ident_abs["msg.sender"] = (
+                f"uint256(uint160({env_sender_expr}))")
 
     (body, call_i, value_est, value_sig, value_pre,
      value_note) = establish_env_value(
@@ -3625,8 +4214,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             # GUARDED, not dropped. See the block comment at `okvar`.
             _chg = call_is_revert_tolerant and rung_asserts_a_change(text)
             a = rung_assertions(text, f"_pre_{ident}", f"_post_{ident}",
-                                f"{var}: {text}", coord_ident,
-                                coord_ident_abs)
+                                oracle_label_prefix + f"{var}: {text}",
+                                coord_ident,
+                                coord_ident_abs, r2_terms)
             if a is None:
                 oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
                 continue
@@ -3652,8 +4242,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         # GUARDED, not dropped. See the block comment at `okvar`.
         _chg = call_is_revert_tolerant and rung_asserts_a_change(text)
         a = rung_assertions(text, f"_pre_{var.lstrip('_')}",
-                            f"_post_{var.lstrip('_')}", f"{var}: {text}",
-                            coord_ident, coord_ident_abs)
+                            f"_post_{var.lstrip('_')}",
+                            oracle_label_prefix + f"{var}: {text}",
+                            coord_ident, coord_ident_abs, r2_terms)
         if a is None:
             oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
             continue
@@ -4112,6 +4703,170 @@ def exit_kind_asserted(body_lines):
     return "[asserted]" in txt or "vm.expectRevert()" in txt
 
 
+def assemble_put_source(emitted, case, puts, new_contract):
+    """Insert PUT functions into the emitter's contract and rename safely."""
+    cname, _cstart, cend = emitted.blocks[case[0]]
+    lines = list(emitted.lines)
+    inserted = []
+    for put in puts:
+        inserted += put
+    lines[cend:cend] = inserted
+    source = "\n".join(lines) + "\n"
+    source = source.replace(
+        f"contract {cname} is Test", f"contract {new_contract} is Test")
+    source = re.sub(r'from "\./', 'from "../src/', source)
+    # Longest first because IERC20 is a prefix of IERC20Metadata.
+    for mock in sorted(set(re.findall(r"ESBMCMock_(\w+)", source)),
+                       key=len, reverse=True):
+        source = re.sub(
+            r"ESBMCMock_" + re.escape(mock) + r"\b",
+            f"ESBMCMock_{mock}_{new_contract}", source)
+    return source
+
+
+def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
+                           enc, depth_, path_function, region, holes, pins,
+                           params, layout, maps, specs, r2_terms, cell,
+                           derived_by, timeout, fuzz_runs, candidate_budget,
+                           log=print):
+    """Refute R2 candidates with one Forge run; never produce proof verdicts."""
+    candidates = r2_candidates(specs)
+    verdicts = {candidate["key"]: "NOT-RUN" for candidate in candidates}
+    evidence = {
+        candidate["key"]: {
+            "key": candidate["key"], "var": candidate["var"],
+            "text": candidate["text"], "verdict": "NOT-RUN",
+            "reason": "candidate probe was not renderable",
+        }
+        for candidate in candidates
+    }
+    if not candidates:
+        return verdicts, skipped_forge_r2_evidence(
+            specs, candidate_budget, "no R2 candidate was proposed", fuzz_runs)
+
+    puts = []
+    labels = {}
+    keys_by_test = {}
+    selected = candidates[:candidate_budget]
+    marker_namespace = secrets.token_hex(16)
+    for candidate in candidates[candidate_budget:]:
+        evidence[candidate["key"]]["reason"] = (
+            f"outside the {candidate_budget}-candidate Forge budget; retained "
+            "for ESBMC")
+    for index, candidate in enumerate(selected):
+        marker = f"VERIPUT_CANDIDATE_{marker_namespace}_{index}"
+        piece = f"fz{index}"
+        probe, stats = build_put(
+            contract, unit, enc, depth_, path_function, region, holes, pins,
+            params, emitted, case, layout,
+            [(candidate["var"], candidate["text"], "HOLDS")], [],
+            cell=cell, rettypes=None, maps=maps, piece_label=piece,
+            derived_by=derived_by, rollback_exit=False, r2_terms=r2_terms,
+            oracle_label_prefix=marker + " ")
+        if probe is None or not stats or stats.get("state_asserts", 0) == 0:
+            continue
+        if marker not in "\n".join(probe):
+            continue
+        test = f"test_put_{contract}_{unit}_path{enc}{piece}"
+        puts.append(probe)
+        labels[test] = f"{marker} {candidate['var']}: {candidate['text']}"
+        keys_by_test[test] = candidate["key"]
+        evidence[candidate["key"]].update({
+            "test": test, "marker": marker,
+            "reason": "expected Forge test was absent",
+        })
+
+    if not puts:
+        skipped = skipped_forge_r2_evidence(
+            specs, candidate_budget,
+            "no candidate could be rendered as a labeled probe", fuzz_runs)
+        skipped["candidates"] = [evidence[candidate["key"]]
+                                 for candidate in candidates]
+        return verdicts, skipped
+
+    base_contract = emitted.blocks[case[0]][0]
+    probe_contract = f"{base_contract}_{contract}_{unit}_put{enc}_FuzzR2"
+    source = assemble_put_source(emitted, case, puts, probe_contract)
+    artifact = os.path.join(workdir, "fuzz-r2-prefilter.t.sol")
+    with open(artifact, "w") as stream:
+        stream.write(source)
+    dest = os.path.join(
+        project, "test",
+        f"{probe_contract}_{os.getpid()}_{time.time_ns()}.t.sol")
+    with open(dest, "w") as stream:
+        stream.write(source)
+
+    match_test = f"^test_put_{re.escape(contract)}_{re.escape(unit)}_path{enc}fz"
+    command = [
+        "forge", "test", "--json", "--match-contract",
+        f"^{re.escape(probe_contract)}$", "--match-test", match_test,
+        "--fuzz-runs", str(fuzz_runs),
+    ]
+    stdout, stderr, timed_out, returncode = "", "", False, None
+    try:
+        proc = subprocess.Popen(
+            command, cwd=project, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            stdout, stderr = proc.communicate()
+        returncode = proc.returncode
+    except OSError as exc:
+        stderr = str(exc)
+    finally:
+        try:
+            os.unlink(dest)
+        except FileNotFoundError:
+            pass
+
+    with open(os.path.join(workdir, "fuzz-r2-prefilter.json"), "w") as stream:
+        stream.write(stdout)
+    with open(os.path.join(workdir, "fuzz-r2-prefilter.stderr"), "w") as stream:
+        stream.write(stderr)
+
+    raw_results = forge_json_test_results(stdout)
+    classified = ({} if timed_out else
+                  fuzz_prefilter_json_verdicts(labels, stdout))
+    for test, verdict in classified.items():
+        key = keys_by_test[test]
+        verdicts[key] = verdict
+        result = raw_results.get(test)
+        if result is None:
+            reason = "expected Forge test was absent"
+        elif verdict == "NOT-REFUTED":
+            reason = "Forge reported Success; this is not proof"
+        else:
+            reason = str(result.get("reason") or result.get("status") or "")
+        evidence[key].update({"verdict": verdict, "reason": reason})
+    if timed_out:
+        for test, key in keys_by_test.items():
+            evidence[key]["reason"] = (
+                f"Forge timed out after {timeout}s before a candidate verdict")
+    refuted = sum(verdict == "REFUTED" for verdict in verdicts.values())
+    not_run = sum(verdict == "NOT-RUN" for verdict in verdicts.values())
+    executed = len(verdicts) - not_run
+    log(f"[put]   Forge R2 prefilter: {len(candidates)} candidate(s), "
+        f"{len(labels)} rendered, {refuted} REFUTED by a labeled concrete "
+        f"failure, {not_run} NOT-RUN; passes prove nothing")
+    return verdicts, {
+        "requested": len(candidates), "selected": len(selected),
+        "candidate_budget": candidate_budget, "rendered": len(labels),
+        "ran": executed,
+        "refuted": refuted, "not_run": not_run,
+        "not_refuted": sum(v == "NOT-REFUTED" for v in verdicts.values()),
+        "timed_out": timed_out, "returncode": returncode,
+        "fuzz_runs": fuzz_runs, "command": command,
+        "candidates": [evidence[candidate["key"]]
+                       for candidate in candidates],
+    }
+
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -4155,6 +4910,11 @@ def main():
     ap.add_argument("--ast", default=None)
     ap.add_argument("--contract", required=True)
     ap.add_argument("--unit", required=True)
+    ap.add_argument("--path-function", default=None,
+                    help="exact mangled path_function certified by stage 2. "
+                         "Legacy callers may omit it only when unit+enc "
+                         "selects one unique path function in the fresh "
+                         "emission report")
     ap.add_argument("--enc", type=int, required=True)
     ap.add_argument("--depth", type=int, default=None,
                     help="the path's decision depth. Omit to read it from the "
@@ -4196,19 +4956,30 @@ def main():
                          "unsplit region -- every existing name is then "
                          "reproduced byte for byte.")
     ap.add_argument("--propose-r2", action="store_true",
-                    help="after the ladder's first pass, ASK for the R2 delta "
-                         "bound its ordering rungs made answerable: `post - "
-                         "pre in [p, p]` for each integer parameter p, i.e. "
-                         "'the state changed by exactly the amount passed in'. "
-                         "R2 exists in the tool and has never been requested "
-                         "by this pipeline -- the spec carried variable NAMES "
-                         "only. ⚠ COSTS ONE EXTRA esbmc RUN PER INTEGER "
-                         "PARAMETER, which is why it is opt-in: a flag that "
-                         "silently multiplies a serial sweep's run count is "
-                         "not a feature. `delta_dir` is never guessed; it is "
-                         "read from the ge/le verdicts already measured, and "
-                         "a variable whose region holds both an increasing "
-                         "and a decreasing execution is skipped and said so.")
+                    help="after the first ladder pass, issue ONE additional "
+                         "ESBMC query containing typed R2 terms")
+    ap.add_argument("--r2-depth", type=int, choices=(0, 1), default=1,
+                    help="structured R2 expression depth")
+    ap.add_argument("--r2-term-budget", type=int, default=R2_TERM_BUDGET,
+                    help="per-variable term prefix kept in the R2 query")
+    ap.add_argument("--r2-candidate-budget", type=int,
+                    default=R2_CANDIDATE_BUDGET,
+                    help="global typed R2 solver-claim cap across all state "
+                         "variables; the omitted suffix is NOT ASKED")
+    ap.add_argument("--fuzz-r2-prefilter", action="store_true",
+                    dest="fuzz_r2_prefilter",
+                    help="before the typed R2 ESBMC batch, run one Foundry "
+                         "suite with one labeled test per candidate and drop "
+                         "only candidates with a matching assertion failure; "
+                         "passes never prove a candidate")
+    ap.add_argument("--fuzz-runs", type=int, default=256,
+                    help="Foundry draws per candidate in --fuzz-r2-prefilter")
+    ap.add_argument("--fuzz-r2-candidate-budget", type=int, default=128,
+                    help="prefix of typed candidates rendered into the one "
+                         "Forge suite; the remainder still goes to ESBMC")
+    ap.add_argument("--fuzz-r2-prefilter-timeout", type=int, default=300,
+                    dest="fuzz_r2_prefilter_timeout",
+                    help="hard timeout in seconds for the single R2 Forge run")
     ap.add_argument("--derived-by", default="{}", metavar="JSON",
                     help="the stage-2 switches this region was derived under, "
                          "as a JSON object, printed on the emitted test. The "
@@ -4254,6 +5025,17 @@ def main():
     refusal = check_esbmc_args(a.esbmc_arg)
     if refusal:
         print(f"[put] REFUSED: {refusal}")
+        return 1
+    if (a.r2_term_budget <= 0 or a.r2_candidate_budget <= 0
+            or a.fuzz_runs <= 0 or a.fuzz_r2_prefilter_timeout <= 0
+            or a.fuzz_r2_candidate_budget <= 0):
+        print("[put] REFUSED: R2 term/candidate budgets, --fuzz-runs, "
+              "--fuzz-r2-candidate-budget and "
+              "--fuzz-r2-prefilter-timeout must all be positive")
+        return 1
+    if a.fuzz_r2_prefilter and not a.propose_r2:
+        print("[put] REFUSED: --fuzz-r2-prefilter needs --propose-r2; there "
+              "are otherwise no typed candidates to filter")
         return 1
 
     region = {k: (int(str(v[0])), int(str(v[1])))
@@ -4345,25 +5127,24 @@ def main():
     # from this run's own report so the match cannot be against another run's
     # numbering.
     rep = json.load(open(os.path.join(emit_dir, "cov-report.json")))
-    pf = None
-    for c in rep.get("claims", []):
-        cond = c.get("condition") or ""
-        if (cond.split(":", 1)[0] if ":" in cond else "") != a.unit:
-            continue
-        if str(c.get("path_id")) == str(a.enc):
-            pf = c.get("path_function")
-            rd = c.get("path_depth")
-            if a.depth is None:
-                a.depth = int(rd)
-                print(f"[put]   depth read from this run's own report: "
-                      f"{a.depth}")
-            elif str(rd) != str(a.depth):
-                notes.append(f"depth mismatch: report says {rd}, spec says "
-                             f"{a.depth}")
-    if pf is None:
-        print(f"[put] REFUSED: this run's report holds no claim for "
-              f"{a.unit} enc={a.enc}, so the concrete case cannot be "
-              f"identified. Nothing was lifted")
+    claim, claim_error = select_path_claim(
+        rep, a.unit, a.enc, path_function=a.path_function)
+    if claim is None:
+        print(f"[put] REFUSED: {claim_error}, so the concrete case cannot be "
+              "identified. Nothing was lifted")
+        return 1
+    pf = claim.get("path_function")
+    rd = claim.get("path_depth")
+    if a.depth is None:
+        a.depth = int(rd)
+        print(f"[put]   depth read from this run's own report: {a.depth}")
+    elif str(rd) != str(a.depth):
+        notes.append(f"depth mismatch: report says {rd}, spec says {a.depth}")
+    declaration_id = path_function_declaration_id(pf)
+    if declaration_id is None:
+        print(f"[put] REFUSED: malformed path_function {pf!r}; expected a "
+              "trailing #<solc-node-id>. Declaration facts cannot be selected "
+              "without guessing")
         return 1
     case = emitted.case_for(pf, a.enc)
     if case is None:
@@ -4396,7 +5177,7 @@ def main():
 
     # Both come from _select_def with the SAME arity, so an overload cannot be
     # resolved one way for the arguments and another way for the return value.
-    params, rettypes = None, None
+    params, rettypes, arity = None, None, None
     if a.ast:
         _n, args0 = rewrite_call_args(
             emitted.lines[case[3][0] + 1:case[3][1]][
@@ -4404,8 +5185,10 @@ def main():
                                a.unit) or 0],
             a.unit, {})
         arity = len(args0) if args0 is not None else None
-        params = function_params(a.ast, a.contract, a.unit, arity)
-        rettypes = function_returns(a.ast, a.contract, a.unit, arity)
+        params = function_params(a.ast, a.contract, a.unit, arity,
+                                 declaration_id)
+        rettypes = function_returns(a.ast, a.contract, a.unit, arity,
+                                    declaration_id)
     if params is None:
         print("[put] WARNING: declared parameters unavailable (no --ast, or "
               "the name did not resolve); no argument can be lifted")
@@ -4431,26 +5214,43 @@ def main():
     # candidates, never correctness.
 
     slot_vars = []
-    slot_vars += propose_slot_vars(maps, params)
+    slot_dependencies, slot_dependency_evidence = unit_state_dependencies(
+        a.ast, a.contract, a.unit, arity=arity,
+        declaration_id=declaration_id)
+    if slot_dependencies is None:
+        print("[put]   mapping dependency closure unavailable; failing closed "
+              "with no proposed mapping slot: "
+              + "; ".join(slot_dependency_evidence))
+    else:
+        for evidence in slot_dependency_evidence:
+            print(f"[put]   {evidence}")
+        slot_vars += propose_slot_vars(
+            maps, params, dependencies=slot_dependencies)
+    scalar_vars = [name for name in (slot_dependencies or ())
+                   if name in (layout or {})]
+    oracle_vars = scalar_vars + slot_vars
+    if oracle_vars:
+        print(f"[put]   dependency-selected assertion candidates: "
+              f"{', '.join(oracle_vars)}")
     if slot_vars:
         print(f"[put]   mapping slots proposed to the ladder: "
               f"{', '.join(slot_vars)}")
 
     # ---- 2b. the assertion ladder -----------------------------------------
     print("[put] step 2b: post-state assertion ladder over the certified region")
-    spec = {"unit": a.unit, "enc": a.enc, "depth": a.depth,
+    spec = {"unit": pf, "enc": a.enc, "depth": a.depth,
             "region": [{"name": n, "lo": str(lo), "hi": str(hi)}
                        | ({"holes": [str(h) for h in holes[n]]}
                           if holes.get(n) else {})
                        for n, (lo, hi) in region.items()]
                       + [{"name": n, "lo": str(v), "hi": str(v)}
                          for n, v in pins.items()]}
-    # ⛔ ONLY when a slot is proposed. `vars` is a whitelist over the contract
-    # object's COMPONENTS, and writing an empty-but-present list is refused by
-    # the tool by name (N1) -- correctly, since it would emit no candidate and
-    # print VERIFICATION SUCCESSFUL for a ladder it never built.
-    if slot_vars:
-        spec["vars"] = [{"name": s} for s in slot_vars]
+    # Exact means exact even when the closure is empty or names only mappings.
+    # Omitting vars requests the legacy all-state scan, which would turn "this
+    # unit has no state dependency" into unrelated frame conditions. Return
+    # rungs remain independently enabled by the verifier under this policy.
+    spec["vars_policy"] = "state-exact"
+    spec["vars"] = [{"name": name} for name in oracle_vars]
     with open(os.path.join(assert_dir, "spec.json"), "w") as f:
         json.dump(spec, f)
     out2, rc2, w2 = run_esbmc(
@@ -4563,6 +5363,8 @@ def main():
     # sweep is not a feature. The direction comes from the ordering rungs
     # `rows` already carries, so this cannot run before the first pass and
     # never guesses `delta_dir`.
+    r2_term_lookup = {}
+    r2_fuzz_prefilter = {"enabled": bool(a.fuzz_r2_prefilter)}
     if a.propose_r2:
         # ---- THE CANDIDATE WIDTH TABLE, FROM solc's OWN LAYOUT --------------
         #
@@ -4581,9 +5383,55 @@ def main():
             _mk = _mn + _tail
             if maps and _mk in maps:
                 _var_bytes[_v] = maps[_mk][2]
-        _r2 = propose_r2_specs(rows, params, log=print,
-                               var_bytes=_var_bytes)
+        _source_literals, _source_evidence = source_r2_literals(
+            a.ast, a.contract, a.unit, arity=len(params or []),
+            declaration_id=declaration_id)
+        for _evidence in _source_evidence:
+            print(f"[put]   {_evidence}")
+        _rendered_coords = []
+        for _pn, _pt in params or []:
+            if _pn not in region:
+                continue
+            _kind = lift_kind(_pt)
+            if _kind is None:
+                continue
+            _rendered_coords.append(
+                (_pn, "id" if _kind[0] == "address" else "num",
+                 20 if _kind[0] == "address" else None))
+        if "msg.sender" in region:
+            _rendered_coords.append(("msg.sender", "id", 20))
+        if "msg.value" in region:
+            _rendered_coords.append(("msg.value", "num", None))
+        _r2 = propose_r2_batch(
+            rows, params, source_literals=_source_literals,
+            depth=a.r2_depth, var_bytes=_var_bytes,
+            rendered_coords=_rendered_coords,
+            term_budget=a.r2_term_budget,
+            candidate_budget=a.r2_candidate_budget, log=print)
+        r2_term_lookup = r2_terms_from_specs(_r2)
         r2_requested = True
+
+        if a.fuzz_r2_prefilter:
+            if rollback_here:
+                r2_fuzz_prefilter.update(skipped_forge_r2_evidence(
+                    _r2, a.fuzz_r2_candidate_budget,
+                    "rollback path has no observable R2 post-state",
+                    a.fuzz_runs))
+                print("[put]   Forge R2 prefilter NOT RUN: this path rolls "
+                      "back, so its layer-2/3 post-state is unobservable")
+            else:
+                _fuzz_verdicts, r2_fuzz_prefilter = run_forge_r2_prefilter(
+                    a.forge_project, a.workdir, emitted, case, a.contract,
+                    a.unit, a.enc, a.depth, pf, region, holes, pins, params,
+                    layout, maps, _r2, r2_term_lookup,
+                    (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
+                    a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
+                    a.fuzz_r2_candidate_budget)
+                r2_fuzz_prefilter["enabled"] = True
+                _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
+                survivors = len(r2_candidates(_r2))
+                print(f"[put]   Forge R2 survivors sent to ESBMC: "
+                      f"{survivors}; a Forge pass was NOT counted as proof")
 
         def _write_r2(suffix, spec_dict):
             p = os.path.join(assert_dir, "spec" + suffix + ".json")
@@ -4715,7 +5563,9 @@ def main():
     # name and put.json's `test` field. Three call sites deriving it separately
     # is how the emitted function and the name the B gate looks up come to
     # disagree -- and a lookup that cannot match is a gate that never fires.
-    plabel = f"p{a.piece}" if a.piece else ""
+    overload_label = overload_artifact_label(
+        a.ast, a.contract, a.unit, declaration_id)
+    plabel = overload_label + (f"p{a.piece}" if a.piece else "")
     put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
                            region, holes, pins, params, emitted, case,
                            layout, rows, notes,
@@ -4723,33 +5573,17 @@ def main():
                            unwind=unwind_applied, rettypes=rettypes,
                            maps=maps, piece_label=plabel,
                            derived_by=json.loads(a.derived_by or "{}"),
-                           rollback_exit=rollback_here)
+                           rollback_exit=rollback_here,
+                           r2_terms=r2_term_lookup)
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
 
     # Insert into the SAME test contract, so the PUT shares the deploy the
     # concrete tests use rather than carrying a second copy of it.
-    cname, cstart, cend = emitted.blocks[case[0]]
-    lines = list(emitted.lines)
-    lines[cend:cend] = put
-    txt = "\n".join(lines) + "\n"
+    cname, _cstart, _cend = emitted.blocks[case[0]]
     newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{plabel}{a.test_suffix}"
-    txt = txt.replace(f"contract {cname} is Test", f"contract {newc} is Test")
-    txt = re.sub(r'from "\./', 'from "../src/', txt)
-    # Mocks are file-level contracts; two PUT files in one project would
-    # redeclare them, so every `ESBMCMock_*` is suffixed per file.
-    #
-    # LONGEST NAME FIRST. `ESBMCMock_IERC20` is a strict prefix of
-    # `ESBMCMock_IERC20Metadata`, so renaming the short one first rewrites the
-    # long one's prefix and yields `ESBMCMock_IERC20_<suffix>Metadata` -- which
-    # happens to compile, because the rewrite is uniform, and is exactly the
-    # kind of name nobody can read back to its interface. MEASURED on farming,
-    # which declares both.
-    for m in sorted(set(re.findall(r"ESBMCMock_(\w+)", txt)),
-                    key=len, reverse=True):
-        txt = re.sub(r"ESBMCMock_" + re.escape(m) + r"\b",
-                     f"ESBMCMock_{m}_{newc}", txt)
+    txt = assemble_put_source(emitted, case, [put], newc)
     dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
     with open(dest, "w") as f:
         f.write(txt)
@@ -4775,6 +5609,7 @@ def main():
     with open(os.path.join(a.workdir, "put.json"), "w") as f:
         json.dump({"contract": a.contract, "unit": a.unit, "enc": a.enc,
                    "depth": a.depth, "path_function": pf,
+                   "artifact_identity": overload_label,
                    "file": dest,
                    # The SAME `plabel` build_put used. A second derivation here
                    # is how put.json comes to name a function the file does not
@@ -4797,6 +5632,15 @@ def main():
                    # a missing command-line flag into a conclusion about the
                    # method.
                    "r2_requested": r2_requested,
+                   "r2_depth": a.r2_depth if r2_requested else None,
+                   "r2_term_budget": (a.r2_term_budget
+                                      if r2_requested else None),
+                   "r2_candidate_budget": (a.r2_candidate_budget
+                                            if r2_requested else None),
+                   "r2_fuzz_prefilter": r2_fuzz_prefilter,
+                   "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
+                   "oracle_dependency_state": list(slot_dependencies or ()),
+                   "oracle_vars": list(oracle_vars),
                    # ⛔ ASKED, AND ANSWERED, AS TWO NUMBERS. A ladder that was
                    # asked about 48 slots and answered about none produces the
                    # same `ladder` array as a unit with no slot to ask about.

@@ -51,6 +51,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ESBMC_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+sys.path.insert(0, os.path.join(ESBMC_ROOT, "scripts"))
+from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
 # ---- THE INPUTS DIRECTORY IS THE POC'S, NOT A SHARED CORPUS ----
 #
 # `notes/coverage/inputs/` has been DELETED. It was the benchmark: this file
@@ -547,6 +549,22 @@ def parse_driver(out):
                 not in line:
             rec["certified"][m.group(1)] = m.group(2)
     return rec
+
+
+def result_path_function(workdir):
+    """Read the exact unit identity written by the stage-2 driver."""
+    try:
+        with open(os.path.join(workdir, "generalise-result.json")) as stream:
+            value = json.load(stream).get("path_function")
+        return value if isinstance(value, str) and value else None
+    except (OSError, ValueError):
+        return None
+
+
+def certification_key(owner, unit, row_path_function, requested_path_function):
+    """Resume identity; explicit overloads are independent measurements."""
+    return (owner, unit,
+            row_path_function if requested_path_function else None)
 
 
 def bucket(rec, rc, out):
@@ -1165,6 +1183,10 @@ def main():
                          "the whole benchmark is swept, which for a re-measure of "
                          "ONE unit means paying for every other unit first and "
                          "risking the budget before reaching it.")
+    ap.add_argument("--path-function", default=None,
+                    help="exact mangled identity for an overloaded --unit. "
+                         "Passed through to the generalisation driver; the "
+                         "result row records the resolved identity.")
     ap.add_argument("--redo", action="store_true")
     ap.add_argument("--workdir", default="/tmp/certify_all",
                     help="scratch root. The ARM's own subdirectory is added "
@@ -1319,7 +1341,9 @@ def main():
                     r = json.loads(line)
                 except ValueError:
                     continue
-                done.add((r.get("benchmark"), r.get("unit")))
+                done.add(certification_key(
+                    r.get("benchmark"), r.get("unit"),
+                    r.get("path_function"), args.path_function))
                 if r.get("binary") != ident:
                     stale.append((r.get("benchmark"), r.get("unit"),
                                   r.get("binary")))
@@ -1405,16 +1429,20 @@ def main():
                   f"expected to be killed here too: "
                   f"{', '.join(killed_in_roundtrip)}")
 
+        requested_pf = args.path_function if args.path_function else None
         todo = [(i, u) for i, u in enumerate(units, 1)
-                if (bench, u) not in done]
+                if certification_key(bench, u, requested_pf,
+                                     args.path_function) not in done]
         for i, unit in enumerate(units, 1):
-            if (bench, unit) in done:
+            if certification_key(bench, unit, requested_pf,
+                                 args.path_function) in done:
                 print(f"  [{i}/{len(units)}] {unit} — already recorded",
                       flush=True)
 
         def run_unit(item):
             i, unit = item
-            uwd = os.path.join(wd, unit)
+            uwd = os.path.join(
+                wd, unit + path_function_artifact_suffix(args.path_function))
             os.makedirs(uwd, exist_ok=True)
             # `-u`: UNBUFFERED. The driver's stdout is a PIPE, so Python block-
             # buffers it and a KILLED run loses whatever is still in the buffer.
@@ -1478,6 +1506,8 @@ def main():
                    "--max-region-pieces", str(args.max_region_pieces)]
             if args.level0:
                 cmd.append("--level0")
+            if args.path_function:
+                cmd += ["--path-function", args.path_function]
             if args.level0_perturb:
                 cmd.append("--level0-perturb")
             # PASSED ONLY WHEN ASKED FOR, unlike --max-holes below. The driver's
@@ -1578,6 +1608,7 @@ def main():
             wall = time.time() - t1
             rec = parse_driver(out)
             rec.update({"benchmark": bench, "unit": unit,
+                        "path_function": result_path_function(uwd),
                         "bucket": bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
                         "memlimit_gib": memlimit, "jobs": args.jobs,

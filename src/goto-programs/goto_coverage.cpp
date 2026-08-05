@@ -4317,18 +4317,36 @@ void goto_coveraget::solidity_path_coverage()
   // {"unit": ..., "enc": N, "depth": D,
   //  "region": [{"name","lo","hi","holes"?}, ...],
   //  "vars":   [{"name","abs_lo"?,"abs_hi"?,
-  //              "delta_dir"?,"delta_lo"?,"delta_hi"?}, ...]}
+  //              "delta_dir"?,"delta_lo"?,"delta_hi"?,
+  //              "equals"?: [{"id","term"}],
+  //              "abs"?: [{"id","lo","hi"}],
+  //              "deltas"?: [{"id","dir","lo","hi"}]}, ...]}
   //
   // `region` is byte for byte the shape certify parses under "box" and goes
   // through the SAME parser. `vars` is optional; omitting it emits the equality
   // and sign rungs for every eligible state variable, which is the default.
   struct assert_vart
   {
+    struct termt
+    {
+      std::string id;
+      nlohmann::json term;
+    };
+    struct ranget
+    {
+      std::string id;
+      std::string dir;
+      nlohmann::json lo;
+      nlohmann::json hi;
+    };
     std::string name;
     bool has_abs = false;
     std::string abs_lo, abs_hi;
     bool has_delta = false;
     std::string delta_dir, delta_lo, delta_hi;
+    std::vector<termt> equals;
+    std::vector<ranget> abs;
+    std::vector<ranget> deltas;
   };
   bool assert_on = false;
   // Route 5, mirrored from certify: a spec matching NO unit emits no assume and
@@ -4342,6 +4360,10 @@ void goto_coveraget::solidity_path_coverage()
   // "vars was written down" is NOT "vars named something". Two entry conditions
   // into one symptom (an empty ladder); they need two messages.
   bool assert_vars_present = false;
+  // New drivers use an exact STATE whitelist. Unlike legacy `vars`, this also
+  // treats an empty or slot-only list as a whitelist and leaves return-value
+  // rungs enabled independently.
+  bool assert_vars_state_exact = false;
   path_cov_assert_mode = false;
   path_cov_assert_candidates.clear();
   if (!path_cov_assert_path.empty())
@@ -4361,6 +4383,17 @@ void goto_coveraget::solidity_path_coverage()
       assert_depth = j.at("depth").get<uint64_t>();
       parse_bounds(j, "region", assert_region);
       assert_vars_present = j.contains("vars");
+      if (j.contains("vars_policy"))
+      {
+        const std::string policy = j.at("vars_policy").get<std::string>();
+        if (policy != "state-exact")
+          throw std::runtime_error(
+            "vars_policy must be \"state-exact\" when present");
+        if (!assert_vars_present)
+          throw std::runtime_error(
+            "vars_policy \"state-exact\" requires an explicit vars array");
+        assert_vars_state_exact = true;
+      }
       for (const auto &v : j.value("vars", nlohmann::json::array()))
       {
         assert_vart av;
@@ -4391,6 +4424,54 @@ void goto_coveraget::solidity_path_coverage()
               "': delta_dir must be \"inc\" or \"dec\"");
           av.has_delta = true;
         }
+        auto valid_candidate_id = [](const std::string &id) {
+          if (id.empty())
+            return false;
+          for (char c : id)
+            if (
+              (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') &&
+              (c < '0' || c > '9') && c != '_')
+              return false;
+          return true;
+        };
+        for (const auto &candidate : v.value("equals", nlohmann::json::array()))
+        {
+          assert_vart::termt term;
+          term.id = candidate.at("id").get<std::string>();
+          if (!valid_candidate_id(term.id))
+            throw std::runtime_error(
+              "variable '" + av.name + "': invalid equals candidate id '" +
+              term.id + "'");
+          term.term = candidate.at("term");
+          av.equals.push_back(std::move(term));
+        }
+        auto parse_ranges = [&](
+                              const char *key,
+                              std::vector<assert_vart::ranget> &out,
+                              bool directed) {
+          for (const auto &candidate : v.value(key, nlohmann::json::array()))
+          {
+            assert_vart::ranget range;
+            range.id = candidate.at("id").get<std::string>();
+            if (!valid_candidate_id(range.id))
+              throw std::runtime_error(
+                "variable '" + av.name + "': invalid " + key +
+                " candidate id '" + range.id + "'");
+            range.lo = candidate.at("lo");
+            range.hi = candidate.at("hi");
+            if (directed)
+            {
+              range.dir = candidate.at("dir").get<std::string>();
+              if (range.dir != "inc" && range.dir != "dec")
+                throw std::runtime_error(
+                  "variable '" + av.name + "': " + key +
+                  " direction must be \"inc\" or \"dec\"");
+            }
+            out.push_back(std::move(range));
+          }
+        };
+        parse_ranges("abs", av.abs, false);
+        parse_ranges("deltas", av.deltas, true);
         assert_vars.push_back(av);
       }
     }
@@ -4404,7 +4485,11 @@ void goto_coveraget::solidity_path_coverage()
         "{{\"unit\":..., \"enc\":N, \"depth\":D, "
         "\"region\":[{{\"name\":...,\"lo\":\"..\",\"hi\":\"..\"}}], "
         "\"vars\":[{{\"name\":...,\"abs_lo\":\"..\",\"abs_hi\":\"..\","
-        "\"delta_dir\":\"inc|dec\",\"delta_lo\":\"..\",\"delta_hi\":\"..\"}}]}"
+        "\"delta_dir\":\"inc|dec\",\"delta_lo\":\"..\",\"delta_hi\":\"..\","
+        "\"equals\":[{{\"id\":...,\"term\":...}}],"
+        "\"abs\":[{{\"id\":...,\"lo\":...,\"hi\":...}}],"
+        "\"deltas\":[{{\"id\":...,\"dir\":\"inc|dec\","
+        "\"lo\":...,\"hi\":...}}]}}]}"
         "}",
         path_cov_assert_path,
         ex.what());
@@ -4417,7 +4502,7 @@ void goto_coveraget::solidity_path_coverage()
     // because it is knowable here; entry condition (b) has its own gate after
     // the unit loop and its own message. Closing one would produce a run that
     // looks exactly like a fix.
-    if (assert_vars_present && assert_vars.empty())
+    if (assert_vars_present && assert_vars.empty() && !assert_vars_state_exact)
     {
       log_error(
         "--path-cov-assert: the spec contains an EMPTY \"vars\" array, so not "
@@ -9151,7 +9236,7 @@ void goto_coveraget::solidity_path_coverage()
       //
       // So the whitelist is over the NON-SLOT entries only. With no slot named
       // this is bit-identical to what it was.
-      bool comp_vars_present = false;
+      bool comp_vars_present = assert_vars_state_exact;
       for (const auto &v : assert_vars)
         if (v.name.find('[') == std::string::npos)
           comp_vars_present = true;
@@ -9334,6 +9419,242 @@ void goto_coveraget::solidity_path_coverage()
         return bghost;
       };
 
+      struct built_assert_termt
+      {
+        expr2tc value;
+        expr2tc defined;
+        std::string text;
+      };
+      auto emit_structured_rungs = [&](
+                                     const assert_vart *spec,
+                                     const type2tc &ty,
+                                     const std::string &owner,
+                                     const expr2tc &live,
+                                     const expr2tc &pre_v) {
+        if (
+          spec == nullptr ||
+          (spec->equals.empty() && spec->abs.empty() && spec->deltas.empty()))
+          return;
+        if (!is_unsignedbv_type(ty))
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: candidate "
+            "'{}' has structured arithmetic terms but its type is not an "
+            "unsigned bit-vector. Bool keeps its R1 equality pair; signed and "
+            "aggregate values require separate typed semantics",
+            uid,
+            owner);
+          exit(1);
+        }
+
+        std::map<std::string, expr2tc> coord_values;
+        std::map<std::string, expr2tc> coord_defined;
+        std::function<built_assert_termt(const nlohmann::json &, unsigned)>
+          build_term;
+        build_term = [&](
+                       const nlohmann::json &term,
+                       unsigned depth) -> built_assert_termt {
+          if (depth > 1)
+            throw std::runtime_error(
+              "variable '" + owner +
+              "': structured R2 term exceeds implemented depth 1");
+          const std::string kind = term.at("kind").get<std::string>();
+          if (kind == "pre")
+            return {pre_v, gen_true_expr(), "pre"};
+          if (kind == "literal")
+          {
+            const std::string value = term.at("value").get<std::string>();
+            bool decimal = !value.empty();
+            for (char c : value)
+              if (c < '0' || c > '9')
+                decimal = false;
+            if (!decimal)
+              throw std::runtime_error(
+                "variable '" + owner + "': literal '" + value +
+                "' is not an unsigned decimal");
+            std::string tmax;
+            if (!path_cov_fits_type(ty, value, tmax))
+              return {gen_zero(ty), gen_false_expr(), value};
+            return {
+              constant_int2tc(ty, string2integer(value)),
+              gen_true_expr(),
+              value};
+          }
+          if (kind == "coord")
+          {
+            const std::string name = term.at("name").get<std::string>();
+            auto cached = coord_values.find(name);
+            if (cached != coord_values.end())
+              return {cached->second, coord_defined.at(name), name};
+            expr2tc source;
+            std::string why;
+            if (!resolve_coord(fsym, name, source))
+              why = "the coordinate does not resolve to an input of this unit";
+            else
+              coord_expressible(source->type, why);
+            if (!why.empty())
+              throw std::runtime_error(
+                "variable '" + owner + "': coordinate '" + name +
+                "' cannot be used in a structured R2 term: " + why);
+
+            symbolt csym;
+            csym.type = migrate_type_back(source->type);
+            csym.name = "__ESBMC_term$" + i2string(ghost_counter++);
+            csym.id = "path_cov::" + id2string(csym.name);
+            csym.lvalue = true;
+            csym.static_lifetime = false;
+            csym.is_extern = false;
+            symbolt *pc;
+            cov_context->move(csym, pc);
+            expr2tc ghost = symbol2tc(migrate_type(pc->type), pc->id);
+            goto_programt::instructiont decl;
+            decl.type = DECL;
+            decl.code = code_decl2tc(source->type, pc->id);
+            decl.location = entry->location;
+            decl.location.property("skipped");
+            decl.function = entry->location.get_function();
+            goto_program.instructions.insert(entry, decl);
+            goto_programt::instructiont assign;
+            assign.type = ASSIGN;
+            assign.code = code_assign2tc(ghost, source);
+            assign.location = entry->location;
+            assign.location.property("skipped");
+            assign.function = entry->location.get_function();
+            goto_program.instructions.insert(entry, assign);
+
+            expr2tc value = ghost->type == ty ? ghost : typecast2tc(ty, ghost);
+            expr2tc defined = gen_true_expr();
+            if (ghost->type != ty && ghost->type->get_width() > ty->get_width())
+            {
+              const expr2tc round_trip = typecast2tc(ghost->type, value);
+              defined = equality2tc(ghost, round_trip);
+            }
+            coord_values[name] = value;
+            coord_defined[name] = defined;
+            return {value, defined, name};
+          }
+          if (kind != "op")
+            throw std::runtime_error(
+              "variable '" + owner + "': unknown R2 term kind '" + kind + "'");
+
+          const std::string op = term.at("op").get<std::string>();
+          const built_assert_termt lhs = build_term(term.at("lhs"), depth + 1);
+          const built_assert_termt rhs = build_term(term.at("rhs"), depth + 1);
+          expr2tc value;
+          std::string glyph;
+          if (op == "add")
+          {
+            value = add2tc(ty, lhs.value, rhs.value);
+            glyph = "+";
+          }
+          else if (op == "sub")
+          {
+            value = sub2tc(ty, lhs.value, rhs.value);
+            glyph = "-";
+          }
+          else if (op == "mul")
+          {
+            value = mul2tc(ty, lhs.value, rhs.value);
+            glyph = "*";
+          }
+          else if (op == "div")
+          {
+            if (
+              term.at("rhs").at("kind").get<std::string>() != "literal" ||
+              string2integer(term.at("rhs").at("value").get<std::string>()) ==
+                0)
+              throw std::runtime_error(
+                "variable '" + owner +
+                "': division is allowed only by a nonzero literal");
+            value = div2tc(ty, lhs.value, rhs.value);
+            glyph = "/";
+          }
+          else
+            throw std::runtime_error(
+              "variable '" + owner + "': unknown R2 operator '" + op + "'");
+
+          expr2tc defined = and2tc(lhs.defined, rhs.defined);
+          if (op != "div")
+            defined = and2tc(defined, gen_not_expr(overflow2tc(value)));
+          return {
+            value,
+            defined,
+            "(" + lhs.text + " " + glyph + " " + rhs.text + ")"};
+        };
+
+        auto build = [&](const nlohmann::json &term) {
+          try
+          {
+            return build_term(term, 0);
+          }
+          catch (const std::exception &ex)
+          {
+            log_error(
+              "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: "
+              "candidate '{}' has an invalid structured R2 term ({})",
+              uid,
+              owner,
+              ex.what());
+            exit(1);
+          }
+        };
+
+        for (const auto &candidate : spec->equals)
+        {
+          const built_assert_termt term = build(candidate.term);
+          emit_rung(
+            owner,
+            "r2e" + candidate.id,
+            "post == " + term.text,
+            and2tc(term.defined, equality2tc(live, term.value)));
+        }
+        for (const auto &candidate : spec->abs)
+        {
+          const built_assert_termt lo = build(candidate.lo);
+          const built_assert_termt hi = build(candidate.hi);
+          const expr2tc defined = and2tc(
+            and2tc(lo.defined, hi.defined),
+            lessthanequal2tc(lo.value, hi.value));
+          emit_rung(
+            owner,
+            "r2a" + candidate.id,
+            "post in [" + lo.text + ", " + hi.text + "]",
+            and2tc(
+              defined,
+              and2tc(
+                greaterthanequal2tc(live, lo.value),
+                lessthanequal2tc(live, hi.value))));
+        }
+        for (const auto &candidate : spec->deltas)
+        {
+          const built_assert_termt lo = build(candidate.lo);
+          const built_assert_termt hi = build(candidate.hi);
+          const expr2tc delta = candidate.dir == "inc"
+                                  ? sub2tc(ty, live, pre_v)
+                                  : sub2tc(ty, pre_v, live);
+          const expr2tc direction = candidate.dir == "inc"
+                                      ? greaterthanequal2tc(live, pre_v)
+                                      : greaterthanequal2tc(pre_v, live);
+          const expr2tc defined = and2tc(
+            and2tc(lo.defined, hi.defined),
+            lessthanequal2tc(lo.value, hi.value));
+          emit_rung(
+            owner,
+            "r2d" + candidate.id,
+            (candidate.dir == "inc" ? std::string("post - pre in [")
+                                    : std::string("pre - post in [")) +
+              lo.text + ", " + hi.text + "] with " +
+              (candidate.dir == "inc" ? "post >= pre" : "pre >= post"),
+            and2tc(
+              defined,
+              and2tc(
+                direction,
+                and2tc(
+                  greaterthanequal2tc(delta, lo.value),
+                  lessthanequal2tc(delta, hi.value)))));
+        }
+      };
+
       for (const auto &comp : to_struct_type(ostruct).components())
       {
         std::string vname = comp.get("#base_name").as_string();
@@ -9425,6 +9746,21 @@ void goto_coveraget::solidity_path_coverage()
                : why) +
             ". The equality rungs (post == pre / post != pre) ARE emitted for "
             "it -- only the ordering, interval and delta rungs are not";
+        if (
+          !interval_ok && spec != nullptr &&
+          (!spec->equals.empty() || !spec->abs.empty() ||
+           !spec->deltas.empty()))
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: variable "
+            "'{}' is BOOLEAN, but its spec contains structured R2 "
+            "candidate(s). Typed R2 arithmetic/interval terms require an "
+            "ordering-capable unsigned scalar; silently dropping ASKED "
+            "candidates would leave the batch summary incomplete",
+            uid,
+            vname);
+          exit(1);
+        }
 
         // ---- pre_v: the entry snapshot ----
         //
@@ -9552,6 +9888,7 @@ void goto_coveraget::solidity_path_coverage()
               dir,
               and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
         }
+        emit_structured_rungs(spec, vt, vname, live, pre_v);
       }
 
       // ---- MAPPING SLOTS AS OBSERVABLES ----
@@ -9752,6 +10089,19 @@ void goto_coveraget::solidity_path_coverage()
           path_cov_refused_coords[v.name] =
             "the mapping's VALUE type cannot carry a candidate: " + ewhy;
           continue;
+        }
+        if (
+          !iv_ok && (!v.equals.empty() || !v.abs.empty() || !v.deltas.empty()))
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: mapping "
+            "slot '{}' has BOOLEAN value type, but its spec contains "
+            "structured R2 candidate(s). Typed R2 arithmetic/interval terms "
+            "require an ordering-capable unsigned scalar; silently dropping "
+            "ASKED candidates would leave the batch summary incomplete",
+            uid,
+            v.name);
+          exit(1);
         }
 
         // ---- ONE ENTRY GHOST PER KEY ----
@@ -10013,6 +10363,7 @@ void goto_coveraget::solidity_path_coverage()
               dir,
               and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
         }
+        emit_structured_rungs(&v, et, v.name, live, pre_v);
       }
 
       // ---- THE UNIT'S OWN RETURN VALUE IS A CANDIDATE TOO ----
@@ -10041,7 +10392,7 @@ void goto_coveraget::solidity_path_coverage()
       const size_t emitted_before_return = emitted;
       {
         const bool ret_wanted =
-          !comp_vars_present ||
+          assert_vars_state_exact || !comp_vars_present ||
           std::any_of(
             assert_vars.begin(), assert_vars.end(), [](const assert_vart &v) {
               return v.name == "return" || v.name.rfind("return.", 0) == 0;

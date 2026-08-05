@@ -1158,3 +1158,214 @@ unrelated existing Bitwuzla dependency problem (`cadical/cadical.hpp` and
 completed and generated the tests, and the already configured ESBMC binary and
 the focused Z3-backed regressions ran successfully. No real POC was launched,
 so the queue-head attempt remains unspent.
+
+## 28. Dependency-selected oracle candidates
+
+Region and oracle stages now consume one shared solc-reference dependency
+closure from `scripts/solidity_ast_dependencies.py`. The closure starts at the
+target implementation, follows modifiers and transitive implemented calls, and
+orders referenced state declarations by call distance. An unreadable AST or an
+unresolved target returns `None`, never an implicit all-mappings fallback.
+
+This closes a former split policy. Region coordinates were dependency-filtered,
+but the PUT driver independently regenerated every type-compatible mapping key
+product. The oracle query now uses the same closure for mapping slots and for
+ordinary scalar state. On the queue-head AST, `setDistributor` resolves to
+exactly `_distributor` and `_owner`; inherited ERC20 mappings and
+`_totalSupply` no longer consume assertion claims. The old helper was removed
+from the generaliser rather than retained as a second implementation.
+
+The PUT unit suite includes a negative control that an unrelated nested mapping
+is named as excluded while the dependent one still produces both sender- and
+parameter-keyed slots. The existing generaliser tests still verify direct,
+modifier, and helper references plus the real queue-head closure.
+
+## 29. Typed single-batch R2
+
+The production R2 path no longer calls ESBMC once per endpoint. One additional
+spec per certified path carries all selected variables and three structured
+candidate vectors: equality terms, absolute ranges, and direction-safe delta
+ranges. The strong recipe is version 6 and records `--r2-depth 1`, a 96-term
+deterministic prefix, and a global 128 structured-R2-candidate cap. Both kinds
+of truncation are logged as `NOT ASKED`; neither creates another solver
+process. Candidate allocation first round-robins candidate kinds within each
+variable and then round-robins variables, so every variable receives one claim
+before any variable receives its second whenever the budget permits it.
+
+The term grammar currently supports depth zero or one. Atoms are the candidate's
+own pre-state, rendered numeric/identity coordinates, integer literals from the
+target body, and literal-valued constants from the target contract's linearized
+bases. Operations are `+`, `-`, `*`, and division by a nonzero literal. The
+ESBMC side consumes JSON term trees directly, snapshots coordinates at entry,
+checks narrowing by round-trip cast, checks arithmetic overflow/underflow, and
+conjoins definedness and interval ordering with the candidate in the same
+claim. An undefined term is REFUTED, never vacuously accepted. The Foundry side
+renders only terms present in the generated lookup and uses the actual lifted
+identifier, including renamed parameters and established `msg.sender`.
+
+The implication antichain now removes an exact interval when the equivalent
+`post == term` also holds. Structured postconditions and absolute intervals are
+success-guarded under a revert-tolerant call; only a delta whose lower endpoint
+is the literal zero remains safe after a swallowed rollback. This prevents a
+strong setter oracle from making the unmodified contract red merely because
+the wrapper tolerated a revert.
+
+Verification completed without a real POC:
+
+- single-thread ESBMC target build: passed;
+- Python byte compilation: passed;
+- generaliser checks: passed;
+- PUT checks: 124/124 passed;
+- typed-term Solidity regression: passed in about one second with 8 GiB set;
+- existing named mapping-delta regression: passed;
+- exit-latched probe fire and silent controls: passed.
+
+The typed regression proves a normal-path `post == pre + 7`, refutes
+`post == pre + amount`, proves exact absolute and delta forms, and refutes an
+overflowing `pre + UINT256_MAX` term in the same query. It also contains a
+must-flip control: a variable enters at `UINT256_MAX`, exits at `6`, and asks
+`post == pre + 7`; definedness makes it REFUTED, while deleting the overflow
+guard would make the wrapped equality HOLDS. CMake refresh again
+printed the known nested Bitwuzla/CaDiCaL header failures but returned success;
+the ESBMC target itself built and the configured regressions executed.
+
+Two term-language gaps remain explicit. Cross-variable pre-state atoms are not
+yet in the grammar: `pre` means the current candidate's own entry value. Constants
+whose initializer requires Solidity constant folding are skipped rather than
+re-evaluated by Python.
+
+## 30. Production R2 fuzz refutation, and its exact boundary
+
+The version-6 official recipe enables `--fuzz-r2-prefilter`. After the R1
+ladder has identified state direction and the typed R2 batch has been generated,
+the PUT driver emits one temporary Foundry test function per selected R2
+candidate and executes them in one Forge process. Each function carries a
+128-bit random marker. A candidate is removed only when Forge reports
+`Failure` and the failure reason starts with the exact full label: marker,
+variable, and candidate text. `Success`
+is recorded as `NOT-REFUTED`, never `HOLDS`; an absent test, malformed JSON,
+timeout, compile/setup failure, or unrelated panic is `NOT-RUN`. Every
+`NOT-REFUTED` and `NOT-RUN` candidate remains in the one ESBMC R2 batch.
+
+The Forge source size is bounded independently of the R2 proof language. The
+official prefix is 128 candidate functions with 256 fuzz draws each. Candidates
+outside that prefix are not discarded: each is recorded as outside the Forge
+budget and retained for ESBMC. `put.json` records requested, selected, rendered,
+actually run, refuted, not-refuted, and not-run counts plus every candidate's
+test name, marker, verdict, and reason. The temporary test filename includes
+the process id and nanosecond timestamp, is removed on every normal/error/timeout
+path, and cannot overwrite an existing project test. The exact generated source,
+Forge JSON, and stderr remain under the PUT work directory as evidence.
+
+A synthetic payable setter validated the complete production call chain without
+using a real POC. With 12 terms, all 26 candidates were rendered in one Forge
+run; 24 received labeled concrete counterexamples, two survived, and the single
+ESBMC batch proved exactly `post == pre + 7` and `post - pre == 7`. The final
+generated PUT passed 32 Foundry fuzz runs on the unmodified contract. A second
+run with a candidate budget of eight recorded 26 requested, eight selected and
+refuted, and 18 `NOT-RUN`; its ninth candidate explicitly said it was outside
+the budget and retained for ESBMC. The ESBMC batch then received all 18
+survivors. Python checks remain 120/120 green.
+
+This does not implement region fuzzing or R1 fuzz filtering. Region fuzzing
+needs a sound executable predicate for "this input followed the same path".
+Today path identity and the branch/condition latches exist only in the internal
+GOTO instrumentation; the emitted Foundry replay has no dynamic path-id oracle.
+Treating equal call success/revert status as equal path would merge distinct
+branches sharing an exit and is unsound. A future region-fuzz layer must first
+export those latches into source-level instrumentation, or provide an equivalent
+path discriminator. Until then, region candidates are probed and certified by
+ESBMC, and no result may claim they were fuzz-prefiltered. The real queue-head
+POC remains unspent.
+
+## 31. Review hardening before the first real POC
+
+The post-implementation verifier and code reviewer found production-path
+gaps. All were resolved before spending the queue-head run.
+
+First, dependency policy is now `solc-reference-closure/3`. Arity was not a
+sufficient overload identity: `f(uint256)` and `f(address)` have the same
+arity. The exact report identity has the
+`sol:@C@<contract>@F@<unit>#<solc-node-id>` shape, so stage 2 now writes it into
+`generalise-result.json`, both certification sweep writers copy it into the
+CERTIFIED row, and stage 4 passes it back as `--path-function`. PUT selects the
+fresh emission claim by that full identity and uses the trailing node id for
+parameters, returns, dependency closure, and source literal collection. Legacy
+certification rows without the field remain readable only if simple unit plus
+path id resolves to one unique path function; overload ambiguity is a hard
+refusal. Same-arity synthetic overloads touch disjoint state, use different
+parameter and return types, and contain different source literals; the tests
+verify that all four readers select the same declaration.
+
+The same exact identity also reaches every solver query. Outer-box, geometric,
+refine, certification, R1, and typed R2 specs write the mangled identity rather
+than returning to the simple source name after enumeration. Both certification
+drivers accept `--path-function` for an explicitly selected overload. This is
+required independently of AST selection: exact parameter facts beside a region
+query that merged two overloads would still be a certificate about the wrong
+unit.
+
+Second, the assertion protocol now supports `vars_policy: state-exact`. The
+official driver always writes this policy and an explicit `vars` array,
+including an empty one. It is an exact whitelist of state observables only;
+return-value rungs remain independently enabled. Therefore an empty dependency
+closure cannot fall back to scanning every state variable, a slot-only closure
+cannot re-enable unrelated scalar frame conditions, and naming state no longer
+suppresses a useful return oracle. The focused `exact_empty_state` regression
+uses an empty state whitelist on a contract with unrelated storage and proves
+that only the three return candidates are emitted. Legacy specs that omit the
+policy retain their old all-state behavior.
+
+Third, typed R2 is proposed only for variables whose R1 table contains the
+unsigned ordering pair. Boolean state and boolean mapping slots therefore
+produce no Python R2 request and are named as omitted. The C++ consumer also
+refuses a hand-written structured bool spec instead of silently counting it as
+asked while emitting no claim. The `bool_r2_refused` regression pins that
+protocol boundary.
+
+Fourth, `--r2-candidate-budget 128` is a global cap on actual structured R2
+claims, not merely on source terms or Forge probes. Baseline non-vacuity, R1,
+and return claims in that same query are additional and recorded separately by
+the ladder. The structured cap is recorded in
+`put.json`; omitted claims are explicitly NOT ASKED. The official Forge prefix
+is also 128, so every solver candidate is eligible for cheap refutation unless
+rendering itself is unsupported.
+
+The cap scheduler was subsequently tightened after review. The earlier
+round-robin was over `(variable, candidate-kind)` queues, so if the number of
+queues exceeded the budget, late variables could still receive no claim. The
+current two-level scheduler gives each variable one candidate per global lap
+and rotates equality/absolute/delta locally. A 50-variable control under the
+official 128-candidate cap retains exactly 128 claims and represents all 50
+variables. If there are more variables than budget, the unavoidable unserved
+count is printed explicitly as NOT ASKED.
+
+`r2_candidates()` uses the same two-level order before applying the independent
+Forge prefix, so lowering only `--fuzz-r2-candidate-budget` cannot return to a
+variable-major prefix. Empty, rollback, and entirely unrenderable Forge paths
+now write the full accounting schema: requested, selected, rendered, ran,
+refuted, not-refuted, and not-run. The invariant
+`requested = refuted + not_refuted + not_run` therefore remains checkable even
+when no Forge process was issued.
+
+Overload identity also owns persistence and artifacts, not only queries.
+Explicit overload certification uses `(benchmark-or-poc, unit, path_function)`
+as its resume key and a `__pf<node-id>` workdir suffix. Stage 4 gives each
+path-function row a separate PUT workdir. A truly overloaded Solidity source
+name receives `_pf<node-id>` in its generated test function, test contract, and
+`.t.sol` filename; non-overloaded functions keep the historical names. The B
+gate reads the exact `put.json.test` name, so it cannot reconstruct away that
+identity during `--forge-only` reporting.
+
+`scripts/test_solidity_path_put_forge.py` is a no-mock integration test over a
+temporary real Foundry project. It exercises production assembly, Forge 1.7.1
+JSON, full-label attribution, filtering, budget retention, and temporary-file
+cleanup. Its three-candidate control produced one labeled REFUTED candidate,
+one NOT-REFUTED candidate that remained for ESBMC, and one budget-excluded
+NOT-RUN candidate that also remained. It is registered in CTest with an
+explicit skip code only when Forge or the checked-out forge-std dependency is
+unavailable; a protocol or assertion failure is red. The final static gate is:
+ESBMC target build passed; 124/124 PUT tests passed; generaliser tests passed;
+the real Forge integration passed; and six serial focused Solidity CTests
+passed in 5.16 seconds with 8-GiB descriptors. No real POC, benchmark, corpus,
+or sweep was run. The queue-head attempt remains unspent.

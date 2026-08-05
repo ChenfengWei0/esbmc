@@ -1,0 +1,10 @@
+CORE
+contract.sol
+--contract ExactState --solidity-path-coverage --solidity-max-tx 1 --path-cov-assert spec.json --memlimit 8g
+^--path-cov-assert: region NON-VACUITY witnessed
+^--path-cov-assert: return: a value IS returned on this path \(REFUTED == yes\)  REFUTED
+^--path-cov-assert: return: return == 0  REFUTED
+^--path-cov-assert: return: return != 0  HOLDS
+^--path-cov-assert: ladder summary -- 3 candidate\(s\): 1 HOLDS, 2 REFUTED, 0 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)
+\A(?!(.|\n)*unrelated: post)
+\A(?!(.|\n)*REFUSING THE LADDER)

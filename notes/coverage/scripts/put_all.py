@@ -27,6 +27,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "scripts"))
+from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
 NOTES = os.path.abspath(os.path.join(HERE, "..", ".."))
 INPUTS = os.path.join(NOTES, "coverage", "inputs")
 CERT = os.path.join(NOTES, "coverage", "certify", "results.jsonl")
@@ -288,21 +290,17 @@ def main():
                          "well-formed report reading `0 of 0` and exits 0, "
                          "which is indistinguishable from a real answer.")
     ap.add_argument("--propose-r2", action="store_true",
-                    help="passed through to the driver: after the ladder's "
-                         "first pass, ASK for the R2 bounds its ordering rungs "
-                         "made answerable -- BOTH the absolute `post in [p, p]` "
-                         "and, for a variable whose direction the ordering "
-                         "rungs fixed, the delta `post - pre in [p, p]`. The "
-                         "two ride the SAME spec entry, so the delta costs no "
-                         "query the absolute did not already cost. ⚠ ONE EXTRA "
-                         "esbmc RUN PER ENDPOINT PER REGION, capped at "
-                         "R2_MAX_QUERIES; pair it with --only. ⛔ IT IS OPT-IN "
-                         "AND NOTHING SETS IT BY DEFAULT: measured 2026-08-05, "
-                         "201 of the 218 put.json files on disk carry a ladder "
-                         "with no R2 row of either kind, and every one of them "
-                         "is a run this flag was absent from -- not a unit "
-                         "that was asked and had nothing to say. put.json's "
-                         "`r2_requested` is what tells the two apart.")
+                    help="passed through to the driver: issue one typed R2 "
+                         "candidate batch per certified region")
+    ap.add_argument("--r2-depth", type=int, choices=(0, 1), default=1)
+    ap.add_argument("--r2-term-budget", type=int, default=96)
+    ap.add_argument("--r2-candidate-budget", type=int, default=128)
+    ap.add_argument("--fuzz-r2-prefilter", action="store_true",
+                    dest="fuzz_r2_prefilter",
+                    help="pass the one-sided Foundry R2 refutation filter to "
+                         "the PUT driver; every survivor still goes to ESBMC")
+    ap.add_argument("--fuzz-runs", type=int, default=256)
+    ap.add_argument("--fuzz-r2-candidate-budget", type=int, default=128)
     ap.add_argument("--forge-only", action="store_true",
                     help="do NOT emit anything: read the put.json each region "
                          "already produced, run `forge test` per project, and "
@@ -333,6 +331,10 @@ def main():
         sys.exit("--timeout must be positive")
     if args.forge_timeout <= 0:
         sys.exit("--forge-timeout must be positive")
+    if (args.r2_term_budget <= 0 or args.r2_candidate_budget <= 0
+            or args.fuzz_runs <= 0 or args.fuzz_r2_candidate_budget <= 0):
+        sys.exit("R2 term/candidate budgets and fuzz run/candidate budgets "
+                 "must be positive")
     if args.memlimit_gib <= 0:
         sys.exit("--memlimit-gib must be positive")
     if args.scope not in ("focus", "whole"):
@@ -414,7 +416,8 @@ def main():
             n_certified += 1
             if args.only and args.only not in f"{key}.{r['unit']}":
                 continue
-            rows.append((key, is_poc, r["unit"], enc_i, piece or None, text,
+            rows.append((key, is_poc, r["unit"], r.get("path_function"),
+                         enc_i, piece or None, text,
                          bool(r.get("pin_extcall")), deriv))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
@@ -464,12 +467,12 @@ def main():
                   f"{', '.join(missing_targets)}. The dispatcher cannot enter "
                   "their certified paths.")
             return 2
-    for bench, is_poc, unit, enc, piece, text, pin_extcall, deriv in rows:
+    for (bench, is_poc, unit, path_function, enc, piece, text, pin_extcall,
+         deriv) in rows:
         # The label every downstream name is built from, derived ONCE and in
         # the same shape the emitter builds it (`p<K>`). Two derivations is how
         # the gate below comes to look up a function the emitted file does not
         # contain.
-        plabel = f"p{piece}" if piece else ""
         encs = f"{enc}#{piece}" if piece else str(enc)
         if is_poc:
             # certify_poc.py runs the driver with `--contract <stem>`, so the
@@ -552,7 +555,9 @@ def main():
             continue
         proj = ensure_project(bench + arm, flat,
                               shared=("poc" + arm) if is_poc else None)
-        wd = os.path.join(OUT, "_wd", f"{bench}__{unit}__{enc}{plabel}{arm}")
+        pf_label = path_function_artifact_suffix(path_function)
+        wd = os.path.join(
+            OUT, "_wd", f"{bench}__{unit}{pf_label}__{enc}{plabel}{arm}")
         os.makedirs(wd, exist_ok=True)
         cmd = [sys.executable, PUT, "--esbmc", ESBMC, "--sol", flat,
                "--ast", ast, "--contract", contract, "--unit", unit,
@@ -568,8 +573,18 @@ def main():
                "--scope", args.scope, "--max-tx", str(args.max_tx),
                "--auto-unwind", str(args.auto_unwind),
                "--derived-by", json.dumps(deriv)]
+        if path_function:
+            cmd += ["--path-function", path_function]
         if args.propose_r2:
-            cmd.append("--propose-r2")
+            cmd += ["--propose-r2", "--r2-depth", str(args.r2_depth),
+                    "--r2-term-budget", str(args.r2_term_budget),
+                    "--r2-candidate-budget", str(args.r2_candidate_budget)]
+        if args.fuzz_r2_prefilter:
+            cmd += ["--fuzz-r2-prefilter", "--fuzz-runs",
+                    str(args.fuzz_runs), "--fuzz-r2-candidate-budget",
+                    str(args.fuzz_r2_candidate_budget),
+                    "--fuzz-r2-prefilter-timeout",
+                    str(args.forge_timeout)]
         for extra in args.esbmc_arg:
             cmd.append(f"--esbmc-arg={extra}")
         # ONLY when this row IS a piece, so an unsplit region's command line is
@@ -860,7 +875,9 @@ def b_report(results, forge_timeout):
         # match is a gate that never fires, and it fails in the direction that
         # LOOKS like caution ('unknown') while actually reporting nothing.
         contract = BENCHES[bench][1] if bench in BENCHES else bench
-        want = f"test_put_{contract}_{unit}_path{enc}{plabel}"
+        legacy_piece = f"p{piece}" if piece else ""
+        want = rec.get("test") or (
+            f"test_put_{contract}_{unit}_path{enc}{legacy_piece}")
         status = verdicts.get(want)
         g4 = status == "Success"
         # Gate 5 is a property of the INPUT, not of the run: a hand-written PoC

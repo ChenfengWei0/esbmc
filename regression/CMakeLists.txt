@@ -103,6 +103,17 @@ add_test(NAME regression/scripts/solidity_path_put
 set_tests_properties(regression/scripts/solidity_path_put
   PROPERTIES TIMEOUT 60 LABELS "regression;scripts/")
 
+# The R2 fuzz prefilter is deliberately one-sided: Forge may remove a candidate
+# only after observing its uniquely-labelled assertion fail, and every pass or
+# unexecuted probe must survive for ESBMC. Exercise the real Forge JSON protocol
+# when the checked-out forge-std dependency is available; 77 is an explicit
+# environmental skip, never a green substitute.
+add_test(NAME regression/scripts/solidity_path_put_forge
+         COMMAND ${Python_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_solidity_path_put_forge.py)
+set_tests_properties(regression/scripts/solidity_path_put_forge
+  PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "regression;scripts/")
+
 # The reducer's mid-rebuild guard. Registered for the same reason as the driver
 # above: a reduction of st1inch was silently invalidated by rebuilding esbmc
 # while it ran, and nothing reported it -- the reducer kept printing progress and

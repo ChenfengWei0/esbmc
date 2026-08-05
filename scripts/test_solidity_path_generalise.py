@@ -1747,6 +1747,8 @@ _DEPS = {
              "name": "helperMap", "stateVariable": True},
             {"nodeType": "VariableDeclaration", "id": 13,
              "name": "unused", "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 14,
+             "name": "sameArity", "stateVariable": True},
             {"nodeType": "ModifierDefinition", "id": 20,
              "name": "guard", "body": {
                  "nodeType": "Block", "statements": [{
@@ -1758,6 +1760,7 @@ _DEPS = {
                      "nodeType": "Identifier", "name": "helperMap",
                      "referencedDeclaration": 12}]}},
             {"nodeType": "FunctionDefinition", "id": 40, "name": "f",
+             "parameters": {"parameters": []},
              "modifiers": [{"nodeType": "ModifierInvocation",
                             "modifierName": {"nodeType": "IdentifierPath",
                                              "referencedDeclaration": 20}}],
@@ -1766,14 +1769,28 @@ _DEPS = {
                   "referencedDeclaration": 10},
                  {"nodeType": "FunctionCall", "expression": {
                      "nodeType": "Identifier", "name": "helper",
-                     "referencedDeclaration": 30}}]}}
+                     "referencedDeclaration": 30}}]}},
+            {"nodeType": "FunctionDefinition", "id": 41, "name": "f",
+             "parameters": {"parameters": [{"name": "x",
+                                               "typeDescriptions": {
+                                                   "typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "Identifier", "name": "unused",
+                  "referencedDeclaration": 13}]}},
+            {"nodeType": "FunctionDefinition", "id": 42, "name": "f",
+             "parameters": {"parameters": [{"name": "who",
+                                               "typeDescriptions": {
+                                                   "typeString": "address"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "Identifier", "name": "sameArity",
+                  "referencedDeclaration": 14}]}}
         ]
     }]
 }
 _fd5, _p5 = tempfile.mkstemp(suffix=".solast")
 with os.fdopen(_fd5, "w") as _f5:
     json.dump(_DEPS, _f5)
-_deps, _dep_evidence = unit_state_dependencies(_p5, "Dep", "f")
+_deps, _dep_evidence = unit_state_dependencies(_p5, "Dep", "f", arity=0)
 check("slot-dependencies-rank-direct-before-transitive",
       _deps, ["direct", "helperMap", "modifierMap"])
 _dc, _ds = propose_slot_coords(
@@ -1788,6 +1805,16 @@ check("slot-dependencies-name-an-unreferenced-mapping",
       True)
 check("slot-dependencies-publish-call-chain-evidence",
       any("modifier guard#20" in note for note in _dep_evidence), True)
+_overload_deps, _ = unit_state_dependencies(_p5, "Dep", "f", arity=1)
+check("slot-dependencies-arity-alone-cannot-separate-same-arity-overloads",
+      _overload_deps, ["sameArity", "unused"])
+_exact_deps, _ = unit_state_dependencies(
+    _p5, "Dep", "f", arity=1, declaration_id=41)
+check("slot-dependencies-select-same-arity-overload-by-node-id",
+      _exact_deps, ["unused"])
+check("slot-params-select-same-arity-overload-by-node-id",
+      unit_params(_p5, "Dep", "f", declaration_id=42),
+      [("who", "address")])
 os.unlink(_p5)
 
 _setdist_ast = os.path.join(

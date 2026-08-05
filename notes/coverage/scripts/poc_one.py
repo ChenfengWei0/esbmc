@@ -51,7 +51,7 @@ sys.path.insert(0, str(HERE))
 from pathcov_collect import solver_flags_for  # noqa: E402
 
 DEFAULT_TIMEOUT = 60
-STRONG_RECIPE_VERSION = "veriput-strong/2"
+STRONG_RECIPE_VERSION = "veriput-strong/6"
 STRONG_PROBE_WITNESSES = 8
 STRONG_CERTIFY_ARGS = [
     "--recipe-version", STRONG_RECIPE_VERSION,
@@ -359,7 +359,13 @@ def main():
                    "--memlimit-gib", "8",
                    "--out-root", str(put_out),
                    "--auto-unwind", "1",
-                   "--propose-r2"]
+                   "--propose-r2",
+                   "--r2-depth", "1",
+                   "--r2-term-budget", "96",
+                   "--r2-candidate-budget", "128",
+                   "--fuzz-r2-prefilter",
+                   "--fuzz-runs", "256",
+                   "--fuzz-r2-candidate-budget", "128"]
             for flag in solver_flags:
                 cmd.append(f"--esbmc-arg={flag}")
         commands.append((stage, cmd))

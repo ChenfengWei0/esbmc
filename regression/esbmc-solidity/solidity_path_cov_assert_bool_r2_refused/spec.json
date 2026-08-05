@@ -1,0 +1,14 @@
+{
+  "unit": "set",
+  "enc": 2,
+  "depth": 1,
+  "region": [{"name": "x", "lo": "11", "hi": "20"}],
+  "vars_policy": "state-exact",
+  "vars": [{
+    "name": "flag",
+    "equals": [{
+      "id": "badBoolArithmetic",
+      "term": {"kind": "literal", "value": "1"}
+    }]
+  }]
+}
