@@ -3294,6 +3294,39 @@ def test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT():
     return bad
 
 
+def test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle():
+    """St1inch.setMaxLossRatio enc=14 shape.
+
+    The concrete coverage case can share one emitted replay between a normal
+    sibling and an overflow rollback sibling. The PUT must follow THIS
+    certified path's exit kind, not the shared replay comment that says the
+    concrete call exits normally.
+    """
+    put, stats, notes = _rollback_put(EMITTED, True, exit_kind="revert")
+    bad = 0
+    bad += check(put is not None, f"a PUT is still produced (notes: {notes})")
+    if put is None:
+        return bad + 6
+    body = "\n".join(put)
+    bad += check("vm.expectRevert();" in body,
+                 "a bare high-level rollback call is armed with expectRevert")
+    bad += check("path exits normally" not in body,
+                 "the inherited normal-exit comment is not left beside the "
+                 "revert oracle")
+    bad += check("path exits through revert" in body,
+                 "the rewritten call comment names the asserted exit kind")
+    bad += check("assertFalse(_put_ok" not in body,
+                 "the try/catch success-flag oracle is not used for a bare "
+                 "high-level call")
+    bad += check(stats.get("exit_kind_asserts") == 1
+                 and stats.get("asserts") == 1,
+                 f"the expectRevert line counts as the path oracle: {stats}")
+    bad += check(stats.get("rollback_exit") is True
+                 and stats.get("exit_kind") == "revert",
+                 f"the accounting keeps both rollback and exit kind: {stats}")
+    return bad
+
+
 def test_a_NON_rollback_path_is_BYTE_IDENTICAL_to_before():
     """⛔ THE NEGATIVE CONTROL, without which the test above proves nothing.
     A change that dropped layer 2/3 on EVERY path would pass every check above
@@ -4196,6 +4229,7 @@ def main():
               test_ESTABLISHING_THE_SENDER_makes_ONLY_THAT_KEY_nameable,
               test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call,
               test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT,
+              test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle,
               test_a_NON_rollback_path_is_BYTE_IDENTICAL_to_before,
               test_a_STAGE1_revert_path_ASSERTS_THE_REVERT_without_calling_it_rollback,
               test_the_ROLLBACK_LINE_of_the_ladder_log_is_PARSED_in_both_directions,

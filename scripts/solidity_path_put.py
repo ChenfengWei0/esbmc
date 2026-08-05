@@ -4573,8 +4573,17 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # reverting path is emitted as `try c0.f() {} catch {}`, an oracle that
     # cannot fail whatever the contract does; asserting the revert turns a
     # mutant that stops reverting from invisible into RED.
-    revert_layer1 = bool(rollback_exit) or (
-        exit_kind == "revert" and new_call.rstrip().endswith("catch {}"))
+    existing_expect_revert = any("vm.expectRevert()" in ln
+                                 for ln in body[:call_i])
+    low_level_exit_asserted = low_level_value_gate_asserts_exit(
+        list(body[:call_i]) + [new_call] + list(body[call_i + 1:]),
+        call_i, new_call)
+    revert_layer1 = bool(rollback_exit) or exit_kind == "revert"
+    catch_assert_revert = (
+        revert_layer1 and new_call.rstrip().endswith("catch {}"))
+    insert_expect_revert = (
+        revert_layer1 and not catch_assert_revert and
+        not existing_expect_revert and not low_level_exit_asserted)
     if revert_layer1:
         n_dropped = len(asserts) + len(guarded) + len(ret_asserts)
         if n_dropped:
@@ -4582,14 +4591,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             oracle_skipped.append(
                 f"{n_dropped} layer-2/3 rung(s) DROPPED ({why_drop})")
         asserts, guarded, guard_notes, ret_asserts = [], [], [], []
-        if not new_call.rstrip().endswith("catch {}"):
-            # The call is already emitted with its exit ASSERTED -- a bare call
-            # whose revert fails the test, or the non-payable value gate's own
-            # assertFalse. There is no `catch` to clear a flag in and nothing to
-            # add: layer 1 is already carried, and emitting a second expectation
-            # here would be a duplicate, not a stronger oracle.
-            revert_layer1 = False
-    if guarded or revert_layer1:
+    if guarded or catch_assert_revert:
         if new_call.rstrip().endswith("catch {}"):
             new_call = (new_call.rstrip()[:-len("catch {}")]
                         + "catch { " + okvar + " = false; }")
@@ -4777,7 +4779,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         # that tolerates any outcome, is a gate that can never fire while
         # reading exactly like one that can.
         headline, why = no_oracle_reason(ladder_rows)
-        if exit_kind_asserted(
+        if insert_expect_revert or exit_kind_asserted(
                 list(body[:call_i]) + [new_call] + list(body[call_i + 1:])):
             out.append(f"  // ORACLE: none emitted -- {headline}:")
             out.append(f"  // {why}.")
@@ -4869,9 +4871,15 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append("    // pre-state for the oracle, at this path's own entry")
         out += pre_reads
     for ln in body[head_end:call_i]:
+        if insert_expect_revert and "[asserted] path exits normally" in ln:
+            out.append("    // [asserted] path exits through revert; "
+                       "vm.expectRevert arms the call")
+            continue
         out.append(ln)
-    if guarded or revert_layer1:
+    if guarded or catch_assert_revert:
         out.append(f"    bool {okvar} = true;")
+    if insert_expect_revert:
+        out.append("    vm.expectRevert();")
     out.append(new_call)
     # NOT `if post_reads:`. That guard was equivalent while every assertion
     # came from a state rung -- a var with no post-read produced no assert
@@ -4885,7 +4893,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"    if ({okvar}) {{")
         out += guarded
         out.append("    }")
-    if revert_layer1:
+    if catch_assert_revert:
         # LAYER 1, and it is the whole oracle for this path. `okvar` is false
         # exactly when the call reverted, and the certified region says every
         # input of it walks THIS path, whose exit is a revert -- so a call that
@@ -4898,10 +4906,12 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     for ln in body[call_i + 1:]:
         out.append(ln)
     out.append("  }")
-    exit_kind_asserts = 1 if revert_layer1 else 0
+    exit_kind_asserts = 1 if (
+        catch_assert_revert or insert_expect_revert or
+        (revert_layer1 and existing_expect_revert)) else 0
     original_call_body = list(body[:call_i]) + [new_call] + list(
         body[call_i + 1:])
-    if low_level_value_gate_asserts_exit(original_call_body, call_i, new_call):
+    if low_level_exit_asserted:
         exit_kind_asserts += 1
     stats = {"fuzz_params": len(sig), "lifted": lifted,
              # COUNTED, and counted separately. A conditional assertion is an

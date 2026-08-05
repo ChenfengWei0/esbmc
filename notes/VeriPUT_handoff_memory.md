@@ -2963,3 +2963,63 @@ python3 notes/coverage/scripts/poc_one.py \
 Attempt-3 budget remains 600s/10GiB. Operationally use a 300s checkpoint, but
 do not split the official long proof window unless a log shows a clear driver
 or fixture error.
+
+Attempt 3 result:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMaxLossRatio \
+  --stage 2 --cell gate --attempt 3 --fresh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMaxLossRatio \
+  --stage 3 --cell gate --attempt 3
+```
+
+- Stage 2 used `--fresh` only because the old cert file named commit
+  `729c9da0b7`; the first non-fresh invocation refused before starting ESBMC.
+- Stage 2 then reused the complete Stage 1 report and finished in 0.4s:
+  `CERTIFIED, 5 certified / 0 not / 5 witnessed`.
+- Stage 3 finished in 381.6s and emitted 5 PUTs.
+- Final B: `4 of 5 emitted PUT(s)`.
+  - B: enc=15 owner normal, enc=2 value gate, enc=12 non-owner/overflow,
+    enc=13 non-owner/non-overflow.
+  - Not B: enc=14 owner/overflow rollback.
+
+enc=14 failure diagnosis:
+
+- Region was correct: `msg.sender == 1`, `msg.value == 0`,
+  `maxLossRatio_ > 1000000000`, `state._owner == 1`.
+- The generated PUT was wrong: it copied the shared concrete replay body whose
+  comment/call shape came from the sibling normal path:
+  `// [asserted] path exits normally; ... c1.setMaxLossRatio(maxLossRatio_);`.
+- For this path the call must revert. Since the call was a bare high-level call
+  rather than `try/catch` or low-level `.call`, the emitter should have inserted
+  `vm.expectRevert()` and counted it as the layer-1 exit-kind oracle.
+- This is a PUT emitter bug, not a region bug and not an ESBMC modeling issue.
+
+Code-level repair after attempt 3:
+
+- `scripts/solidity_path_put.py` now treats rollback/revert path exit oracles
+  as one of three legal shapes:
+  - existing low-level value-gate `assertFalse(ok)`;
+  - existing `vm.expectRevert()`;
+  - newly inserted `vm.expectRevert()` for a bare high-level call.
+- It still rewrites `try ... catch {}` to clear `_put_ok` when guarded
+  assertions or catch-based exit assertions need it.
+- It rewrites the inherited normal-exit call comment when it inserts
+  `vm.expectRevert()`, so generated text no longer says both normal and revert.
+- `scripts/test_solidity_path_put.py` now has
+  `test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle`, directly
+  covering the St1inch `setMaxLossRatio` enc=14 shape.
+
+Validation after the repair:
+
+```sh
+python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py
+python3 scripts/test_solidity_path_put.py
+```
+
+Both passed. Do not rerun `setMaxLossRatio` unless the budget is explicitly
+reopened: its three official attempts are now spent. The fix should benefit the
+next rollback/overflow owner-gated setter POCs, especially
+`setMinLockPeriodRatio`.
