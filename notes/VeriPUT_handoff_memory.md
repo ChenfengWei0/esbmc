@@ -609,3 +609,238 @@ static implementation batch, beginning with the official driver call graph and
 per-path coordinate policy. Every change should be tested without the real POC.
 Only after the complete batch builds and focused tests pass should the single
 queue-head run be spent.
+
+## 15. 2026-08-05 takeover audit: actual production call graph
+
+The comments and the executable call graph currently disagree in one important
+place.
+
+`poc_one.py --stage 1` invokes `pathcov_collect.py`. That process runs ESBMC in
+path-coverage mode and archives a `cov-report.json` under the selected POC cell.
+`poc_one.py --stage 2` invokes `certify_all.py`, which invokes
+`solidity_path_generalise.py`. The generalise driver unconditionally deletes
+its work directory's `cov-report.json` and invokes ESBMC again in
+`enumerate_paths()`. It has no option that imports the stage-one report.
+
+Therefore the statement in `poc_one.py` that stage two "reads [the stage-one
+counterexample set] back" is false in the current implementation. Stage one is
+an independently archived gate measurement; it is not an input to region
+synthesis. This duplicates path enumeration and also permits the two stages to
+use different witness settings. In particular, the strong region recipe wants
+`--all-witnesses --max-witnesses N`, while the stage-one collector currently
+does not request them.
+
+The production entry point is also incomplete after certification:
+
+- `poc_one.py` exposes only stages 1 and 2;
+- it never invokes `put_all.py` / `solidity_path_put.py`;
+- consequently it never requests R1/R2, emits the final PUT, or runs the five
+  Foundry gates as one official POC pipeline;
+- `put_all.py --propose-r2` remains opt-in and spends one ESBMC process per
+  proposed endpoint, up to the current hard cap of six.
+
+The single-POC rule applies to the full official pipeline, not to one diagnostic
+arm. The pipeline may internally make the batched enumeration, region, certify,
+and assertion queries required by the method, but after the binary and recipe
+are frozen it may be launched for a given real POC only once. Synthetic unit
+tests and purpose-built regression contracts do not consume that real-POC run.
+
+## 16. Memory and process contract
+
+The requested POC memory limit is exactly 8 GiB per ESBMC process.
+
+- `pathcov_collect.py` already passes the hardcoded `--memlimit 8g`.
+- `solidity_path_generalise.py` defaults to `--memlimit 8g`.
+- `solidity_path_put.py` defaults to `--memlimit 8g`.
+- `certify_all.py` defaults to `--memlimit-gib 8`, checks
+  `jobs * memlimit <= 60% of MemAvailable`, and defaults to `--jobs 1`.
+
+Relying on those defaults is insufficient for the official command. The POC
+entry point must pass and print `--memlimit-gib 8` explicitly, every child must
+record it, and the recipe must keep `jobs=1`. A timeout must kill the complete
+process group; all three current outer drivers already contain process-group
+cleanup because killing only the Python child previously left an ESBMC
+grandchild alive with its full memory allowance.
+
+No real POC ESBMC process was launched during this audit.
+
+## 17. ESBMC option and modelling facts used by the design
+
+The following are source-level facts, not assumptions inferred from help text.
+
+1. Solidity path coverage forces multi-property/base-case operation, protects
+   counterexample symbols only with `--cov-report-json`, and rejects
+   `--multi-fail-fast` because abandoned claims would be indistinguishable from
+   unreachable ones.
+2. Solidity coverage starts from `--no-standard-checks`; path/branch coverage
+   also disables user/library assertions and symbolic-execution pointer checks.
+   Bounds, division-by-zero, overflow, and related checks are not automatically
+   part of source path identity. Positive check flags are separate semantic
+   obligations and must not be confused with decision points.
+3. Complete paths are identified by both `tr` and `cnt`. Each kept decision
+   updates `tr = 2 * tr + arm` and increments `cnt`; exit claims deny the pair
+   `(enc, depth)`. Using only `enc` would merge different-length sequences.
+4. `--solidity-max-tx N > 0` emits N straight-line transaction bodies. Under a
+   coverage mode, max-tx zero does not restore an unbounded transaction loop:
+   coverage neutralises the dispatcher back edge unless
+   `--coverage-multi-tx` is selected, so zero effectively leaves one pass.
+5. With no explicit unwind, path coverage installs unwind 4 and suppresses
+   unwinding assertions. The same unwind currently bounds Solidity loops,
+   internal-call expansion, and nondeterministic external-call re-entry.
+6. `--path-cov-max-goals` first degrades the selected internal-call granularity
+   and only then truncates as a last resort. `--path-cov-claim-timeout` is a
+   per-claim budget and reports `claim-budget-exceeded`; it is not the Python
+   process timeout.
+7. `--path-cov-outer-box` is one batched ladder query. Its global `pin` list is
+   part of every path antecedent, while per-path coordinate values can differ.
+   `--path-cov-certify` independently assumes one box and checks path identity
+   at every exit, with a separate non-vacuity witness. Its explicit
+   `RESULT: CERTIFIED|REFUTED|VACUOUS|UNDECIDED|UNDECIDED-TRUNCATED` line is
+   authoritative; the final generic verification line is not.
+8. `--path-cov-assert` assumes the certified region and checks a batch of R1/R2
+   candidates at the target path's exits. Its candidate verdict table and
+   non-vacuity result are authoritative.
+9. `--path-cov-fixture` exists in the frontend. A fixture can skip the
+   constructor and assign concrete scalar integer/address/bool state before the
+   transaction driver. No production Python driver creates or passes such a
+   fixture, and it does not yet implement the paper's required witness, fill,
+   and concrete replay protocol.
+10. Solidity external calls may nondeterministically re-enter the contract
+    dispatcher, causing unwind-dependent path multiplication. The frozen
+    deterministic EOA/no-code and no-callback stub policy is not implemented.
+
+## 18. Queue-head path anatomy from archived evidence
+
+The queue head remains `farming__Distributor__setDistributor`. Its source shape
+is an `onlyOwner` guard followed by a zero-address guard and one state update.
+The archived stage-one report contains exactly five witnessed complete paths:
+
+| enc | depth | ABI value gate | owner relation | distributor | exit |
+|---:|---:|---|---|---|---|
+| 2 | 1 | reject, `msg.value != 0` | not entered | irrelevant | rollback revert |
+| 12 | 3 | body, `msg.value == 0` | non-owner | zero | rollback revert |
+| 13 | 3 | body, `msg.value == 0` | non-owner | nonzero | rollback revert |
+| 14 | 3 | body, `msg.value == 0` | owner | zero | rollback revert |
+| 15 | 3 | body, `msg.value == 0` | owner | nonzero | normal return/write |
+
+The report records the first decision with `synthetic_abi_gate: true`. That is
+enough to distinguish the ABI reject path from body paths without a new ESBMC
+query. The generalise parser currently discards this decision metadata.
+
+The two historical partial arms are diagnostic only:
+
+- the derived-coordinate arm pinned `msg.value=0`, pinned agreed entry state,
+  promoted the disagreed sender, and certified body paths 12--15 while excluding
+  path 2 by construction;
+- the value-gate arm left `msg.value` free and certified path 2 as
+  `[1, uint256.max]`, but did not combine the owner-state and sender policy that
+  made the body paths certifiable.
+
+They were produced by different configurations and binaries and cannot be
+summed. A coherent official attempt must admit both sides of the ABI gate in
+one recorded policy. The least invasive candidate is to make `msg.value` a
+coordinate when the synthetic gate is present, pin the agreed owner state, and
+let each path's certified box specialize the value to either zero or the
+nonzero interval. Explicit path-class grouping remains the fallback if the
+shared coordinate batch is too expensive or loses sibling-cut quality.
+
+## 19. Static defects that must be fixed before that attempt
+
+### 19.1 Work-directory provenance is incomplete
+
+`run_config()` conditionally records `env_coord_disagreed` and
+`pin_agreed_state`, but `stamp_workdir()` compares only `CONFIG_FIELDS`, and
+that tuple omits both keys. It also omits `skip_bracket`, explicit environment
+coordinates, pins, level-0/perturb settings, probe-ladder budget, refine/shrink
+budgets, holes/pieces, fixture identity, solver arguments, timeout semantics,
+and other options that change the generated questions. Two incompatible arms
+can therefore share and overwrite fixed-name files while passing the stamp.
+The stamp must compare a complete canonical measurement configuration, with a
+version field and compatibility handling only for genuinely equivalent old
+defaults.
+
+### 19.2 The official sweep cannot express all relevant budgets
+
+The generalise driver accepts `--claim-budget`, but `certify_all.py` neither
+exposes nor records it. Note that this budget thins only a geometric bracket
+whose values are generated by Python; it does not cap refine claims generated
+from a range by ESBMC. It must be wired and described accurately, not presented
+as a universal query cap.
+
+### 19.3 Width provenance can be falsely labelled
+
+`put_all.py` always records `probes`, and `solidity_path_put.py` currently treats
+the presence of either `probe_ladder` or `probes` as evidence that a ladder
+derived a region's width. Under `--skip-bracket`, `probes` controls refinement
+but no geometric bracket ran. A wide interval can consequently be labelled
+ladder-derived when it came only from full-type initialization/refinement.
+Width provenance must be explicit per mechanism (multi-witness member span,
+sibling subtraction, geometric/per-path ladder, certified shrink/cut) and may
+not be inferred from a nonzero default.
+
+### 19.4 A certified `msg.value` interval is emitted as one value
+
+The historical path-2 certificate is `msg.value in [1, uint256.max]`, but the
+emitted Foundry test keeps `.call{value: 1}`. The test therefore does not fuzz
+the certified coordinate and its apparent argument fuzzing is irrelevant to
+the ABI reject path. The emitter already rewrites `msg.sender`; it must also:
+
+- introduce a bounded `uint256 p_msg_value` parameter;
+- apply certified holes with `vm.assume`;
+- rewrite the governing low-level call to `{value: p_msg_value}`;
+- fund the actual sender before the prank with `vm.deal(sender, p_msg_value)`;
+- record the environment coordinate as established and count its actual width.
+
+The first implementation should be deliberately narrow: only rewrite an
+existing low-level call that already has a `{value: ...}` option. Inventing a
+value-bearing call for arbitrary emitted call shapes requires a separate
+semantic check.
+
+### 19.5 Fuzz-first exists only in pieces
+
+Multi-witness path collection is production-wired and costs no extra ESBMC
+process, but it is off in the official recipe. `fuzz_prefilter_verdicts()` can
+classify Forge results for assertion candidates and has tests, but has no
+production call site. The sound policy is asymmetric: a concrete Forge failure
+may drop/refute a candidate; a Forge pass proves nothing and every survivor
+must still be sent to ESBMC. Fuzz evidence and proof evidence must be recorded
+separately.
+
+### 19.6 R2 remains below the paper-strength target
+
+The C++ endpoint resolver accepts a decimal or one resolvable name. The Python
+proposer mostly emits parameter identity, absolute `post in [p,p]`, exact
+directional delta, and a second-pass `[0,p]` cap. It does not implement a typed
+depth-one grammar over parameters, selected environment coordinates, readable
+pre-state, and literals, and it spends one cold ESBMC process per endpoint.
+This should become one typed candidate table and one batched survivor query per
+path, with definedness checked under the same region assumption.
+
+## 20. Frozen implementation order after the audit
+
+The next edits should be made in this order and validated without the real
+queue-head contract:
+
+1. Fix configuration stamping and wire/record the missing budget and explicit
+   8 GiB recipe fields.
+2. Preserve decision metadata from enumeration and make the ABI gate policy
+   admit both body and reject paths coherently. Start with one shared coordinate
+   batch; add path-class grouping only if a synthetic regression demonstrates
+   that it is needed.
+3. Correct width provenance and implement low-level-call `msg.value` lifting,
+   including sender funding and Foundry-facing tests.
+4. Wire one versioned strong recipe through the single-POC driver and add a
+   complete stage that reaches assertion synthesis, R2 mode, emission, and the
+   Foundry B gates. Keep every subprocess at `--memlimit 8g` and jobs one.
+5. Implement the frozen fixture boundary before using any certificate whose
+   entry state cannot be reproduced by the emitted test.
+6. Add decision-origin taxonomy and deterministic external-call treatment
+   before attacking POCs whose denominator or reach depends on those models.
+7. Integrate Forge refutation and replace per-endpoint R2 cold starts with a
+   typed batched query.
+
+Only after these applicable static changes, Python tests, a build, and focused
+synthetic ESBMC regressions pass may the queue-head POC be launched once. Its
+command must state `--memlimit-gib 8` explicitly and archive the recipe version,
+binary identity, all path-policy decisions, every query verdict, generated PUT,
+and Forge result.
