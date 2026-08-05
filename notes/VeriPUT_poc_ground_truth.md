@@ -202,7 +202,17 @@ Stage-1 pathcov: 2 witnessed paths.
   - Expected region: `msg.value == 0` and constructor pins above.
   - Expected PUT oracle: return value equals `_distributor`, currently `0`.
 
-This POC is already semantically complete in the current certification result.
+Current attempt status:
+
+- Stage 3 attempt 3 under 600s/10GiB produced `B = 1 of 2`.
+- Path `2` is now a strong value-gate PUT: it fuzzes `msg.value` over
+  `[1, uint256.max]` and asserts the low-level non-payable call fails.
+- Path `3` remains refused as not parameterized. It has the expected return
+  oracle (`return == 0`), but no coordinate rendered by the Foundry test has
+  width greater than one: `msg.value` is pinned to zero and the state slice is
+  constructor-pinned.
+- No official retry remains for this POC under the current three-attempt
+  budget.
 
 ### `Distributor.setDistributor`
 
@@ -266,6 +276,19 @@ Stage-1 pathcov: 154 instrumented paths, 7 witnessed paths.
 Current result is therefore not a region-search failure. It is a harness
 expressiveness boundary: the region is over controllable inputs, while the path
 split is over callee behavior.
+
+Current attempt status:
+
+- Stage 3 attempt 1 under 60s/8GiB timed out in the emit substep before a
+  `.cov.t.sol` was produced. No PUT/oracle result was measured by that attempt.
+- Stage 3 attempt 2 under 120s/8GiB produced `B = 1 of 1 emitted PUT` for
+  path `2`.
+- The path `2` PUT fuzzes `msg.sender`, `msg.value`, and `amount`; it asserts
+  the low-level non-payable value call fails.
+- The six external-call-split paths remain excluded by method attribution, not
+  by a failed region search.
+- Only the 600s/10GiB tier remains for this POC, and there is no need to spend
+  it unless the fixture/model strategy changes.
 
 ## Next Static Checks Before Running Another POC
 

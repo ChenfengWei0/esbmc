@@ -1600,7 +1600,7 @@ python3 notes/coverage/scripts/poc_one.py \
   farming__Distributor__distributor --stage 3 --attempt 2
 ```
 
-The result is intentionally NOT a generalized PUT success:
+The attempt-2 result was intentionally NOT a generalized PUT success:
 
 - path 2 emitted
   `FarmingPoolCovTest_FarmingPool_distributor_put2.t.sol` with one fuzzed
@@ -1613,13 +1613,35 @@ The result is intentionally NOT a generalized PUT success:
   therefore refuses it as not parameterized instead of pretending a concrete
   replay is a PUT.
 
-The POC therefore reports `B = 0`: one path has width without an oracle, the
-other has an oracle without width. This is a real methodological bottleneck,
-not an ESBMC timeout. Getter-style units over constant or fully pinned tx-1
-entry state are low-value targets for parameterized unit tests unless the
-method intentionally supports parameterized state setup. Fuzz cannot prove the
-getter body path; it can only cheaply refute bad assertions or bad regions when
-there is an exposed runtime parameter to vary.
+At that older head the POC reported `B = 0`: one path had width without a
+counted oracle, the other had an oracle without width. The first half was later
+fixed by the Stage-1 value/revert accounting work; the second half remains a
+real methodological bottleneck, not an ESBMC timeout. Getter-style units over
+constant or fully pinned tx-1 entry state are low-value targets for
+parameterized unit tests unless the method intentionally supports
+parameterized state setup. Fuzz cannot prove the getter body path; it can only
+cheaply refute bad assertions or bad regions when there is an exposed runtime
+parameter to vary.
+
+Attempt 3 has now been spent for Stage 3 only:
+
+```
+python3 notes/coverage/scripts/poc_one.py \
+  farming__Distributor__distributor --stage 3 --cell gate --attempt 3
+```
+
+The tier was 600s/10GiB; wall time was 89.9s. Current head
+`52c643bb8c` produced:
+
+- path 2: `B`. The PUT fuzzes `msg.value`, preserves the non-payable low-level
+  value call, counts/asserts the exit-kind oracle, and is Forge green.
+- path 3: still refused as `NOT PARAMETERIZED`. It has the expected
+  `return == 0` oracle, but the certified region renders no coordinate with
+  width greater than one: `msg.value == 0`, and all state is constructor-pinned
+  or established.
+
+The current result is therefore `B = 1 of 2`; no further official attempt
+remains for this POC under the three-tier budget.
 
 ## 35. setDistributor ground truth and structural decision fast path
 
@@ -2236,3 +2258,66 @@ Do not spend safeBalances again for this code change. The next useful work is
 another POC's ground-truth-first repair, or promoting these now-queryable R1
 slot rows into emitted assertions only for non-reverting paths where post-state
 is observable on chain.
+
+## 2026-08-06 current farming PUT progress
+
+These entries are after commit `52c643bb8c`.
+
+### `farming__Distributor__distributor`
+
+Stage 3 attempt 3 has been spent:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  farming__Distributor__distributor --stage 3 --cell gate --attempt 3
+```
+
+Budget was 600s/10GiB; wall time was 89.9s. Current result:
+
+- `B = 1 of 2`.
+- `enc=2` is now B: one fuzz coordinate (`msg.value`), measured width from the
+  certified ABI value region, and one exit-kind oracle on the low-level
+  non-payable value call.
+- `enc=3` is still correctly refused as not parameterized. The ladder proves
+  the getter return (`return == 0`), but the emitted Foundry test has no
+  rendered coordinate with width greater than one: `msg.value == 0`, and every
+  state quantity is constructor-pinned or established.
+- No official retry remains for this POC.
+
+### `farming__FarmingPool__deposit`
+
+Stage 3 attempt 1 was spent under 60s/8GiB and failed before any PUT could be
+measured:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  farming__FarmingPool__deposit --stage 3 --cell gate --attempt 1
+```
+
+The ESBMC emit substep timed out at 60.1s with no `.cov.t.sol`. This is an
+emission-timeout outcome, not a region/oracle failure.
+
+Stage 3 attempt 2 was then spent under 120s/8GiB:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  farming__FarmingPool__deposit --stage 3 --cell gate --attempt 2
+```
+
+Wall time was 144.3s because the 120s ESBMC emit finished at 118.2s and Forge
+then ran the B gate. Current result:
+
+- `B = 1 of 1 emitted PUT`.
+- The emitted path is `enc=2`, the ABI non-payable reject path.
+- It fuzzes `msg.sender`, `msg.value`, and `amount`.
+- It carries one exit-kind oracle: the low-level value call must fail.
+- Forge was green after the driver disabled one red concrete replay from the
+  emitter's original coverage suite.
+- The six other witnessed deposit paths remain method-level unsupported in
+  Stage 2: each pair differs only in external-call behavior
+  (`STAKING_TOKEN.safeTransferFrom` success/failure) that a plain generated PUT
+  cannot choose without a deterministic ERC20 fixture.
+
+Only attempt 3 remains for `farming__FarmingPool__deposit`, but the supported
+certified path is already B; do not spend it unless a later code change
+requires regression confirmation.
