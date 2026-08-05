@@ -997,3 +997,125 @@ slot selection, and the typed batched R2 interface on synthetic fixtures. Then
 perform a low-concurrency build and focused regressions. Only after those gates
 pass should `farming__Distributor__setDistributor` consume its one allowed
 official rerun, with 8 GiB printed and recorded end to end.
+
+## 25. Probe architecture: facts established before implementation
+
+### 25.1 Existing coverage modes cannot be composed by adding flags
+
+The coverage dispatch runs condition, branch, branch-function, k-path, and
+Solidity complete-path passes independently and in that order. They mutate the
+same GOTO program and publish through the same static `all_claims` set. The
+Solidity path pass explicitly clears that set; branch-function later replaces it
+with every instrumented coverage assertion then present. Reporting has a second
+independent precedence order (`branch`, `branch-function`, `k-path`,
+`solidity-path`, `condition`, `assertion`), while the path-only JSON decoration
+still runs whenever the path boolean is set. Therefore a command containing
+both path and branch-function coverage does not mean intersection, sequencing,
+or attribution. It produces a mixed assertion universe interpreted by two
+incompatible reporters. Such output is invalid evidence.
+
+### 25.2 A branch-point counterexample carries only a prefix by construction
+
+`branch_function_coverage()` inserts its assertions immediately before each
+GOTO. The selected assertion constrains execution only up to that decision. The
+claim slicer disables the other assertions, and the dependency slicer removes
+later assignments unless they are separately protected. Even if later `tr/cnt`
+assignments are protected, the violated branch assertion itself does not require
+the execution to reach any function exit. Reading the then-current accumulator
+would label a path prefix as a complete path. This is not repaired by harvesting
+more fields or disabling compact traces.
+
+Consequently a genuine branch/condition probe attributable to a complete path
+must delay its goal to an exit. The mechanically sound shape is:
+
+1. initialise one reachability latch per selected decision arm at unit entry;
+2. update those latches when their decision is evaluated;
+3. retain the ordinary complete-path `tr/cnt` observation;
+4. assert each unreached latch at unit exits, so every violating model is a
+   complete execution rather than a prefix;
+5. publish the branch goal and the observed `(unit, tr, cnt)` separately;
+6. group and deduplicate payloads by `(unit, tr, cnt)`, never by branch claim.
+
+This must be a dedicated hybrid mode. It must not run the ordinary branch pass
+and ordinary path pass on the same mutated program. Its report needs its own
+schema and coverage type so no existing branch/path dataset changes silently.
+
+### 25.3 Path multi-witness collection remains useful but is not R16 by itself
+
+`--all-witnesses` already re-solves one encoded complete-path claim repeatedly,
+so every returned model is correctly attributed to the same `(enc, depth)` and
+costs no second symex/encoding. `probe_seed.py` and the generaliser consume this
+correctly: variation proves a coordinate is not a point; lack of variation
+proves nothing. This is valuable member seeding and should remain enabled in the
+strong recipe.
+
+It is not sufficient to claim R16 is implemented. The work order explicitly
+requires branch-function/condition (or k-path) probes and asks whether quantities
+outside the current coordinate set separate paths. Current all-witness blocking
+also ranges over every collected nondeterministic symbol. Archived farming data
+shows that irrelevant harness environment, especially `block.difficulty`, can
+consume most of an eight-witness budget while producing only two or three
+distinct published points. The temporary nondet census in `witnesses.cpp`
+documents this gap; no production filter calls it away.
+
+The hybrid probe therefore needs two payload classes: renderable coordinates
+(arguments, reproducibly established environment, fixture entry state and
+supported mapping slots) and observed non-coordinate quantities (for example a
+deterministic external-call result). Harness allocator/dispatcher choices are
+neither. Only the first two classes may drive witness blocking, and every
+outside quantity that varies while `(unit,tr,cnt)` stays fixed is evidence for a
+coordinate-promotion decision. A single observed value is never evidence of
+constancy.
+
+### 25.4 Existing mapping support is broad; selection is still syntactic
+
+The current implementation is already stronger than the frozen first-version
+paper boundary. The Python side reads mapping declarations from the solc AST,
+supports parameter and `msg.sender` keys, nested mapping key products, and
+scalar fields of mapping struct values. The ESBMC assertion pass resolves each
+key at entry, snapshots it, indexes one array level per mapping level, and emits
+R1 plus absolute/delta R2 candidates. The Foundry emitter computes the matching
+storage slot, including struct member offsets. These are implemented mechanisms,
+not future work.
+
+What is missing is dependency-guided selection. `propose_slot_coords()` forms a
+type-compatible cross product and truncates it by list order. It does not use the
+target unit's guards, state reads, or probe evidence to rank the slots that can
+actually separate paths. On a deeply nested store this spends the coordinate
+and assertion budgets on plausible but irrelevant keys before the relevant one.
+The required static change is selection/ranking and explicit cap accounting,
+not another mapping encoder.
+
+### 25.5 Current R2 is depth zero and process-inefficient
+
+The production R2 proposer currently uses a parameter name as an endpoint. It
+can ask absolute equality-shaped intervals and exact/capped directed deltas, and
+the ESBMC pass batches all variables sharing that one endpoint in one query.
+Identity endpoints are width-filtered; antichain reduction exists. This recovers
+setters such as `post == argument`, but it is not the frozen depth-one language.
+
+Missing pieces are a typed term AST over rendered coordinates, pre-state reads,
+contract constants and source integer literals; depth-one `+`, `-`, `*`, and
+division by a nonzero literal; form (7) `post == e`; same-query definedness; and
+one batch of all fuzz-surviving terms per path. The present cap of six endpoint
+specifications still means up to six cold ESBMC processes. Also,
+`fuzz_prefilter_verdicts()` is unit-tested but has no production call site, so
+the advertised fuzz-first cost reduction currently does not occur.
+
+## 26. Static implementation order after the investigation
+
+The safe order is now fixed:
+
+1. add the dedicated exit-latched hybrid probe schema and synthetic fire/silent
+   controls, without changing ordinary branch or path coverage;
+2. make its blocking/payload classification exclude harness-only nondeterminism
+   and emit coordinate-promotion evidence;
+3. feed that evidence into deterministic mapping-slot ranking;
+4. replace endpoint strings with typed depth-one R2 terms, integrate one-sided
+   Forge refutation, and submit all survivors in one ESBMC batch per path;
+5. build at low concurrency and run only focused synthetic regressions;
+6. freeze the strong recipe, then spend the queue-head POC's single official
+   8-GiB run.
+
+No real POC, Forge corpus run, or benchmark run was used to establish the facts
+in Sections 25--26; they come from source inspection and archived outputs.
