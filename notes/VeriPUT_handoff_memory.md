@@ -1643,3 +1643,13 @@ enumeration/certification run. Stage 3 has deliberately not been rerun yet:
 before spending the remaining POC budget, inspect whether the emitter will spend
 unnecessary ladder/R2 ESBMC queries on rollback paths whose only observable
 oracle is the exit kind, and prioritize enc=15 as the expected strong PUT.
+
+Stage 3 now has that first scheduling guard. `notes/coverage/scripts/put_all.py`
+reads `exit_kind` from the Stage-1 enumeration report named by each certify row
+and emits normal-exit certified regions before rollback/unknown ones. This does
+not change any region, oracle, or proof claim; it only changes the order in
+which expensive PUT/R2 ESBMC work is attempted. For `setDistributor`, a
+`--forge-only` dry measurement over the refreshed cert file now prints enc=15
+first, followed by enc=2/12/13/14. This means the remaining attempt-3 Stage 3
+run should try the only expected strong PUT before spending time on exit-only
+negative paths.

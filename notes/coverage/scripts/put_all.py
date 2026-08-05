@@ -56,6 +56,7 @@ BENCHES = {
 }
 
 POC_UNITS = os.path.join(NOTES, "coverage", "poc_units")
+EXIT_KIND_CACHE = {}
 
 
 def corpus_inputs_dir(bench, unit):
@@ -132,6 +133,37 @@ def parse_certified(text):
             continue
         pins[m.group(1)] = int(m.group(2))
     return region, holes, pins
+
+
+def report_exit_kind(report_path, path_function, enc):
+    """The path's exit kind from the Stage-1 report, or None.
+
+    Stage 4 can spend minutes per certified region. When a unit contains both
+    rollback-only negative paths and a normal path with a semantic post-state
+    oracle, running the normal path last risks spending the budget before the
+    strongest PUT is even attempted. The cert row names its enumeration report;
+    use that already-authenticated artefact only for scheduling priority.
+    """
+    if not report_path:
+        return None
+    report_path = os.path.abspath(report_path)
+    if report_path not in EXIT_KIND_CACHE:
+        found = {}
+        try:
+            d = json.load(open(report_path))
+            for c in d.get("claims") or []:
+                try:
+                    pid = int(c.get("path_id"))
+                except (TypeError, ValueError):
+                    continue
+                pf = c.get("path_function")
+                found[(pf, pid)] = c.get("exit_kind")
+                found.setdefault((None, pid), c.get("exit_kind"))
+        except (OSError, ValueError):
+            found = {}
+        EXIT_KIND_CACHE[report_path] = found
+    return (EXIT_KIND_CACHE[report_path].get((path_function, int(enc)))
+            or EXIT_KIND_CACHE[report_path].get((None, int(enc))))
 
 
 def current_binary_identity():
@@ -416,9 +448,11 @@ def main():
             n_certified += 1
             if args.only and args.only not in f"{key}.{r['unit']}":
                 continue
+            exit_kind = report_exit_kind(
+                r.get("enumeration_report"), r.get("path_function"), enc_i)
             rows.append((key, is_poc, r["unit"], r.get("path_function"),
                          enc_i, piece or None, text,
-                         bool(r.get("pin_extcall")), deriv))
+                         bool(r.get("pin_extcall")), deriv, exit_kind))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
     #
@@ -467,8 +501,17 @@ def main():
                   f"{', '.join(missing_targets)}. The dispatcher cannot enter "
                   "their certified paths.")
             return 2
+    def _exit_priority(kind):
+        return {"normal": 0, "undetermined": 1, None: 2, "revert": 3}.get(
+            kind, 2)
+    ordered_rows = [r for _i, r in sorted(
+        enumerate(rows), key=lambda ir: (_exit_priority(ir[1][9]), ir[0]))]
+    if ordered_rows != rows:
+        print("[order] normal-exit certified region(s) are emitted first, using "
+              "the Stage-1 report's exit_kind. This changes scheduling only; "
+              "regions and certification are unchanged")
     for (bench, is_poc, unit, path_function, enc, piece, text, pin_extcall,
-         deriv) in rows:
+         deriv, exit_kind) in ordered_rows:
         # The label every downstream name is built from, derived ONCE and in
         # the same shape the emitter builds it (`p<K>`). Two derivations is how
         # the gate below comes to look up a function the emitted file does not
