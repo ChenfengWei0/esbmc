@@ -1038,7 +1038,27 @@ def structural_decision_regions(paths, path_decisions, pins, coords,
 _MISSING = object()
 
 
-def extcall_inseparable_failures(paths, path_extras):
+def _nondet_decision_splits(decisions_a, decisions_b):
+    by_key = {}
+    for d in decisions_a or []:
+        key = (d.get("index"), d.get("function"), d.get("line"))
+        by_key[key] = d
+    out = []
+    for d in decisions_b or []:
+        key = (d.get("index"), d.get("function"), d.get("line"))
+        other = by_key.get(key)
+        claim = d.get("branch_claim") or ""
+        other_claim = (other or {}).get("branch_claim") or ""
+        if other is None or ("NONDET(" not in claim and
+                             "NONDET(" not in other_claim):
+            continue
+        if other.get("arm") != d.get("arm"):
+            out.append(f"decision#{d.get('index')} "
+                       f"{claim if 'NONDET(' in claim else other_claim}")
+    return out
+
+
+def extcall_inseparable_failures(paths, path_extras, path_decisions=None):
     """Paths that no generated-test coordinate region can separate.
 
     This is a refutation-only static filter. It fires only for the measured
@@ -1057,16 +1077,24 @@ def extcall_inseparable_failures(paths, path_extras):
             diff = [n for n in names
                     if payload_a.get(n, _MISSING) !=
                     payload_b.get(n, _MISSING)]
-            if not diff or any(not n.startswith("extcall.") for n in diff):
-                continue
-            if any(payload_a.get(n, _MISSING) is _MISSING or
-                   payload_b.get(n, _MISSING) is _MISSING for n in diff):
-                continue
+            if diff:
+                if any(not n.startswith("extcall.") for n in diff):
+                    continue
+                if any(payload_a.get(n, _MISSING) is _MISSING or
+                       payload_b.get(n, _MISSING) is _MISSING for n in diff):
+                    continue
+                evidence = diff
+            else:
+                evidence = _nondet_decision_splits(
+                    (path_decisions or {}).get(enc_a),
+                    (path_decisions or {}).get(enc_b))
+                if not evidence:
+                    continue
             reason = (
                 "STATICALLY INSEPARABLE: this path has a witnessed sibling "
                 f"with the same generated-test-settable payload and differs "
                 "only on harness-chosen external-call behavior "
-                f"({', '.join(diff)}). A generated PUT can choose call "
+                f"({', '.join(evidence)}). A generated PUT can choose call "
                 "arguments, supported environment values, and reproducible "
                 "entry state; it cannot choose whether the callee returns "
                 "success or failure unless a deterministic mock/stub fixture "
@@ -5788,7 +5816,8 @@ def main():
     def query_pins():
         return {n: v for n, v in pins.items() if n not in nonquery_pins}
 
-    pre_failed = (extcall_inseparable_failures(paths, path_extras)
+    pre_failed = (extcall_inseparable_failures(paths, path_extras,
+                                              path_decisions)
                   if args.static_extcall_inseparable else {})
     if pre_failed:
         pairs = []

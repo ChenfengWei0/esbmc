@@ -2674,6 +2674,27 @@ check("missing-extcall-harvest-is-not-inseparable",
           [(26, 4, {"amount": 0}), (27, 4, {"amount": 0})],
           {26: {"extcall.success": 0}}),
       {})
+_nondet_decisions = {
+    28: [{"index": 4, "function": "setDefaultFarm_onlyOwner", "line": 4569,
+          "branch_claim": "NONDET( IERC20Plugins *) != ( IERC20Plugins *)this",
+          "arm": "fall-through"}],
+    29: [{"index": 4, "function": "setDefaultFarm_onlyOwner", "line": 4569,
+          "branch_claim": "NONDET( IERC20Plugins *) != ( IERC20Plugins *)this",
+          "arm": "taken"}],
+}
+_nondet_fail = extcall_inseparable_failures(
+    [(28, 4, {"defaultFarm_": 1, "msg.sender": 1, "msg.value": 0}),
+     (29, 4, {"defaultFarm_": 1, "msg.sender": 1, "msg.value": 0})],
+    {}, _nondet_decisions)
+check("nondet-decision-only-sibling-split-is-statically-inseparable",
+      sorted(_nondet_fail), [28, 29])
+check("nondet-decision-inseparable-reason-names-decision",
+      "decision#4" in _nondet_fail[28], True)
+check("nondet-decision-with-settable-difference-is-not-inseparable",
+      extcall_inseparable_failures(
+          [(28, 4, {"defaultFarm_": 1}), (29, 4, {"defaultFarm_": 2})],
+          {}, _nondet_decisions),
+      {})
 
 # Stage 2 may reuse stage 1 only when the structured collection manifest proves
 # that both stages mean the same run. This test exercises the accepting edge and

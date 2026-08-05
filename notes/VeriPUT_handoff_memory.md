@@ -3263,3 +3263,49 @@ Next spend:
 - Use `setDefaultFarm` attempt2 at 120s/8GiB after this repair. Stage1 does not
   need to be rerun if the existing fresh attempt1 report is reused; the code
   change is in Stage2 generalisation.
+
+Attempt 2:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setDefaultFarm \
+  --stage 2 --cell gate --attempt 2 --fresh
+```
+
+Budget: 120s/8GiB per ESBMC process. Stage1 was not rerun; Stage2 reused the
+fresh attempt1 enumeration report.
+
+Result:
+
+- Stage2 still timed out/killed at 120s:
+  `KILLED, 0 certified / 0 not / 7 witnessed`.
+- The previous code repair did work: `level0_vacuity_risk` was empty, and the
+  log no longer entered level0b. It confirmed `msg.value == 0` by witnessed
+  members.
+- The new bottleneck was after refine:
+  - enc=2, enc=13, and enc=15 were already structural simple-decision regions.
+  - enc=24/25/28/29 remained `UNSEPARATED`.
+  - The driver then tried to certify enc=24 anyway and timed out before it could
+    write a usable final result.
+
+Second code-level repair:
+
+- `extcall_inseparable_failures` now also detects sibling paths whose
+  generated-test-settable payload is identical and whose only split is the arm
+  of the same `NONDET(...)` decision.
+- This is the `Plugin(defaultFarm_).TOKEN() != this` external-return split in
+  `setDefaultFarm`.
+- A pure JSON-level probe over the real attempt1 Stage1 report now classifies
+  exactly enc=24, enc=25, enc=28, and enc=29 as statically inseparable, while
+  leaving enc=2, enc=13, and enc=15 available for structural certification.
+
+Validation:
+
+```sh
+python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py
+python3 scripts/test_solidity_path_generalise.py
+```
+
+Both passed. Next spend is attempt3 at 600s/10GiB. Because the four nonzero
+external-call siblings should now be removed before region search, Stage2 should
+only need to certify the three zero/value/owner structural regions.
