@@ -53,6 +53,9 @@ BENCHES = {
     "cross_chain_swap_EscrowDst": ("cross-chain-swap__EscrowDst.flat.sol",
                                    "EscrowDst"),
     "farming": ("farming__FarmingPool.flat.sol", "FarmingPool"),
+    "limit_order_protocol": ("limit-order-protocol__MakerTraitsLib.flat.sol",
+                             "MakerTraitsLib"),
+    "st1inch_St1inch": ("st1inch__St1inch.flat.sol", "St1inch"),
 }
 
 POC_UNITS = os.path.join(NOTES, "coverage", "poc_units")

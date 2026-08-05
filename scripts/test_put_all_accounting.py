@@ -7,10 +7,15 @@ import tempfile
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PUT_ALL = os.path.join(REPO, "notes", "coverage", "scripts", "put_all.py")
+COLLECT = os.path.join(REPO, "notes", "coverage", "scripts", "collect.py")
 
 spec = importlib.util.spec_from_file_location("put_all", PUT_ALL)
 put_all = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(put_all)
+
+collect_spec = importlib.util.spec_from_file_location("collect", COLLECT)
+collect = importlib.util.module_from_spec(collect_spec)
+collect_spec.loader.exec_module(collect)
 
 
 def check(name, got, want):
@@ -78,6 +83,9 @@ def main():
                      legacy["method_unsupported"], 1)
         bad += check("legacy-detail-not-unknown",
                      legacy["detail_unknown"], 0)
+        bad += check("stage4-bench-table-covers-collector",
+                     sorted(put_all.BENCHES),
+                     sorted(collect.BENCHES))
         return bad
     finally:
         os.unlink(path)
