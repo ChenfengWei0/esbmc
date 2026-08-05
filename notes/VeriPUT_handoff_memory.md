@@ -3309,3 +3309,51 @@ python3 scripts/test_solidity_path_generalise.py
 Both passed. Next spend is attempt3 at 600s/10GiB. Because the four nonzero
 external-call siblings should now be removed before region search, Stage2 should
 only need to certify the three zero/value/owner structural regions.
+
+Attempt 3:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setDefaultFarm \
+  --stage 2 --cell gate --attempt 3 --fresh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setDefaultFarm \
+  --stage 3 --cell gate --attempt 3
+```
+
+Budget: 600s/10GiB per ESBMC process.
+
+Result:
+
+- Stage2 finished in 0.5s:
+  `CERTIFIED, 3 certified / 4 not / 7 witnessed`.
+- The 4 not-certified paths are method-level unsupported external-call siblings
+  on the `Plugin(defaultFarm_).TOKEN() != this` nondet return split.
+- Stage3 finished in 242.2s.
+- Final B table for the 3 certified regions:
+  - B: enc=2 and enc=13.
+  - REFUSED: enc=15.
+
+Details:
+
+- enc=2 is the ABI value-gate rollback path. It emitted a PUT with
+  `msg.sender`, `msg.value`, and `defaultFarm_` fuzz parameters plus one
+  exit-kind oracle.
+- enc=13 is the non-owner zero-defaultFarm rollback path. It emitted a PUT with
+  `msg.sender` and `defaultFarm_` fuzz parameters plus one exit-kind oracle.
+- enc=15 is the owner zero-defaultFarm normal path. Source-assignment R2 proved
+  `defaultFarm: post == defaultFarm_  HOLDS`, but the certified rendered region
+  is singleton: `defaultFarm_ == 0`, `msg.sender == 1`, `msg.value == 0`.
+  The emitter correctly refused it as not parameterized.
+
+Accounting recommendation:
+
+- Count this POC as `2/3` parameterized green PUTs among certified regions, with
+  `4/7` witnessed paths explicitly excluded as method-level unsupported.
+- Do not spend more `setDefaultFarm` runs under the current gate fixture. The
+  remaining nonzero paths require a deterministic plugin fixture or another
+  external-call realization policy, not a longer ESBMC timeout.
+- The two code-level fixes from this POC are generic and should help other units:
+  witnessed level0 points avoid redundant vacuity probes, and same-payload
+  `NONDET(...)` decision siblings are classified before they drag certification
+  into large unsupported regions.
