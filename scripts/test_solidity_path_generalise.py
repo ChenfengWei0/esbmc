@@ -2224,7 +2224,19 @@ _report(_d, [_claim(2, "unit-not-entered")])
 check("emptyenum-unit-not-entered-is-a-command-line-outcome",
       empty_enumeration_reason(_d, "balanceOf")[0], True)
 
-# 4. A TOKEN THIS DRIVER DOES NOT KNOW fails CLOSED. The alternative -- treating
+# 4. SOLVER UNKNOWN is the st1inch shape: the solver gave no answer, so the
+#    absence of an F claim is not a path result and must not feed the B
+#    denominator as an empty witnessed set.
+_report(_d, [_claim(2, "solver-unknown"),
+             _claim(3, "bounded-holds")])
+_fatal_solver_unknown, _txt_solver_unknown = empty_enumeration_reason(
+    _d, "balanceOf")
+check("emptyenum-solver-unknown-is-not-a-result",
+      _fatal_solver_unknown, True)
+check("emptyenum-solver-unknown-is-named",
+      "solver answered `unknown`" in _txt_solver_unknown, True)
+
+# 5. A TOKEN THIS DRIVER DOES NOT KNOW fails CLOSED. The alternative -- treating
 #    an unrecognised reason as benign -- is how a new ESBMC token would silently
 #    become "no coverage here", which is the failure `verdict()` above already
 #    refuses for certification verdicts.
@@ -2234,13 +2246,13 @@ check("emptyenum-an-unknown-reason-token-fails-closed", _fatal_new, True)
 check("emptyenum-and-says-it-does-not-know-it",
       "does not know this reason token" in _txt_new, True)
 
-# 5. NO CLAIM FOR THIS UNIT AT ALL is not the empty case either -- nothing was
+# 6. NO CLAIM FOR THIS UNIT AT ALL is not the empty case either -- nothing was
 #    attempted, which is a scope or wiring question.
 _report(_d, [_claim(2, "bounded-holds", unit="someOtherUnit")])
 check("emptyenum-no-claim-for-the-unit-is-not-the-empty-case",
       empty_enumeration_reason(_d, "balanceOf")[0], True)
 
-# 6. AN UNREADABLE REPORT must not become the benign branch. "We could not tell"
+# 7. AN UNREADABLE REPORT must not become the benign branch. "We could not tell"
 #    and "we looked and found nothing" are the two readings this whole function
 #    exists to keep apart.
 _d_empty = tempfile.mkdtemp(prefix="emptyenum-none-")
