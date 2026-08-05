@@ -875,6 +875,10 @@ void report_coverage(
   bool is_branch_func_cov =
     options.get_bool_option("branch-function-coverage") ||
     options.get_bool_option("branch-function-coverage-claims");
+  const bool is_path_probe =
+    options.get_bool_option("solidity-path-probe-enabled");
+  if (is_path_probe)
+    is_branch_func_cov = false;
   // `k-path-coverage` itself stores the CLI integer N; the dedicated
   // boolean enable flag is set by parseoptions when either CLI flag is
   // present. This avoids `get_bool_option("k-path-coverage")` returning 0
@@ -1273,315 +1277,325 @@ void report_coverage(
     }
     else
     {
-
-    // Denominator = the no-skip static universe built by
-    // solidity_path_coverage() (one entry per enumerated complete path), so a
-    // covered-set skip never shrinks it. Numerator = universe paths EITHER
-    // witnessed this run OR already persisted by an earlier round.
-    const size_t total = goto_coveraget::all_claims.size();
-    // Complete-path coverage keys its cross-run cover on the CONTENT-ADDRESSED
-    // stable id, not on `covered_set` (which solidity_path_coverage()
-    // deliberately leaves empty — see path_witnessed_earlier). Using
-    // covered_set here reported every path carried over from an earlier round
-    // as U: a path with a counterexample in hand, filed under "undecided".
-    const bool cov_set_active = !goto_coveraget::path_covered_outpath.empty();
-    size_t tracked_instance = 0;
-    for (const auto &k : goto_coveraget::all_claims)
-    {
-      // THE SAME DISJUNCTION `Path Status: F` USES, and it has to be, because
-      // `Reached` and `F` are two renderings of one set. Adding `v == 'F'`
-      // below without adding it here produced a report reading
-      // `Path Coverage: 0%` and `Path Status: F 1` in the same block --
-      // measured on the injected mid-harvest fault. Two numbers computed from
-      // one fact must not be able to disagree; a reader would have to guess
-      // which was the defect.
-      char vv = 0;
-      {
-        std::lock_guard lk(goto_coveraget::claim_outcome_mutex);
-        auto it_v =
-          goto_coveraget::claim_outcome.find(k.first + "\t" + k.second);
-        if (it_v != goto_coveraget::claim_outcome.end())
-          vv = it_v->second;
-      }
-      if (
-        goto_coveraget::path_witnessed_earlier(k) ||
-        reached_claims.count(k.first + "\t" + k.second) || vv == 'F')
-        ++tracked_instance;
-    }
-
-    log_success("\n[Coverage]\n");
-    // ---- THE COMPLETENESS LINE, printed in BOTH directions ----
-    //
-    // A partial report lands under the same filename a complete one does, and
-    // the [Coverage] block below is byte-compatible with a run that genuinely
-    // measured these numbers. So the discriminator is stated as its own line,
-    // unconditionally: a marker that is only present when something is wrong is
-    // indistinguishable, to any consumer that has not been taught about it,
-    // from a marker that was forgotten.
-    if (is_partial)
-      log_result(
-        "Report Completeness: PARTIAL — this run did not conclude ({}). {} of "
-        "{} claim(s) had been decided. Every count below is a LOWER BOUND: the "
-        "paths never reached are reported U with reason "
-        "'run-died-before-solving', which is NOT the same as "
-        "'not-solved-this-run'",
-        partial_reason,
-        goto_coveraget::live_decided.load(std::memory_order_relaxed),
-        goto_coveraget::claims_total_atomic.load(std::memory_order_relaxed));
-    else
-      log_result("Report Completeness: COMPLETE");
-    // Printed on EVERY path-coverage run, including when the budget is off and
-    // when it never fired. "The cap was on" and "the cap fired N times" are
-    // separate statements, and a run whose numbers were shaped by an abandoned
-    // query must not look like one whose solver answered everything.
-    log_result(
-      "Claim Budget: {} — {} claim(s) abandoned over budget ({})",
-      goto_coveraget::claim_budget_seconds == 0
-        ? std::string("unlimited")
-        : std::to_string(goto_coveraget::claim_budget_seconds) + "s per claim",
-      goto_coveraget::claim_budget_exceeded.load(std::memory_order_relaxed),
-      goto_coveraget::claim_budget_mechanism.empty()
-        ? std::string("no enforcement")
-        : goto_coveraget::claim_budget_mechanism);
-    // ---- WHAT THE ARITHMETIC RE-SOLVE COST, AND WHAT IT BOUGHT ----
-    //
-    // Printed on EVERY path-coverage run, including when the mechanism is off
-    // and when it never fired. "The flag was on" and "it fired N times" are
-    // separate statements, and a mechanism whose price is unmeasured is one
-    // nobody can decide to keep -- nobody knew, when this was designed, whether
-    // it would fire on three claims or three thousand.
-    //
-    // `conditions seen` is printed even at ZERO and especially then: zero means
-    // no arithmetic check was enabled, or none reached these units, and without
-    // it a run that re-solved nothing looks exactly like a run that had nothing
-    // to re-solve.
-    if (options.get_bool_option("path-cov-arith-resolve"))
-      log_result(
-        // `took the constrained witness` counts SAT re-solves, NOT wraps
-        // fixed: a path whose original witness already satisfied every check
-        // re-solves to an equally good one and is counted here too. Measured on
-        // D10_WrapNotPanic, 3 of 3 -- and only ONE of those three was wrapping.
-        // Naming it "replaced by a non-wrapping one" would have let a reader
-        // infer three defects fixed from one.
-        "Arithmetic Re-solve: {} condition(s) seen, {} claim(s) re-solved in "
-        "{}s, {} took the constrained witness (this counts SAT re-solves, not "
-        "wraps fixed -- a path whose witness was already fine is counted too), "
-        "{} path(s) PROVEN reachable only through a checked-arithmetic revert, "
-        "{} Foundry case(s) REFUSED for that reason",
-        goto_coveraget::arith_conditions_seen.load(std::memory_order_relaxed),
-        goto_coveraget::arith_resolve_queries.load(std::memory_order_relaxed),
-        goto_coveraget::arith_resolve_ms.load(std::memory_order_relaxed) /
-          1000.0,
-        goto_coveraget::arith_resolve_replaced.load(std::memory_order_relaxed),
-        goto_coveraget::arith_revert_only_paths.size(),
-        goto_coveraget::arith_revert_only_suppressed.load(
-          std::memory_order_relaxed));
-    else
-      log_result(
-        "Arithmetic Re-solve: OFF (--path-cov-arith-resolve). A witnessed "
-        "path whose counterexample wraps or divides by zero is emitted as a "
-        "normal-exit test and is RED on the unmodified contract");
-
-    // Printed unconditionally, zero included. A NON-ZERO value means the same
-    // claim key reached the solve loop more than once and a decision it had
-    // already made would have been thrown away -- so this line is both the
-    // guard's effect and the duplicate-instrumentation defect's detector.
-    log_result(
-      "Verdicts Preserved: {} — a claim already DECIDED whose later solve "
-      "returned no verdict kept its decision. Non-zero also means the same "
-      "claim key was solved more than once, which is a separate defect",
-      goto_coveraget::verdicts_preserved.load(std::memory_order_relaxed));
-
-    // ---- THE OTHER DIRECTION, which the line above cannot see ----
-    //
-    // `Verdicts Preserved` fires only when the LATER solve returned no verdict.
-    // A later solve that returns a DIFFERENT verdict passes it silently, and
-    // that is the common case: measured on a 20-line contract at
-    // --solidity-max-tx 2, one key was solved twice and got PASSED then FAILED
-    // while `Verdicts Preserved` read 0.
-    //
-    // Printed unconditionally, zeros included, and as three separate numbers
-    // because they answer three different questions: how much solving was
-    // repeated, how often a decision was superseded, and what the worst key
-    // was. A single "duplicates: N" would let "no duplication" and "the
-    // counter was never wired" look the same.
-    log_result(
-      "Claim Multiplicity: {} extra solve(s) beyond the first across all "
-      "keys; worst key '{}' decided {} time(s); ceiling {}; {} decided "
-      "verdict(s) superseded by a different decided verdict. Repetition is "
-      "EXPECTED and is not bounded by this run's tx/unwind: one instantiation "
-      "per transaction, one per re-entry level, and one per caller for a "
-      "public unit another unit calls internally. The path's answer is the "
-      "disjunction over them. The number to read is SUPERSEDED: non-zero means "
-      "one key's instantiations disagreed, so what this run reports for that "
-      "path depended on which was solved first",
-      path_cov_extra_solves.load(std::memory_order_relaxed),
-      path_cov_max_solves_key.empty()
-        ? std::string("(none)")
-        : prettify_solidity_expr(path_cov_max_solves_key),
-      path_cov_max_solves,
-      path_cov_allowed_solves == 0
-        ? std::string("not enforced (--path-cov-max-claim-solves unset)")
-        : std::to_string(path_cov_allowed_solves),
-      path_cov_verdict_upgrades.load(std::memory_order_relaxed));
-
-    if (total == 0)
-      log_result("No complete path enumerated");
-    else
-    {
-      log_result("Complete Paths : {}", total);
-      log_result("Reached : {}", tracked_instance);
-      log_result("Path Coverage: {}%", tracked_instance * 100.0 / total);
-      // Exit-shape breakdown on stdout as well as in the JSON. The JSON is a
-      // file, and the regression harness matches program OUTPUT only — without
-      // this line the whole exit classification (and in particular the refusal
-      // to call an undetermined exit "normal") cannot be regression-locked.
-      size_t n_rev = 0, n_und = 0;
+      // Denominator = the no-skip static universe built by
+      // solidity_path_coverage() (one entry per enumerated complete path), so a
+      // covered-set skip never shrinks it. Numerator = universe paths EITHER
+      // witnessed this run OR already persisted by an earlier round.
+      const size_t total = goto_coveraget::all_claims.size();
+      // Complete-path coverage keys its cross-run cover on the CONTENT-ADDRESSED
+      // stable id, not on `covered_set` (which solidity_path_coverage()
+      // deliberately leaves empty — see path_witnessed_earlier). Using
+      // covered_set here reported every path carried over from an earlier round
+      // as U: a path with a counterexample in hand, filed under "undecided".
+      const bool cov_set_active = !goto_coveraget::path_covered_outpath.empty();
+      size_t tracked_instance = 0;
       for (const auto &k : goto_coveraget::all_claims)
       {
+        // THE SAME DISJUNCTION `Path Status: F` USES, and it has to be, because
+        // `Reached` and `F` are two renderings of one set. Adding `v == 'F'`
+        // below without adding it here produced a report reading
+        // `Path Coverage: 0%` and `Path Status: F 1` in the same block --
+        // measured on the injected mid-harvest fault. Two numbers computed from
+        // one fact must not be able to disagree; a reader would have to guess
+        // which was the defect.
+        char vv = 0;
+        {
+          std::lock_guard lk(goto_coveraget::claim_outcome_mutex);
+          auto it_v =
+            goto_coveraget::claim_outcome.find(k.first + "\t" + k.second);
+          if (it_v != goto_coveraget::claim_outcome.end())
+            vv = it_v->second;
+        }
         if (
-          goto_coveraget::revert_paths.count(k) ||
-          goto_coveraget::rollback_revert_paths.count(k))
-          ++n_rev;
-        else if (goto_coveraget::undetermined_exit_paths.count(k))
-          ++n_und;
+          goto_coveraget::path_witnessed_earlier(k) ||
+          reached_claims.count(k.first + "\t" + k.second) || vv == 'F')
+          ++tracked_instance;
       }
-      log_result(
-        "Path Exits: normal {}, revert {}, undetermined {}",
-        total - n_rev - n_und,
-        n_rev,
-        n_und);
 
-      // Tri-state totals on stdout too, for the same reason as the exit line:
-      // the per-path F/I/U verdicts live only in the JSON file, which the
-      // regression harness cannot inspect. Without this the central honesty
-      // rule — a claim that merely HELD within the bound is U, never I — is
-      // not regression-locked. Same rule as the JSON emission below.
+      log_success("\n[Coverage]\n");
+      // ---- THE COMPLETENESS LINE, printed in BOTH directions ----
+      //
+      // A partial report lands under the same filename a complete one does, and
+      // the [Coverage] block below is byte-compatible with a run that genuinely
+      // measured these numbers. So the discriminator is stated as its own line,
+      // unconditionally: a marker that is only present when something is wrong is
+      // indistinguishable, to any consumer that has not been taught about it,
+      // from a marker that was forgotten.
+      if (is_partial)
+        log_result(
+          "Report Completeness: PARTIAL — this run did not conclude ({}). {} "
+          "of "
+          "{} claim(s) had been decided. Every count below is a LOWER BOUND: "
+          "the "
+          "paths never reached are reported U with reason "
+          "'run-died-before-solving', which is NOT the same as "
+          "'not-solved-this-run'",
+          partial_reason,
+          goto_coveraget::live_decided.load(std::memory_order_relaxed),
+          goto_coveraget::claims_total_atomic.load(std::memory_order_relaxed));
+      else
+        log_result("Report Completeness: COMPLETE");
+      // Printed on EVERY path-coverage run, including when the budget is off and
+      // when it never fired. "The cap was on" and "the cap fired N times" are
+      // separate statements, and a run whose numbers were shaped by an abandoned
+      // query must not look like one whose solver answered everything.
+      log_result(
+        "Claim Budget: {} — {} claim(s) abandoned over budget ({})",
+        goto_coveraget::claim_budget_seconds == 0
+          ? std::string("unlimited")
+          : std::to_string(goto_coveraget::claim_budget_seconds) +
+              "s per claim",
+        goto_coveraget::claim_budget_exceeded.load(std::memory_order_relaxed),
+        goto_coveraget::claim_budget_mechanism.empty()
+          ? std::string("no enforcement")
+          : goto_coveraget::claim_budget_mechanism);
+      // ---- WHAT THE ARITHMETIC RE-SOLVE COST, AND WHAT IT BOUGHT ----
+      //
+      // Printed on EVERY path-coverage run, including when the mechanism is off
+      // and when it never fired. "The flag was on" and "it fired N times" are
+      // separate statements, and a mechanism whose price is unmeasured is one
+      // nobody can decide to keep -- nobody knew, when this was designed, whether
+      // it would fire on three claims or three thousand.
+      //
+      // `conditions seen` is printed even at ZERO and especially then: zero means
+      // no arithmetic check was enabled, or none reached these units, and without
+      // it a run that re-solved nothing looks exactly like a run that had nothing
+      // to re-solve.
+      if (options.get_bool_option("path-cov-arith-resolve"))
+        log_result(
+          // `took the constrained witness` counts SAT re-solves, NOT wraps
+          // fixed: a path whose original witness already satisfied every check
+          // re-solves to an equally good one and is counted here too. Measured on
+          // D10_WrapNotPanic, 3 of 3 -- and only ONE of those three was wrapping.
+          // Naming it "replaced by a non-wrapping one" would have let a reader
+          // infer three defects fixed from one.
+          "Arithmetic Re-solve: {} condition(s) seen, {} claim(s) re-solved in "
+          "{}s, {} took the constrained witness (this counts SAT re-solves, "
+          "not "
+          "wraps fixed -- a path whose witness was already fine is counted "
+          "too), "
+          "{} path(s) PROVEN reachable only through a checked-arithmetic "
+          "revert, "
+          "{} Foundry case(s) REFUSED for that reason",
+          goto_coveraget::arith_conditions_seen.load(std::memory_order_relaxed),
+          goto_coveraget::arith_resolve_queries.load(std::memory_order_relaxed),
+          goto_coveraget::arith_resolve_ms.load(std::memory_order_relaxed) /
+            1000.0,
+          goto_coveraget::arith_resolve_replaced.load(
+            std::memory_order_relaxed),
+          goto_coveraget::arith_revert_only_paths.size(),
+          goto_coveraget::arith_revert_only_suppressed.load(
+            std::memory_order_relaxed));
+      else
+        log_result(
+          "Arithmetic Re-solve: OFF (--path-cov-arith-resolve). A witnessed "
+          "path whose counterexample wraps or divides by zero is emitted as a "
+          "normal-exit test and is RED on the unmodified contract");
+
+      // Printed unconditionally, zero included. A NON-ZERO value means the same
+      // claim key reached the solve loop more than once and a decision it had
+      // already made would have been thrown away -- so this line is both the
+      // guard's effect and the duplicate-instrumentation defect's detector.
+      log_result(
+        "Verdicts Preserved: {} — a claim already DECIDED whose later solve "
+        "returned no verdict kept its decision. Non-zero also means the same "
+        "claim key was solved more than once, which is a separate defect",
+        goto_coveraget::verdicts_preserved.load(std::memory_order_relaxed));
+
+      // ---- THE OTHER DIRECTION, which the line above cannot see ----
+      //
+      // `Verdicts Preserved` fires only when the LATER solve returned no verdict.
+      // A later solve that returns a DIFFERENT verdict passes it silently, and
+      // that is the common case: measured on a 20-line contract at
+      // --solidity-max-tx 2, one key was solved twice and got PASSED then FAILED
+      // while `Verdicts Preserved` read 0.
+      //
+      // Printed unconditionally, zeros included, and as three separate numbers
+      // because they answer three different questions: how much solving was
+      // repeated, how often a decision was superseded, and what the worst key
+      // was. A single "duplicates: N" would let "no duplication" and "the
+      // counter was never wired" look the same.
+      log_result(
+        "Claim Multiplicity: {} extra solve(s) beyond the first across all "
+        "keys; worst key '{}' decided {} time(s); ceiling {}; {} decided "
+        "verdict(s) superseded by a different decided verdict. Repetition is "
+        "EXPECTED and is not bounded by this run's tx/unwind: one "
+        "instantiation "
+        "per transaction, one per re-entry level, and one per caller for a "
+        "public unit another unit calls internally. The path's answer is the "
+        "disjunction over them. The number to read is SUPERSEDED: non-zero "
+        "means "
+        "one key's instantiations disagreed, so what this run reports for that "
+        "path depended on which was solved first",
+        path_cov_extra_solves.load(std::memory_order_relaxed),
+        path_cov_max_solves_key.empty()
+          ? std::string("(none)")
+          : prettify_solidity_expr(path_cov_max_solves_key),
+        path_cov_max_solves,
+        path_cov_allowed_solves == 0
+          ? std::string("not enforced (--path-cov-max-claim-solves unset)")
+          : std::to_string(path_cov_allowed_solves),
+        path_cov_verdict_upgrades.load(std::memory_order_relaxed));
+
+      if (total == 0)
+        log_result("No complete path enumerated");
+      else
       {
-        // See path_cov_can_prove_unreachable(): no coverage configuration can
-        // establish unreachability, so this is false and every non-refuted
-        // path is U. Deliberately NOT keyed on --solidity-max-tx 0, which the
-        // back-edge-to-SKIP pass reduces to a single guarded transaction.
-        const bool unb = path_cov_can_prove_unreachable();
-        size_t nF = 0, nI = 0, nU = 0;
-        // Every U carries a reason token. See path_u_reason_token(): a U cell
-        // that can silently absorb an implementation defect has already done so
-        // three times, and each time the broken case looked exactly like an
-        // honest timeout.
-        std::map<std::string, size_t> u_reasons;
-        for (const auto &t : goto_coveraget::path_u_reason_tokens())
-          u_reasons[t] = 0;
-        std::vector<std::string> untokened;
+        log_result("Complete Paths : {}", total);
+        log_result("Reached : {}", tracked_instance);
+        log_result("Path Coverage: {}%", tracked_instance * 100.0 / total);
+        // Exit-shape breakdown on stdout as well as in the JSON. The JSON is a
+        // file, and the regression harness matches program OUTPUT only — without
+        // this line the whole exit classification (and in particular the refusal
+        // to call an undetermined exit "normal") cannot be regression-locked.
+        size_t n_rev = 0, n_und = 0;
         for (const auto &k : goto_coveraget::all_claims)
         {
-          const std::string sig = k.first + "\t" + k.second;
-          char v = 0;
-          {
-            std::lock_guard lk(goto_coveraget::claim_outcome_mutex);
-            auto it_o = goto_coveraget::claim_outcome.find(sig);
-            if (it_o != goto_coveraget::claim_outcome.end())
-              v = it_o->second;
-          }
-          // ---- A VERDICT THAT WAS MADE MUST NOT BE LOST ----
-          //
-          // `v == 'F'` is in this disjunction because the two records of a
-          // refutation are written at DIFFERENT TIMES and a dying run can land
-          // between them. `claim_outcome[sig] = 'F'` is written the instant the
-          // solver answers SAT; `reached_claims.emplace(sig)` is written only
-          // after build_goto_trace, the counterexample harvest and every
-          // artifact emitter have run. Everything in that window can throw.
-          //
-          // MEASURED on notes/coverage/poc/P16_Mapping.sol -- a 30-line nested
-          // mapping, 8 paths, `std::bad_alloc` at 4 GB:
-          //
-          //     ✗ FAILED: 'put:path:7 at'
-          //     Path Status: F 0, I 0, U 8
-          //     ERROR: INTERNAL DEFECT — 1 path(s) are reported U with NO
-          //            reason token: sol:@C@P16_Mapping@F@put#31:path:7
-          //
-          // The run printed the refutation and then reported zero refutations.
-          // The path fell to the `else` below, `path_u_reason_token` has no
-          // token for 'F' (correctly -- an F is not a U), and the invariant
-          // fired. So the abort was RIGHT and its cause was here: a witnessed
-          // path filed as undecided, which on a live run reads exactly like an
-          // honest "we could not decide it".
-          //
-          // The payload may be absent for such a claim -- the harvest is what
-          // died -- and that is reported as it is: `status: F` with an empty
-          // `inputs` is the true statement (a witness exists, its values did
-          // not survive), whereas dropping the F asserts something false about
-          // the program. The same disjunction is applied to `witnessed` in the
-          // JSON block so the file and the terminal cannot disagree.
           if (
-            goto_coveraget::path_witnessed_earlier(k) ||
-            reached_claims.count(sig) || v == 'F')
-            ++nF;
-          else if (v == 'P' && unb)
-            ++nI;
-          else
-          {
-            ++nU;
-            const std::string tok = goto_coveraget::path_u_reason_token(k);
-            if (tok.empty())
-              untokened.push_back(k.first);
-            else
-              ++u_reasons[tok];
-          }
+            goto_coveraget::revert_paths.count(k) ||
+            goto_coveraget::rollback_revert_paths.count(k))
+            ++n_rev;
+          else if (goto_coveraget::undetermined_exit_paths.count(k))
+            ++n_und;
         }
-        log_result("Path Status: F {}, I {}, U {}", nF, nI, nU);
-        // Printed whenever there is a U, with EVERY slot listed including the
-        // zeros: a category that stops occurring is noticed, a category that
-        // silently disappears from the output is not.
-        if (nU > 0)
+        log_result(
+          "Path Exits: normal {}, revert {}, undetermined {}",
+          total - n_rev - n_und,
+          n_rev,
+          n_und);
+
+        // Tri-state totals on stdout too, for the same reason as the exit line:
+        // the per-path F/I/U verdicts live only in the JSON file, which the
+        // regression harness cannot inspect. Without this the central honesty
+        // rule — a claim that merely HELD within the bound is U, never I — is
+        // not regression-locked. Same rule as the JSON emission below.
         {
-          std::string breakdown;
+          // See path_cov_can_prove_unreachable(): no coverage configuration can
+          // establish unreachability, so this is false and every non-refuted
+          // path is U. Deliberately NOT keyed on --solidity-max-tx 0, which the
+          // back-edge-to-SKIP pass reduces to a single guarded transaction.
+          const bool unb = path_cov_can_prove_unreachable();
+          size_t nF = 0, nI = 0, nU = 0;
+          // Every U carries a reason token. See path_u_reason_token(): a U cell
+          // that can silently absorb an implementation defect has already done so
+          // three times, and each time the broken case looked exactly like an
+          // honest timeout.
+          std::map<std::string, size_t> u_reasons;
           for (const auto &t : goto_coveraget::path_u_reason_tokens())
-            breakdown +=
-              (breakdown.empty() ? "" : ", ") + t + " " +
-              std::to_string(u_reasons[t]);
-          log_result("U Reasons: {}", breakdown);
-        }
-        if (!untokened.empty())
-        {
-          std::string names;
-          for (const auto &n : untokened)
-            names += (names.empty() ? "" : "; ") + n;
-          log_error(
-            "--solidity-path-coverage: INTERNAL DEFECT — {} path(s) are "
-            "reported U with NO reason token: {}. The claim this pass makes is "
-            "that every uncovered path carries a named reason and there is no "
-            "unexplained remainder. An untokened U is that claim being false, "
-            "and it is exactly the shape in which an implementation defect "
-            "hides inside an honest-looking 'we do not know'.",
-            untokened.size(),
-            names);
-          abort();
+            u_reasons[t] = 0;
+          std::vector<std::string> untokened;
+          for (const auto &k : goto_coveraget::all_claims)
+          {
+            const std::string sig = k.first + "\t" + k.second;
+            char v = 0;
+            {
+              std::lock_guard lk(goto_coveraget::claim_outcome_mutex);
+              auto it_o = goto_coveraget::claim_outcome.find(sig);
+              if (it_o != goto_coveraget::claim_outcome.end())
+                v = it_o->second;
+            }
+            // ---- A VERDICT THAT WAS MADE MUST NOT BE LOST ----
+            //
+            // `v == 'F'` is in this disjunction because the two records of a
+            // refutation are written at DIFFERENT TIMES and a dying run can land
+            // between them. `claim_outcome[sig] = 'F'` is written the instant the
+            // solver answers SAT; `reached_claims.emplace(sig)` is written only
+            // after build_goto_trace, the counterexample harvest and every
+            // artifact emitter have run. Everything in that window can throw.
+            //
+            // MEASURED on notes/coverage/poc/P16_Mapping.sol -- a 30-line nested
+            // mapping, 8 paths, `std::bad_alloc` at 4 GB:
+            //
+            //     ✗ FAILED: 'put:path:7 at'
+            //     Path Status: F 0, I 0, U 8
+            //     ERROR: INTERNAL DEFECT — 1 path(s) are reported U with NO
+            //            reason token: sol:@C@P16_Mapping@F@put#31:path:7
+            //
+            // The run printed the refutation and then reported zero refutations.
+            // The path fell to the `else` below, `path_u_reason_token` has no
+            // token for 'F' (correctly -- an F is not a U), and the invariant
+            // fired. So the abort was RIGHT and its cause was here: a witnessed
+            // path filed as undecided, which on a live run reads exactly like an
+            // honest "we could not decide it".
+            //
+            // The payload may be absent for such a claim -- the harvest is what
+            // died -- and that is reported as it is: `status: F` with an empty
+            // `inputs` is the true statement (a witness exists, its values did
+            // not survive), whereas dropping the F asserts something false about
+            // the program. The same disjunction is applied to `witnessed` in the
+            // JSON block so the file and the terminal cannot disagree.
+            if (
+              goto_coveraget::path_witnessed_earlier(k) ||
+              reached_claims.count(sig) || v == 'F')
+              ++nF;
+            else if (v == 'P' && unb)
+              ++nI;
+            else
+            {
+              ++nU;
+              const std::string tok = goto_coveraget::path_u_reason_token(k);
+              if (tok.empty())
+                untokened.push_back(k.first);
+              else
+                ++u_reasons[tok];
+            }
+          }
+          log_result("Path Status: F {}, I {}, U {}", nF, nI, nU);
+          // Printed whenever there is a U, with EVERY slot listed including the
+          // zeros: a category that stops occurring is noticed, a category that
+          // silently disappears from the output is not.
+          if (nU > 0)
+          {
+            std::string breakdown;
+            for (const auto &t : goto_coveraget::path_u_reason_tokens())
+              breakdown += (breakdown.empty() ? "" : ", ") + t + " " +
+                           std::to_string(u_reasons[t]);
+            log_result("U Reasons: {}", breakdown);
+          }
+          if (!untokened.empty())
+          {
+            std::string names;
+            for (const auto &n : untokened)
+              names += (names.empty() ? "" : "; ") + n;
+            log_error(
+              "--solidity-path-coverage: INTERNAL DEFECT — {} path(s) are "
+              "reported U with NO reason token: {}. The claim this pass makes "
+              "is "
+              "that every uncovered path carries a named reason and there is "
+              "no "
+              "unexplained remainder. An untokened U is that claim being "
+              "false, "
+              "and it is exactly the shape in which an implementation defect "
+              "hides inside an honest-looking 'we do not know'.",
+              untokened.size(),
+              names);
+            abort();
+          }
         }
       }
-    }
 
-    // Final write-back of the CONTENT-ADDRESSED cover.
-    //
-    // This call was missing, and the omission killed the whole cross-run
-    // mechanism silently. `write_path_covered_set_atomic` existed and was
-    // correct; nothing called it, while the code here called the BRANCH
-    // metric's writer, gated on `covered_set_outpath` — which
-    // solidity_path_coverage() never sets. Measured before the fix: running
-    // with `--coverage-covered-set cov.json` produced no file at all, so every
-    // round re-instrumented everything and the escalation story (round N spends
-    // its budget only on paths still lacking a CE) did not work at all.
-    //
-    // Same defect shape as the entry-liveness audit before it was wired: a
-    // function that is written, tested by eye, and never called. The function
-    // itself selects only 'F' claims, so nothing but a real witness is ever
-    // persisted.
-    if (cov_set_active)
-    {
-      goto_coveraget::write_path_covered_set_atomic("at run end");
-      log_success(
-        "coverage covered-set written to {}",
-        goto_coveraget::path_covered_outpath);
-    }
+      // Final write-back of the CONTENT-ADDRESSED cover.
+      //
+      // This call was missing, and the omission killed the whole cross-run
+      // mechanism silently. `write_path_covered_set_atomic` existed and was
+      // correct; nothing called it, while the code here called the BRANCH
+      // metric's writer, gated on `covered_set_outpath` — which
+      // solidity_path_coverage() never sets. Measured before the fix: running
+      // with `--coverage-covered-set cov.json` produced no file at all, so every
+      // round re-instrumented everything and the escalation story (round N spends
+      // its budget only on paths still lacking a CE) did not work at all.
+      //
+      // Same defect shape as the entry-liveness audit before it was wired: a
+      // function that is written, tested by eye, and never called. The function
+      // itself selects only 'F' claims, so nothing but a real witness is ever
+      // persisted.
+      if (cov_set_active)
+      {
+        goto_coveraget::write_path_covered_set_atomic("at run end");
+        log_success(
+          "coverage covered-set written to {}",
+          goto_coveraget::path_covered_outpath);
+      }
     } // end of the non-certification reporting block
   }
 
@@ -1598,7 +1612,7 @@ void report_coverage(
     else if (is_k_path_cov)
       cov_type = "k-path";
     else if (is_path_cov)
-      cov_type = "solidity-path";
+      cov_type = is_path_probe ? "solidity-path-probe" : "solidity-path";
     else if (is_cond_cov)
       cov_type = "condition";
     else if (is_assert_cov)
@@ -1631,7 +1645,8 @@ void report_coverage(
       max_tx == "0"
         ? std::string(
             "one guarded transaction: --solidity-max-tx 0 emits the "
-            "`while (nondet) dispatch()` driver, but Solidity coverage rewrites "
+            "`while (nondet) dispatch()` driver, but Solidity coverage "
+            "rewrites "
             "every _ESBMC_Main* back-edge to a SKIP, so the loop runs at most "
             "once. This explores FEWER transactions than --solidity-max-tx 2")
         : (max_tx.empty()
@@ -1771,12 +1786,10 @@ void report_coverage(
         // reverting transaction succeeded.
         const bool ck_err =
           goto_coveraget::revert_paths.count({claim_msg, claim_loc}) > 0;
-        const bool ck_rb =
-          goto_coveraget::rollback_revert_paths.count({claim_msg, claim_loc}) >
-          0;
-        const bool ck_un =
-          goto_coveraget::undetermined_exit_paths.count({claim_msg, claim_loc}) >
-          0;
+        const bool ck_rb = goto_coveraget::rollback_revert_paths.count(
+                             {claim_msg, claim_loc}) > 0;
+        const bool ck_un = goto_coveraget::undetermined_exit_paths.count(
+                             {claim_msg, claim_loc}) > 0;
         claim_entry["exit_kind"] =
           (ck_err || ck_rb) ? "revert" : (ck_un ? "undetermined" : "normal");
         if (ck_rb)
@@ -1857,8 +1870,7 @@ void report_coverage(
             if (
               ti != goto_coveraget::path_decision_table.end() &&
               xi != goto_coveraget::path_decision_index.end() &&
-              dp != goto_coveraget::path_decision_depth.end() &&
-              dp->second > 0)
+              dp != goto_coveraget::path_decision_depth.end() && dp->second > 0)
             {
               const uint64_t pdepth = dp->second;
               json seq = json::array();
@@ -1988,7 +2000,8 @@ void report_coverage(
           // name and their order is part of the answer.
           json ext = json::array();
           for (const auto &[n, v] : ce.extcall_returns)
-            ext.push_back({{"symbol", prettify_solidity_expr(n)}, {"value", v}});
+            ext.push_back(
+              {{"symbol", prettify_solidity_expr(n)}, {"value", v}});
           claim_entry["extcall_returns"] = ext;
           if (ce.extcall_returns.empty())
             // NOT "there were no external calls": say what is actually known.
@@ -2595,7 +2608,8 @@ void report_coverage(
         goto_coveraget::arith_resolve_replaced.load(std::memory_order_relaxed);
       report["summary"]["arith_revert_only_paths"] =
         goto_coveraget::arith_revert_only_paths.size();
-      report["summary"]["bound"]["max_tx"] = max_tx.empty() ? "default" : max_tx;
+      report["summary"]["bound"]["max_tx"] =
+        max_tx.empty() ? "default" : max_tx;
       report["summary"]["bound"]["unwind"] =
         unwind_s.empty() ? "default" : unwind_s;
       report["summary"]["bound"]["kind"] =
@@ -2638,6 +2652,164 @@ void report_coverage(
         "is not havoc'd, so paths guarded by state that an earlier transaction "
         "would have to establish are reported U at this tx bound. A U is "
         "therefore not evidence that the path is unreachable";
+
+      if (is_path_probe)
+      {
+        json goals = json::array();
+        size_t fired = 0, observations = 0, unattributed = 0;
+        size_t varying_coordinates = 0, outside_variations = 0;
+        std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+        for (const auto &[goal_id, goal] : goto_coveraget::path_probe_goals)
+        {
+          json gj;
+          gj["id"] = goal_id;
+          gj["unit"] = goal.unit;
+          gj["decision_location"] = parse_claim_location(goal.decision_loc);
+          gj["condition"] = prettify_solidity_expr(goal.condition);
+          gj["arm"] = goal.arm;
+
+          size_t claims = 0, nF = 0, nP = 0, nU = 0, nB = 0;
+          for (const auto &[key, meta] : goto_coveraget::path_probe_claims)
+          {
+            if (meta.goal_id != goal_id)
+              continue;
+            ++claims;
+            const std::string sig = key.first + "\t" + key.second;
+            auto oi = goto_coveraget::path_probe_outcome.find(sig);
+            const char v =
+              oi == goto_coveraget::path_probe_outcome.end() ? 'U' : oi->second;
+            if (v == 'F')
+              ++nF;
+            else if (v == 'P')
+              ++nP;
+            else if (v == 'B')
+              ++nB;
+            else
+              ++nU;
+          }
+          gj["claims_total"] = claims;
+          gj["claim_status"] = {{"F", nF}, {"P", nP}, {"U", nU}, {"B", nB}};
+          gj["status"] = nF > 0 ? "F" : (nP == claims ? "P" : "U");
+          if (nF > 0)
+            ++fired;
+
+          std::map<
+            std::pair<uint64_t, uint64_t>,
+            std::vector<const goto_coveraget::path_ce_t *>>
+            by_path;
+          auto wi = goto_coveraget::path_probe_observations.find(goal_id);
+          if (wi != goto_coveraget::path_probe_observations.end())
+            for (const auto &ce : wi->second)
+            {
+              ++observations;
+              if (!ce.observed_path_known)
+              {
+                ++unattributed;
+                continue;
+              }
+              by_path[{ce.observed_path_id, ce.observed_path_depth}].push_back(
+                &ce);
+            }
+
+          json paths = json::array();
+          for (const auto &[path_key, members] : by_path)
+          {
+            json pj;
+            pj["path_id"] = path_key.first;
+            pj["decision_depth"] = path_key.second;
+            json witnesses_json = json::array();
+            std::map<std::string, std::set<std::string>> coordinate_values;
+            std::map<std::string, std::set<std::string>> outside_values;
+            for (const auto *ce : members)
+            {
+              json wj;
+              auto pairs_object = [&](const auto &pairs) {
+                json obj = json::object();
+                for (const auto &[name, value] : pairs)
+                  obj[prettify_solidity_expr(name)] = value;
+                return obj;
+              };
+              wj["inputs"] = pairs_object(ce->inputs);
+              wj["env"] = pairs_object(ce->env);
+              wj["entry_storage"] = pairs_object(ce->entry_storage);
+              json ext = json::array();
+              for (const auto &[name, value] : ce->extcall_returns)
+                ext.push_back(
+                  {{"symbol", prettify_solidity_expr(name)}, {"value", value}});
+              wj["extcall_returns"] = ext;
+              witnesses_json.push_back(std::move(wj));
+
+              for (const auto &[name, value] : ce->inputs)
+                coordinate_values[prettify_solidity_expr(name)].insert(value);
+              for (const auto &[name, value] : ce->env)
+              {
+                const std::string pretty = prettify_solidity_expr(name);
+                if (pretty == "msg.sender" || pretty == "msg.value")
+                  coordinate_values[pretty].insert(value);
+                else
+                  outside_values["env:" + pretty].insert(value);
+              }
+              for (const auto &[name, value] : ce->entry_storage)
+                outside_values["entry:" + prettify_solidity_expr(name)].insert(
+                  value);
+              for (const auto &[name, value] : ce->extcall_returns)
+                outside_values["nondet-local:" + prettify_solidity_expr(name)]
+                  .insert(value);
+            }
+            pj["witnesses"] = std::move(witnesses_json);
+            pj["witness_count"] = members.size();
+            pj["varying_coordinates"] = json::array();
+            pj["outside_coordinate_variation"] = json::array();
+            for (const auto &[name, values] : coordinate_values)
+              if (values.size() > 1)
+              {
+                pj["varying_coordinates"].push_back(name);
+                ++varying_coordinates;
+              }
+            for (const auto &[name, values] : outside_values)
+              if (values.size() > 1)
+              {
+                pj["outside_coordinate_variation"].push_back(name);
+                ++outside_variations;
+              }
+            paths.push_back(std::move(pj));
+          }
+          gj["paths"] = std::move(paths);
+          goals.push_back(std::move(gj));
+        }
+        report["probe"]["strategy"] = "branch-function-coverage";
+        report["probe"]["attribution"] = "exit-latched-observed-tr-cnt";
+        report["probe"]["goals"] = std::move(goals);
+        report["probe"]["summary"] = {
+          {"goals_total", goto_coveraget::path_probe_goals.size()},
+          {"goals_fired", fired},
+          {"observations_total", observations},
+          {"observations_unattributed", unattributed},
+          {"varying_path_coordinate_pairs", varying_coordinates},
+          {"outside_coordinate_variations", outside_variations},
+          {"nondets_kept_for_blocking",
+           goto_coveraget::path_probe_nondets_kept.load(
+             std::memory_order_relaxed)},
+          {"nondets_dropped_from_blocking",
+           goto_coveraget::path_probe_nondets_dropped.load(
+             std::memory_order_relaxed)},
+          {"valid", unattributed == 0}};
+        log_status(
+          "--path-cov-probe: {} of {} branch-arm goal(s) fired; {} complete "
+          "execution observation(s), {} unattributed; {} varying coordinate "
+          "pair(s), {} outside-coordinate variation(s); blocker kept {} and "
+          "dropped {} nondet value(s)",
+          fired,
+          goto_coveraget::path_probe_goals.size(),
+          observations,
+          unattributed,
+          varying_coordinates,
+          outside_variations,
+          goto_coveraget::path_probe_nondets_kept.load(
+            std::memory_order_relaxed),
+          goto_coveraget::path_probe_nondets_dropped.load(
+            std::memory_order_relaxed));
+      }
     }
 
     std::ofstream out("cov-report.json");
@@ -3354,6 +3526,10 @@ smt_convt::resultt bmct::multi_property_check(
   bool is_branch_func_cov =
     options.get_bool_option("branch-function-coverage") ||
     options.get_bool_option("branch-function-coverage-claims");
+  const bool is_path_probe =
+    options.get_bool_option("solidity-path-probe-enabled");
+  if (is_path_probe)
+    is_branch_func_cov = false;
   // "k-Path Cov" — keyed off the dedicated boolean (see line ~717
   // comment); needed in the is_goto_cov disjunction so the
   // claim_slicer reads the witness comment, matching the form stored
@@ -3680,6 +3856,10 @@ smt_convt::resultt bmct::multi_property_check(
     //! This algo is unsound, need a better signature to distinguish claims
     bool is_verified = false;
     std::string claim_sig = claim.claim_msg + "\t" + claim.claim_loc;
+    const auto probe_claim_it = goto_coveraget::path_probe_claims.find(
+      {claim.claim_msg, claim.claim_loc});
+    const bool is_probe_claim =
+      probe_claim_it != goto_coveraget::path_probe_claims.end();
     if (is_assert_cov)
     {
       // C++20 reached_mul_claims.contains
@@ -3726,8 +3906,9 @@ smt_convt::resultt bmct::multi_property_check(
       // precisely the kind of change that cannot be attributed afterwards.
       std::lock_guard lock(reached_claims_mutex);
       is_verified =
-        reached_claims.count(is_path_cov ? claim_sig : claim.claim_cstr) ? true
-                                                                        : false;
+        reached_claims.count(is_path_cov ? claim_sig : claim.claim_cstr)
+          ? true
+          : false;
     }
     if (is_assert_cov && is_verified)
     {
@@ -3915,7 +4096,7 @@ smt_convt::resultt bmct::multi_property_check(
     // ones, so both non-refuted cases would otherwise collapse into a
     // single indistinguishable "uncovered"). An inductive-step SAT means
     // "cannot prove", not a counterexample, so it maps to 'U'.
-    if (is_path_cov)
+    if (is_path_cov && !is_probe_claim)
     {
       char verdict;
       if (over_budget)
@@ -4035,9 +4216,27 @@ smt_convt::resultt bmct::multi_property_check(
         // later solve returns NO verdict), and because a silent overwrite and a
         // reasoned upgrade look identical from outside.
         if (
-          (it_o->second == 'P' || it_o->second == 'F') && verdict != it_o->second)
+          (it_o->second == 'P' || it_o->second == 'F') &&
+          verdict != it_o->second)
           path_cov_verdict_upgrades.fetch_add(1, std::memory_order_relaxed);
         it_o->second = verdict;
+      }
+    }
+    else if (is_probe_claim)
+    {
+      const char verdict =
+        over_budget
+          ? 'B'
+          : (solver_result == smt_convt::P_SATISFIABLE
+               ? (is ? 'U' : 'F')
+               : (solver_result == smt_convt::P_UNSATISFIABLE ? 'P' : 'U'));
+      std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+      auto [it, inserted] =
+        goto_coveraget::path_probe_outcome.emplace(claim_sig, verdict);
+      if (!inserted && it->second != 'F')
+      {
+        if (verdict == 'F' || (it->second != 'P' && verdict == 'P'))
+          it->second = verdict;
       }
     }
 
@@ -4117,7 +4316,8 @@ smt_convt::resultt bmct::multi_property_check(
       std::unique_ptr<smt_convt> arith_solver;
       std::unique_ptr<symex_target_equationt> arith_eq;
       if (
-        is_path_cov && options.get_bool_option("path-cov-arith-resolve") &&
+        is_path_cov && !is_probe_claim &&
+        options.get_bool_option("path-cov-arith-resolve") &&
         !options.get_bool_option("smt-during-symex") &&
         claim.claim_property == "instrumented assertion")
       {
@@ -4151,8 +4351,8 @@ smt_convt::resultt bmct::multi_property_check(
           if (prop != "overflow" && prop != "division-by-zero")
             continue;
           st.type = goto_trace_stept::ASSUME;
-          st.cond = is_nil_expr(st.guard) ? st.cond
-                                          : implies2tc(st.guard, st.cond);
+          st.cond =
+            is_nil_expr(st.guard) ? st.cond : implies2tc(st.guard, st.cond);
           st.ignore = false;
           ++n_arith;
         }
@@ -4357,7 +4557,35 @@ smt_convt::resultt bmct::multi_property_check(
         // (only when --all-witnesses is set, i.e. enumerate==true).
         // The legacy single-witness renderer does not use them.
         if (enumerate)
+        {
           w.nondet_inputs = collect_nondet_values(local_eq, *solver_ptr);
+          if (is_probe_claim)
+          {
+            const auto before = w.nondet_inputs.size();
+            w.nondet_inputs.erase(
+              std::remove_if(
+                w.nondet_inputs.begin(),
+                w.nondet_inputs.end(),
+                [](const collected_nondet_value &v) {
+                  const std::string &lhs = v.lhs_symbol_name;
+                  const bool source_local =
+                    lhs.rfind("sol:@", 0) == 0 &&
+                    lhs.find("@F@") != std::string::npos;
+                  const bool replayable_env =
+                    lhs.find("@msg_sender") != std::string::npos ||
+                    lhs.find("@msg_value") != std::string::npos;
+                  const bool scalar = is_unsignedbv_type(v.type) ||
+                                      is_signedbv_type(v.type) ||
+                                      is_bool_type(v.type);
+                  return !scalar || (!source_local && !replayable_env);
+                }),
+              w.nondet_inputs.end());
+            goto_coveraget::path_probe_nondets_kept.fetch_add(
+              w.nondet_inputs.size(), std::memory_order_relaxed);
+            goto_coveraget::path_probe_nondets_dropped.fetch_add(
+              before - w.nondet_inputs.size(), std::memory_order_relaxed);
+          }
+        }
         w.ce_index = ce_counter++;
 
         // Emit machine-readable artifacts NOW, while this witness's solver
@@ -4472,7 +4700,8 @@ smt_convt::resultt bmct::multi_property_check(
           // existed (INVOCATION_DECISIONS row 6 says not to), so there is no
           // prior behaviour here to preserve.
           const bool non_path_claim =
-            is_path_cov && claim.claim_property != "instrumented assertion";
+            is_path_cov && (is_probe_claim ||
+                            claim.claim_property != "instrumented assertion");
           if (non_path_claim)
             log_debug(
               "coverage",
@@ -4549,9 +4778,8 @@ smt_convt::resultt bmct::multi_property_check(
           ce.payload_symbols_protected =
             options.get_bool_option("cov-report-json");
           ce.compact_trace = is_compact_trace;
-          ce.revert_pre_rollback =
-            goto_coveraget::revert_paths.count(
-              {claim.claim_msg, claim.claim_loc}) > 0;
+          ce.revert_pre_rollback = goto_coveraget::revert_paths.count(
+                                     {claim.claim_msg, claim.claim_loc}) > 0;
           // Ordered so the emitted post-state is deterministic across runs.
           std::map<std::string, std::string> last_state;
           // The EVM environment, LAST write wins -- see the `is_env` branch
@@ -4606,17 +4834,28 @@ smt_convt::resultt bmct::multi_property_check(
           // callee inlined into this unit would donate its own tuple.
           std::string tuple_want;
           {
-            const auto p = claim.claim_msg.rfind(":path:");
-            if (p != std::string::npos)
+            std::string fn_id;
+            if (is_probe_claim)
             {
-              std::string fn_id = claim.claim_msg.substr(0, p);
+              const auto goal_it = goto_coveraget::path_probe_goals.find(
+                probe_claim_it->second.goal_id);
+              if (goal_it != goto_coveraget::path_probe_goals.end())
+                fn_id = goal_it->second.unit;
+            }
+            else
+            {
+              const auto p = claim.claim_msg.rfind(":path:");
+              if (p != std::string::npos)
+                fn_id = claim.claim_msg.substr(0, p);
+            }
+            if (!fn_id.empty())
+            {
               fn_id_full = fn_id;
               const auto fpos = fn_id.find("@F@");
               if (fpos != std::string::npos)
                 contract_scope = fn_id.substr(0, fpos + 1);
-              const auto hash = fn_id.find('#', fpos == std::string::npos
-                                                  ? 0
-                                                  : fpos + 3);
+              const auto hash =
+                fn_id.find('#', fpos == std::string::npos ? 0 : fpos + 3);
               if (hash != std::string::npos && !contract_scope.empty())
                 tuple_want =
                   contract_scope + "tuple_instance$" + fn_id.substr(hash + 1);
@@ -4716,6 +4955,12 @@ smt_convt::resultt bmct::multi_property_check(
           // path's flag with another's value.
           std::string ret_value;
           bool ret_flag = false;
+          uint64_t observed_path_id = 0;
+          uint64_t observed_path_depth = 0;
+          bool observed_path_id_known = false;
+          bool observed_path_depth_known = false;
+          auto observer_it =
+            goto_coveraget::path_observer_symbols.find(fn_id_full);
           // A TUPLE return, member index -> value. Keyed on the INDEX rather
           // than the name so `mem10` cannot sort between `mem1` and `mem2`,
           // which a lexicographic map would do silently and which would publish
@@ -4792,7 +5037,8 @@ smt_convt::resultt bmct::multi_property_check(
                   : std::string("-"));
               std::string frames;
               for (const auto &fr : st.stack_trace)
-                frames += (frames.empty() ? "" : " < ") + fr.function.as_string();
+                frames +=
+                  (frames.empty() ? "" : " < ") + fr.function.as_string();
               log_debug(
                 "coverage",
                 "   stack[{}]: {}",
@@ -4800,6 +5046,26 @@ smt_convt::resultt bmct::multi_property_check(
                 frames.empty() ? std::string("<empty>") : frames);
             }
             const std::string name = from_expr(ns, "", st.lhs);
+            if (
+              observer_it != goto_coveraget::path_observer_symbols.end() &&
+              is_symbol2t(st.lhs) && is_constant_int2t(st.value))
+            {
+              const std::string sid = to_symbol2t(st.lhs).thename.as_string();
+              if (sid == observer_it->second.first)
+              {
+                observed_path_id =
+                  to_constant_int2t(st.value).value.to_uint64();
+                observed_path_id_known = true;
+                continue;
+              }
+              if (sid == observer_it->second.second)
+              {
+                observed_path_depth =
+                  to_constant_int2t(st.value).value.to_uint64();
+                observed_path_depth_known = true;
+                continue;
+              }
+            }
             // NOT extcall_returns. The `_ESBMC_Nondet_Extcall_<C>` symbols are
             // the RE-ENTRY model's own choice bits (which public method the
             // outside world calls back into), not the value the external call
@@ -4916,8 +5182,7 @@ smt_convt::resultt bmct::multi_property_check(
                 !is_constant_struct2t(mv) && !is_constant_array2t(mv))
               {
                 char *endp = nullptr;
-                const unsigned long k =
-                  strtoul(mem.c_str() + 3, &endp, 10);
+                const unsigned long k = strtoul(mem.c_str() + 3, &endp, 10);
                 if (endp != nullptr && *endp == '\0')
                 {
                   ret_members[k] = from_expr(ns, "", mv);
@@ -5053,17 +5318,18 @@ smt_convt::resultt bmct::multi_property_check(
             // only `this->member` writes would miss it and report the
             // pre-rollback value as the post-state, i.e. a WRONG value. Adopt
             // every member of the restored object as the new post-state.
-            if (
-              name.rfind("*this", 0) == 0 && is_constant_struct2t(st.value))
+            if (name.rfind("*this", 0) == 0 && is_constant_struct2t(st.value))
             {
               const struct_type2t &sty = to_struct_type(st.value->type);
-              const auto &mems = to_constant_struct2t(st.value).datatype_members;
+              const auto &mems =
+                to_constant_struct2t(st.value).datatype_members;
               for (size_t i = 0; i < sty.member_names.size() && i < mems.size();
                    ++i)
               {
                 const std::string mn = sty.member_names[i].as_string();
-                if (mn.empty() || mn[0] == '$' || mn.rfind("_ESBMC", 0) == 0 ||
-                    mn.rfind("anon_pad", 0) == 0)
+                if (
+                  mn.empty() || mn[0] == '$' || mn.rfind("_ESBMC", 0) == 0 ||
+                  mn.rfind("anon_pad", 0) == 0)
                   continue;
                 if (is_constant_expr(mems[i]))
                   last_state[mn] = from_expr(ns, "", mems[i]);
@@ -5077,7 +5343,8 @@ smt_convt::resultt bmct::multi_property_check(
               // on the contract object ($address/$code/$codehash/binding) are
               // not user state and would only add noise.
               const std::string bare = name.substr(name.rfind("->") + 2);
-              if (!bare.empty() && bare[0] != '$' && bare.rfind("_ESBMC", 0) != 0)
+              if (
+                !bare.empty() && bare[0] != '$' && bare.rfind("_ESBMC", 0) != 0)
                 last_state[bare] = val;
             }
             else
@@ -5349,6 +5616,10 @@ smt_convt::resultt bmct::multi_property_check(
           }
           for (const auto &[n, v] : entry_snapshot)
             ce.entry_storage.emplace_back(n, v);
+          ce.observed_path_id = observed_path_id;
+          ce.observed_path_depth = observed_path_depth;
+          ce.observed_path_known =
+            observed_path_id_known && observed_path_depth_known;
           // Accumulated locally and published once after the loop: publishing
           // per witness would leave the shared maps disagreeing about how many
           // witnesses a claim has for the duration of the enumeration, and the
@@ -5417,8 +5688,19 @@ smt_convt::resultt bmct::multi_property_check(
       if (is_path_cov && !ce_all.empty())
       {
         std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
-        goto_coveraget::path_ce[claim_sig] = ce_all.front();
-        goto_coveraget::path_ce_all[claim_sig] = std::move(ce_all);
+        if (is_probe_claim)
+        {
+          auto &dst =
+            goto_coveraget::path_probe_observations[probe_claim_it->second
+                                                      .goal_id];
+          for (auto &ce : ce_all)
+            dst.push_back(std::move(ce));
+        }
+        else
+        {
+          goto_coveraget::path_ce[claim_sig] = ce_all.front();
+          goto_coveraget::path_ce_all[claim_sig] = std::move(ce_all);
+        }
       }
 
       // Store claim signature (once — multiple witnesses are still one claim)
@@ -5454,9 +5736,11 @@ smt_convt::resultt bmct::multi_property_check(
         // insertion it counts, so the two cannot drift; read only by the kill
         // handler, which cannot walk reached_claims (a std::unordered_set,
         // possibly mid-rehash when the signal lands).
-        if (is_path_cov)
+        if (is_path_cov && !is_probe_claim)
           goto_coveraget::live_F.fetch_add(1, std::memory_order_relaxed);
-        if (is_path_cov && !goto_coveraget::path_covered_outpath.empty())
+        if (
+          is_path_cov && !is_probe_claim &&
+          !goto_coveraget::path_covered_outpath.empty())
           goto_coveraget::write_path_covered_set_atomic(fmt::format(
             "mid-solve after claim {} of {}", decided_now, remaining_claims));
         // THE PAYLOAD, ON DISK, NOW. Unlike the covered set above this needs no
@@ -5464,7 +5748,9 @@ smt_convt::resultt bmct::multi_property_check(
         // not passing one and no collector in this project ever has. Written
         // here rather than at the end of the run for the only reason that
         // matters: the end of the run may not happen.
-        if (is_path_cov && !goto_coveraget::path_ce_journal_path.empty())
+        if (
+          is_path_cov && !is_probe_claim &&
+          !goto_coveraget::path_ce_journal_path.empty())
           goto_coveraget::write_path_ce_journal_atomic(
             fmt::format("after claim {} of {}", decided_now, remaining_claims),
             /*complete=*/false);
@@ -5651,10 +5937,10 @@ smt_convt::resultt bmct::multi_property_check(
   };
   try
   {
-  // PARALLEL
-  if (options.get_bool_option("parallel-solving"))
-  {
-    /* NOTE: I would love to use std::for_each here, but it is not giving
+    // PARALLEL
+    if (options.get_bool_option("parallel-solving"))
+    {
+      /* NOTE: I would love to use std::for_each here, but it is not giving
        * the result I would expect. My guess is either compiler version
        * or some magic flag that we are not using.
        *
@@ -5662,23 +5948,23 @@ smt_convt::resultt bmct::multi_property_check(
        * threads.
        */
 
-    // TODO: Running everything in parallel might be a bad idea.
-    //       Should we also add a thread pool?
-    std::vector<std::thread> parallel_jobs;
-    for (const auto &i : jobs)
-      parallel_jobs.push_back(std::thread(job_function, i));
+      // TODO: Running everything in parallel might be a bad idea.
+      //       Should we also add a thread pool?
+      std::vector<std::thread> parallel_jobs;
+      for (const auto &i : jobs)
+        parallel_jobs.push_back(std::thread(job_function, i));
 
-    // Main driver
-    for (auto &t : parallel_jobs)
-    {
-      t.join();
+      // Main driver
+      for (auto &t : parallel_jobs)
+      {
+        t.join();
+      }
+      // We could remove joined jobs from the parallel_jobs vector.
+      // However, its probably not worth for small vectors.
     }
-    // We could remove joined jobs from the parallel_jobs vector.
-    // However, its probably not worth for small vectors.
-  }
-  // SEQUENTIAL
-  else
-    std::for_each(std::begin(jobs), std::end(jobs), job_function);
+    // SEQUENTIAL
+    else
+      std::for_each(std::begin(jobs), std::end(jobs), job_function);
   }
   // Typed arms, not a bare catch(...), because the REASON is the point: a
   // reader of a partial report has to be able to tell an out-of-memory kill
@@ -5686,8 +5972,9 @@ smt_convt::resultt bmct::multi_property_check(
   // is the answer that sends them back to the log they no longer have.
   catch (const std::bad_alloc &)
   {
-    emit_partial("std::bad_alloc — the process ran out of memory during the "
-                 "per-claim solve");
+    emit_partial(
+      "std::bad_alloc — the process ran out of memory during the "
+      "per-claim solve");
     throw;
   }
   catch (const std::string &e)
@@ -5710,8 +5997,9 @@ smt_convt::resultt bmct::multi_property_check(
     // Reached only by a throw of a type nothing here knows about. Kept rather
     // than dropped: the alternative is that the one exception nobody
     // anticipated is also the one that costs the whole report.
-    emit_partial("an exception of unrecognised type escaped the per-claim "
-                 "solve loop");
+    emit_partial(
+      "an exception of unrecognised type escaped the per-claim "
+      "solve loop");
     throw;
   }
 

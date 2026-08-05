@@ -493,7 +493,8 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
             os.remove(report)
         enum_args = ["--cov-report-json"]
         if probe_witnesses:
-            enum_args += ["--all-witnesses", "--max-witnesses",
+            enum_args += ["--branch-function-coverage", "--path-cov-probe",
+                          "--all-witnesses", "--max-witnesses",
                           str(probe_witnesses)]
         log = run(esbmc, sol, contract, enum_args, max_tx, timeout, cwd,
                   ast=ast, focus=focus, memlimit=memlimit,
@@ -549,6 +550,16 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     # them, and they must never reach a box.
     path_extras = {}
     path_decisions = {}
+    probe_members = {}
+    for goal in (rep.get("probe") or {}).get("goals", []):
+        if pfs and goal.get("unit") not in pfs:
+            continue
+        for path in goal.get("paths") or []:
+            key = (int(path["path_id"]), int(path["decision_depth"]))
+            dst = probe_members.setdefault(key, [])
+            for witness in path.get("witnesses") or []:
+                wce, _ = coord_values(witness, state_structs=state_structs)
+                dst.append(wce)
     for c in witnessed:
         ce, ref = coord_values(c, state_structs=state_structs)
         enc = int(c["path_id"])
@@ -576,6 +587,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
         for w in (c.get("witnesses") or []):
             wce, _ = coord_values(w, state_structs=state_structs)
             vecs.append(wce)
+        vecs.extend(probe_members.get((enc, int(c["path_depth"])), ()))
         out.append((enc, int(c["path_depth"]), ce, vecs))
     # Same enc can appear once per transaction instance; keep one of each.
     seen, uniq, members = set(), [], {}
@@ -3764,6 +3776,11 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
             expect("command witnesses", _single_option(
                 argv, "--max-witnesses"), expected_witnesses)
             expect("command all-witnesses", "--all-witnesses" in argv,
+                   bool(probe_witnesses))
+            expect("command path probe", "--path-cov-probe" in argv,
+                   bool(probe_witnesses))
+            expect("command branch-function probe",
+                   "--branch-function-coverage" in argv,
                    bool(probe_witnesses))
             expect("command solver/ESBMC flags",
                    all(flag in argv for flag in esbmc_args), True)

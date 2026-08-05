@@ -2192,7 +2192,8 @@ with tempfile.TemporaryDirectory() as _import_dir:
              "--solidity-path-coverage", "--solidity-max-tx", "1",
              "--cov-report-json", "--path-cov-max-goals", "10000",
              "--memlimit", "8g", "--contract", "C",
-             "--focus-function", "f", "--all-witnesses",
+             "--focus-function", "f", "--branch-function-coverage",
+             "--path-cov-probe", "--all-witnesses",
              "--max-witnesses", "8"]
     _index = {
         "schema": "veriput-pathcov-collection/2",
@@ -2228,6 +2229,21 @@ with tempfile.TemporaryDirectory() as _import_dir:
         _mismatched_import_refused = True
     check("stage1-report-with-another-tx-bound-is-refused",
           _mismatched_import_refused, True)
+
+    _index["runs"][0]["cmdArgv"] = [
+        arg for arg in _argv if arg != "--path-cov-probe"
+    ]
+    with open(_index_path, "w", encoding="utf-8") as _stream:
+        json.dump(_index, _stream)
+    try:
+        validate_enumeration_import(
+            _index_path, _report, _binary, _source, _ast, "C", "f",
+            "focus", 1, "8g", 8, [])
+        _missing_probe_refused = False
+    except SystemExit:
+        _missing_probe_refused = True
+    check("stage1-report-without-path-probe-is-refused",
+          _missing_probe_refused, True)
 
 
 if FAILURES:

@@ -613,6 +613,12 @@ public:
     // ⛔ EMPTY MEANS THE LOOKUP FAILED, never "returns nothing". An unavailable
     // declaration is not evidence of a void return.
     std::string declared_return;
+    // Runtime path identity observed at this claim's own exit. Probe claims
+    // depend on a reachability latch, so tr/cnt are protected separately and
+    // harvested explicitly rather than inferred from the probe's name.
+    uint64_t observed_path_id = 0;
+    uint64_t observed_path_depth = 0;
+    bool observed_path_known = false;
   };
   static std::map<std::string, path_ce_t> path_ce;
 
@@ -645,6 +651,34 @@ public:
   // Widening the existing type would have been a change to all four at once,
   // and the one that wanted the others is the report.
   static std::map<std::string, std::vector<path_ce_t>> path_ce_all;
+
+  struct path_probe_goalt
+  {
+    std::string id;
+    std::string unit;
+    std::string decision_loc;
+    std::string condition;
+    std::string arm;
+  };
+
+  struct path_probe_claimt
+  {
+    std::string goal_id;
+    std::string exit_loc;
+  };
+
+  // Probe goals are unique branch arms. Probe claims are their copies at
+  // distinct physical exits. Their outcomes and payloads never enter the
+  // complete-path claim ledger.
+  static std::map<std::string, path_probe_goalt> path_probe_goals;
+  static std::map<std::pair<std::string, std::string>, path_probe_claimt>
+    path_probe_claims;
+  static std::map<std::string, char> path_probe_outcome;
+  static std::map<std::string, std::vector<path_ce_t>> path_probe_observations;
+  static std::map<std::string, std::pair<std::string, std::string>>
+    path_observer_symbols;
+  static std::atomic<size_t> path_probe_nondets_kept;
+  static std::atomic<size_t> path_probe_nondets_dropped;
 
   static std::map<std::string, path_ce_t> path_covered_payload;
 
@@ -772,9 +806,9 @@ public:
   // three claims or three thousand; a mechanism whose price is unmeasured is
   // one nobody can decide to keep.
   static std::set<std::pair<std::string, std::string>> arith_revert_only_paths;
-  static std::atomic<size_t> arith_resolve_queries;   // re-solves attempted
-  static std::atomic<size_t> arith_resolve_replaced;  // better witness found
-  static std::atomic<size_t> arith_resolve_ms;        // wall time, ms
+  static std::atomic<size_t> arith_resolve_queries;  // re-solves attempted
+  static std::atomic<size_t> arith_resolve_replaced; // better witness found
+  static std::atomic<size_t> arith_resolve_ms;       // wall time, ms
   // How many arithmetic-check claims the equation carried at all. Printed even
   // when it is ZERO, and especially then: zero means no check was enabled or
   // none reached this unit, and without the number a run that re-solved nothing
@@ -895,7 +929,8 @@ public:
   // unit id -> that unit's interned decision descriptors.
   static std::map<std::string, std::vector<path_decisiont>> path_decision_table;
   // unit id -> (prefix enc -> index into the table above).
-  static std::map<std::string, std::map<uint64_t, uint32_t>> path_decision_index;
+  static std::map<std::string, std::map<uint64_t, uint32_t>>
+    path_decision_index;
 
   // ---- THE PER-PATH EMIT SEQUENCE (R0's event rung) ----
   //
@@ -1140,6 +1175,10 @@ public:
   // the c2goto crypto/ABI tables and the rest of the harness plumbing are
   // still removed from the formula.
   bool protect_ce_symbols = false;
+
+  // Dedicated hybrid mode selected by --path-cov-probe together with
+  // --branch-function-coverage. The path pass owns both instrumentations.
+  bool path_cov_probe = false;
 
   // Write the counterexample journal (see path_ce_journal_path). Its own flag
   // rather than a reuse of protect_ce_symbols: both are set by

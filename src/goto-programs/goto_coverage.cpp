@@ -54,6 +54,17 @@ std::map<std::string, std::vector<std::string>>
 std::map<std::string, goto_coveraget::path_ce_t> goto_coveraget::path_ce;
 std::map<std::string, std::vector<goto_coveraget::path_ce_t>>
   goto_coveraget::path_ce_all;
+std::map<std::string, goto_coveraget::path_probe_goalt>
+  goto_coveraget::path_probe_goals;
+std::map<std::pair<std::string, std::string>, goto_coveraget::path_probe_claimt>
+  goto_coveraget::path_probe_claims;
+std::map<std::string, char> goto_coveraget::path_probe_outcome;
+std::map<std::string, std::vector<goto_coveraget::path_ce_t>>
+  goto_coveraget::path_probe_observations;
+std::map<std::string, std::pair<std::string, std::string>>
+  goto_coveraget::path_observer_symbols;
+std::atomic<size_t> goto_coveraget::path_probe_nondets_kept{0};
+std::atomic<size_t> goto_coveraget::path_probe_nondets_dropped{0};
 std::map<std::string, goto_coveraget::path_ce_t>
   goto_coveraget::path_covered_payload;
 std::map<std::pair<std::string, std::string>, uint64_t>
@@ -265,7 +276,8 @@ void goto_coveraget::write_path_ce_journal_atomic(
   if (path_ce_journal_path.empty())
     return;
   const size_t claims_decided = live_decided.load(std::memory_order_relaxed);
-  const size_t claims_total = claims_total_atomic.load(std::memory_order_relaxed);
+  const size_t claims_total =
+    claims_total_atomic.load(std::memory_order_relaxed);
   nlohmann::json out;
   out["version"] = PATH_COVERED_SET_VERSION;
   out["kind"] = "solidity-complete-path-ce-journal";
@@ -351,8 +363,7 @@ void goto_coveraget::write_path_ce_journal_atomic(
       {
         nlohmann::json v;
         rb >> v;
-        const nlohmann::json w =
-          v.value("witnesses", nlohmann::json::object());
+        const nlohmann::json w = v.value("witnesses", nlohmann::json::object());
         on_disk = w.size();
         for (auto it = w.begin(); it != w.end(); ++it)
           if (it.value().contains("inputs") && !it.value()["inputs"].empty())
@@ -481,8 +492,7 @@ void goto_coveraget::write_path_covered_set_atomic(const std::string &when)
         nlohmann::json v;
         rb >> v;
         on_disk_ids = v.value("covered", nlohmann::json::array()).size();
-        const nlohmann::json p =
-          v.value("payloads", nlohmann::json::object());
+        const nlohmann::json p = v.value("payloads", nlohmann::json::object());
         on_disk_payloads = p.size();
         for (auto it = p.begin(); it != p.end(); ++it)
           if (it.value().contains("inputs") && !it.value()["inputs"].empty())
@@ -501,7 +511,8 @@ void goto_coveraget::write_path_covered_set_atomic(const std::string &when)
       "--solidity-path-coverage: covered-set {} was published but could not be "
       "read back. The counterexample payload is the deliverable a dying run is "
       "supposed to keep; an unreadable file means it was NOT kept, and saying "
-      "nothing here would leave a lost witness looking exactly like a saved one",
+      "nothing here would leave a lost witness looking exactly like a saved "
+      "one",
       path_covered_outpath);
     return;
   }
@@ -932,13 +943,16 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
           names += (names.empty() ? "" : "; ") + p;
         log_status(
           "--path-cov-certify: PUNCH SUGGESTION for '{}' — instead of cutting "
-          "the interval, remove the witness itself: add {} to the box's `holes` "
-          "(Definition 5). Legal by the same rule as a side cut (this path's own "
+          "the interval, remove the witness itself: add {} to the box's "
+          "`holes` "
+          "(Definition 5). Legal by the same rule as a side cut (this path's "
+          "own "
           "counterexample differs there and survives), and it costs ONE value "
           "rather than a whole side — the difference between the two was "
           "measured at 5.7e45 on an address coordinate. It is NOT strictly "
           "better: punching converges only where the excluded set is a few "
-          "points, while a side cut is what makes progress when the boundary is "
+          "points, while a side cut is what makes progress when the boundary "
+          "is "
           "an interval. Which to use is the driver's policy; both are reported",
           key.first,
           names);
@@ -961,7 +975,8 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
           "--path-cov-certify: no single-coordinate shrink for '{}' — on every "
           "bounded coordinate the witness agrees with the path's own "
           "counterexample, so neither a cut NOR a hole separates them while "
-          "keeping a known member of the domain. The region has to be split, or "
+          "keeping a known member of the domain. The region has to be split, "
+          "or "
           "the path falls back to its concrete counterexample test",
           key.first);
     }
@@ -976,7 +991,8 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
   log_error(
     "--path-cov-certify: INTERNAL DEFECT — {} certification claim(s) were "
     "REFUTED but carry no witness input: {}. The box bounds at least one call "
-    "argument, so a refutation is obliged to name the input inside the box that "
+    "argument, so a refutation is obliged to name the input inside the box "
+    "that "
     "leaves the path — that input IS the value the box gets shrunk with. A "
     "verdict without it is not a weaker result, it is an unusable one, and the "
     "verdict alone still prints as if everything worked.",
@@ -1075,13 +1091,15 @@ static void path_cov_report_truncated(
     "at the unwind bound while unwinding assertions were disabled, so the "
     "executions needing one more iteration were ASSUMED AWAY rather than "
     "explored. VACUOUS would mean \"no execution the region admits walks this "
-    "path\"; that proposition is FALSE whenever a truncation assumption removed "
+    "path\"; that proposition is FALSE whenever a truncation assumption "
+    "removed "
     "executions on the path, so THIS RUN IS NOT ENTITLED TO IT and the "
     "confident word is withheld. This is NOT a weaker VACUOUS and must not be "
     "read as one: it is the explicit third state, and the region may well be "
     "perfectly non-empty. MEASURED on aqua Aqua.dock enc=12 (--focus-function "
     "dock --solidity-max-tx 1): --path-cov-certify answered CERTIFIED while "
-    "--path-cov-assert answered VACUOUS for the IDENTICAL region, and the whole "
+    "--path-cov-assert answered VACUOUS for the IDENTICAL region, and the "
+    "whole "
     "difference was one truncated library loop (__memset_impl, "
     "src/c2goto/library/string.c:298) whose executions --unwindset 64:512 "
     "brings back. TO GET A VERDICT: raise --unwind, use "
@@ -1149,8 +1167,7 @@ void goto_coveraget::report_path_cov_certify()
     const std::string truncated = path_cov_truncated_loops();
     if (!truncated.empty())
     {
-      path_cov_report_truncated(
-        "--path-cov-certify", enc_txt, why, truncated);
+      path_cov_report_truncated("--path-cov-certify", enc_txt, why, truncated);
       exit(1);
     }
 
@@ -1160,8 +1177,10 @@ void goto_coveraget::report_path_cov_certify()
       "FOR WANT OF AN EXECUTION, which is indistinguishable from a certified "
       "box: this run establishes NOTHING about the box. The four structural "
       "gates in front of it are SYNTACTIC (lo>hi, a name bounded twice, holes "
-      "emptying the interval, a decimal outside the coordinate's type) and none "
-      "of them can see this — contract state is NOT havoc'd at this transaction "
+      "emptying the interval, a decimal outside the coordinate's type) and "
+      "none "
+      "of them can see this — contract state is NOT havoc'd at this "
+      "transaction "
       "bound, so a box naming an entry state the constructor never produces is "
       "well-formed, in-type, non-empty and admits nothing",
       enc_txt,
@@ -1217,7 +1236,8 @@ void goto_coveraget::report_path_cov_certify()
     log_status(
       "--path-cov-certify: RESULT: REFUTED — {} of {} exit assert(s) were "
       "refuted, so an input the box admits leaves this path. The witness input "
-      "is the value the box gets shrunk with; see the SHRINK / PUNCH suggestion "
+      "is the value the box gets shrunk with; see the SHRINK / PUNCH "
+      "suggestion "
       "above. Non-vacuity WAS witnessed, so this is a genuine refutation and "
       "not an empty box",
       refuted,
@@ -1232,9 +1252,11 @@ void goto_coveraget::report_path_cov_certify()
       path_cov_certify_exit_keys.size());
   else
     log_status(
-      "--path-cov-certify: RESULT: CERTIFIED — every input the box admits walks "
+      "--path-cov-certify: RESULT: CERTIFIED — every input the box admits "
+      "walks "
       "path enc={} ({} of {} exit assert(s) discharged by the solver, {} at "
-      "exits the box makes unreachable), and NON-VACUITY was witnessed, so this "
+      "exits the box makes unreachable), and NON-VACUITY was witnessed, so "
+      "this "
       "is a statement about executions rather than about an empty box. "
       "BOUNDED: true under THIS exploration (tx/unwind bound, post-constructor "
       "entry state), never 'proven'",
@@ -1722,8 +1744,10 @@ void goto_coveraget::report_outer_boxes()
     for (const auto &[cn, why] : path_cov_refused_coords)
       refused += (refused.empty() ? "" : "; ") + cn + " (" + why + ")";
     log_warning(
-      "--path-cov-outer-box: {} coordinate(s) were REFUSED and appear in NO box "
-      "below: {}. Their absence is a refusal, not a measurement — reading it as "
+      "--path-cov-outer-box: {} coordinate(s) were REFUSED and appear in NO "
+      "box "
+      "below: {}. Their absence is a refusal, not a measurement — reading it "
+      "as "
       "\"bounded by the whole type\" would attribute a measured bound to a "
       "coordinate nothing was measured on, and would widen every region that "
       "quoted it",
@@ -1736,14 +1760,17 @@ void goto_coveraget::report_outer_boxes()
     pin_note += (pin_note.empty() ? "" : ", ") + pn + " == " + pv;
   if (!pin_note.empty())
     log_status(
-      "--path-cov-outer-box: every box and every region below is measured under "
+      "--path-cov-outer-box: every box and every region below is measured "
+      "under "
       "the PIN {} — they describe that SLICE of the input space, not the whole "
-      "domain. Any test rendered from one must carry the pin as a `require` too, "
+      "domain. Any test rendered from one must carry the pin as a `require` "
+      "too, "
       "or it claims something about inputs that were never examined",
       pin_note);
 
   log_status(
-    "--path-cov-outer-box: {} of {} ladder probe(s) reached the solver. A probe "
+    "--path-cov-outer-box: {} of {} ladder probe(s) reached the solver. A "
+    "probe "
     "that HOLDS is an outer bound; a refuted probe is the ladder working, and "
     "its counterexample is a genuine input of that path beyond the bound",
     decided,
@@ -1775,7 +1802,8 @@ void goto_coveraget::report_outer_boxes()
         // An inverted interval is EMPTY, and printed bare it reads as a measured
         // range. Say so at the interval itself, not only in a trailing note: the
         // number pair is what gets quoted.
-        if (it->second.have_l && it->second.have_u && it->second.l > it->second.u)
+        if (
+          it->second.have_l && it->second.have_u && it->second.l > it->second.u)
           s += " (EMPTY: lo > hi)";
       }
     }
@@ -1785,7 +1813,8 @@ void goto_coveraget::report_outer_boxes()
   for (const auto &[enc, depth] : path_cov_outer_box_paths)
   {
     log_status(
-      "--path-cov-outer-box: path enc={} depth={} OUTER box (D_path is CONTAINED "
+      "--path-cov-outer-box: path enc={} depth={} OUTER box (D_path is "
+      "CONTAINED "
       "in it): {}",
       enc,
       depth,
@@ -1811,7 +1840,8 @@ void goto_coveraget::report_outer_boxes()
     }
     if (!br.empty())
       log_status(
-        "--path-cov-outer-box: path enc={} BRACKET (refine the next batch's span "
+        "--path-cov-outer-box: path enc={} BRACKET (refine the next batch's "
+        "span "
         "to this): {}",
         enc,
         br);
@@ -1929,10 +1959,10 @@ void goto_coveraget::report_outer_boxes()
       bool best_is_hole = false;
       BigInt best_hole;
       BigInt best_kept;
-      auto kept_in = [&](const std::string &c, const BigInt &lo,
-                         const BigInt &hi) {
-        return path_cov_kept_in(holes, c, lo, hi);
-      };
+      auto kept_in =
+        [&](const std::string &c, const BigInt &lo, const BigInt &hi) {
+          return path_cov_kept_in(holes, c, lo, hi);
+        };
       for (const auto &[c, sr] : sbox)
       {
         auto ob = box.find(c);
@@ -1949,8 +1979,7 @@ void goto_coveraget::report_outer_boxes()
           sr.first == sr.second && sr.first >= ob->second.first &&
           sr.first <= ob->second.second && ce != sr.first)
         {
-          const BigInt k =
-            kept_in(c, ob->second.first, ob->second.second) - 1;
+          const BigInt k = kept_in(c, ob->second.first, ob->second.second) - 1;
           if (!best || k > best_kept)
           {
             best = true;
@@ -2067,10 +2096,12 @@ void goto_coveraget::report_outer_boxes()
     if (!empty_on.empty())
       empty_note =
         " — EMPTY, NOT CERTIFIED: no value survives on " + empty_on +
-        " (either lo > hi, or the holes remove every value the interval holds — "
+        " (either lo > hi, or the holes remove every value the interval holds "
+        "— "
         "a punched interval can be empty while its endpoints look well-formed)"
         ", so this box contains no input at all. The subtraction removed "
-        "everything, which under a pin usually means the pin excluded this path "
+        "everything, which under a pin usually means the pin excluded this "
+        "path "
         "from the slice; the honest statement is that exclusion. Do NOT hand "
         "this box to the certification query: an unsatisfiable assumption "
         "answers SUCCESSFUL for want of any execution";
@@ -2160,11 +2191,10 @@ void goto_coveraget::report_path_cov_assertions()
   // no table -- every row below would be a statement about a region that admits
   // no execution, and each row would read exactly like a certified one.
   {
-    const std::string nv =
-      path_cov_assert_nonvacuous_key.first.empty()
-        ? std::string()
-        : path_cov_assert_nonvacuous_key.first + "\t" +
-            path_cov_assert_nonvacuous_key.second;
+    const std::string nv = path_cov_assert_nonvacuous_key.first.empty()
+                             ? std::string()
+                             : path_cov_assert_nonvacuous_key.first + "\t" +
+                                 path_cov_assert_nonvacuous_key.second;
     char nvv = '?';
     if (!nv.empty())
     {
@@ -2191,16 +2221,16 @@ void goto_coveraget::report_path_cov_assertions()
           ? std::string("<unknown>")
           : std::to_string(path_cov_assert_candidates.front().enc);
       const std::string why =
-        nvv == 'P' ? "the antecedent held on every execution, i.e. no admitted "
-                     "input reaches this path"
-                   : (nvv == '?' ? "the witness claim never reached the solver"
-                                 : "the solver returned unknown for the witness "
-                                   "claim");
+        nvv == 'P'
+          ? "the antecedent held on every execution, i.e. no admitted "
+            "input reaches this path"
+          : (nvv == '?' ? "the witness claim never reached the solver"
+                        : "the solver returned unknown for the witness "
+                          "claim");
       const std::string truncated = path_cov_truncated_loops();
       if (!truncated.empty())
       {
-        path_cov_report_truncated(
-          "--path-cov-assert", enc_txt, why, truncated);
+        path_cov_report_truncated("--path-cov-assert", enc_txt, why, truncated);
         exit(1);
       }
 
@@ -2208,7 +2238,8 @@ void goto_coveraget::report_path_cov_assertions()
         "--path-cov-assert: THE REGION IS VACUOUS -- no execution it admits "
         "walks path enc={} of this unit ({}). Every candidate below would hold "
         "FOR WANT OF AN EXECUTION, and the table would be indistinguishable "
-        "from a fully certified ladder. The four structural gates on the region "
+        "from a fully certified ladder. The four structural gates on the "
+        "region "
         "are SYNTACTIC (lo>hi, a name bounded twice, holes emptying the "
         "interval, a decimal outside the type) and none of them can see this: "
         "contract state is NOT havoc'd at this transaction bound, so a region "
@@ -3372,8 +3403,7 @@ static size_t count_paths_no_instrument(
         size_t rk = 0;
         if (pc->location.property().as_string() != "skipped")
           collect_short_circuit_decisions(
-            to_code_return2t(pc->code).operand,
-            [&](const expr2tc &) { ++rk; });
+            to_code_return2t(pc->code).operand, [&](const expr2tc &) { ++rk; });
         paths += (rk > 0 && rk <= SC_DECISION_MAX) ? (size_t(1) << rk) : 1;
         break;
       }
@@ -3552,8 +3582,9 @@ public:
     // that normalises this; we run after goto conversion, so emit the real
     // instruction kind.
     Forall_goto_program_instructions (pit, tmp)
-      if (pit->type == OTHER && !is_nil_expr(pit->code) &&
-          is_code_decl2t(pit->code))
+      if (
+        pit->type == OTHER && !is_nil_expr(pit->code) &&
+        is_code_decl2t(pit->code))
         pit->type = DECL;
     tmp.destructive_append(tmp2);
 
@@ -3626,8 +3657,7 @@ public:
 // but it means a naive `2^width - 1` type-range check admits `[0, 255]` for a
 // bool. `path_cov_fits_type` and certify's copy of it both special-case bool to
 // `[0, 1]` for that reason.
-static bool
-coord_expressible(const type2tc &t, std::string &why)
+static bool coord_expressible(const type2tc &t, std::string &why)
 {
   if (is_unsignedbv_type(t))
     return true;
@@ -3660,29 +3690,34 @@ coord_expressible(const type2tc &t, std::string &why)
   // and refused when out of it. That is a separate change with its own criteria;
   // it must not be smuggled in by widening this test back.
   if (is_signedbv_type(t))
-    why = "it resolves to a SIGNED bit-vector. A bound is built as a constant "
-          "of the coordinate's own type and compared with a signedness-aware "
-          "predicate, so a decimal bound above the signed maximum wraps to a "
-          "negative value and can make the assumption UNSATISFIABLE -- which "
-          "certifies vacuously while the printed box still looks non-empty "
-          "(reproduced: the same box that is refuted on uint256 is 'certified' "
-          "on int256). Supporting this needs the bounds validated against the "
-          "signed range, not a wider type test";
+    why =
+      "it resolves to a SIGNED bit-vector. A bound is built as a constant "
+      "of the coordinate's own type and compared with a signedness-aware "
+      "predicate, so a decimal bound above the signed maximum wraps to a "
+      "negative value and can make the assumption UNSATISFIABLE -- which "
+      "certifies vacuously while the printed box still looks non-empty "
+      "(reproduced: the same box that is refuted on uint256 is 'certified' "
+      "on int256). Supporting this needs the bounds validated against the "
+      "signed range, not a wider type test";
   else if (is_array_type(t))
-    why = "it resolves to an ARRAY — the frontend lowers strings, bytes, "
-          "mappings and dynamic arrays to arrays, and a scalar interval is not "
-          "expressible on one";
+    why =
+      "it resolves to an ARRAY — the frontend lowers strings, bytes, "
+      "mappings and dynamic arrays to arrays, and a scalar interval is not "
+      "expressible on one";
   else if (is_struct_type(t) || is_union_type(t))
-    why = "it resolves to an AGGREGATE (struct / contract instance) — bounding "
-          "it would need a coordinate per field, which is a different "
-          "coordinate kind, not a wider interval";
+    why =
+      "it resolves to an AGGREGATE (struct / contract instance) — bounding "
+      "it would need a coordinate per field, which is a different "
+      "coordinate kind, not a wider interval";
   else if (is_pointer_type(t))
-    why = "it resolves to a POINTER (a contract or interface handle) — the "
-          "value is an address in the model's own allocator, not an input a "
-          "test can set";
+    why =
+      "it resolves to a POINTER (a contract or interface handle) — the "
+      "value is an address in the model's own allocator, not an input a "
+      "test can set";
   else
-    why = "it does not resolve to a bit-vector, which is the only kind this "
-          "stage can put a bound on";
+    why =
+      "it does not resolve to a bit-vector, which is the only kind this "
+      "stage can put a bound on";
   return false;
 }
 
@@ -3775,11 +3810,18 @@ void goto_coveraget::solidity_path_coverage()
   truncation_weakened.clear();
   path_decision_depth.clear();
   degraded_call_sites.clear();
+  path_probe_goals.clear();
+  path_probe_claims.clear();
+  path_observer_symbols.clear();
+  path_probe_nondets_kept.store(0, std::memory_order_relaxed);
+  path_probe_nondets_dropped.store(0, std::memory_order_relaxed);
   {
     std::lock_guard lock(claim_outcome_mutex);
     claim_outcome.clear();
     path_ce.clear();
     path_ce_all.clear();
+    path_probe_outcome.clear();
+    path_probe_observations.clear();
   }
 
   // Fingerprint of everything that can change what a path IS. The stable path
@@ -4070,12 +4112,10 @@ void goto_coveraget::solidity_path_coverage()
       for (const auto &p : j.at("paths"))
       {
         const uint64_t e = p.at("enc").get<uint64_t>();
-        path_cov_outer_box_paths.emplace_back(
-          e, p.at("depth").get<uint64_t>());
+        path_cov_outer_box_paths.emplace_back(e, p.at("depth").get<uint64_t>());
         // Bound to a NAMED object first: `.items()` on the temporary returned
         // by `value()` iterates a destroyed object.
-        const nlohmann::json ce_obj =
-          p.value("ce", nlohmann::json::object());
+        const nlohmann::json ce_obj = p.value("ce", nlohmann::json::object());
         for (auto it = ce_obj.begin(); it != ce_obj.end(); ++it)
           path_cov_outer_box_ce[{e, it.key()}] = it.value().get<std::string>();
         // ---- PER-PATH LADDERS: `paths[].coords[].values` ----
@@ -4180,8 +4220,7 @@ void goto_coveraget::solidity_path_coverage()
     std::ifstream cin_f(path_cov_certify_path);
     if (!cin_f)
     {
-      log_error(
-        "--path-cov-certify: cannot open '{}'", path_cov_certify_path);
+      log_error("--path-cov-certify: cannot open '{}'", path_cov_certify_path);
       abort();
     }
     try
@@ -4237,16 +4276,20 @@ void goto_coveraget::solidity_path_coverage()
         "value(s) are removed across {} coordinate(s), so the assumption is "
         "`lo <= c <= hi && c != h ...`. A hole says the region omits exactly "
         "those points, which a closed interval cannot say: without it the "
-        "subtraction has to keep whichever SIDE of an excluded value happens to "
-        "hold its own counterexample, and that side is chosen by the solver, not "
+        "subtraction has to keep whichever SIDE of an excluded value happens "
+        "to "
+        "hold its own counterexample, and that side is chosen by the solver, "
+        "not "
         "by the method",
         certify_holes_total,
         path_cov_certify_holes.size());
     log_status(
       "--path-cov-certify: CERTIFICATION QUERY for unit '{}' path enc={} "
-      "depth={} over {} bounded input(s). The per-path identity asserts are NOT "
+      "depth={} over {} bounded input(s). The per-path identity asserts are "
+      "NOT "
       "emitted in this mode and NO [Coverage] block is printed — a certified "
-      "box makes these claims HOLD, which the coverage counters would report as "
+      "box makes these claims HOLD, which the coverage counters would report "
+      "as "
       "uncovered. THE RESULT OF THIS RUN IS THE `RESULT:` LINE, not the "
       "VERIFICATION SUCCESSFUL / FAILED verdict: a non-vacuity witness is "
       "emitted at this path's own exit and is REFUTED on every run that "
@@ -4361,7 +4404,8 @@ void goto_coveraget::solidity_path_coverage()
         "{{\"unit\":..., \"enc\":N, \"depth\":D, "
         "\"region\":[{{\"name\":...,\"lo\":\"..\",\"hi\":\"..\"}}], "
         "\"vars\":[{{\"name\":...,\"abs_lo\":\"..\",\"abs_hi\":\"..\","
-        "\"delta_dir\":\"inc|dec\",\"delta_lo\":\"..\",\"delta_hi\":\"..\"}}]}}",
+        "\"delta_dir\":\"inc|dec\",\"delta_lo\":\"..\",\"delta_hi\":\"..\"}}]}"
+        "}",
         path_cov_assert_path,
         ex.what());
       abort();
@@ -4388,7 +4432,8 @@ void goto_coveraget::solidity_path_coverage()
     log_status(
       "--path-cov-assert: POST-STATE ASSERTION LADDER for unit '{}' path "
       "enc={} depth={} over {} region bound(s) and {} explicit variable "
-      "spec(s). The region is ASSUMED at entry -- it is exactly the `require` a "
+      "spec(s). The region is ASSUMED at entry -- it is exactly the `require` "
+      "a "
       "generated test would carry -- and each candidate is asserted at THIS "
       "path's own exit under `tr != enc || cnt != depth`, so it is vacuous on "
       "every other path. One fixed assumption, a whole ladder of assertions, "
@@ -4652,7 +4697,8 @@ void goto_coveraget::solidity_path_coverage()
   // cap + 1, which is all a budget comparison needs.
   auto count_paths_of = [&](const goto_programt &b, size_t cap) -> size_t {
     bool hit = false;
-    const size_t n = count_paths_no_instrument(b, ns, path_cov_unwind, cap, hit);
+    const size_t n =
+      count_paths_no_instrument(b, ns, path_cov_unwind, cap, hit);
     return hit ? cap + 1 : n;
   };
 
@@ -4728,7 +4774,8 @@ void goto_coveraget::solidity_path_coverage()
       log_warning(
         "--solidity-path-coverage: unit '{}' is over the per-unit budget ({}) "
         "and degradation has NOTHING it may withdraw — the unit's own source "
-        "decisions already exceed the budget, or its only internal calls are to "
+        "decisions already exceed the budget, or its only internal calls are "
+        "to "
         "public/external functions, which must stay expanded (their bodies "
         "carry the ABI value gate, which an internal call does not run "
         "on-chain). The goal cap will therefore truncate this unit; raise "
@@ -4803,10 +4850,12 @@ void goto_coveraget::solidity_path_coverage()
         "enumerates more paths than the per-unit budget ({}), so {} call "
         "point(s) were WITHDRAWN from its path identity and are now treated as "
         "black boxes: {}. The callees still EXECUTE (the call is still there), "
-        "they just stop contributing decisions, so the path classes get coarser "
+        "they just stop contributing decisions, so the path classes get "
+        "coarser "
         "while still partitioning the input space — sound, with weaker "
         "assertions, and weaker exactly at the call points named here. This is "
-        "tried BEFORE the goal cap on purpose: the cap would instead DROP paths "
+        "tried BEFORE the goal cap on purpose: the cap would instead DROP "
+        "paths "
         "that exist in the model",
         uname,
         path_cov_max_goals,
@@ -4906,14 +4955,17 @@ void goto_coveraget::solidity_path_coverage()
         unames += (unames.empty() ? "" : ", ") + n;
       log_warning(
         "--solidity-path-coverage: {} of those unexpanded callee(s) are "
-        "themselves public/external UNITS ({}). That is not only coarser: their "
+        "themselves public/external UNITS ({}). That is not only coarser: "
+        "their "
         "bodies carry the synthesised ABI value gate, which models an EXTERNAL "
         "entry, while the call reaching them here is INTERNAL and never runs "
         "that gate on-chain. So the model can admit an execution in which the "
         "callee reverts for carrying value inside a caller that on-chain "
-        "proceeds. Every path of every unit containing such a call is therefore "
+        "proceeds. Every path of every unit containing such a call is "
+        "therefore "
         "a NAMED OBSTACLE (same containment as a branch-free assume — same "
-        "failure, different route), not merely a coarser one. Raise --unwind so "
+        "failure, different route), not merely a coarser one. Raise --unwind "
+        "so "
         "these are expanded: an expanded copy is gate-free, which is exactly "
         "what makes both entry kinds correct at once",
         residual_unit_fns.size(),
@@ -5341,8 +5393,7 @@ void goto_coveraget::solidity_path_coverage()
       const std::string uid = f_it->first.as_string();
       focus_candidates.push_back(uid);
       auto spec_names = [&uid](const std::string &spec) {
-        return uid == spec ||
-               uid.find("@F@" + spec + "#") != std::string::npos;
+        return uid == spec || uid.find("@F@" + spec + "#") != std::string::npos;
       };
       const bool stage_target = (outer_on && spec_names(outer_unit)) ||
                                 (certify_on && spec_names(certify_unit)) ||
@@ -5565,6 +5616,76 @@ void goto_coveraget::solidity_path_coverage()
     expr2tc cnt = symbol2tc(migrate_type(pcsym->type), pcsym->id);
     irep_idt cnt_id = pcsym->id;
 
+    const std::string unit_id = f_it->first.as_string();
+    path_observer_symbols[unit_id] = {tr_id.as_string(), cnt_id.as_string()};
+    if (path_cov_probe)
+    {
+      // A probe claim depends on its latch, not on tr/cnt. Keep the observer
+      // ghosts so the resulting complete execution can still be attributed.
+      config.no_slice_names.insert(tr_id.as_string());
+      config.no_slice_names.insert(cnt_id.as_string());
+    }
+
+    struct local_probe_goalt
+    {
+      expr2tc latch;
+      irep_idt latch_id;
+      std::string id;
+      std::string decision_loc;
+      std::string condition;
+      std::string arm;
+    };
+    std::vector<local_probe_goalt> probe_goals;
+
+    auto new_probe_goal = [&](
+                            const locationt &loc,
+                            const expr2tc &condition,
+                            const std::string &arm) -> expr2tc {
+      symbolt lsym;
+      lsym.type = bool_typet();
+      lsym.name = "__ESBMC_path_probe$" + i2string(ghost_counter++);
+      lsym.id = "path_cov::" + id2string(lsym.name);
+      lsym.lvalue = true;
+      lsym.static_lifetime = false;
+      lsym.is_extern = false;
+      symbolt *plsym;
+      cov_context->move(lsym, plsym);
+      expr2tc latch = symbol2tc(migrate_type(plsym->type), plsym->id);
+      const std::string goal_id =
+        unit_id + ":probe:branch:" + std::to_string(probe_goals.size()) + ":" +
+        arm;
+      probe_goals.push_back(
+        {latch,
+         plsym->id,
+         goal_id,
+         loc.as_string(),
+         from_expr(ns, "", condition),
+         arm});
+      path_probe_goals.emplace(
+        goal_id,
+        path_probe_goalt{
+          goal_id,
+          unit_id,
+          loc.as_string(),
+          from_expr(ns, "", condition),
+          arm});
+      return latch;
+    };
+
+    auto latch_probe = [&](
+                         goto_programt::targett &sit,
+                         const expr2tc &latch,
+                         const expr2tc &value) {
+      goto_programt::instructiont a;
+      a.type = ASSIGN;
+      a.code = code_assign2tc(latch, or2tc(latch, value));
+      a.location = sit->location;
+      a.location.property("skipped");
+      a.function = sit->location.get_function();
+      goto_program.insert_swap(sit++, a);
+      --sit;
+    };
+
     // Snapshot one decision: insert `tr = tr*2 + (uint64)val; cnt = cnt+1`
     // before `it` (leaving `it` unchanged), both marked "skipped" so they are
     // not coverage claims. For K decisions at the same site, call in order —
@@ -5628,6 +5749,15 @@ void goto_coveraget::solidity_path_coverage()
       if (it->is_goto() && !is_true(it->guard))
       {
         phase1_decision_sites.emplace(it->location.as_string(), 0u);
+        if (path_cov_probe)
+        {
+          const expr2tc taken =
+            new_probe_goal(it->location, it->guard, "taken");
+          const expr2tc fallthrough = new_probe_goal(
+            it->location, gen_not_expr(it->guard), "fallthrough");
+          latch_probe(it, taken, it->guard);
+          latch_probe(it, fallthrough, gen_not_expr(it->guard));
+        }
         snapshot(it, it->guard);
       }
       else if (
@@ -5733,8 +5863,7 @@ void goto_coveraget::solidity_path_coverage()
           continue;
         const type2tc rt = rv->type;
         if (
-          !is_unsignedbv_type(rt) && !is_signedbv_type(rt) &&
-          !is_bool_type(rt))
+          !is_unsignedbv_type(rt) && !is_signedbv_type(rt) && !is_bool_type(rt))
           continue;
         if (!has_ret_ghost)
         {
@@ -5826,11 +5955,11 @@ void goto_coveraget::solidity_path_coverage()
     {
       const std::string uid0 = f_it->first.as_string();
       const size_t hash0 = uid0.rfind('#');
-      const std::string want =
-        hash0 == std::string::npos
-          ? std::string()
-          : "sol:@C@" + contract_of(uid0) + "@tuple_instance$" +
-              uid0.substr(hash0 + 1);
+      const std::string want = hash0 == std::string::npos
+                                 ? std::string()
+                                 : "sol:@C@" + contract_of(uid0) +
+                                     "@tuple_instance$" +
+                                     uid0.substr(hash0 + 1);
       if (!want.empty())
       {
         Forall_goto_program_instructions (tit, goto_program)
@@ -5956,6 +6085,26 @@ void goto_coveraget::solidity_path_coverage()
       cini.function = efn;
       goto_program.insert_swap(entry++, cini);
       --entry;
+      for (const auto &goal : probe_goals)
+      {
+        goto_programt::instructiont pdcl;
+        pdcl.type = DECL;
+        pdcl.code = code_decl2tc(goal.latch->type, goal.latch_id);
+        pdcl.location = eloc;
+        pdcl.location.property("skipped");
+        pdcl.function = efn;
+        goto_program.insert_swap(entry++, pdcl);
+        --entry;
+
+        goto_programt::instructiont pini;
+        pini.type = ASSIGN;
+        pini.code = code_assign2tc(goal.latch, gen_false_expr());
+        pini.location = eloc;
+        pini.location.property("skipped");
+        pini.function = efn;
+        goto_program.insert_swap(entry++, pini);
+        --entry;
+      }
       // The return-value ghost, declared and zeroed alongside tr/cnt. The zero
       // is NOT a value claim: a path that reverts before reaching any RETURN
       // leaves it at 0, and `return_value_known` in the payload is the only
@@ -6113,8 +6262,7 @@ void goto_coveraget::solidity_path_coverage()
     }
     // Recover a complete path's emit sequence: every prefix it passed through,
     // in order, and within each prefix every emit in program position order.
-    auto events_for = [&ev_index, &ev_table](
-                        uint64_t enc, uint64_t depth) {
+    auto events_for = [&ev_index, &ev_table](uint64_t enc, uint64_t depth) {
       std::vector<std::string> out;
       for (uint64_t k = depth + 1; k-- > 0;)
       {
@@ -6156,8 +6304,8 @@ void goto_coveraget::solidity_path_coverage()
       if (!record_decisions)
         return;
       const std::string loc = l.as_string();
-      const std::string ikey = loc + "\t" + std::to_string(sub) + "\t" +
-                               from_expr(ns, "", cond);
+      const std::string ikey =
+        loc + "\t" + std::to_string(sub) + "\t" + from_expr(ns, "", cond);
       auto ins = dec_intern.emplace(ikey, (uint32_t)dec_table.size());
       if (ins.second)
       {
@@ -6325,8 +6473,9 @@ void goto_coveraget::solidity_path_coverage()
     // stamped `sol_revert_edge` so the Foundry generator renders
     // vm.expectRevert() (R0). Normal paths exit at END_FUNCTION, is_revert=false.
     // 5th field: the content-addressed stable path id (cross-run key).
-    std::vector<std::
-                  tuple<goto_programt::targett, expr2tc, std::string, bool, std::string>>
+    std::vector<
+      std::
+        tuple<goto_programt::targett, expr2tc, std::string, bool, std::string>>
       to_insert;
     bool capped = false;
     // Set when a back-edge budget refused a continuation, i.e. this unit has a
@@ -6409,9 +6558,8 @@ void goto_coveraget::solidity_path_coverage()
       if (!i->is_assign() || !is_code_assign2t(i->code))
         return false;
       const expr2tc &src = to_code_assign2t(i->code).source;
-      return is_symbol2t(src) &&
-             to_symbol2t(src).thename.as_string().find("_sol_save_this") !=
-               std::string::npos;
+      return is_symbol2t(src) && to_symbol2t(src).thename.as_string().find(
+                                   "_sol_save_this") != std::string::npos;
     };
 
     // True iff `i` is the frontend's explicit revert marker
@@ -6448,9 +6596,8 @@ void goto_coveraget::solidity_path_coverage()
       if (i->location.get_bool("sol_path_inlined"))
         return false;
       const expr2tc &src = to_code_assign2t(i->code).source;
-      return is_symbol2t(src) &&
-             to_symbol2t(src).thename.as_string().find("_saved_encl_addr") !=
-               std::string::npos;
+      return is_symbol2t(src) && to_symbol2t(src).thename.as_string().find(
+                                   "_saved_encl_addr") != std::string::npos;
     };
 
     // Does this function HAVE an epilogue at all? Without one the marker above
@@ -6614,36 +6761,36 @@ void goto_coveraget::solidity_path_coverage()
               // Positive evidence of a rollback revert.
               rollback_exits.insert(idx);
             else if (!has_epilogue || !saw_epilogue)
-              // No positive evidence of a normal exit. Either the path reached
-              // END_FUNCTION while SKIPPING the epilogue, or the function has
-              // no epilogue at all (library / free function — exactly the
-              // scopes the revert-observation gate does NOT mark, so a revert
-              // there carries no marker either). Both a `require` failing
-              // before any state write and a plain early `return` compile to
-              // this same shape, with nothing on the edge to separate them.
-              // Report undetermined rather than guess: calling it "normal"
-              // would claim a reverted transaction succeeded — measured on
-              // a library whose function reverts, that is exactly what the
-              // previous "no epilogue => normal" default did.
-              //
-              // The two sub-cases are counted apart (see the declaration): "the
-              // unit has no epilogue at all" is a scope problem affecting every
-              // path of the unit, while "the epilogue exists and this path
-              // skipped it" is a per-path shape. Fixing one does nothing for the
-              // other.
+            // No positive evidence of a normal exit. Either the path reached
+            // END_FUNCTION while SKIPPING the epilogue, or the function has
+            // no epilogue at all (library / free function — exactly the
+            // scopes the revert-observation gate does NOT mark, so a revert
+            // there carries no marker either). Both a `require` failing
+            // before any state write and a plain early `return` compile to
+            // this same shape, with nothing on the edge to separate them.
+            // Report undetermined rather than guess: calling it "normal"
+            // would claim a reverted transaction succeeded — measured on
+            // a library whose function reverts, that is exactly what the
+            // previous "no epilogue => normal" default did.
+            //
+            // The two sub-cases are counted apart (see the declaration): "the
+            // unit has no epilogue at all" is a scope problem affecting every
+            // path of the unit, while "the epilogue exists and this path
+            // skipped it" is a per-path shape. Fixing one does nothing for the
+            // other.
+            {
+              undetermined_exits.insert(idx);
+              if (has_epilogue)
               {
-                undetermined_exits.insert(idx);
-                if (has_epilogue)
-                {
-                  ++und_epilogue_skipped;
-                  und_locs_epilogue_skipped.insert(pc->location.as_string());
-                }
-                else
-                {
-                  ++und_no_epilogue;
-                  und_locs_no_epilogue.insert(pc->location.as_string());
-                }
+                ++und_epilogue_skipped;
+                und_locs_epilogue_skipped.insert(pc->location.as_string());
               }
+              else
+              {
+                ++und_no_epilogue;
+                und_locs_no_epilogue.insert(pc->location.as_string());
+              }
+            }
           }
           break;
         }
@@ -6852,9 +6999,7 @@ void goto_coveraget::solidity_path_coverage()
         // each was snapshotted into tr in Phase 1. Fan the DFS out over the
         // 2^K operand-value combinations, appending K bits to enc/depth (in
         // collect order, matching tr) so each combination is a distinct path.
-        if (
-          pc->is_assign() &&
-          pc->location.property().as_string() != "skipped")
+        if (pc->is_assign() && pc->location.property().as_string() != "skipped")
         {
           const expr2tc &src = to_code_assign2t(pc->code).source;
           // Collected rather than counted, for the same reason as the RETURN
@@ -6945,8 +7090,7 @@ void goto_coveraget::solidity_path_coverage()
     //
     // So this is reported as an absolute count and a strength annotation, and
     // degradation exists precisely so it should not be reached at all.
-    const bool unit_truncated =
-      capped || dropped_paths > dropped_before_unit;
+    const bool unit_truncated = capped || dropped_paths > dropped_before_unit;
 
     // ---- Path-count distribution measurement ----
     {
@@ -7005,7 +7149,8 @@ void goto_coveraget::solidity_path_coverage()
             "degradation withdrew {} call point(s) and stopped, because the "
             "pre-enumeration count then read {} (within budget). The "
             "enumeration produced {}. These are two different computations, so "
-            "a gap here means their counting units disagree — reconcile the two "
+            "a gap here means their counting units disagree — reconcile the "
+            "two "
             "definitions; it is not by itself a defect. If they DO agree, the "
             "degradation policy simply stopped one withdrawal too early",
             uname,
@@ -7045,7 +7190,8 @@ void goto_coveraget::solidity_path_coverage()
         // is inserted after the snapshot and contributes exactly one path. A
         // mismatch means the two traversals have drifted, which would silently
         // corrupt every ratio computed from them.
-        const size_t after_no_gate = after - (gate_inserted && after > 0 ? 1 : 0);
+        const size_t after_no_gate =
+          after - (gate_inserted && after > 0 ? 1 : 0);
         if (
           expanded_into_unit[uname] == 0 && !capped && !snap_capped &&
           !loop_truncated && before != after_no_gate)
@@ -7102,8 +7248,9 @@ void goto_coveraget::solidity_path_coverage()
         std::string out;
         for (const auto &e : s)
           out += (out.empty() ? "" : "; ") + e;
-        return out.empty() ? std::string("no source location on the exit "
-                                         "instruction; see the unit named above")
+        return out.empty() ? std::string(
+                               "no source location on the exit "
+                               "instruction; see the unit named above")
                            : out;
       };
       log_warning(
@@ -7180,7 +7327,8 @@ void goto_coveraget::solidity_path_coverage()
       std::vector<std::string> unaccounted;
       for (const auto &[site, sub] : dfs_decision_sites)
         if (phase1_decision_sites.count({site, sub}) == 0)
-          unaccounted.push_back(site + " (operand " + std::to_string(sub) + ")");
+          unaccounted.push_back(
+            site + " (operand " + std::to_string(sub) + ")");
       if (!unaccounted.empty())
       {
         std::string where;
@@ -7330,8 +7478,10 @@ void goto_coveraget::solidity_path_coverage()
         if (!tc.empty())
           log_warning(
             "--solidity-path-coverage: unit '{}' contains {} `this.<f>(...)` "
-            "call site(s) [{}]. On-chain that is an EXTERNAL call and msg.sender "
-            "inside the callee is this contract's own address; the model lowers "
+            "call site(s) [{}]. On-chain that is an EXTERNAL call and "
+            "msg.sender "
+            "inside the callee is this contract's own address; the model "
+            "lowers "
             "it to a direct call and keeps the caller's msg.sender, so a path "
             "through it may not exist on-chain. NAMED OBSTACLE: paths through "
             "these sites must not be turned into tests",
@@ -7373,7 +7523,8 @@ void goto_coveraget::solidity_path_coverage()
           // exit on the floor. Aborting is the point — the alternative is a
           // coverage percentage that silently omits it.
           log_error(
-            "--solidity-path-coverage: INTERNAL DEFECT in unit '{}'. {} exit(s) "
+            "--solidity-path-coverage: INTERNAL DEFECT in unit '{}'. {} "
+            "exit(s) "
             "are reachable in the goto program but no enumerated path ends at "
             "them, and no bound was hit to explain it. The enumeration is "
             "swallowing a class of exit, so the coverage denominator and every "
@@ -7509,7 +7660,8 @@ void goto_coveraget::solidity_path_coverage()
           // reading as "measured, and it came out as the whole type".
           path_cov_refused_coords[c.name] = why;
           log_warning(
-            "--path-cov-outer-box: unit '{}' — REFUSING coordinate '{}': {}. No "
+            "--path-cov-outer-box: unit '{}' — REFUSING coordinate '{}': {}. "
+            "No "
             "probe is emitted for it and no bound is attributed to it; the "
             "remaining coordinates are measured as usual. This is a refusal, "
             "NOT a measurement of the full type range: those two are the same "
@@ -7650,7 +7802,8 @@ void goto_coveraget::solidity_path_coverage()
           log_warning(
             "--path-cov-outer-box: path enc={} is not among this unit's "
             "enumerated paths; no probe emitted for it, and it therefore also "
-            "contributes NOTHING to the sibling subtraction — which makes every "
+            "contributes NOTHING to the sibling subtraction — which makes "
+            "every "
             "other path's certified region a claim about a partition that is "
             "missing a part",
             penc);
@@ -7683,10 +7836,10 @@ void goto_coveraget::solidity_path_coverage()
             else
             {
               const auto &d = tbl[dit->second];
-              seq += d.loc + " (operand " + std::to_string(d.sub) + ") [guard " +
-                     ((key & 1) ? "TRUE" : "FALSE") + "]" +
-                     (d.synthetic_abi_gate ? " [synthesised ABI value gate]"
-                                           : "");
+              seq +=
+                d.loc + " (operand " + std::to_string(d.sub) + ") [guard " +
+                ((key & 1) ? "TRUE" : "FALSE") + "]" +
+                (d.synthetic_abi_gate ? " [synthesised ABI value gate]" : "");
             }
           }
           log_status(
@@ -7733,8 +7886,7 @@ void goto_coveraget::solidity_path_coverage()
             }
             not_this_path = or2tc(
               not_this_path,
-              notequal2tc(
-                pexpr, pv == 0 ? gen_false_expr() : gen_true_expr()));
+              notequal2tc(pexpr, pv == 0 ? gen_false_expr() : gen_true_expr()));
             continue;
           }
           not_this_path = or2tc(
@@ -7788,7 +7940,8 @@ void goto_coveraget::solidity_path_coverage()
               // surfaced.
               log_error(
                 "--path-cov-outer-box: REFUSING coordinate '{}': hi < lo "
-                "(lo={}, hi={}), so the span contains no probe value. This is a "
+                "(lo={}, hi={}), so the span contains no probe value. This is "
+                "a "
                 "malformed span in the SPEC, not a property of the path",
                 c.name,
                 c.lo,
@@ -7798,9 +7951,8 @@ void goto_coveraget::solidity_path_coverage()
             const BigInt span = hi - lo;
             for (size_t k = 0; k <= outer_probes + 1; ++k)
               probe_vals.push_back(
-                lo +
-                (span * BigInt((int64_t)k)) /
-                  BigInt((int64_t)(outer_probes + 1)));
+                lo + (span * BigInt((int64_t)k)) /
+                       BigInt((int64_t)(outer_probes + 1)));
           }
           // ---- DROP probe values the coordinate's type cannot hold ----
           //
@@ -7857,9 +8009,12 @@ void goto_coveraget::solidity_path_coverage()
             log_warning(
               "--path-cov-outer-box: coordinate '{}' — DROPPED {} probe "
               "value(s) that do not fit its type; {} probe value(s) remain. "
-              "Those values would have been built as constants of this type and "
-              "WRAPPED, so each would have measured a different number than the "
-              "one requested. The ladder is correspondingly coarser here, which "
+              "Those values would have been built as constants of this type "
+              "and "
+              "WRAPPED, so each would have measured a different number than "
+              "the "
+              "one requested. The ladder is correspondingly coarser here, "
+              "which "
               "is a resolution loss, not a wrong bound",
               c.name,
               out_of_type,
@@ -7869,7 +8024,8 @@ void goto_coveraget::solidity_path_coverage()
             log_warning(
               "--path-cov-outer-box: coordinate '{}' — NO probe value survives "
               "the type check, so NOTHING is measured on it and it appears in "
-              "no box below. Its absence is a refusal, not a measurement of the "
+              "no box below. Its absence is a refusal, not a measurement of "
+              "the "
               "full type range",
               c.name);
             path_cov_refused_coords[c.name] =
@@ -7914,9 +8070,9 @@ void goto_coveraget::solidity_path_coverage()
               }
               else
                 cmp =
-                  upper ? lessthanequal2tc(snap[c.name], constant_int2tc(ct, v))
-                        : greaterthanequal2tc(
-                            snap[c.name], constant_int2tc(ct, v));
+                  upper
+                    ? lessthanequal2tc(snap[c.name], constant_int2tc(ct, v))
+                    : greaterthanequal2tc(snap[c.name], constant_int2tc(ct, v));
               const std::string comment =
                 id2string(f_it->first) + ":path:" + std::to_string(penc) + "#" +
                 (upper ? "ub" : "lb") + "_" + c.name + "_" + integer2string(v);
@@ -8007,7 +8163,8 @@ void goto_coveraget::solidity_path_coverage()
           "NAMED OBSTACLE, so the model admits an execution the chain does not "
           "have. A box certified here can contain inputs whose modelled "
           "execution cannot happen on chain, and the region would be reported "
-          "as certified all the same — which is a false certificate, not a weak "
+          "as certified all the same — which is a false certificate, not a "
+          "weak "
           "one (lost decision: {}; calls a gated unit: {}). Certification is "
           "not attempted",
           uid,
@@ -8065,10 +8222,11 @@ void goto_coveraget::solidity_path_coverage()
           // leaves no case where "not empty by this test" and "not empty" come
           // apart.
           else if (!box_names.insert(b.name).second)
-            bad = "the coordinate is bounded TWICE in this spec; two bounds on "
-                  "one name can intersect to an empty box while each is "
-                  "individually well-formed, which the emptiness test above "
-                  "would not see";
+            bad =
+              "the coordinate is bounded TWICE in this spec; two bounds on "
+              "one name can intersect to an empty box while each is "
+              "individually well-formed, which the emptiness test above "
+              "would not see";
           else if (!b.holes.empty())
           {
             // A PUNCHED interval has a SECOND way of being empty, and it is the
@@ -8100,9 +8258,11 @@ void goto_coveraget::solidity_path_coverage()
           if (!bad.empty())
           {
             log_error(
-              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on coordinate "
+              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on "
+              "coordinate "
               "'{}': {}. An unsatisfiable assumption certifies VACUOUSLY: the "
-              "run would print VERIFICATION SUCCESSFUL next to a box holding no "
+              "run would print VERIFICATION SUCCESSFUL next to a box holding "
+              "no "
               "inputs, which is a false certificate rather than a weak one. "
               "Certification is not attempted",
               uid,
@@ -8382,12 +8542,14 @@ void goto_coveraget::solidity_path_coverage()
             if (path_cov_fits_type(bt, txt, tmax))
               continue;
             log_error(
-              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on coordinate "
+              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on "
+              "coordinate "
               "'{}': the {} value {} does not fit the coordinate's own type "
               "(admissible range [0, {}]). The bound is built as a constant of "
               "that type, so an out-of-range decimal WRAPS and the query would "
               "be emitted about a different value than the one written here — "
-              "answering SUCCESSFUL about a box nobody asked for. Certification "
+              "answering SUCCESSFUL about a box nobody asked for. "
+              "Certification "
               "is not attempted",
               uid,
               b.name,
@@ -8411,8 +8573,7 @@ void goto_coveraget::solidity_path_coverage()
           // built either. lo/hi/holes collapse to the allowed set and the whole
           // bound — interval AND holes — is one disjunction of equalities.
           size_t applied = 0;
-          bguard =
-            path_cov_bool_domain_guard(bs, b.lo, b.hi, b.holes, applied);
+          bguard = path_cov_bool_domain_guard(bs, b.lo, b.hi, b.holes, applied);
           if (is_nil_expr(bguard))
           {
             // Unreachable through the structural gates above (`lo > hi` and
@@ -8423,7 +8584,8 @@ void goto_coveraget::solidity_path_coverage()
             // holding no inputs, which is the one outcome this query exists to
             // prevent.
             log_error(
-              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on coordinate "
+              "--path-cov-certify: unit '{}' — REFUSING THE QUERY on "
+              "coordinate "
               "'{}': it is a BOOLEAN and the box admits NEITHER value "
               "(lo={}, hi={}, {} hole(s)). The entry assumption is then "
               "unsatisfiable and every exit assert would hold for want of an "
@@ -8445,8 +8607,7 @@ void goto_coveraget::solidity_path_coverage()
           for (const auto &h : b.holes)
           {
             bguard = and2tc(
-              bguard,
-              notequal2tc(bs, constant_int2tc(bt, string2integer(h))));
+              bguard, notequal2tc(bs, constant_int2tc(bt, string2integer(h))));
             // Incremented HERE, inside the conjunction, and not from
             // `b.holes.size()` next to the insert. MEASURED on the fault
             // injection for this very change: with the conjunction disabled the
@@ -8559,7 +8720,8 @@ void goto_coveraget::solidity_path_coverage()
         {
           log_error(
             "--path-cov-certify: unit '{}' — REFUSING THE QUERY: path enc={} "
-            "is not among this unit's {} enumerated path(s). `tr == {}` is then "
+            "is not among this unit's {} enumerated path(s). `tr == {}` is "
+            "then "
             "false on every execution, so the run would answer FAILED and name "
             "an escaping input for a path that does not exist — a refutation "
             "the driver can never satisfy by shrinking. Check enc against the "
@@ -8649,14 +8811,14 @@ void goto_coveraget::solidity_path_coverage()
         std::set<std::string> region_names;
         for (const auto &b : assert_region)
         {
-          const std::string bad =
-            path_cov_structural_refusal(b, region_names);
+          const std::string bad = path_cov_structural_refusal(b, region_names);
           if (!bad.empty())
           {
             log_error(
               "--path-cov-assert: unit '{}' -- REFUSING THE LADDER on region "
               "coordinate '{}': {}. An unsatisfiable entry assumption is worse "
-              "here than in certification: nothing executes, so EVERY candidate "
+              "here than in certification: nothing executes, so EVERY "
+              "candidate "
               "on the ladder holds for want of an execution and the report "
               "reads as a whole set of certified post-state assertions",
               uid,
@@ -8696,7 +8858,8 @@ void goto_coveraget::solidity_path_coverage()
           // disposition. Dropping a requested bound would assume a WIDER region
           // and certify every candidate over inputs nobody asked about.
           log_error(
-            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER because region "
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER because "
+            "region "
             "coordinate '{}' cannot be expressed: {}",
             uid,
             b.name,
@@ -8728,8 +8891,7 @@ void goto_coveraget::solidity_path_coverage()
           // already carries one duplicated bound-parse/gate pair and says at the
           // top what that costs ("a fix to one copy does not reach the other").
           size_t applied = 0;
-          bguard =
-            path_cov_bool_domain_guard(bs, b.lo, b.hi, b.holes, applied);
+          bguard = path_cov_bool_domain_guard(bs, b.lo, b.hi, b.holes, applied);
           if (is_nil_expr(bguard))
           {
             log_error(
@@ -8819,7 +8981,8 @@ void goto_coveraget::solidity_path_coverage()
         if (dit == path_decision_depth.end() || dit->second != assert_depth)
         {
           log_error(
-            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the spec says "
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the spec "
+            "says "
             "path enc={} has depth={}, the enumeration says {}. The antecedent "
             "is `tr != enc || cnt != depth`, so a wrong depth is TRUE on every "
             "execution: every candidate would hold vacuously and the report "
@@ -8891,8 +9054,7 @@ void goto_coveraget::solidity_path_coverage()
       // uses. See path_cov_contract_object for what reading the wrong object
       // does to this mode specifically.
       const std::string own_contract = contract_of(uid);
-      const symbolt *obj =
-        path_cov_contract_object(*cov_context, own_contract);
+      const symbolt *obj = path_cov_contract_object(*cov_context, own_contract);
       if (obj == nullptr)
       {
         log_error(
@@ -9309,8 +9471,7 @@ void goto_coveraget::solidity_path_coverage()
         if (!interval_ok)
           continue;
 
-        emit_rung(
-          vname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
+        emit_rung(vname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
         emit_rung(vname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
         emit_rung(vname, "gt", "post > pre", greaterthan2tc(live, pre_v));
         emit_rung(vname, "lt", "post < pre", lessthan2tc(live, pre_v));
@@ -9375,9 +9536,8 @@ void goto_coveraget::solidity_path_coverage()
           // `lo <= post - pre <= hi` therefore HOLDS on a decreasing path
           // whenever the wrapped difference lands in the window -- and for the
           // wide window a driver writes first, on EVERY decreasing path.
-          const expr2tc d = spec->delta_dir == "inc"
-                              ? sub2tc(vt, live, pre_v)
-                              : sub2tc(vt, pre_v, live);
+          const expr2tc d = spec->delta_dir == "inc" ? sub2tc(vt, live, pre_v)
+                                                     : sub2tc(vt, pre_v, live);
           const expr2tc dir = spec->delta_dir == "inc"
                                 ? greaterthanequal2tc(live, pre_v)
                                 : greaterthanequal2tc(pre_v, live);
@@ -10096,7 +10256,8 @@ void goto_coveraget::solidity_path_coverage()
         }
 
       log_status(
-        "--path-cov-assert: unit '{}' -- assumed {} region bound(s) ({} hole(s) "
+        "--path-cov-assert: unit '{}' -- assumed {} region bound(s) ({} "
+        "hole(s) "
         "punched) at entry and emitted {} candidate assertion(s), {} of them "
         "over the unit's own RETURN VALUE and the rest over {} state "
         "variable(s), at path enc={} depth={}'s OWN exit. Every candidate "
@@ -10242,6 +10403,57 @@ void goto_coveraget::solidity_path_coverage()
       ++total_paths;
     }
 
+    if (path_cov_probe && !probe_goals.empty())
+    {
+      std::vector<goto_programt::targett> physical_exits;
+      std::set<const goto_programt::instructiont *> seen_exits;
+      for (const auto &exit : to_insert)
+      {
+        auto pc = std::get<0>(exit);
+        if (seen_exits.insert(&*pc).second)
+          physical_exits.push_back(pc);
+      }
+
+      const size_t probe_claim_count =
+        probe_goals.size() * physical_exits.size();
+      if (probe_claim_count > path_cov_max_goals)
+      {
+        log_error(
+          "--path-cov-probe: unit '{}' needs {} probe claims ({} branch arms "
+          "x {} physical exits), exceeding --path-cov-max-goals {}. Refusing "
+          "instead of truncating the probe universe",
+          unit_id,
+          probe_claim_count,
+          probe_goals.size(),
+          physical_exits.size(),
+          path_cov_max_goals);
+        abort();
+      }
+
+      for (size_t exit_index = 0; exit_index < physical_exits.size();
+           ++exit_index)
+      {
+        auto pc = physical_exits[exit_index];
+        const std::string exit_loc = pc->location.as_string();
+        for (const auto &goal : probe_goals)
+        {
+          const std::string comment =
+            goal.id + ":exit:" + std::to_string(exit_index);
+          const std::pair<std::string, std::string> key(comment, exit_loc);
+          path_probe_claims.emplace(key, path_probe_claimt{goal.id, exit_loc});
+          insert_assert(goto_program, pc, gen_not_expr(goal.latch), comment);
+        }
+      }
+      log_status(
+        "--path-cov-probe: unit '{}' added {} exit-latched claim(s) for {} "
+        "branch arm(s) at {} physical exit(s); complete-path denominator "
+        "remains {}",
+        unit_id,
+        probe_claim_count,
+        probe_goals.size(),
+        physical_exits.size(),
+        all_claims.size());
+    }
   }
 
   // ---- A --focus-function THAT MATCHED NO UNIT IS NOT A MEASUREMENT ----
@@ -10306,10 +10518,12 @@ void goto_coveraget::solidity_path_coverage()
   }
   if (units_skipped_by_focus > 0)
     log_status(
-      "--solidity-path-coverage: --focus-function '{}' narrowed INSTRUMENTATION "
+      "--solidity-path-coverage: --focus-function '{}' narrowed "
+      "INSTRUMENTATION "
       "to {} unit(s); {} other in-scope unit(s) were not enumerated at all. "
       "Their paths are absent from the denominator ON PURPOSE: the dispatcher "
-      "cannot enter them in this run, so no exploration could ever witness them "
+      "cannot enter them in this run, so no exploration could ever witness "
+      "them "
       "and counting them made the reported coverage a contract-level number "
       "wearing a unit-level label. Internal-call EXPANSION still ran for every "
       "unit, so this unit's path identity is unchanged -- a callee's decisions "
@@ -10395,7 +10609,8 @@ void goto_coveraget::solidity_path_coverage()
         (refused.empty() ? "" : "; ") + rc.first + " (" + rc.second + ")";
     log_error(
       "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: NOT ONE candidate "
-      "assertion could be formed. Every candidate this ladder could have formed "
+      "assertion could be formed. Every candidate this ladder could have "
+      "formed "
       "was refused{}{}. Zero assertions means nothing is checked, and the run "
       "would "
       "print VERIFICATION SUCCESSFUL with exit 0 -- the same output a fully "
@@ -10428,7 +10643,8 @@ void goto_coveraget::solidity_path_coverage()
   if (!named_obstacle_paths.empty())
     log_warning(
       "--solidity-path-coverage: NAMED OBSTACLE — {} path(s) excluded, being "
-      "ALL paths of every affected unit. Both causes are the SAME failure — the "
+      "ALL paths of every affected unit. Both causes are the SAME failure — "
+      "the "
       "model and the chain disagree, so a counterexample can describe an "
       "execution that does not exist and the test built from it is RED on the "
       "UNMODIFIED contract — reached by two different routes, so they are "
@@ -10437,7 +10653,8 @@ void goto_coveraget::solidity_path_coverage()
       "removes executions WITHOUT a branch — an explicitly written "
       "`__ESBMC_assume`, or a `require` still lowered to a control-flow-free "
       "assume (the library / free-function case; seeing that again means the "
-      "revert-observation widening regressed). Those executions do not exist in "
+      "revert-observation widening regressed). Those executions do not exist "
+      "in "
       "the model at all, so no certification query can even see them.\n"
       "  (b) {} path(s) across {} unit(s): the unit still calls another UNIT's "
       "own body unexpanded (depth bound), routing an INTERNAL call through the "
@@ -10460,7 +10677,8 @@ void goto_coveraget::solidity_path_coverage()
       "their decision accounting is still instrumented, so an input reaching "
       "one still carries its path number in `tr` and the certification query "
       "`assume(interval); assert(tr == pi)` rejects it — the interval shrinks "
-      "rather than being wrong. Degradation runs first precisely so this should "
+      "rather than being wrong. Degradation runs first precisely so this "
+      "should "
       "not be reached; each unit above says why it was",
       truncation_weakened_paths,
       units_at_cap,
@@ -10479,10 +10697,9 @@ void goto_coveraget::solidity_path_coverage()
     // and the pre-expansion total were already structural, so the mix was
     // silent — the kind of number that gets quoted.
     const size_t enumerated_total = all_claims.size();
-    const double ratio =
-      pre_expansion_total > 0
-        ? (double)enumerated_total / (double)pre_expansion_total
-        : 0.0;
+    const double ratio = pre_expansion_total > 0 ? (double)enumerated_total /
+                                                     (double)pre_expansion_total
+                                                 : 0.0;
     log_status(
       "--solidity-path-coverage: path distribution — {} unit(s), {} path(s) "
       "total, max {} in '{}', mean {:.1f}; before internal-call expansion the "

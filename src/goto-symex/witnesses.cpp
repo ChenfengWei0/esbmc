@@ -1460,6 +1460,8 @@ collect_nondet_values(const symex_target_equationt &target, smt_convt &smt_conv)
       // Store the collected value
       collected_nondet_value val;
       val.symbol_name = sym.thename.as_string();
+      if (is_symbol2t(SSA_step.lhs))
+        val.lhs_symbol_name = to_symbol2t(SSA_step.lhs).thename.as_string();
       val.symbol_expr = nondet_expr;
       val.value_expr = concrete_value;
       val.type = concrete_value->type;

@@ -1119,3 +1119,42 @@ The safe order is now fixed:
 
 No real POC, Forge corpus run, or benchmark run was used to establish the facts
 in Sections 25--26; they come from source inspection and archived outputs.
+
+## 27. Exit-latched probe implementation and synthetic controls
+
+The dedicated hybrid probe is now implemented without composing the two
+ordinary coverage passes. `--path-cov-probe` requires Solidity path coverage,
+branch-function coverage, all-witness enumeration, and at least two witnesses.
+The branch-function pass is suppressed; the Solidity path pass owns one boolean
+latch per conditional-GOTO arm, updates it at the decision, and checks it only
+at the unit's physical exits. Probe claims are kept out of the complete-path
+denominator and have their own outcomes and report schema.
+
+Every probe counterexample explicitly reads the protected runtime `tr/cnt`
+ghosts and is grouped by the observed `(unit, path_id, decision_depth)`. The
+multi-witness blocker keeps scalar function-local Solidity nondeterminism and
+reproducible `msg.sender`/`msg.value`, while dropping harness-only and aggregate
+nondeterminism. The report separates varying rendered coordinates from varying
+entry-state, other-environment, and external-return quantities, so the latter
+are coordinate-promotion evidence rather than silently spent witness budget.
+Stage-one collection, direct generalisation, and imported-report validation all
+carry and verify the new probe flags. Probe witnesses are merged into the same
+whole-vector member pool as ordinary path witnesses only after path attribution.
+
+Two focused Solidity regressions lock both required controls. The fire case
+uses constructor-selected storage and a branch in a payable target: at least one
+branch-arm goal fires, every observation is attributed, and variation outside
+the current input coordinate set is reported. The silent case is a branchless
+payable target and reports zero goals and zero observations. Both descriptors
+carry `--memlimit 8g`; together they passed serially in 2.15 seconds. Three
+pre-existing path-coverage regressions (multi-witness reporting, default single
+witness, and slicing-protected payload) also passed serially in 2.92 seconds.
+The two Python pipeline test modules pass, including a new fail-closed check
+that a stage-one manifest requesting probes cannot omit `--path-cov-probe`.
+
+The low-concurrency ESBMC target build passed. Refreshing CMake exposed an
+unrelated existing Bitwuzla dependency problem (`cadical/cadical.hpp` and
+`cadical/tracer.hpp` absent while its nested Meson build runs); CMake still
+completed and generated the tests, and the already configured ESBMC binary and
+the focused Z3-backed regressions ran successfully. No real POC was launched,
+so the queue-head attempt remains unspent.

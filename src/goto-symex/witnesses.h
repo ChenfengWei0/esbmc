@@ -285,10 +285,11 @@ void generate_testcase(
 /// Helper structure for collected nondet values
 struct collected_nondet_value
 {
-  std::string symbol_name; // e.g., "nondet$symex::nondet3"
-  expr2tc symbol_expr;     // The (renamed) symbol2tc as it appears in the SSA
-  expr2tc value_expr;      // The concrete value expression
-  type2tc type;            // The type
+  std::string symbol_name;     // e.g., "nondet$symex::nondet3"
+  std::string lhs_symbol_name; // source assignment receiving this nondet
+  expr2tc symbol_expr; // The (renamed) symbol2tc as it appears in the SSA
+  expr2tc value_expr;  // The concrete value expression
+  type2tc type;        // The type
 };
 
 /// Collect all nondet values from SSA

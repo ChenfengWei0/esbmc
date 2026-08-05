@@ -203,8 +203,9 @@ static void emit_path_coverage_on_signal()
     f = total;
 
   sigbuf b;
-  b.put("\n[Coverage]\nReport Completeness: PARTIAL — terminated by signal "
-        "before verification concluded\nComplete Paths : ");
+  b.put(
+    "\n[Coverage]\nReport Completeness: PARTIAL — terminated by signal "
+    "before verification concluded\nComplete Paths : ");
   b.put_uint(total);
   b.put("\nClaims Decided : ");
   b.put_uint(decided);
@@ -212,9 +213,10 @@ static void emit_path_coverage_on_signal()
   b.put_uint(claims);
   b.put("\nPath Status: F ");
   b.put_uint(f);
-  b.put(" (partial: LOWER BOUND, no cov-report.json was written, and this line "
-        "carries no counterexample payload. The payload for these paths is in "
-        "cov-ce-journal.json when --cov-report-json was given)\n");
+  b.put(
+    " (partial: LOWER BOUND, no cov-report.json was written, and this line "
+    "carries no counterexample payload. The payload for these paths is in "
+    "cov-ce-journal.json when --cov-report-json was given)\n");
   b.flush();
 }
 
@@ -958,6 +960,54 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
   if (cmdline.isset("solidity-path-coverage"))
     options.set_option("solidity-path-coverage-enabled", true);
 
+  if (cmdline.isset("path-cov-probe"))
+  {
+    const bool branch_function =
+      cmdline.isset("branch-function-coverage") ||
+      cmdline.isset("branch-function-coverage-claims");
+    if (!cmdline.isset("solidity-path-coverage") || !branch_function)
+    {
+      log_error(
+        "--path-cov-probe requires both --solidity-path-coverage and "
+        "--branch-function-coverage. The path pass must own the branch "
+        "latches; "
+        "running either ordinary pass alone cannot attribute a branch-prefix "
+        "counterexample to a complete path.");
+      abort();
+    }
+    if (!cmdline.isset("all-witnesses"))
+    {
+      log_error(
+        "--path-cov-probe requires --all-witnesses: one branch-arm witness "
+        "cannot establish coordinate variation on a complete path.");
+      abort();
+    }
+    if (
+      cmdline.isset("max-witnesses") &&
+      std::stoi(cmdline.getval("max-witnesses")) == 1)
+    {
+      log_error(
+        "--path-cov-probe requires --max-witnesses 0 or at least 2; one "
+        "witness "
+        "cannot distinguish a singleton from an under-sampled coordinate.");
+      abort();
+    }
+    options.set_option("solidity-path-probe-enabled", true);
+  }
+  else if (
+    cmdline.isset("solidity-path-coverage") &&
+    (cmdline.isset("branch-function-coverage") ||
+     cmdline.isset("branch-function-coverage-claims")))
+  {
+    log_error(
+      "--solidity-path-coverage and --branch-function-coverage cannot be "
+      "composed directly: they mutate one GOTO program and publish "
+      "incompatible "
+      "claim universes. Add --path-cov-probe for the exit-latched hybrid mode, "
+      "or run exactly one coverage mode.");
+    abort();
+  }
+
   // ---- --path-cov-arith-resolve: REFUSE rather than silently do nothing ----
   //
   // The mechanism re-solves a witnessed path claim with goto_check's own
@@ -976,9 +1026,10 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
   {
     if (!cmdline.isset("solidity-path-coverage"))
     {
-      log_error("--path-cov-arith-resolve is only meaningful with "
-                "--solidity-path-coverage: it re-solves a COMPLETE PATH claim, "
-                "and no other mode emits one.");
+      log_error(
+        "--path-cov-arith-resolve is only meaningful with "
+        "--solidity-path-coverage: it re-solves a COMPLETE PATH claim, "
+        "and no other mode emits one.");
       abort();
     }
     if (
@@ -4132,20 +4183,29 @@ bool esbmc_parseoptionst::process_goto_program(
       cmdline.isset("branch-function-coverage") ||
       cmdline.isset("branch-function-coverage-claims"))
     {
-      // for multi-property
-      options.set_option("base-case", true);
-      options.set_option("multi-property", true);
-      options.set_option("keep-verified-claims", false);
-      options.set_option("no-pointer-check", true);
+      if (cmdline.isset("path-cov-probe"))
+      {
+        log_status(
+          "--path-cov-probe: suppressing the ordinary branch-function pass; "
+          "the Solidity path pass will emit exit-latched branch-arm probes");
+      }
+      else
+      {
+        // for multi-property
+        options.set_option("base-case", true);
+        options.set_option("multi-property", true);
+        options.set_option("keep-verified-claims", false);
+        options.set_option("no-pointer-check", true);
 
-      // enable '--no-unwinding-assertions' if '--unwind' is enabled
-      if (cmdline.isset("unwind"))
-        options.set_option("no-unwinding-assertions", true);
+        // enable '--no-unwinding-assertions' if '--unwind' is enabled
+        if (cmdline.isset("unwind"))
+          options.set_option("no-unwinding-assertions", true);
 
-      std::string filename = cmdline.args[0];
-      goto_coveraget tmp(ns, goto_functions, filename);
-      tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
-      tmp.branch_function_coverage();
+        std::string filename = cmdline.args[0];
+        goto_coveraget tmp(ns, goto_functions, filename);
+        tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
+        tmp.branch_function_coverage();
+      }
     }
 
     if (
@@ -4391,6 +4451,7 @@ bool esbmc_parseoptionst::process_goto_program(
         // that asks for the report, because the memory is per path PREFIX.
         tmp.emit_decision_sites = true;
       }
+      tmp.path_cov_probe = cmdline.isset("path-cov-probe");
       // Per-unit path budget. Read BEFORE solidity_path_coverage() because the
       // pass uses it twice and in a fixed order: first as the target that
       // degradation withdraws call points to reach, then as the goal cap that
@@ -4494,6 +4555,15 @@ bool esbmc_parseoptionst::process_goto_program(
           stage2.push_back("--path-cov-certify");
         if (cmdline.isset("path-cov-assert"))
           stage2.push_back("--path-cov-assert");
+        if (cmdline.isset("path-cov-probe") && !stage2.empty())
+        {
+          log_error(
+            "--path-cov-probe is a stage-1 witness mode and cannot be combined "
+            "with {}. Run the probe while enumerating paths, then run exactly "
+            "one stage-2/3 mode from the saved report.",
+            stage2.front());
+          return true;
+        }
         if (stage2.size() > 1)
         {
           std::string names;
@@ -4502,7 +4572,8 @@ bool esbmc_parseoptionst::process_goto_program(
           log_error(
             "--solidity-path-coverage: {} were given together ({}). These are "
             "three mutually exclusive stage-2/3 modes implemented as three "
-            "branches at the end of one pass, and each one leaves the unit loop "
+            "branches at the end of one pass, and each one leaves the unit "
+            "loop "
             "as soon as it fires -- so passing two does not run two, it runs "
             "the first and silently discards the rest. Historically that "
             "discarded run then failed with a message about the unit NAME, "

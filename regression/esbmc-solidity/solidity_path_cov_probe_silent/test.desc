@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--contract ProbeSilent --focus-function set --solidity-path-coverage --branch-function-coverage --path-cov-probe --cov-report-json --solidity-max-tx 1 --all-witnesses --max-witnesses 4 --memlimit 8g
+^--path-cov-probe: 0 of 0 branch-arm goal\(s\) fired; 0 complete execution observation\(s\), 0 unattributed; 0 varying coordinate pair\(s\), 0 outside-coordinate variation\(s\); blocker kept 0 and dropped 0 nondet value\(s\)$
+^VERIFICATION FAILED$

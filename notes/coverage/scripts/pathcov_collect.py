@@ -294,7 +294,9 @@ def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
         # neither affordable NOR comparable.
         cmd += ["--path-cov-instrument-only", instrument_only]
     if probe_witnesses:
-        cmd += ["--all-witnesses", "--max-witnesses", str(probe_witnesses)]
+        cmd += ["--branch-function-coverage", "--path-cov-probe",
+                "--all-witnesses", "--max-witnesses",
+                str(probe_witnesses)]
     return cmd
 
 
@@ -1183,9 +1185,10 @@ def main():
                     help="per ESBMC process. The official POC runner passes 8 "
                          "explicitly; recorded in index.json.")
     ap.add_argument("--probe-witnesses", type=int, default=0, metavar="N",
-                    help="request up to N witnesses per path. Recorded in the "
-                         "collection manifest so stage 2 can safely reuse the "
-                         "report instead of enumerating the same unit again.")
+                    help="request up to N witnesses for each complete path and "
+                         "each exit-latched branch-function probe. Probe models "
+                         "are attributed by observed (path id, depth). Recorded "
+                         "in the manifest so stage 2 can reuse this one run.")
     ap.add_argument("--scope", choices=("single", "set", "whole"),
                     default="single",
                     help="WIDTH axis, i.e. the ALPHABET of the call sequence: "
