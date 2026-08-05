@@ -11,15 +11,18 @@ rule against creating new Markdown files.
 ## 1. Current repository state
 
 - Working branch: `feat/veriput-fuzz-first`
-- Snapshot commit: `5efe5b3252` (`[solidity] Strengthen parameterized path test synthesis`)
+- Original takeover snapshot: `5efe5b3252`
+  (`[solidity] Strengthen parameterized path test synthesis`)
+- Current static pipeline commit: `0298564375`
+  (`[solidity] Harden VeriPUT single-POC pipeline`)
 - Pushed remote branch: `E-SOL/feat/veriput-fuzz-first`
 - Snapshot checks:
   - `python3 scripts/test_solidity_path_generalise.py`: passed
-  - `python3 scripts/test_solidity_path_put.py`: 109/109 passed
+  - `python3 scripts/test_solidity_path_put.py`: 110/110 passed
   - Python byte compilation of staged scripts: passed
   - `git clang-format` was applied to the two changed C++ files and then
     reported no further changes
-- Not run for the snapshot: C++ rebuild, CTest, Forge, or any POC ESBMC run.
+- Not run after the static batch: C++ rebuild, CTest, Forge, or any POC ESBMC run.
   Other experiments are using the machine, and a real POC run is a scarce
   measurement, not a compile check.
 - The worktree contains many untracked generated artefacts. They were
@@ -844,3 +847,153 @@ synthetic ESBMC regressions pass may the queue-head POC be launched once. Its
 command must state `--memlimit-gib 8` explicitly and archive the recipe version,
 binary identity, all path-policy decisions, every query verdict, generated PUT,
 and Forge result.
+
+## 21. 2026-08-05 static implementation batch
+
+The first four items in Section 20 have now been implemented without launching
+a real POC ESBMC process.
+
+- Generalisation work directories use a versioned, fail-closed configuration
+  stamp covering input/AST/binary identities and the semantic switches that
+  shape enumeration, coordinates, region search, and solver calls.
+- Stage two can import exactly one stage-one enumeration index/report pair. It
+  validates schema, file and binary identities, contract/unit, transaction
+  depth, scope, witness count, memory limit, solver arguments, and structured
+  command arguments before reuse. A mismatch is a refusal, never a fallback to
+  a second silent enumeration.
+- Stage-one reports retain decision metadata and classify the synthetic ABI
+  gate. Duplicate encodings retain one consistent metadata record.
+- The official runner now has three serial stages: enumerate, certify, then
+  R1/R2 plus PUT emission and Forge gates. It is still impossible to name two
+  POCs in one invocation.
+- The versioned `veriput-strong/1` recipe explicitly uses eight witnesses,
+  level-zero perturbation, a geometric probe ladder, agreed-state pins,
+  renderable disagreed environment coordinates, finite holes/pieces, jobs one,
+  and 8 GiB per ESBMC process.
+- Solver/encoder exceptions are selected once by `pathcov_collect.py` and
+  propagated to all three stages. In particular, st1inch consistently receives
+  `--z3 --tuple-node-flattener`; later stages no longer silently fall back to a
+  different backend.
+- Width provenance now records geometric bracketing and sibling subtraction
+  explicitly. A nonzero probe count no longer falsely claims a ladder-derived
+  width when the bracket was skipped.
+- A certified interval over `msg.value` can become a bounded fuzz parameter for
+  an existing low-level value call. The emitted test rewrites the value option,
+  funds the actual sender before the prank, preserves the original statement's
+  exit check, and records the coordinate as established.
+- Environment coordinates the emitter cannot reproduce, such as unsupported
+  block or transaction quantities, now refuse emission. Automatic promotion is
+  restricted to `msg.sender` and `msg.value` because those are the two current
+  Foundry emitter paths that establish the verifier assumption.
+- `put_all.py` accepts the recorded dispatcher set, transaction depth, solver
+  arguments, timeout, memory, and per-POC output root. It forwards R2 opt-in and
+  keeps derivation provenance in the PUT command.
+- `--fresh` no longer deletes a stage-one collection. It atomically moves the
+  whole directory to a unique `.superseded.<time_ns>` name. Stage-two redo
+  already preserves its prior result and scratch tree similarly.
+
+Static verification after this batch:
+
+- Python byte compilation passed for all eight changed scripts.
+- `scripts/test_solidity_path_generalise.py` passed.
+- `scripts/test_solidity_path_put.py` passed all 110 declared tests.
+- farming and a real st1inch POC completed three-stage dry runs. The printed
+  commands show 8 GiB in all ESBMC stages, stage-two report reuse, and solver
+  propagation. Dry runs start no ESBMC process.
+- A synthetic process-tree timeout check killed both a parent shell and its
+  background child. Stage one, stage two, the POC supervisor, PUT ESBMC calls,
+  and Forge now use process-group cleanup where an outer timeout can fire.
+- `git diff --check` passed. Pylint's only error is the pre-existing
+  `best[0]` union-inference warning in `choose_refinement`; blame places that
+  line in an older commit and the current batch does not touch it.
+
+## 22. Memory and timeout semantics after the batch
+
+The exact resource contract is now:
+
+- stage one receives and records `--memlimit 8g` and requests at most eight
+  witnesses in the one enumeration process;
+- stage two receives `--memlimit-gib 8 --jobs 1`, imports stage one's report,
+  and gives each generalisation-driver invocation its recorded run timeout;
+- every ESBMC call made by PUT receives `--memlimit 8g` and is wrapped by
+  `setsid timeout -k 30s`;
+- Forge is checked twice per output project, each invocation in its own process
+  group with a 300-second default timeout;
+- stage one and stage two retain an aggregate supervisor timeout because each
+  supervises one bounded unit invocation;
+- stage three deliberately has no one-invocation aggregate timeout. One region
+  requires the base ladder and can require up to six serial R2 calls, and one
+  POC can have several certified regions. Killing that complete sweep after one
+  ESBMC allowance discards valid later regions. Its external children remain
+  individually bounded, so this does not create an unbounded ESBMC or Forge
+  process.
+
+The queue-head official attempt has still not been spent.
+
+## 23. What is still not implemented
+
+The following must not be reported as complete merely because the strong recipe
+has switches with similar names.
+
+1. The work order's probe rule is not satisfied yet. `--all-witnesses` gathers
+   several models for a path-coverage claim, but witness blocking currently
+   includes irrelevant nondeterministic quantities and historically produced
+   only two or three distinct published points from eight requests. The required
+   branch/condition/k-path probe pass that discovers variation outside the
+   current coordinate set has no production call or archived fire/silent
+   controls.
+2. Forge-first assertion filtering is parser-only. The tested
+   `fuzz_prefilter_verdicts()` correctly treats a concrete failure as REFUTED
+   and a pass as only NOT-REFUTED, but no generated probe suite feeds it and the
+   ESBMC assertion spec cannot yet omit only the refuted rungs. No production
+   query has been saved by fuzzing yet.
+3. Mapping slots are not dependency-selected. The strong recipe uses zero
+   blanket slot coordinates because inherited ERC20 mappings multiply every
+   region round even for a scalar setter such as `setDistributor`. The next
+   implementation needs an AST/call/modifier dependency walk that names only
+   stores read or written by the target; zero is a conservative temporary
+   policy, not the final mapping policy.
+4. R1 is still bounded by the current scalar/return candidate emitter and by
+   what the test can read after normal return. Rollback paths correctly keep
+   only the observable exit-kind oracle, but richer selected mapping and struct
+   components still need dependency-aware candidates.
+5. R2 remains the opt-in parameter identity/exact delta/cap proposer with a
+   six-query cap. The frozen typed depth-one grammar over rendered coordinates,
+   pre-state, constants, and literals, with same-query definedness and one
+   batched survivor table, is not implemented.
+6. The frozen three-step constructor fixture and deterministic external-call
+   model are not implemented. POCs that need unreproducible deployment state or
+   currently explode through nondeterministic dispatcher re-entry must be
+   attributed to those method gaps, not attacked by repeated region shrinking.
+
+## 24. Failure attribution before any further real run
+
+The observed difficulty must be split before selecting a repair:
+
+- **Instrumentation/path identity:** missing or merged `(enc, depth)`, synthetic
+  ABI/constructor/internal-call decisions, goal degradation/truncation,
+  irrelevant witness blocking, nondeterministic external re-entry, or a report
+  that cannot preserve the coordinate payload. These require an ESBMC-side
+  minimal reproducer and cannot be repaired by shrinking a region.
+- **Invocation:** wrong solver/encoder, scope, transaction depth, unwind,
+  memory/time budget, witness count, stale report, or inconsistent stage
+  configuration. These require a one-switch contrast and are now mostly guarded
+  by the versioned manifests and unified runner.
+- **Region policy:** a witnessed path exists, but its relevant coordinate is
+  omitted, unrenderable, correlated with another coordinate, lost to sibling
+  subtraction, or collapsed by an exhausted refinement policy. This is where
+  multi-witness coordinate discovery, ABI gate classification, environment
+  lifting, and dependency-selected state coordinates apply.
+- **Oracle policy:** a region certifies but no non-vacuous, observable antichain
+  candidate survives. This is where Forge refutation, stronger R1, typed R2,
+  return values, mapping slots, rollback observability, and definedness apply.
+- **Emitter/roundtrip:** the certificate constrains a quantity the Foundry test
+  does not establish, the generated source does not compile, the test is red on
+  the unmodified contract, or the five gates read stale output. These are
+  emission failures, not evidence that the path has no region or oracle.
+
+The next work is static: implement the genuine probe pass, dependency-guided
+slot selection, and the typed batched R2 interface on synthetic fixtures. Then
+perform a low-concurrency build and focused regressions. Only after those gates
+pass should `farming__Distributor__setDistributor` consume its one allowed
+official rerun, with 8 GiB printed and recorded end to end.
