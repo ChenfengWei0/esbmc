@@ -2435,6 +2435,21 @@ def single_point_coords(box):
     return sorted(n for n, (lo, hi) in box.items() if lo == hi)
 
 
+def point_has_known_member(members, enc, coord, point, pins):
+    """Whether a witnessed vector already shows `coord == point` on this path."""
+    for vec in members.get(enc) or []:
+        bad = False
+        for name, value in pins.items():
+            if name in vec and vec[name] != value:
+                bad = True
+                break
+        if bad:
+            continue
+        if coord in vec and vec[coord] == point:
+            return True
+    return False
+
+
 def equality_coords(boxes, coords, expected_paths):
     """Coordinates that came back a single point for EVERY witnessed path.
 
@@ -5977,13 +5992,29 @@ def main():
                 # of six coordinates rather than all six: the four are exactly
                 # the ones whose siblings all agreed, so their candidate list
                 # had one value. The path was vacuous on every coordinate.
-                blind = [n for n in pts if len(cand.get(n, ())) < 2]
+                blind = []
+                confirmed_by_member = []
+                for n in pts:
+                    if len(cand.get(n, ())) >= 2:
+                        continue
+                    point = b[n][0]
+                    if point_has_known_member(
+                            members, enc, n, point, query_pins()):
+                        confirmed_by_member.append(n)
+                    else:
+                        blind.append(n)
                 # COLLECTED, not just printed. The warning has named this set
                 # on every run since it was written and nothing could act on
                 # it; --level0-perturb below is the action, and it needs the
                 # union across paths because the candidate list is laid PER
                 # COORDINATE for all paths at once.
                 at_risk.update(blind)
+                if confirmed_by_member:
+                    print(f"[level0] enc={enc}: point on "
+                          + ", ".join(confirmed_by_member)
+                          + " confirmed by this path's witnessed input under "
+                            "the current non-conflicting pins, so it is not "
+                            "sent to level0b's vacuity probe")
                 if blind:
                     print(f"[level0] ⚠ enc={enc}: the point(s) on "
                           + ", ".join(blind)

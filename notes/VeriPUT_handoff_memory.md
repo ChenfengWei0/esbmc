@@ -3179,3 +3179,87 @@ Accounting recommendation:
 - Do not spend attempt 2 on this POC just to chase enc=14. The missing row is
   not an ESBMC-strength issue; it is a singleton-region/parameterization policy
   issue.
+
+## 2026-08-06 st1inch setDefaultFarm attempt1 diagnosis
+
+Ground truth:
+
+```solidity
+function setDefaultFarm(address defaultFarm_) external onlyOwner {
+    if (defaultFarm_ != address(0) &&
+        Plugin(defaultFarm_).TOKEN() != this) revert DefaultFarmTokenMismatch();
+    defaultFarm = defaultFarm_;
+    emit DefaultFarmSet(defaultFarm_);
+}
+```
+
+Important shape:
+
+- `defaultFarm_ == 0` avoids the external `Plugin(...).TOKEN()` call and should
+  be a normal setter path with oracle `defaultFarm post == defaultFarm_`.
+- `defaultFarm_ != 0` splits on external-call behavior. Some siblings may be
+  method-level unsupported unless a deterministic plugin fixture is added.
+- Source-assignment R2 does see `defaultFarm = defaultFarm_` and can ask the
+  small setter oracle when a normal path is certified.
+
+Attempt 1:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setDefaultFarm \
+  --stage all --cell gate --attempt 1 --fresh
+```
+
+Budget: 60s/8GiB per ESBMC process.
+
+Result:
+
+- Stage 1 completed in 40.2s with a fresh fixture-backed report.
+- The report improved from the old no-fixture `7/7 U solver-unknown` to
+  `7/7 F`, path coverage 100%, with 7 witnesses.
+- Stage 2 timed out/killed at 60s:
+  `KILLED, 0 certified / 0 not / 7 witnessed`.
+- Stage 3 had no certified regions and exited 2.
+
+Stage 2 diagnosis:
+
+- The driver log shows level0 decided 4 paths by 38.2s:
+  - enc=24: `msg.value == 0`
+  - enc=25: `msg.value == 0`
+  - enc=28: `msg.sender == 1, msg.value == 0`
+  - enc=29: `msg.sender == 1, msg.value == 0`
+- It then entered level0b to re-probe `msg.value: [0] -> [0, 1]`, because
+  single-value candidates were considered vacuity-risk. This consumed the 60s
+  attempt before any result could be used.
+- Here the risk is avoidable: the same Stage1 report already witnessed each
+  path under the same fixture. A concrete member with `msg.value == 0` proves
+  the antecedent is not empty for the purpose of the level0 vacuity warning.
+  This does not prove the final region; it only avoids an unnecessary
+  refute-oriented neighbor probe.
+
+Code-level repair after attempt1:
+
+- `scripts/solidity_path_generalise.py` now checks whether a one-value
+  level0 point is already confirmed by this path's known witness vector under
+  the current non-conflicting pins.
+- If so, that coordinate is not sent to level0b's vacuity probe.
+- Missing fixture pins in the witness payload do not disqualify the member,
+  because the Stage1 report was generated under the fixture; an explicitly
+  present conflicting pin still disqualifies it.
+- `scripts/test_solidity_path_generalise.py` covers both cases with pure Python
+  tests.
+
+Validation:
+
+```sh
+python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py
+python3 scripts/test_solidity_path_generalise.py
+```
+
+Both passed.
+
+Next spend:
+
+- Use `setDefaultFarm` attempt2 at 120s/8GiB after this repair. Stage1 does not
+  need to be rerun if the existing fresh attempt1 report is reused; the code
+  change is in Stage2 generalisation.

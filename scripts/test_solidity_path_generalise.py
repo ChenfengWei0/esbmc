@@ -70,6 +70,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       empty_enumeration_reason,
                                       brackets_for,
                                       known_inside,
+                                      point_has_known_member,
                                       outward_ladder,
                                       run_config,
                                       stamp_workdir,
@@ -533,6 +534,14 @@ check("candidates-are-deduplicated", level0_candidates(P_A, ["amt"]),
 # with nothing.
 check("absent-coordinate-gets-no-candidate-list",
       "nope" in level0_candidates(P_A, ["to", "nope"]), False)
+check("level0-point-confirmed-by-known-member-with-missing-fixture-pin",
+      point_has_known_member(
+          {24: [{"msg.value": 0, "defaultFarm_": 1}]},
+          24, "msg.value", 0, {"state._owner": 1}), True)
+check("level0-point-not-confirmed-by-member-that-conflicts-a-present-pin",
+      point_has_known_member(
+          {24: [{"msg.value": 0, "defaultFarm_": 1}]},
+          24, "msg.value", 0, {"defaultFarm_": 0}), False)
 
 # (2) POSITIVE. A box that came back [v, v] is the single-point case.
 check("point-box-is-single-point",
