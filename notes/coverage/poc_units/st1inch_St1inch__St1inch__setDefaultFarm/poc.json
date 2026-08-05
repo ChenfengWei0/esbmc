@@ -26,5 +26,22 @@
       "focus_with": [],
       "instrument_only": "setDefaultFarm"
     }
+  },
+  "fixtures": {
+    "gate": {
+      "why": "setDefaultFarm is owner-gated and shares St1inch's expensive constructor. The fixture replaces deployment with the minimal owner state needed to exercise the owner gate. Nonzero defaultFarm paths still depend on Plugin(defaultFarm_).TOKEN() and may need a deterministic plugin fixture or method-level extcall attribution.",
+      "skip_constructor": true,
+      "foundry": {
+        "constructor_args": [
+          "mk_IERC20_oneInch_",
+          "999999952502977889",
+          "address(uint160(7300))"
+        ],
+        "why": "Foundry cannot install St1inch runtimeCode directly because the contract has immutables. For replay only, deploy with a constructor value in the Solidity-checked valid expBase interval, then overwrite the ESBMC fixture scalar state."
+      },
+      "state": {
+        "_owner": "1"
+      }
+    }
   }
 }

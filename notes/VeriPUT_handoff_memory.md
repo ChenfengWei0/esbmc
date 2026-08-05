@@ -2747,3 +2747,89 @@ Important accounting rule:
 - Do not rerun st1inch `setEmergencyExit` through ESBMC. Its three official
   attempts are spent, and the POC now has complete gate-cell closure at B=3/3.
   Further work should move to another POC or to generic code-level fixes.
+
+## 2026-08-06 next st1inch setter batch
+
+The next fast path is to reuse the `setEmergencyExit` fixture/replay repair on
+the other St1inch owner-gated setters before spending any new POC attempt.
+These POCs previously had no fixture in `poc.json`, so their gate-cell path
+coverage had to reason through the full constructor. Existing no-fixture
+pathcov evidence:
+
+- `setFeeReceiver`: 111.84s at 8 GiB, report present but only 2/5 verdicts
+  preserved; the other 3 were solver-unknown.
+- `setMaxLossRatio`: 78.07s at 8 GiB, report present but all 5 paths were
+  solver-unknown.
+
+Fixture patch applied:
+
+- `st1inch_St1inch__St1inch__setFeeReceiver`
+- `st1inch_St1inch__St1inch__setMaxLossRatio`
+- `st1inch_St1inch__St1inch__setMinLockPeriodRatio`
+- `st1inch_St1inch__St1inch__setDefaultFarm`
+
+All four gate fixtures now skip the constructor for ESBMC, set `_owner = 1`,
+and carry the same Foundry replay metadata used by `setEmergencyExit`:
+
+```solidity
+c1 = new St1inch(
+    mk_IERC20_oneInch_,
+    999999952502977889,
+    address(uint160(7300))
+);
+```
+
+The `expBase` value is inside the contract-checked valid interval
+`[999999952502977513, 999999952502978265]`.
+
+Ground truth before the next run:
+
+- `setFeeReceiver(address feeReceiver_)`:
+  - value gate: `msg.value != 0`, exit-kind oracle only;
+  - non-owner paths: `msg.value == 0`, `msg.sender != 1`, rollback
+    exit-kind oracle; zero/nonzero `feeReceiver_` may split before/after the
+    body but post-state is not chain-observable;
+  - owner zero path: `msg.value == 0`, `msg.sender == 1`,
+    `feeReceiver_ == 0`, rollback exit-kind oracle;
+  - owner nonzero normal path: `msg.value == 0`, `msg.sender == 1`,
+    `feeReceiver_ in [1, 2^160-1]`, oracle
+    `state.feeReceiver post == feeReceiver_`.
+- `setMaxLossRatio(uint256 maxLossRatio_)`:
+  - value gate: `msg.value != 0`, exit-kind oracle only;
+  - non-owner paths: `msg.value == 0`, `msg.sender != 1`, rollback
+    exit-kind oracle;
+  - owner overflow path: `msg.value == 0`, `msg.sender == 1`,
+    `maxLossRatio_ > 1e9`, rollback exit-kind oracle;
+  - owner normal path: `msg.value == 0`, `msg.sender == 1`,
+    `maxLossRatio_ in [0, 1e9]`, oracle
+    `state.maxLossRatio post == maxLossRatio_`.
+- `setMinLockPeriodRatio(uint256 minLockPeriodRatio_)`: same shape as
+  `setMaxLossRatio`, with oracle
+  `state.minLockPeriodRatio post == minLockPeriodRatio_`.
+- `setDefaultFarm(address defaultFarm_)`:
+  - value gate and non-owner paths are the same owner-gate shape;
+  - `defaultFarm_ == 0` on the owner path is a normal setter path with oracle
+    `state.defaultFarm post == 0`;
+  - nonzero `defaultFarm_` also depends on external
+    `Plugin(defaultFarm_).TOKEN() == this`, so nonzero success/revert paths may
+    require a deterministic plugin fixture or method-level extcall
+    attribution rather than plain generated-test inputs.
+
+Validation before any real POC attempt:
+
+```sh
+python3 -m json.tool notes/coverage/poc_units/st1inch_St1inch__St1inch__setFeeReceiver/poc.json >/dev/null
+python3 -m json.tool notes/coverage/poc_units/st1inch_St1inch__St1inch__setMaxLossRatio/poc.json >/dev/null
+python3 -m json.tool notes/coverage/poc_units/st1inch_St1inch__St1inch__setMinLockPeriodRatio/poc.json >/dev/null
+python3 -m json.tool notes/coverage/poc_units/st1inch_St1inch__St1inch__setDefaultFarm/poc.json >/dev/null
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMaxLossRatio \
+  --stage all --cell gate --attempt 1 --dry-run
+```
+
+Recommended next spend:
+
+- Start with `st1inch_St1inch__St1inch__setMaxLossRatio`, attempt 1
+  (60s/8GiB), because its source has no address zero special-case and no
+  external call. If attempt 1 times out near the old 78s no-fixture baseline,
+  attempt 2 is the likely first decisive run.
