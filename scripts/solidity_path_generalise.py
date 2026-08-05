@@ -51,6 +51,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -3960,6 +3961,20 @@ def _single_option(argv, flag):
     return argv[positions[0] + 1]
 
 
+def _recorded_argv(recorded):
+    argv = recorded.get("cmdArgv")
+    if isinstance(argv, list):
+        return argv
+    cmd = recorded.get("cmd")
+    if isinstance(cmd, str):
+        return shlex.split(cmd)
+    return None
+
+
+def _realpath_or_none(path):
+    return os.path.realpath(path) if path else None
+
+
 def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
                                 contract, unit, scope_label, max_tx, memlimit,
                                 probe_witnesses, esbmc_args):
@@ -3974,7 +3989,7 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
         raise SystemExit(f"[enumerate-import] cannot read {index_path}: {exc}")
     try:
         with open(report_path) as stream:
-            json.load(stream)
+            report_data = json.load(stream)
     except (OSError, ValueError) as exc:
         raise SystemExit(f"[enumerate-import] cannot read {report_path}: {exc}")
 
@@ -3983,19 +3998,6 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
     def expect(name, actual, expected):
         if actual != expected:
             mismatches.append(f"{name}: report={actual!r}, requested={expected!r}")
-
-    expect("schema", index.get("schema"), "veriput-pathcov-collection/2")
-    expect("source", index.get("flatInputIdentity"), file_identity(sol))
-    expect("AST", index.get("astInputIdentity"), file_identity(ast))
-    expect("ESBMC binary", index.get("esbmcIdentity"), file_identity(esbmc))
-    expect("contract", (index.get("primary") or {}).get("name"), contract)
-
-    config = index.get("config") or {}
-    expect("unit set", config.get("onlyUnits"), [unit])
-    expect("max-tx", config.get("solidityMaxTx"), max_tx)
-    expect("memlimit", config.get("memlimit"), memlimit)
-    expect("probe witnesses", config.get("probeWitnesses"), probe_witnesses)
-    expect("solver/ESBMC flags", config.get("solverFlags"), list(esbmc_args))
 
     if scope_label == "whole":
         collector_scope, focus_with, focus = "whole", [], None
@@ -4007,6 +4009,33 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
         collector_scope, focus = "set", ",".join([unit] + focus_with)
     else:
         raise SystemExit(f"[enumerate-import] unknown scope {scope_label!r}")
+
+    schema = index.get("schema")
+    legacy = schema is None and "flatInput" in index and "runs" in index
+    if schema not in ("veriput-pathcov-collection/2", None) or (
+            schema is None and not legacy):
+        expect("schema", schema, "veriput-pathcov-collection/2")
+
+    config = index.get("config") or {}
+    if legacy:
+        expect("source", _realpath_or_none(index.get("flatInput")),
+               _realpath_or_none(sol))
+        print("[enumerate-import] using legacy stage-1 index without "
+              "collection/2 identity fields; validating command shape and "
+              "unit report instead")
+    else:
+        expect("schema", schema, "veriput-pathcov-collection/2")
+        expect("source", index.get("flatInputIdentity"), file_identity(sol))
+        expect("AST", index.get("astInputIdentity"), file_identity(ast))
+        expect("ESBMC binary", index.get("esbmcIdentity"), file_identity(esbmc))
+        expect("probe witnesses", config.get("probeWitnesses"),
+               probe_witnesses)
+
+    expect("contract", (index.get("primary") or {}).get("name"), contract)
+    expect("unit set", config.get("onlyUnits"), [unit])
+    expect("max-tx", config.get("solidityMaxTx"), max_tx)
+    expect("memlimit", config.get("memlimit"), memlimit)
+    expect("solver/ESBMC flags", config.get("solverFlags"), list(esbmc_args))
     expect("scope", config.get("scope"), collector_scope)
     expect("focus-with", config.get("focusWith"), focus_with)
     expect("instrument-only-unit", config.get("instrumentOnlyUnit"),
@@ -4028,16 +4057,22 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
         expect("run function", recorded.get("function"), unit)
         expect("report present", recorded.get("reportPresent"), True)
         expect("outer timeout", recorded.get("killedByOuterTimeout"), False)
-        argv = recorded.get("cmdArgv")
+        argv = _recorded_argv(recorded)
         if not isinstance(argv, list) or len(argv) < 2:
-            mismatches.append("cmdArgv: absent or malformed")
+            mismatches.append("cmdArgv/cmd: absent or malformed")
         else:
-            expect("command binary", file_identity(argv[0]), file_identity(esbmc))
-            expect("command AST", file_identity(argv[1]), file_identity(ast))
+            if legacy:
+                expect("command binary path", _realpath_or_none(argv[0]),
+                       _realpath_or_none(esbmc))
+                expect("command AST path", _realpath_or_none(argv[1]),
+                       _realpath_or_none(ast))
+            else:
+                expect("command binary", file_identity(argv[0]),
+                       file_identity(esbmc))
+                expect("command AST", file_identity(argv[1]), file_identity(ast))
             command_source = _single_option(argv, "--sol")
-            expect("command source",
-                   os.path.realpath(command_source) if command_source else None,
-                   os.path.realpath(sol))
+            expect("command source", _realpath_or_none(command_source),
+                   _realpath_or_none(sol))
             expect("command contract", _single_option(argv, "--contract"),
                    contract)
             expect("command max-tx", _single_option(
@@ -4051,17 +4086,30 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
                 unit if collector_scope == "set" else None)
             expected_witnesses = (str(probe_witnesses)
                                   if probe_witnesses else None)
-            expect("command witnesses", _single_option(
-                argv, "--max-witnesses"), expected_witnesses)
-            expect("command all-witnesses", "--all-witnesses" in argv,
-                   bool(probe_witnesses))
-            expect("command path probe", "--path-cov-probe" in argv,
-                   bool(probe_witnesses))
-            expect("command branch-function probe",
-                   "--branch-function-coverage" in argv,
-                   bool(probe_witnesses))
+            legacy_probe_missing = legacy and probe_witnesses and (
+                "--path-cov-probe" not in argv)
+            if legacy_probe_missing:
+                print("[enumerate-import] legacy report has no "
+                      "--path-cov-probe / --all-witnesses provenance; witness "
+                      "pool widening is unavailable, so the later probe stage "
+                      "may report a one-vector limitation")
+            else:
+                expect("command witnesses", _single_option(
+                    argv, "--max-witnesses"), expected_witnesses)
+                expect("command all-witnesses", "--all-witnesses" in argv,
+                       bool(probe_witnesses))
+                expect("command path probe", "--path-cov-probe" in argv,
+                       bool(probe_witnesses))
+                expect("command branch-function probe",
+                       "--branch-function-coverage" in argv,
+                       bool(probe_witnesses))
             expect("command solver/ESBMC flags",
                    all(flag in argv for flag in esbmc_args), True)
+
+    report_claims = report_data.get("claims") if isinstance(report_data, dict) \
+        else None
+    if not isinstance(report_claims, list):
+        mismatches.append("unit report: claims absent or malformed")
 
     if mismatches:
         raise SystemExit("[enumerate-import] REFUSING incompatible stage-1 "

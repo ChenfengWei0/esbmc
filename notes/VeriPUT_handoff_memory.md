@@ -1871,6 +1871,14 @@ Implemented policy update after this investigation:
 - `certify_all.py`, `certify_summary.py`, and `certify_arms.py` now record or
   compare `static_extcall_inseparable`, so a static-attribution arm cannot be
   silently aggregated with a normal certification arm.
+- `scripts/solidity_path_generalise.py` accepts the legacy Stage-1 POC index
+  format used by most `notes/coverage/pathcov/*_poc_*_gate/index.json` files:
+  no `veriput-pathcov-collection/2` schema, command stored as `cmd` rather than
+  `cmdArgv`, and no probe-witness provenance. The compatibility path still
+  checks source path, AST path, contract, unit set, max-tx, memlimit, focus
+  function, report directory/tag, and solver flags. It prints a warning that
+  witness-pool widening is unavailable for those legacy reports instead of
+  forcing a Stage-1 rerun.
 
 Focused checks already run after the change:
 
@@ -1889,3 +1897,24 @@ python3 notes/coverage/scripts/poc_one.py aqua_Aqua__Aqua__safeBalances --stage 
 The dry-runs confirmed the official Stage-2 command now carries
 `--skip-bracket`, `--static-extcall-inseparable`, `--timeout 60`,
 `--run-timeout 60`, and `--memlimit-gib 8` for attempt 1.
+
+Actual POC spend after this change:
+
+```
+python3 notes/coverage/scripts/poc_one.py farming__FarmingPool__deposit --stage 2 --attempt 1 --fresh
+```
+
+Result: completed in 0.3s wall, reused the legacy Stage-1 report, and started no
+enumeration ESBMC process. It produced `7` witnessed paths, `1` certified region,
+and `6` static `NOT_CERTIFIED` attributions:
+
+- certified `enc=2`: structural `msg.value != 0` ABI value-gate region, with
+  `amount`, `msg.sender`, `msg.value`, and
+  `state._balances[msg.sender]` free over their full admissible ranges except
+  `msg.value in [1, uint256_max]`.
+- not certified `enc=26/27`, `246/247`, `3622/3623`: each sibling pair differs
+  only on `extcall.success`; all six have `concrete_fallback=false`.
+
+This matches the expected ground truth above. The first two wrapper invocations
+before the legacy fix did not start ESBMC: one refused stale resume data, the
+next wrote a `DRIVER-REFUSED` row at the enumerate-import check.

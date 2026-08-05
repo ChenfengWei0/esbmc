@@ -2446,6 +2446,44 @@ with tempfile.TemporaryDirectory() as _import_dir:
     check("stage1-report-without-path-probe-is-refused",
           _missing_probe_refused, True)
 
+    _legacy_argv = [_binary, _ast, "--sol", _source,
+                    "--solidity-path-coverage", "--solidity-max-tx", "1",
+                    "--cov-report-json", "--path-cov-max-goals", "10000",
+                    "--memlimit", "8g", "--contract", "C",
+                    "--focus-function", "f"]
+    _legacy_index = {
+        "benchmark": "bench",
+        "primary": {"name": "C"},
+        "flatInput": _source,
+        "config": {"onlyUnits": ["f"], "solidityMaxTx": 1,
+                   "memlimit": "8g", "solverFlags": [], "scope": "single",
+                   "focusWith": [], "instrumentOnlyUnit": False},
+        "runs": [{"tag": "D__f", "function": "f", "reportPresent": True,
+                  "killedByOuterTimeout": False,
+                  "cmd": " ".join(_legacy_argv)}],
+        "reportsDir": _reports,
+    }
+    with open(_index_path, "w", encoding="utf-8") as _stream:
+        json.dump(_legacy_index, _stream)
+    try:
+        validate_enumeration_import(
+            _index_path, _report, _binary, _source, _ast, "C", "f",
+            "focus", 1, "8g", 8, [])
+        _legacy_import = True
+    except SystemExit:
+        _legacy_import = False
+    check("legacy-stage1-report-is-reusable-without-probe-provenance",
+          _legacy_import, True)
+    try:
+        validate_enumeration_import(
+            _index_path, _report, _binary, _source, _ast, "C", "f",
+            "focus", 2, "8g", 8, [])
+        _legacy_mismatched_import_refused = False
+    except SystemExit:
+        _legacy_mismatched_import_refused = True
+    check("legacy-stage1-report-with-another-tx-bound-is-refused",
+          _legacy_mismatched_import_refused, True)
+
 
 if FAILURES:
     print("FAILED:")
