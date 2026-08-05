@@ -556,6 +556,7 @@ def main():
         proj = ensure_project(bench + arm, flat,
                               shared=("poc" + arm) if is_poc else None)
         pf_label = path_function_artifact_suffix(path_function)
+        plabel = f"p{piece}" if piece else ""
         wd = os.path.join(
             OUT, "_wd", f"{bench}__{unit}{pf_label}__{enc}{plabel}{arm}")
         os.makedirs(wd, exist_ok=True)

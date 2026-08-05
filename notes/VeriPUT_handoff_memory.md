@@ -1475,3 +1475,67 @@ Consequences for already consumed POCs:
   fully covered 2/2 paths; Stage 2 timed out after level0/bracket/refine with
   no certified region. Attempt 2 may run at 120s/8GiB unless a code-level fix
   removes the need first.
+
+## 34. Distributor getter attempt 2 and Stage-3 bottleneck
+
+`farming__Distributor__distributor` has now also spent attempt 2:
+
+```
+python3 notes/coverage/scripts/poc_one.py \
+  farming__Distributor__distributor --stage all --fresh --attempt 2
+```
+
+The official ladder used 120 seconds and 8 GiB. Stage 1 completed in 22.3s and
+published a complete 2/2 report. Stage 2 completed in 45.8s and certified both
+paths:
+
+- path 2, the synthetic non-payable ABI reject path:
+  `msg.value in [1, UINT256_MAX]` plus pinned entry state.
+- path 3, the body path:
+  `msg.value == 0` plus the same pinned entry state.
+
+This is the expected result after the structural ABI-gate shortcut: the only
+decision in the complete path is the compiler/front-end ABI `msg.value` gate,
+so the split is certified without spending a generic region-certification
+search on a trivial one-branch partition.
+
+Stage 3 initially crashed before any PUT measurement because
+`notes/coverage/scripts/put_all.py` referenced `plabel` while constructing the
+per-piece workdir but only computed `encs`. The fix is to derive the same
+`p<K>` suffix used by the emitter:
+
+```
+pf_label = path_function_artifact_suffix(path_function)
+plabel = f"p{piece}" if piece else ""
+wd = os.path.join(
+    OUT, "_wd", f"{bench}__{unit}{pf_label}__{enc}{plabel}{arm}")
+```
+
+After that one driver fix, rerunning Stage 3 only under the same attempt-2
+budget completed in 143.7s:
+
+```
+python3 notes/coverage/scripts/poc_one.py \
+  farming__Distributor__distributor --stage 3 --attempt 2
+```
+
+The result is intentionally NOT a generalized PUT success:
+
+- path 2 emitted
+  `FarmingPoolCovTest_FarmingPool_distributor_put2.t.sol` with one fuzzed
+  coordinate (`msg.value`), but no non-exit oracle. It is a rollback/reject
+  path. Storage and return rungs are dropped because the observable post-state
+  after a revert is restored state, and the return rungs are vacuous.
+- path 3 has the useful getter oracle (`return == 0` holds and `return != 0`
+  is refuted), but the certified region renders no parameterized coordinate:
+  `msg.value` is pinned to 0 and all state is pinned/established. The emitter
+  therefore refuses it as not parameterized instead of pretending a concrete
+  replay is a PUT.
+
+The POC therefore reports `B = 0`: one path has width without an oracle, the
+other has an oracle without width. This is a real methodological bottleneck,
+not an ESBMC timeout. Getter-style units over constant or fully pinned tx-1
+entry state are low-value targets for parameterized unit tests unless the
+method intentionally supports parameterized state setup. Fuzz cannot prove the
+getter body path; it can only cheaply refute bad assertions or bad regions when
+there is an exposed runtime parameter to vary.
