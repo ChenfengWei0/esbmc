@@ -60,9 +60,14 @@ Stage-1 pathcov: 6 instrumented paths, 2 witnessed paths.
     `tokensCount == _DOCKED`.
   - Expected PUT oracle: `expectRevert` or low-level `ok == false`. This path
     should not be emitted as assertion-free `try/catch`.
-  - Current blocker: ESBMC aborts during linear-refine for the body path after
-    source slot selection; classify whether the abort is bytes32 mapping key,
-    `BalanceLib.load` assembly modeling, or path-cov outer-box instrumentation.
+  - Static diagnosis: the source slot key `strategyHash` is a `bytes32`
+    aggregate, so it must not be emitted as `[strategyHash]` in an ESBMC slot
+    coordinate. The driver now fixes it to the witnessed mapping-key literal
+    `0x2000000000000000000000000000000000000000000000000000000000000000`
+    when the CE slice is `bytes32(0)`.
+  - Remaining blocker to test once, not guess by rerunning: whether the literal
+    slot lets outer refine finish, or whether the next failure is in
+    `BalanceLib.load` assembly modeling / path-cov outer-box internals.
 
 ### `Aqua.safeBalances`
 
@@ -85,7 +90,10 @@ Stage-1 pathcov: 4 instrumented paths, 2 witnessed paths.
     minimally `tokensCount == 0`; `token1` is irrelevant when token0 guard
     fails.
   - Expected PUT oracle: `expectRevert` or low-level `ok == false`.
-  - Current blocker: same ESBMC abort shape as `push`.
+  - Static diagnosis: same `bytes32` mapping-key issue as `push`. Offline
+    checks against the real Stage-1 report now propose literal-key slots for
+    both `token0` and `token1`; the next ESBMC run should verify whether this
+    removes the outer-refine abort.
 
 ### `Aqua.rawBalances`
 
@@ -207,14 +215,12 @@ split is over callee behavior.
 
 ## Next Static Checks Before Running Another POC
 
-- For Aqua, inspect ESBMC's `--path-cov-outer-box` resolver for a slot with a
-  `bytes32` key:
-  `state._balances[maker][app][strategyHash][token].tokensCount`.
-- Confirm whether `strategyHash` is represented as `BytesStatic`/struct in
-  irep2, and whether `index2tc` over mapping keys tolerates that type in the
-  outer-box snapshot path.
-- Isolate `BalanceLib.load` assembly approximation: source-level slot
-  expressions may be right while the local `tokensCount` value is generated via
-  approximated assembly and therefore not tied back to the mapping slot.
-- Do not spend Aqua retries until a diagnostic run can save
-  `failed-rounds/*.outer.json` and the exact ESBMC command/log.
+- Keep the Aqua ground truth above in front of the next run. The expected body
+  region is an inactive selected Balance slot, not a free `strategyHash`.
+- If Aqua still aborts after literal-key slot generation, inspect the saved
+  `failed-rounds/*.outer.json` and log first. The next likely causes are
+  `BalanceLib.load` assembly approximation or verifier-side outer-box
+  instrumentation on mapping-member slots.
+- Do not spend a POC retry until the generated outer-box spec visibly contains
+  the literal bytes32 mapping key and no `state._balances[...][strategyHash]`
+  coordinate.

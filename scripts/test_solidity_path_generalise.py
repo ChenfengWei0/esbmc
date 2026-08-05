@@ -64,6 +64,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       unit_mapping_slot_accesses,
                                       unit_state_dependencies,
                                       propose_slot_coords,
+                                      bytes_static_mapping_key_from_ce,
+                                      agreed_bytes_mapping_key_literals,
                                       empty_enumeration_reason,
                                       brackets_for,
                                       known_inside,
@@ -1896,23 +1898,52 @@ check("slot-access-walk-preserves-the-source-key-chain",
 check("slot-access-evidence-names-the-source-slot",
       "state._balances[maker][app][strategyHash][token]"
       in _slot_access_evidence[0], True)
+_bytes32_zero_slot_key = "0x20" + ("00" * 31)
+check("bytes32-zero-ce-lowers-to-solidity-mapping-key",
+      bytes_static_mapping_key_from_ce("bytes32", "{ .data = { 0 } }"),
+      _bytes32_zero_slot_key)
+check("bytes2-ce-lowers-to-solidity-mapping-key",
+      bytes_static_mapping_key_from_ce(
+          "bytes2", "{ .data = { 0x12, 0x34 } }"),
+      "0x02" + ("00" * 29) + "1234")
+_literal_keys, _literal_skipped = agreed_bytes_mapping_key_literals(
+    [{"strategyHash": "{ .data = { 0 } }"},
+     {"strategyHash": "{ .data = { 0 } }"}],
+    [("maker", "address"), ("strategyHash", "bytes32")])
+check("bytes32-mapping-key-literal-agrees-across-witnesses",
+      _literal_keys, {"strategyHash": _bytes32_zero_slot_key})
+check("bytes32-mapping-key-literal-has-no-refusal",
+      _literal_skipped, [])
 _aqua_slots, _aqua_skipped = propose_slot_coords(
     {"_balances": (("address", "address", "bytes32", "address"),
                    "struct Balance", [".amount", ".tokensCount"])},
     [("maker", "address"), ("app", "address"),
      ("strategyHash", "bytes32"), ("token", "address")],
     4, ["_balances"], _slot_accesses)
+check("slot-source-access-refuses-bytes32-key-without-literal",
+      _aqua_slots, [])
+check("slot-source-access-explains-missing-bytes32-literal",
+      any("bytesN parameter strategyHash" in s for s in _aqua_skipped),
+      True)
+_aqua_slots, _aqua_skipped = propose_slot_coords(
+    {"_balances": (("address", "address", "bytes32", "address"),
+                   "struct Balance", [".amount", ".tokensCount"])},
+    [("maker", "address"), ("app", "address"),
+     ("strategyHash", "bytes32"), ("token", "address")],
+    4, ["_balances"], _slot_accesses,
+    key_literals={"strategyHash": _bytes32_zero_slot_key})
 check("slot-source-accesses-spend-the-budget-before-cross-products",
       _aqua_slots[:2],
-      ["state._balances[maker][app][strategyHash][token].amount",
-       "state._balances[maker][app][strategyHash][token].tokensCount"])
+      [f"state._balances[maker][app][{_bytes32_zero_slot_key}][token].amount",
+       f"state._balances[maker][app][{_bytes32_zero_slot_key}][token].tokensCount"])
 check("slot-source-access-deduplicates-the-fallback-cross-product",
       _aqua_slots.count(
-          "state._balances[maker][app][strategyHash][token].amount"), 1)
+          f"state._balances[maker][app][{_bytes32_zero_slot_key}][token].amount"),
+      1)
 check("slot-source-access-suppresses-guessed-cross-products",
       _aqua_slots,
-      ["state._balances[maker][app][strategyHash][token].amount",
-       "state._balances[maker][app][strategyHash][token].tokensCount"])
+      [f"state._balances[maker][app][{_bytes32_zero_slot_key}][token].amount",
+       f"state._balances[maker][app][{_bytes32_zero_slot_key}][token].tokensCount"])
 check("slot-source-access-names-the-suppressed-fallback",
       any("fallback cross-product suppressed" in s for s in _aqua_skipped),
       True)

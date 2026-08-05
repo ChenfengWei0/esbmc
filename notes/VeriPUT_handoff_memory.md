@@ -1,6 +1,6 @@
 # VeriPUT Engineering Memory
 
-Last updated: 2026-08-05
+Last updated: 2026-08-06
 
 This document is the durable handoff state for VeriPUT. It records facts that
 were established by reading the paper, the work order, the implementation, and
@@ -13,8 +13,8 @@ rule against creating new Markdown files.
 - Working branch: `feat/veriput-fuzz-first`
 - Original takeover snapshot: `5efe5b3252`
   (`[solidity] Strengthen parameterized path test synthesis`)
-- Current static pipeline commit: `0298564375`
-  (`[solidity] Harden VeriPUT single-POC pipeline`)
+- Current static pipeline commit before this batch: `6d3cb1f065`
+  (`[solidity] Document VeriPUT POC ground truth`)
 - Pushed remote branch: `E-SOL/feat/veriput-fuzz-first`
 - Snapshot checks:
   - `python3 scripts/test_solidity_path_generalise.py`: passed
@@ -43,9 +43,13 @@ The user's current execution constraints tighten the work order:
 
 - Make every code-level change that can be justified statically before running
   a real POC.
-- Each POC may be rerun through ESBMC at most once, not twice.
+- Each POC may be rerun through ESBMC at most three times:
+  60s/8GiB, then 120s/8GiB, then at most 600s/10GiB.
 - Do not run a POC merely to answer a question already answered by logs, source,
   unit tests, a small synthetic regression, or GOTO inspection.
+- Before spending a POC run, read the POC source and existing pathcov artefacts
+  and write down the expected path, input region, slot region, and assertion
+  oracle. Treat this as the ground truth for debugging.
 - The eventual global generalisation target is at least 70%. This is a delivery
   threshold, not permission to abandon the remaining paths without attribution.
 
@@ -159,6 +163,40 @@ assertions, and width provenance. This is implementation coverage, not proof
 that the official POC entry point enables the mechanisms.
 
 ## 5. Current gaps from the frozen method
+
+### 5.0 Aqua bytes32 mapping-key status
+
+Static diagnosis on 2026-08-06 identified a concrete driver-side cause for the
+Aqua `push`/`safeBalances` outer-refine abort class:
+
+- The source slot access is genuinely
+  `_balances[maker][app][strategyHash][token]`.
+- `strategyHash` has type `bytes32`, and ESBMC reports it as a `BytesStatic`
+  aggregate such as `{ .data = { 0 } }`.
+- `coord_values()` is right to refuse `strategyHash` as a fuzz coordinate.
+- The stage-2 slot generator was wrong to emit
+  `state._balances[maker][app][strategyHash][token].tokensCount`, because the
+  verifier-side slot resolver then receives an aggregate key where the Solidity
+  frontend's normal mapping model uses `bytes_static_to_mapping_key`.
+- The driver now computes the same key literal as the frontend,
+  `(len << 248) | bytes_static_to_uint(data)`, only when witnessed CE inputs
+  agree on that bytesN slice. For `bytes32(0)`, the literal is
+  `0x2000000000000000000000000000000000000000000000000000000000000000`.
+- ESBMC's internal path-cov coordinate resolver also now fail-closes on
+  aggregate mapping keys before building `index2tc`, so stale/manual
+  `state._balances[...][strategyHash]` coordinates should be refused rather
+  than aborting instrumentation.
+- Offline checks against the real Aqua reports now propose:
+  - `push`:
+    `state._balances[maker][app][0x2000...0000][token].amount` and
+    `.tokensCount`;
+  - `safeBalances`:
+    the same literal with `token0` and `token1`, both `.amount` and
+    `.tokensCount`.
+
+This is a source-slice restriction from the witnessed CE, not a proof and not a
+new fuzz dimension. If witnessed bytesN values disagree, the slot is refused
+rather than passed to ESBMC as a bad aggregate-key coordinate.
 
 ### 5.1 Fixture and environment
 

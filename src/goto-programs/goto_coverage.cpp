@@ -5353,6 +5353,18 @@ void goto_coveraget::solidity_path_coverage()
             kexpr = constant_int2tc(get_uint_type(256), kval);
           else if (!resolve_coord(fsym, kn, kexpr))
             return false;
+          else
+          {
+            // A source-level bytesN mapping key resolves to the frontend's
+            // BytesStatic aggregate. Normal Solidity mapping access lowers it
+            // through bytes_static_to_mapping_key before indexing, but a
+            // user-written path-cov slot name is only a coordinate name, not a
+            // full expression. Refuse the slot here instead of constructing an
+            // index over an aggregate key and aborting during instrumentation.
+            std::string kwhy;
+            if (!coord_expressible(kexpr->type, kwhy))
+              return false;
+          }
           cur_e = index2tc(et, cur_e, kexpr);
           cur_t = et;
         }

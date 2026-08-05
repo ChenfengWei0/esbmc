@@ -451,6 +451,108 @@ def coord_values(c, state_structs=False):
     return ce, refused
 
 
+def bytes_static_len(type_string):
+    m = re.fullmatch(r"bytes([1-9]|[12][0-9]|3[0-2])", type_string or "")
+    return int(m.group(1)) if m else None
+
+
+def bytes_static_mapping_key_from_ce(type_string, raw_value):
+    """Return the uint256 mapping-key literal for a bytesN CE value.
+
+    The Solidity frontend does not index mappings by the raw BytesStatic
+    aggregate. It lowers bytesN keys through bytes_static_to_mapping_key:
+        (len << 248) | bytes_static_to_uint(data)
+
+    So a slot such as m[strategyHash] can only be named in a stage-2 query if
+    the aggregate parameter is first fixed to the concrete counterexample slice
+    and emitted as that numeric key. The aggregate itself remains unsupported as
+    a fuzz coordinate.
+    """
+    n = bytes_static_len(type_string)
+    if n is None:
+        return None
+    raw = str(raw_value).strip()
+    if not raw or "nil" in raw:
+        return None
+    try:
+        value = parse_int(raw)
+    except ValueError:
+        m = re.search(r"\.data\s*=\s*\{([^{}]*)\}", raw)
+        if not m:
+            return None
+        items = [p.strip() for p in m.group(1).split(",") if p.strip()]
+        data = []
+        for item in items:
+            try:
+                b = parse_int(item)
+            except ValueError:
+                return None
+            if b < 0 or b > 255:
+                return None
+            data.append(b)
+        if len(data) > n:
+            return None
+        data += [0] * (n - len(data))
+        value = 0
+        for b in data:
+            value = (value << 8) | b
+    if value < 0 or value >= (1 << (8 * n)):
+        return None
+    key = (n << 248) | value
+    return f"0x{key:064x}"
+
+
+def witnessed_raw_inputs(cwd, unit, paths, path_function=None):
+    report = os.path.join(cwd, "cov-report.json")
+    try:
+        with open(report) as f:
+            rep = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    wanted = {(int(enc), int(depth)) for enc, depth, _ in paths}
+    out = []
+    for c in rep.get("claims", []) or []:
+        if c.get("status") != "F" or claim_unit(c) != unit:
+            continue
+        if path_function and c.get("path_function") != path_function:
+            continue
+        try:
+            key = (int(c["path_id"]), int(c["path_depth"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if key in wanted:
+            out.append(dict(c.get("inputs") or {}))
+    return out
+
+
+def agreed_bytes_mapping_key_literals(raw_inputs, params):
+    literals, skipped = {}, []
+    for name, type_string in params:
+        if bytes_static_len(type_string) is None:
+            continue
+        vals = set()
+        seen = 0
+        for raw in raw_inputs:
+            if name not in raw:
+                continue
+            seen += 1
+            key = bytes_static_mapping_key_from_ce(type_string, raw[name])
+            if key is None:
+                skipped.append(
+                    f"{name} ({type_string}: counterexample value is not a "
+                    "concrete bytesN aggregate)")
+                vals = set()
+                break
+            vals.add(key)
+        if len(vals) == 1:
+            literals[name] = next(iter(vals))
+        elif seen and len(vals) > 1:
+            skipped.append(
+                f"{name} ({type_string}: witnessed paths disagree on the "
+                "bytesN mapping-key slice)")
+    return literals, skipped
+
+
 def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     ast=None, focus=None, memlimit="8g", path_function=None,
                     esbmc_args=(), state_structs=False, probe_witnesses=0,
@@ -1505,7 +1607,8 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
     return found[-1] if found else []
 
 
-def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=None):
+def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=None,
+                        key_literals=None):
     """Slot coordinate names to add, plus a line per candidate NOT added.
 
     A slot is proposed only where the KEY has a name the query can express and
@@ -1523,6 +1626,7 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
     """
     cand, skipped = [], []
     param_types = dict(params)
+    key_literals = dict(key_literals or {})
 
     def spec_parts(spec):
         kts = spec[0]
@@ -1536,7 +1640,27 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
     def key_matches(coord, key_type):
         if coord == "msg.sender":
             return key_type == "address"
-        return param_types.get(coord) == key_type
+        if param_types.get(coord) != key_type:
+            return False
+        if bytes_static_len(key_type) is not None:
+            return coord in key_literals
+        return True
+
+    def key_name(coord):
+        return key_literals.get(coord, coord)
+
+    def key_refusal(name, keys, lvl, key, kt):
+        base = f"state.{name}" + "".join(f"[{k}]" for k in keys)
+        if param_types.get(key) == kt and bytes_static_len(kt) is not None:
+            return (
+                f"{base} (source slot not proposed: key level {lvl} uses "
+                f"bytesN parameter {key}, which the verifier models as an "
+                "aggregate rather than a scalar coordinate, and no agreed "
+                "counterexample mapping-key literal was available)")
+        return (
+            f"{base} (source slot not proposed: key level {lvl} uses {key}, "
+            f"but the verifier can only express unit parameters of type "
+            f"'{kt}'" + (" or msg.sender" if kt == "address" else "") + ")")
 
     def push_slot(name, keys, tails):
         base = f"state.{name}" + "".join(f"[{k}]" for k in keys)
@@ -1551,17 +1675,14 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
         kts, tails = spec_parts(maps[name])
         if len(keys) != len(kts):
             return False
+        resolved_keys = []
         for lvl, (key, kt) in enumerate(zip(keys, kts)):
             if key_matches(key, kt):
+                resolved_keys.append(key_name(key))
                 continue
-            skipped.append(
-                f"state.{name}" + "".join(f"[{k}]" for k in keys) +
-                f" (source slot not proposed: key level {lvl} uses {key}, "
-                f"but the verifier can only express unit parameters of type "
-                f"'{kt}'" + (" or msg.sender" if kt == "address" else "") +
-                ")")
+            skipped.append(key_refusal(name, keys, lvl, key, kt))
             return False
-        push_slot(name, keys, tails)
+        push_slot(name, resolved_keys, tails)
         return True
 
     if dependencies is None:
@@ -1600,17 +1721,28 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
         # ---- ONE CANDIDATE KEY SET PER LEVEL ----
         per_level, bad = [], False
         for lvl, kt in enumerate(kts):
-            keys = [p for p, pt in params if pt == kt]
+            keys = [key_name(p) for p, pt in params if key_matches(p, kt)]
             if kt == "address":
                 keys.append("msg.sender")
             if not keys:
-                skipped.append(
-                    f"state.{m}[...] (at key level {lvl} this unit has no "
-                    f"parameter of the key type '{kt}', and the key type is "
-                    f"not address so msg.sender does not apply). A nested "
-                    f"store needs a key at EVERY level: one missing level "
-                    f"leaves no slot to name, and a name with fewer keys "
-                    f"would denote a whole sub-store instead")
+                byte_params = [p for p, pt in params
+                               if pt == kt
+                               and bytes_static_len(kt) is not None]
+                if byte_params:
+                    skipped.append(
+                        f"state.{m}[...] (at key level {lvl} the only "
+                        f"matching parameter(s) are bytesN aggregate(s): "
+                        + ", ".join(byte_params) + ". No agreed "
+                        "counterexample mapping-key literal was available, so "
+                        "the verifier cannot name a scalar slot key)")
+                else:
+                    skipped.append(
+                        f"state.{m}[...] (at key level {lvl} this unit has no "
+                        f"parameter of the key type '{kt}', and the key type is "
+                        f"not address so msg.sender does not apply). A nested "
+                        f"store needs a key at EVERY level: one missing level "
+                        f"leaves no slot to name, and a name with fewer keys "
+                        f"would denote a whole sub-store instead")
                 bad = True
                 break
             per_level.append(keys)
@@ -5261,10 +5393,15 @@ def main():
         slot_accesses, slot_access_evidence = unit_mapping_slot_accesses(
             args.ast, args.contract, args.unit,
             declaration_id=declaration_id)
+        key_literals, key_literal_skipped = agreed_bytes_mapping_key_literals(
+            witnessed_raw_inputs(cwd, args.unit, paths, args.path_function),
+            params)
         proposed, skipped = propose_slot_coords(
             maps, params, args.slot_coords,
             dependencies=[] if dependencies is None else dependencies,
-            slot_accesses=[] if slot_accesses is None else slot_accesses)
+            slot_accesses=[] if slot_accesses is None else slot_accesses,
+            key_literals=key_literals)
+        skipped += key_literal_skipped
         if not args.slot_coords:
             proposed, skipped = [], []
         # An explicit --slot-coord is not rationed and not type-checked here:
@@ -5282,6 +5419,11 @@ def main():
         if slot_access_evidence:
             print("[coords] mapping slot access priority: "
                   + "; ".join(slot_access_evidence))
+        if key_literals:
+            print("[coords] bytesN mapping key(s) fixed to the witnessed "
+                  "counterexample slice, not treated as fuzz coordinates: "
+                  + ", ".join(f"{k}->{v}"
+                              for k, v in sorted(key_literals.items())))
         if slot_added:
             print("[coords] MAPPING SLOT(s) proposed from solc's declaration "
                   "(a payload can only offer a slot at a key some "
