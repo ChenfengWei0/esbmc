@@ -1369,3 +1369,75 @@ ESBMC target build passed; 124/124 PUT tests passed; generaliser tests passed;
 the real Forge integration passed; and six serial focused Solidity CTests
 passed in 5.16 seconds with 8-GiB descriptors. No real POC, benchmark, corpus,
 or sweep was run. The queue-head attempt remains unspent.
+
+## 32. Queue-head POC attempt and journal salvage repair
+
+The queue-head official POC attempt has now been spent:
+
+```
+python3 notes/coverage/scripts/poc_one.py \
+  farming__Distributor__setDistributor --stage all --fresh
+```
+
+It ran under recipe `veriput-strong/6`, `--timeout 60`,
+`--memlimit-gib 8`, `jobs=1`, and `--solidity-max-tx 1`. Stage 1 focused
+`Distributor.setDistributor` through `--contract FarmingPool` and instrumented
+5 complete paths, but the outer 60s timeout killed the run before ESBMC wrote
+`reports/Distributor__setDistributor.json`. Stage 2 therefore recorded
+`NO-WITNESS-UNKNOWN`, and Stage 3 correctly refused an empty PUT sweep. This is
+not evidence that PUT generation or R1/R2 synthesis failed; they never received
+any certified region.
+
+The important observation is that the killed run did leave
+`work/Distributor__setDistributor/cov-ce-journal.json` with
+`claims_decided=29`, `claims_total=35`, and 5 witnessed feasible path claims.
+Each path had up to 8 witness payloads. The loss was in the external pipeline:
+`pathcov_collect.py` only copied a completed `cov-report.json` into
+`reports/`, so a useful partial CE journal was treated the same as no witness
+at all.
+
+The repair is deliberately one-sided. `pathcov_collect.py` now converts a
+live CE journal into a Stage-2 enumeration report only when the journal already
+contains solver-refuted feasible path witnesses. The synthetic report is stamped
+`partial=true` and records `veriput_salvage.from = cov-ce-journal.json`; it
+does not claim full coverage and does not turn undecided claims into evidence.
+It normalizes journal list-shaped payloads into the dict-shaped report schema
+that `solidity_path_generalise.py` already consumes, including `msg.sender` /
+`block.timestamp` environment names, input coordinates, entry storage, final
+state, extcall extras, per-path witnesses, and summary counters. Legacy
+journals that lack `path_depth` recover it from ESBMC's path encoding
+(`tr = 1; tr = tr*2 + guard_value`), i.e. `floor(log2(path_id))`; future
+journals should not need that fallback.
+
+ESBMC's own CE journal writer now emits `path_id`, `path_depth`,
+`path_function`, and report-style `condition` for every witnessed path. The
+depth comes from the existing `path_decision_depth` map, the same metadata used
+by the path assertion/certification checks. This makes future timeout salvage
+unambiguous and keeps overload identity available before the full report exists.
+
+Verification after the repair:
+
+```
+python3 scripts/test_pathcov_collect.py
+python3 scripts/test_solidity_path_generalise.py
+python3 scripts/test_solidity_path_put.py
+cmake --build build --target esbmc -j2
+ctest --test-dir build -R '^regression/scripts/pathcov_collect$' \
+  --output-on-failure
+ctest --test-dir build -R \
+  'regression/esbmc-solidity/solidity_path_cov_ce_journal_survives_death|regression/esbmc-solidity/solidity_path_cov_ce_journal_absent_without_report' \
+  --output-on-failure
+```
+
+All passed. The CMake regeneration still printed the known nested
+Bitwuzla/CaDiCaL missing-header failures before falling back to the already
+found Bitwuzla 0.8.2; the final `esbmc` target built successfully. `cppcheck`
+on `src/goto-programs/goto_coverage.cpp` reported only the existing
+`unknownMacro` parser limitation at `Forall_goto_program_instructions`, not a
+must-fix warning.
+
+Concrete implication for the next real POC: a timeout after some path claims
+are refuted should no longer produce a zero-region Stage 2 solely because the
+final coverage report was not written. It will still be honest partial
+evidence: only paths with actual CE payloads enter certification, and ESBMC
+must still certify any region before PUT generation.

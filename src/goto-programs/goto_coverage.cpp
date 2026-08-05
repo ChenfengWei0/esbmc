@@ -312,6 +312,27 @@ void goto_coveraget::write_path_ce_journal_atomic(
       auto sid = path_stable_id.find({msg, loc});
       if (sid != path_stable_id.end())
         e["path_id_stable"] = sid->second;
+      const std::string path_tag = ":path:";
+      const size_t path_pos = msg.rfind(path_tag);
+      if (path_pos != std::string::npos)
+      {
+        const std::string path_function = msg.substr(0, path_pos);
+        const std::string path_id = msg.substr(path_pos + path_tag.size());
+        e["path_function"] = path_function;
+        e["path_id"] = path_id;
+        const std::string f_tag = "@F@";
+        const size_t f_pos = path_function.find(f_tag);
+        const size_t h_pos = path_function.find('#', f_pos);
+        if (f_pos != std::string::npos && h_pos != std::string::npos)
+        {
+          const size_t begin = f_pos + f_tag.size();
+          e["condition"] =
+            path_function.substr(begin, h_pos - begin) + ":path:" + path_id;
+        }
+      }
+      auto depth = path_decision_depth.find({msg, loc});
+      if (depth != path_decision_depth.end())
+        e["path_depth"] = depth->second;
       // Under --all-witnesses a path has several payloads, and a journal that
       // kept only the first would lose exactly what that flag was turned on to
       // obtain -- on the run that most needs the journal, the one that dies.

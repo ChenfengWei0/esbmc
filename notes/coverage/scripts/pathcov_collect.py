@@ -105,8 +105,7 @@ def quarantine_collection(out_dir):
     """Move an existing collection aside and return its new path, if any."""
     if not out_dir.exists() or not any(out_dir.iterdir()):
         return None
-    archived = out_dir.with_name(
-        f"{out_dir.name}.superseded.{time.time_ns()}")
+    archived = out_dir.with_name(f"{out_dir.name}.superseded.{time.time_ns()}")
     out_dir.rename(archived)
     return archived
 
@@ -117,6 +116,7 @@ def kill_process_group(proc):
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except (OSError, ProcessLookupError, AttributeError):
         pass
+
 
 # ---- WHERE THE INPUT LIVES IS NOW THE POC'S ANSWER, NOT A CONSTANT ----
 #
@@ -135,8 +135,7 @@ def kill_process_group(proc):
 # Unset, this still points at the old location -- which no longer exists, so a
 # benchmark-shaped invocation dies on a missing file instead of sweeping. That
 # is the intended failure, and `collect()` says so by name.
-INPUTS = Path(os.environ.get("VERIPUT_INPUTS_DIR",
-                             str(REPO / "notes/coverage/inputs")))
+INPUTS = Path(os.environ.get("VERIPUT_INPUTS_DIR", str(REPO / "notes/coverage/inputs")))
 # `collect` resolves the project scope file out of ITS own copy of this
 # constant, and collect.py is LOCKED (it is the branch-coverage baseline side).
 # Rebinding the imported module's attribute is how the override reaches it
@@ -217,8 +216,16 @@ def solver_flags_for(bench_key, override):
     return [], "tool default (no solver flag passed)"
 
 
-def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
-              instrument_only=None, unwind=None, probe_witnesses=0):
+def esbmc_cmd(solast,
+              flat,
+              primary,
+              focus,
+              goals,
+              solver_flags=(),
+              max_tx=1,
+              instrument_only=None,
+              unwind=None,
+              probe_witnesses=0):
     # `max_tx` IS A PARAMETER NOW, AND IT WAS A LITERAL `"1"` BEFORE.
     #
     # The docstring at the top of this file argues at length for 1 -- correctly,
@@ -233,12 +240,18 @@ def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
     # recorded `solidityMaxTx` is not 1, and `collect()` below refuses to write a
     # non-gate cell into the gate's own directory.
     cmd = [
-        str(ESBMC), str(solast), "--sol", str(flat),
+        str(ESBMC),
+        str(solast),
+        "--sol",
+        str(flat),
         "--solidity-path-coverage",
-        "--solidity-max-tx", str(max_tx),
+        "--solidity-max-tx",
+        str(max_tx),
         "--cov-report-json",
-        "--path-cov-max-goals", str(goals),
-        "--memlimit", MEMLIMIT,
+        "--path-cov-max-goals",
+        str(goals),
+        "--memlimit",
+        MEMLIMIT,
     ] + list(solver_flags)
     if unwind is not None:
         # ---- THE CALL-DEPTH BOUND IS THIS FLAG, AND IT WAS NEVER PASSED ----
@@ -294,9 +307,10 @@ def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
         # neither affordable NOR comparable.
         cmd += ["--path-cov-instrument-only", instrument_only]
     if probe_witnesses:
-        cmd += ["--branch-function-coverage", "--path-cov-probe",
-                "--all-witnesses", "--max-witnesses",
-                str(probe_witnesses)]
+        cmd += [
+            "--branch-function-coverage", "--path-cov-probe", "--all-witnesses", "--max-witnesses",
+            str(probe_witnesses)
+        ]
     return cmd
 
 
@@ -310,16 +324,203 @@ def binary_identity():
     uncommitted changes, so a row produced from a work-in-progress tree can
     never be mistaken for one produced from the commit it names.
     """
+
     def _sh(args):
         try:
-            return subprocess.run(args, capture_output=True, text=True,
-                                  cwd=str(REPO), timeout=30).stdout.strip()
+            return subprocess.run(args, capture_output=True, text=True, cwd=str(REPO),
+                                  timeout=30).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             return ""
+
     return {
         "head": _sh(["git", "rev-parse", "--short", "HEAD"]),
         "srcDirty": bool(_sh(["git", "status", "--porcelain", "--", "src/"])),
         "binaryMtime": int(ESBMC.stat().st_mtime) if ESBMC.exists() else 0,
+    }
+
+
+def _named_values_to_dict(values, *, env=False):
+    out = {}
+    if isinstance(values, dict):
+        items = values.items()
+    else:
+        items = ((v.get("name"), v.get("value")) for v in values or [] if isinstance(v, dict))
+    for name, value in items:
+        if not name:
+            continue
+        if env:
+            for p in ("msg_", "tx_", "block_"):
+                if name.startswith(p):
+                    name = p[:-1] + "." + name[len(p):]
+                    break
+        out[name] = value
+    return out
+
+
+def _extcall_returns(values):
+    out = []
+    for item in values or []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("symbol") or item.get("name")
+        if name:
+            out.append({"symbol": name, "value": item.get("value")})
+    return out
+
+
+def _claim_parts(msg):
+    m = re.match(r"(?P<pf>.+):path:(?P<pid>\d+)$", msg or "")
+    if not m:
+        return None, None, None
+    pf = m.group("pf")
+    pid = m.group("pid")
+    fm = re.search(r"@F@([^#]+)#", pf)
+    unit = fm.group(1) if fm else pf.rsplit("@F@", 1)[-1].split("#", 1)[0]
+    return pf, unit, pid
+
+
+def _log_path_depths(log):
+    depths = {}
+    for m in re.finditer(r"path enc=(\d+) depth=(\d+)", log or ""):
+        depths[m.group(1)] = int(m.group(2))
+    return depths
+
+
+def report_from_ce_journal(journal, log=""):
+    """Build a stage-2 enumeration report from the live CE journal.
+
+    The journal is not a coverage report and must stay marked partial. It is,
+    however, authoritative evidence for claims that already reached the solver
+    and were refuted before an outer timeout killed the run.
+    """
+    if journal.get("kind") != "solidity-complete-path-ce-journal":
+        return None
+    witnessed = journal.get("witnesses") or {}
+    if not isinstance(witnessed, dict) or not witnessed:
+        return None
+    depths = _log_path_depths(log)
+    claims = []
+    for entry in witnessed.values():
+        if not isinstance(entry, dict):
+            continue
+        msg = entry.get("claim")
+        path_function, unit, path_id = _claim_parts(msg)
+        if not path_function or path_id is None:
+            continue
+        depth = entry.get("path_depth") or entry.get("decision_depth")
+        if depth is None:
+            depth = depths.get(str(path_id))
+        if depth is None:
+            # Legacy journals predate the explicit path_depth field. ESBMC's
+            # path encoding starts at 1 and appends each decision bit with
+            # `tr = tr*2 + guard_value`, so floor(log2(enc)) is the exact
+            # decision depth for those rows.
+            try:
+                depth = int(path_id).bit_length() - 1
+            except ValueError:
+                continue
+        claim = {
+            "bound": {
+                "kind": "bounded"
+            },
+            "ce_extraction": {
+                "compact_trace": bool(entry.get("compact_trace")),
+                "harness_nondets_dropped": entry.get("dropped_internal"),
+                "payload_symbols_exempt_from_slicing": bool(entry.get("payload_symbols_protected")),
+                "scoped_to_claim": bool(entry.get("scoped_to_claim")),
+                "sliced": bool(entry.get("sliced")),
+                "witness_count": entry.get("witness_count", 1),
+            },
+            "column": 0,
+            "condition": f"{unit}:path:{path_id}",
+            "decisions": entry.get("decisions") or [],
+            "entry_storage": _named_values_to_dict(entry.get("entry_storage")),
+            "env": _named_values_to_dict(entry.get("env"), env=True),
+            "events": entry.get("events") or [],
+            "exit_kind": "revert" if entry.get("revert_pre_rollback") else "normal",
+            "extcall_returns": _extcall_returns(entry.get("extcall_returns")),
+            "file": "",
+            "final_state": _named_values_to_dict(entry.get("final_state")),
+            "function": "",
+            "inputs": _named_values_to_dict(entry.get("inputs")),
+            "line": 0,
+            "path_depth": int(depth),
+            "path_function": path_function,
+            "path_id": str(path_id),
+            "return_value": entry.get("return_value"),
+            "return_value_known": bool(entry.get("return_value_known")),
+            "state_written_value_unavailable": entry.get("state_written_unrendered") or [],
+            "status": "F",
+            "witnessed_in_earlier_round": False,
+        }
+        witnesses = []
+        for w in entry.get("witnesses") or []:
+            if not isinstance(w, dict):
+                continue
+            witnesses.append({
+                "entry_storage": _named_values_to_dict(w.get("entry_storage")),
+                "env": _named_values_to_dict(w.get("env"), env=True),
+                "extcall_returns": _extcall_returns(w.get("extcall_returns")),
+                "final_state": _named_values_to_dict(w.get("final_state")),
+                "inputs": _named_values_to_dict(w.get("inputs")),
+                "return_value": w.get("return_value"),
+                "return_value_known": bool(w.get("return_value_known")),
+            })
+        if witnesses:
+            claim["witnesses"] = witnesses
+        claims.append(claim)
+    if not claims:
+        return None
+    total = journal.get("claims_total") or len(claims)
+    decided = journal.get("claims_decided")
+    return {
+        "claims": claims,
+        "coverage_type": "solidity-complete-path",
+        "partial": True,
+        "source_files": [],
+        "summary": {
+            "F_feasible_with_ce":
+            len(claims),
+            "F_with_multiple_witnesses":
+            sum(1 for c in claims if (c.get("ce_extraction") or {}).get("witness_count", 1) > 1),
+            "I_proven_unreachable":
+            0,
+            "U_of_which_bounded_holds":
+            0,
+            "U_reasons": {
+                "bounded-holds": 0,
+                "claim-budget-exceeded": 0,
+                "named-obstacle": 0,
+                "not-solved-this-run": max(0,
+                                           int(total) - int(decided or len(claims))),
+                "run-died-before-solving": 0,
+                "solver-unknown": 0,
+                "unit-not-entered": 0,
+            },
+            "U_undecided":
+            max(0,
+                int(total) - len(claims)),
+            "covered":
+            len(claims),
+            "partial":
+            True,
+            "paths_total":
+            total,
+            "percentage": (100.0 * len(claims) / total) if total else 0.0,
+            "total":
+            total,
+            "uncovered":
+            max(0,
+                int(total) - len(claims)),
+            "witnesses_total":
+            sum((c.get("ce_extraction") or {}).get("witness_count", 1) for c in claims),
+        },
+        "veriput_salvage": {
+            "from": "cov-ce-journal.json",
+            "claims_decided": decided,
+            "claims_total": total,
+            "reason": "outer-timeout-with-feasible-path-witnesses",
+        },
     }
 
 
@@ -329,8 +530,11 @@ def one_run(tag, cmd, timeout, workdir):
         stale.unlink()
     t0 = time.time()
     killed = False
-    proc = subprocess.Popen(cmd, cwd=str(workdir), stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True,
+    proc = subprocess.Popen(cmd,
+                            cwd=str(workdir),
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
                             start_new_session=True)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -370,8 +574,7 @@ def one_run(tag, cmd, timeout, workdir):
     # empty numerator. Parsed off the run's own summary line rather than
     # inferred from the report, so a run that died before writing one still
     # says which of the three it was.
-    m = re.search(r"instrumented (\d+) complete path\(s\) across (\d+) unit\(s\)",
-                  out)
+    m = re.search(r"instrumented (\d+) complete path\(s\) across (\d+) unit\(s\)", out)
     if m:
         rec["pathsInstrumented"] = int(m.group(1))
         rec["unitsEnumerated"] = int(m.group(2))
@@ -419,9 +622,7 @@ def one_run(tag, cmd, timeout, workdir):
     # A record written before this field existed carries NO key, and a consumer
     # must render that as "unrecorded" rather than as 0 -- the same third-state
     # rule the rest of this pipeline follows. Absent is not zero.
-    m = re.search(
-        r"(\d+) call site\(s\) are deeper than the call depth bound \((\d+)\)",
-        out)
+    m = re.search(r"(\d+) call site\(s\) are deeper than the call depth bound \((\d+)\)", out)
     if m:
         rec["depthBoundUnexpandedSites"] = int(m.group(1))
         rec["depthBound"] = int(m.group(2))
@@ -443,8 +644,8 @@ def one_run(tag, cmd, timeout, workdir):
     m = re.search(
         r"call site\(s\) are deeper than the call depth bound \(\d+\) and "
         r"were NOT expanded \(([^)]*)\)", out)
-    rec["depthBoundUnexpandedNames"] = (
-        [n.strip() for n in m.group(1).split(",") if n.strip()] if m else [])
+    rec["depthBoundUnexpandedNames"] = ([n.strip() for n in m.group(1).split(",")
+                                         if n.strip()] if m else [])
 
     # ---- TWO MORE MODELLING LIMITS THAT NOBODY READ ----
     #
@@ -545,8 +746,7 @@ def one_run(tag, cmd, timeout, workdir):
             r"struct '([^']+)'\) - '([^']+)' havoc'd to nondet", out):
         asm_lines.add(int(m.group(1)))
         for t in (m.group(2), m.group(3)):
-            asm_havoc_types.add(t[len("tag-struct "):]
-                                if t.startswith("tag-struct ") else t)
+            asm_havoc_types.add(t[len("tag-struct "):] if t.startswith("tag-struct ") else t)
         asm_havoc_locals.add(m.group(4))
     rec["asmApproxSites"] = out.count("[approx] inline assembly at ")
     rec["asmApproxLines"] = sorted(asm_lines)
@@ -554,12 +754,28 @@ def one_run(tag, cmd, timeout, workdir):
     rec["asmHavocLocals"] = sorted(asm_havoc_locals)
     rec["asmHavocStructTypes"] = sorted(asm_havoc_types)
 
+    d = None
     if report.exists():
         try:
             d = json.loads(report.read_text())
         except ValueError as e:
             rec["reportParseError"] = str(e)
             return rec, None
+    else:
+        journal = workdir / "cov-ce-journal.json"
+        if journal.exists():
+            try:
+                d = report_from_ce_journal(json.loads(journal.read_text()), out)
+            except ValueError as e:
+                rec["journalParseError"] = str(e)
+            if d is not None:
+                rec["reportPresent"] = True
+                rec["reportFromJournal"] = True
+                rec["reportPartial"] = True
+                rec["journalClaimsDecided"] = d.get("veriput_salvage", {}).get("claims_decided")
+                rec["journalClaimsTotal"] = d.get("veriput_salvage", {}).get("claims_total")
+                report.write_text(json.dumps(d, indent=2) + "\n")
+    if d is not None:
         s = d.get("summary", {})
         rec["pathsTotal"] = s.get("paths_total")
         rec["F"] = s.get("F_feasible_with_ce")
@@ -570,9 +786,20 @@ def one_run(tag, cmd, timeout, workdir):
     return rec, None
 
 
-def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
-            fresh=False, max_tx=1, focus_with=(), scope="single", adhoc=None,
-            only=(), unwind=None, probe_witnesses=0):
+def collect(bench_key,
+            whole,
+            timeout,
+            goals,
+            out_suffix="",
+            solver_override=(),
+            fresh=False,
+            max_tx=1,
+            focus_with=(),
+            scope="single",
+            adhoc=None,
+            only=(),
+            unwind=None,
+            probe_witnesses=0):
     # ---- THE LADDER'S TWO AXES, AND WHY THEY ARE NOT A PLAIN PRODUCT ----
     #
     # They are LENGTH x ALPHABET, and that is now read out of the source rather
@@ -611,8 +838,7 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # for benchmarks where whole does not finish. It only buys anything at
     # max_tx >= 2, because a word of length 1 cannot contain both letters.
     sflags, sreason = solver_flags_for(bench_key, solver_override)
-    print(f"  [solver] {' '.join(sflags) if sflags else '(none)'} -- {sreason}",
-          flush=True)
+    print(f"  [solver] {' '.join(sflags) if sflags else '(none)'} -- {sreason}", flush=True)
     if adhoc is not None:
         # AD-HOC TARGET: a hand-written PoC rather than a corpus benchmark.
         # R6 requires every investigation to start from a minimal reproduction,
@@ -641,16 +867,15 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                      f"PoC whose private input directory is incomplete. "
                      f"Rebuild it: python3 "
                      f"notes/coverage/scripts/poc_split.py")
-        sys.exit(
-            f"missing AST: {solast}\n"
-            f"  The shared corpus directory notes/coverage/inputs/ HAS BEEN "
-            f"DELETED on purpose: it was the benchmark, and a benchmark is not "
-            f"a runnable thing here. Each PoC owns its input.\n"
-            f"    python3 notes/coverage/scripts/poc_one.py --list\n"
-            f"    python3 notes/coverage/scripts/poc_one.py <poc-id>\n"
-            f"  To restore the corpus for a baseline re-measurement (it is in "
-            f"git, nothing was lost):\n"
-            f"    git checkout -- notes/coverage/inputs/")
+        sys.exit(f"missing AST: {solast}\n"
+                 f"  The shared corpus directory notes/coverage/inputs/ HAS BEEN "
+                 f"DELETED on purpose: it was the benchmark, and a benchmark is not "
+                 f"a runnable thing here. Each PoC owns its input.\n"
+                 f"    python3 notes/coverage/scripts/poc_one.py --list\n"
+                 f"    python3 notes/coverage/scripts/poc_one.py <poc-id>\n"
+                 f"  To restore the corpus for a baseline re-measurement (it is in "
+                 f"git, nothing was lost):\n"
+                 f"    git checkout -- notes/coverage/inputs/")
 
     # THE OUTPUT DIRECTORY IS PART OF THE CONFIGURATION, not a convenience.
     # `index.json` is REWRITTEN at the end of every collection with only the
@@ -689,20 +914,19 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # there would replace the gate's collection with one the gate is not
     # entitled to read, and the operator would discover it as "the gate is
     # broken" rather than as "I overwrote it".
-    if (max_tx != 1 or focus_with or scope != "single" or only
-            or unwind is not None or probe_witnesses) and not out_suffix:
-        sys.exit(
-            f"{bench_key}: refusing to write a LADDER cell (scope={scope}, "
-            f"max-tx={max_tx}, unwind={unwind if unwind is not None else 'default'}, "
-            f"only={','.join(only) or 'all'}, "
-            f"focus-with={','.join(focus_with) or 'none'}) into the gate's own "
-            f"directory {OUT / bench_key}.\n"
-            f"The unsuffixed directory holds the collection every gate row is "
-            f"computed from, and a collection rewrites its index.json wholesale. "
-            f"Pass --out-suffix (e.g. --out-suffix __tx{max_tx}"
-            + (f"__unwind{unwind}" if unwind is not None else "")
-            + (f"__{scope}" if scope != "single" else "")
-            + ("__focusset" if focus_with else "") + ").")
+    if (max_tx != 1 or focus_with or scope != "single" or only or unwind is not None
+            or probe_witnesses) and not out_suffix:
+        sys.exit(f"{bench_key}: refusing to write a LADDER cell (scope={scope}, "
+                 f"max-tx={max_tx}, unwind={unwind if unwind is not None else 'default'}, "
+                 f"only={','.join(only) or 'all'}, "
+                 f"focus-with={','.join(focus_with) or 'none'}) into the gate's own "
+                 f"directory {OUT / bench_key}.\n"
+                 f"The unsuffixed directory holds the collection every gate row is "
+                 f"computed from, and a collection rewrites its index.json wholesale. "
+                 f"Pass --out-suffix (e.g. --out-suffix __tx{max_tx}" +
+                 (f"__unwind{unwind}" if unwind is not None else "") +
+                 (f"__{scope}" if scope != "single" else "") +
+                 ("__focusset" if focus_with else "") + ").")
     pkind = base.primary_contract_kind(flat, primary)
     out_dir = OUT / (bench_key + out_suffix)
     if fresh:
@@ -743,7 +967,10 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                      "Pass --fresh or move the directory aside.")
         expected = {
             "schema": COLLECTION_SCHEMA,
-            "primary": {"name": primary, "kind": pkind},
+            "primary": {
+                "name": primary,
+                "kind": pkind
+            },
             "flatInputIdentity": file_identity(flat),
             "astInputIdentity": file_identity(solast),
             "esbmcIdentity": file_identity(ESBMC),
@@ -763,16 +990,17 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             "flatInputIdentity": old_index.get("flatInputIdentity"),
             "astInputIdentity": old_index.get("astInputIdentity"),
             "esbmcIdentity": old_index.get("esbmcIdentity"),
-            **{key: (old_index.get("config") or {}).get(key)
-               for key in expected if key not in {
-                   "schema", "primary", "flatInputIdentity",
-                   "astInputIdentity", "esbmcIdentity"}},
+            **{
+                key: (old_index.get("config") or {}).get(key)
+                for key in expected if key not in {
+                    "schema", "primary", "flatInputIdentity", "astInputIdentity", "esbmcIdentity"
+                }
+            },
         }
         changed = [key for key in expected if actual.get(key) != expected[key]]
         if changed:
-            detail = "\n".join(
-                f"  {key}: recorded={actual.get(key)!r}, "
-                f"requested={expected[key]!r}" for key in changed)
+            detail = "\n".join(f"  {key}: recorded={actual.get(key)!r}, "
+                               f"requested={expected[key]!r}" for key in changed)
             sys.exit(f"{bench_key}: REFUSING to resume reports made under an "
                      f"incompatible or unversioned collection:\n{detail}\n"
                      "Pass --fresh to re-measure, or move the directory aside "
@@ -800,8 +1028,7 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # timestamp moved would still surprise a resumable run. The operator must
     # explicitly choose --fresh, which quarantines the directory above.
     ident = binary_identity()
-    stale = {t: r.get("binary") for t, r in done.items()
-             if r.get("binary") != ident}
+    stale = {t: r.get("binary") for t, r in done.items() if r.get("binary") != ident}
     if stale and not fresh:
         shown = list(stale.items())[:5]
         # ---- SAY WHICH FIELD MOVED. "A DIFFERENT BINARY" IS SOMETIMES FALSE ----
@@ -827,8 +1054,7 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
         # Still REFUSED in both cases -- this is a gate, and an operator who is
         # told which case it is can act; one who is told a false thing cannot.
         mt_now = (ident or {}).get("binaryMtime")
-        mt_moved = sum(1 for b in stale.values()
-                       if (b or {}).get("binaryMtime") != mt_now)
+        mt_moved = sum(1 for b in stale.values() if (b or {}).get("binaryMtime") != mt_now)
         if mt_moved:
             headline = (f"{mt_moved} of them were produced by a genuinely "
                         f"DIFFERENT BINARY (binaryMtime differs)")
@@ -841,13 +1067,11 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
         sys.exit(
             f"{bench_key}: {len(stale)} of {len(done)} journal record(s) do not "
             f"match the identity on disk now, and {headline}.\n"
-            f"  now:  {ident}\n"
-            + "".join(f"  was:  {t} -> {b}\n" for t, b in shown)
-            + (f"  ... and {len(stale) - len(shown)} more\n"
-               if len(stale) > len(shown) else "")
-            + "Refused either way, because resuming would skip those runs and "
-              "reuse their reports. Re-run with --fresh to preserve this "
-              "collection under .superseded.* and start over.")
+            f"  now:  {ident}\n" + "".join(f"  was:  {t} -> {b}\n" for t, b in shown) +
+            (f"  ... and {len(stale) - len(shown)} more\n" if len(stale) > len(shown) else "") +
+            "Refused either way, because resuming would skip those runs and "
+            "reuse their reports. Re-run with --fresh to preserve this "
+            "collection under .superseded.* and start over.")
     # THE REPORTS DIRECTORY IS RECONCILED WITH THE JOURNAL, and this is not
     # housekeeping. `work/` is emptied per run (one_run), but `reports/` never
     # was, so a report written by an EARLIER collection survived into the next
@@ -862,14 +1086,14 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # anything in `reports/` that the journal does not name is removed, and the
     # removal is COUNTED ON STDOUT -- a silent cleanup would hide the fact that
     # a previous collection's output was here at all.
-    orphans = [p for p in sorted(reports_dir.glob("*.json"))
-               if p.stem not in done]
+    orphans = [p for p in sorted(reports_dir.glob("*.json")) if p.stem not in done]
     for p in orphans:
         p.unlink()
     if orphans:
         print(f"  [reports] removed {len(orphans)} report(s) not named by "
-              f"{journal.name}: " + ", ".join(p.stem for p in orphans[:8])
-              + (" ..." if len(orphans) > 8 else ""), flush=True)
+              f"{journal.name}: " + ", ".join(p.stem for p in orphans[:8]) +
+              (" ..." if len(orphans) > 8 else ""),
+              flush=True)
 
     runs = []
 
@@ -901,13 +1125,17 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
         if tag in done:
             runs.append(done[tag])
         else:
-            rec, d = one_run(tag,
-                             esbmc_cmd(solast, flat,
-                                       None if pkind == "library" else primary,
-                                       None, goals, sflags, max_tx,
-                                       unwind=unwind,
-                                       probe_witnesses=probe_witnesses),
-                             timeout, out_dir / "work" / tag)
+            rec, d = one_run(
+                tag,
+                esbmc_cmd(solast,
+                          flat,
+                          None if pkind == "library" else primary,
+                          None,
+                          goals,
+                          sflags,
+                          max_tx,
+                          unwind=unwind,
+                          probe_witnesses=probe_witnesses), timeout, out_dir / "work" / tag)
             record(rec)
             if d is not None:
                 (reports_dir / f"{tag}.json").write_text(json.dumps(d))
@@ -945,13 +1173,12 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # silently ran 2 of aqua's 8 callables while printing "2/2 run(s)
             # produced a report"). A quiet fallback here would be the same
             # failure with a new name.
-            sys.exit(
-                f"--sol/--contract is an AD-HOC target with no project tree, "
-                f"so the per-method scope rule cannot be applied and "
-                f"--scope {scope} is unavailable for it. Use --scope whole "
-                f"(the ad-hoc target's purpose is the LENGTH axis, which needs "
-                f"no unit enumeration), or add the contract to collect.py's "
-                f"BENCHES if it is a real benchmark.")
+            sys.exit(f"--sol/--contract is an AD-HOC target with no project tree, "
+                     f"so the per-method scope rule cannot be applied and "
+                     f"--scope {scope} is unavailable for it. Use --scope whole "
+                     f"(the ad-hoc target's purpose is the LENGTH axis, which needs "
+                     f"no unit enumeration), or add the contract to collect.py's "
+                     f"BENCHES if it is a real benchmark.")
         todo = list(base.enumerate_own_callable_functions(flat, project))
         if only:
             # ---- THE LADDER NEEDS ONE UNIT, NOT A BENCHMARK ----
@@ -968,13 +1195,12 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             have = {fn for _c, fn, _k in todo}
             missing = [w for w in wanted if w not in have]
             if missing:
-                sys.exit(
-                    f"{bench_key}: --only names {', '.join(missing)}, which "
-                    f"this benchmark's callable-unit enumeration does not "
-                    f"contain. It has: {', '.join(sorted(have))}.\n"
-                    f"Refused rather than run the ones that did match: a "
-                    f"partial ladder that prints a clean summary is how a typo "
-                    f"becomes a measurement.")
+                sys.exit(f"{bench_key}: --only names {', '.join(missing)}, which "
+                         f"this benchmark's callable-unit enumeration does not "
+                         f"contain. It has: {', '.join(sorted(have))}.\n"
+                         f"Refused rather than run the ones that did match: a "
+                         f"partial ladder that prints a clean summary is how a typo "
+                         f"becomes a measurement.")
             todo = [t for t in todo if t[1] in set(wanted)]
         for i, (cname, fname, ckind) in enumerate(todo, 1):
             tag = f"{cname}__{fname}"
@@ -1014,20 +1240,36 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                 # becomes an explicitly reported gap, which is the honest form
                 # of "this configuration cannot measure it".
                 rec = {
-                    "tag": tag, "cmd": None, "wallSeconds": 0.0,
-                    "exitCode": None, "killedByOuterTimeout": False,
-                    "reportPresent": False,
-                    "skipped": "library-has-no-dispatcher",
+                    "tag":
+                    tag,
+                    "cmd":
+                    None,
+                    "wallSeconds":
+                    0.0,
+                    "exitCode":
+                    None,
+                    "killedByOuterTimeout":
+                    False,
+                    "reportPresent":
+                    False,
+                    "skipped":
+                    "library-has-no-dispatcher",
                     "skippedDetail":
-                        "a library has no dispatcher harness, so --contract "
-                        "<Lib> finds no verification targets; the only other "
-                        "route is --function, which verifies in isolation from "
-                        "an arbitrary state and can yield a counterexample no "
-                        "reachable state supports. Internal library functions "
-                        "are covered through their callers' paths; external "
-                        "ones are an unmeasured gap under this configuration",
-                    "contract": cname, "function": fname, "kind": ckind,
-                    "binary": binary_identity(),
+                    "a library has no dispatcher harness, so --contract "
+                    "<Lib> finds no verification targets; the only other "
+                    "route is --function, which verifies in isolation from "
+                    "an arbitrary state and can yield a counterexample no "
+                    "reachable state supports. Internal library functions "
+                    "are covered through their callers' paths; external "
+                    "ones are an unmeasured gap under this configuration",
+                    "contract":
+                    cname,
+                    "function":
+                    fname,
+                    "kind":
+                    ckind,
+                    "binary":
+                    binary_identity(),
                 }
                 # AND CLEAR ITS WORKDIR. A skipped unit never calls `one_run`,
                 # which is the only thing that empties `work/<tag>/`, so an
@@ -1054,9 +1296,8 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                         if p.is_file():
                             p.unlink()
                             removed += 1
-                print(f"  [{i}/{len(todo)}] {tag}  (skipped: library"
-                      + (f"; cleared {removed} stale file(s) from work/{tag})"
-                         if removed else ")"),
+                print(f"  [{i}/{len(todo)}] {tag}  (skipped: library" +
+                      (f"; cleared {removed} stale file(s) from work/{tag})" if removed else ")"),
                       flush=True)
                 record(rec)
                 continue
@@ -1074,8 +1315,14 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # pinned to the unit itself whenever extra letters were added.
             # `single` passes nothing, so its command line is byte-identical to
             # what it always was.
-            cmd = esbmc_cmd(solast, flat, primary, focus_arg, goals, sflags,
-                            max_tx, fname if focus_with else None,
+            cmd = esbmc_cmd(solast,
+                            flat,
+                            primary,
+                            focus_arg,
+                            goals,
+                            sflags,
+                            max_tx,
+                            fname if focus_with else None,
                             unwind=unwind,
                             probe_witnesses=probe_witnesses)
             rec, d = one_run(tag, cmd, timeout, out_dir / "work" / tag)
@@ -1088,69 +1335,87 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
         "schema": COLLECTION_SCHEMA,
         "benchmark": bench_key,
         "project": project,
-        "primary": {"name": primary, "kind": pkind},
+        "primary": {
+            "name": primary,
+            "kind": pkind
+        },
         "flatInput": str(flat),
         "flatInputIdentity": file_identity(flat),
         "astInput": str(solast),
         "astInputIdentity": file_identity(solast),
         "esbmcIdentity": file_identity(ESBMC),
         "config": {
-            "mode": "whole" if whole else "per-method",
+            "mode":
+            "whole" if whole else "per-method",
             # THE WIDTH AXIS AS A NAME, beside the two values it is computed
             # from. `mode` collapses `single` and `set` into "per-method", which
             # is fine for a human reading the table and wrong for anything
             # deciding whether a row belongs to the gate: the gate cell is
             # scope=single AND max_tx=1, and a `set` run has the same `mode`
             # string as a `single` one.
-            "scope": scope,
+            "scope":
+            scope,
             # Which units this collection actually ran. Empty = all of them.
             # A ladder row covers ONE unit and no table may read it as the
             # benchmark's row, so the restriction travels with the data rather
             # than living only in the shell history that produced it.
-            "onlyUnits": list(only),
+            "onlyUnits":
+            list(only),
             # Whether this row came from a corpus benchmark or a hand-written
             # minimal reproduction. A PoC row is not a corpus row and no table
             # may mix them; recorded rather than inferred from the key's prefix.
-            "adhocTarget": None if adhoc is None else str(flat),
+            "adhocTarget":
+            None if adhoc is None else str(flat),
             # RECORDED FROM THE ARGUMENT, not from a literal. It used to be a
             # hardcoded 1 beside a hardcoded flag; the two agreed only because
             # neither could change. `branch_gate.assert_gate_config` reads THIS
             # field to decide whether a collection may be quoted into the gate
             # table, so a literal here would let a ladder cell present itself as
             # the gate cell.
-            "solidityMaxTx": max_tx,
+            "solidityMaxTx":
+            max_tx,
             # The CALL-DEPTH BOUND, which is --unwind. `null` means the
             # flag was NOT passed and the tool chose its own 4; that is a
             # different fact from "we asked for 4", and the two must not
             # be written the same way -- a row that cannot say which is a
             # row whose truncation numbers have no bound recorded.
-            "unwind": unwind,
+            "unwind":
+            unwind,
             # The extra names added to every unit's focus set. Empty for the gate
             # and artefact cells; non-empty for the middle cell of the width axis.
-            "focusWith": list(focus_with),
+            "focusWith":
+            list(focus_with),
             # Whether the DENOMINATOR was pinned to the unit while the ALPHABET
             # was widened (--path-cov-instrument-only). It decides what the
             # published path total MEANS: with it, a `set` cell's total is the
             # unit's own and is comparable with the `single` cell of the same
             # unit; without it the total is the union of every named unit's
             # paths and the two cells answer different questions.
-            "instrumentOnlyUnit": bool(focus_with),
-            "pathCovMaxGoals": goals,
-            "probeWitnesses": probe_witnesses,
-            "memlimit": MEMLIMIT,
+            "instrumentOnlyUnit":
+            bool(focus_with),
+            "pathCovMaxGoals":
+            goals,
+            "probeWitnesses":
+            probe_witnesses,
+            "memlimit":
+            MEMLIMIT,
             # Written into the index so no later table can quote a row without
             # the encoder it was produced with. A benchmark whose runs needed a
             # non-default encoder is not comparable to one that did not, and
             # that difference has to travel WITH the data.
-            "solverFlags": sflags,
-            "solverFlagsReason": sreason,
-            "outerTimeoutSeconds": timeout,
-            "innerEsbmcTimeout": None,
+            "solverFlags":
+            sflags,
+            "solverFlagsReason":
+            sreason,
+            "outerTimeoutSeconds":
+            timeout,
+            "innerEsbmcTimeout":
+            None,
             "innerTimeoutNote":
-                "--timeout is deliberately NOT passed: the partial-result "
-                "rescue is gated on branch_cov_active, so a path-coverage run "
-                "killed by it emits nothing. Bounding is done from outside and "
-                "a killed run is recorded as such rather than as a zero reach",
+            "--timeout is deliberately NOT passed: the partial-result "
+            "rescue is gated on branch_cov_active, so a path-coverage run "
+            "killed by it emits nothing. Bounding is done from outside and "
+            "a killed run is recorded as such rather than as a zero reach",
         },
         "runs": runs,
         "reportsDir": str(reports_dir),
@@ -1164,111 +1429,130 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("bench", nargs="?")
     ap.add_argument("--list", action="store_true")
-    ap.add_argument("--whole", action="store_true",
+    ap.add_argument("--whole",
+                    action="store_true",
                     help="Pair-1 analogue: one whole-contract run, no focus")
     ap.add_argument("--timeout", type=int, default=DEFAULT_OUTER_TIMEOUT)
     ap.add_argument("--goals", type=int, default=DEFAULT_MAX_GOALS)
-    ap.add_argument("--out-suffix", default="",
+    ap.add_argument("--out-suffix",
+                    default="",
                     help="appended to the output directory name; two "
-                         "configurations must never share one directory")
-    ap.add_argument("--fresh", action="store_true",
+                    "configurations must never share one directory")
+    ap.add_argument("--fresh",
+                    action="store_true",
                     help="move this collection aside under a unique "
-                         ".superseded.* name, then collect from scratch. "
-                         "Required after a binary/configuration change; never "
-                         "silently implied and never deletes prior evidence")
-    ap.add_argument("--solver-flags", default="",
+                    ".superseded.* name, then collect from scratch. "
+                    "Required after a binary/configuration change; never "
+                    "silently implied and never deletes prior evidence")
+    ap.add_argument("--solver-flags",
+                    default="",
                     help="space-separated ESBMC solver/encoder flags, e.g. "
-                         "'--z3 --tuple-node-flattener'. Overrides the "
-                         "per-benchmark ENCODER_EXCEPTIONS table; whichever "
-                         "applies is printed and recorded in index.json")
-    ap.add_argument("--memlimit-gib", type=int, default=8, metavar="N",
+                    "'--z3 --tuple-node-flattener'. Overrides the "
+                    "per-benchmark ENCODER_EXCEPTIONS table; whichever "
+                    "applies is printed and recorded in index.json")
+    ap.add_argument("--memlimit-gib",
+                    type=int,
+                    default=8,
+                    metavar="N",
                     help="per ESBMC process. The official POC runner passes 8 "
-                         "explicitly; recorded in index.json.")
-    ap.add_argument("--probe-witnesses", type=int, default=0, metavar="N",
+                    "explicitly; recorded in index.json.")
+    ap.add_argument("--probe-witnesses",
+                    type=int,
+                    default=0,
+                    metavar="N",
                     help="request up to N witnesses for each complete path and "
-                         "each exit-latched branch-function probe. Probe models "
-                         "are attributed by observed (path id, depth). Recorded "
-                         "in the manifest so stage 2 can reuse this one run.")
-    ap.add_argument("--scope", choices=("single", "set", "whole"),
+                    "each exit-latched branch-function probe. Probe models "
+                    "are attributed by observed (path id, depth). Recorded "
+                    "in the manifest so stage 2 can reuse this one run.")
+    ap.add_argument("--scope",
+                    choices=("single", "set", "whole"),
                     default="single",
                     help="WIDTH axis, i.e. the ALPHABET of the call sequence: "
-                         "'single' passes --focus-function <unit> (one name, "
-                         "the GATE cell); 'set' passes --focus-function "
-                         "<unit>,<--focus-with names> ; 'whole' passes no "
-                         "--focus-function at all. Requires --out-suffix for "
-                         "anything but 'single'. NOTE the alphabet only buys "
-                         "reach at --max-tx >= 2: one transaction is EXACTLY "
-                         "one entry call (each dispatcher arm ends in a "
-                         "`return`, solidity_convert_constructor.cpp:445), so a "
-                         "length-one word cannot contain two letters however "
-                         "wide the alphabet is.")
-    ap.add_argument("--only", default="",
+                    "'single' passes --focus-function <unit> (one name, "
+                    "the GATE cell); 'set' passes --focus-function "
+                    "<unit>,<--focus-with names> ; 'whole' passes no "
+                    "--focus-function at all. Requires --out-suffix for "
+                    "anything but 'single'. NOTE the alphabet only buys "
+                    "reach at --max-tx >= 2: one transaction is EXACTLY "
+                    "one entry call (each dispatcher arm ends in a "
+                    "`return`, solidity_convert_constructor.cpp:445), so a "
+                    "length-one word cannot contain two letters however "
+                    "wide the alphabet is.")
+    ap.add_argument("--only",
+                    default="",
                     help="comma-separated FUNCTION names to run, instead of "
-                         "every callable unit of the benchmark. A tx ladder is "
-                         "three runs of ONE unit; without this the cheapest way "
-                         "to get them was to sweep the whole benchmark three "
-                         "times. Every name must exist or the run is refused "
-                         "(a typo that silently ran nothing would print "
-                         "'0/0 run(s) produced a report'). Requires "
-                         "--out-suffix, because a one-unit collection is not "
-                         "the benchmark's collection.")
-    ap.add_argument("--sol", default="",
+                    "every callable unit of the benchmark. A tx ladder is "
+                    "three runs of ONE unit; without this the cheapest way "
+                    "to get them was to sweep the whole benchmark three "
+                    "times. Every name must exist or the run is refused "
+                    "(a typo that silently ran nothing would print "
+                    "'0/0 run(s) produced a report'). Requires "
+                    "--out-suffix, because a one-unit collection is not "
+                    "the benchmark's collection.")
+    ap.add_argument("--sol",
+                    default="",
                     help="AD-HOC TARGET: a flat .sol outside BENCHES (its "
-                         "<file>.solast must sit beside it). Requires "
-                         "--contract and --scope whole. Exists so the ladder "
-                         "has a MINIMAL subject: R6 requires a <80-line "
-                         "reproduction before any investigation, and until now "
-                         "this collector could only be pointed at the six "
-                         "locked corpus entries.")
-    ap.add_argument("--contract", default="",
+                    "<file>.solast must sit beside it). Requires "
+                    "--contract and --scope whole. Exists so the ladder "
+                    "has a MINIMAL subject: R6 requires a <80-line "
+                    "reproduction before any investigation, and until now "
+                    "this collector could only be pointed at the six "
+                    "locked corpus entries.")
+    ap.add_argument("--contract",
+                    default="",
                     help="contract name for --sol (the --contract value ESBMC "
-                         "is given)")
-    ap.add_argument("--unwind", type=int, default=None,
+                    "is given)")
+    ap.add_argument("--unwind",
+                    type=int,
+                    default=None,
                     help="the CALL-DEPTH BOUND, i.e. --unwind. The pass prints "
-                         "'expanded N internal call(s) ... (call depth bound = "
-                         "U)' and U is this value; unset, the tool picks 4. A "
-                         "call site deeper than the bound is a callee whose "
-                         "decisions never join the caller's path identity, so "
-                         "they cannot enter the gate's numerator. MEASURED on "
-                         "the current corpus: the one benchmark that CLEARS "
-                         "the branch-coverage gate (aqua) is the only one with "
-                         "nothing truncated by this bound, while EscrowSrc, "
-                         "EscrowDst and farming are truncated on EVERY run (up "
-                         "to 42 sites past it). Requires --out-suffix, and is "
-                         "recorded in index.json -- a truncation count whose "
-                         "bound is not in the row is a number nobody can "
-                         "interpret.")
-    ap.add_argument("--max-tx", type=int, default=1,
+                    "'expanded N internal call(s) ... (call depth bound = "
+                    "U)' and U is this value; unset, the tool picks 4. A "
+                    "call site deeper than the bound is a callee whose "
+                    "decisions never join the caller's path identity, so "
+                    "they cannot enter the gate's numerator. MEASURED on "
+                    "the current corpus: the one benchmark that CLEARS "
+                    "the branch-coverage gate (aqua) is the only one with "
+                    "nothing truncated by this bound, while EscrowSrc, "
+                    "EscrowDst and farming are truncated on EVERY run (up "
+                    "to 42 sites past it). Requires --out-suffix, and is "
+                    "recorded in index.json -- a truncation count whose "
+                    "bound is not in the row is a number nobody can "
+                    "interpret.")
+    ap.add_argument("--max-tx",
+                    type=int,
+                    default=1,
                     help="DEPTH axis, i.e. the LENGTH of the call sequence: "
-                         "--solidity-max-tx. ⚠ ESBMC's OWN DEFAULT IS 2, not 1 "
-                         "and not unbounded: --solidity-path-coverage is absent "
-                         "from get_tx_bound's `unbounded_modes` "
-                         "(solidity_convert_contract.cpp:623-655), so passing "
-                         "nothing gives 2. This script defaults to 1, which is "
-                         "the GATE cell and the only value the gate table may "
-                         "read. This was a hardcoded literal until now, so the "
-                         "tx ladder had no command-line entry at all and has "
-                         "never been run on a real benchmark -- the only tx=2 "
-                         "measurement in the project is on poc/Tiny.sol. "
-                         "Requires --out-suffix for any value but 1, so a "
-                         "ladder run cannot overwrite the gate's collection. "
-                         "NOTE 0 is NOT unbounded: under coverage it is the "
-                         "SHALLOWEST setting (the back-edge is rewritten to a "
-                         "SKIP, leaving one transaction).")
-    ap.add_argument("--focus-with", default="",
+                    "--solidity-max-tx. ⚠ ESBMC's OWN DEFAULT IS 2, not 1 "
+                    "and not unbounded: --solidity-path-coverage is absent "
+                    "from get_tx_bound's `unbounded_modes` "
+                    "(solidity_convert_contract.cpp:623-655), so passing "
+                    "nothing gives 2. This script defaults to 1, which is "
+                    "the GATE cell and the only value the gate table may "
+                    "read. This was a hardcoded literal until now, so the "
+                    "tx ladder had no command-line entry at all and has "
+                    "never been run on a real benchmark -- the only tx=2 "
+                    "measurement in the project is on poc/Tiny.sol. "
+                    "Requires --out-suffix for any value but 1, so a "
+                    "ladder run cannot overwrite the gate's collection. "
+                    "NOTE 0 is NOT unbounded: under coverage it is the "
+                    "SHALLOWEST setting (the back-edge is rewritten to a "
+                    "SKIP, leaving one transaction).")
+    ap.add_argument("--focus-with",
+                    default="",
                     help="WIDTH axis: comma-separated EXTRA function names "
-                         "added to every unit's focus set, so a later "
-                         "transaction has something other than the unit itself "
-                         "to dispatch. Empty (default) reproduces the "
-                         "single-name focus exactly. Use for the middle cell of "
-                         "the width axis -- {unit} plus the functions that "
-                         "WRITE what the unit reads -- which is the cheap "
-                         "approximation of whole-contract on benchmarks where "
-                         "whole does not finish. Measured: a SINGLE-name focus "
-                         "reaches no cross-function state at ANY tx bound, "
-                         "because the other functions are not in the dispatcher "
-                         "for a later transaction to call. Requires "
-                         "--out-suffix.")
+                    "added to every unit's focus set, so a later "
+                    "transaction has something other than the unit itself "
+                    "to dispatch. Empty (default) reproduces the "
+                    "single-name focus exactly. Use for the middle cell of "
+                    "the width axis -- {unit} plus the functions that "
+                    "WRITE what the unit reads -- which is the cheap "
+                    "approximation of whole-contract on benchmarks where "
+                    "whole does not finish. Measured: a SINGLE-name focus "
+                    "reaches no cross-function state at ANY tx bound, "
+                    "because the other functions are not in the dispatcher "
+                    "for a later transaction to call. Requires "
+                    "--out-suffix.")
     a = ap.parse_args()
     if a.memlimit_gib <= 0:
         sys.exit("--memlimit-gib must be positive")
@@ -1285,8 +1569,7 @@ def main():
     # this tree says, and silently changing the spelling of a configuration is
     # how a later table stops matching the command that produced it.
     scope = "whole" if a.whole else a.scope
-    focus_with = tuple(s for s in
-                       (x.strip() for x in a.focus_with.split(",")) if s)
+    focus_with = tuple(s for s in (x.strip() for x in a.focus_with.split(",")) if s)
     if scope == "set" and not focus_with:
         sys.exit("--scope set needs --focus-with: without extra names the "
                  "alphabet is {unit} and the run is byte-identical to "
@@ -1294,9 +1577,9 @@ def main():
                  "two different configuration names")
     if scope != "set" and focus_with:
         sys.exit(f"--focus-with is only meaningful with --scope set; under "
-                 f"--scope {scope} the names would be "
-                 + ("appended to a focus this run does not pass"
-                    if scope == "whole" else "silently ignored"))
+                 f"--scope {scope} the names would be " +
+                 ("appended to a focus this run does not pass" if scope ==
+                  "whole" else "silently ignored"))
 
     only = tuple(s for s in (x.strip() for x in a.only.split(",")) if s)
     if only and scope == "whole":
@@ -1342,31 +1625,29 @@ def main():
     # they are the opposite of a full-corpus run.
     if adhoc is None:
         if scope == "whole":
-            sys.exit(
-                f"{a.bench}: --scope whole enumerates EVERY unit of this "
-                f"benchmark in one run, and the corpus no longer has runnable "
-                f"benchmarks -- it has PoCs, one per target public/external "
-                f"function.\n"
-                f"  python3 notes/coverage/scripts/poc_split.py --list\n"
-                f"  python3 notes/coverage/scripts/poc_one.py <poc-id>\n"
-                f"An ad-hoc minimal reproduction (--sol <file> --contract C "
-                f"--scope whole) is still allowed and is the intended route "
-                f"for an investigation.")
+            sys.exit(f"{a.bench}: --scope whole enumerates EVERY unit of this "
+                     f"benchmark in one run, and the corpus no longer has runnable "
+                     f"benchmarks -- it has PoCs, one per target public/external "
+                     f"function.\n"
+                     f"  python3 notes/coverage/scripts/poc_split.py --list\n"
+                     f"  python3 notes/coverage/scripts/poc_one.py <poc-id>\n"
+                     f"An ad-hoc minimal reproduction (--sol <file> --contract C "
+                     f"--scope whole) is still allowed and is the intended route "
+                     f"for an investigation.")
         if len(only) != 1:
-            sys.exit(
-                f"{a.bench}: this collector now runs exactly ONE unit per "
-                f"invocation, and --only named "
-                f"{len(only)} ({', '.join(only) or 'nothing'}).\n"
-                f"  The corpus is split into PoCs, one per target "
-                f"public/external function; a benchmark key by itself would "
-                f"sweep every unit it has, which is the run this work order "
-                f"bans.\n"
-                f"  python3 notes/coverage/scripts/poc_split.py --list\n"
-                f"  python3 notes/coverage/scripts/poc_one.py <poc-id>")
+            sys.exit(f"{a.bench}: this collector now runs exactly ONE unit per "
+                     f"invocation, and --only named "
+                     f"{len(only)} ({', '.join(only) or 'nothing'}).\n"
+                     f"  The corpus is split into PoCs, one per target "
+                     f"public/external function; a benchmark key by itself would "
+                     f"sweep every unit it has, which is the run this work order "
+                     f"bans.\n"
+                     f"  python3 notes/coverage/scripts/poc_split.py --list\n"
+                     f"  python3 notes/coverage/scripts/poc_one.py <poc-id>")
 
     idx = collect(a.bench, scope == "whole", a.timeout, a.goals, a.out_suffix,
-                  a.solver_flags.split(), a.fresh, a.max_tx, focus_with,
-                  scope, adhoc, only, a.unwind, a.probe_witnesses)
+                  a.solver_flags.split(), a.fresh, a.max_tx, focus_with, scope, adhoc, only,
+                  a.unwind, a.probe_witnesses)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "

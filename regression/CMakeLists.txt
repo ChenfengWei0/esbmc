@@ -114,6 +114,16 @@ add_test(NAME regression/scripts/solidity_path_put_forge
 set_tests_properties(regression/scripts/solidity_path_put_forge
   PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "regression;scripts/")
 
+# Stage-1 collector salvage: a path-coverage run killed by the outer timeout
+# can still leave a CE journal with solver-refuted path witnesses. This pure
+# test pins the journal-to-report conversion consumed by stage 2; no ESBMC
+# process is started.
+add_test(NAME regression/scripts/pathcov_collect
+         COMMAND ${Python_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_pathcov_collect.py)
+set_tests_properties(regression/scripts/pathcov_collect
+  PROPERTIES TIMEOUT 60 LABELS "regression;scripts/")
+
 # The reducer's mid-rebuild guard. Registered for the same reason as the driver
 # above: a reduction of st1inch was silently invalidated by rebuilding esbmc
 # while it ran, and nothing reported it -- the reducer kept printing progress and
