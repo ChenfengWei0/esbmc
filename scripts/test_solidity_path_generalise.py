@@ -76,6 +76,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       structural_decision_regions,
                                       extcall_inseparable_failures,
                                       file_identity,
+                                      save_failed_round,
                                       validate_enumeration_import)
 
 FAILURES = []
@@ -334,6 +335,23 @@ check("unresolved-wording-survives-exit-code",
       "COORDINATE-SUPPORT" in
       (round_failure_reason(UNRESOLVED + "\n[run] EXIT 134\n") or ""), True)
 
+with tempfile.TemporaryDirectory() as _fail_dir:
+    _meta = save_failed_round(
+        _fail_dir, "linear-refine",
+        {"unit": "sol:@C@C@F@f#1", "coords": [{"name": "x"}]},
+        "ERROR: boom\n[run] CMD esbmc C.sol --path-cov-outer-box outer.json\n"
+        "[run] EXIT -6\n",
+        "ESBMC exited -6 (ABORTED (SIGABRT))", 1.25)
+    _meta_data = json.load(open(_meta, encoding="utf-8"))
+    check("failed-round-meta-is-written", os.path.exists(_meta), True)
+    check("failed-round-log-is-written",
+          os.path.exists(os.path.join(_fail_dir, "failed-rounds",
+                                      _meta_data["log"])), True)
+    check("failed-round-spec-is-written",
+          os.path.exists(os.path.join(_fail_dir, "failed-rounds",
+                                      _meta_data["outerSpec"])), True)
+    check("failed-round-meta-keeps-command",
+          _meta_data["cmd"], "esbmc C.sol --path-cov-outer-box outer.json")
 
 
 # --- two certified regions may never intersect ---

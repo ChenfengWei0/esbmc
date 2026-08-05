@@ -1992,3 +1992,15 @@ abort is in internal modeling of mapping-slot coordinates, inline assembly
 `BalanceLib.load/store`, or the path-cov certification instrumentation. Do not
 spend more Aqua POC retries unless the next run is explicitly a new arm or a
 manual diagnostic outside the official attempt budget.
+
+Immediate diagnostic patch after the Aqua attempts:
+
+- `solidity_path_generalise.py` now records the exact ESBMC command line in
+  every `run()` log, both for normal exits and timeouts.
+- If an outer-box round exits abnormally or times out, the driver writes
+  `<workdir>/failed-rounds/<kind>-NNN.outer.json`,
+  `<kind>-NNN.log`, and `<kind>-NNN.meta.json`. The metadata keeps the round
+  kind, failure classification, wall time, captured command, and filenames.
+- This does not consume a POC retry by itself and does not certify anything.
+  Its purpose is to make the next abort reproducible without rerunning the
+  whole POC pipeline again.

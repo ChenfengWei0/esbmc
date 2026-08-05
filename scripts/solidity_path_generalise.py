@@ -153,6 +153,7 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
     # between the round that measured a region and the query that certifies it
     # is two measurements wearing one name.
     cmd += list(esbmc_args)
+    cmd_line = " ".join(shlex.quote(part) for part in cmd)
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
                            timeout=timeout)
@@ -173,7 +174,8 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
                 return ""
             return b.decode(errors="replace") if isinstance(b, bytes) else b
         out = _txt(e.stdout) + _txt(e.stderr)
-        return out + f"\n[run] TIMEOUT after {timeout}s: {' '.join(cmd)}\n"
+        return (out + f"\n[run] CMD {cmd_line}\n"
+                f"[run] TIMEOUT after {timeout}s: {cmd_line}\n")
     # RECORD THE EXIT CODE, and let callers judge on it rather than on message
     # text. ESBMC uses 0 for SUCCESSFUL and 1 for FAILED; anything else means it
     # did not finish -- 6 for a conversion error, 134 for an abort, and so on.
@@ -185,7 +187,32 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
     # reported downstream as "no fully bounded region was measured" -- a
     # property of the path, for what was a crash. A whitelist of failures is
     # open at the bottom; an exit code is not.
-    return p.stdout + p.stderr + f"\n[run] EXIT {p.returncode}\n"
+    return p.stdout + p.stderr + f"\n[run] CMD {cmd_line}\n[run] EXIT {p.returncode}\n"
+
+
+def save_failed_round(cwd, kind, spec, log, failure, wall_seconds):
+    """Persist the exact failed outer-round query for later ESBMC diagnosis."""
+    fail_dir = os.path.join(cwd, "failed-rounds")
+    os.makedirs(fail_dir, exist_ok=True)
+    existing = [name for name in os.listdir(fail_dir)
+                if name.startswith(f"{kind}-") and name.endswith(".meta.json")]
+    prefix = os.path.join(fail_dir, f"{kind}-{len(existing) + 1:03d}")
+    with open(prefix + ".outer.json", "w", encoding="utf-8") as stream:
+        json.dump(spec, stream, indent=2, sort_keys=True)
+    with open(prefix + ".log", "w", encoding="utf-8") as stream:
+        stream.write(log)
+    cmd_line = None
+    for line in log.splitlines():
+        if line.startswith("[run] CMD "):
+            cmd_line = line[len("[run] CMD "):]
+    meta = {"kind": kind, "failure": failure,
+            "wallSeconds": round(wall_seconds, 3),
+            "outerSpec": os.path.basename(prefix + ".outer.json"),
+            "log": os.path.basename(prefix + ".log"),
+            "cmd": cmd_line}
+    with open(prefix + ".meta.json", "w", encoding="utf-8") as stream:
+        json.dump(meta, stream, indent=2, sort_keys=True)
+    return prefix + ".meta.json"
 
 
 def parse_int(s):
@@ -2492,7 +2519,9 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     # measured", which reads as a property of the path.
     failure = round_failure_reason(log)
     if failure:
+        meta_path = save_failed_round(cwd, kind, spec, log, failure, _wall)
         print(f"[outer-box] ROUND MEASURED NOTHING — {failure}")
+        print(f"[outer-box] failed round evidence: {meta_path}")
     boxes, brackets, regions, warned = {}, {}, {}, set()
     region_holes, type_ranges = {}, {}
     for line in log.splitlines():
