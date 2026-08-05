@@ -204,6 +204,12 @@ Aqua `push`/`safeBalances` outer-refine abort class:
   - `safeBalances`:
     the same literal with `token0` and `token1`, both `.amount` and
     `.tokensCount`.
+- A 2026-08-06 pure replay of the existing `Aqua.push` Stage-1 report plus the
+  real solc AST through the current code confirms that `push` now proposes only
+  the source slot
+  `state._balances[maker][app][0x2000...0000][token].{amount,tokensCount}`.
+  It proposes no stale `[strategyHash]` aggregate key and no guessed
+  cross-product slot such as `[maker][maker]`.
 
 This is a source-slice restriction from the witnessed CE, not a proof and not a
 new fuzz dimension. If witnessed bytesN values disagree, the slot is refused
@@ -221,13 +227,13 @@ driver-side slot issue:
   `[0, UINT256_MAX]` instead of its declared `uint8` range `[0, 255]`.
 - ESBMC then correctly refused the assertion ladder before solving:
   the high endpoint did not fit the coordinate's own type.
-- The pending script patch extends `mapping_state_vars()` with an optional
+- The implemented script patch extends `mapping_state_vars()` with an optional
   fourth tuple element `{tail: leaf_type}` for struct-valued mappings, adds
   `mapping_slot_type_ranges()`, and seeds stage-2 `type_ranges` before the
-  first ladder. This should make `Balance.amount` use `uint248` and
+  first ladder. This makes `Balance.amount` use `uint248` and
   `Balance.tokensCount` use `uint8` even when no counterexample payload carries
   the slot value.
-- The same patch updates `solidity_path_put.py` so
+- The same patch updated `solidity_path_put.py` so
   `REFUSING THE LADDER on region coordinate ...` is parsed as a refusal. A
   future ladder refusal must stop PUT emission instead of producing an
   oracle-free fuzz replay.
@@ -240,6 +246,11 @@ Validated by `Aqua.rawBalances` attempt 2:
   getter PUT with `maker/app/token` parameters and return assertions
   `return.0 == 0`, `return.1 == 0`; path `enc=2` emits the value/revert oracle.
 - The B table reports `B = 2 of 2`.
+- The same pure replay for `Aqua.push` now reports `.amount in [0, 2^248-1]`
+  and `.tokensCount in [0, 255]` for the literal-key source slot. Its currently
+  checked-in `certify_gate.jsonl` remains a stale pre-fix artefact because it
+  still contains `[strategyHash]`, guessed cross-product slots, and `uint256`
+  leaf ranges.
 
 ### 5.1 Fixture and environment
 
@@ -2075,8 +2086,11 @@ Actual Aqua POC spend:
   - attempt 3, 600s/10GiB: first wrapper call was `DRIVER-REFUSED` at 0s
     because Stage 1 said 8GiB and Stage 2 asked 10GiB; no ESBMC process was
     started. After the memlimit compatibility fix, the effective attempt ran
-    12.4s and still produced `1 certified / 1 not / 2 witnessed`. The source
-    slot was present, but `enc=6` still made the linear-refine round abort.
+    12.4s and still produced `1 certified / 1 not / 2 witnessed`. That run is
+    now known to be stale for the current coordinate logic: its saved
+    `outer.json` still contains `[strategyHash]` aggregate slots, guessed
+    `[maker][maker]...` cross-products, and `uint256` ranges for `Balance`
+    leaves.
 - `aqua_Aqua__Aqua__safeBalances`
   - attempt 1, 60s/8GiB: same query-pin refusal shape as push.
   - attempt 2, 120s/8GiB: `1 certified / 1 not / 2 witnessed`; `enc=2`
@@ -2087,14 +2101,14 @@ Actual Aqua POC spend:
     leaf slots. Result remains `1 certified / 1 not / 2 witnessed`; `enc=6`
     still aborts during linear-refine.
 
-Current conclusion: Aqua's remaining blocker is no longer wrong slot selection
-or immutable pinning. It is an ESBMC/tool abort reached by the linear-refine
-probe batch for the body path. The next useful investigation is to preserve or
-reconstruct the failing ESBMC query around `enc=6` and classify whether the
-abort is in internal modeling of mapping-slot coordinates, inline assembly
-`BalanceLib.load/store`, or the path-cov certification instrumentation. Do not
-spend more Aqua POC retries unless the next run is explicitly a new arm or a
-manual diagnostic outside the official attempt budget.
+Current conclusion: `safeBalances` and `rawBalances` have already validated the
+literal bytes32 slot and struct-leaf range fixes with official POC runs. For
+`push`, the old SIGABRT artefacts do not describe the current query shape, and
+there is no saved failed-round command from the pre-diagnostic run. Do not
+spend more Aqua POC retries unless the budget policy is explicitly reopened; if
+that happens, the first thing to inspect is whether the new
+`failed-rounds/*.outer.json` contains only the literal-key source slot and
+typed `uint248/uint8` leaves.
 
 Immediate diagnostic patch after the Aqua attempts:
 

@@ -65,9 +65,19 @@ Stage-1 pathcov: 6 instrumented paths, 2 witnessed paths.
     coordinate. The driver now fixes it to the witnessed mapping-key literal
     `0x2000000000000000000000000000000000000000000000000000000000000000`
     when the CE slice is `bytes32(0)`.
-  - Remaining blocker to test once, not guess by rerunning: whether the literal
-    slot lets outer refine finish, or whether the next failure is in
-    `BalanceLib.load` assembly modeling / path-cov outer-box internals.
+  - Current static check, without consuming a POC ESBMC retry: replaying the
+    existing Stage-1 report and real solc AST through the current Python
+    coordinate logic proposes exactly
+    `state._balances[maker][app][0x2000...0000][token].amount` and
+    `.tokensCount`, with no `[strategyHash]` aggregate coordinate and no
+    guessed cross-product slots such as `[maker][maker]`.
+  - Current static type check: the proposed leaves carry the source ranges
+    `.amount in [0, 2^248-1]` and `.tokensCount in [0, 255]`.
+  - The old `certify_gate.jsonl` and `/tmp/.../outer.json` for `push` are stale:
+    they still contain `[strategyHash]`, guessed cross-product slots, and
+    `uint256` leaf ranges. Treat their SIGABRT as evidence about that old query
+    shape, not about the current region strategy. No official retry remains for
+    `push` unless the budget policy is explicitly reopened.
 
 ### `Aqua.safeBalances`
 

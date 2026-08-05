@@ -1963,6 +1963,36 @@ check("slot-source-access-suppresses-guessed-cross-products",
 check("slot-source-access-names-the-suppressed-fallback",
       any("fallback cross-product suppressed" in s for s in _aqua_skipped),
       True)
+_aqua_typed_slots, _aqua_typed_skipped = propose_slot_coords(
+    {"_balances": (("address", "address", "bytes32", "address"),
+                   "struct Balance", [".amount", ".tokensCount"],
+                   {".amount": "uint248", ".tokensCount": "uint8"})},
+    [("maker", "address"), ("app", "address"),
+     ("strategyHash", "bytes32"), ("token", "address"),
+     ("amount", "uint256")],
+    8, ["_balances"], _slot_accesses,
+    key_literals={"strategyHash": _bytes32_zero_slot_key})
+_aqua_amount_coord = (
+    f"state._balances[maker][app][{_bytes32_zero_slot_key}][token].amount")
+_aqua_count_coord = (
+    f"state._balances[maker][app][{_bytes32_zero_slot_key}][token].tokensCount")
+check("slot-source-access-aqua-push-ground-truth-slots",
+      _aqua_typed_slots, [_aqua_amount_coord, _aqua_count_coord])
+check("slot-source-access-aqua-push-no-strategyhash-aggregate-slot",
+      any("[strategyHash]" in c for c in _aqua_typed_slots), False)
+check("slot-source-access-aqua-push-no-guessed-cross-product",
+      any("[maker][maker]" in c for c in _aqua_typed_slots), False)
+check("slot-source-access-aqua-push-static-leaf-ranges",
+      mapping_slot_type_ranges(
+          {"_balances": (("address", "address", "bytes32", "address"),
+                         "struct Balance", [".amount", ".tokensCount"],
+                         {".amount": "uint248", ".tokensCount": "uint8"})},
+          _aqua_typed_slots),
+      {_aqua_amount_coord: (0, (1 << 248) - 1),
+       _aqua_count_coord: (0, 255)})
+check("slot-source-access-aqua-push-documents-fallback-suppression",
+      any("fallback cross-product suppressed" in s
+          for s in _aqua_typed_skipped), True)
 os.unlink(_p6)
 
 _setdist_ast = os.path.join(
