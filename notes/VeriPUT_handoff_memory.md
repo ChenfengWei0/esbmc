@@ -2526,3 +2526,65 @@ Expected direct ESBMC results:
 - `solidity_path_cov_assert_bool_r2_refused` exits before the ladder summary
   with the bool interval refusal. This pins that bool R2 equality is supported
   without opening bool ordering/arithmetic.
+
+## 2026-08-06 st1inch setEmergencyExit attempt 1
+
+Official attempt spent:
+
+- POC: `st1inch_St1inch__St1inch__setEmergencyExit`
+- Cell: `gate`
+- Attempt: 1, therefore 60s / 8 GiB.
+- Command: `python3 notes/coverage/scripts/poc_one.py
+  st1inch_St1inch__St1inch__setEmergencyExit --stage all --cell gate
+  --attempt 1 --fresh`
+
+Observed result:
+
+- Stage 1 used `--z3 --tuple-node-flattener` and the current strong runner's
+  `--path-cov-probe --all-witnesses --max-witnesses 8`.
+- Stage 1 was killed by the 60s outer timeout with no `cov-report.json` and no
+  `cov-ce-journal.json`. The run record is under
+  `notes/coverage/pathcov/st1inch_St1inch__poc_St1inch_setEmergencyExit_gate/`
+  and records head `7563ef3ad1`, binary mtime `1785965824`,
+  `pathsInstrumented: 3`, `degradedUnits: 12`, and `asmApproxSites: 16`.
+- Because `pathcov_collect.py` returned success despite no report,
+  `poc_one.py` continued. Stage 2 then hit a driver bug: `certify_all.py`
+  required `notes/coverage/forge_roundtrip/st1inch_St1inch/emit.jsonl`, even
+  though this is a single POC-unit run with its own `poc.json` and Stage-1
+  `index.json`. It wrote an empty `certify_gate.jsonl`.
+- Stage 3 correctly refused the empty selection:
+  `--only 'st1inch_St1inch.setEmergencyExit' selected NONE`.
+
+Code repair after attempt 1, without spending another POC ESBMC run:
+
+- `notes/coverage/scripts/certify_all.py` now has a POC-only unit-list fallback:
+  if the corpus `emit.jsonl` is absent but the caller provided one
+  `--unit` plus a matching `--enumeration-index`, the Stage-1 collection
+  manifest is accepted as the unit authority. This fallback is fail-closed for
+  benchmark mismatch, multi-unit sweeps, and mismatched `onlyUnits`.
+- `notes/coverage/scripts/pathcov_collect.py` now returns nonzero for a
+  restricted `--only` run that produces zero reports. This makes `poc_one.py`
+  stop at the real Stage-1 boundary instead of letting Stage2/Stage3 convert a
+  timeout into an empty measurement.
+- Added pure test `scripts/test_poc_stage_drivers.py`.
+
+Verification run:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/certify_all.py \
+  notes/coverage/scripts/pathcov_collect.py \
+  scripts/test_poc_stage_drivers.py
+python3 scripts/test_poc_stage_drivers.py
+python3 scripts/test_put_all_accounting.py
+```
+
+Next rule for this POC:
+
+- attempt 2 remains available: 120s / 8 GiB.
+- Do not run attempt 2 until the driver repair above is committed/pushed.
+- If attempt 2 still dies in Stage 1, the next code-level target is Stage1
+  speed/triage, not bool R2. Candidate fixes to inspect before attempt 3:
+  reducing probe witness overhead for st1inch, solver/encoder arm choice for
+  this single unit, or a cheap fuzz/refute prepass outside ESBMC's internal
+  path instrumentation.

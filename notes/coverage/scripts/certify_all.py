@@ -432,6 +432,42 @@ def units_of(bench):
     return (units, killed), None
 
 
+def units_from_enumeration_index(index_path, bench, want_units):
+    """Single-POC unit authority from the Stage-1 collection manifest.
+
+    Corpus sweeps deliberately use forge_roundtrip/emit.jsonl as their unit
+    list. A POC-unit run is already narrower: poc_one.py passes one --unit and
+    one private Stage-1 collection via --enumeration-index. Requiring the
+    corpus round-trip file there turns a valid POC into NO-UNIT-LIST and then
+    Stage 3 reads an empty cert file as a measurement. This fallback is enabled
+    only for that one-unit path and is fail-closed against a mismatched
+    manifest.
+    """
+    if not index_path or not want_units:
+        return None, "no POC enumeration index and unit restriction"
+    if len(want_units) != 1:
+        return None, "POC enumeration index fallback requires exactly one --unit"
+    try:
+        d = json.load(open(index_path))
+    except (OSError, ValueError) as e:
+        return None, f"cannot read {index_path}: {e}"
+    if d.get("benchmark") != bench:
+        return None, (
+            f"{index_path} is for benchmark {d.get('benchmark')!r}, not {bench!r}")
+    cfg = d.get("config") or {}
+    only = cfg.get("onlyUnits") or []
+    unit = next(iter(want_units))
+    if only and unit not in only:
+        return None, (
+            f"{index_path} restricts Stage 1 to {only}, which does not include "
+            f"requested unit {unit!r}")
+    primary = (d.get("primary") or {}).get("name") or BENCHMARKS[bench][1]
+    return ([(primary, unit)], []), (
+        f"using POC Stage-1 enumeration index {index_path}; this run is already "
+        f"restricted to --unit {unit}, so forge_roundtrip/emit.jsonl is not "
+        f"required")
+
+
 # A REFUSAL, IN THE DRIVER'S OWN WORDS. The shape is `[<tag>] REFUSING ...`,
 # which is how the driver declines to start: a workdir holding another
 # configuration's artefacts, an artefact cell whose writer set is empty. The tag
@@ -1426,6 +1462,12 @@ def main():
         os.makedirs(wd, exist_ok=True)
         print(f"\n########## {bench} ({contract}) ##########", flush=True)
         got, why = units_of(bench)
+        if got is None:
+            got, poc_why = units_from_enumeration_index(
+                args.enumeration_index, bench, want_units)
+            if got is not None:
+                print(f"[sweep] {bench}: {poc_why}")
+                why = None
         if got is None:
             # A benchmark whose unit list could not be built is recorded as
             # exactly that, with the reason, rather than as zero units. "0 units"

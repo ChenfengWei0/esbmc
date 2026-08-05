@@ -1652,6 +1652,12 @@ def main():
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "
           f"{killed} killed by the outer timeout")
+    if only and ok == 0:
+        print(f"{a.bench}: REFUSING success for --only "
+              f"{','.join(only)} because no Stage-1 report was produced. "
+              f"Stage 2 has no witnessed path universe to certify; continuing "
+              f"would turn a timeout into an empty measurement.")
+        return 2
     return 0
 
 
