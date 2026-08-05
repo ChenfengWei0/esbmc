@@ -5159,6 +5159,9 @@ void goto_coveraget::solidity_path_coverage()
   // one-fact-two-ledgers shape this file has already paid for elsewhere.
   std::function<bool(const symbolt *, const std::string &, expr2tc &)>
     resolve_coord;
+  std::function<
+    bool(const symbolt *, const std::string &, expr2tc &, std::string &)>
+    resolve_slot_key;
   resolve_coord =
     [&](const symbolt *fsym, const std::string &name, expr2tc &out) -> bool {
     if (
@@ -5325,46 +5328,9 @@ void goto_coveraget::solidity_path_coverage()
             return false;
           const type2tc et = to_array_type(cur_t).subtype;
           expr2tc kexpr;
-          bool klit = false;
-          BigInt kval;
-          if (kn.rfind("0x", 0) == 0 || kn.rfind("0X", 0) == 0)
-          {
-            klit = kn.size() > 2;
-            for (size_t i = 2; i < kn.size(); ++i)
-              if (isxdigit((unsigned char)kn[i]) == 0)
-                klit = false;
-            if (klit)
-              kval = BigInt(kn.c_str() + 2, 16);
-          }
-          else
-          {
-            klit = true;
-            for (char c : kn)
-              if (c < '0' || c > '9')
-                klit = false;
-            if (klit)
-              kval = string2integer(kn);
-          }
-          if (klit)
-            // uint256 because that is the widest key Solidity has; the SMT
-            // layer resizes an index to the array's own domain width, so a
-            // narrower key (an `address`) is not mis-indexed by carrying the
-            // wider type.
-            kexpr = constant_int2tc(get_uint_type(256), kval);
-          else if (!resolve_coord(fsym, kn, kexpr))
+          std::string kwhy;
+          if (!resolve_slot_key(fsym, kn, kexpr, kwhy))
             return false;
-          else
-          {
-            // A source-level bytesN mapping key resolves to the frontend's
-            // BytesStatic aggregate. Normal Solidity mapping access lowers it
-            // through bytes_static_to_mapping_key before indexing, but a
-            // user-written path-cov slot name is only a coordinate name, not a
-            // full expression. Refuse the slot here instead of constructing an
-            // index over an aggregate key and aborting during instrumentation.
-            std::string kwhy;
-            if (!coord_expressible(kexpr->type, kwhy))
-              return false;
-          }
           cur_e = index2tc(et, cur_e, kexpr);
           cur_t = et;
         }
@@ -5429,6 +5395,55 @@ void goto_coveraget::solidity_path_coverage()
         return walk_fields(ns, out, name.substr(dot + 1));
       }
     return false;
+  };
+
+  resolve_slot_key =
+    [&](const symbolt *fsym,
+        const std::string &kn,
+        expr2tc &kexpr,
+        std::string &why) -> bool {
+    bool klit = false;
+    BigInt kval;
+    if (kn.rfind("0x", 0) == 0 || kn.rfind("0X", 0) == 0)
+    {
+      klit = kn.size() > 2;
+      for (size_t i = 2; i < kn.size(); ++i)
+        if (isxdigit((unsigned char)kn[i]) == 0)
+          klit = false;
+      if (klit)
+        kval = BigInt(kn.c_str() + 2, 16);
+    }
+    else
+    {
+      klit = !kn.empty();
+      for (char c : kn)
+        if (c < '0' || c > '9')
+          klit = false;
+      if (klit)
+        kval = string2integer(kn);
+    }
+    if (klit)
+    {
+      // uint256 because that is the widest key Solidity has; the SMT layer
+      // resizes an index to the array's own domain width, so a narrower key
+      // such as an `address` is not mis-indexed by carrying the wider type.
+      kexpr = constant_int2tc(get_uint_type(256), kval);
+      why.clear();
+      return true;
+    }
+    if (!resolve_coord(fsym, kn, kexpr))
+    {
+      why.clear();
+      return false;
+    }
+    // A source-level bytesN mapping key resolves to the frontend's BytesStatic
+    // aggregate. Normal Solidity mapping access lowers it through
+    // bytes_static_to_mapping_key before indexing, but a user-written path-cov
+    // slot name is only a coordinate name, not a full expression. Refuse the
+    // slot here instead of constructing an index over an aggregate key and
+    // aborting during instrumentation.
+    coord_expressible(kexpr->type, why);
+    return why.empty();
   };
 
   Forall_goto_functions (f_it, goto_functions)
@@ -10183,38 +10198,37 @@ void goto_coveraget::solidity_path_coverage()
         for (const auto &kn : knames)
         {
           expr2tc kexpr;
-          if (!resolve_coord(fsym, kn, kexpr))
+          std::string kwhy;
+          if (!resolve_slot_key(fsym, kn, kexpr, kwhy))
           {
+            if (!kwhy.empty())
+            {
+              // ⚠ THE GHOSTS ALREADY BUILT FOR EARLIER KEYS OF THIS SAME NAME
+              // STAY IN THE PROGRAM. They are a DECL and an ASSIGN before
+              // `entry`, both marked `skipped`, and nothing references them once
+              // this candidate is dropped -- inert, at the cost of two
+              // instructions and two ghost numbers. Unwinding them would mean
+              // erasing instructions from a list other iterators point into,
+              // which is how the ABI gate acquired a self-loop; the cheap
+              // correct thing is to leave them unread.
+              key_drop = "the key '" + kn +
+                         "' resolves but cannot be "
+                         "expressed: " +
+                         kwhy +
+                         ". This candidate is DROPPED; the other candidates of "
+                         "this run are unaffected";
+              break;
+            }
             log_error(
               "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the slot "
               "'{}' names the key '{}', which cannot be expressed: the key "
               "does not resolve to an input of this unit. Name a parameter, "
-              "an environment value as `msg.sender` / `msg.value`, or a state "
-              "variable at entry as `state.<field>`",
+              "a decimal or 0x literal, an environment value as `msg.sender` / "
+              "`msg.value`, or a state variable at entry as `state.<field>`",
               uid,
               v.name,
               kn);
             exit(1);
-          }
-          std::string kwhy;
-          coord_expressible(kexpr->type, kwhy);
-          if (!kwhy.empty())
-          {
-            // ⚠ THE GHOSTS ALREADY BUILT FOR EARLIER KEYS OF THIS SAME NAME
-            // STAY IN THE PROGRAM. They are a DECL and an ASSIGN before
-            // `entry`, both marked `skipped`, and nothing references them once
-            // this candidate is dropped -- inert, at the cost of two
-            // instructions and two ghost numbers. Unwinding them would mean
-            // erasing instructions from a list other iterators point into,
-            // which is how the ABI gate acquired a self-loop; the cheap
-            // correct thing is to leave them unread.
-            key_drop = "the key '" + kn +
-                       "' resolves but cannot be "
-                       "expressed: " +
-                       kwhy +
-                       ". This candidate is DROPPED; the other candidates of "
-                       "this run are unaffected";
-            break;
           }
 
           // Plain list inserts before `entry`, never insert_swap --

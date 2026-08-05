@@ -106,9 +106,14 @@ Stage-1 pathcov: 4 instrumented paths, 2 witnessed paths.
     `B = 2 of 2`. Path `enc=6` now fuzzes `maker/app/token0/token1`,
     establishes the four zero literal-key slots with `vm.store` plus readback
     checks, calls `safeBalances(...)` inside `try/catch`, and asserts the call
-    reverted. The assertion ladder still cannot query the literal bytes32 key
-    as an ESBMC slot coordinate; this is a slot-resolver/R1 issue, not a
-    blocker for the gate-cell exit-kind PUT.
+    reverted.
+  - Focused assertion-spec replay after the internal resolver fix no longer
+    hard-refuses the literal bytes32 key. It emits R1 rows for all four
+    literal-key `_balances` leaf slots: `post == pre` holds on the rollback
+    path, while change and strict-order candidates are refuted. This confirms
+    the slot-coordinate blocker is fixed; the generated gate-cell PUT should
+    still rely on the revert exit-kind oracle because post-state is not
+    chain-observable after rollback.
 
 ### `Aqua.rawBalances`
 
@@ -232,10 +237,11 @@ split is over callee behavior.
 
 - Keep the Aqua ground truth above in front of the next run. The expected body
   region is an inactive selected Balance slot, not a free `strategyHash`.
-- If Aqua still aborts after literal-key slot generation, inspect the saved
-  `failed-rounds/*.outer.json` and log first. The next likely causes are
-  `BalanceLib.load` assembly approximation or verifier-side outer-box
-  instrumentation on mapping-member slots.
-- Do not spend a POC retry until the generated outer-box spec visibly contains
-  the literal bytes32 mapping key and no `state._balances[...][strategyHash]`
-  coordinate.
+- Literal bytes32 mapping keys are now queryable by both region assumptions and
+  assertion observables. If Aqua still aborts, inspect the saved
+  `failed-rounds/*.outer.json` and log first; the next likely causes are
+  `BalanceLib.load` assembly approximation or a different verifier-side
+  instrumentation issue, not the `0x2000...0000` key spelling.
+- Do not spend a POC retry until the generated outer-box/assert spec visibly
+  contains the literal bytes32 mapping key and no
+  `state._balances[...][strategyHash]` coordinate.

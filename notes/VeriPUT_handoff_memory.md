@@ -182,10 +182,11 @@ Aqua `push`/`safeBalances` outer-refine abort class:
   `(len << 248) | bytes_static_to_uint(data)`, only when witnessed CE inputs
   agree on that bytesN slice. For `bytes32(0)`, the literal is
   `0x2000000000000000000000000000000000000000000000000000000000000000`.
-- ESBMC's internal path-cov coordinate resolver also now fail-closes on
-  aggregate mapping keys before building `index2tc`, so stale/manual
-  `state._balances[...][strategyHash]` coordinates should be refused rather
-  than aborting instrumentation.
+- ESBMC's internal path-cov coordinate resolver also now shares one
+  mapping-key parser between region assumptions and assertion observables:
+  decimal and `0x` literals become uint256 keys, while stale/manual aggregate
+  keys such as `state._balances[...][strategyHash]` fail closed before
+  building `index2tc`.
 - Offline checks against the real Aqua reports now propose:
   - `push`:
     `state._balances[maker][app][0x2000...0000][token].amount` and
@@ -2163,6 +2164,33 @@ exited 0 after 96.6s wall. Result:
   not invalidate the current gate-cell PUT because the observable oracle for
   this path is the rollback/revert exit, not post-state.
 
+Focused internal replay after the C++ resolver fix:
+
+```sh
+timeout -k 30s 120s build/src/esbmc/esbmc \
+  notes/coverage/poc_units/aqua_Aqua__Aqua__safeBalances/inputs/aqua__Aqua.flat.sol.solast \
+  --sol notes/coverage/poc_units/aqua_Aqua__Aqua__safeBalances/inputs/aqua__Aqua.flat.sol \
+  --contract Aqua --solidity-path-coverage --solidity-max-tx 1 \
+  --memlimit 8g --result-only --focus-function safeBalances \
+  --path-cov-assert notes/coverage/poc_units/aqua_Aqua__Aqua__safeBalances/put_gate/_wd/aqua_Aqua__safeBalances__pf2909__6__certify_gate/assert/spec.json \
+  --cov-report-json
+```
+
+This was a focused assertion-spec replay, not a `poc_one.py` stage rerun. It
+finished in 18.2s under the 120s/8GiB envelope and no longer hard-refused the
+literal `0x2000...0000` bytes32 mapping key. The ladder emitted 29 candidates:
+17 HOLDS and 12 REFUTED. For each of the four certified `_balances` leaf slots,
+`post == pre`, `post >= pre`, and `post <= pre` HOLDS, while change/strict-order
+candidates are REFUTED. On this rollback path those HOLDS mean the verifier
+models state restoration correctly; they are useful internal R1 rows, but the
+chain-observable PUT oracle is still the revert exit-kind assertion.
+
+Manual note: in this shell/tool environment, `setsid timeout ...` returned
+after early child output and did not wait for ESBMC. Use plain `timeout` for
+manual focused replays. The Python drivers still use their own subprocess
+wrapper and previously produced complete logs with `setsid`.
+
 Do not spend safeBalances again for this code change. The next useful work is
-either another POC's ground-truth-first repair or an internal ESBMC fix so
-`--path-cov-assert` can query certified literal mapping-key slots.
+another POC's ground-truth-first repair, or promoting these now-queryable R1
+slot rows into emitted assertions only for non-reverting paths where post-state
+is observable on chain.
