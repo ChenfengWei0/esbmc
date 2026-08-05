@@ -26,6 +26,7 @@ import json
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
@@ -64,7 +65,12 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       empty_enumeration_reason,
                                       brackets_for,
                                       known_inside,
-                                      outward_ladder)
+                                      outward_ladder,
+                                      run_config,
+                                      stamp_workdir,
+                                      abi_gate_class,
+                                      file_identity,
+                                      validate_enumeration_import)
 
 FAILURES = []
 
@@ -2130,6 +2136,98 @@ check("violated-second-of-two-is-the-second-one",
 # heading is matched whole, so a counterexample step mentioning it stays out.
 check("violated-heading-must-be-the-whole-line",
       violated_properties("  see Violated property: below\nfoo\n"), [])
+
+# The workdir stamp used to write these switches and then compare a fixed tuple
+# that omitted them. Two incompatible arms therefore passed the provenance gate
+# and overwrote the same cov-report/outer/cert/result files.
+with tempfile.TemporaryDirectory() as _stamp_dir:
+    _tool = os.path.join(_stamp_dir, "esbmc")
+    _sol = os.path.join(_stamp_dir, "C.sol")
+    open(_tool, "w").close()
+    open(_sol, "w").close()
+    _base = SimpleNamespace(esbmc=_tool, sol=_sol, ast=None, contract="C",
+                            unit="f", path_function=None, max_tx=1)
+    _cfg_off = run_config(_base, "focus")
+    _cfg_on = run_config(
+        SimpleNamespace(**dict(vars(_base), env_coord_disagreed=True)),
+        "focus")
+    check("run-config-records-env-coordinate-policy",
+          (_cfg_off["env_coord_disagreed"],
+           _cfg_on["env_coord_disagreed"]),
+          (False, True))
+    stamp_workdir(_stamp_dir, _cfg_off)
+    try:
+        stamp_workdir(_stamp_dir, _cfg_on)
+        _stamp_refused = False
+    except SystemExit:
+        _stamp_refused = True
+check("workdir-refuses-a-policy-change-the-old-field-list-missed",
+          _stamp_refused, True)
+
+check("synthetic-abi-taken-is-the-body",
+      abi_gate_class([{"synthetic_abi_gate": True, "arm": "taken"}]),
+      "body")
+check("synthetic-abi-fallthrough-is-the-reject-path",
+      abi_gate_class([{"synthetic_abi_gate": True, "arm": "fall-through"}]),
+      "reject")
+check("a-source-only-path-has-no-abi-class",
+      abi_gate_class([{"arm": "taken", "branch_claim": "x == 0"}]), None)
+
+# Stage 2 may reuse stage 1 only when the structured collection manifest proves
+# that both stages mean the same run. This test exercises the accepting edge and
+# one semantic mismatch without launching ESBMC.
+with tempfile.TemporaryDirectory() as _import_dir:
+    _binary = os.path.join(_import_dir, "esbmc")
+    _source = os.path.join(_import_dir, "C.sol")
+    _ast = os.path.join(_import_dir, "C.solast")
+    _reports = os.path.join(_import_dir, "reports")
+    os.mkdir(_reports)
+    _report = os.path.join(_reports, "D__f.json")
+    for _path in (_binary, _source, _ast):
+        with open(_path, "w", encoding="utf-8") as _stream:
+            _stream.write(_path)
+    with open(_report, "w", encoding="utf-8") as _stream:
+        json.dump({"claims": []}, _stream)
+    _argv = [_binary, _ast, "--sol", _source,
+             "--solidity-path-coverage", "--solidity-max-tx", "1",
+             "--cov-report-json", "--path-cov-max-goals", "10000",
+             "--memlimit", "8g", "--contract", "C",
+             "--focus-function", "f", "--all-witnesses",
+             "--max-witnesses", "8"]
+    _index = {
+        "schema": "veriput-pathcov-collection/2",
+        "primary": {"name": "C"},
+        "flatInputIdentity": file_identity(_source),
+        "astInputIdentity": file_identity(_ast),
+        "esbmcIdentity": file_identity(_binary),
+        "config": {"onlyUnits": ["f"], "solidityMaxTx": 1,
+                   "memlimit": "8g", "probeWitnesses": 8,
+                   "solverFlags": [], "scope": "single", "focusWith": [],
+                   "instrumentOnlyUnit": False},
+        "runs": [{"tag": "D__f", "function": "f", "reportPresent": True,
+                  "killedByOuterTimeout": False, "cmdArgv": _argv}],
+        "reportsDir": _reports,
+    }
+    _index_path = os.path.join(_import_dir, "index.json")
+    with open(_index_path, "w", encoding="utf-8") as _stream:
+        json.dump(_index, _stream)
+    try:
+        validate_enumeration_import(
+            _index_path, _report, _binary, _source, _ast, "C", "f",
+            "focus", 1, "8g", 8, [])
+        _valid_import = True
+    except SystemExit:
+        _valid_import = False
+    check("matching-stage1-report-is-reusable", _valid_import, True)
+    try:
+        validate_enumeration_import(
+            _index_path, _report, _binary, _source, _ast, "C", "f",
+            "focus", 2, "8g", 8, [])
+        _mismatched_import_refused = False
+    except SystemExit:
+        _mismatched_import_refused = True
+    check("stage1-report-with-another-tx-bound-is-refused",
+          _mismatched_import_refused, True)
 
 
 if FAILURES:

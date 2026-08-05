@@ -7,13 +7,12 @@ it takes one PoC id and nothing else -- no benchmark key, no `--all`, no glob.
 Both underlying drivers additionally refuse a multi-unit invocation on their
 own, so the restriction survives someone calling them directly.
 
-TWO STAGES, and they are separate invocations on purpose. Stage 1's output is
-the counterexample set; stage 2 reads it back and measures regions. Running
-them as one command would make a stage-2 budget outcome indistinguishable from
-a stage-1 one, which is the confusion the funnel exists to prevent.
+THREE STAGES, each archived separately. `--stage all` runs them serially for
+the one named POC and stops at the first failed stage.
 
     --stage 1   instrument + witness   (pathcov_collect.py, one unit)
     --stage 2   region + certify       (certify_all.py -> the generalise driver)
+    --stage 3   R1/R2 + PUT + Foundry  (put_all.py -> the PUT driver)
 
 TWO CELLS, never merged:
 
@@ -26,13 +25,14 @@ TWO CELLS, never merged:
               empty, because guessing it would make every artefact number a
               measurement of the guess.
 
-THE TIME BOX IS ENFORCED HERE. The work order bans any single run longer than
-60 seconds unless the task explicitly allows it, so that is the default and
-exceeding it needs `--long N` -- which prints the rule it is overriding rather
-than letting a large number slip past in a command line.
+THE PER-ESBMC TIME BOX IS ENFORCED HERE. The work order bans any single solver
+invocation longer than 60 seconds unless the task explicitly allows it, so that
+is the default and exceeding it needs `--long N`. Stage 3 can contain several
+serial region/R2 invocations; each keeps this bound, while the stage itself is
+not killed after the first invocation's allowance.
 
 Usage:
-    python3 poc_one.py <poc-id> [--stage 1|2] [--cell gate|artefact] [--long N]
+    python3 poc_one.py <poc-id> [--stage 1|2|3|all] [--cell gate|artefact]
     python3 poc_one.py --list
 """
 import argparse
@@ -47,8 +47,37 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent.parent
 POCS = REPO / "notes/coverage/poc_units"
+sys.path.insert(0, str(HERE))
+from pathcov_collect import solver_flags_for  # noqa: E402
 
 DEFAULT_TIMEOUT = 60
+STRONG_RECIPE_VERSION = "veriput-strong/1"
+STRONG_PROBE_WITNESSES = 8
+STRONG_CERTIFY_ARGS = [
+    "--recipe-version", STRONG_RECIPE_VERSION,
+    "--memlimit-gib", "8",
+    "--jobs", "1",
+    "--probes", "8",
+    "--refine-rounds", "2",
+    "--shrink-rounds", "4",
+    "--claim-budget", "0",
+    "--level0",
+    "--level0-perturb",
+    "--probe-witnesses", str(STRONG_PROBE_WITNESSES),
+    "--probe-ladder",
+    "--probe-ladder-budget", "4",
+    "--no-auto-pin-value",
+    "--env-coord-disagreed",
+    "--pin-agreed-state",
+    "--max-holes", "1",
+    "--max-region-pieces", "1",
+    "--cut-policy", "spec",
+    "--state-struct-fields",
+    # Mapping slots multiply every ladder round. They are enabled only after a
+    # unit-level dependency walk names the stores this target actually touches;
+    # a blanket 8 adds inherited ERC20 balances to unrelated setters.
+    "--slot-coords", "0",
+]
 
 
 def index_pocs():
@@ -131,7 +160,7 @@ def run(cmd, timeout, cwd, inputs_dir):
         except (OSError, ProcessLookupError):
             pass
     wall = time.time() - t0
-    print(f"\n[poc] exit={rc}{' KILLED at the time box' if killed else ''} "
+    print(f"\n[poc] exit={rc}{' KILLED at the stage time box' if killed else ''} "
           f"wall={wall:.1f}s", flush=True)
     return rc
 
@@ -143,7 +172,7 @@ def main():
     ap.add_argument("poc", nargs="?",
                     help="exactly one PoC id. There is no plural form.")
     ap.add_argument("--list", action="store_true")
-    ap.add_argument("--stage", choices=("1", "2"), default="1")
+    ap.add_argument("--stage", choices=("1", "2", "3", "all"), default="1")
     ap.add_argument("--cell", choices=("gate", "artefact"), default="gate")
     ap.add_argument("--long", type=int, default=None, metavar="N",
                     help="raise the per-run time box above the work order's "
@@ -151,8 +180,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="print the command and the cell, run nothing")
     ap.add_argument("--fresh", action="store_true",
-                    help="DISCARD records this binary did not write and "
-                         "measure again. Stage 1 spells it `--fresh` and "
+                    help="PRESERVE old records under unique .superseded.* "
+                         "names and measure again. Stage 1 spells it `--fresh` and "
                          "stage 2 spells it `--redo`; this passes whichever "
                          "the stage wants, so the caller does not have to "
                          "know. Reaching stage 2's via --certify-arg would "
@@ -165,8 +194,8 @@ def main():
                          "refusal tells the caller to pass this. Until now "
                          "this entry point could not, so the only way past a "
                          "correct gate was to move the directory aside by "
-                         "hand. ⚠ It THROWS AWAY measurements: everything "
-                         "collected for this unit is re-run.")
+                         "hand. Existing evidence is retained, but everything "
+                         "for this unit is measured again.")
     # ---- AN ARM IS A CONFIGURATION, AND IT GETS ITS OWN OUTPUT FILE ----
     #
     # The work order now requires every query that reached NO verdict to be
@@ -213,13 +242,14 @@ def main():
             "same file the unmodified configuration writes -- and the two "
             "sides of a contrast that overwrite each other prove nothing. "
             "A contrast is only evidence while BOTH sides are still on disk.")
-    if a.certify_arg and a.stage != "2":
+    if a.certify_arg and a.stage not in ("2", "all"):
         sys.exit(f"--certify-arg is passed to the stage-2 driver, and this is "
                  f"--stage {a.stage}. Stage 1's knobs are the cell's "
                  f"(--scope / --max-tx), which live in poc.json.")
 
     poc = load(a.poc)
     cell = poc["cells"][a.cell]
+    solver_flags, solver_reason = solver_flags_for(poc["benchmark"], ())
     if a.cell == "artefact" and not cell["focus_with"]:
         sys.exit(
             f"{a.poc}: the artefact cell needs the ALPHABET chosen first, and "
@@ -250,15 +280,33 @@ def main():
           f"(--solidity-max-tx {cell['max_tx']}, scope {cell['scope']})")
     print(f"[poc] why this cell: {cell['why']}")
     print(f"[poc] time box     : {timeout}s")
+    print(f"[poc] memory       : 8 GiB per ESBMC process, jobs=1")
+    print(f"[poc] solver       : {' '.join(solver_flags) if solver_flags else '(default)'}"
+          f" ({solver_reason})")
 
-    if a.stage == "1":
-        cmd = [sys.executable, "-u",
-               str(HERE / "pathcov_collect.py"), poc["benchmark"],
-               "--only", poc["unit"],
-               "--out-suffix", suffix,
-               "--scope", cell["scope"],
-               "--max-tx", str(cell["max_tx"]),
-               "--timeout", str(timeout)]
+    arm = "".join(c if c.isalnum() else "_" for c in a.arm)
+    out = outdir / (f"certify_{a.cell}" + (f"__{arm}" if arm else "")
+                    + ".jsonl")
+    certify_scope = ("focus" if cell["scope"] == "single" else
+                     ",".join([poc["unit"]] + cell["focus_with"]))
+    collection = (REPO / "notes/coverage/pathcov" /
+                  (poc["benchmark"] + suffix))
+    enumeration_index = collection / "index.json"
+    enumeration_report = (collection / "reports" /
+                          f"{poc['declaring_contract']}__{poc['unit']}.json")
+    stages = ("1", "2", "3") if a.stage == "all" else (a.stage,)
+    commands = []
+    for stage in stages:
+        if stage == "1":
+            cmd = [sys.executable, "-u",
+                   str(HERE / "pathcov_collect.py"), poc["benchmark"],
+                   "--only", poc["unit"],
+                   "--out-suffix", suffix,
+                   "--scope", cell["scope"],
+                   "--max-tx", str(cell["max_tx"]),
+                   "--memlimit-gib", "8",
+                   "--probe-witnesses", str(STRONG_PROBE_WITNESSES),
+                   "--timeout", str(timeout)]
         # ---- THE GATE'S OWN ADVICE HAS TO BE REACHABLE FROM HERE ----------
         #
         # `pathcov_collect` refuses to resume a collection written by a
@@ -268,25 +316,28 @@ def main():
         # pass that, so the only route was to move the directory aside by
         # hand. A gate that names an action the caller cannot take is a gate
         # people learn to work around.
-        if a.fresh:
-            cmd.append("--fresh")
-        if cell["scope"] == "set":
-            cmd += ["--focus-with", ",".join(cell["focus_with"])]
-    else:
-        arm = "".join(c if c.isalnum() else "_" for c in a.arm)
-        out = outdir / (f"certify_{a.cell}" + (f"__{arm}" if arm else "")
-                        + ".jsonl")
-        cmd = [sys.executable, "-u",
-               str(HERE / "certify_all.py"), poc["benchmark"],
-               "--unit", poc["unit"],
-               "--out", str(out),
-               "--timeout", str(timeout),
-               "--run-timeout", str(timeout)] + list(a.certify_arg)
+            if a.fresh:
+                cmd.append("--fresh")
+            if cell["scope"] == "set":
+                cmd += ["--focus-with", ",".join(cell["focus_with"])]
+        elif stage == "2":
+            cmd = [sys.executable, "-u",
+                   str(HERE / "certify_all.py"), poc["benchmark"],
+                   "--unit", poc["unit"],
+                   "--out", str(out),
+                   "--scope", certify_scope,
+                   "--max-tx", str(cell["max_tx"]),
+                   "--enumeration-index", str(enumeration_index),
+                   "--enumeration-report", str(enumeration_report),
+                   "--timeout", str(timeout),
+                   "--run-timeout", str(timeout)] + STRONG_CERTIFY_ARGS \
+                  + [f"--esbmc-arg={flag}" for flag in solver_flags] \
+                  + list(a.certify_arg)
         # ---- ONE FLAG, THE RIGHT VERB PER STAGE ---------------------------
         #
         # Stage 1's collector calls it `--fresh`, stage 2's sweep calls it
-        # `--redo`. Both mean the same thing to the CALLER: discard the
-        # records this binary did not write and measure again.
+        # `--redo`. Both mean the same thing to the CALLER: preserve the old
+        # records under a superseded name and measure again.
         #
         # The alternative was `--certify-arg=--redo`, and that is worse than
         # verbose: `--certify-arg` REQUIRES `--arm`, and `--arm` renames the
@@ -295,12 +346,31 @@ def main():
         # that way would file an identical-configuration rerun under a new arm
         # name -- inventing a contrast that does not exist, in the one place
         # this project is most careful never to do that.
-        if a.fresh:
-            cmd.append("--redo")
-        if a.certify_arg:
-            print(f"[poc] arm          : {a.arm}  "
-                  f"(+ {' '.join(a.certify_arg)})")
-            print(f"[poc] out          : {out.name}")
+            if a.fresh:
+                cmd.append("--redo")
+        else:
+            put_out = outdir / (f"put_{a.cell}"
+                                + (f"__{arm}" if arm else ""))
+            cmd = [sys.executable, "-u", str(HERE / "put_all.py"),
+                   "--cert", str(out),
+                   "--only", f"{poc['benchmark']}.{poc['unit']}",
+                   "--scope", certify_scope,
+                   "--max-tx", str(cell["max_tx"]),
+                   "--timeout", str(timeout),
+                   "--memlimit-gib", "8",
+                   "--out-root", str(put_out),
+                   "--auto-unwind", "1",
+                   "--propose-r2"]
+            for flag in solver_flags:
+                cmd.append(f"--esbmc-arg={flag}")
+        commands.append((stage, cmd))
+
+    if "2" in stages:
+        print(f"[poc] recipe       : {STRONG_RECIPE_VERSION}")
+    if a.certify_arg:
+        print(f"[poc] arm          : {a.arm}  "
+              f"(+ {' '.join(a.certify_arg)})")
+        print(f"[poc] out          : {out.name}")
 
     inputs_dir = poc.get("inputs_dir")
     if not inputs_dir or not Path(inputs_dir).is_dir():
@@ -314,10 +384,25 @@ def main():
     print(f"[poc] inputs       : {inputs_dir}")
 
     if a.dry_run:
-        print("[poc] --dry-run: VERIPUT_INPUTS_DIR=" + inputs_dir
-              + " " + " ".join(cmd))
+        for stage, cmd in commands:
+            print(f"[poc] --dry-run stage {stage}: VERIPUT_INPUTS_DIR="
+                  + inputs_dir + " " + " ".join(cmd))
         return 0
-    return run(cmd, timeout + 30, REPO, inputs_dir)
+    for stage, cmd in commands:
+        print(f"[poc] starting stage {stage}", flush=True)
+        # Stages 1 and 2 each supervise one bounded unit. Stage 3 is a serial
+        # sweep over every certified region and up to six R2 queries per region;
+        # applying one invocation's budget to that whole sweep kills valid work
+        # after the first region. Its ESBMC children retain `--timeout`, and
+        # put_all separately bounds Forge, so there is no unbounded external
+        # process even though the aggregate stage has no artificial cap here.
+        stage_timeout = None if stage == "3" else timeout + 30
+        rc = run(cmd, stage_timeout, REPO, inputs_dir)
+        if rc:
+            print(f"[poc] STOP: stage {stage} failed; later stages did not run",
+                  flush=True)
+            return rc
+    return 0
 
 
 if __name__ == "__main__":

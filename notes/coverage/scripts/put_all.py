@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 
@@ -223,15 +224,40 @@ def cells_of(results):
     return sorted(set(made)), norun
 
 
+def run_forge(project, timeout):
+    """Run Forge with a hard timeout over its whole process group."""
+    proc = subprocess.Popen(["forge", "test", "--json"], cwd=project,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        stdout, stderr = proc.communicate()
+    finally:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+    return proc.returncode, stdout, stderr, timed_out
+
+
 def main():
+    global OUT
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--scope", choices=("focus", "whole"), default="focus",
-                    help="which of the two settled command lines to run in. "
-                         "Default `focus`, which with --max-tx 1 is the GATE "
-                         "cell -- the one every PUT in this directory was "
-                         "produced in before it was an argument.")
+    ap.add_argument("--scope", default="focus",
+                    help="dispatcher alphabet: focus, whole, or a comma list "
+                         "containing the target plus its recorded state "
+                         "writers. Default focus with --max-tx 1 is the GATE "
+                         "cell; a comma list with --max-tx 2 is an ARTEFACT "
+                         "cell.")
     ap.add_argument("--poc", action="store_true",
                     help="read the PoC SET's stage-2 sweep "
                          "(certify/poc_results.jsonl) instead of the corpus's, "
@@ -288,7 +314,35 @@ def main():
                     help="passed to the driver: on an UNDECIDED-TRUNCATED "
                          "ladder, widen the loops the tool NAMED and retry, up "
                          "to N times. aqua `dock` is the recorded case.")
+    ap.add_argument("--timeout", type=int, default=600,
+                    help="per ESBMC invocation in the PUT driver")
+    ap.add_argument("--forge-timeout", type=int, default=300,
+                    help="per Forge invocation; Forge is run twice per project "
+                         "for replay filtering and the final green gate")
+    ap.add_argument("--memlimit-gib", type=int, default=8, metavar="N",
+                    help="per ESBMC process; the official POC recipe passes 8")
+    ap.add_argument("--esbmc-arg", action="append", default=[], metavar="ARG",
+                    help="one solver/encoder argument passed to every PUT/R2 "
+                         "ESBMC invocation. Repeatable; use the = form for "
+                         "values beginning with a dash.")
+    ap.add_argument("--out-root", default=OUT,
+                    help="project and scratch root. A single POC should point "
+                         "this at its own output directory.")
     args = ap.parse_args()
+    if args.timeout <= 0:
+        sys.exit("--timeout must be positive")
+    if args.forge_timeout <= 0:
+        sys.exit("--forge-timeout must be positive")
+    if args.memlimit_gib <= 0:
+        sys.exit("--memlimit-gib must be positive")
+    if args.scope not in ("focus", "whole"):
+        scope_names = [name.strip() for name in args.scope.split(",")
+                       if name.strip()]
+        if not scope_names or ",".join(scope_names) != args.scope:
+            sys.exit("--scope must be focus, whole, or a canonical "
+                     "comma-separated function list")
+    OUT = os.path.abspath(args.out_root)
+    os.makedirs(OUT, exist_ok=True)
     cert_path = args.cert or (POC_CERT if args.poc else CERT)
     if not os.path.exists(cert_path):
         sys.exit(f"no certify sweep at {cert_path}")
@@ -352,6 +406,8 @@ def main():
             deriv = {k: r.get(k) for k in
                      ("level0", "level0_perturb", "level0_points",
                       "probe_ladder", "probe_ladder_budget", "probes",
+                      "geometric_bracket", "sibling_subtraction",
+                      "claim_budget",
                       "shrink_rounds", "refine_rounds", "skip_bracket",
                       "cut_policy", "max_region_pieces", "max_holes")
                      if r.get(k) is not None}
@@ -400,6 +456,14 @@ def main():
               f"Refusing to print an empty sweep, which reads exactly like a "
               f"real measurement of nothing.")
         return 2
+    if args.scope not in ("focus", "whole"):
+        scope_names = set(args.scope.split(","))
+        missing_targets = sorted({row[2] for row in rows} - scope_names)
+        if missing_targets:
+            print(f"REFUSED: --scope {args.scope!r} omits target unit(s) "
+                  f"{', '.join(missing_targets)}. The dispatcher cannot enter "
+                  "their certified paths.")
+            return 2
     for bench, is_poc, unit, enc, piece, text, pin_extcall, deriv in rows:
         # The label every downstream name is built from, derived ONCE and in
         # the same shape the emitter builds it (`p<K>`). Two derivations is how
@@ -494,7 +558,9 @@ def main():
                "--ast", ast, "--contract", contract, "--unit", unit,
                "--enc", str(enc), "--region", json.dumps(region),
                "--holes", json.dumps(holes),
-               "--forge-project", proj, "--workdir", wd, "--timeout", "600",
+               "--forge-project", proj, "--workdir", wd,
+               "--timeout", str(args.timeout),
+               "--memlimit", f"{args.memlimit_gib}g",
                # The CELL is a property of the measurement, not a default of
                # this sweep. INVOCATION_DECISIONS.md prints two command lines
                # and forbids quoting one into the other's table, so it is an
@@ -504,6 +570,8 @@ def main():
                "--derived-by", json.dumps(deriv)]
         if args.propose_r2:
             cmd.append("--propose-r2")
+        for extra in args.esbmc_arg:
+            cmd.append(f"--esbmc-arg={extra}")
         # ONLY when this row IS a piece, so an unsplit region's command line is
         # byte-identical to every one already recorded.
         if piece:
@@ -600,7 +668,7 @@ def main():
     print("  EMITTED TEXT; B additionally requires the test to be GREEN on the")
     print("  unmodified contract, which only forge can say. See the gate below.")
 
-    b_report(results)
+    b_report(results, args.forge_timeout)
     return 0
 
 
@@ -624,7 +692,7 @@ def main():
 # coordinate whose certified interval is a single point (lo == hi) is established,
 # not fuzzed, so a `bound(x, v, v)` is a constant wearing a fuzz parameter's type.
 # At least ONE fuzzed coordinate must have hi > lo or gate 2 fails.
-def disable_red_replays(projects):
+def disable_red_replays(projects, forge_timeout):
     """Rename RED CONCRETE REPLAYS out of forge's `test*` prefix. Never a PUT.
 
     THE SAME SELF-CHECK GATE forge_roundtrip.py already runs, brought to stage 4
@@ -646,10 +714,13 @@ def disable_red_replays(projects):
     decided that such a case is kept, renamed, and not counted.
     """
     for proj in projects:
-        p = subprocess.run(["forge", "test", "--json"], cwd=proj,
-                           capture_output=True, text=True)
+        _rc, stdout, _stderr, timed_out = run_forge(proj, forge_timeout)
+        if timed_out:
+            print(f"  [self-check] {os.path.basename(proj)}: forge timed out "
+                  f"after {forge_timeout}s; no replay was disabled")
+            continue
         try:
-            data = json.loads(p.stdout)
+            data = json.loads(stdout)
         except json.JSONDecodeError:
             continue
         red = {}
@@ -699,29 +770,32 @@ def disable_red_replays(projects):
                       + ", ".join(changed))
 
 
-def b_report(results):
+def b_report(results, forge_timeout):
     print()
     print("=" * 84)
     print("DELIVERABLE B — all five WORKORDER gates, per PUT")
     print("=" * 84)
-    disable_red_replays(sorted({r[6] for r in results if r[6]}))
+    disable_red_replays(sorted({r[6] for r in results if r[6]}), forge_timeout)
 
     # forge, once per project, and the verdict per TEST FUNCTION. Running it per
     # row would recompile the benchmark flat once per region (70-180 KB each),
     # and a per-row run cannot see a failure caused by two PUTs sharing a project.
     verdicts = {}
     for proj in sorted({r[6] for r in results if r[6]}):
-        p = subprocess.run(["forge", "test", "--json"], cwd=proj,
-                           capture_output=True, text=True)
+        _rc, stdout, stderr, timed_out = run_forge(proj, forge_timeout)
+        if timed_out:
+            print(f"  [forge] {os.path.basename(proj)}: timed out after "
+                  f"{forge_timeout}s; every row in this project is UNKNOWN")
+            continue
         try:
-            data = json.loads(p.stdout)
+            data = json.loads(stdout)
         except json.JSONDecodeError:
             # NAMED, not swallowed. A project that does not compile makes every
             # one of its rows UNKNOWN, and an UNKNOWN must never read as a pass.
             print(f"  [forge] {os.path.basename(proj)}: could NOT parse `forge "
                   f"test --json` output -- every row in this project is UNKNOWN "
                   f"below, which is NOT a pass. First 200 chars of stderr: "
-                  f"{p.stderr[:200]!r}")
+                  f"{stderr[:200]!r}")
             continue
         for suite in data.values():
             for name, res in (suite.get("test_results") or {}).items():

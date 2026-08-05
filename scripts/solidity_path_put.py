@@ -242,6 +242,11 @@ CELLS = {
 
 def cell_of(scope, max_tx):
     """(name, rule) for this run's configuration. Never guesses a name."""
+    if scope not in ("focus", "whole") and max_tx == 2:
+        return ("ARTEFACT",
+                f"dispatcher set {{{scope}}} at --solidity-max-tx 2: the "
+                f"target plus its recorded state writers. May NOT be quoted "
+                f"into the branch-coverage gate table")
     return CELLS.get((scope, max_tx),
                      ("UNNAMED",
                       f"scope={scope} --solidity-max-tx={max_tx} is neither of "
@@ -276,6 +281,8 @@ def run_esbmc(esbmc, sol, ast, contract, unit, extra, cwd, max_tx, timeout,
             "--memlimit", memlimit, "--result-only"]
     if scope == "focus":
         cmd += ["--focus-function", unit]
+    elif scope != "whole":
+        cmd += ["--focus-function", scope]
     cmd += extra
     t0 = time.time()
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
@@ -2161,12 +2168,8 @@ class EmittedFile:
 # a caller the certification never spoke about, silently -- which is the same
 # defect as the dropped `state.` pin, found a second time in the same function.
 #
-# The environment is not ESTABLISHED here, it is CHECKED. The emitter already
-# writes `vm.prank(...)` and `{value: ...}` from the counterexample and that
-# statement shape is kept verbatim (it is what makes the R0 exit-kind
-# expectation hold by construction); re-deriving it would put the same fact in
-# two places. So the question is only whether the two agree, and a disagreement
-# REFUSES rather than annotates.
+# Environment quantities are checked unless a dedicated mechanism below can
+# establish them. A disagreement on every other quantity refuses.
 #
 # ---- ...AND FOR `msg.sender` THAT IS NOW TOO WEAK, MEASURED -----------------
 #
@@ -2189,12 +2192,12 @@ class EmittedFile:
 # never land inside a certified interval by chance. Checking alone therefore
 # converts every wide-sender region into nothing.
 #
-# `msg.sender` is the one environment quantity a Foundry test can CHOOSE. The
+# `msg.sender` is an environment quantity a Foundry test can CHOOSE. The
 # comment further down this file that says an environment quantity "cannot be
 # bound() into the signature" is true only of the CALL's argument list; the
 # test FUNCTION's signature is a different list, and `vm.prank` accepts an
 # arbitrary expression -- including a fuzz parameter. So for `msg.sender`, and
-# only for it, the driver now ESTABLISHES rather than checks:
+# it, the driver ESTABLISHES rather than checks:
 #
 #   width > 1  -> a fuzz parameter, bound() into the certified interval, and
 #                 the governing prank rewritten to use it. The PUT is then a
@@ -2202,12 +2205,16 @@ class EmittedFile:
 #                 point of it.
 #   width == 1 -> the governing prank rewritten to the certified value.
 #
-# `msg.value` is deliberately NOT done this way even though it is equally
-# choosable: it is written as a `{value: ...}` option on the call and changing
-# it changes whether a nonpayable unit reverts, i.e. it would move the R0
-# exit-kind expectation the preamble exists to make hold. Sender does not.
-# `tx.`/`block.` stay CHECKED because a test cannot set them at all.
+# A certified region already proves that every admitted msg.value walks the
+# target path, including its exit kind. Therefore an EXISTING low-level
+# `.call{value: ...}` may also take a bound fuzz parameter. The rewrite is kept
+# narrow: this driver does not invent a value option or change another call
+# shape. `tx.`/`block.` stay CHECKED because a test cannot set them at all.
 ENV_PREFIXES = ("msg.", "tx.", "block.")
+# Auto-derived environment coordinates must be realizable by the emitted test.
+# msg.value remains conditional on an existing value-bearing call; that final
+# shape check lives in planned_env_value and fails closed in env_disagreements.
+ESTABLISHABLE_ENV_COORDS = frozenset(("msg.sender", "msg.value"))
 
 _PRANK_RE = re.compile(r"vm\.(?:start)?[Pp]rank\(")
 _VALUE_RE = re.compile(r"\{\s*value\s*:\s*([^},]+?)\s*\}")
@@ -2335,7 +2342,8 @@ def observed_env(body, call_i, call_line):
     return {"msg.sender": (sender, sender_ev), "msg.value": (value, value_ev)}
 
 
-def establish_env_sender(body, call_i, region, holes, pins, used):
+def establish_env_sender(body, call_i, region, holes, pins, used,
+                         call_value_expr=None):
     """Rewrite the governing `vm.prank` so the test runs inside the certified
     `msg.sender` slice, instead of refusing because it does not.
 
@@ -2448,7 +2456,12 @@ def establish_env_sender(body, call_i, region, holes, pins, used):
     # reason. That is a test that is green while standing for something else,
     # which is the outcome this pipeline exists never to produce.
     fund = None
-    if 0 <= call_i < len(new_body):
+    if call_value_expr is not None:
+        fund = f"    vm.deal({sender_expr}, {call_value_expr});"
+        note += (f" (and funded with `vm.deal({sender_expr}, "
+                 f"{call_value_expr})`, because the call sends a fuzzed value "
+                 f"and the sender pays)")
+    elif 0 <= call_i < len(new_body):
         mv = _VALUE_RE.search("\n".join(new_body[stmt_i:call_i + 1]))
         if mv:
             v = _lit_int(mv.group(1))
@@ -2483,15 +2496,88 @@ def establish_env_sender(body, call_i, region, holes, pins, used):
     return new_body, call_i, "msg.sender", sig_add, pre_add, note, sender_expr
 
 
+def planned_env_value(body, call_i, region, used):
+    """Return the fuzz variable for a renderable wide msg.value interval.
+
+    This intentionally recognises only an existing low-level `.call{value:}`.
+    Changing another call shape into a value-bearing call would be a separate
+    semantic transformation; leaving it unhandled keeps env_disagreements as
+    the fail-closed gate.
+    """
+    if "msg.value" not in region:
+        return None
+    lo, hi = region["msg.value"]
+    if hi <= lo or not (0 <= call_i < len(body)):
+        return None
+    stmt_i = statement_start(body, call_i)
+    statement = "\n".join(body[stmt_i:call_i + 1])
+    if ".call" not in statement or not _VALUE_RE.search(statement):
+        return None
+    var = "p_msg_value"
+    while var in used:
+        var += "_"
+    return var
+
+
+def establish_env_value(body, call_i, region, holes, value_var,
+                        sender_expr=None):
+    """Fuzz an existing low-level call's certified msg.value interval.
+
+    Returns `(body, call_i, established, sig_add, pre_add, note)`.  A missing
+    plan is a no-op; the caller then checks the concrete value exactly as it did
+    before this mechanism existed.
+    """
+    if value_var is None:
+        return body, call_i, None, None, [], None
+
+    lo, hi = region["msg.value"]
+    value_holes = sorted(holes.get("msg.value", ()))
+    new_body = list(body)
+    stmt_i = statement_start(new_body, call_i)
+    replaced = False
+    for i in range(stmt_i, call_i + 1):
+        if not replaced and _VALUE_RE.search(new_body[i]):
+            new_body[i] = _VALUE_RE.sub(
+                "{value: " + value_var + "}", new_body[i], count=1)
+            replaced = True
+    if not replaced:
+        return body, call_i, None, None, [], None
+
+    # establish_env_sender already funds the rewritten sender when it chose
+    # one. Otherwise recover the actual payer from the governing prank, or use
+    # the test contract for an ordinary unpranked call.
+    if sender_expr is None:
+        payer = "address(this)"
+        prank_i = None
+        for i in range(stmt_i):
+            m = _PRANK_RE.search(new_body[i])
+            if m:
+                prank_i = i
+                payer = _arg0(new_body[i], m.end() - 1).strip()
+        fund = f"    vm.deal({payer}, {value_var});"
+        insert_at = prank_i if prank_i is not None else stmt_i
+        new_body.insert(insert_at, fund)
+        call_i += 1
+
+    note = (f"msg.value in [{lo}, {hi}]"
+            + ("  \\ {" + ", ".join(str(h) for h in value_holes) + "}"
+               if value_holes else "")
+            + f" is ESTABLISHED and FUZZED: the existing low-level call now "
+              f"takes the bound() fuzz parameter `{value_var}`"
+            + (f", and the {len(value_holes)} punched value(s) are excluded "
+               f"by vm.assume" if value_holes else ""))
+    return (new_body, call_i, "msg.value", ("uint256", value_var),
+            bound_lines(value_var, "uint", 256, lo, hi, value_holes), note)
+
+
 def env_disagreements(body, call_i, call_line, region, pins, established=()):
     """(refusals, unchecked) for every width-1 environment quantity certified.
 
     `refusals` is non-empty exactly when the emitted case is KNOWN to run
     outside the certified slice, or when it cannot be shown to run inside it.
-    `unchecked` names the environment quantities this driver has no way to
-    compare -- block.timestamp and friends -- so they appear on the emitted PUT
-    instead of being invisible, which is the failure this whole block exists to
-    stop repeating.
+    An environment quantity this driver cannot establish or observe is a
+    refusal. A test of unknown membership in the certified slice is not a
+    weaker PUT; it is not justified by that certificate at all.
     """
     want, ranged = {}, {}
     for n, (lo, hi) in region.items():
@@ -2539,9 +2625,10 @@ def env_disagreements(body, call_i, call_line, region, pins, established=()):
     # that is the same refusal a width-one disagreement gets.
     for n, (lo, hi) in sorted(ranged.items()):
         if n not in obs:
-            unchecked.append(
-                f"{n} in [{lo}, {hi}] is NOT CHECKED: this driver can compare "
-                f"only msg.sender and msg.value against the emitted preamble")
+            refusals.append(
+                f"{n} is certified over [{lo}, {hi}], but this emitter cannot "
+                f"establish or observe it. The test is not known to run inside "
+                f"the certified range")
             continue
         got, ev = obs[n]
         if got is None:
@@ -2565,10 +2652,10 @@ def env_disagreements(body, call_i, call_line, region, pins, established=()):
             f"cannot be bound() into the signature")
     for n, v in sorted(want.items()):
         if n not in obs:
-            unchecked.append(
-                f"{n} == {v} is NOT CHECKED: this driver can compare only "
-                f"msg.sender and msg.value against the emitted preamble, so "
-                f"whether the test runs in that part of the slice is unknown")
+            refusals.append(
+                f"{n} is certified at {v}, but this emitter cannot establish "
+                f"or observe it. The test is not known to run inside that "
+                f"certified slice")
             continue
         got, ev = obs[n]
         if got is None:
@@ -2880,20 +2967,19 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     used = {b[0] for b in emitted.blocks}
 
     # The environment the emitted case runs under must be the one certified.
-    # `msg.sender` is ESTABLISHED (the one environment quantity a test can
-    # choose); everything else is CHECKED and a disagreement still refuses.
-    # See the long comment above ENV_PREFIXES for why the two are not treated
-    # alike, and in particular why msg.value is not established even though it
-    # is equally choosable.
+    # Foundry can establish msg.sender with prank and can establish msg.value
+    # when the emitted statement already carries a low-level `{value: ...}`
+    # option. Everything else is checked and a disagreement still refuses.
     #
     # ORDER MATTERS: establishment rewrites the very line the check reads, so
     # it has to happen first, and the rewritten body is what everything below
     # -- the call rewrite, the head/pre-state slices, the emitted text -- must
     # use. `call_i` can move, because a missing prank is inserted.
+    env_value_var = planned_env_value(body, call_i, region, used)
     (body, call_i, env_est, sig_add, pre_add, env_note,
      env_sender_expr) = establish_env_sender(
-        body, call_i, region, holes, pins, used)
-    call_line = body[call_i]
+        body, call_i, region, holes, pins, used,
+        call_value_expr=env_value_var)
     env_established = []
     if env_est is not None:
         env_established.append(env_note)
@@ -2920,9 +3006,27 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                     {h for h in holes.get("msg.sender", ())
                      if _slo <= h <= _shi})
 
+    (body, call_i, value_est, value_sig, value_pre,
+     value_note) = establish_env_value(
+        body, call_i, region, holes, env_value_var, env_sender_expr)
+    if value_est is not None:
+        env_established.append(value_note)
+        sig.append(value_sig)
+        pre_lines += value_pre
+        lifted.append("msg.value")
+        used.add(value_sig[1])
+        _vlo, _vhi = region["msg.value"]
+        rendered_width["msg.value"] = (_vhi - _vlo + 1) - len(
+            {h for h in holes.get("msg.value", ())
+             if _vlo <= h <= _vhi})
+        coord_ident["msg.value"] = value_sig[1]
+        coord_ident_abs["msg.value"] = value_sig[1]
+
+    call_line = body[call_i]
+
     env_refusals, env_unchecked = env_disagreements(
         body, call_i, call_line, region, pins,
-        established=({env_est} if env_est else ()))
+        established={e for e in (env_est, value_est) if e})
     if env_refusals:
         notes.append("the emitted case does not run in the certified "
                      "environment slice: " + "; ".join(env_refusals))
@@ -3673,11 +3777,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # per-bound trace would be reading a precision that was never measured,
     # and that misreading is likelier than no information at all.
     if derived_by:
-        _ladder = bool(derived_by.get("probe_ladder")
-                       or derived_by.get("probes"))
-        _cut = bool(derived_by.get("cut_policy")
-                    or derived_by.get("max_region_pieces"))
-        _probe_only = (not _ladder) and (not _cut) and bool(
+        _ladder = bool(derived_by.get("geometric_bracket"))
+        _subtract = bool(derived_by.get("sibling_subtraction"))
+        _probe_only = (not _ladder) and (not _subtract) and bool(
             derived_by.get("level0") or derived_by.get("level0_perturb")
             or derived_by.get("level0_points"))
         out.append("  // WIDTH PROVENANCE (stage-2 switches for this ROW, not "
@@ -3694,12 +3796,14 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             out.append("  // The region is still CERTIFIED -- an independent "
                        "query admitted it -- but its")
             out.append("  // WIDTH is not evidence of a measured boundary.")
-        elif _ladder or _cut:
+        elif _ladder or _subtract:
             out.append("  // Width sources that ran: "
                        + ", ".join(s for s, on in
-                                   (("the assertion ladder's boundary probes",
+                                   (("the stage-2 geometric ladder's boundary "
+                                     "probes",
                                      _ladder),
-                                    ("subtraction of the sibling paths", _cut))
+                                    ("subtraction of the sibling paths",
+                                     _subtract))
                                    if on))
     out.append(f"  // Arguments the region does NOT bound keep the "
                f"counterexample's own")
@@ -4127,12 +4231,11 @@ def main():
                          "feasible path look infeasible. OFF by default, "
                          "because it costs a run per attempt and changes what "
                          "a default invocation does.")
-    ap.add_argument("--scope", choices=("focus", "whole"), default="focus",
+    ap.add_argument("--scope", default="focus",
                     help="focus passes --focus-function <unit> (the GATE "
-                         "cell); whole drops it and lets every entry be "
-                         "dispatched (the ARTEFACT cell, which with "
-                         "--max-tx 2 is the only configuration measured to "
-                         "reach cross-function state). The choice is RECORDED "
+                         "cell); whole drops it; a comma-separated list passes "
+                         "that dispatcher alphabet (the target plus recorded "
+                         "state writers for an ARTEFACT cell). The choice is RECORDED "
                          "on the emitted test and in put.json, because "
                          "INVOCATION_DECISIONS.md forbids quoting one cell's "
                          "run into the other's table.")

@@ -51,6 +51,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -63,7 +64,8 @@ import time
 # ledgers -- the defect this project keeps paying for -- so it is imported.
 # No cycle: that module imports only the standard library.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from solidity_path_put import (STRATEGY_FLAGS_REFUSED,  # noqa: E402,F401
+from solidity_path_put import (ESTABLISHABLE_ENV_COORDS,  # noqa: E402,F401
+                               STRATEGY_FLAGS_REFUSED,
                                check_esbmc_args)
 
 UINT256_MAX = (1 << 256) - 1
@@ -419,8 +421,10 @@ def coord_values(c, state_structs=False):
 
 def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     ast=None, focus=None, memlimit="8g", path_function=None,
-                    esbmc_args=(), state_structs=False, probe_witnesses=0):
-    """Step 1. Returns (paths, refused, caveats, members).
+                    esbmc_args=(), state_structs=False, probe_witnesses=0,
+                    enumeration_index=None, enumeration_report=None,
+                    scope_label="whole"):
+    """Step 1. Return paths, refusals, caveats, members, extras and decisions.
 
     `paths` = [(enc, depth, ce)]; `members` = {enc: {coord: [v, ...]}}, the
     values a coordinate is KNOWN to take on that path.
@@ -477,22 +481,28 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     # ESBMC's own message about a solc mismatch or a missing contract -- can
     # never fire, so the actionable diagnostic is replaced by silent stale data.
     report = os.path.join(cwd, "cov-report.json")
-    if os.path.exists(report):
-        os.remove(report)
-    enum_args = ["--cov-report-json"]
-    if probe_witnesses:
-        enum_args += ["--all-witnesses", "--max-witnesses",
-                      str(probe_witnesses)]
-    log = run(esbmc, sol, contract, enum_args, max_tx, timeout, cwd,
-              ast=ast, focus=focus, memlimit=memlimit, esbmc_args=esbmc_args)
-    if not os.path.exists(report):
-        # Do NOT let this surface as a FileNotFoundError about a JSON file.
-        # ESBMC has already said what went wrong -- a solc version mismatch, a
-        # parse error, a missing contract -- and throwing that output away turns
-        # an actionable message into a stack trace about the wrong subject.
-        raise SystemExit(
-            "[enumerate] ESBMC produced no cov-report.json. Its output was:\n"
-            + log)
+    if enumeration_report:
+        validate_enumeration_import(
+            enumeration_index, enumeration_report, esbmc, sol, ast, contract,
+            unit, scope_label, max_tx, memlimit, probe_witnesses, esbmc_args)
+        shutil.copyfile(enumeration_report, report)
+        print(f"[enumerate] reused stage-1 report {enumeration_report}; "
+              "no enumeration ESBMC process was started")
+    else:
+        if os.path.exists(report):
+            os.remove(report)
+        enum_args = ["--cov-report-json"]
+        if probe_witnesses:
+            enum_args += ["--all-witnesses", "--max-witnesses",
+                          str(probe_witnesses)]
+        log = run(esbmc, sol, contract, enum_args, max_tx, timeout, cwd,
+                  ast=ast, focus=focus, memlimit=memlimit,
+                  esbmc_args=esbmc_args)
+        if not os.path.exists(report):
+            # Preserve ESBMC's actionable frontend/configuration diagnostic.
+            raise SystemExit(
+                "[enumerate] ESBMC produced no cov-report.json. Its output was:\n"
+                + log)
     with open(report) as f:
         rep = json.load(f)
 
@@ -538,9 +548,16 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     # carried so the comparison can say the two counterexamples disagree about
     # them, and they must never reach a box.
     path_extras = {}
+    path_decisions = {}
     for c in witnessed:
         ce, ref = coord_values(c, state_structs=state_structs)
-        path_extras[int(c["path_id"])] = payload_extras(c)
+        enc = int(c["path_id"])
+        # The de-duplication below keeps the FIRST transaction instance of an
+        # enc. Keep its metadata by the same rule; assignment here used to keep
+        # the LAST instance's decisions beside the first instance's CE/depth.
+        path_extras.setdefault(enc, payload_extras(c))
+        path_decisions.setdefault(
+            enc, [dict(d) for d in (c.get("decisions") or [])])
         refused.update(ref)
         # THE WITNESSES OF THIS CLAIM, AND OF NO OTHER. A claim's witnesses are
         # inputs that walk THIS (enc, depth); the duplicate-enc claim dropped
@@ -559,7 +576,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
         for w in (c.get("witnesses") or []):
             wce, _ = coord_values(w, state_structs=state_structs)
             vecs.append(wce)
-        out.append((int(c["path_id"]), int(c["path_depth"]), ce, vecs))
+        out.append((enc, int(c["path_depth"]), ce, vecs))
     # Same enc can appear once per transaction instance; keep one of each.
     seen, uniq, members = set(), [], {}
     for enc, depth, ce, vecs in out:
@@ -568,8 +585,19 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
         seen.add(enc)
         uniq.append((enc, depth, ce))
         members[enc] = vecs
+    kept_decisions = {enc: path_decisions.get(enc, []) for enc, _, _ in uniq}
     return (uniq, sorted(refused), extraction_caveats(witnessed), members,
-            path_extras)
+            path_extras, kept_decisions)
+
+
+def abi_gate_class(decisions):
+    """Classify the explicit synthetic ABI value gate, if one was recorded."""
+    gates = [d for d in (decisions or []) if d.get("synthetic_abi_gate")]
+    if not gates:
+        return None
+    # The synthetic GOTO jumps into the body when msg.value == 0. In the report
+    # that jump is `taken`; fall-through is the immediate ABI rejection path.
+    return "body" if gates[0].get("arm") == "taken" else "reject"
 
 
 # ---- WHY THERE IS NO WITNESS, READ FROM THE REPORT RATHER THAN ASSUMED -------
@@ -3607,44 +3635,201 @@ def resolve_scope(scope, focus_flag, unit):
 # means as surely as a different --max-tx does, and this project has already
 # hung old-build numbers on a new build's name without anything objecting. Its
 # size and mtime are cheap and change on every rebuild.
-CONFIG_FIELDS = ("contract", "unit", "path_function", "max_tx", "scope",
-                 "esbmc", "esbmc_size", "esbmc_mtime", "probe_witnesses")
+RUN_CONFIG_SCHEMA = "solidity-path-generalise-config/2"
+
+
+def file_identity(path):
+    """Stable-enough identity for an input consumed by this run.
+
+    Nanosecond mtime plus size catches rebuilt binaries and regenerated source
+    files without hashing a several-hundred-megabyte executable before every
+    unit.  The absolute path is part of the identity because two equal-looking
+    basenames can be different flattened contracts.
+    """
+    if not path:
+        return None
+    resolved = path
+    if os.sep not in path:
+        resolved = shutil.which(path) or path
+    abspath = os.path.realpath(resolved)
+    try:
+        st = os.stat(abspath)
+        return {"path": abspath, "size": st.st_size,
+                "mtime_ns": st.st_mtime_ns}
+    except OSError:
+        return {"path": abspath, "size": None, "mtime_ns": None}
+
+
+def _single_option(argv, flag):
+    """Return one option value, or None; reject malformed manifests."""
+    positions = [i for i, value in enumerate(argv) if value == flag]
+    if not positions:
+        return None
+    if len(positions) != 1 or positions[0] + 1 >= len(argv):
+        raise SystemExit(f"[enumerate-import] malformed {flag} in cmdArgv")
+    return argv[positions[0] + 1]
+
+
+def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
+                                contract, unit, scope_label, max_tx, memlimit,
+                                probe_witnesses, esbmc_args):
+    """Fail closed unless a stage-1 report is this exact enumeration run."""
+    if not index_path:
+        raise SystemExit("[enumerate-import] --enumeration-report requires "
+                         "--enumeration-index")
+    try:
+        with open(index_path) as stream:
+            index = json.load(stream)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"[enumerate-import] cannot read {index_path}: {exc}")
+    try:
+        with open(report_path) as stream:
+            json.load(stream)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"[enumerate-import] cannot read {report_path}: {exc}")
+
+    mismatches = []
+
+    def expect(name, actual, expected):
+        if actual != expected:
+            mismatches.append(f"{name}: report={actual!r}, requested={expected!r}")
+
+    expect("schema", index.get("schema"), "veriput-pathcov-collection/2")
+    expect("source", index.get("flatInputIdentity"), file_identity(sol))
+    expect("AST", index.get("astInputIdentity"), file_identity(ast))
+    expect("ESBMC binary", index.get("esbmcIdentity"), file_identity(esbmc))
+    expect("contract", (index.get("primary") or {}).get("name"), contract)
+
+    config = index.get("config") or {}
+    expect("unit set", config.get("onlyUnits"), [unit])
+    expect("max-tx", config.get("solidityMaxTx"), max_tx)
+    expect("memlimit", config.get("memlimit"), memlimit)
+    expect("probe witnesses", config.get("probeWitnesses"), probe_witnesses)
+    expect("solver/ESBMC flags", config.get("solverFlags"), list(esbmc_args))
+
+    if scope_label == "whole":
+        collector_scope, focus_with, focus = "whole", [], None
+    elif scope_label == "focus":
+        collector_scope, focus_with, focus = "single", [], unit
+    elif scope_label.startswith("focus:"):
+        names = scope_label[len("focus:"):].split(",")
+        focus_with = [name for name in names if name != unit]
+        collector_scope, focus = "set", ",".join([unit] + focus_with)
+    else:
+        raise SystemExit(f"[enumerate-import] unknown scope {scope_label!r}")
+    expect("scope", config.get("scope"), collector_scope)
+    expect("focus-with", config.get("focusWith"), focus_with)
+    expect("instrument-only-unit", config.get("instrumentOnlyUnit"),
+           collector_scope == "set")
+
+    report = os.path.abspath(report_path)
+    reports_dir = os.path.abspath(index.get("reportsDir", ""))
+    if os.path.dirname(report) != reports_dir:
+        mismatches.append(f"report directory: {report!r} is not under "
+                          f"manifest reportsDir {reports_dir!r}")
+    tag = os.path.splitext(os.path.basename(report))[0]
+    matching = [run for run in index.get("runs", [])
+                if run.get("tag") == tag]
+    if len(matching) != 1:
+        mismatches.append(f"run record: expected one tag {tag!r}, found "
+                          f"{len(matching)}")
+    else:
+        recorded = matching[0]
+        expect("run function", recorded.get("function"), unit)
+        expect("report present", recorded.get("reportPresent"), True)
+        expect("outer timeout", recorded.get("killedByOuterTimeout"), False)
+        argv = recorded.get("cmdArgv")
+        if not isinstance(argv, list) or len(argv) < 2:
+            mismatches.append("cmdArgv: absent or malformed")
+        else:
+            expect("command binary", file_identity(argv[0]), file_identity(esbmc))
+            expect("command AST", file_identity(argv[1]), file_identity(ast))
+            command_source = _single_option(argv, "--sol")
+            expect("command source",
+                   os.path.realpath(command_source) if command_source else None,
+                   os.path.realpath(sol))
+            expect("command contract", _single_option(argv, "--contract"),
+                   contract)
+            expect("command max-tx", _single_option(
+                argv, "--solidity-max-tx"), str(max_tx))
+            expect("command memlimit", _single_option(argv, "--memlimit"),
+                   memlimit)
+            expect("command focus", _single_option(argv, "--focus-function"),
+                   focus)
+            expect("command instrument-only", _single_option(
+                argv, "--path-cov-instrument-only"),
+                unit if collector_scope == "set" else None)
+            expected_witnesses = (str(probe_witnesses)
+                                  if probe_witnesses else None)
+            expect("command witnesses", _single_option(
+                argv, "--max-witnesses"), expected_witnesses)
+            expect("command all-witnesses", "--all-witnesses" in argv,
+                   bool(probe_witnesses))
+            expect("command solver/ESBMC flags",
+                   all(flag in argv for flag in esbmc_args), True)
+
+    if mismatches:
+        raise SystemExit("[enumerate-import] REFUSING incompatible stage-1 "
+                         "report:\n  " + "\n  ".join(mismatches))
+
+
+def arg_value(args, name, default=None):
+    """Read a CLI value while keeping pure-function test Namespaces concise."""
+    return getattr(args, name, default)
 
 
 def run_config(args, scope_label):
     """The fields that change WHAT IS MEASURED, as a comparable dict."""
-    esbmc = args.esbmc
-    try:
-        st = os.stat(esbmc)
-        size, mtime = st.st_size, int(st.st_mtime)
-    except OSError:
-        size, mtime = None, None
-    cfg = {"contract": args.contract, "unit": args.unit,
-           "path_function": args.path_function, "max_tx": args.max_tx,
-           "scope": scope_label, "esbmc": os.path.abspath(esbmc),
-           "esbmc_size": size, "esbmc_mtime": mtime}
-    # ---- PRESENT ONLY WHEN IT IS ON, AND THAT IS NOT A SHORTCUT ----
-    #
-    # The ladder is part of what was measured, so a run WITH probes and one
-    # WITHOUT must not share a directory. But `stamp_workdir` compares
-    # `old.get(k) != cfg.get(k)`, and a stamp written before this key existed
-    # returns None for it -- so writing `probe_witnesses: 0` unconditionally
-    # would refuse every pre-existing workdir on a difference that is not one
-    # (None against 0, both meaning "no probes"). Omitting the key when it is 0
-    # makes the four cases come out right: off/off compares None to None and is
-    # allowed, on/off and off/on both differ and are refused, on/on must match.
-    if args.probe_witnesses:
-        cfg["probe_witnesses"] = args.probe_witnesses
-    # Same present-only-when-on rule, and for the same reason: each changes the
-    # coordinate set, so a run with one and a run without must not share a
-    # directory -- but writing the key as False unconditionally would refuse
-    # every workdir stamped before the key existed, on a difference that is not
-    # one.
-    if args.env_coord_disagreed:
-        cfg["env_coord_disagreed"] = True
-    if args.pin_agreed_state:
-        cfg["pin_agreed_state"] = True
-    return cfg
+    # Every field is written even at its default.  An absent key in a v2 stamp
+    # is an unknown configuration, not permission to substitute today's
+    # default.  Lists that are semantic sets are sorted; raw ESBMC arguments
+    # retain order because option order can affect command-line parsing.
+    return {
+        "schema": RUN_CONFIG_SCHEMA,
+        "contract": arg_value(args, "contract"),
+        "unit": arg_value(args, "unit"),
+        "path_function": arg_value(args, "path_function"),
+        "max_tx": arg_value(args, "max_tx", 1),
+        "scope": scope_label,
+        "esbmc": file_identity(arg_value(args, "esbmc", "esbmc")),
+        "sol": file_identity(arg_value(args, "sol")),
+        "ast": file_identity(arg_value(args, "ast")),
+        "probes": arg_value(args, "probes", 16),
+        "refine_rounds": arg_value(args, "refine_rounds", 3),
+        "shrink_rounds": arg_value(args, "shrink_rounds", 4),
+        "witness_check": bool(arg_value(args, "witness_check", True)),
+        "cut_policy": arg_value(args, "cut_policy", "spec"),
+        "max_region_pieces": arg_value(args, "max_region_pieces", 1),
+        "max_holes": arg_value(args, "max_holes", 0),
+        "timeout": arg_value(args, "timeout", 900),
+        "memlimit": arg_value(args, "memlimit", "8g"),
+        "env_coords": sorted(arg_value(args, "env_coord", []) or []),
+        "claim_budget": arg_value(args, "claim_budget", 0),
+        "level0": bool(arg_value(args, "level0", False)),
+        "level0_perturb": bool(arg_value(args, "level0_perturb", False)),
+        "skip_bracket": bool(arg_value(args, "skip_bracket", False)),
+        "probe_witnesses": arg_value(args, "probe_witnesses", 0),
+        "probe_ladder": bool(arg_value(args, "probe_ladder", False)),
+        "probe_ladder_budget": arg_value(args, "probe_ladder_budget", 0),
+        "no_auto_pin_value": bool(
+            arg_value(args, "no_auto_pin_value", False)),
+        "pin_env": bool(arg_value(args, "pin_env", False)),
+        "env_coord_disagreed": bool(
+            arg_value(args, "env_coord_disagreed", False)),
+        "pin_agreed_state": bool(
+            arg_value(args, "pin_agreed_state", False)),
+        "slot_coords": arg_value(args, "slot_coords", 0),
+        "slot_coord": sorted(arg_value(args, "slot_coord", []) or []),
+        "pins": sorted(arg_value(args, "pin", []) or []),
+        "pin_extcall": bool(arg_value(args, "pin_extcall", False)),
+        "esbmc_args": list(arg_value(args, "esbmc_arg", []) or []),
+        "state_struct_fields": bool(
+            arg_value(args, "state_struct_fields", False)),
+        "enumeration_index": file_identity(
+            arg_value(args, "enumeration_index")),
+        "enumeration_report": file_identity(
+            arg_value(args, "enumeration_report")),
+    }
 
 
 def stamp_workdir(cwd, cfg):
@@ -3662,7 +3847,8 @@ def stamp_workdir(cwd, cfg):
         except (OSError, ValueError):
             old = None
         if old is not None:
-            diff = [k for k in CONFIG_FIELDS if old.get(k) != cfg.get(k)]
+            diff = [k for k in sorted(set(old) | set(cfg))
+                    if old.get(k) != cfg.get(k)]
             if diff:
                 lines = "\n".join(
                     f"    {k}: previously {old.get(k)!r}, now {cfg.get(k)!r}"
@@ -4063,9 +4249,12 @@ def main():
                          "its ABI gate is a decision on an unconstrained "
                          "msg.value.")
     ap.add_argument("--env-coord-disagreed", action="store_true",
-                    help="promote EVERY environment quantity the witnessed "
-                         "paths DISAGREE on to a free coordinate, instead of "
-                         "requiring each to be named with --env-coord.\n"
+                    help="promote every PUT-ESTABLISHABLE environment quantity "
+                         "the witnessed paths DISAGREE on (currently msg.sender "
+                         "and msg.value) to a free coordinate, instead of "
+                         "requiring each to be named with --env-coord. Other "
+                         "block./tx. quantities remain named as unsupported; a "
+                         "certified region the test cannot enter is not a PUT.\n"
                          "WHY: --pin-env already computes this exact partition "
                          "and already prints of the disagreeing side 'Left "
                          "unconstrained, so a path guarded by one of these "
@@ -4228,8 +4417,22 @@ def main():
                          "and `farmInfo.duration` are exactly that case. "
                          "Whether the coordinate gate moves is the measurement, "
                          "not the claim.")
+    ap.add_argument("--enumeration-index", default=None,
+                    help="stage-1 pathcov index.json to validate before reusing "
+                         "an enumeration. Must be paired with "
+                         "--enumeration-report; any configuration mismatch is "
+                         "a hard refusal before an ESBMC process starts.")
+    ap.add_argument("--enumeration-report", default=None,
+                    help="stage-1 unit report to reuse for enumeration. The "
+                         "versioned --enumeration-index is the authority for "
+                         "source, AST, binary, unit, scope, max-tx, memory, "
+                         "witness and solver-option compatibility.")
     ap.add_argument("--workdir", default=None)
     args = ap.parse_args()
+
+    if bool(args.enumeration_index) != bool(args.enumeration_report):
+        raise SystemExit("--enumeration-index and --enumeration-report must be "
+                         "passed together")
 
     # Checked BEFORE the workdir is stamped and before any query is issued: a
     # refusal that arrives after the enumeration has run has already spent the
@@ -4262,12 +4465,16 @@ def main():
             f"the call sequence and max-tx is its LENGTH; both are recorded in "
             f"run-config.json and in the result, because a run of one "
             f"configuration may not be quoted into another's table")
-    paths, refused, caveats, members, path_extras = enumerate_paths(
+    (paths, refused, caveats, members, path_extras,
+     path_decisions) = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
         args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
         path_function=args.path_function, esbmc_args=args.esbmc_arg,
         state_structs=args.state_struct_fields,
-        probe_witnesses=args.probe_witnesses)
+        probe_witnesses=args.probe_witnesses,
+        enumeration_index=args.enumeration_index,
+        enumeration_report=args.enumeration_report,
+        scope_label=scope_label)
     if not paths:
         # ⛔ THE OLD TEXT HERE ASSERTED A RESULT AND WAS WRONG ON REAL INPUT.
         # It said "That is a result, not an error ... (The report was checked:
@@ -4287,6 +4494,13 @@ def main():
         return 1
     print(f"[enumerate] {len(paths)} witnessed path(s): "
           + ", ".join(f"enc={e} depth={d}" for e, d, _ in paths))
+    abi_classes = {enc: abi_gate_class(path_decisions.get(enc))
+                   for enc, _, _ in paths}
+    if any(v is not None for v in abi_classes.values()):
+        print("[enumerate] synthetic ABI value gate classes: "
+              + ", ".join(f"enc={enc}:{kind}"
+                          for enc, kind in sorted(abi_classes.items())
+                          if kind is not None))
     if refused:
         # Say it. Every region printed below is a statement about the SLICE
         # through these, not about the whole input space.
@@ -4394,6 +4608,10 @@ def main():
             vals = {ce.get(n) for _, _, ce in paths}
             if len(vals) == 1 and None not in vals:
                 kept.append(f"{n} (all {len(paths)} paths agree)")
+                continue
+            if n not in ESTABLISHABLE_ENV_COORDS:
+                kept.append(f"{n} (paths disagree, but the PUT emitter cannot "
+                            "establish this environment quantity)")
                 continue
             promoted.append(n)
         if promoted:
@@ -6017,9 +6235,19 @@ def main():
         # two results that disagree because one was focused and one was not
         # looked like two results that simply disagree.
         "scope": scope_label,
+        "enumeration_source": {
+            "mode": "imported-stage-1" if args.enumeration_report else "direct",
+            "index": file_identity(args.enumeration_index),
+            "report": file_identity(args.enumeration_report),
+        },
         # The slice every region below is a statement ABOUT. A region quoted
         # without its pins is a region quoted wrong.
         "pins": {n: str(v) for n, v in sorted(pins.items())},
+        "path_decisions": {
+            str(enc): {"abi_gate_class": abi_gate_class(decisions),
+                       "decisions": decisions}
+            for enc, decisions in sorted(path_decisions.items())
+        },
         "dropped_by_certify": sorted(dropped_by_certify),
         "certified": [
             {

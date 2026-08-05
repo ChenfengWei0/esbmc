@@ -71,6 +71,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -83,6 +84,39 @@ import collect as base  # noqa: E402  -- the LOCKED baseline side, reused verbat
 
 REPO = Path("/home/samson/workspace/esbmc")
 ESBMC = REPO / "build/src/esbmc/esbmc"
+COLLECTION_SCHEMA = "veriput-pathcov-collection/2"
+
+
+def file_identity(path):
+    """Identity of an exact file consumed by the collection."""
+    resolved = Path(path).resolve()
+    try:
+        stat = resolved.stat()
+        return {
+            "path": str(resolved),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        }
+    except OSError:
+        return {"path": str(resolved), "size": None, "mtime_ns": None}
+
+
+def quarantine_collection(out_dir):
+    """Move an existing collection aside and return its new path, if any."""
+    if not out_dir.exists() or not any(out_dir.iterdir()):
+        return None
+    archived = out_dir.with_name(
+        f"{out_dir.name}.superseded.{time.time_ns()}")
+    out_dir.rename(archived)
+    return archived
+
+
+def kill_process_group(proc):
+    """Kill a process and all descendants started in its session."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError, AttributeError):
+        pass
 
 # ---- WHERE THE INPUT LIVES IS NOW THE POC'S ANSWER, NOT A CONSTANT ----
 #
@@ -184,7 +218,7 @@ def solver_flags_for(bench_key, override):
 
 
 def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
-              instrument_only=None, unwind=None):
+              instrument_only=None, unwind=None, probe_witnesses=0):
     # `max_tx` IS A PARAMETER NOW, AND IT WAS A LITERAL `"1"` BEFORE.
     #
     # The docstring at the top of this file argues at length for 1 -- correctly,
@@ -259,6 +293,8 @@ def esbmc_cmd(solast, flat, primary, focus, goals, solver_flags=(), max_tx=1,
         # this is not a speed knob -- without it the widened-alphabet cell is
         # neither affordable NOR comparable.
         cmd += ["--path-cov-instrument-only", instrument_only]
+    if probe_witnesses:
+        cmd += ["--all-witnesses", "--max-witnesses", str(probe_witnesses)]
     return cmd
 
 
@@ -291,24 +327,22 @@ def one_run(tag, cmd, timeout, workdir):
         stale.unlink()
     t0 = time.time()
     killed = False
+    proc = subprocess.Popen(cmd, cwd=str(workdir), stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
     try:
-        cp = subprocess.run(cmd, capture_output=True, text=True,
-                            timeout=timeout, cwd=str(workdir))
-        rc, out = cp.returncode, cp.stdout + cp.stderr
-    except subprocess.TimeoutExpired as e:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        rc, out = proc.returncode, stdout + stderr
+    except subprocess.TimeoutExpired:
         killed = True
-        rc = -1
-
-        # TimeoutExpired carries BYTES even under text=True, and each stream
-        # independently. Decoding the concatenation is what raised TypeError on
-        # the first real timeout (aqua's `ship`), losing the partial log of the
-        # very run whose log is most worth having.
-        def _dec(x):
-            if x is None:
-                return ""
-            return x.decode("utf-8", "replace") if isinstance(x, bytes) else x
-
-        out = _dec(e.stdout) + _dec(e.stderr)
+        kill_process_group(proc)
+        stdout, stderr = proc.communicate()
+        rc, out = -1, stdout + stderr
+    except BaseException:
+        kill_process_group(proc)
+        raise
+    finally:
+        kill_process_group(proc)
     wall = time.time() - t0
     (workdir / "run.log").write_text(out)
 
@@ -316,6 +350,7 @@ def one_run(tag, cmd, timeout, workdir):
     rec = {
         "tag": tag,
         "cmd": " ".join(cmd),
+        "cmdArgv": [str(arg) for arg in cmd],
         "wallSeconds": round(wall, 2),
         "exitCode": rc,
         # A killed path-coverage run yields NOTHING -- the timeout rescue path
@@ -535,7 +570,7 @@ def one_run(tag, cmd, timeout, workdir):
 
 def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             fresh=False, max_tx=1, focus_with=(), scope="single", adhoc=None,
-            only=(), unwind=None):
+            only=(), unwind=None, probe_witnesses=0):
     # ---- THE LADDER'S TWO AXES, AND WHY THEY ARE NOT A PLAIN PRODUCT ----
     #
     # They are LENGTH x ALPHABET, and that is now read out of the source rather
@@ -653,7 +688,7 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     # entitled to read, and the operator would discover it as "the gate is
     # broken" rather than as "I overwrote it".
     if (max_tx != 1 or focus_with or scope != "single" or only
-            or unwind is not None) and not out_suffix:
+            or unwind is not None or probe_witnesses) and not out_suffix:
         sys.exit(
             f"{bench_key}: refusing to write a LADDER cell (scope={scope}, "
             f"max-tx={max_tx}, unwind={unwind if unwind is not None else 'default'}, "
@@ -666,7 +701,13 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             + (f"__unwind{unwind}" if unwind is not None else "")
             + (f"__{scope}" if scope != "single" else "")
             + ("__focusset" if focus_with else "") + ").")
+    pkind = base.primary_contract_kind(flat, primary)
     out_dir = OUT / (bench_key + out_suffix)
+    if fresh:
+        archived = quarantine_collection(out_dir)
+        if archived is not None:
+            print(f"  [fresh] preserved the previous collection at "
+                  f"{archived}", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     reports_dir = out_dir / "reports"
     reports_dir.mkdir(exist_ok=True)
@@ -684,6 +725,56 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             if line.strip():
                 r = json.loads(line)
                 done[r["tag"]] = r
+
+    # A journal tag is reusable only inside the configuration that produced it.
+    # The binary check below is necessary but insufficient: scope, tx depth,
+    # witness multiplicity and solver flags can all change while the executable
+    # stays byte-identical. Refuse old/unversioned manifests rather than rewrite
+    # their index with today's values around yesterday's reports.
+    old_index_path = out_dir / "index.json"
+    if done and not fresh:
+        try:
+            old_index = json.loads(old_index_path.read_text())
+        except (OSError, ValueError) as exc:
+            sys.exit(f"{bench_key}: cannot resume {journal}: its collection "
+                     f"manifest {old_index_path} is missing or invalid ({exc}). "
+                     "Pass --fresh or move the directory aside.")
+        expected = {
+            "schema": COLLECTION_SCHEMA,
+            "primary": {"name": primary, "kind": pkind},
+            "flatInputIdentity": file_identity(flat),
+            "astInputIdentity": file_identity(solast),
+            "esbmcIdentity": file_identity(ESBMC),
+            "scope": scope,
+            "onlyUnits": list(only),
+            "solidityMaxTx": max_tx,
+            "unwind": unwind,
+            "focusWith": list(focus_with),
+            "pathCovMaxGoals": goals,
+            "probeWitnesses": probe_witnesses,
+            "memlimit": MEMLIMIT,
+            "solverFlags": sflags,
+        }
+        actual = {
+            "schema": old_index.get("schema"),
+            "primary": old_index.get("primary"),
+            "flatInputIdentity": old_index.get("flatInputIdentity"),
+            "astInputIdentity": old_index.get("astInputIdentity"),
+            "esbmcIdentity": old_index.get("esbmcIdentity"),
+            **{key: (old_index.get("config") or {}).get(key)
+               for key in expected if key not in {
+                   "schema", "primary", "flatInputIdentity",
+                   "astInputIdentity", "esbmcIdentity"}},
+        }
+        changed = [key for key in expected if actual.get(key) != expected[key]]
+        if changed:
+            detail = "\n".join(
+                f"  {key}: recorded={actual.get(key)!r}, "
+                f"requested={expected[key]!r}" for key in changed)
+            sys.exit(f"{bench_key}: REFUSING to resume reports made under an "
+                     f"incompatible or unversioned collection:\n{detail}\n"
+                     "Pass --fresh to re-measure, or move the directory aside "
+                     "to preserve it.")
 
     # RESUMING ACROSS A DIFFERENT BINARY IS THE TRAP THIS FEATURE SETS.
     #
@@ -703,9 +794,9 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
     #
     # So each record carries the identity of the binary that produced it, and a
     # journal whose records came from a different one is REFUSED rather than
-    # resumed. Refused, not auto-cleared: deleting someone's collection because
-    # a timestamp moved is its own way to lose data, and the operator should
-    # choose between --fresh and quarantining the directory.
+    # resumed. Refused, not auto-cleared: moving someone's collection because a
+    # timestamp moved would still surprise a resumable run. The operator must
+    # explicitly choose --fresh, which quarantines the directory above.
     ident = binary_identity()
     stale = {t: r.get("binary") for t, r in done.items()
              if r.get("binary") != ident}
@@ -753,17 +844,8 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             + (f"  ... and {len(stale) - len(shown)} more\n"
                if len(stale) > len(shown) else "")
             + "Refused either way, because resuming would skip those runs and "
-              "reuse their reports. Re-run with --fresh to discard this "
-              "collection and start over, or move the directory aside to keep "
-              "it.")
-    if fresh and done:
-        print(f"  [fresh] discarding {len(done)} journal record(s) and their "
-              f"reports", flush=True)
-        done = {}
-        journal.unlink()
-        for p in reports_dir.glob("*.json"):
-            p.unlink()
-
+              "reuse their reports. Re-run with --fresh to preserve this "
+              "collection under .superseded.* and start over.")
     # THE REPORTS DIRECTORY IS RECONCILED WITH THE JOURNAL, and this is not
     # housekeeping. `work/` is emptied per run (one_run), but `reports/` never
     # was, so a report written by an EARLIER collection survived into the next
@@ -787,7 +869,6 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
               f"{journal.name}: " + ", ".join(p.stem for p in orphans[:8])
               + (" ..." if len(orphans) > 8 else ""), flush=True)
 
-    pkind = base.primary_contract_kind(flat, primary)
     runs = []
 
     def record(rec):
@@ -822,7 +903,8 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                              esbmc_cmd(solast, flat,
                                        None if pkind == "library" else primary,
                                        None, goals, sflags, max_tx,
-                                       unwind=unwind),
+                                       unwind=unwind,
+                                       probe_witnesses=probe_witnesses),
                              timeout, out_dir / "work" / tag)
             record(rec)
             if d is not None:
@@ -992,7 +1074,8 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # what it always was.
             cmd = esbmc_cmd(solast, flat, primary, focus_arg, goals, sflags,
                             max_tx, fname if focus_with else None,
-                            unwind=unwind)
+                            unwind=unwind,
+                            probe_witnesses=probe_witnesses)
             rec, d = one_run(tag, cmd, timeout, out_dir / "work" / tag)
             rec["contract"], rec["function"], rec["kind"] = cname, fname, ckind
             record(rec)
@@ -1000,10 +1083,15 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
                 (reports_dir / f"{tag}.json").write_text(json.dumps(d))
 
     index = {
+        "schema": COLLECTION_SCHEMA,
         "benchmark": bench_key,
         "project": project,
         "primary": {"name": primary, "kind": pkind},
         "flatInput": str(flat),
+        "flatInputIdentity": file_identity(flat),
+        "astInput": str(solast),
+        "astInputIdentity": file_identity(solast),
+        "esbmcIdentity": file_identity(ESBMC),
         "config": {
             "mode": "whole" if whole else "per-method",
             # THE WIDTH AXIS AS A NAME, beside the two values it is computed
@@ -1046,6 +1134,7 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
             # paths and the two cells answer different questions.
             "instrumentOnlyUnit": bool(focus_with),
             "pathCovMaxGoals": goals,
+            "probeWitnesses": probe_witnesses,
             "memlimit": MEMLIMIT,
             # Written into the index so no later table can quote a row without
             # the encoder it was produced with. A benchmark whose runs needed a
@@ -1069,6 +1158,7 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
 
 
 def main():
+    global MEMLIMIT
     ap = argparse.ArgumentParser()
     ap.add_argument("bench", nargs="?")
     ap.add_argument("--list", action="store_true")
@@ -1080,15 +1170,22 @@ def main():
                     help="appended to the output directory name; two "
                          "configurations must never share one directory")
     ap.add_argument("--fresh", action="store_true",
-                    help="discard this benchmark's journal and reports and "
-                         "collect from scratch. Required when the binary "
-                         "changed since the journal was written; without it "
-                         "the resume path would reuse the old build's reports")
+                    help="move this collection aside under a unique "
+                         ".superseded.* name, then collect from scratch. "
+                         "Required after a binary/configuration change; never "
+                         "silently implied and never deletes prior evidence")
     ap.add_argument("--solver-flags", default="",
                     help="space-separated ESBMC solver/encoder flags, e.g. "
                          "'--z3 --tuple-node-flattener'. Overrides the "
                          "per-benchmark ENCODER_EXCEPTIONS table; whichever "
                          "applies is printed and recorded in index.json")
+    ap.add_argument("--memlimit-gib", type=int, default=8, metavar="N",
+                    help="per ESBMC process. The official POC runner passes 8 "
+                         "explicitly; recorded in index.json.")
+    ap.add_argument("--probe-witnesses", type=int, default=0, metavar="N",
+                    help="request up to N witnesses per path. Recorded in the "
+                         "collection manifest so stage 2 can safely reuse the "
+                         "report instead of enumerating the same unit again.")
     ap.add_argument("--scope", choices=("single", "set", "whole"),
                     default="single",
                     help="WIDTH axis, i.e. the ALPHABET of the call sequence: "
@@ -1170,6 +1267,11 @@ def main():
                          "for a later transaction to call. Requires "
                          "--out-suffix.")
     a = ap.parse_args()
+    if a.memlimit_gib <= 0:
+        sys.exit("--memlimit-gib must be positive")
+    if a.probe_witnesses < 0:
+        sys.exit("--probe-witnesses must be non-negative")
+    MEMLIMIT = f"{a.memlimit_gib}g"
     if a.list or not (a.bench or a.sol):
         for k in base.BENCHES:
             print(k)
@@ -1261,7 +1363,7 @@ def main():
 
     idx = collect(a.bench, scope == "whole", a.timeout, a.goals, a.out_suffix,
                   a.solver_flags.split(), a.fresh, a.max_tx, focus_with,
-                  scope, adhoc, only, a.unwind)
+                  scope, adhoc, only, a.unwind, a.probe_witnesses)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "

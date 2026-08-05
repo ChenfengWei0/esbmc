@@ -320,25 +320,22 @@ def test_env_value_pin_disagreement_refuses():
     return bad
 
 
-def test_uncomparable_env_quantity_is_disclosed_not_ignored():
-    """`block.timestamp == 42` is neither checkable nor silently fine."""
+def test_uncomparable_env_quantity_refuses_emission():
+    """`block.timestamp == 42` cannot produce a test outside its proof slice."""
     em, case = make_case()
     notes = []
-    put, stats = build_put(
+    put, _stats = build_put(
         "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
                 "block.timestamp": (42, 42)},
         holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
         ladder_rows=LADDER, notes=notes)
     bad = 0
-    bad += check(put is not None,
-                 "an uncomparable quantity does not block emission")
-    bad += check(any("block.timestamp == 42 is NOT CHECKED" in s
-                     for s in (stats or {}).get("env_unchecked", [])),
-                 f"it is disclosed: {(stats or {}).get('env_unchecked')}")
-    bad += check("environment NOT CHECKED: block.timestamp == 42"
-                 in "\n".join(put or []),
-                 "and the disclosure is ON the emitted test, not only in stats")
+    bad += check(put is None,
+                 "an environment slice the emitter cannot establish REFUSES")
+    bad += check(any("block.timestamp is certified at 42" in note
+                     and "cannot establish" in note for note in notes),
+                 f"the refusal names the unsupported slice: {notes}")
     return bad
 
 
@@ -920,15 +917,29 @@ def test_a_ladder_derived_width_is_NOT_flagged():
     measured source and the warning must be ABSENT. A flag that fires on every
     row says nothing -- the always-true reader this project has already been
     bitten by."""
-    text, _notes = _deriv_put({"probe_ladder": True, "probes": 8})
+    text, _notes = _deriv_put({"geometric_bracket": True,
+                               "probe_ladder": True, "probes": 8})
     bad = 0
     bad += check("WIDTH PROVENANCE" in text,
                  "the provenance block is still printed")
     bad += check("NO LADDER AND NO SUBTRACTION RAN" not in text,
                  "and the probe-only warning is ABSENT")
     bad += check("Width sources that ran" in text
-                 and "assertion ladder" in text,
+                 and "stage-2 geometric ladder" in text,
                  "the measured source is named")
+    return bad
+
+
+def test_probes_do_NOT_claim_a_ladder_when_the_bracket_was_skipped():
+    """The historical false-positive shape: every row records probes=8, even
+    when --skip-bracket prevented the geometric ladder from running."""
+    text, _notes = _deriv_put({"skip_bracket": True, "probes": 8,
+                               "level0": True})
+    bad = 0
+    bad += check("NO LADDER AND NO SUBTRACTION RAN" in text,
+                 "a refine probe count is not labelled as a boundary ladder")
+    bad += check("stage-2 geometric ladder" not in text,
+                 "the width source line does not invent a skipped mechanism")
     return bad
 
 
@@ -2696,18 +2707,12 @@ def test_a_width_one_env_coordinate_emits_at_the_certified_value():
     return bad
 
 
-def test_msg_value_is_still_CHECKED_and_still_refuses():
-    """THE OTHER HALF OF THE GATE MUST NOT HAVE MOVED.
+def test_msg_value_without_a_value_option_is_still_CHECKED_and_refuses():
+    """The lifting mechanism must not invent a value-bearing call.
 
-    `msg.sender` is now established; `msg.value` is not, and the reason is not
-    tidiness -- it is written as a `{value: ...}` option on the call, and
-    changing it changes whether a nonpayable unit reverts, i.e. it would move
-    the R0 exit-kind expectation the preamble exists to make hold.
-
-    Without this test, a later change that established every environment
-    quantity "for symmetry" would pass the whole suite. This is the check that
-    a relaxation of one branch did not silently become a relaxation of all of
-    them.
+    This ordinary member call has no `{value: ...}` option. A pin at seven is
+    therefore outside the emitted call's value-zero execution and still fails
+    closed.
     """
     em, case = make_case()
     notes = []
@@ -3183,10 +3188,15 @@ def test_the_low_level_value_gate_emits_a_PUT():
                  "past the signature string")
     bad += check("\"setDistributor(address)\"" in txt,
                  "and the signature string itself is untouched")
+    bad += check("uint256 p_msg_value" in txt,
+                 "msg.value is a FUZZ PARAMETER of the PUT")
+    bad += check(f"p_msg_value = bound(p_msg_value, 1, {UINT256_MAX});" in txt,
+                 "and is bounded to the complete certified interval")
     # THE STATEMENT MUST NOT BE SPLIT. Everything the PUT adds goes in front of
     # its first line, never between the two.
     code = [ln for ln in put if not ln.strip().startswith("//")]
-    i = [k for k, ln in enumerate(code) if "{value: 1}(" in ln]
+    i = [k for k, ln in enumerate(code)
+         if "{value: p_msg_value}(" in ln]
     bad += check(len(i) == 1 and "abi.encodeWithSignature" in code[i[0] + 1],
                  "the two lines of the statement are still adjacent")
     bad += check(any("assertFalse(ok5," in ln for ln in put),
@@ -3194,7 +3204,8 @@ def test_the_low_level_value_gate_emits_a_PUT():
     bad += check(any(ln.strip() == "vm.prank(p_msg_sender);" for ln in put),
                  "the established prank sits above the statement, not inside "
                  "it")
-    bad += check(any(ln.strip() == "vm.deal(p_msg_sender, 1);" for ln in put),
+    bad += check(any(ln.strip() ==
+                     "vm.deal(p_msg_sender, p_msg_value);" for ln in put),
                  "and the chosen sender is FUNDED, or the call fails for lack "
                  "of funds and assertFalse passes for the wrong reason")
     return bad
@@ -3207,9 +3218,9 @@ def test_the_funding_line_precedes_the_prank():
     put, _stats, _n = _value_gate_put({"msg.value": (1, UINT256_MAX)})
     code = [ln.strip() for ln in (put or []) if not ln.strip().startswith("//")]
     bad = 0
-    if "vm.deal(p_msg_sender, 1);" not in code:
+    if "vm.deal(p_msg_sender, p_msg_value);" not in code:
         return check(False, "the funding line is present")
-    bad += check(code.index("vm.deal(p_msg_sender, 1);")
+    bad += check(code.index("vm.deal(p_msg_sender, p_msg_value);")
                  < code.index("vm.prank(p_msg_sender);"),
                  "the deal comes before the prank")
     return bad
@@ -3273,8 +3284,8 @@ def main():
               test_env_agreement_emits_when_the_preamble_matches,
               test_env_sender_disagreement_is_ESTABLISHED_not_refused,
               test_env_value_pin_disagreement_refuses,
-              test_msg_value_is_still_CHECKED_and_still_refuses,
-              test_uncomparable_env_quantity_is_disclosed_not_ignored,
+              test_msg_value_without_a_value_option_is_still_CHECKED_and_refuses,
+              test_uncomparable_env_quantity_refuses_emission,
               test_return_rung_is_bound_and_asserted,
               test_a_retlive_that_HOLDS_kills_every_return_rung,
               test_a_bool_return_uses_assertTrue_not_a_cast,
@@ -3297,6 +3308,7 @@ def main():
               test_a_slot_pin_keyed_by_msg_sender_is_REFUSED,
               test_a_probe_only_width_is_FLAGGED_on_the_test,
               test_a_ladder_derived_width_is_NOT_flagged,
+              test_probes_do_NOT_claim_a_ladder_when_the_bracket_was_skipped,
               test_no_derivation_recorded_prints_no_provenance_block,
               test_an_entirely_holed_coordinate_REFUSES_the_put,
               test_an_INCREASING_variable_proposes_an_inc_delta_named_by_the_parameter,

@@ -604,6 +604,19 @@ def main():
     ap.add_argument("--out", default=os.path.join(ESBMC_ROOT, "notes",
                                                   "coverage", "certify",
                                                   "results.jsonl"))
+    ap.add_argument("--recipe-version", default="unversioned",
+                    help="identity of the caller's complete method recipe. "
+                         "Recorded on every row; this label does not set any "
+                         "option by itself, so the concrete fields below remain "
+                         "the authority for reproduction.")
+    ap.add_argument("--scope", default="focus",
+                    help="driver dispatcher alphabet: focus, whole, or a "
+                         "comma-separated function set. Default focus preserves "
+                         "the historical gate-cell invocation.")
+    ap.add_argument("--max-tx", type=int, default=1,
+                    help="driver transaction-sequence length. This travels "
+                         "with --scope; changing either selects a different "
+                         "cell and is recorded on every row.")
     ap.add_argument("--timeout", type=int, default=600,
                     help="per DRIVER invocation, i.e. one unit's WHOLE loop -- "
                          "enumeration, level 0, the geometric bracket, every "
@@ -658,6 +671,14 @@ def main():
                     help="HALF the driver's own default of 16, and unargued. "
                          "Resolution per refine round divides by (probes+1), so "
                          "this compounds with --refine-rounds above.")
+    ap.add_argument("--claim-budget", type=int, default=0, metavar="N",
+                    help="passed to the driver: cap only the candidate VALUES "
+                         "that Python emits for a geometric-bracket round. "
+                         "DEFAULT 0 = uncapped. This does NOT cap a refine "
+                         "round: ESBMC lays those probes from lo/hi and "
+                         "--probes is the available control. Recorded on every "
+                         "row so a thinned bracket cannot be compared with an "
+                         "uncapped one as if they were the same measurement.")
     ap.add_argument("--skip-bracket", action="store_true",
                     help="the geometric bracket is the binding cost on real "
                          "input -- 258 probes per coordinate per direction. "
@@ -1025,6 +1046,18 @@ def main():
                          "state._balances[msg.sender] (driver --slot-coord). "
                          "Repeatable, and honoured independently of the "
                          "--slot-coords budget.")
+    ap.add_argument("--state-struct-fields", action="store_true",
+                    help="passed to the driver: decompose struct-valued entry "
+                         "state into scalar leaves present in the report. "
+                         "Recorded on every row because it changes the "
+                         "coordinate set and therefore the certified slice.")
+    ap.add_argument("--enumeration-index", default=None,
+                    help="versioned stage-1 index.json for this one-unit run. "
+                         "Paired with --enumeration-report and forwarded to "
+                         "the driver for fail-closed compatibility checks.")
+    ap.add_argument("--enumeration-report", default=None,
+                    help="stage-1 unit report to reuse instead of paying for a "
+                         "second path-enumeration ESBMC process.")
     ap.add_argument("--pin-extcall", action="store_true",
                     help="passed to the driver: fix every quantity the HARNESS "
                          "chose inside the execution -- an external call's "
@@ -1189,6 +1222,10 @@ def main():
               "'ladder' would be a single point wearing the name of a "
               "bracket.")
         return 1
+    if bool(args.enumeration_index) != bool(args.enumeration_report):
+        print("[sweep] --enumeration-index and --enumeration-report must be "
+              "passed together")
+        return 1
 
     # ---- THE ARM OWNS ITS SCRATCH DIRECTORY, DERIVED FROM ITS --out ----
     #
@@ -1216,7 +1253,14 @@ def main():
     # that one decision govern the scratch tree too means an arm cannot be
     # given its own file and still share a directory.
     arm_dir = os.path.splitext(os.path.basename(args.out))[0]
-    os.makedirs(os.path.join(args.workdir, arm_dir), exist_ok=True)
+    arm_root = os.path.join(args.workdir, arm_dir)
+    if args.redo and os.path.isdir(arm_root):
+        keep = f"{arm_root}.superseded.{time.time_ns()}"
+        os.replace(arm_root, keep)
+        print(f"[sweep] --redo: moved the previous scratch tree to {keep}; "
+              "a new stage-1 report changes the workdir stamp and may not "
+              "overwrite old query artefacts")
+    os.makedirs(arm_root, exist_ok=True)
 
     # THE MEMORY BOUND IS COMPUTED AND PRINTED BEFORE ANY RUN, and a failure to
     # fit is a refusal. Printed even at --jobs 1, so the number a sweep ran
@@ -1233,6 +1277,7 @@ def main():
           + ". Every esbmc run carries the limit, which is what makes running "
             "more than one of them an arithmetic question rather than a guess.",
           flush=True)
+    print(f"[sweep] recipe {args.recipe_version}", flush=True)
     write_lock = threading.Lock()
 
     ident = binary_identity()
@@ -1245,7 +1290,7 @@ def main():
     # in two places. The previous file is moved aside rather than deleted: it
     # is a measurement, just one of a build that no longer exists.
     if args.redo and os.path.exists(args.out):
-        keep = args.out + ".superseded"
+        keep = f"{args.out}.superseded.{time.time_ns()}"
         os.replace(args.out, keep)
         print(f"[sweep] --redo: moved the previous results to {keep} rather "
               f"than appending beside them; two records with one "
@@ -1387,8 +1432,10 @@ def main():
                    "--esbmc", ESBMC,
                    "--sol", os.path.join(INPUTS, sol),
                    "--ast", os.path.join(INPUTS, sol + ".solast"),
-                   "--contract", contract, "--unit", unit, "--focus",
+                   "--contract", contract, "--unit", unit,
+                   "--scope", args.scope, "--max-tx", str(args.max_tx),
                    "--probes", str(args.probes),
+                   "--claim-budget", str(args.claim_budget),
                    "--refine-rounds", str(args.refine_rounds),
                    "--shrink-rounds", str(args.shrink_rounds),
                    # ---- THE PER-ESBMC-RUN BUDGET, NOW `--run-timeout` ----
@@ -1462,6 +1509,11 @@ def main():
             # record. The defaults equal the driver's, so an unflagged sweep is
             # byte-identical to every recorded one.
             cmd += ["--slot-coords", str(args.slot_coords)]
+            if args.state_struct_fields:
+                cmd.append("--state-struct-fields")
+            if args.enumeration_index:
+                cmd += ["--enumeration-index", args.enumeration_index,
+                        "--enumeration-report", args.enumeration_report]
             for sc in args.slot_coord:
                 cmd += ["--slot-coord", sc]
             # Passed only when asked for, unlike --max-holes above, and the
@@ -1529,12 +1581,21 @@ def main():
                         "bucket": bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
                         "memlimit_gib": memlimit, "jobs": args.jobs,
+                        "recipe_version": args.recipe_version,
+                        "scope": args.scope, "max_tx": args.max_tx,
                         # THE CONFIGURATION TRAVELS WITH THE RECORD. Two units
                         # measured under different ladders are not comparable,
                         # and this project has already paid once for a ratio
                         # whose numerator and denominator came from runs that
                         # shared only a benchmark name.
                         "skip_bracket": bool(args.skip_bracket),
+                        # Explicit width mechanisms. `probes` also controls a
+                        # refine round and therefore cannot prove that the
+                        # geometric bracket ran. Likewise `cut_policy` governs
+                        # certification retreat; it is not sibling subtraction.
+                        "geometric_bracket": not bool(args.skip_bracket),
+                        "sibling_subtraction": bool(
+                            (rec.get("witnessed") or 0) > 1),
                         # WHO CHOSE THE COORDINATE SET. A region measured with
                         # the sender promoted and the owner pinned BY THE
                         # DRIVER is the same measurement as one where a human
@@ -1603,6 +1664,9 @@ def main():
                         # the same reason env_coord: null is.
                         "slot_coords": args.slot_coords,
                         "slot_coord": list(args.slot_coord),
+                        "state_struct_fields": bool(args.state_struct_fields),
+                        "enumeration_index": args.enumeration_index,
+                        "enumeration_report": args.enumeration_report,
                         # WHAT WE ASKED TO PIN, which is NOT the same field as
                         # `pins` -- that one is the driver's own report of what
                         # it ENDED UP pinning (auto msg.value, constants it
@@ -1629,6 +1693,7 @@ def main():
                         # an old row's bound unknown rather than default.
                         "esbmc_args": list(args.esbmc_arg),
                         "probes": args.probes,
+                        "claim_budget": args.claim_budget,
                         "refine_rounds": args.refine_rounds,
                         "shrink_rounds": args.shrink_rounds,
                         "unit_timeout_s": args.timeout,
