@@ -1918,3 +1918,77 @@ and `6` static `NOT_CERTIFIED` attributions:
 This matches the expected ground truth above. The first two wrapper invocations
 before the legacy fix did not start ESBMC: one refused stale resume data, the
 next wrote a `DRIVER-REFUSED` row at the enumerate-import check.
+
+## 2026-08-06 Aqua gate-cell handoff
+
+User retry budget is now official per PoC: attempt 1 = 60s/8GiB, attempt 2 =
+120s/8GiB, attempt 3 = 600s/10GiB. Fuzz may be used anywhere as a cheap
+refutation channel, including region/probe sanity, but never as proof.
+
+Ground truth read from the Aqua source and solc AST:
+
+- `push(maker, app, strategyHash, token, amount)` reads
+  `_balances[maker][app][strategyHash][token]`, then requires
+  `tokensCount > 0 && tokensCount != _DOCKED`, then stores the updated amount
+  and calls `IERC20(token).safeTransferFrom(msg.sender, maker, amount)`.
+- `safeBalances(maker, app, strategyHash, token0, token1)` reads two slots:
+  `_balances[maker][app][strategyHash][token0]` and
+  `_balances[maker][app][strategyHash][token1]`, and has the same active-token
+  checks against `_DOCKED`.
+- Both gate-cell Stage 1 reports witness two paths: `enc=2` is the ABI
+  nonpayable reject (`msg.value != 0`), and `enc=6` is the body path with
+  `msg.value == 0` reaching the inactive/docked balance guard.
+
+Driver fixes implemented from these runs:
+
+- Immutable/constant state coordinates, e.g. `state._DOCKED`, remain semantic
+  pins in the printed/report region but are omitted from ESBMC query pins.
+  They are not runtime inputs a generated PUT can set, and proving without the
+  query assumption is stronger than asking ESBMC to resolve an unresolvable
+  coordinate.
+- Structural decision regions are now partially pre-certified. If one path
+  has a simple source/ABI decision (`enc=2: msg.value != 0`) and a sibling path
+  needs heavy region search, the simple path is removed from ladder/refine so
+  the hard sibling cannot hide a usable certified gate.
+- `unit_mapping_slot_accesses` reads concrete `IndexAccess` chains from the
+  target's solc-resolved callable closure. `propose_slot_coords` spends mapping
+  slot budget on those source slots first and suppresses the same mapping's
+  guessed same-type cross product. This replaced Aqua's old wrong candidates
+  such as `_balances[maker][maker][strategyHash][app]` with the real source
+  slots above.
+- Enumeration import now accepts raising Stage 2 memlimit over a completed
+  Stage 1 report's memlimit, while still refusing a lower requested memlimit or
+  any other identity mismatch. This is needed by attempt 3: legacy Aqua Stage 1
+  was collected at 8GiB, while official attempt 3 certifies at 10GiB.
+
+Actual Aqua POC spend:
+
+- `aqua_Aqua__Aqua__push`
+  - attempt 1, 60s/8GiB: no certification; `state._DOCKED` was wrongly sent as
+    a query pin and rejected as unresolvable.
+  - attempt 2, 120s/8GiB: after query-pin/partial-structural fix, result
+    `1 certified / 1 not / 2 witnessed`. `enc=2` certified structurally;
+    `enc=6` died in linear-refine with ESBMC `SIGABRT`.
+  - attempt 3, 600s/10GiB: first wrapper call was `DRIVER-REFUSED` at 0s
+    because Stage 1 said 8GiB and Stage 2 asked 10GiB; no ESBMC process was
+    started. After the memlimit compatibility fix, the effective attempt ran
+    12.4s and still produced `1 certified / 1 not / 2 witnessed`. The source
+    slot was present, but `enc=6` still made the linear-refine round abort.
+- `aqua_Aqua__Aqua__safeBalances`
+  - attempt 1, 60s/8GiB: same query-pin refusal shape as push.
+  - attempt 2, 120s/8GiB: `1 certified / 1 not / 2 witnessed`; `enc=2`
+    structurally certified, `enc=6` hit ESBMC `SIGABRT`.
+  - attempt 3, 600s/10GiB: ran 10.1s after source-slot suppression. Free
+    coordinates reduced to the semantically expected nine:
+    `app`, `maker`, `msg.value`, token0/token1, and the four real balance
+    leaf slots. Result remains `1 certified / 1 not / 2 witnessed`; `enc=6`
+    still aborts during linear-refine.
+
+Current conclusion: Aqua's remaining blocker is no longer wrong slot selection
+or immutable pinning. It is an ESBMC/tool abort reached by the linear-refine
+probe batch for the body path. The next useful investigation is to preserve or
+reconstruct the failing ESBMC query around `enc=6` and classify whether the
+abort is in internal modeling of mapping-slot coordinates, inline assembly
+`BalanceLib.load/store`, or the path-cov certification instrumentation. Do not
+spend more Aqua POC retries unless the next run is explicitly a new arm or a
+manual diagnostic outside the official attempt budget.

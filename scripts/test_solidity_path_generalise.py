@@ -61,6 +61,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       unresolvable_coords,
                                       mapping_state_vars,
                                       unit_params,
+                                      unit_mapping_slot_accesses,
                                       unit_state_dependencies,
                                       propose_slot_coords,
                                       empty_enumeration_reason,
@@ -1821,6 +1822,84 @@ check("slot-params-select-same-arity-overload-by-node-id",
       [("who", "address")])
 os.unlink(_p5)
 
+_SLOT_ACCESS = {
+    "nodeType": "SourceUnit",
+    "nodes": [{
+        "nodeType": "ContractDefinition", "name": "Aqua", "id": 1,
+        "linearizedBaseContracts": [1],
+        "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10,
+             "name": "_balances", "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "push",
+             "parameters": {"parameters": [
+                 {"name": "maker", "typeDescriptions": {"typeString": "address"}},
+                 {"name": "app", "typeDescriptions": {"typeString": "address"}},
+                 {"name": "strategyHash",
+                  "typeDescriptions": {"typeString": "bytes32"}},
+                 {"name": "token", "typeDescriptions": {"typeString": "address"}}]},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "ExpressionStatement",
+                 "expression": {
+                     "nodeType": "MemberAccess", "memberName": "load",
+                     "expression": {
+                         "nodeType": "IndexAccess", "src": "40:1:0",
+                         "baseExpression": {
+                             "nodeType": "IndexAccess",
+                             "baseExpression": {
+                                 "nodeType": "IndexAccess",
+                                 "baseExpression": {
+                                     "nodeType": "IndexAccess",
+                                     "baseExpression": {
+                                         "nodeType": "Identifier",
+                                         "name": "_balances",
+                                         "referencedDeclaration": 10},
+                                     "indexExpression": {
+                                         "nodeType": "Identifier",
+                                         "name": "maker"}},
+                                 "indexExpression": {
+                                     "nodeType": "Identifier",
+                                     "name": "app"}},
+                             "indexExpression": {
+                                 "nodeType": "Identifier",
+                                 "name": "strategyHash"}},
+                         "indexExpression": {
+                             "nodeType": "Identifier",
+                             "name": "token"}}}}]}}
+        ]
+    }]
+}
+_fd6, _p6 = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd6, "w") as _f6:
+    json.dump(_SLOT_ACCESS, _f6)
+_slot_accesses, _slot_access_evidence = unit_mapping_slot_accesses(
+    _p6, "Aqua", "push", declaration_id=20)
+check("slot-access-walk-preserves-the-source-key-chain",
+      _slot_accesses, [("_balances", ("maker", "app", "strategyHash", "token"))])
+check("slot-access-evidence-names-the-source-slot",
+      "state._balances[maker][app][strategyHash][token]"
+      in _slot_access_evidence[0], True)
+_aqua_slots, _aqua_skipped = propose_slot_coords(
+    {"_balances": (("address", "address", "bytes32", "address"),
+                   "struct Balance", [".amount", ".tokensCount"])},
+    [("maker", "address"), ("app", "address"),
+     ("strategyHash", "bytes32"), ("token", "address")],
+    4, ["_balances"], _slot_accesses)
+check("slot-source-accesses-spend-the-budget-before-cross-products",
+      _aqua_slots[:2],
+      ["state._balances[maker][app][strategyHash][token].amount",
+       "state._balances[maker][app][strategyHash][token].tokensCount"])
+check("slot-source-access-deduplicates-the-fallback-cross-product",
+      _aqua_slots.count(
+          "state._balances[maker][app][strategyHash][token].amount"), 1)
+check("slot-source-access-suppresses-guessed-cross-products",
+      _aqua_slots,
+      ["state._balances[maker][app][strategyHash][token].amount",
+       "state._balances[maker][app][strategyHash][token].tokensCount"])
+check("slot-source-access-names-the-suppressed-fallback",
+      any("fallback cross-product suppressed" in s for s in _aqua_skipped),
+      True)
+os.unlink(_p6)
+
 _setdist_ast = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "notes", "coverage",
     "poc_units", "farming__Distributor__setDistributor", "inputs",
@@ -2424,6 +2503,24 @@ with tempfile.TemporaryDirectory() as _import_dir:
     try:
         validate_enumeration_import(
             _index_path, _report, _binary, _source, _ast, "C", "f",
+            "focus", 1, "10g", 8, [])
+        _raised_memlimit_import = True
+    except SystemExit:
+        _raised_memlimit_import = False
+    check("stage1-report-is-reusable-with-a-larger-stage2-memlimit",
+          _raised_memlimit_import, True)
+    try:
+        validate_enumeration_import(
+            _index_path, _report, _binary, _source, _ast, "C", "f",
+            "focus", 1, "7g", 8, [])
+        _lower_memlimit_refused = False
+    except SystemExit:
+        _lower_memlimit_refused = True
+    check("stage1-report-with-a-larger-memlimit-than-stage2-is-refused",
+          _lower_memlimit_refused, True)
+    try:
+        validate_enumeration_import(
+            _index_path, _report, _binary, _source, _ast, "C", "f",
             "focus", 2, "8g", 8, [])
         _mismatched_import_refused = False
     except SystemExit:
@@ -2474,6 +2571,15 @@ with tempfile.TemporaryDirectory() as _import_dir:
         _legacy_import = False
     check("legacy-stage1-report-is-reusable-without-probe-provenance",
           _legacy_import, True)
+    try:
+        validate_enumeration_import(
+            _index_path, _report, _binary, _source, _ast, "C", "f",
+            "focus", 1, "10g", 8, [])
+        _legacy_raised_memlimit_import = True
+    except SystemExit:
+        _legacy_raised_memlimit_import = False
+    check("legacy-stage1-report-is-reusable-with-a-larger-stage2-memlimit",
+          _legacy_raised_memlimit_import, True)
     try:
         validate_enumeration_import(
             _index_path, _report, _binary, _source, _ast, "C", "f",

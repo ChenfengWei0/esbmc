@@ -70,7 +70,7 @@ from solidity_path_put import (ESTABLISHABLE_ENV_COORDS,  # noqa: E402,F401
                                check_esbmc_args)
 from solidity_ast_dependencies import (  # noqa: E402,F401
     SLOT_DEPENDENCY_POLICY, path_function_declaration_id,
-    unit_state_dependencies)
+    unit_mapping_slot_accesses, unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
 ADDRESS_MAX = (1 << 160) - 1
@@ -1478,7 +1478,7 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
     return found[-1] if found else []
 
 
-def propose_slot_coords(maps, params, limit, dependencies=None):
+def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=None):
     """Slot coordinate names to add, plus a line per candidate NOT added.
 
     A slot is proposed only where the KEY has a name the query can express and
@@ -1495,6 +1495,48 @@ def propose_slot_coords(maps, params, limit, dependencies=None):
     is named, never dropped silently.
     """
     cand, skipped = [], []
+    param_types = dict(params)
+
+    def spec_parts(spec):
+        kts = spec[0]
+        # A one-level scalar mapping still arrives as the plain 2-tuple, so
+        # both shapes are read here rather than forcing every caller to change.
+        if isinstance(kts, str):
+            kts = (kts,)
+        tails = list(spec[2]) if len(spec) > 2 else [""]
+        return kts, tails
+
+    def key_matches(coord, key_type):
+        if coord == "msg.sender":
+            return key_type == "address"
+        return param_types.get(coord) == key_type
+
+    def push_slot(name, keys, tails):
+        base = f"state.{name}" + "".join(f"[{k}]" for k in keys)
+        for tail in tails:
+            coord = base + tail
+            if coord not in cand:
+                cand.append(coord)
+
+    def accept_source_slot(name, keys):
+        if name not in maps:
+            return False
+        kts, tails = spec_parts(maps[name])
+        if len(keys) != len(kts):
+            return False
+        for lvl, (key, kt) in enumerate(zip(keys, kts)):
+            if key_matches(key, kt):
+                continue
+            skipped.append(
+                f"state.{name}" + "".join(f"[{k}]" for k in keys) +
+                f" (source slot not proposed: key level {lvl} uses {key}, "
+                f"but the verifier can only express unit parameters of type "
+                f"'{kt}'" + (" or msg.sender" if kt == "address" else "") +
+                ")")
+            return False
+        push_slot(name, keys, tails)
+        return True
+
     if dependencies is None:
         map_order = sorted(maps)
     else:
@@ -1508,14 +1550,25 @@ def propose_slot_coords(maps, params, limit, dependencies=None):
                 "the target, its modifiers, and the transitive callable "
                 "closure contain no solc-resolved reference to this mapping)")
 
+    if slot_accesses:
+        source_seen = []
+        for name, keys in slot_accesses:
+            if dependencies is not None and name not in map_order:
+                continue
+            if accept_source_slot(name, keys) and name not in source_seen:
+                source_seen.append(name)
+        for name in source_seen:
+            if name in map_order:
+                map_order.remove(name)
+                skipped.append(
+                    f"state.{name}[...] fallback cross-product suppressed: "
+                    "solc resolved concrete key chain(s) for this mapping in "
+                    "the target's callable closure, so the budget is spent on "
+                    "source slots before guessed same-type key combinations")
+
     for m in map_order:
         spec = maps[m]
-        kts = spec[0]
-        # A one-level scalar mapping still arrives as the plain 2-tuple, so
-        # both shapes are read here rather than forcing every caller to change.
-        if isinstance(kts, str):
-            kts = (kts,)
-        tails = list(spec[2]) if len(spec) > 2 else [""]
+        kts, tails = spec_parts(spec)
 
         # ---- ONE CANDIDATE KEY SET PER LEVEL ----
         per_level, bad = [], False
@@ -1555,9 +1608,7 @@ def propose_slot_coords(maps, params, limit, dependencies=None):
                 f"{len(combos) * len(tails)} candidate name(s) before the "
                 f"budget. This is a note, not a refusal")
         for combo in combos:
-            base = f"state.{m}" + "".join(f"[{k}]" for k in combo)
-            for t in tails:
-                cand.append(base + t)
+            push_slot(m, combo, tails)
     if limit and len(cand) > limit:
         skipped += [f"{c} (over the --slot-coords budget of {limit})"
                     for c in cand[limit:]]
@@ -3999,6 +4050,28 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
         if actual != expected:
             mismatches.append(f"{name}: report={actual!r}, requested={expected!r}")
 
+    def memlimit_bytes(value):
+        if not isinstance(value, str):
+            return None
+        match = re.fullmatch(r"\s*([0-9]+)\s*([bBkKmMgGtT]?)\s*", value)
+        if not match:
+            return None
+        scale = {
+            "": 1, "b": 1, "k": 1024, "m": 1024**2,
+            "g": 1024**3, "t": 1024**4,
+        }[match.group(2).lower()]
+        return int(match.group(1)) * scale
+
+    def expect_memlimit(name, actual, expected):
+        if actual == expected:
+            return
+        actual_bytes = memlimit_bytes(actual)
+        expected_bytes = memlimit_bytes(expected)
+        if (actual_bytes is not None and expected_bytes is not None
+                and expected_bytes >= actual_bytes):
+            return
+        mismatches.append(f"{name}: report={actual!r}, requested={expected!r}")
+
     if scope_label == "whole":
         collector_scope, focus_with, focus = "whole", [], None
     elif scope_label == "focus":
@@ -4034,7 +4107,7 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
     expect("contract", (index.get("primary") or {}).get("name"), contract)
     expect("unit set", config.get("onlyUnits"), [unit])
     expect("max-tx", config.get("solidityMaxTx"), max_tx)
-    expect("memlimit", config.get("memlimit"), memlimit)
+    expect_memlimit("memlimit", config.get("memlimit"), memlimit)
     expect("solver/ESBMC flags", config.get("solverFlags"), list(esbmc_args))
     expect("scope", config.get("scope"), collector_scope)
     expect("focus-with", config.get("focusWith"), focus_with)
@@ -4077,8 +4150,8 @@ def validate_enumeration_import(index_path, report_path, esbmc, sol, ast,
                    contract)
             expect("command max-tx", _single_option(
                 argv, "--solidity-max-tx"), str(max_tx))
-            expect("command memlimit", _single_option(argv, "--memlimit"),
-                   memlimit)
+            expect_memlimit("command memlimit",
+                            _single_option(argv, "--memlimit"), memlimit)
             expect("command focus", _single_option(argv, "--focus-function"),
                    focus)
             expect("command instrument-only", _single_option(
@@ -5054,12 +5127,14 @@ def main():
                 "never declared; no generated test can set one, so offering it "
                 "as a coordinate is the same defect as offering an immutable")
 
+    nonquery_pins = set()
     unsettable = unsettable_coords(coords, state_mutability(args.ast))
     if unsettable:
         for c in sorted(unsettable):
             v = next((ce[c] for _, _, ce in paths if c in ce), None)
             if v is not None:
                 pins.setdefault(c, v)
+                nonquery_pins.add(c)
         coords = [c for c in coords if c not in unsettable]
         print("[coords] NOT SETTABLE by any generated test, pinned at the "
               "counterexample value instead of generalised: "
@@ -5068,6 +5143,13 @@ def main():
               + ". An immutable is fixed at construction and a constant is in "
                 "the code; neither is an input, so generalising over one asks "
                 "the verifier about inputs no test can produce")
+        if nonquery_pins:
+            print("[coords] ESBMC query pins OMIT immutable/constant "
+                  "coordinate(s): " + ", ".join(sorted(nonquery_pins))
+                  + ". They remain semantic pins in the reported slice, but "
+                    "are not runtime coordinates the verifier must resolve; "
+                    "proving without those assumptions is stronger than "
+                    "proving with them")
     elif args.ast:
         print("[coords] every state coordinate is a MUTABLE state variable "
               "(checked against the AST), so none was excluded")
@@ -5147,9 +5229,13 @@ def main():
         dependencies, dependency_evidence = unit_state_dependencies(
             args.ast, args.contract, args.unit,
             declaration_id=declaration_id)
+        slot_accesses, slot_access_evidence = unit_mapping_slot_accesses(
+            args.ast, args.contract, args.unit,
+            declaration_id=declaration_id)
         proposed, skipped = propose_slot_coords(
             maps, params, args.slot_coords,
-            dependencies=[] if dependencies is None else dependencies)
+            dependencies=[] if dependencies is None else dependencies,
+            slot_accesses=[] if slot_accesses is None else slot_accesses)
         if not args.slot_coords:
             proposed, skipped = [], []
         # An explicit --slot-coord is not rationed and not type-checked here:
@@ -5164,6 +5250,9 @@ def main():
             print(f"[coords] mapping dependency policy "
                   f"{SLOT_DEPENDENCY_POLICY}: "
                   + "; ".join(dependency_evidence))
+        if slot_access_evidence:
+            print("[coords] mapping slot access priority: "
+                  + "; ".join(slot_access_evidence))
         if slot_added:
             print("[coords] MAPPING SLOT(s) proposed from solc's declaration "
                   "(a payload can only offer a slot at a key some "
@@ -5261,6 +5350,9 @@ def main():
     coord_types = dict(unit_params(args.ast, args.contract, args.unit,
                                    declaration_id=declaration_id))
 
+    def query_pins():
+        return {n: v for n, v in pins.items() if n not in nonquery_pins}
+
     pre_failed = (extcall_inseparable_failures(paths, path_extras)
                   if args.static_extcall_inseparable else {})
     if pre_failed:
@@ -5304,6 +5396,33 @@ def main():
         brackets = regions = warned = round_failure = region_holes = None
         structural_regions = None
         structural_region_source = {}
+
+    pre_structural_regions, pre_structural_holes, pre_structural_source = \
+        {}, {}, {}
+    if paths:
+        candidate_structural_regions, candidate_structural_holes, \
+            candidate_structural_source = {}, {}, {}
+        for enc, _depth, ce in paths:
+            got = structural_decision_region(
+                path_decisions.get(enc), ce, pins, coords,
+                coord_types=coord_types, type_ranges={})
+            if got is None:
+                continue
+            box, h, reason = got
+            candidate_structural_regions[enc] = box
+            candidate_structural_holes[enc] = h
+            candidate_structural_source[enc] = reason
+        if (candidate_structural_regions and
+                len(candidate_structural_regions) < len(paths)):
+            pre_structural_regions = candidate_structural_regions
+            pre_structural_holes = candidate_structural_holes
+            pre_structural_source = candidate_structural_source
+            print("[structural] " + ", ".join(
+                f"enc={enc}" for enc in sorted(pre_structural_regions))
+                  + " already has a simple decision product region; removing "
+                    "it from ladder/refine so harder sibling paths cannot hide "
+                    "a certified ABI/source gate")
+            paths = [p for p in paths if p[0] not in pre_structural_regions]
 
     if paths:
         early_structural_regions, _, _ = structural_decision_regions(
@@ -5374,7 +5493,7 @@ def main():
                     "type range, which is what a proposed mapping slot needs")
         (l0_boxes, _, _, _, l0_failure, _, tr_new, unres) = outer_round(
             args.esbmc, args.sol, args.contract, query_unit, paths, l0_coords,
-            pins, args.probes, args.max_tx, args.timeout, cwd,
+            query_pins(), args.probes, args.max_tx, args.timeout, cwd,
             values_by_coord=cand,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
             esbmc_args=args.esbmc_arg) if l0_coords else (
@@ -5520,10 +5639,10 @@ def main():
                 cand2.update(widened)
                 (b2, _, _, _, f2, _, tr2, unres2) = outer_round(
                     args.esbmc, args.sol, args.contract, query_unit, paths,
-                    [c for c in coords if c in cand2], pins, args.probes,
-                    args.max_tx, args.timeout, cwd, values_by_coord=cand2,
-                    ast=args.ast, focus=focus, memlimit=args.memlimit,
-                    esbmc_args=args.esbmc_arg)
+                    [c for c in coords if c in cand2], query_pins(),
+                    args.probes, args.max_tx, args.timeout, cwd,
+                    values_by_coord=cand2, ast=args.ast, focus=focus,
+                    memlimit=args.memlimit, esbmc_args=args.esbmc_arg)
                 type_ranges.update(tr2)
                 unresolvable.update(unres2)
                 if f2:
@@ -5587,7 +5706,7 @@ def main():
                   f"report, not about the paths: it is what a run without "
                   f"--all-witnesses looks like")
         prune, endpoints, kept_pool, notes = known_inside(
-            paths, members, coords, pins, type_ranges)
+            paths, members, coords, query_pins(), type_ranges)
         for n in notes:
             print(n)
         varied = sorted((enc, c, vs)
@@ -5739,7 +5858,7 @@ def main():
             (_, brackets, regions, warned, round_failure, region_holes,
              tr_new, unres) = outer_round(
                 args.esbmc, args.sol, args.contract, query_unit, paths, coords,
-                pins, args.probes, args.max_tx, args.timeout, cwd,
+                query_pins(), args.probes, args.max_tx, args.timeout, cwd,
                 geometric=True, ast=args.ast, focus=focus,
                 memlimit=args.memlimit, values_by_coord=eq_values,
                 extra_values=probe_extra, type_ranges=type_ranges,
@@ -5778,8 +5897,8 @@ def main():
             (_, brackets, regions, warned, round_failure, region_holes,
              tr_new, unres) = outer_round(
                 args.esbmc, args.sol, args.contract, query_unit, paths, coords,
-                pins, args.probes, args.max_tx, args.timeout, cwd, spans=spans,
-                ast=args.ast, focus=focus, memlimit=args.memlimit,
+                query_pins(), args.probes, args.max_tx, args.timeout, cwd,
+                spans=spans, ast=args.ast, focus=focus, memlimit=args.memlimit,
                 values_by_coord=eq_values, extra_values=probe_extra,
                 type_ranges=type_ranges, esbmc_args=args.esbmc_arg)
             type_ranges.update(tr_new)
@@ -5830,6 +5949,15 @@ def main():
     # paths because `pins` is global, so the drop is announced once but affects
     # every path after it.
     dropped_by_certify = set()
+    for enc, box in sorted(pre_structural_regions.items()):
+        key = (enc, 1)
+        ok[key] = dict(box)
+        ok_holes[key] = copy_holes(pre_structural_holes.get(enc) or {})
+        ok_source[key] = "structural-simple-decision"
+        witness_check[enc] = "STRUCTURAL"
+        print(f"[certify enc={enc}] STRUCTURAL simple decision region: "
+              f"{pre_structural_source[enc]}. No ESBMC certification query "
+              "is started for this path.")
     for enc, depth, ce in paths:
         box = regions.get(enc)
         if box is None:
@@ -5994,7 +6122,7 @@ def main():
             for _ in range(args.shrink_rounds):
                 v, nb, wit, punches, unexp, unknown_why = certify(
                     args.esbmc, args.sol, args.contract, query_unit,
-                    enc, depth, box, ce, dict(pins, **xpins), args.max_tx,
+                    enc, depth, box, ce, dict(query_pins(), **xpins), args.max_tx,
                     args.timeout, cwd, ast=args.ast, focus=focus,
                     memlimit=args.memlimit, holes=holes,
                     esbmc_args=args.esbmc_arg,
@@ -6067,7 +6195,7 @@ def main():
                     prev_size = region_size(box, holes)
                     v, nb, wit, punches, unexp, unknown_why = certify(
                         args.esbmc, args.sol, args.contract, query_unit,
-                        enc, depth, box, ce, dict(pins, **xpins), args.max_tx,
+                        enc, depth, box, ce, dict(query_pins(), **xpins), args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
                         memlimit=args.memlimit, holes=holes,
                         # ⛔ THIS RE-QUERY DROPPED --esbmc-arg, and that
@@ -6540,7 +6668,7 @@ def main():
                 else:
                     wv, _wnb, _ww, _wp, _wunexp, wwhy = certify(
                         args.esbmc, args.sol, args.contract, query_unit,
-                        enc, depth, point, ce, dict(pins, **xpins), args.max_tx,
+                        enc, depth, point, ce, dict(query_pins(), **xpins), args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
                         memlimit=args.memlimit, holes={},
                         esbmc_args=args.esbmc_arg, want_property=True)
