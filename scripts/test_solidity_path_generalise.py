@@ -62,7 +62,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       unit_params,
                                       propose_slot_coords,
                                       empty_enumeration_reason,
-                                      brackets_for)
+                                      brackets_for,
+                                      known_inside,
+                                      outward_ladder)
 
 FAILURES = []
 
@@ -1656,6 +1658,56 @@ check("slot-a-mismatched-parameter-is-not-used",
       propose_slot_coords({"_balances": ("address", "uint256")},
                           [("amount", "uint256")], 4)[0],
       ["state._balances[msg.sender]"])
+
+# ---- NESTED AND STRUCT-VALUED STORES -------------------------------------
+#
+# THESE CANNOT PASS WITHOUT THE CHANGE, and that is checked rather than hoped:
+# `propose_slot_coords` used to destructure every entry as `kt, _vt = maps[m]`,
+# so a 3-tuple raised ValueError before a single name was built. There is no
+# reading of the old code under which these produce the expected lists.
+#
+# THE TWO ONE-LEVEL CASES ABOVE ARE THE NEGATIVE CONTROL and must stay
+# BIT-IDENTICAL: widening the nested case while also changing the one-level
+# spelling would silently re-point every slot coordinate already in use, and
+# both outcomes would look like "the new tests pass".
+check("slot-nested-two-level-crosses-the-keys",
+      propose_slot_coords({"m": (("address", "address"), "uint256", [""])},
+                          [("from_", "address")], 8)[0],
+      ["state.m[from_][from_]", "state.m[from_][msg.sender]",
+       "state.m[msg.sender][from_]", "state.m[msg.sender][msg.sender]"])
+
+check("slot-struct-value-names-every-scalar-field",
+      propose_slot_coords({"b": (("uint256",), "struct Bal",
+                                 [".amount", ".tag"])},
+                          [("k", "uint256")], 8)[0],
+      ["state.b[k].amount", "state.b[k].tag"])
+
+# A level with NO candidate key must yield NOTHING rather than a shorter name.
+# A name with fewer keys denotes a whole sub-store, and its rungs would be
+# reported under the name the reader wrote -- the silent-wrong-quantity shape.
+_cn, _sn = propose_slot_coords({"m": (("address", "uint8"), "uint256", [""])},
+                               [("a", "address")], 8)
+check("slot-nested-missing-a-level-proposes-nothing", _cn, [])
+check("slot-nested-missing-a-level-names-which-level",
+      any("key level 1" in s for s in _sn), True)
+
+# ---- AND THE SAME THING READ OFF A REAL solc AST -------------------------
+#
+# The cases above are hand-built dicts, so they test the proposer and nothing
+# else. This one runs the AST walk over the fixture the whole finding rests on.
+# Its presence is CHECKED, not assumed: a missing fixture would otherwise skip
+# silently and the suite would stay green having measured nothing.
+_d44 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                    "notes", "coverage", "poc", "D44_MapStructValue.solast")
+check("d44-fixture-is-present", os.path.exists(_d44), True)
+_d44maps, _d44ref = mapping_state_vars(_d44, "D44_MapStructValue")
+check("d44-one-level-scalar-still-the-plain-two-tuple",
+      _d44maps.get("balScalar"), ("uint256", "uint256"))
+check("d44-struct-valued-mapping-lists-its-scalar-fields",
+      (_d44maps.get("balStruct") or (None, None, None))[2],
+      [".amount", ".tag"])
+check("d44-struct-valued-mapping-is-no-longer-refused",
+      any("balStruct" in r for r in _d44ref), False)
 # ...and on a NON-address key with no matching parameter there is nothing to
 # propose at all, with the reason named rather than an empty list.
 _c, _s = propose_slot_coords({"bal": ("uint256", "uint256")},
@@ -1689,6 +1741,152 @@ os.unlink(_p4)
 # file rather than paraphrased -- the keys were printed off disk first, because
 # this driver has already been wired to a field (`claim["function"]`) that is
 # always empty on complete-path claims.
+
+
+# ---- outward_ladder: rungs beyond the known members, never between them -----
+#
+# THE PROPERTY BEING PINNED IS WHERE THE FIRST RUNG SITS. Anchored at zero the
+# ladder's nearest rungs to a boundary at 21 are 16 and 32; anchored at the
+# known member 20 the first rung IS 21. The second check below is the one that
+# would go red if the anchor were ever moved back to zero.
+check("outward_ladder 10..20 in [0,255]", outward_ladder(10, 20, 0, 255),
+      [0, 2, 6, 8, 9, 10, 20, 21, 22, 24, 28, 36, 52, 84, 148, 255])
+check("outward_ladder first rung is one beyond the top member",
+      outward_ladder(10, 20, 0, 255)[7], 21)
+# NOTHING STRICTLY BETWEEN THE MEMBERS. Those probes are refuted in both
+# directions by the members themselves, before the query is issued.
+check("outward_ladder lays no rung inside the bracket",
+      [v for v in outward_ladder(10, 20, 0, 255) if 10 < v < 20], [])
+# A single-member path still gets a bracket, and it is laid on BOTH sides --
+# one value is not evidence of a point, so the ladder may not behave as if it
+# were.
+check("outward_ladder single member", outward_ladder(0, 0, 0, 255),
+      [0, 1, 2, 4, 8, 16, 32, 64, 128, 255])
+# CLAMPED AT THE TYPE, in both directions: a rung past the type maximum is
+# built as a constant of that type, wraps, and measures a different number.
+check("outward_ladder at both type edges", outward_ladder(0, 255, 0, 255),
+      [0, 255])
+check("outward_ladder stays inside a narrow type",
+      [v for v in outward_ladder(3, 4, 0, 7) if v < 0 or v > 7], [])
+
+# ---- the BUDGET: nearest rungs kept, furthest dropped, anchors never ---------
+#
+# TWO-WAY, because a cap that dropped the NEAREST rungs and one that drops the
+# furthest both shrink the list, and a size check alone cannot tell them apart.
+# So the first check names the values kept and the second names one that must be
+# gone. Uncapped, this ladder is the 16-value list pinned above.
+check("outward_ladder budget keeps the nearest rungs",
+      outward_ladder(10, 20, 0, 255, budget=2), [0, 8, 9, 10, 20, 21, 22, 255])
+check("outward_ladder budget drops the FURTHEST rung",
+      [v for v in outward_ladder(10, 20, 0, 255, budget=2) if v == 148], [])
+# THE ANCHORS AND BOTH TYPE LIMITS SURVIVE ANY BUDGET. Without the limits the
+# coordinate is half-open and the subtraction is blocked outright, so a budget
+# small enough to reach them would break the round it was meant to make cheap.
+check("outward_ladder budget 1 still carries anchors and type limits",
+      outward_ladder(10, 20, 0, 255, budget=1), [0, 9, 10, 20, 21, 255])
+# budget=0 IS THE OLD BEHAVIOUR, byte for byte. Every number recorded before the
+# flag existed has to reproduce under a run that does not pass it.
+check("outward_ladder budget 0 is uncapped",
+      outward_ladder(10, 20, 0, 255, budget=0),
+      outward_ladder(10, 20, 0, 255))
+# THE CASE THAT MOTIVATED IT, at the real width: a uint256 anchored at [0, 1]
+# lays 259 rungs uncapped and 6 at budget 4 -- and the 6 include both anchors
+# and both type limits.
+_U256 = (1 << 256) - 1
+check("outward_ladder uint256 uncapped is 259 rungs",
+      len(outward_ladder(0, 1, 0, _U256)), 259)
+check("outward_ladder uint256 at budget 4",
+      outward_ladder(0, 1, 0, _U256, budget=4), [0, 1, 2, 3, 5, 9, _U256])
+
+# ---- known_inside: the path-labelled point pool -----------------------------
+#
+# EVERY CHECK BELOW HAS BOTH OUTCOMES SOMEWHERE IN THIS BLOCK. A pool that can
+# only ever return "nothing to prune" and one that prunes correctly print the
+# same thing at the call site, so each rule is pinned by a pair: a case where it
+# fires and a case where it must NOT.
+
+_P3 = [(1, 1, {}), (2, 1, {})]
+
+# FIRES. Both paths' members bracket [10, 90] and [20, 80], so the intersection
+# is the open interval (20, 80) and any rung strictly inside it is refuted in
+# BOTH directions on BOTH paths before the query is issued.
+_pr, _end, _kept, _notes = known_inside(
+    _P3,
+    {1: [{"a": 10}, {"a": 90}, {"a": 50}],
+     2: [{"a": 20}, {"a": 80}]},
+    ["a"], {}, {"a": (0, 255)})
+check("known_inside prune", _pr, {"a": (20, 80)})
+# The extremes of EVERY path are kept, plus their neighbours -- the neighbours
+# are the perturbation probe, and the extremes are what stops the bracket
+# widening once the interior is gone.
+check("known_inside endpoints", _end["a"], [9, 10, 11, 19, 20, 21, 79, 80, 81,
+                                            89, 90, 91])
+check("known_inside kept", _kept, {1: {"a": [10, 50, 90]}, 2: {"a": [20, 80]}})
+check("known_inside notes", _notes, [])
+
+# DOES NOT FIRE: disjoint domains. lo = max(10, 80) = 80 and hi = min(20, 90) =
+# 20, so the intersection is empty and NOTHING may be dropped -- the ladder is
+# shared, and a value informative for either path has to be laid.
+_pr2, _end2, _, _ = known_inside(
+    _P3,
+    {1: [{"a": 10}, {"a": 20}], 2: [{"a": 80}, {"a": 90}]},
+    ["a"], {}, {"a": (0, 255)})
+check("known_inside disjoint prunes nothing", _pr2, {})
+check("known_inside disjoint still gives endpoints", _end2["a"],
+      [9, 10, 11, 19, 20, 21, 79, 80, 81, 89, 90, 91])
+
+# DOES NOT FIRE: a path with no member on the coordinate. A proposed mapping
+# slot is exactly this, and dropping a rung on the strength of the OTHER paths
+# would remove a question this one has not answered.
+_pr3, _end3, _, _ = known_inside(
+    _P3,
+    {1: [{"a": 10}, {"a": 90}], 2: [{"b": 1}]},
+    ["a"], {}, {"a": (0, 255)})
+check("known_inside missing coord prunes nothing", _pr3, {})
+check("known_inside missing coord has no endpoints", _end3, {})
+
+# A ONE-VALUE PATH IS NOT A POINT AND MUST NOT BEHAVE LIKE ONE. Path 2 offers a
+# single member, so its own interval is empty and the intersection cannot have
+# an interior -- lo = max(10, 50) = 50, hi = min(90, 50) = 50.
+_pr4, _, _kept4, _ = known_inside(
+    _P3, {1: [{"a": 10}, {"a": 90}], 2: [{"a": 50}]}, ["a"], {},
+    {"a": (0, 255)})
+check("known_inside single-member path prunes nothing", _pr4, {})
+check("known_inside single member is still reported", _kept4[2], {"a": [50]})
+
+# THE PIN FILTER IS A WHOLE-VECTOR TEST. The vector {a: 55, p: 9} walks the path
+# but is NOT in the slice p == 7, so its `a` value may not enter the pool -- and
+# with it gone the two paths no longer bracket a shared interior.
+_pr5, _, _kept5, _notes5 = known_inside(
+    _P3,
+    {1: [{"a": 10, "p": 7}, {"a": 90, "p": 7}],
+     2: [{"a": 20, "p": 7}, {"a": 80, "p": 9}]},
+    ["a"], {"p": 7}, {"a": (0, 255)})
+check("known_inside pin filter drops the vector", _kept5[2], {"a": [20]})
+check("known_inside pin filter changes the prune", _pr5, {})
+check("known_inside pin filter is announced", len(_notes5), 1)
+
+# A VECTOR THAT DOES NOT CARRY THE PINNED NAME IS ALSO OUT. It cannot be shown
+# to be in the slice, and every use downstream treats a pooled value as a KNOWN
+# MEMBER of it.
+_, _, _kept6, _notes6 = known_inside(
+    [(1, 1, {})], {1: [{"a": 10, "p": 7}, {"a": 90}]}, ["a"], {"p": 7}, None)
+check("known_inside drops a vector missing the pin", _kept6[1], {"a": [10]})
+check("known_inside missing-pin is announced", len(_notes6), 1)
+
+# NO TYPE RANGE -> NO NEIGHBOURS. Probing outside the type wraps and measures a
+# different number, so the neighbour is left out rather than guessed; the caller
+# names the coordinates this happened to.
+_, _end7, _, _ = known_inside(
+    _P3, {1: [{"a": 10}, {"a": 90}], 2: [{"a": 20}, {"a": 80}]},
+    ["a"], {}, None)
+check("known_inside no type range gives no neighbours", _end7["a"],
+      [10, 20, 80, 90])
+
+# CLAMPED AT THE TYPE EDGE, on the side that has one only.
+_, _end8, _, _ = known_inside(
+    [(1, 1, {})], {1: [{"a": 0}, {"a": 255}]}, ["a"], {}, {"a": (0, 255)})
+check("known_inside clamps both type edges", _end8["a"], [0, 1, 254, 255])
 
 
 def _report(tmpdir, claims):
@@ -1802,7 +2000,8 @@ check("esbmcarg-no-extra-args-passes", _spg.check_esbmc_args([]), None)
 # paired with the case that must NOT trigger it, because a rule that fires on
 # everything is the always-true-reader shape this project keeps hitting.
 from solidity_path_generalise import (cut_towards, coord_kept,  # noqa: E402
-                                      refutation_response)
+                                      refutation_response,
+                                      violated_properties)
 
 # 1. DIRECTION. "keeping the side of y_c on which x_{pi,c} lies removes y and
 #    keeps x_pi". Both directions, because a rule that only ever cuts upward
@@ -1873,6 +2072,65 @@ check("coord-kept-subtracts-punctures", coord_kept(0, 9, (1, 2, 3)), 7)
 check("coord-kept-ignores-punctures-outside-the-interval",
       coord_kept(0, 9, (1, 2, 99)), 8)
 check("coord-kept-of-an-inverted-interval-is-zero", coord_kept(9, 0, ()), 0)
+
+# ---------------------------------------------------------------------------
+# violated_properties: BOTH directions, because a log reader that returns the
+# same thing on every input is the failure this file exists to stop. One log
+# HAS the block, one has none, and one has two -- and the block is compared
+# CHARACTER FOR CHARACTER, since the whole point of the harvest is that it
+# quotes rather than summarises.
+# ---------------------------------------------------------------------------
+_LOG_WITH_ONE = """Starting Bounded Model Checking
+--path-cov-certify: RESULT: REFUTED
+
+Violated property:
+  file farming.sol line 118 column 9 function deposit
+  arithmetic overflow on add
+  !overflow("+", state._totalSupply, amount)
+
+VERIFICATION FAILED
+
+[run] EXIT 1
+"""
+
+_LOG_WITH_NONE = """Starting Bounded Model Checking
+--path-cov-certify: RESULT: REFUTED
+VERIFICATION FAILED
+
+[run] EXIT 1
+"""
+
+_LOG_WITH_TWO = """Violated property:
+  file a.sol line 1 column 1 function f
+  assertion
+  x != 0
+
+Violated property:
+  file b.sol line 2 column 2 function g
+  division by zero
+  y != 0
+
+VERIFICATION FAILED
+"""
+
+check("violated-one-block-is-quoted-verbatim",
+      violated_properties(_LOG_WITH_ONE),
+      ["Violated property:\n"
+       "  file farming.sol line 118 column 9 function deposit\n"
+       "  arithmetic overflow on add\n"
+       '  !overflow("+", state._totalSupply, amount)'])
+check("violated-no-block-is-an-empty-list-not-a-sentence",
+      violated_properties(_LOG_WITH_NONE), [])
+check("violated-two-blocks-are-kept-apart",
+      len(violated_properties(_LOG_WITH_TWO)), 2)
+check("violated-second-of-two-is-the-second-one",
+      violated_properties(_LOG_WITH_TWO)[1].splitlines()[2].strip(),
+      "division by zero")
+# The reader must not fire on a line that merely CONTAINS the words: the
+# heading is matched whole, so a counterexample step mentioning it stays out.
+check("violated-heading-must-be-the-whole-line",
+      violated_properties("  see Violated property: below\nfoo\n"), [])
+
 
 if FAILURES:
     print("FAILED:")

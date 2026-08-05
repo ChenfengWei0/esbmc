@@ -1993,22 +1993,25 @@ void report_coverage(
           if (ce.extcall_returns.empty())
             // NOT "there were no external calls": say what is actually known.
             //
-            // This list is ALWAYS empty: nothing anywhere writes to
-            // ce.extcall_returns. Below is what stands between the value and
-            // this field, measured on a four-unit contract whose units differ
-            // ONLY in the syntactic shape the call's result arrives in. There
-            // are THREE distinct reasons, not one, and a fix for any single one
-            // leaves the field empty in the other shapes -- which looks exactly
-            // like no fix at all.
+            // Below is what stands between the value and this field, measured
+            // on a four-unit contract whose units differ ONLY in the syntactic
+            // shape the call's result arrives in. There are THREE distinct
+            // reasons, not one, and a fix for any single one leaves the field
+            // empty in the other shapes -- which looks exactly like no fix at
+            // all. ONE of the three is now fixed, so an empty list means less
+            // than it used to and the message below says which cases remain.
             //
-            //   (a) result bound to a named local (`bool ok = c.f();`) and the
-            //       assembly form (`success` assigned inside an approximated
-            //       block): the step DOES reach the harvest and
-            //       get_nondet_symbol DOES resolve it. It is then dropped
-            //       because the classification below has exactly three
-            //       outcomes -- parameter -> inputs, environment -> env,
-            //       otherwise -> dropped_internal -- and a call's return is a
-            //       LOCAL, so it lands in the third. There is no bucket for it.
+            //   (a) FIXED. Result bound to a named local (`bool ok = c.f();`)
+            //       and the assembly form (`success` assigned inside an
+            //       approximated block): the step DOES reach the harvest and
+            //       get_nondet_symbol DOES resolve it. It used to be dropped
+            //       because the classification had exactly three outcomes --
+            //       parameter -> inputs, environment -> env, otherwise ->
+            //       dropped_internal -- and a call's return is a LOCAL, so it
+            //       landed in the third. A fourth bucket now takes it: see the
+            //       `in_fn_scope && !is_param` branch in the classification.
+            //       ⚠ That bucket holds nondet LOCALS in general, which is a
+            //       superset of call returns and is documented as such there.
             //   (b) low-level `(bool ok, ) = a.call("")`: get_nondet_symbol
             //       returns nil, so the step is skipped BEFORE classification.
             //       (This is the mechanism an earlier version of this comment
@@ -2021,13 +2024,22 @@ void report_coverage(
             // (measured: identical on two paths that disagree about it), so
             // they are deliberately not reported here.
             claim_entry["ce_extraction"]["extcall_returns_unavailable_reason"] =
-              "not implemented yet, and for three different reasons depending "
-              "on the syntactic shape the call's result arrives in; this field "
-              "does NOT say which one applies to this claim. (a) bound to a "
-              "named local, or assigned inside an approximated assembly block: "
-              "the value IS harvested and resolved, then dropped because the "
-              "classification has buckets only for parameters and environment "
-              "values and a call's return is a local. (b) low-level "
+              "EMPTY here means shape (b) or (c) below, NOT shape (a): a value "
+              "bound to a named local of the unit under test is now harvested "
+              "into this list, so an empty list no longer covers that case. "
+              "Two "
+              "shapes remain and this field does NOT say which applies. "
+              "⚠ AND A THIRD READING SURVIVES BOTH: the path may simply "
+              "perform "
+              "no external call. An empty list is UNKNOWN, never proof of "
+              "absence. (a) FIXED -- bound to a named local, or assigned "
+              "inside "
+              "an approximated assembly block: the value is resolved and now "
+              "lands in this list rather than being dropped for want of a "
+              "bucket. ⚠ The list holds nondet LOCALS, which is how a call's "
+              "return arrives but is not the same thing: read an entry as 'a "
+              "quantity the harness chose that no test can pass as an "
+              "argument', not as 'the callee returned this'. (b) low-level "
               "`(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so "
               "the step is skipped before classification. (c) used inline, "
               "`if (c.f())`: no named local is assigned, so no trace step "
@@ -2081,15 +2093,63 @@ void report_coverage(
           if (ce.return_value_known)
             claim_entry["return_value"] = ce.return_value;
           else
-            claim_entry["ce_extraction"]["return_value_unavailable_reason"] =
+          {
+            // ---- SAY WHICH OF THE THREE, WHEN THE DECLARATION SETTLES IT ----
+            //
+            // The message below used to list three situations and refuse to
+            // choose, which is honest and, for the commonest one, needlessly
+            // so: whether the unit RETURNS ANYTHING AT ALL is not a property of
+            // the trace, it is in the declaration, and the declaration is in
+            // the symbol table this loop already has.
+            //
+            // WHY IT MATTERS RATHER THAN BEING TIDINESS. On farming/deposit the
+            // six uncertified paths end at the same verdict and the driver's
+            // reason lists the quantities that could separate the witness from
+            // the counterexample. Three of them have now been excluded by
+            // measurement -- the mapping slots, the shrink budget, and the
+            // external-call return -- and `return_value` was still on the list
+            // ONLY because this field would not say (a) from (b) or (c). For a
+            // unit declared to return nothing there is no return value to be
+            // the discriminator, and that has to come out of the tool rather
+            // than out of a reader's inspection of the source.
+            //
+            // ⛔ IT ONLY SPEAKS WHEN IT KNOWS. If the lookup fails the sentence
+            // is the old three-way one, unchanged: an unavailable declaration
+            // is not evidence of a void return, and guessing here would put a
+            // manufactured fact where the caveat used to be.
+            const std::string declared = ce.declared_return;
+            std::string why =
               "no scalar return value was captured on this path. THREE "
-              "different situations produce this and the field does not say "
-              "which: (a) the unit returns nothing; (b) it returns an "
-              "aggregate, tuple or dynamic type, which the instrumenter does "
-              "not materialise because there is no single renderable value; "
-              "(c) this path exits without reaching a RETURN at all, which is "
-              "the normal shape of a revert. An absent value means UNKNOWN, "
-              "never 'this unit returns nothing'";
+              "different situations produce this";
+            if (declared == "none")
+              why +=
+                ", and the DECLARATION settles it: this unit is declared to "
+                "return NOTHING, so it is situation (a) and there is no return "
+                "value on this path for any consumer to be missing. (b) and "
+                "(c) "
+                "below are ruled out for this claim, not merely unlisted";
+            else if (declared == "present")
+              why +=
+                ", and the DECLARATION rules out (a): this unit IS declared to "
+                "return something, so the value is missing rather than absent. "
+                "It is (b) or (c), and this field does not say which";
+            else
+              why +=
+                " and the field does not say which -- the unit's declaration "
+                "could not be looked up here, so not even (a) is settled";
+            why +=
+              ". (a) the unit returns nothing; (b) it returns an aggregate, "
+              "tuple or dynamic type, which the instrumenter does not "
+              "materialise because there is no single renderable value; (c) "
+              "this path exits without reaching a RETURN at all, which is the "
+              "normal shape of a revert. An absent value means UNKNOWN, never "
+              "'this unit returns nothing' -- unless the declaration says so "
+              "above";
+            claim_entry["ce_extraction"]["return_value_unavailable_reason"] =
+              why;
+            claim_entry["ce_extraction"]["declared_return"] =
+              declared.empty() ? "unknown" : declared;
+          }
           // State this path WROTE but whose value is not renderable (mapping /
           // dynamic-array stores). Listed so "absent from final_state" is never
           // read as "unchanged".
@@ -4500,6 +4560,10 @@ smt_convt::resultt bmct::multi_property_check(
           // and a parameter name suppress each other.
           std::map<std::string, std::string> last_env;
           std::set<std::string> input_seen;
+          // FIRST WRITE WINS, its own set, for the same reason `last_env` has
+          // its own map: a local's name may collide with a parameter's and one
+          // shared set would let them suppress each other silently.
+          std::set<std::string> nondet_local_seen;
           // Scope prefix this path's function parameters carry. A Solidity
           // parameter symbol is `sol:@C@<contract>@F@<method>@<param>` (see
           // foundry.h's parse_param_symbol), i.e. the method appears WITHOUT
@@ -4559,6 +4623,29 @@ smt_convt::resultt bmct::multi_property_check(
               if (hash != std::string::npos)
                 fn_id.erase(hash);
               fn_scope = fn_id + "@";
+            }
+          }
+          // ---- WHAT THIS UNIT IS DECLARED TO RETURN ----
+          //
+          // Taken HERE, beside the id it is a property of, because this is
+          // where the goto function id and the namespace both exist. The report
+          // that consumes it lives in another function with neither -- an
+          // earlier version of this change did the lookup there and did not
+          // compile, which is the harmless form of a fact kept in two places.
+          //
+          // ⛔ LEFT EMPTY WHEN THE LOOKUP FAILS. The consumer prints the old
+          // three-way sentence in that case; a missing declaration is not
+          // evidence of a void return, and filling in "none" here would put a
+          // manufactured fact exactly where the caveat used to be.
+          ce.declared_return.clear();
+          if (!fn_id_full.empty())
+          {
+            const symbolt *fsym = ns.lookup(irep_idt(fn_id_full));
+            if (fsym && fsym->type.is_code())
+            {
+              const typet &rt = to_code_type(fsym->type).return_type();
+              ce.declared_return =
+                (rt.is_nil() || rt.id() == "empty") ? "none" : "present";
             }
           }
           // Entry detection, using the SAME algorithm ESBMC already uses for
@@ -5037,6 +5124,73 @@ smt_convt::resultt bmct::multi_property_check(
               // A comment claiming a step that does not exist is worse than no
               // comment, because it redirects the next reader away from the
               // line that actually drops the value.
+              // ---- IS THIS ASSIGNMENT IN A FRAME BELOW THE UNIT UNDER TEST? --
+              //
+              // `in_fn_scope` above is a NAME test: the symbol's own mangled id
+              // must start with this unit's scope. That is true of the unit's
+              // parameters and locals and FALSE of a callee's locals, which
+              // carry the callee's scope -- so a value produced one frame down
+              // is invisible to it.
+              //
+              // MEASURED, B5_ExtcallInCallee, two units differing in exactly
+              // that and nothing else -- same low-level call, same success bit,
+              // same `if (!success) revert`, same state write:
+              //
+              //   probeInline  (assembly in the unit's own body)
+              //     path 6  extcall_returns [{"symbol":"success","value":"0"}]
+              //     path 7  extcall_returns [{"symbol":"success","value":"1"}]
+              //   probeLib     (identical work, one frame down in a library)
+              //     path 6  extcall_returns []   dropped 23
+              //     path 7  extcall_returns []   dropped 23
+              //
+              // The second is farming/deposit's shape: its call is inside
+              // `SafeERC20.safeTransferFrom`, and on that unit the harvest
+              // reports an empty list beside 197 and 199 dropped values.
+              //
+              // So membership is asked of the FRAME as well as of the name.
+              //
+              // ⛔ THE FRAME IS THE FULL GOTO FUNCTION ID, and the first attempt
+              // at this compared against its tail, which never matched anything.
+              // The tail came from a census line QUOTED IN A COMMENT elsewhere
+              // in the tree as `stack[3]: probe#32 < Nondet_Extcall < Main` --
+              // an abbreviation someone wrote by hand. The tool's own output,
+              // re-run for this, is:
+              //
+              //   sym='sol:@C@B5Lib@F@mustCall@success#9' fn='mustCall'
+              //     stack[3]: sol:@C@B5_ExtcallInCallee@F@probeLib#44
+              //             < sol:@C@B5_ExtcallInCallee@_ESBMC_Nondet_Extcall...
+              //             < sol:@C@B5_ExtcallInCallee@F@_ESBMC_Main...
+              //
+              // -- full ids, and equal to `fn_id_full` verbatim. The abbreviated
+              // quote cost one build and one run; the rule it breaks is that a
+              // paraphrase of a tool's output is not the tool's output.
+              //
+              // NOTE the library call is INLINED: `mustCall` is not a frame of
+              // its own, so a test looking for the callee on the stack would
+              // find nothing either. What identifies the value is that the
+              // UNIT's frame is on the stack while the symbol's own scope is
+              // somewhere else.
+              //
+              // ⛔ STILL RESTRICTED TO SOLIDITY SYMBOLS, AND PLUMBING IS STILL
+              // EXCLUDED. The frame test alone would admit any C-level harness
+              // temporary assigned while the unit is on the stack, and even
+              // among `sol:@` symbols the census shows the address-binding
+              // object `sol:@_ESBMC_Object_<C>#` carrying the unit's frame. The
+              // two extra tests are the same ones the contract-scope branch
+              // already applies, for the same reason: every name published here
+              // has to be a quantity from the source.
+              bool in_unit_frame = false;
+              if (
+                !fn_id_full.empty() && sym_id.rfind("sol:@", 0) == 0 &&
+                !name.empty() && name[0] != '$' && name.rfind("_ESBMC", 0) != 0)
+              {
+                for (const auto &fr : st.stack_trace)
+                  if (fr.function.as_string() == fn_id_full)
+                  {
+                    in_unit_frame = true;
+                    break;
+                  }
+              }
               const bool is_env = name.rfind("msg_", 0) == 0 ||
                                   name.rfind("tx_", 0) == 0 ||
                                   name.rfind("block_", 0) == 0;
@@ -5101,6 +5255,47 @@ smt_convt::resultt bmct::multi_property_check(
                 // other, and `std::map` additionally makes the published order
                 // deterministic across runs rather than trace-order.
                 last_env[name] = val;
+              }
+              else if ((in_fn_scope || in_unit_frame) && !sym_id.empty())
+              {
+                // ---- THE MISSING BUCKET, cause (a) of three ----
+                //
+                // A value that is nondet-sourced, declared INSIDE the unit under
+                // test, and not one of its parameters. It arrived here resolved
+                // and then fell off the end of the classification for want of a
+                // bucket -- which is why `extcall_returns` had a declaration,
+                // three readers and zero writers, and why every report said
+                // "not harvested at all".
+                //
+                // WHY IT MATTERS, measured on farming/deposit: six of its seven
+                // paths end at the same verdict -- the single-point check of
+                // certification REFUTED -- and the driver names two possible
+                // causes it cannot separate. For two of them it says the
+                // refuting witness and the path's counterexample "agree on every
+                // coordinate AND every scalar quantity in the payload", leaving
+                // the external-call return as a NAMED CANDIDATE that could not
+                // appear in the comparison because it was never in the payload.
+                // Populating this field is what turns that candidate into a
+                // finding or eliminates it.
+                //
+                // ⛔ THE NAME IS HONEST ABOUT WHAT IT IS. This is a nondet LOCAL,
+                // and an external call's return is the common way one appears --
+                // but nothing here proves that is what a given entry is. A
+                // consumer must read it as "a quantity the harness chose that no
+                // test can pass as an argument", which is the property that makes
+                // it interesting, and not as "the callee returned this".
+                //
+                // ⛔ IT IS NOT AN INPUT. It stays out of `inputs` deliberately:
+                // that field is contracted to hold values a generated test can
+                // supply as call arguments, and a local is not one. Publishing it
+                // there is a defect this file already fixed once.
+                //
+                // FIRST WRITE WINS, unlike the environment directly above: a
+                // local is assigned where it is bound, and a later reassignment
+                // is a different value of the same name rather than a reseed of
+                // the same one.
+                if (nondet_local_seen.insert(name).second)
+                  ce.extcall_returns.emplace_back(name, val);
               }
               else
                 ++ce.dropped_internal;

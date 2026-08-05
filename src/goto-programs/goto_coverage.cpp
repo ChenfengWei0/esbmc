@@ -1550,6 +1550,46 @@ walk_fields(const namespacet &ns, expr2tc &e, const std::string &path)
   return false;
 }
 
+// The TYPE at the end of a dotted field path, without building an expression.
+//
+// The mapping-slot candidate former has to answer "can this observable carry a
+// candidate?" BEFORE it creates the entry ghost that would hold the value, so
+// at that point there is no expression to walk -- only the array's element
+// type. Component matching is character for character the one `walk_fields`
+// uses, so the two can never disagree about which field a path names; that
+// disagreement would put the expressibility gate on one field and the snapshot
+// on another.
+static bool
+walk_field_type(const namespacet &ns, type2tc &t, const std::string &path)
+{
+  size_t p = 0;
+  while (p <= path.size())
+  {
+    const size_t q = path.find('.', p);
+    const std::string field =
+      path.substr(p, q == std::string::npos ? q : q - p);
+    if (field.empty())
+      return false;
+    const typet st = ns.follow(migrate_type_back(t));
+    if (st.id() != "struct")
+      return false;
+    bool hit = false;
+    for (const auto &comp : to_struct_type(st).components())
+      if (comp.get_name() == field || comp.get("#base_name") == field)
+      {
+        t = migrate_type(comp.type());
+        hit = true;
+        break;
+      }
+    if (!hit)
+      return false;
+    if (q == std::string::npos)
+      return true;
+    p = q + 1;
+  }
+  return false;
+}
+
 // |R_c| for a punched interval (Definition 5): how many values of [lo, hi]
 // survive once this coordinate's holes are removed.
 //
@@ -3966,6 +4006,11 @@ void goto_coveraget::solidity_path_coverage()
   // under `bal == 0` that got rendered as `require(amt >= 1)` alone would be a
   // claim about inputs that were never examined.
   std::vector<std::pair<std::string, std::string>> outer_pins;
+  // (enc, coordinate) -> that PATH's own ladder, replacing the shared one.
+  // Empty for every (path, coordinate) the spec does not override, which is
+  // what makes a spec written before this existed behave bit-identically.
+  std::map<std::pair<uint64_t, std::string>, std::vector<std::string>>
+    outer_path_values;
   path_cov_outer_box_mode = false;
   path_cov_outer_box_probes.clear();
   path_cov_outer_box_paths.clear();
@@ -4033,14 +4078,66 @@ void goto_coveraget::solidity_path_coverage()
           p.value("ce", nlohmann::json::object());
         for (auto it = ce_obj.begin(); it != ce_obj.end(); ++it)
           path_cov_outer_box_ce[{e, it.key()}] = it.value().get<std::string>();
+        // ---- PER-PATH LADDERS: `paths[].coords[].values` ----
+        //
+        // WHY THE SHARED LIST IS NOT ENOUGH, measured rather than argued. A
+        // ladder value is informative for a path only OUTSIDE that path's known
+        // domain: if inputs at 16 and at 20 both walk pi, then `c <= 18` is
+        // refuted and `c >= 18` is refuted, both before any query. So a driver
+        // holding several witnesses per path can say exactly where each path's
+        // rungs are worth putting -- and with ONE shared list it cannot say it,
+        // because a value it drops is dropped for every path at once.
+        //
+        // MEASURED on notes/coverage/poc/P14_Ladder.sol `bump`, three paths,
+        // eight witnesses each: enc=7's known members bracket [16, 20] and
+        // enc=6's bracket [2^256-4, 2^256-1]. The intersection is EMPTY -- and
+        // that is the general case, not bad luck: two paths of one unit are
+        // separated precisely by the coordinate the ladder is measuring, so
+        // their domains are disjoint on it by construction. A shared list can
+        // therefore drop nothing at all, which is what the driver reported.
+        //
+        // The override REPLACES the shared list for that (path, coordinate) --
+        // it does not merge. Merging would put the shared ladder's rungs back
+        // and the saving with them, and a knob whose effect another rule undoes
+        // is worse than no knob: it reports as applied.
+        //
+        // Nothing else changes. Each probe is still an independent containment
+        // statement about ONE path, the subtraction still runs over whatever
+        // was measured, and a coordinate not overridden still gets the shared
+        // list. In particular this cannot widen a box: a bound that was never
+        // asked about is simply absent, exactly as for a refused coordinate.
+        for (const auto &pc : p.value("coords", nlohmann::json::array()))
+        {
+          const std::string cn = pc.at("name").get<std::string>();
+          std::vector<std::string> vals;
+          for (const auto &v : pc.at("values"))
+            vals.push_back(v.get<std::string>());
+          if (vals.empty())
+            // REFUSED, not accepted as "no probes here". An empty override
+            // would leave the coordinate unmeasured for this path while the
+            // spec claims to have specified it -- the same shape as a refused
+            // coordinate read as a measured full-type bound, and unlike that
+            // one it would be the DRIVER's silence rather than the tool's.
+            throw std::runtime_error(
+              "path " + std::to_string(e) + " overrides coordinate '" + cn +
+              "' with an EMPTY value list; a per-path ladder with no rung "
+              "measures nothing on it, which is not the same statement as "
+              "leaving it to the shared ladder");
+          outer_path_values[{e, cn}] = vals;
+        }
       }
     }
     catch (const std::exception &ex)
     {
       log_error(
-        "--path-cov-outer-box: cannot parse '{}' ({}). Expected {{\"unit\":..., "
-        "\"probes\":K, \"coords\":[{{\"name\":..,\"lo\":\"..\",\"hi\":\"..\"}}], "
-        "\"paths\":[{{\"enc\":N,\"depth\":D,\"ce\":{{\"a\":\"..\"}}}}]}}",
+        "--path-cov-outer-box: cannot parse '{}' ({}). Expected "
+        "{{\"unit\":..., "
+        "\"probes\":K, "
+        "\"coords\":[{{\"name\":..,\"lo\":\"..\",\"hi\":\"..\"}}], "
+        "\"paths\":[{{\"enc\":N,\"depth\":D,\"ce\":{{\"a\":\"..\"}}, "
+        "\"coords\":[{{\"name\":\"a\",\"values\":[\"1\",\"2\"]}}]}}]}}. The "
+        "per-path \"coords\" is OPTIONAL and REPLACES the shared ladder for "
+        "that (path, coordinate); its value list may not be empty",
         path_cov_outer_box_path,
         ex.what());
       abort();
@@ -4947,14 +5044,67 @@ void goto_coveraget::solidity_path_coverage()
       // Definition 6 -- a region is a product of per-coordinate SETS -- and is
       // not attempted. A single named slot IS such a coordinate: it is a
       // scalar with an interval, exactly like a scalar state variable.
+      //
+      // A MEMBER TAIL is accepted after the slot: `state.m[k].amount`. The
+      // element of a struct-valued mapping is an aggregate, which has no
+      // interval, so the slot alone is not a coordinate -- its scalar FIELDS
+      // are, exactly as they are for a struct parameter a few lines below.
+      // Requiring the name to END in `]` is what sent `m[k].amount` down to the
+      // contract-object walk, where it failed as "not a scalar component".
+      //
+      // ---- A KEY LIST, NOT A KEY: `state.m[a][b][c][d]` ----
+      //
+      // A nested mapping lowers to an array whose element type is the next
+      // array, so each `[k]` peels exactly one level and the shape is the same
+      // at every depth. Reading only the FIRST `[` and the LAST `]` made a
+      // four-level name parse as the single key `a][b][c][d`, which resolves
+      // to nothing -- so the three consumers of this function all refused, and
+      // the driver learned never to ask for such a slot at all.
+      //
+      // MEASURED CONSEQUENCE, aqua: `_balances` is
+      // `mapping(address => mapping(address => mapping(bytes32 =>
+      // mapping(address => Balance))))`, and its PUTs carry NO oracle -- the
+      // only rungs the ladder built name the immutable `_DOCKED`, which the
+      // emitter then drops as a compile-time tautology. The matched pair in
+      // notes/coverage/poc/D44_MapStructValue.sol rules out the other
+      // candidate cause: with ONE level and the same packed struct value, the
+      // rungs ARE built and rendered (`balStruct[k].amount`, `.tag`, with the
+      // right mask and shift). So the cost was the NESTING, and specifically
+      // the spelling, one level deep.
+      //
+      // ⛔ THE PARSE FALLS THROUGH UNCHANGED WHEN THE SHAPE DOES NOT HOLD.
+      // A half-parsed name must not be read as a shorter key list: fewer keys
+      // denote a DIFFERENT slot -- in fact a whole sub-array -- and its rungs
+      // would be reported under the name the reader wrote.
       const size_t ob = field.find('[');
-      if (ob != std::string::npos && field.size() > ob + 1 &&
-          field.back() == ']')
+      std::vector<std::string> knames;
+      std::string slot_tail;
+      bool slot_shape = false;
+      if (ob != std::string::npos && ob > 0)
+      {
+        size_t kp = ob;
+        bool wf = true;
+        while (kp < field.size() && field[kp] == '[')
+        {
+          const size_t c = field.find(']', kp + 1);
+          if (c == std::string::npos || c < kp + 2)
+          {
+            wf = false;
+            break;
+          }
+          knames.push_back(field.substr(kp + 1, c - kp - 1));
+          kp = c + 1;
+        }
+        slot_tail = wf ? field.substr(kp) : std::string();
+        slot_shape =
+          wf && !knames.empty() && (slot_tail.empty() || slot_tail[0] == '.');
+        if (!slot_shape)
+          knames.clear();
+      }
+      if (slot_shape)
       {
         const std::string mname = field.substr(0, ob);
-        const std::string kname = field.substr(ob + 1, field.size() - ob - 2);
-        if (mname.empty() || kname.empty())
-          return false;
+        const std::string &mtail = slot_tail;
         // WHICH CONTRACT: the unit's own, from its mangled id. Falling back to
         // scope_contract only when there is no unit symbol -- the substring
         // test resolve_coord uses for the contract OBJECT is wrong here for the
@@ -4987,9 +5137,6 @@ void goto_coveraget::solidity_path_coverage()
         if (store == nullptr)
           return false;
         const type2tc mt = migrate_type(store->type);
-        if (!is_array_type(mt))
-          return false;
-        const type2tc et = to_array_type(mt).subtype;
 
         // ---- THE KEY: A LITERAL OR A NAME, AND BOTH ARE NEEDED ----
         //
@@ -5004,37 +5151,58 @@ void goto_coveraget::solidity_path_coverage()
         // the prefix would read a PARAMETER named `abc` as the number 0xabc --
         // a perfectly well-formed bound on a slot nobody named, which is the
         // silent-wrong-quantity failure this whole layer exists to avoid.
-        expr2tc kexpr;
-        bool klit = false;
-        BigInt kval;
-        if (kname.rfind("0x", 0) == 0 || kname.rfind("0X", 0) == 0)
+        //
+        // ONE ITERATION PER KEY, and the level is peeled INSIDE the loop: an
+        // index built with the outer array's element type at an inner level
+        // reads the wrong shape without any diagnostic at all.
+        expr2tc cur_e = symbol2tc(mt, store->id);
+        type2tc cur_t = mt;
+        for (const std::string &kn : knames)
         {
-          klit = kname.size() > 2;
-          for (size_t i = 2; i < kname.size(); ++i)
-            if (isxdigit((unsigned char)kname[i]) == 0)
-              klit = false;
+          // A level that is not an array means the name has MORE keys than the
+          // store has levels. Refused (softly, as everything in this function
+          // is) rather than stopping early: stopping would silently denote the
+          // sub-array reached so far.
+          if (!is_array_type(cur_t))
+            return false;
+          const type2tc et = to_array_type(cur_t).subtype;
+          expr2tc kexpr;
+          bool klit = false;
+          BigInt kval;
+          if (kn.rfind("0x", 0) == 0 || kn.rfind("0X", 0) == 0)
+          {
+            klit = kn.size() > 2;
+            for (size_t i = 2; i < kn.size(); ++i)
+              if (isxdigit((unsigned char)kn[i]) == 0)
+                klit = false;
+            if (klit)
+              kval = BigInt(kn.c_str() + 2, 16);
+          }
+          else
+          {
+            klit = true;
+            for (char c : kn)
+              if (c < '0' || c > '9')
+                klit = false;
+            if (klit)
+              kval = string2integer(kn);
+          }
           if (klit)
-            kval = BigInt(kname.c_str() + 2, 16);
+            // uint256 because that is the widest key Solidity has; the SMT
+            // layer resizes an index to the array's own domain width, so a
+            // narrower key (an `address`) is not mis-indexed by carrying the
+            // wider type.
+            kexpr = constant_int2tc(get_uint_type(256), kval);
+          else if (!resolve_coord(fsym, kn, kexpr))
+            return false;
+          cur_e = index2tc(et, cur_e, kexpr);
+          cur_t = et;
         }
-        else
-        {
-          klit = true;
-          for (char c : kname)
-            if (c < '0' || c > '9')
-              klit = false;
-          if (klit)
-            kval = string2integer(kname);
-        }
-        if (klit)
-          // uint256 because that is the widest key Solidity has; the SMT layer
-          // resizes an index to the array's own domain width, so a narrower
-          // key (an `address`) is not mis-indexed by carrying the wider type.
-          kexpr = constant_int2tc(get_uint_type(256), kval);
-        else if (!resolve_coord(fsym, kname, kexpr))
-          return false;
 
-        out = index2tc(et, symbol2tc(mt, store->id), kexpr);
-        return true;
+        out = cur_e;
+        if (mtail.empty())
+          return true;
+        return walk_fields(ns, out, mtail.substr(1));
       }
 
       // The contract instance object. Same symbol family the counterexample
@@ -7455,6 +7623,11 @@ void goto_coveraget::solidity_path_coverage()
       // information: at another exit the antecedent `tr == enc` is false and the
       // implication is vacuous.
       size_t emitted = 0;
+      // How many (path, coordinate) pairs took a PER-PATH ladder. Reported in
+      // both directions below, including at zero: a spec that carries overrides
+      // the emitter never consulted and a spec that carries none look identical
+      // from outside, and this project has shipped that shape twice.
+      size_t per_path_ladders = 0;
       for (const auto &[penc, pdepth] : path_cov_outer_box_paths)
       {
         goto_programt::targett exit_pc;
@@ -7581,9 +7754,27 @@ void goto_coveraget::solidity_path_coverage()
           // [lo, hi]. Both end up as the same kind of probe; only the choice of
           // where to put them differs, and that choice is policy.
           std::vector<BigInt> probe_vals;
-          for (const auto &v : c.values)
-            probe_vals.push_back(string2integer(v));
-          if (c.subdivide)
+          // ---- A PER-PATH LADDER REPLACES THE SHARED ONE, ENTIRELY ----
+          //
+          // Both the explicit shared values AND the [lo, hi] subdivision are
+          // skipped for this (path, coordinate): the driver that wrote an
+          // override knows where THIS path's rungs belong, and adding the
+          // shared ladder back would restore exactly the emissions the override
+          // exists to remove. The parser refuses an empty override, so this can
+          // never leave the coordinate with no probe at all.
+          const auto ov = outer_path_values.find({penc, c.name});
+          if (ov != outer_path_values.end())
+          {
+            for (const auto &v : ov->second)
+              probe_vals.push_back(string2integer(v));
+            ++per_path_ladders;
+          }
+          else
+          {
+            for (const auto &v : c.values)
+              probe_vals.push_back(string2integer(v));
+          }
+          if (c.subdivide && ov == outer_path_values.end())
           {
             const BigInt lo = string2integer(c.lo), hi = string2integer(c.hi);
             if (hi < lo)
@@ -7747,6 +7938,21 @@ void goto_coveraget::solidity_path_coverage()
         "instead of one query per widening step",
         uid,
         emitted);
+      // Printed on EVERY outer-box run, zero included. "the spec carried no
+      // per-path ladder" and "the spec carried some and the emitter ignored
+      // them" are different facts with the same silence, and only one of them
+      // is a defect.
+      log_status(
+        "--path-cov-outer-box: unit '{}' — {} (path, coordinate) pair(s) used "
+        "a "
+        "PER-PATH ladder from the spec instead of the shared one; the spec "
+        "carried {} such override(s) in total. A shared ladder can only drop a "
+        "value that is uninformative for EVERY path at once, and two paths of "
+        "one unit are separated precisely by the coordinate being measured, so "
+        "on real input that intersection is routinely empty",
+        uid,
+        per_path_ladders,
+        outer_path_values.size());
       total_paths += emitted;
       continue;
     }
@@ -7907,11 +8113,192 @@ void goto_coveraget::solidity_path_coverage()
         }
       }
 
+      // ---- A NONDETERMINISTIC LOCAL AS A COORDINATE: `extcall.<name>` ----
+      //
+      // WHY THIS EXISTS, measured on farming/deposit: six of its seven paths
+      // end at the same verdict -- the single-point check of certification
+      // REFUTED -- and inside ONE single-point log the two counterexamples
+      // differ on exactly one quantity: `success`, the bool that SafeERC20's
+      // inline assembly writes from the low-level call. The counterexample
+      // report already publishes it (`extcall_returns`); `resolve_coord`
+      // refuses the name, so the box could not bound it and the WHOLE query was
+      // refused.
+      //
+      // ⛔ IT IS NOT AN INPUT AND THIS DOES NOT PRETEND IT IS. No generated test
+      // can pass it as a call argument. Bounding it says "of the executions in
+      // which the callee's return took this value, every one walks this path"
+      // -- WEAKER than a bound on a real input, and a consumer that renders the
+      // region as a test must still realise the value some other way. The
+      // prefix is in the NAME so that no reader downstream can lose that.
+      //
+      // ⛔ THE BOUND CANNOT GO AT ENTRY. Measured on
+      // notes/coverage/poc/B5_ExtcallInCallee with --goto-functions-only:
+      //
+      //   probeInline:  DECL _Bool success; ASSIGN success=false;
+      //                 ASSIGN success=NONDET(_Bool);     <- in the UNIT's body
+      //   probeLib:     FUNCTION_CALL: mustCall(token)    <- one frame down
+      //   mustCall:     ASSIGN success=NONDET(_Bool);     <- in the CALLEE body
+      //
+      // An ASSUME at `instructions.begin()` constrains the incarnation BEFORE
+      // that assignment, which the assignment then overwrites: the bound would
+      // bind nothing and the run would answer about the unconstrained box --
+      // a false certificate, not a weak one. So the ASSUME goes immediately
+      // AFTER the nondeterministic assignment, in whichever body holds it.
+      // deposit's shape is the CALLEE one, so searching only this unit's own
+      // body would have found nothing.
+      std::function<bool(
+        const std::string &,
+        expr2tc &,
+        goto_programt *&,
+        goto_programt::targett &,
+        std::string &)>
+        resolve_nondet_local = [&](
+                                 const std::string &nm,
+                                 expr2tc &out,
+                                 goto_programt *&prog,
+                                 goto_programt::targett &at,
+                                 std::string &err) -> bool {
+        const std::string tail = "@" + nm + "#";
+        // ---- ONLY WHAT THIS UNIT'S EXECUTION CAN REACH ----
+        //
+        // MEASURED on notes/coverage/poc/B5_ExtcallInCallee: both of its units
+        // declare a local called `success`, so a search over the WHOLE goto
+        // program found 3 nondeterministic assignments across 3 functions and
+        // refused as AMBIGUOUS -- while certifying `probeLib`, whose execution
+        // cannot enter `probeInline` at all. The question is not "is the name
+        // unique in the program" but "is it unique in what this unit can run",
+        // which is the same frame criterion the counterexample harvest uses to
+        // decide whether a value belongs to this unit's payload.
+        //
+        // Transitive, because deposit's own bit is TWO levels down (the unit
+        // calls the library wrapper, the wrapper holds the assembly block), so
+        // a direct-callee test would find nothing on the very shape this
+        // exists for.
+        std::set<std::string> reach;
+        {
+          std::vector<std::string> work{f_it->first.as_string()};
+          reach.insert(work.front());
+          while (!work.empty())
+          {
+            const std::string cur = work.back();
+            work.pop_back();
+            auto cit = goto_functions.function_map.find(irep_idt(cur));
+            if (
+              cit == goto_functions.function_map.end() ||
+              !cit->second.body_available)
+              continue;
+            for (const auto &ins : cit->second.body.instructions)
+            {
+              if (!ins.is_function_call() || !is_code_function_call2t(ins.code))
+                continue;
+              const expr2tc &callee =
+                to_code_function_call2t(ins.code).function;
+              if (!is_symbol2t(callee))
+                continue;
+              const std::string cid = to_symbol2t(callee).thename.as_string();
+              if (reach.insert(cid).second)
+                work.push_back(cid);
+            }
+          }
+        }
+        std::set<std::string> owners, fns, sitenames;
+        size_t sites = 0;
+        Forall_goto_functions (n_it, goto_functions)
+        {
+          if (!n_it->second.body_available)
+            continue;
+          if (reach.count(n_it->first.as_string()) == 0)
+            continue;
+          goto_programt &np = n_it->second.body;
+          for (auto it = np.instructions.begin(); it != np.instructions.end();
+               ++it)
+          {
+            if (!it->is_assign() || !is_code_assign2t(it->code))
+              continue;
+            const code_assign2t &a = to_code_assign2t(it->code);
+            if (!is_symbol2t(a.target))
+              continue;
+            const std::string id = to_symbol2t(a.target).thename.as_string();
+            // A SOLIDITY symbol, and `<nm>` must be its LAST segment. Without
+            // the "no further `@`" test a name would also match a symbol that
+            // merely CONTAINS it, and a bound on the wrong quantity is exactly
+            // the silent-wrong-answer this layer exists to prevent.
+            if (id.rfind("sol:@", 0) != 0)
+              continue;
+            const size_t p = id.rfind(tail);
+            if (
+              p == std::string::npos ||
+              id.find('@', p + 1) != std::string::npos)
+              continue;
+            // NONDET on the right-hand side, not merely "assigned". The
+            // quantity of interest is the one the HARNESS chose; the frontend
+            // emits `success=false` two instructions earlier in the very same
+            // body, and pinning that one would bound a value the path discards.
+            if (
+              !is_sideeffect2t(a.source) ||
+              to_sideeffect2t(a.source).kind != sideeffect2t::nondet)
+              continue;
+            ++sites;
+            owners.insert(id);
+            fns.insert(n_it->first.as_string());
+            // FUNCTION BESIDE ID. The first version of the refusal printed the
+            // ids alone and reported "3 assignments across 3 functions" next to
+            // a list of 2 ids -- which reads as a defect in the counting rather
+            // than as one symbol reached through two bodies. A message whose
+            // parts cannot be lined up is a message that gets argued with.
+            sitenames.insert(n_it->first.as_string() + " :: " + id);
+            out = a.target;
+            prog = &np;
+            at = it;
+          }
+        }
+        if (sites == 0)
+        {
+          err =
+            "no ASSIGN of a NONDET value to a Solidity symbol with that name "
+            "exists in this unit's own body or in anything it calls, "
+            "transitively (" +
+            std::to_string(reach.size()) +
+            " function(s) searched). `extcall.<name>` names a "
+            "quantity the HARNESS chose during the execution, and `<name>` is "
+            "the local's own source name -- the same one the counterexample "
+            "publishes under `extcall_returns`";
+          return false;
+        }
+        if (owners.size() > 1 || sites > 1)
+        {
+          std::string ids;
+          for (const auto &o : sitenames)
+            ids += (ids.empty() ? "" : "; ") + o;
+          err = "the name is AMBIGUOUS within what this unit can reach: " +
+                std::to_string(sites) +
+                " nondeterministic assignment(s) across " +
+                std::to_string(fns.size()) + " function(s) match it (" + ids +
+                "). Bounding ONE of them would certify a box over whichever "
+                "site the search reached last, and bounding ALL of them would "
+                "certify a NARROWER box than the one asked for. Neither is the "
+                "question that was put";
+          return false;
+        }
+        return true;
+      };
+
       for (const auto &b : certify_box)
       {
         expr2tc bs;
         std::string why;
-        if (!resolve_coord(fsym, b.name, bs))
+        // WHERE THIS BOUND GOES. Entry for every ordinary coordinate -- that is
+        // what makes it an ENTRY box -- and immediately after the assignment
+        // for a nondeterministic local, for the reason given above the resolver.
+        goto_programt *bprog = &goto_program;
+        goto_programt::targett bat = goto_program.instructions.begin();
+        bool bat_entry = true;
+        if (b.name.rfind("extcall.", 0) == 0)
+        {
+          if (resolve_nondet_local(b.name.substr(8), bs, bprog, bat, why))
+            bat_entry = false;
+        }
+        else if (!resolve_coord(fsym, b.name, bs))
           why =
             "the name does not resolve to an input of this unit. Name a "
             "parameter of this unit, an environment value as `msg.value` / "
@@ -7920,8 +8307,12 @@ void goto_coveraget::solidity_path_coverage()
             "components only — a WHOLE mapping or dynamic array does not "
             "resolve), or ONE SLOT of such a store as `state.<name>[<key>]` "
             "with <key> a decimal, an 0x-prefixed hex literal, a parameter of "
-            "this unit, or `msg.sender`";
-        else
+            "this unit, or `msg.sender`. A quantity the HARNESS chose rather "
+            "than one a caller supplies is named `extcall.<name>`";
+        // KEYED ON `why`, NOT ON WHICH RESOLVER RAN. There are two of them now,
+        // and an `else` bound to one of them would silently skip the type check
+        // for everything resolved by the other.
+        if (why.empty())
           coord_expressible(bs->type, why);
         if (!why.empty())
         {
@@ -8070,12 +8461,24 @@ void goto_coveraget::solidity_path_coverage()
         goto_programt::instructiont asm_i;
         asm_i.type = ASSUME;
         asm_i.guard = bguard;
-        asm_i.location = goto_program.instructions.begin()->location;
+        // THE SITE'S OWN LOCATION. A bound placed after a callee's assignment
+        // must not be stamped with the unit's entry line: a wrong location on
+        // an inserted instruction makes it unattributable in the very trace it
+        // exists to explain.
+        const goto_programt::targett anchor =
+          bat_entry ? goto_program.instructions.begin() : bat;
+        asm_i.location = anchor->location;
         // "skipped" keeps this out of the decision-set census, which flags a
         // user-source ASSUME as a lowered-away branch. This one is ours.
         asm_i.location.property("skipped");
-        asm_i.function = goto_program.instructions.begin()->location.get_function();
-        goto_program.instructions.insert(goto_program.instructions.begin(), asm_i);
+        asm_i.function = anchor->location.get_function();
+        if (bat_entry)
+          goto_program.instructions.insert(anchor, asm_i);
+        else
+          // AFTER, not before. The value is CREATED by `*anchor`; an assume in
+          // front of it constrains the incarnation that assignment discards,
+          // which is a bound that binds nothing while looking like a bound.
+          bprog->instructions.insert(std::next(anchor), asm_i);
         ++bounds_emitted;
       }
 
@@ -8649,6 +9052,126 @@ void goto_coveraget::solidity_path_coverage()
         ++emitted;
       };
 
+      // ---- ONE R2 ENDPOINT BUILDER, FOR BOTH CANDIDATE SHAPES --------------
+      //
+      // R2 is the class of absolute and delta bounds (`post in [lo, hi]`,
+      // `post - pre in [lo, hi]`), and its endpoints may name a QUANTITY --
+      // typically the unit's own amount parameter -- rather than a decimal.
+      // That is the whole value of R2 on a fuzz test: `post - pre in [7, 7]`
+      // is false on 255 of 256 draws, while `post - pre in [amt, amt]` is the
+      // property a deposit-shaped unit is actually about.
+      //
+      // ⛔ WHY IT LIVES HERE AND NOT INSIDE ONE OF THE TWO LOOPS. There are
+      // TWO candidate shapes below -- a COMPONENT (a scalar state variable,
+      // reached by a field walk) and a SLOT (`m[k]`, reached by one array
+      // index per mapping level) -- and each builds its own abs/delta rungs.
+      // When named endpoints were added they reached the COMPONENT loop only;
+      // the slot loop kept `constant_int2tc(et, string2integer(v.delta_lo))`,
+      // which on the string "amt" is not an error and not a refusal: it is the
+      // constant ZERO. So a slot delta rung asked `post - pre in [0, 0]`,
+      // came back REFUTED, and the REFUTED was read as a fact about the
+      // contract. MEASURED on N03_SenderKeyedBalance, whose `deposit` does
+      // `bal[msg.sender] += amt`: `post > pre` HOLDS and `post - pre in
+      // [amt, amt]` REFUTED in the SAME run -- two verdicts that cannot both
+      // be true of the same execution, which is what exposed it.
+      //
+      // This is the file's own recurring failure -- one fact, three readers,
+      // and only the reader that was being looked at got updated. It is fixed
+      // by removing the second reader, not by teaching it the same trick.
+      //
+      // `ty` is the CANDIDATE's type and the comparison is built in it: a
+      // uint256 parameter bounding a uint248 packed field is routine, and an
+      // untyped comparison would be a different question from the one written.
+      auto bound_endpoint = [&](
+                              const type2tc &ty,
+                              const std::string &owner,
+                              const char *what,
+                              const std::string &s) -> expr2tc {
+        bool numeric = !s.empty();
+        for (char c : s)
+          if (c < '0' || c > '9')
+            numeric = false;
+        if (numeric)
+        {
+          std::string tmax;
+          if (!path_cov_fits_type(ty, s, tmax))
+          {
+            log_error(
+              "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: candidate "
+              "'{}' {} value {} does not fit its own type (admissible range "
+              "[0, {}]). The bound is built as a constant of that type, so an "
+              "out-of-range decimal WRAPS and the candidate asserted would not "
+              "be the candidate written here",
+              uid,
+              owner,
+              what,
+              s,
+              tmax);
+            exit(1);
+          }
+          return constant_int2tc(ty, string2integer(s));
+        }
+        expr2tc e;
+        std::string why;
+        if (!resolve_coord(fsym, s, e))
+          why =
+            "it is neither a decimal literal nor a name that resolves to an "
+            "input of this unit. Name a parameter, an environment value as "
+            "`msg.value` / `block.timestamp`, or a state variable at entry "
+            "as `state.<field>`";
+        else
+          coord_expressible(e->type, why);
+        if (!why.empty())
+        {
+          // REFUSE, never fall back to a constant. The fallback is what the
+          // slot loop effectively had, and a silent 0 is the worst possible
+          // outcome: it produces a well-formed rung, a confident verdict, and
+          // a statement about a bound nobody wrote.
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: candidate "
+            "'{}' {} endpoint '{}' cannot be built: {}",
+            uid,
+            owner,
+            what,
+            s,
+            why);
+          exit(1);
+        }
+        // A NAMED ENDPOINT IS SNAPSHOTTED AT ENTRY, for the same reason a
+        // mapping key is: the comparison happens at the EXIT, and a parameter
+        // the body reassigned would make the bound a statement about a value
+        // that no longer exists. Plain list inserts before `entry`, never
+        // insert_swap -- insert_swap moves the instruction's CONTENT and the
+        // iterator would end up naming the new instruction.
+        symbolt bsym;
+        bsym.type = migrate_type_back(e->type);
+        bsym.name = "__ESBMC_bnd$" + i2string(ghost_counter++);
+        bsym.id = "path_cov::" + id2string(bsym.name);
+        bsym.lvalue = true;
+        bsym.static_lifetime = false;
+        bsym.is_extern = false;
+        symbolt *pb;
+        cov_context->move(bsym, pb);
+        expr2tc bghost = symbol2tc(migrate_type(pb->type), pb->id);
+        goto_programt::instructiont bd;
+        bd.type = DECL;
+        bd.code = code_decl2tc(e->type, pb->id);
+        bd.location = entry->location;
+        bd.location.property("skipped");
+        bd.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, bd);
+        goto_programt::instructiont ba;
+        ba.type = ASSIGN;
+        ba.code = code_assign2tc(bghost, e);
+        ba.location = entry->location;
+        ba.location.property("skipped");
+        ba.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, ba);
+        if (bghost->type != ty)
+          return typecast2tc(ty, bghost);
+        return bghost;
+      };
+
       for (const auto &comp : to_struct_type(ostruct).components())
       {
         std::string vname = comp.get("#base_name").as_string();
@@ -8656,10 +9179,35 @@ void goto_coveraget::solidity_path_coverage()
           vname = comp.get_name().as_string();
         if (!path_cov_user_state_name(vname))
           continue;
+        // ---- A DUPLICATE NAME IS REFUSED, NOT SILENTLY COLLAPSED ----------
+        //
+        // This loop did not `break`, so two `vars` entries with the same name
+        // left the LAST one winning and the earlier one gone without a word.
+        // That is a live hazard for anything that proposes specs
+        // automatically: `delta_dir` is mandatory and a proposer that wanted
+        // both directions would naturally write two same-named entries, get
+        // ONE of them measured, and read the single result as though both had
+        // been asked. A spec is an INPUT, and an input silently reinterpreted
+        // is the failure shape this project keeps paying for.
         const assert_vart *spec = nullptr;
         for (const auto &v : assert_vars)
           if (v.name == vname)
+          {
+            if (spec != nullptr)
+            {
+              log_error(
+                "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: "
+                "\"vars\" names '{}' more than once. Only one entry per "
+                "variable is measured, so the others would be dropped without "
+                "appearing anywhere in the report. If two bounds are wanted "
+                "(both delta directions, say), run them as two SEPARATE "
+                "queries whose results can be told apart",
+                uid,
+                vname);
+              exit(1);
+            }
             spec = &v;
+          }
         if (comp_vars_present && spec == nullptr)
           continue; // an explicit `vars` list is a whitelist
         if (spec != nullptr)
@@ -8767,42 +9315,59 @@ void goto_coveraget::solidity_path_coverage()
         emit_rung(vname, "gt", "post > pre", greaterthan2tc(live, pre_v));
         emit_rung(vname, "lt", "post < pre", lessthan2tc(live, pre_v));
 
-        auto require_fits = [&](const char *what, const std::string &dec) {
-          std::string tmax;
-          if (path_cov_fits_type(vt, dec, tmax))
-            return;
-          log_error(
-            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: variable "
-            "'{}' {} value {} does not fit its own type (admissible range [0, "
-            "{}]). The bound is built as a constant of that type, so an "
-            "out-of-range decimal WRAPS and the candidate asserted would not be "
-            "the candidate written here",
-            uid,
-            vname,
-            what,
-            dec,
-            tmax);
-          exit(1);
+        // ---- AN R2 BOUND MAY NAME A QUANTITY, NOT ONLY A DECIMAL ----------
+        //
+        // R2 is the class of absolute and delta bounds (`post in [lo, hi]`,
+        // `post - pre in [lo, hi]`). Its endpoints were parsed with
+        // `string2integer`, i.e. LITERAL CONSTANTS ONLY -- and that is what
+        // makes R2 nearly useless on a generated test. The property a
+        // deposit-shaped unit is actually about is
+        //
+        //     post - pre == amount
+        //
+        // with `amount` the unit's own parameter. A fuzz test ranges over
+        // `amount`, so the only R2 a literal can express -- `post - pre in
+        // [7, 7]` -- is false on 255 of 256 runs and has to be dropped. The
+        // strongest oracle this pipeline could emit was inexpressible.
+        //
+        // A NAMED ENDPOINT IS SNAPSHOTTED AT ENTRY, for the same reason a
+        // mapping key is: the comparison happens at the EXIT, and a parameter
+        // the body reassigned would make the bound a statement about a value
+        // that no longer exists. Both endpoints therefore become entry ghosts.
+        //
+        // ⛔ EMITTER SAFETY, stated because this half can land alone: the rung
+        // TEXT carries the endpoint verbatim, so the emitter sees `post - pre
+        // in [amount, amount]`. An emitter that cannot parse that shape
+        // reports `rung shape not rendered` and DROPS it -- visible, and
+        // never a wrong assertion. This change cannot produce a red test on
+        // the unmodified contract; the worst it can do is lose a rung until
+        // the emitter learns the shape.
+        // ⛔ A FORWARDER, NOT A SECOND IMPLEMENTATION. This body used to be the
+        // only place named endpoints were understood, and the SLOT loop below
+        // silently kept `string2integer`, i.e. the constant 0 for any name. It
+        // now forwards to the one builder defined beside `emit_rung`, so the
+        // two candidate shapes cannot answer the same question differently
+        // again -- there is only one answer left to give.
+        auto bound_expr =
+          [&](const char *what, const std::string &s) -> expr2tc {
+          return bound_endpoint(vt, vname, what, s);
         };
 
         if (spec != nullptr && spec->has_abs)
         {
-          require_fits("abs_lo", spec->abs_lo);
-          require_fits("abs_hi", spec->abs_hi);
+          const expr2tc alo = bound_expr("abs_lo", spec->abs_lo);
+          const expr2tc ahi = bound_expr("abs_hi", spec->abs_hi);
           emit_rung(
             vname,
             "abs",
             "post in [" + spec->abs_lo + ", " + spec->abs_hi + "]",
             and2tc(
-              greaterthanequal2tc(
-                live, constant_int2tc(vt, string2integer(spec->abs_lo))),
-              lessthanequal2tc(
-                live, constant_int2tc(vt, string2integer(spec->abs_hi)))));
+              greaterthanequal2tc(live, alo), lessthanequal2tc(live, ahi)));
         }
         if (spec != nullptr && spec->has_delta)
         {
-          require_fits("delta_lo", spec->delta_lo);
-          require_fits("delta_hi", spec->delta_hi);
+          const expr2tc dlo = bound_expr("delta_lo", spec->delta_lo);
+          const expr2tc dhi = bound_expr("delta_hi", spec->delta_hi);
           // ---- THE DIRECTION CONJUNCT IS NOT DECORATION ----
           //
           // Candidate variables are unsigned, so `post - pre` WRAPS when the
@@ -8825,11 +9390,7 @@ void goto_coveraget::solidity_path_coverage()
               (spec->delta_dir == "inc" ? "post >= pre" : "pre >= post"),
             and2tc(
               dir,
-              and2tc(
-                greaterthanequal2tc(
-                  d, constant_int2tc(vt, string2integer(spec->delta_lo))),
-                lessthanequal2tc(
-                  d, constant_int2tc(vt, string2integer(spec->delta_hi))))));
+              and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
         }
       }
 
@@ -8870,18 +9431,61 @@ void goto_coveraget::solidity_path_coverage()
       // reason the outer-box batch snapshots its coordinates.
       for (const auto &v : assert_vars)
       {
+        // ---- A KEY LIST, NOT A KEY ----
+        //
+        // `m[a]` and `m[a][b][c][d]` are the same shape at this layer: each
+        // `[k]` peels ONE array level, because the frontend lowers a nested
+        // mapping to an array whose element type is the next array. Reading
+        // only the first and last bracket -- find('[') with rfind(']') -- made
+        // a four-level key parse as the single key `a][b][c][d`, which
+        // resolve_coord cannot resolve, so the ladder was REFUSED and the
+        // driver learned never to ask. That is why aqua's `_balances` has no
+        // rung and its PUTs carry no oracle at all: not a rendering gap, a
+        // SPELLING gap, one level deep.
+        //
+        // ⛔ THE WALK IS LEFT TO RIGHT AND STOPS AT THE FIRST NON-`[`. A
+        // trailing `.field` still belongs to `mtail`; anything else leaves the
+        // name half-parsed, and a half-parsed slot name must be refused below
+        // rather than silently read as a shorter key list.
         const size_t ob = v.name.find('[');
-        if (ob == std::string::npos || v.name.empty() || v.name.back() != ']')
+        if (ob == std::string::npos)
           continue; // not a slot spelling; the component loop owns this name
         const std::string mname = v.name.substr(0, ob);
-        const std::string kname =
-          v.name.substr(ob + 1, v.name.size() - ob - 2);
-        if (mname.empty() || kname.empty())
+        std::vector<std::string> knames;
+        size_t kp = ob;
+        bool slot_wellformed = true;
+        while (kp < v.name.size() && v.name[kp] == '[')
+        {
+          const size_t c = v.name.find(']', kp + 1);
+          if (c == std::string::npos || c < kp + 2)
+          {
+            slot_wellformed = false;
+            break;
+          }
+          knames.push_back(v.name.substr(kp + 1, c - kp - 1));
+          kp = c + 1;
+        }
+        // "" or ".<field>[.<field>...]" -- a scalar FIELD of a struct-valued
+        // mapping element. The element itself is an aggregate and carries no
+        // candidate; its fields do.
+        const std::string mtail =
+          slot_wellformed ? v.name.substr(kp) : std::string();
+        // Kept for every diagnostic below, which names the key the reader
+        // wrote rather than an index into a vector they cannot see.
+        std::string kname;
+        for (const auto &k : knames)
+          kname += "[" + k + "]";
+        if (mname.empty() || knames.empty() || !slot_wellformed)
         {
           log_error(
             "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: \"vars\" "
             "names '{}', which is not a well-formed slot. The shape is "
-            "`<mapping>[<key>]` with both parts non-empty",
+            "`<mapping>[<key>]`, or `<mapping>[<k1>][<k2>]...` for a nested "
+            "mapping, with the mapping name and EVERY key non-empty, "
+            "optionally followed by `.<field>`. Refused rather than read as a "
+            "shorter key list: a name that peeled fewer levels than written "
+            "would denote a DIFFERENT slot and its rungs would be reported "
+            "under the name the reader wrote",
             uid,
             v.name);
           exit(1);
@@ -8913,20 +9517,68 @@ void goto_coveraget::solidity_path_coverage()
         }
 
         const type2tc mt = migrate_type(sit->second->type);
-        if (!is_array_type(mt))
+        // ---- PEEL ONE ARRAY LEVEL PER KEY ----
+        //
+        // `level_elem[i]` is the type reached after applying key i, so
+        // `level_elem.back()` is what the old single-key code called `elem`.
+        // The intermediate types are kept because the indexing expressions
+        // below must be built with the type of the level they produce -- an
+        // index2tc carrying the wrong element type is not a compile error,
+        // it is a read of the wrong shape.
+        //
+        // ⛔ A LEVEL THAT IS NOT AN ARRAY REFUSES, NAMING WHICH LEVEL. Writing
+        // one key too many on a one-level mapping otherwise peels past the
+        // value into whatever the value's own type admits, and the rung would
+        // be reported under the name the reader wrote.
+        std::vector<type2tc> level_elem;
         {
-          log_error(
-            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: '{}' is a "
-            "contract-scope store but does not lower to an ARRAY, so `{}` "
-            "denotes no slot. Refused rather than skipped: a dropped candidate "
-            "reads in the table as a variable nothing needed to be asserted "
-            "about",
-            uid,
-            mname,
-            v.name);
-          exit(1);
+          type2tc cur = mt;
+          for (size_t ki = 0; ki < knames.size(); ++ki)
+          {
+            if (!is_array_type(cur))
+            {
+              log_error(
+                "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: '{}' "
+                "names {} key(s), but level {} ('{}') does not lower to an "
+                "ARRAY, so `{}` denotes no slot. A contract-scope store lowers "
+                "to one array level per mapping level; refused rather than "
+                "skipped, because a dropped candidate reads in the table as a "
+                "variable nothing needed to be asserted about",
+                uid,
+                v.name,
+                knames.size(),
+                ki,
+                knames[ki],
+                mname);
+              exit(1);
+            }
+            cur = to_array_type(cur).subtype;
+            level_elem.push_back(cur);
+          }
         }
-        const type2tc et = to_array_type(mt).subtype;
+        const type2tc elem = level_elem.back();
+
+        // THE OBSERVABLE IS THE FIELD, NOT THE ELEMENT. Everything below --
+        // the expressibility gate, the ghost's type, the constants of the abs
+        // and delta rungs -- is about `et`, so resolving the member tail here
+        // means not one of them had to learn about members.
+        type2tc et = elem;
+        if (!mtail.empty())
+        {
+          if (mtail[0] != '.' || !walk_field_type(ns, et, mtail.substr(1)))
+          {
+            log_error(
+              "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: \"vars\" "
+              "names '{}', whose member path '{}' is not a field of the "
+              "mapping's value type. Refused rather than skipped: a dropped "
+              "candidate reads in the table as a variable nothing needed to be "
+              "asserted about",
+              uid,
+              v.name,
+              mtail);
+            exit(1);
+          }
+        }
 
         // Same two-gate split as the component loop at (F): the whitelist is
         // the EQUALITY gate, and the ordering rungs additionally require a
@@ -8942,46 +9594,100 @@ void goto_coveraget::solidity_path_coverage()
           continue;
         }
 
-        expr2tc kexpr;
-        std::string kwhy;
-        if (!resolve_coord(fsym, kname, kexpr))
-          kwhy =
-            "the key does not resolve to an input of this unit. Name a "
-            "parameter, an environment value as `msg.sender` / `msg.value`, or "
-            "a state variable at entry as `state.<field>`";
-        else
+        // ---- ONE ENTRY GHOST PER KEY ----
+        //
+        // The snapshot-at-entry rule is per LEVEL, not per slot: any of the
+        // keys may be a parameter the body reassigns, and a key read live at
+        // the exit would make the pre-read and the post-read name two
+        // different slots and report them as one variable's before and after.
+        // So every key gets its own ghost, exactly as the single-key code did
+        // for its one key.
+        // ---- TWO KINDS OF BAD KEY, AND THEY GET DIFFERENT DISPOSITIONS -----
+        //
+        // These used to be ONE branch that refused the whole ladder, and the
+        // argument for that was sound while `vars` was hand-written: a slot
+        // the caller asked about that cannot be built is not a weaker
+        // observable, and dropping it silently would read in the table as a
+        // variable nobody needed asserted.
+        //
+        // ⛔ `vars` STOPPED BEING HAND-WRITTEN. `propose_slot_vars` now emits
+        // the CROSS PRODUCT of per-level key candidates, so one store can
+        // contribute a dozen names that are guesses by construction. Under one
+        // global refusal, a single guess whose key type this mode cannot
+        // express kills every other candidate in the run.
+        //
+        // MEASURED, aqua `dock`: 16 candidates proposed over
+        // `_balances[.][.][strategyHash][.]`, the FIRST one refused on
+        // `strategyHash`, and the ladder came back `rows=0` -- 0 verdicts from
+        // 16 questions, one of which was bad. The emitted PUT carried an empty
+        // oracle and the log said "ladder REFUSED", which reads as "this unit
+        // has nothing assertable" and is false.
+        //
+        // So the two causes are split:
+        //
+        //   NAME DOES NOT RESOLVE  -> still a hard refusal. That is an INPUT
+        //     error: the caller named something that is not a quantity of this
+        //     unit at all, and running the rest would answer a question nobody
+        //     asked while the typo went unreported.
+        //
+        //   NAME RESOLVES, TYPE IS NOT EXPRESSIBLE -> drop THIS candidate and
+        //     record why. That is a CAPABILITY limit about a real quantity,
+        //     and it is not silent: `path_cov_refused_coords` is printed with
+        //     the reason beside the name, exactly as the value-type and
+        //     boolean refusals a few lines below already are.
+        std::vector<expr2tc> key_ghosts;
+        std::string key_drop;
+        for (const auto &kn : knames)
+        {
+          expr2tc kexpr;
+          if (!resolve_coord(fsym, kn, kexpr))
+          {
+            log_error(
+              "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the slot "
+              "'{}' names the key '{}', which cannot be expressed: the key "
+              "does not resolve to an input of this unit. Name a parameter, "
+              "an environment value as `msg.sender` / `msg.value`, or a state "
+              "variable at entry as `state.<field>`",
+              uid,
+              v.name,
+              kn);
+            exit(1);
+          }
+          std::string kwhy;
           coord_expressible(kexpr->type, kwhy);
-        if (!kwhy.empty())
-        {
-          // REFUSE THE LADDER, the certify disposition. A slot whose key could
-          // not be built is not a weaker observable, it is a different one:
-          // there is no expression to read, so continuing would silently drop
-          // the candidate the spec asked for.
-          log_error(
-            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the slot "
-            "'{}' names the key '{}', which cannot be expressed: {}",
-            uid,
-            v.name,
-            kname,
-            kwhy);
-          exit(1);
-        }
+          if (!kwhy.empty())
+          {
+            // ⚠ THE GHOSTS ALREADY BUILT FOR EARLIER KEYS OF THIS SAME NAME
+            // STAY IN THE PROGRAM. They are a DECL and an ASSIGN before
+            // `entry`, both marked `skipped`, and nothing references them once
+            // this candidate is dropped -- inert, at the cost of two
+            // instructions and two ghost numbers. Unwinding them would mean
+            // erasing instructions from a list other iterators point into,
+            // which is how the ABI gate acquired a self-loop; the cheap
+            // correct thing is to leave them unread.
+            key_drop = "the key '" + kn +
+                       "' resolves but cannot be "
+                       "expressed: " +
+                       kwhy +
+                       ". This candidate is DROPPED; the other candidates of "
+                       "this run are unaffected";
+            break;
+          }
 
-        // The key ghost, then the slot's entry snapshot. Both plain list
-        // inserts before `entry`, never insert_swap -- insert_swap moves the
-        // instruction's CONTENT and the iterator would end up naming the new
-        // instruction, which is how the ABI gate acquired a self-loop once.
-        symbolt ksym;
-        ksym.type = migrate_type_back(kexpr->type);
-        ksym.name = "__ESBMC_key$" + i2string(ghost_counter++);
-        ksym.id = "path_cov::" + id2string(ksym.name);
-        ksym.lvalue = true;
-        ksym.static_lifetime = false;
-        ksym.is_extern = false;
-        symbolt *pk;
-        cov_context->move(ksym, pk);
-        expr2tc key_v = symbol2tc(migrate_type(pk->type), pk->id);
-        {
+          // Plain list inserts before `entry`, never insert_swap --
+          // insert_swap moves the instruction's CONTENT and the iterator would
+          // end up naming the new instruction, which is how the ABI gate
+          // acquired a self-loop once.
+          symbolt ksym;
+          ksym.type = migrate_type_back(kexpr->type);
+          ksym.name = "__ESBMC_key$" + i2string(ghost_counter++);
+          ksym.id = "path_cov::" + id2string(ksym.name);
+          ksym.lvalue = true;
+          ksym.static_lifetime = false;
+          ksym.is_extern = false;
+          symbolt *pk;
+          cov_context->move(ksym, pk);
+          expr2tc key_v = symbol2tc(migrate_type(pk->type), pk->id);
           goto_programt::instructiont kd;
           kd.type = DECL;
           kd.code = code_decl2tc(kexpr->type, pk->id);
@@ -8996,11 +9702,57 @@ void goto_coveraget::solidity_path_coverage()
           ka.location.property("skipped");
           ka.function = entry->location.get_function();
           goto_program.instructions.insert(entry, ka);
+          key_ghosts.push_back(key_v);
+        }
+        if (!key_drop.empty())
+        {
+          // BEFORE the count invariant below, and that ordering is load
+          // bearing: a dropped candidate legitimately has fewer ghosts than
+          // keys, which is exactly the state the invariant aborts on.
+          path_cov_refused_coords[v.name] = key_drop;
+          continue;
+        }
+        // The count is an INVARIANT of the loop above, so it is checked rather
+        // than assumed: an index built from fewer ghosts than the name has
+        // keys would read a whole sub-array as if it were the scalar slot.
+        if (
+          key_ghosts.size() != knames.size() ||
+          level_elem.size() != knames.size())
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- INTERNAL DEFECT on slot '{}': {} "
+            "key(s) named, {} ghost(s) built, {} level type(s) peeled. These "
+            "must be equal; indexing with a short list would silently read a "
+            "sub-array as the scalar slot",
+            uid,
+            v.name,
+            knames.size(),
+            key_ghosts.size(),
+            level_elem.size());
+          abort();
         }
 
-        // The slot itself, read through the ENTRY key on both sides.
+        // The slot itself, read through the ENTRY keys on both sides, one
+        // index per level and each carrying the type of the level it produces.
         expr2tc marr = symbol2tc(mt, sit->second->id);
-        expr2tc live = index2tc(et, marr, key_v);
+        expr2tc live = marr;
+        for (size_t ki = 0; ki < key_ghosts.size(); ++ki)
+          live = index2tc(level_elem[ki], live, key_ghosts[ki]);
+        // The pre-read and the post-read walk the SAME member path, for the
+        // same reason both index with the same entry key ghost: two reads that
+        // did not agree on which field they name would be reported as one
+        // variable's before and after.
+        if (!mtail.empty() && !walk_fields(ns, live, mtail.substr(1)))
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the member "
+            "path of '{}' resolved as a TYPE but not as an EXPRESSION. The two "
+            "walks disagree, which would put the gate on one field and the "
+            "snapshot on another",
+            uid,
+            v.name);
+          exit(1);
+        }
 
         symbolt ssym;
         ssym.type = migrate_type_back(et);
@@ -9050,41 +9802,37 @@ void goto_coveraget::solidity_path_coverage()
         emit_rung(v.name, "gt", "post > pre", greaterthan2tc(live, pre_v));
         emit_rung(v.name, "lt", "post < pre", lessthan2tc(live, pre_v));
 
-        auto slot_fits = [&](const char *what, const std::string &dec) {
-          std::string tmax;
-          if (path_cov_fits_type(et, dec, tmax))
-            return;
-          log_error(
-            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: slot '{}' "
-            "{} value {} does not fit the mapping's value type (admissible "
-            "range [0, {}]). The bound is built as a constant of that type, so "
-            "an out-of-range decimal WRAPS and the candidate asserted would not "
-            "be the candidate written here",
-            uid,
-            v.name,
-            what,
-            dec,
-            tmax);
-          exit(1);
-        };
+        // ---- THE ENDPOINTS GO THROUGH `bound_endpoint`, LIKE THE COMPONENT'S
+        //
+        // What stood here was `constant_int2tc(et, string2integer(v.abs_lo))`
+        // and the delta equivalent -- decimal-only, with no refusal for a name.
+        // `string2integer("amt")` is the constant ZERO, so a spec written by
+        // the R2 proposer (which names the unit's integer parameter, never a
+        // literal) produced `post - pre in [0, 0]` and a confident REFUTED
+        // about a bound nobody wrote. The `slot_fits` guard could not catch it
+        // either: it only ever asked whether a DECIMAL was in range.
+        //
+        // MEASURED, and the contradiction is what makes it a defect rather
+        // than a preference: on N03_SenderKeyedBalance.deposit
+        // (`bal[msg.sender] += amt`) the same ladder run reported
+        // `post > pre` HOLDS and `post - pre in [amt, amt]` REFUTED.
         if (v.has_abs)
         {
-          slot_fits("abs_lo", v.abs_lo);
-          slot_fits("abs_hi", v.abs_hi);
+          const expr2tc alo = bound_endpoint(et, v.name, "abs_lo", v.abs_lo);
+          const expr2tc ahi = bound_endpoint(et, v.name, "abs_hi", v.abs_hi);
           emit_rung(
             v.name,
             "abs",
             "post in [" + v.abs_lo + ", " + v.abs_hi + "]",
             and2tc(
-              greaterthanequal2tc(
-                live, constant_int2tc(et, string2integer(v.abs_lo))),
-              lessthanequal2tc(
-                live, constant_int2tc(et, string2integer(v.abs_hi)))));
+              greaterthanequal2tc(live, alo), lessthanequal2tc(live, ahi)));
         }
         if (v.has_delta)
         {
-          slot_fits("delta_lo", v.delta_lo);
-          slot_fits("delta_hi", v.delta_hi);
+          const expr2tc dlo =
+            bound_endpoint(et, v.name, "delta_lo", v.delta_lo);
+          const expr2tc dhi =
+            bound_endpoint(et, v.name, "delta_hi", v.delta_hi);
           // The direction conjunct is not decoration, for the reason the
           // component loop records: the value type is unsigned, so `post - pre`
           // WRAPS on a decrease and a bare window HOLDS on every decreasing
@@ -9103,11 +9851,7 @@ void goto_coveraget::solidity_path_coverage()
               (v.delta_dir == "inc" ? "post >= pre" : "pre >= post"),
             and2tc(
               dir,
-              and2tc(
-                greaterthanequal2tc(
-                  d, constant_int2tc(et, string2integer(v.delta_lo))),
-                lessthanequal2tc(
-                  d, constant_int2tc(et, string2integer(v.delta_hi))))));
+              and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
         }
       }
 

@@ -1,0 +1,1936 @@
+\documentclass[manuscript,anonymous]{acmart}
+
+\usepackage{tcolorbox}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{xurl}
+\usepackage{amsmath}
+
+\input{solidity_highlight}
+
+\newcommand{\tool}[1]{\texttt{#1}}
+
+\newtcolorbox{rqbox}{colback=gray!8, colframe=gray!60, boxrule=0.5pt, arc=2pt,
+  left=6pt, right=6pt, top=3pt, bottom=3pt}
+\newtcolorbox{answerbox}{colback=green!4, colframe=green!45!black, boxrule=0.5pt,
+  arc=2pt, left=6pt, right=6pt, top=3pt, bottom=3pt}
+
+\begin{document}
+
+\title{VeriPUT: Verifier-Derived Parameterized Unit Tests for Path Coverage of
+Smart Contracts}
+\begin{abstract}
+\end{abstract}
+\maketitle
+
+\section{Introduction}\label{sec:intro}
+
+Smart contracts hold digital assets on public blockchains, and a fault in one
+can be turned directly into a significant loss~\cite{werner2022sok}. Once such
+contracts are deployed, they cannot be edited in place, so every version has to
+be checked before it goes on chain. Developers write unit tests for this
+purpose. One common way to obtain such tests automatically is \emph{coverage-based
+test generation}, which measures how much of a contract a suite reaches and
+generates tests that raise that
+measure~\cite{syntest_solidity,solar_sbst,SolTG-1}. A suite is also kept after
+it is written and run again whenever the code changes. Optionally, it carries assertions that record how the contract behaves
+now, so a change that alters this behavior makes the suite fail.
+
+\textbf{Challenges.} In general, coverage-based test generation for smart
+contracts rests on the assumption behind coverage criteria, that a suite
+reaching more of a contract detects more of its faults~\cite{AmmannOffutt}.
+However, reaching a fault is not the same as detecting it. In fact, coverage can
+be a weak indicator of how many faults a suite detects. A suite can reach every
+line of a program and still detect almost none of the faults injected into the
+code it reached~\cite{Wang2025MutationGuided}. The reason is that covering a
+target only requires one input that reaches it, and such an input is what these
+tools deliver. A contract is checked once and then released, so a fault its
+suite does not notice is deployed with the code. Specifically, we identify three
+obstacles between reaching a target and detecting a fault at it. The first two
+concern the test that a generator emits for a target it reaches. The third
+concerns the targets for which it emits nothing, and what their absence tells a
+developer before deployment.
+
+\textbf{(1) Weak oracles.} A test is expected to carry an oracle that a fault
+can violate. However, a coverage criterion states which parts of a contract a
+run must reach, and nothing about what should hold once it reaches them. A
+coverage-driven generator therefore has no source of truth beyond the program
+under test, and the strongest assertion it can synthesize is a record of the run
+it produced~\cite{Barr2015,syntest_solidity}. Such a test reports the faults
+that stop the run, for instance a changed function signature that breaks
+compilation, or a changed \texttt{require} condition that makes the call revert.
+However, a more subtle logical fault lets the run finish and only moves a value,
+such as a rounding direction or a bound shifted by one. The run still reaches
+the statement that carries it, so the coverage figure is unchanged, and the
+fault goes unreported unless the recorded values happen to include the one it
+moved. For a smart contract this second kind is what a suite is kept for. The
+values a call leaves behind are the balances and stored amounts that later
+transactions read, so an edit that moves one has to be reported whether or not
+it is a vulnerability.
+
+\textbf{(2) Points instead of ranges.} A test is expected to run on the inputs
+at which a fault becomes visible. However, a coverage criterion is satisfied by
+one input per target, and it says nothing about which input that should be. A
+generator that maximizes coverage therefore has no reason to run a second input
+against a target it has already reached. It also has no basis for preferring one
+input over another, since it takes its targets from the structure of the program
+and does not predict where a fault lies. This leads to a coverage-safety gap. In
+particular, existing coverage-driven generators for smart contracts emit a
+\emph{concrete replay test}, one in which every parameter is fixed to a single
+value. Such a test runs the target on one of the values that reach it. The other
+values are never run. If the contract behaves differently on one of them, the
+test cannot see it, and the coverage figure is again unchanged. For a smart
+contract, any account can call the function with a value the suite never ran.
+
+\textbf{(3) Unreached is not unreachable.} A generator is also expected to
+account for the targets it leaves uncovered, and to separate those that no input
+can reach from those it failed to find. However, a coverage criterion records
+only whether a target was reached. That is, for a target left uncovered, we do
+not know whether any input reaches it at all. A search-based generator stops when
+its budget runs out, and a symbolic one stops when solving fails, and in practice
+neither outcome tells the two apart. Raising the budget does not settle the
+question either, since it moves a few targets into the covered set and reports
+the rest exactly as before. A search also starts from seeds and explores in an
+order that changes between runs, so a target missed in one run may be reached in
+the next. For a smart contract this is the part that matters. A target that was
+missed by accident is behavior no test ran, and any transaction can reach it once
+the contract is on chain.
+
+\textbf{Our approach.} To address these challenges, we present \tool{VeriPUT}, a
+path-coverage-driven, verifier-certified framework that generates
+\emph{parameterized unit tests} (PUTs) for smart contracts. A PUT declares the
+test arguments instead of fixing them, states an assumption that says which
+values the test admits, and carries an assertion that must hold for every
+admitted value~\cite{Tillmann2005}. The core idea has three parts. (i) We
+widen how an execution path is covered, from a concrete replay test that runs
+the path on one input, to a range of inputs that all follow the same path, i.e.,
+parameterized inputs. (ii) We widen what the test observes at the end of the
+path, from the single value one run produced, to whether each observed quantity
+changes and what the quantity becomes when it changes. (iii) We use a verifier
+with unbounded proving power as the oracle, which certifies that the resulting
+PUT holds on the contract under test. As a result, \tool{VeriPUT} returns one test per path, and reports each path for which \tool{VeriPUT}
+produced no test as proved out of reach or left undecided.
+
+\textbf{Workflow.} \tool{VeriPUT} takes a contract and works in three stages.
+The first stage instruments each entry point so that a run records the decisions
+it takes. \tool{VeriPUT} then takes one path at a time and plants at each exit
+an assertion stating that the recorded decisions are not those of that path. A
+verifier that refutes such an assertion hands back an input that reaches the
+path. Each path is therefore refuted with a counterexample, proved out of reach,
+or left undecided where the verifier exhausts its limits, and \tool{VeriPUT}
+reports the three separately. The second stage widens that counterexample into a
+\emph{certified input region}, a range of inputs around the counterexample, and
+has the verifier certify that every input in the region follows the same path.
+Where no region can be certified, the region narrows to the counterexample
+alone, and the test stays concrete. The third stage puts candidate assertions to
+the verifier, with the region as the assumption, and writes into the test those
+the verifier proves. Where none of them is proved, the test asserts the exact
+values recorded in the counterexample, so every emitted test carries an
+assertion the verifier has established.
+
+\textbf{Observations.} This design is based on two observations. (i) Unlike many
+other programs, a smart contract has a fixed and uniform set of behaviors to
+observe and test. A test can observe the balances and stored values of the
+accounts involved, the data returned, whether the call succeeded, and the log
+entries produced. Assertion candidates can therefore be enumerated directly from
+the contract's own state variables, return types, and events. (ii) A smart
+contract commonly has many entry points, i.e., its public and external
+functions, and each entry point is a short unit. This makes it suitable to
+analyze the paths through each function unit on its own, rather than the paths
+that run from a single entry to an exit as in many programs written in other
+languages. A typical entry point checks a few conditions, updates a few state
+variables, and returns. The decisions such a unit takes are few enough that the
+paths through it can be enumerated one by one.
+
+\textbf{Contributions.}
+In summary, our contributions are:
+\begin{itemize}
+\item \textbf{Path-coverage-driven PUT synthesis.}
+We present \tool{VeriPUT}, a method that generates parameterized unit tests for
+smart contracts from the contract source alone, without a written specification
+or an existing test suite. Compared to the concrete replay test generated by the
+existing tools, a test emitted by \tool{VeriPUT} summarizes whether a path can
+be taken, what the call does along it, and how the call ends, and thereby covers
+an execution path in a stronger sense.
+
+\item \textbf{Certified input regions.}
+We introduce a region construction algorithm that turns the single input a
+verifier returns for a path into a \emph{certified input region}, i.e., a range
+of inputs proven to drive execution along that same path. Specifically, it
+introduces a candidate ladder that searches the range of each argument in one
+batch of verifier queries. Additionally, it introduces a practical degradation step that ranges over the
+arguments it can generalize and fixes the rest, which avoids the path
+combination explosion. The
+resulting PUTs differ from existing coverage-driven generators for smart
+contracts, which emit a single input for each path they reach.
+
+
+\item \textbf{Verified assertion synthesis.}
+We introduce an assertion oracle synthesis algorithm that synthesizes
+path-level assertions. Specifically, for one path we observe whether the path
+can be taken, whether it changes the contract's observable state, and what that
+state becomes, and the algorithm asserts all three. This extends what coverage
+means while staying coverage-driven, and closes the coverage-safety gap. It does
+so without predicting where a fault may lie and without mutants of the contract,
+which sets it apart from methods that target contract-level properties.
+
+\item \textbf{Implementation \& Evaluation.}
+Our evaluation results show that \dots
+
+\end{itemize}
+
+%-----------------------------------------------------
+\section{Background}\label{sec:background}
+%-----------------------------------------------------
+
+%-----------------------------------------------------
+\subsection{Smart Contracts and Solidity}
+%-----------------------------------------------------
+
+A smart contract is a program deployed on a blockchain, on Ethereum usually
+written in Solidity~\cite{solidity_docs} and run by the Ethereum Virtual
+Machine (EVM)~\cite{wood_yellowpaper_evm}. A contract declares \emph{state
+variables}, whose values make up the contract \emph{state}. The state is kept
+in storage between calls, so what a call does depends on its arguments and on
+what earlier calls left behind. Functions read and change the state, and those
+marked \texttt{public} or \texttt{external} are the \emph{entry points} of the
+contract~\cite{solidityStructureOfAContract}. A contract normally has no single fixed
+entry point and does not start on its own. It runs only when an outside party
+sends it a \emph{transaction}, which names the entry point to call, carries its
+arguments, and may transfer funds with the call. Nothing restricts how often or
+in what order the entry points are used. A transaction is all or nothing. It
+either finishes and keeps its writes, or it \emph{reverts} and every write it
+made is undone~\cite{liu2025state}. Such contracts often hold financial
+assets~\cite{werner2022sok}, and deployed code cannot be changed
+afterwards~\cite{wood_yellowpaper_evm}, so a fault found later cannot simply be
+patched. Therefore, a contract has to be checked before it is deployed.
+
+The first four bytes of the call data are a \emph{function selector} that picks
+the entry point, and the arguments behind it follow the \emph{application
+binary interface} (ABI) of the contract~\cite{abi_spec}. They are decoded
+before the function body is entered, so call data that does not fit the
+declared parameter types can be rejected before the body runs. The body need
+not reach its end either, as a runtime error such as a division by zero aborts
+the call~\cite{solidity-panic}. A contract may also call another contract whose
+address it holds. The code at that address then runs, and the caller does not
+control it. The call may fail instead of returning, and the callee may call
+back into the caller before the first call
+returns~\cite{solidity_address_members,solidity2}.
+
+%-----------------------------------------------------
+\subsection{Unit Testing and Coverage Criteria}
+%-----------------------------------------------------
+
+A \emph{unit test} runs one unit of a program on some inputs and judges the
+run. The part that judges is the \emph{test oracle}~\cite{Barr2015}. It is
+often an \emph{assertion} in the test, but need not be. A test with no
+assertion still fails when the run crashes, and this implicit oracle is all
+that many generated tests carry~\cite{Barr2015}. A test with fixed inputs also
+fixes one expected outcome, and so covers a single point of the input
+space~\cite{Tillmann2005}. A \emph{parameterized unit test} turns the inputs
+into parameters instead, stating an \emph{assumption} that says which values
+are admitted and an assertion that must hold for all of them; the framework
+supplies the concrete values, for example by
+fuzzing~\cite{Tillmann2005,Claessen2000}.
+
+A \emph{coverage criterion} measures how thoroughly a suite exercises a
+program. Statement and branch coverage, for example, ask for every statement
+and every branch outcome to be executed, while \emph{path coverage} asks for
+every execution path to be taken~\cite{Howden1976}. Path coverage is the
+strongest of the three, as it subsumes statement and branch coverage and asks
+for every combination of decisions to be taken. However, paths grow
+exponentially with the number of branches, and their number need not be finite
+once loops appear. Some paths are \emph{infeasible} as well, in that no input
+drives execution along them, and whether a given path is feasible cannot be
+decided in general~\cite{AmmannOffutt}. Coverage is thus reported against the
+feasible paths. A criterion says which parts of a program a suite reaches, not
+whether the suite would notice a fault in them.
+
+To run unit tests on a smart contract and collect coverage, developers use a testing
+framework such as \tool{py-evm}~\cite{pyevm}, \tool{Remix}~\cite{remix},
+\tool{Truffle}~\cite{truffle}, \tool{Hardhat}~\cite{hardhat}, or
+\tool{Foundry}~\cite{foundry}. Such a framework deploys the contract on a local
+chain, lets each test set the caller and the value sent, and supplies the
+arguments of a parameterized test. An oracle written against a contract need
+not check a return value. A test may require that a call revert, or watch a
+balance or a state variable for an expected change.
+
+%\emph{Mutation testing} asks whether a
+%suite would notice a fault, by injecting small syntactic changes, each yielding
+%a \emph{mutant} of the program, and counting how many of them make the suite
+%fail~\cite{Howden1982,mutationSurveySC}. A mutant that does is killed; one that
+%behaves identically to the original on every input is equivalent, and no suite
+%can kill it.
+
+
+%-----------------------------------------------------
+\subsection{Bounded Model Checking and Counterexamples}
+%-----------------------------------------------------
+
+Formal verification checks by mathematical means whether a program satisfies a
+property stated in a formal language~\cite{BaierKatoen2008}. Model checking
+answers such a question by examining the states a program can
+reach~\cite{Clarke1999ModelChecking}. Bounded model checking (BMC) narrows the
+question to a fixed number of steps, asking whether the program can violate the
+property within that many steps~\cite{Biere1999}. It unrolls the executions of
+the program up to that bound and hands the question to a satisfiability solver.
+A satisfiable answer means a violation exists inside the bound. An
+unsatisfiable one means none does, but says nothing about longer executions, so
+a property that survives is still not shown to hold in general. The solver may
+also exhaust its resources and return no answer. \emph{k-induction} can lift
+the bound~\cite{gadelha2017kinduction}. It proves two things. The base case is
+that the property is not violated within the bound. The inductive step is that
+once the property has held for a number of consecutive steps, it holds for the
+next one too. Where both are proved, the result carries to every reachable
+state.
+
+The property a verifier is asked about may be written by the developer as an
+assertion, or come from the verifier itself, which adds checks for arithmetic
+overflow, division by zero, out-of-bounds accesses and the like~\cite{smtchecker}.
+\emph{Assumptions} work the other way and narrow the inputs the verifier
+considers. When the question is satisfiable, the satisfying assignment records
+how the property breaks, and a verifier can return it as a
+\emph{counterexample}: input values, the conditions along the path taken, an
+execution trace, and the values of program variables where the property
+fails~\cite{counterexample}.
+
+\section{Motivation}\label{sec:motivation}
+
+We use a fee-charging vault and two faults injected into it. Our goal is to show
+(i)~what a coverage-driven generator returns for such a contract, (ii)~how a
+concrete replay test and a parameterized unit test differ on the same path, and
+(iii)~the coverage-safety gap, in that both tests cover that path while the
+assurance each of them gives can differ.
+
+\begin{lstlisting}[language=Solidity, numbers=left, numberstyle=\scriptsize,
+xleftmargin=1.5em, basicstyle=\ttfamily\scriptsize, breaklines=true,
+columns=fullflexible, keepspaces=true, float=tbp,
+caption={A simplified fee-charging vault, with the two injected faults marked
+at the line they replace.},
+label={lst:motivation}]
+pragma solidity ^0.8.0;
+contract FeeVault {
+    address public owner = msg.sender;
+    address public feeReceiver = msg.sender;
+    uint16 public constant feeBps = 250;    // 2.5% fee
+    uint256 public constant maxFee = 1e17;  // cap 0.1 ether
+    mapping(address => uint256) public deposits;
+    mapping(address => uint16) public discountBps;
+    event Deposited(address indexed u, uint256 amount);
+    event Withdrawn(address indexed u, uint256 net, uint256 fee);
+
+    function deposit() external payable {
+        deposits[msg.sender] += msg.value;
+        emit Deposited(msg.sender, msg.value);
+    }
+
+    function setDiscount(address u, uint16 bps) external {
+        require(msg.sender == owner && bps <= feeBps);
+        discountBps[u] = bps;
+    }
+
+    function withdraw(uint256 amount) external returns (uint256 net) {
+        uint256 d = deposits[msg.sender];
+        require(amount > 0 && amount <= d);
+        uint256 rate = feeBps;
+        if (discountBps[msg.sender] > 0) {
+            rate = feeBps - discountBps[msg.sender];
+        }
+        // M1: / 10000 -> / 100
+        // M2: amount * rate -> d * rate
+        uint256 fee = amount * rate / 10000;
+        if (fee > maxFee) {
+            fee = maxFee;
+        }
+        net = amount - fee;
+        deposits[msg.sender] = d - amount;
+        (bool ok1, ) = feeReceiver.call{value: fee}("");
+        require(ok1);
+        (bool ok2, ) = msg.sender.call{value: net}("");
+        require(ok2);
+        emit Withdrawn(msg.sender, net, fee);
+    }
+}
+\end{lstlisting}
+
+Listing~\ref{lst:motivation} shows the simplified vault, which we take as the
+reference program, that is, as the version whose behaviour the developer
+intended. The vault holds Ether for the accounts that deposit it, charges a fee
+on each withdrawal, and lets the owner grant an account a discount on that fee.
+The deployer owns the contract and collects its fees (Lines~3--4). A
+withdrawal is charged 250 basis points, or $2.5\%$, of the amount taken, and no
+single fee exceeds 0.1 Ether (Lines~5--6). Each account has a deposit and a
+discount expressed in the same unit as the fee, zero unless the owner grants one
+(Lines~7--8, 17--20), and depositing credits the caller (Lines~12--15). Two
+events record a deposit and a withdrawal (Lines~9--10). A withdrawal admits any
+positive amount within the caller's deposit (Lines~23--24), lowers the rate by
+the discount when one is held (Lines~25--28), and applies the rate, lowering the
+fee to the cap when the fee exceeds it (Lines~31--34). It then computes the net,
+reduces the deposit by the amount (Lines~35--36), pays the fee and then the net,
+requiring each transfer to succeed (Lines~37--40), and emits the withdrawal
+event (Line~41). Each conditional has two outcomes, and all four
+combinations are reachable, so a successful withdrawal follows one of four
+paths.
+
+We now mutate the program, that is, we deliberately introduce an edit of a kind
+a developer might make and use it to ask whether a test detects the change in
+logic it causes. We introduce two such faults. Both replace Line~31, and both
+are marked there in Listing~\ref{lst:motivation}. $M_1$ divides by one hundred
+rather than by ten thousand, a confusion between a percentage and a basis
+point, so every fee is a hundred times the intended one, or the cap where that
+exceeds it. $M_2$ applies the rate to the balance rather than to the amount
+withdrawn, which is what the line would have read in a version that only ever
+withdrew everything, so a partial withdrawal is charged on the whole deposit.
+Both edits can change which branch a given input takes, since the conditional
+below them reads the fee they change. Neither edit, however, changes the text
+of either condition itself.
+
+\begin{figure*}[t]
+\begin{minipage}[t]{0.46\textwidth}
+\begin{lstlisting}[numbers=none, basicstyle=\ttfamily\scriptsize,
+xleftmargin=0.5em, breaklines=true, columns=fullflexible, keepspaces=true,
+caption={The counterexample (simplified) returned for one condition by
+\tool{CC-SolBMC}~\cite{CCSolBMC2024} via \tool{SMTChecker}~\cite{smtchecker}.},
+label={lst:motivation-ce}]
+BMC: Assertion violation happens here.
+  --> FeeVault_mod.sol:32:2
+   |
+32 | assert(!(discountBps[msg.sender] > 0));
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Counterexample:
+  amount                  = 21239
+  deposits[msg.sender]    = 21239
+  discountBps[msg.sender] = 39
+  ...
+\end{lstlisting}
+
+\vspace{0.4em}
+
+\begin{lstlisting}[language=Solidity, numbers=left, numberstyle=\scriptsize,
+basicstyle=\ttfamily\scriptsize, xleftmargin=1.5em, breaklines=true,
+columns=fullflexible, keepspaces=true,
+caption={The same counterexample rendered as a concrete-replay
+\tool{Foundry}-style test unit.},
+label={lst:motivation-tc}]
+import "forge-std/Test.sol";
+import "../src/FeeVault.sol";
+
+contract CoverageTest is Test {
+    FeeVault v;
+    address alice = address(0xA11CE);
+
+    function setUp() public { v = new FeeVault(); }
+    receive() external payable {}
+
+    function test_discountedWithdrawal() public {
+        v.setDiscount(alice, 39);
+        vm.deal(alice, 21239);
+        vm.startPrank(alice);
+        v.deposit{value: 21239}();
+        v.withdraw(21239);
+        vm.stopPrank();
+    }
+}
+\end{lstlisting}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.50\textwidth}
+\begin{lstlisting}[language=Solidity, numbers=left, numberstyle=\scriptsize,
+basicstyle=\ttfamily\scriptsize, xleftmargin=1.5em, breaklines=true,
+columns=fullflexible, keepspaces=true,
+caption={Listing~\ref{lst:motivation-tc} widened into a parameterized unit test
+over the same path.},
+label={lst:motivation-put}]
+import "forge-std/Test.sol";
+import "../src/FeeVault.sol";
+
+contract DiscountTest is Test {
+    FeeVault v;
+    address alice = address(0xA11CE);
+
+    function setUp() public { v = new FeeVault(); }
+    receive() external payable {}
+
+    function test_discountLowersFee(uint256 dep, uint256 amount, uint16 disc) public {
+        dep = bound(dep, 21239, 200000);
+        amount = bound(amount, 10000, 21239);
+        disc = uint16(bound(uint256(disc), 1, 100));
+        v.setDiscount(alice, disc);
+        vm.deal(alice, dep);
+        vm.startPrank(alice);
+        v.deposit{value: dep}();
+        uint256 net = v.withdraw(amount);
+        vm.stopPrank();
+        uint256 fee = amount - net;
+        assertLe(fee, amount * 249 / 10000);
+        assertGe(fee, amount * 150 / 10000);
+    }
+}
+\end{lstlisting}
+\end{minipage}
+\caption{What a coverage-driven generator produces for
+Listing~\ref{lst:motivation} (left) and a test over the same path that reports
+both faults (right). The generator targets one atomic condition at a time and
+returns an assignment of values; Listing~\ref{lst:motivation-tc} is that
+assignment rendered as a call by us, since the generator emits no executable
+artifact. Both test contracts deploy the vault themselves and so collect its
+fees, which is why each declares \texttt{receive}. The harness supplies
+\texttt{vm.deal}, which credits an account with Ether;
+\texttt{vm.startPrank} and \texttt{vm.stopPrank}, which make the calls between
+them come from a given account; \texttt{bound}, which maps an argument into a
+range; and \texttt{assertLe} and \texttt{assertGe}, which fail the test when
+the ordering they state does not hold.}
+\label{fig:motivation-tests}
+\end{figure*}
+
+We first ask what a coverage-driven generator produces for this contract, using
+an existing one. \tool{CC-SolBMC}~\cite{CCSolBMC2024} works at the level of
+atomic conditions: for every condition it finds in the source it emits a test
+input that makes the condition true and one that makes it false. It obtains
+each of them by planting a pair of assertions on the line above the condition,
+one asserting that the condition does not hold and one asserting that its
+negation does not hold. An assertion of the first kind is false exactly when
+the condition is true, so asking a verifier to prove it is the same as asking
+whether any input satisfies the condition. Refuting it establishes that the
+true branch is reachable and returns a witness.
+
+For the discount test of the vault (Line~26 of
+Listing~\ref{lst:motivation}) the pair reads
+\texttt{assert(!(discountBps[msg.sender] > 0))} for the true polarity and
+\texttt{assert(!(!(discountBps[msg.sender] > 0)))} for the false one. We follow
+the first. The instrumented contract is handed to
+\tool{SMTChecker}~\cite{smtchecker}, the verifier built into the \tool{Solidity}
+compiler, whose bounded model checking engine \tool{CC-SolBMC} drives, and the
+assertion is refuted. Listing~\ref{lst:motivation-ce} shows the resulting
+counterexample, the one for the true polarity, simplified to the assignments
+that can serve as test inputs. It names the line and the assertion that failed
+and then assigns a value to each variable the engine tracked; of those, three
+determine the call. The caller has 21239 wei on deposit, holds a discount of 39
+basis points, and asks to withdraw the whole balance. Those three values are
+what a test needs, and we render them as a \tool{Foundry} test in
+Listing~\ref{lst:motivation-tc}. The test contract deploys the vault, so it is
+the owner and grants \texttt{alice} the discount of 39 basis points
+(Lines~4--9, 12). It then funds \texttt{alice} with the deposit recorded in the
+counterexample, deposits it, and withdraws all of it under her identity
+(Lines~13--17). Note that both this test and the one beside it are written
+against the reference contract, not against either fault, and that both have
+been run and pass on it.
+
+We now run this test unit against the two mutants. On $M_1$ it fails. The fault
+multiplies every fee by one hundred, so at the recorded input the fee comes to
+44814 wei against a deposit of 21239, the subtraction on Line~35 of
+Listing~\ref{lst:motivation} underflows, and the call reverts. The test carries
+no assertion, so what reported the fault is the run not completing. Notably, a
+test reports a fault when the faulty program yields a different observation.
+Whether a call reverted is one of the things a caller can observe, alongside
+the stored state and the value returned. The test was not written with $M_1$ in
+mind, and reporting a fault it was not written for is what a regression suite
+is for. On $M_2$ the test passes, and no assertion added to it would have
+changed that. The counterexample withdraws the whole balance, so the amount and
+the deposit coincide, and charging the rate on one is charging it on the other.
+The two programs agree on the fee, on the net, on the stored deposit, and on
+the event. There is nothing on this run for an assertion to separate, and the rest of the
+suite the generator returned for this contract fares no better. In most of its
+tests the amount requested equals the deposit, and $M_2$ charges what the
+reference charges. The remaining ones withdraw part of the balance, but not on
+this path: one is small enough that both fees floor to zero, and two are large
+enough that both are lowered to the cap on Line~32.
+
+We now focus on $M_2$. It changes what a withdrawal costs, and the test runs on
+a path where it does so, yet the run itself shows nothing. A single run affords
+only one kind of assertion, a copy of a value it produced, and here every such
+value agrees with the reference. What $M_2$ breaks is the relation between the
+amount withdrawn and the fee charged, and a relation cannot be stated at one
+input. A natural thought is to enhance the existing test. Specifically, the
+input values can be widened into a region that stays on the same path, and an
+assertion can then be formed over that region.
+
+Listing~\ref{lst:motivation-put} takes both steps. The deposit and the amount
+withdrawn become separate parameters (Line~11), bounded rather than pinned
+(Lines~12--14). The surrounding contract and the call sequence are unchanged
+(Lines~1--9, 15--20). The last three lines are new. The fee is recovered from
+the amount and what came back (Line~21). It is then required to lie between the
+rates the bounded discount allows (Lines~22--23). The bounds keep every
+admitted input on the path the counterexample took. A discount of at least one
+basis point enters the conditional on Line~26 of Listing~\ref{lst:motivation}.
+Deposits and amounts of this size keep the fee far under the cap on Line~32.
+In the deposit and the amount the counterexample sits at a corner. Every
+admitted amount must be at most every admitted deposit, or Line~24 would reject
+some pair, and the counterexample withdraws its whole balance, so from there the
+amount can only shrink and the deposit can only grow. The discount is not
+constrained against either, and the region extends to both sides of the
+counterexample's 39 basis points. The
+bounds also give the assertion its content. A discount of one to a hundred
+basis points leaves the contract charging a rate of 150 to 249, so the fee is
+bounded by the amount times those two rates. $M_2$ charges on the deposit
+instead of on the amount, and where the deposit is large enough against the
+amount the fee leaves that range. The fee
+it charges stays below every admitted amount, so the call completes and the
+assertion is what reports the fault. $M_1$ was already reported by the concrete
+test, and widening does not lose it. What widening adds is $M_2$.
+
+These observations motivate \tool{VeriPUT}. A test is generated for a complete
+path rather than for a condition, so the decisions the call takes are fixed and
+an assertion has something to range over. Its arguments are not pinned to the
+witness that reached the path but widened to a region of inputs that reach it
+too. The assertion is synthesized over what the call changed, and the verifier
+that produced the witness proves both the region and the assertion.
+
+\section{Methodology}\label{sec:method}
+
+\subsection{Overview}\label{sec:overview}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{flowchart.png}
+\caption{Overview of \tool{VeriPUT}, following one execution path through path
+enumeration, certified input regions and verified assertion synthesis. All three
+stages put their queries to the same verifier, drawn as the band above them. A
+path the verifier cannot reach, or one whose input describes an execution the
+contract cannot perform, emits \emph{no test} and is logged on its own; a path
+whose region cannot be certified keeps its \emph{concrete replay test}; the rest
+reach one or more \emph{parameterized unit tests}.}
+  \label{fig:overview}
+\end{figure*}
+
+Generating a parameterized unit test for a contract calls for two things at
+once: a set of inputs the test admits, and an assertion that holds for all of
+them. Neither can be settled on its own. A set of inputs chosen first is usually
+wide enough that the only assertions holding over it are ones that would hold
+whatever the contract did. An assertion chosen first leaves the inputs on which
+it holds still to be found, and those inputs need not form anything a test can
+state as a range.
+
+An execution path settles the two together. A path here is the sequence of
+decisions one call takes, as recorded at the chosen granularity, from the entry
+point to the point where it returns or reverts. An input is everything that
+execution depends on: the arguments the call carries, the context it arrives in
+such as the caller and the value sent, the state the contract is already in
+such as a stored balance or owner, and what the contracts it calls out to
+return. The inputs that follow a given path are those satisfying the conditions
+along it, and all of them end at the same exit, so there is something definite
+for an assertion to be about. \tool{VeriPUT} works in that order. As shown in
+Figure~\ref{fig:overview}, it proceeds in three stages: \emph{path
+enumeration}, which finds paths and one input for each; \emph{certified input
+regions}, which widens that input into a range of inputs following the same
+path; and \emph{verified assertion synthesis}, which proves assertions over the
+range.
+
+In the path enumeration stage, \tool{VeriPUT} instruments each entry point so
+that the way a run went is appended to a record of its own at every decision
+point the chosen granularity keeps, and plants at each exit an assertion denying
+the path that reaches it. The record is written but never read back, so the
+instrumented contract takes the same decisions as the original on every input.
+Refuting one of those assertions hands back an input that reaches the path, and
+from each such input a concrete replay test is emitted. Three kinds of path are
+left without one and recorded apart: those the verifier proves out of reach,
+those it leaves open, and those whose input describes an execution the contract
+cannot perform.
+
+The single input from the first stage says nothing about the other inputs that
+reach the same path. In the certified input regions stage it is widened into a
+range. No input takes two paths, so the other paths through the same entry point
+propose cuts that keep the input already in hand, and the verifier is asked
+whether the range that survives admits inputs of that path only. A refutation
+supplies an input inside the range that left by a different path, which narrows
+the range before the question is asked again. Where narrowing a coordinate would
+leave it a single value, that coordinate is fixed at the value already in hand
+and the others carry on, which is the common outcome. Where nothing survives,
+the concrete replay test for the same path stands.
+
+In the verified assertion synthesis stage, \tool{VeriPUT} supplies the oracle.
+Candidates are enumerated from what the contract declares---its state variables,
+the values it returns, and whether a call reverts---rather than predicted from a
+model of what may go wrong, and each is put to the verifier with the certified
+range as its assumption. Those it discharges are what the test carries. A candidate
+refuted on part of the range is kept over the rest by dividing the range at the
+input the verifier returned, and one that a condition separates is written with
+that condition in front of it; a declined candidate is recorded as such. The
+stage emits a parameterized unit test for each part. Where the verifier
+discharges nothing over the range, the concrete replay test stands, asserting at
+its single input the values the refutation already reported.
+
+\paragraph{Why not write the test directly?}
+Property inference suggests a shorter route: examine the contract, obtain a
+property that holds of it, and write that property out as a test. The route does
+not arrive at the same place. How much a property says is decided by the set of
+runs it is asserted over, and that set is fixed by where the property is stated.
+
+Take the withdrawal of Listing~\ref{lst:motivation}. A postcondition of it as a
+whole has to hold on the runs that apply a discount and on the runs that do not,
+so it can say no more than that the rate charged is at most the standard one. An
+assertion of that kind is \emph{trivial}: it holds however the function behaves,
+and a test carrying it reports nothing. Confine the question to one path and
+each becomes worth checking. Along the path that applies a discount the rate is
+strictly below the standard one; along the other it equals it. Both are
+provable.
+
+What changed is not the assertion but the set of runs it speaks about. Strength
+comes from narrowing that set. Confining the question to one path leaves runs
+that share a recorded decision sequence and an exit, and leaves every input in
+exactly one class; the instrumented contract yields both the classes and their
+exits. Beginning from a property reverses the problem, since what must
+then be found is the set of inputs on which that property holds, and such a set
+need not be anything an assumption can state. A parameterized unit test needs
+both halves. Fixing the path first yields a set of inputs that can be written
+down, and the assertion is proved over that set instead of sampled on it.
+
+\subsubsection{Problem Definition}\label{sec:task-def}
+
+The input to \tool{VeriPUT} is the source of a single contract and nothing
+else: no test written by a developer, no property supplied by hand, and no
+record of transactions the contract has served. For each path of each
+\emph{unit}, that is, each entry point the outside world may call, it produces
+one of three outcomes: one or more parameterized unit tests, each admitting a
+part of the certified range on which its assertions were proved; a concrete
+replay test, where no range could be certified or where nothing the test writes
+was left free to vary; or no test at all, the path being listed with the
+reason. A constructor runs only when the contract is created and is not an
+entry point of the deployed contract, so its execution covers no path of a
+unit. Every test carries at least one assertion, proved to hold on each input
+the test admits and not only on the values a framework happens to draw.
+
+Results are relative to bounds we declare: how far loops are unrolled and
+callbacks followed, how long an argument of dynamic length may be, how far
+internal calls are expanded, and how many values a coordinate's range may have
+removed from it one at a time. We assume a decoder that rejects arguments not
+fitting the declared types instead of normalising them. Gas consumption is not
+modelled, though the branches introduced by a gas failure are. Each run of
+\tool{VeriPUT} also fixes a \emph{fixture}, a deployment a test can reproduce:
+the code, the values construction leaves behind, and the block context. The
+state a call starts from is the state that fixture leaves, except at the
+storage locations a test can write, which range as the other inputs do. The
+fixture is settled once, before enumeration. \tool{VeriPUT} asks the verifier
+for one deployment that completes, fills the values that witness leaves
+unconstrained the same way every time, and runs that deployment once to see it
+through; every question below is put from what it leaves behind, and the emitted
+test repeats the same deployment. Where no deployment
+can be witnessed within these bounds, the contract yields no tests and is
+reported. A path is reachable relative to that fixture and to these bounds, and
+not from every deployment or every history of calls. The claims below concern
+the queries put to the verifier and take the verifier to be free of defects;
+where it exhausts its resources it says so, which we read as an answer withheld
+and not as a proof.
+
+Four things are asked of the verifier itself. (i)~It decides several assertions
+under one assumption in a single run, which is what keeps a ladder of candidate
+bounds to one round. (ii)~It returns, with a refutation, the values that produce
+it. (iii)~It reports a question it could not settle as such, and not as one that
+holds. (iv)~It reports the value a variable of the instrumented unit carries,
+which is how a refutation names the path it took. A verifier missing one of
+these leaves the construction sound and weakens it. Without the first,
+\tool{VeriPUT} is run with the ladder switched off.
+
+\subsection{Path Enumeration}\label{sec:enum}
+
+We now describe how \tool{VeriPUT} obtains the paths a parameterized unit test
+will later be built around, together with one input for each. Recall from
+Section~\ref{sec:task-def} that a \emph{unit} $u$ is one entry point of the
+contract, and that a test for a path of $u$ has to state which inputs it admits
+and assert something about what the call left behind. Both halves have to be
+readable from the outside. A test written for a framework cannot assert that a
+particular branch was taken, since a branch is a moment inside the call and
+leaves no trace once the call has finished; it can only assert over what the
+call returned and what it changed. The coverage target therefore has to fix
+those, and a whole path does.
+
+\paragraph{Why must the coverage object be a whole path?}
+\begin{itemize}
+\item A target inside a run leaves the ending open. Two inputs may take the same
+branch and then part company, one returning and one reverting, so a test bound
+to that branch has nothing definite to check when the call is over.
+\item The targets have to cut the inputs into classes a test can name. The
+inputs reaching a branch are those reaching it along any route, and one input
+reaches many branches. Whole paths leave each input in exactly one class, which
+is what Section~\ref{sec:region} relies on when it bounds one class by the
+others.
+\end{itemize}
+
+\subsubsection{Decision Points}
+A \emph{decision point} of a unit is a place where its control flow may continue
+in more than one way. They come from four sources. The first is the
+guard of a conditional or a loop. The second is the right-hand operand of a
+short-circuit operator: in \texttt{a \&\& b} the operand \texttt{b} is evaluated
+only when \texttt{a} holds, so a run in which \texttt{a} fails and a run in
+which \texttt{a} holds while \texttt{b} fails are different executions, one of
+which evaluated \texttt{b} and one of which did not. The third is the outcome of
+a call to another contract, which may succeed or fail, and, where the called
+contract calls back, the entry point it calls back into. The fourth is the
+failure of argument decoding, which ends the call before its body starts.
+
+Notably, the checks a compiler inserts for arithmetic and for array bounds are
+not counted among these. The line falls between what the source states and what
+a particular compiler adds. Drawing it there keeps one source to one set of
+decision points across compiler versions, and across blocks in which those
+checks are switched off. Inputs that would trip an inserted check are removed
+from a range at the point where the range is certified, as
+Section~\ref{sec:region} describes. A path never tells
+an arithmetic failure apart from the operation succeeding, and the number of
+paths through a unit is a property of the code its author wrote.
+
+Which decision points are recorded is a parameter. Expanding an internal call
+inside its caller multiplies the decisions of the one by the decisions of the
+other, so \tool{VeriPUT} records those of a chosen subset of the internal call
+sites of $u$. We write $S(u)$ for those call sites, $G \subseteq S(u)$ for the
+subset that is expanded, which we call the \emph{granularity}, $\Delta_G(u)$ for
+the decision points recorded under it, and $\Pi_G(u)$ for the resulting paths.
+Section~\ref{sec:budget} returns to how $G$ is chosen.
+
+\subsubsection{Instrumentation}
+We then add two things to $u$. The first is a record: at each point of
+$\Delta_G(u)$, the way the run went is appended to a variable declared for this
+purpose. The record is written and never read back, and nothing already in the
+contract reads it either, so the instrumented unit takes the same decisions as
+the original on every input. The second is one assertion per \emph{exit} per
+enumerated path. A unit has two kinds of exit, one at which the call returns and
+one at which it reverts, and the assertion planted at an exit claims that the
+path in question was not the one just taken. An assertion of this form is false
+exactly on the runs that do take the path, so asking a verifier to prove it is a
+way of asking whether any input reaches it, and a refutation carries such an
+input back.
+
+Where the assertion is placed depends on which kind of exit it belongs to. At an
+exit that returns, it goes at the end of the body. At an exit that reverts, it
+goes ahead of the operation that fails, because a revert undoes everything the
+call wrote and nothing after that operation runs. Placing it after the failure
+would leave it unreachable on every input, and a verifier would report that it
+holds, which reads exactly like a proof that the path cannot be taken.
+
+Listing~\ref{lst:instrumented} shows the withdrawal of
+Listing~\ref{lst:motivation} instrumented for two of its paths, one leaving by
+each kind of exit. The record is kept as an integer: Line~4 seeds it for the
+call, and Lines~6, 11 and~15 double it and add the way the decision went, so
+that a path is named by the number its decisions build up. Seeding with one
+rather than zero keeps a run that has taken no decision apart from one that has
+taken a single decision the low way. Line~7 then targets the path on which the
+amount is rejected, and Line~18 the path on which a discount applies and the fee
+stays under the cap. A refutation of the second returns the discounted
+withdrawal at the corner of the region Listing~\ref{lst:motivation-put} draws.
+
+The two assertions sit at different places, and the rule above is why. The
+first path leaves by reverting, so its assertion goes ahead of the operation
+that fails, an assertion being checked where it stands and before the undoing.
+The second returns, so its assertion goes at the end of the body. Placed
+earlier, it would be refuted by a run that later reverts in a transfer, and the
+input handed back would reach an exit the path does not name.
+
+The listing appears in source form for readability, whereas the instrumentation
+is applied to the control-flow graph, where a conditional expression and a
+short-circuit operator have already become ordinary branches; and the record is
+a quantity of the model rather than a storage variable of the contract, so what
+a revert does to the contract's own state does not reach it. The record itself
+is the sequence of ways the run went; the integer of the listing is one
+encoding of it, chosen so the example reads, and it carries no bound of its
+own. We also reduce the example in four ways. (i)~Each condition is lifted into
+a named local, so the record and the branch it belongs to read on separate
+lines. (ii)~The two operands of the conjunction at Line~5 are shown as one
+decision, where the encoding treats them as two. (iii)~The two transfers that
+end the function are left folded, each carrying decisions of its own. (iv)~The
+decision the decoder takes before the body starts is left out.
+
+\begin{lstlisting}[language=Solidity, numbers=left, numberstyle=\scriptsize,
+xleftmargin=1.5em, basicstyle=\ttfamily\scriptsize, breaklines=true,
+columns=fullflexible, keepspaces=true, float=tbp,
+caption={The withdrawal of Listing~\ref{lst:motivation} instrumented for two of
+its paths, one leaving by each kind of exit.},
+label={lst:instrumented}]
+uint256 tr;                       // decision record
+
+function withdraw(uint256 amount) public returns (uint256 net) {
+    tr = 1;                       // fresh for this call
+    bool ok = amount > 0 && amount <= deposits[msg.sender];
+    tr = 2 * tr + (ok ? 1 : 0);
+    assert(tr != 2);              // target: the amount is rejected
+    require(ok, "bad amount");
+    uint256 rate = feeBps;
+    bool disc = discountBps[msg.sender] > 0;
+    tr = 2 * tr + (disc ? 1 : 0);
+    if (disc) { rate = feeBps - discountBps[msg.sender]; }
+    uint256 fee = amount * rate / 10000;
+    bool cap = fee > maxFee;
+    tr = 2 * tr + (cap ? 1 : 0);
+    if (cap) { fee = maxFee; }
+    // ... two transfers and the event, each with decisions of its own
+    assert(tr != 14);             // target: discounted, under the cap
+}
+\end{lstlisting}
+
+\subsubsection{Verdicts}
+What \tool{VeriPUT} hands the verifier is the instrumented unit together with
+the assertions planted in it. What the verifier hands back, for each assertion,
+is an answer and, where that answer is a refutation, an input producing it. The
+answer comes in one of three kinds, and \tool{VeriPUT} keeps the three apart. It
+may refute the assertion, in which case the path is reachable and an input
+reaching it is in hand. It may prove the assertion, in which case no input
+reaches the path. It may run out of resources without deciding, in which case
+nothing is known about the path, and it is reported as such and never counted
+with either of the others.
+
+Two conditions have to hold for the second kind of answer to mean what it says.
+The first concerns the reasoning behind it. A bounded model checker unrolls
+loops and follows calls to a fixed depth, and an assertion it cannot refute
+within those limits has been shown to hold only of the executions the limits
+admit. Read as a statement about the contract, such an answer belongs with the
+third kind and not the second. Only where the verifier settles the question
+without leaning on a bound, as unbounded reasoning about the unit can, does the
+answer say that no input reaches the path. Therefore \tool{VeriPUT} counts a
+path as unreachable only when the answer is of the latter sort.
+
+The second condition concerns what was reasoned about. A path guarded by state
+that only an earlier call can establish is reached by writing that state, as
+Section~\ref{sec:task-def} declares, and not by modelling the call that would
+have written it. What a refutation witnesses is a path of the fixture it was
+asked about. Moreover, where the
+reachability of a path rests on a construct the model describes more loosely
+than the contract does, that path is set aside before any test is built from it,
+and it is listed together with the construct responsible. Unlike a path left
+undecided, where the answer is missing, here the answer would be about an
+execution the contract cannot perform.
+
+\subsubsection{Budget and Granularity}\label{sec:budget}
+Neither response below removes a path from the contract. One folds paths
+together and one stops enumerating them, and the record is written on every run
+either way, so nothing the later stages do rests on the paths having been
+enumerated in full. The responses decide how much is produced, never whether it
+is correct.
+
+A unit whose callees are themselves layered can carry more paths than any budget
+allows. \tool{VeriPUT} responds by withdrawing call sites from $G$. A withdrawn
+call still executes and still determines what the run does; what it stops doing
+is contributing its own decisions to the identity of a path. Paths that differed
+only inside it become one path, which still runs to an exit and still holds a
+class of inputs of its own. Therefore every input remains in exactly one class,
+and the loss is confined to how finely the classes are told apart.
+
+The oracle pays that loss, and the region does not. Section~\ref{sec:oracle}
+loses the statements it reads off a path, for the decisions no longer recorded.
+It keeps the ones comparing an observable before and after the call, at the
+price of the further tests a division costs. That section returns to both.
+
+Given a budget $N$ on the number of targets, the subset $G$ is chosen in three
+steps.
+
+\begin{enumerate}
+\item \textbf{Measurement, not estimation.} For each candidate site $s$,
+\tool{VeriPUT} expands every site but $s$ and counts the resulting paths, which
+gives a number $r(s)$: how many paths remain when $s$ alone is withdrawn. A
+small $r(s)$ marks a site that was holding up many paths. The count stops at the
+budget, so every site that cannot on its own bring the unit under it receives
+the same $r$ and the step does not separate them.
+\item \textbf{Greedy withdrawal.} The candidates are ordered once by increasing
+$r$, and sites are taken from the front of that order and withdrawn until the
+count of paths under the remaining $G$ falls to $N$ or below.
+\item \textbf{Distance.} Sites with equal $r$ are separated in favour of the one
+furthest from the entry. The reasoning is a heuristic: decisions taken close to
+the entry are the ones most directly determined by the arguments of the call,
+and keeping them inside the identity of a path keeps the classes aligned with
+what a test can vary. On a unit far over the budget the first step separates
+few sites, so most of the order comes from here.
+\end{enumerate}
+
+The order is settled once and never recomputed, since withdrawing one site can
+make the measurement of another stale and recomputing would cost one count per
+remaining site per round. We do not claim the result to be optimal, and none of
+the guarantees above depends on which sites are chosen. The choice decides how
+much strength is kept, never whether the output is sound.
+
+One class of call site is never a candidate. Where the callee of a site is
+itself an entry point, withdrawing the site leaves the call arriving at a body
+that carries the guard the compiler places on external entry, a guard an
+internal call never passes on chain. The model would then admit a failure the
+contract cannot produce, and a test built from it would fail on the contract as
+shipped.
+
+Where withdrawal is not enough, enumeration stops at $N$ targets and the paths
+beyond it are counted and reported. Doing so removes assertions and leaves the
+record untouched, so an input taking one of the abandoned paths still carries
+that path in the record when the call ends. Section~\ref{sec:region} returns to
+this point, which is what allows the later stages to remain correct without
+every path having been enumerated.
+
+Algorithm~\ref{alg:instrument} collects the stage. It reads the internal call
+sites of $u$, sets aside those whose callee is an entry point, measures and
+withdraws as above, counts and enumerates the paths of $\Pi_G(u)$ up to $N$
+under the declared unrolling and granularity, pruning prefixes the control flow
+cannot follow, appends the record at each point of $\Delta_G(u)$,
+and plants one assertion per path at the exit that path reaches.
+
+\begin{algorithm}[!htpb]
+\caption{Instrumenting one unit for path enumeration}
+\label{alg:instrument}
+\begin{algorithmic}[1]
+\Require unit $u$, target budget $N$
+\Ensure instrumented unit, granularity $G$, abandoned path count $k$
+
+\State $G \gets \textsc{InternalCallSites}(u)$
+\Comment{those reached within the declared call depth}
+\State $E \gets \{s \in G : \textsc{Callee}(s)$ is an entry point$\}$
+\Comment{never candidates}
+\If{$\textsc{CountSyntacticPaths}(u, G) > N$}
+    \ForAll{$s \in G \setminus E$}
+        \State $r(s) \gets \textsc{CountSyntacticPaths}(u, G \setminus \{s\})$
+        \Comment{one count per site}
+    \EndFor
+    \State $Q \gets G \setminus E$ ordered by increasing $r$,
+           ties by distance from the entry
+    \While{$\textsc{CountSyntacticPaths}(u, G) > N$ \textbf{and} $Q \neq \emptyset$}
+        \State remove the head of $Q$ from $G$
+        \Comment{the order is never recomputed}
+    \EndWhile
+\EndIf
+
+\State $\Pi \gets \textsc{EnumeratePaths}(u, G, N)$
+\Comment{structurally impossible control-flow prefixes are pruned}
+\State $k \gets \textsc{CountSyntacticPaths}(u, G) - |\Pi|$
+
+\ForAll{$p \in \Delta_G(u)$}
+    \State $\textsc{AppendToRecord}(p)$
+    \Comment{written, never read}
+\EndFor
+\ForAll{$\pi \in \Pi$}
+    \If{the exit of $\pi$ reverts}
+        \State $\textsc{PlantAssert}(\mathit{record} \neq \pi)$
+               before the operation that fails
+    \Else
+        \State $\textsc{PlantAssert}(\mathit{record} \neq \pi)$ at that exit
+    \EndIf
+\EndFor
+\State \Return the instrumented unit, $G$, $k$
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Concrete Replay Tests}
+Each refutation yields an input, and from it \tool{VeriPUT} emits a test that
+sets every argument, the caller, the value sent, and the contract state to the
+values the input names, and then calls $u$. The test is bound to the path the
+input takes, which is what allows the assertions of Section~\ref{sec:oracle} to
+be attached to it without further queries. The refutation also reports the value
+each observable holds when the call ends, so such a test can state those values
+without a query of its own. Moreover, it gives every path with a
+witness a test of its own before the widening of Section~\ref{sec:region} is
+attempted.
+
+Some of the values an input carries stand for nothing in particular. A verifier
+with no reason to constrain an address may report it as zero and use it only to
+tell one account from another. Such a value marks a place where the path imposes
+no condition, and the test is free to use any value the framework allows. Where
+a value cannot be arranged at all, no test is emitted, and the path is reported
+with the others that received none.
+
+\subsection{Certified Input Regions}\label{sec:region}
+
+Section~\ref{sec:enum} leaves one input for each path it witnesses. That input
+shows the path can be taken and says nothing about the others that take it, and
+those others are where a change in behaviour would show. We now widen it. We
+write $D_\pi$ for the \emph{path domain} of $\pi$: the modelled inputs, under
+the declared bounds, whose run records $\pi$ at the granularity of
+Section~\ref{sec:budget}. This stage receives a path $\pi$, the witness $x_\pi$
+that reaches it, and the witnesses of the other paths through the same unit,
+and it returns a region of inputs proven to follow $\pi$, obtained by taking
+what those other paths cover away from what $\pi$ might cover. Where no region
+survives, the concrete replay test of the previous stage stands.
+
+\subsubsection{Coordinates}\label{sec:coords}
+A \emph{coordinate} is a dimension of the input that the emitted test can set
+to a value of its choosing, directly or through its preamble. The arguments of
+the call are set by passing them. The caller and the value sent are set through
+the interfaces a test framework provides for the purpose. The state the
+contract is in is set by writing it. The behaviour of a contract called out to
+is set by deploying a stub that answers as the input names, which presumes that
+the callee's interface is known and that a stub can stand in for it; where the
+address is one the test cannot control, or no code is deployed there when the
+call is made, that behaviour is not settable. Which behaviours are settable is a
+parameter of the method: a behaviour counts when the verifier models it and the
+emitted test can reproduce it, and the two must agree.
+
+Which dimensions there are is settled by the types that may cross a contract's
+boundary, and every one of them comes apart into integers. An enumeration
+becomes a small unsigned integer, and a user-defined value type the type beneath
+it. A handle to a contract or an interface becomes a $160$-bit address, and a
+boolean an eight-bit scalar of which two values are used. A struct or an array
+of fixed length gives one coordinate per component. An argument of dynamic
+length gives one coordinate for its length and one per element it may hold, up
+to the bound declared in Section~\ref{sec:task-def}. The decomposition terminates without a
+depth bound of its own, because a type that could recur without end, a mapping
+or a pointer into storage among them, cannot cross the boundary at all.
+
+The state a call starts from decomposes by storage location instead. A path
+fixes which locations it reads and writes wherever its decisions are recorded,
+and such a location becomes a coordinate where its key is an expression over the
+input and the test can establish it from the values it renders; the deposit of
+the caller in Listing~\ref{lst:motivation} is one. Locations reached inside a
+withdrawn call site, locations whose keys can coincide, and locations no test
+can write receive none.
+
+Every coordinate ranges over a bounded set of integers, so there is no kind of
+argument the construction below is unable to describe. What a given
+implementation admits is narrower: the kinds for which the verifier has a model
+and the emission of Section~\ref{sec:emit} has a way of writing a value, and a
+quantity of any other kind is reported rather than approximated. How much of a
+coordinate a region ends up admitting is a quantity we report rather than a
+capability we claim.
+
+What a region can say about a coordinate depends on the type beneath it, and
+three cases arise. (i)~On a quantity that counts or measures, a range carries
+information at every width. (ii)~On an address it does not. A path turns on
+which account the caller is, and not on where that account falls among the
+addresses. A range of addresses narrower than the type and wider than one value
+is therefore sound and still leaves a test varying a quantity the unit never
+orders. The brackets and cuts of Section~\ref{sec:candidate} produced that
+range, so \tool{VeriPUT} emits it; Section~\ref{sec:emit} declines to count it.
+A boolean is the same case with two values. (iii)~On an argument of dynamic
+length, the length is one coordinate and each element it may hold is another. An
+element the length excludes is never read, so the region leaves those elements
+whole and Section~\ref{sec:emit} renders the length first.
+
+Not every quantity a verifier fixes is a coordinate. A counterexample names the
+quantities it chose, and each is classified by kind: an argument, part of the
+context, a slot of the contract's state, or a value returned to the unit by a
+contract it called. A quantity is a coordinate when the emission of
+Section~\ref{sec:emit} has a way of establishing that kind, and the
+classification is closed, a kind it does not recognise counting as not settable.
+Where a quantity that decides the path is not a coordinate, $\pi$ receives no
+region and no test, and is reported with the quantity responsible. Taking a
+settable quantity for an unsettable one costs yield; the opposite mistake is
+caught at run time, as Section~\ref{sec:emit} describes. A quantity
+left out of the classification altogether is not constrained by the region
+either, so the certification of Section~\ref{sec:cert} quantifies over it: where
+varying it can lead away from $\pi$, that query is refuted or left undecided and
+no region beyond the witness is emitted.
+
+\paragraph{Why not widen the witness one step at a time?}
+One alternative widens the witness a little, asks whether the widened range
+still follows $\pi$, and repeats. Taken one step at a time that is a search with
+no stopping rule, in which a step too small spends a query and a step too large
+is refuted, while neither outcome says how far the boundary lies. The
+construction below starts from the witness as well, but fixes the widths in
+advance and puts them in one batch, so the answers together bracket the boundary
+instead of feeling for it. The brackets of the other paths through $u$ are asked in the same batch, so
+cutting against them adds no further round of verification. They offer candidate
+cuts and not exact boundaries: projections of disjoint domains can overlap, and
+where they cover a coordinate entirely nothing is left and the concrete replay
+test stands.
+
+\subsubsection{Candidate Regions}\label{sec:candidate}
+A \emph{certified input region} for $\pi$ admits a set of values on each
+coordinate and imposes nothing across coordinates. Formally,
+\begin{equation}
+R_\pi \;=\; \prod_{c \in \mathrm{coords}(u)} V_c ,
+\qquad
+V_c \;=\; [L_c, U_c] \setminus H_c ,
+\label{eq:region}
+\end{equation}
+where $[L_c,U_c]$ is an interval of the integers $c$ ranges over and $H_c$ is a
+finite set of \emph{punctures}, values that interval contains and the region
+excludes. The steps below show where punctures come from and why intervals alone
+are not enough.
+
+Imposing nothing across coordinates is a decision about what is inferred. The
+construction below reads each coordinate on its own, so it derives no relation
+between two of them for a test to carry. A path domain need not be a product,
+however. On the path of Listing~\ref{lst:motivation} where a discount applies
+and the fee stays under the cap, the two are tied by
+$\lfloor \mathit{amount} \times (\mathit{feeBps} - \mathit{disc}) / 10^{4}
+\rfloor \leq \mathit{maxFee}$, which no pair of independent ranges describes.
+The same condition gives the cost. At the smallest discount the
+path admits, the fee reaches the cap at about four ether. Where the discount
+leaves a single basis point of rate in force, the same cap is reached only at
+two hundred and forty-nine times that amount, and where it leaves none the cap
+is never reached at all. A region giving the amount one range and the discount
+another has to take the smallest of these, so a withdrawal of ten ether by an
+account holding a large discount follows this path and receives no test from it.
+We therefore make no claim that a certified region is all of a path domain, and
+what one leaves out is counted rather than passed over.
+
+A candidate region is built in three steps, of which only the first and third
+put questions to the verifier.
+
+\begin{enumerate}
+\item \textbf{Bracketing.} For each coordinate we ask whether it stays below a
+candidate bound on every run that follows $\pi$, and again whether it stays
+above one. The candidates form a ladder anchored at the witness:
+$x_{\pi,c}$ itself, then $x_{\pi,c} \pm 1$, $\pm 2$, $\pm 4$ and so on to the
+extremes of the coordinate's own type. The spacing doubles because on a
+coordinate of $256$ bits any evenly spaced ladder puts all of its rungs where
+nothing is. The anchor is the witness because the witness already answers one
+side of each question. A bound below $x_{\pi,c}$ is refuted by $x_\pi$ itself,
+and a ladder anchored at zero spends most of its rungs on answers of that kind.
+One rung is still placed below $x_{\pi,c}$, where a refutation is what we
+expect. A discharge there means that no run following $\pi$ satisfies the
+assumption the batch was asked under, and that every answer in it holds for want
+of a run to violate it. Without that rung, a coordinate fixed at one value and
+an assumption nothing satisfies are reported alike. The candidates do not depend on one another, so a verifier that
+decides several assertions under one assumption settles a ladder at once, and
+the ladder is not walked rung by rung. What comes back is an
+over-approximation: an interval known to contain everything $D_\pi$ reaches on
+that coordinate. A candidate the verifier leaves undecided is dropped, which
+widens the bracket.
+
+\item \textbf{Subtraction.} No input takes two paths, so a value another path
+through $u$ reaches on every coordinate at once cannot be $\pi$'s, and the
+brackets of those paths are where we look for cuts. A bracket lying wholly to
+one side of $x_{\pi,c}$ cuts the interval there; one that contains $x_{\pi,c}$
+cuts nothing on that coordinate. Because projections of disjoint domains can
+overlap, a cut may take away values $\pi$ does reach, which costs yield alone,
+and may leave values it does not, which certification removes. Subtraction
+proposes the candidate; certification decides it. Where enumeration was cut
+short, fewer sibling brackets are available and the candidate comes out wider.
+
+\item \textbf{Punching.} A sibling that pins a coordinate to one value needs
+care, since an interval cannot say \emph{everything except} $v$. Whether a
+sibling $\sigma$ is so pinned on a coordinate $c$ is answered by running the
+first step on the single candidate $v$, where the two probes ask whether $c$ is
+at once at most and at least $v$; we call this a \emph{collapse test}. The
+candidate costs nothing to obtain, being the value $\sigma$'s own witness gives
+to $c$, and it goes into the same batch. A discharged collapse test says that
+$\sigma$ occupies exactly $\{v\}$ on $c$, and where $v$ differs from
+$x_{\pi,c}$ it joins $H_c$ as a puncture instead of cutting $[L_c, U_c]$ in
+two.
+\end{enumerate}
+
+The guard on Line~18 of Listing~\ref{lst:motivation} is the shape this handles.
+Take the path of \texttt{setDiscount} on which the guard fails. Its sibling, the
+path on which the guard holds, is reached only where the caller is the owner,
+one value somewhere inside the address space. Subtraction confined to intervals
+would have to keep one side of that value and discard the other, and which side
+it kept would follow from the value the solver happened to return: two answers,
+both sound, one holding almost the whole space and the other almost none of it.
+With a puncture the region is the address space less that one value, wherever it
+sits.
+
+A puncture answers that shape and no other. Where two coordinates are tied
+together, as the amount and the discount are by the cap, no product of value
+sets describes the domain however many values are removed from it, and the
+shortfall is reported as yield rather than repaired.
+
+Algorithm~\ref{alg:region} collects the three steps together with the
+refinement of the next section. It brackets each coordinate of $\pi$, subtracts
+the brackets of the other paths through $u$ on the side away from $x_\pi$,
+asks a collapse test at each sibling's own witness value and punches out the
+ones it pins, puts the result to the verifier,
+and, on a refutation, narrows the region at the input the verifier returns
+before asking again. That input is punched out where it differs from the witness
+on one coordinate and the budget on holes allows, cut against otherwise, and
+where a cut would leave the coordinate it points at a single value, that
+coordinate is pinned to the value $x_\pi$ gives it and the others carry on. Rounds that run out return the region as it then stands, the witness
+alone only where every coordinate is pinned; a query the verifier declines
+returns the witness alone, there being nothing to cut at.
+
+\begin{algorithm}[!htpb]
+\caption{Building a certified input region for one path}
+\label{alg:region}
+\begin{algorithmic}[1]
+\Require unit $u$, path $\pi$, its witness $x_\pi$, the enumerated paths $\Sigma$
+         through $u$ that carry witnesses, refinement rounds $m$, hole budget $h$
+\Ensure a certified region $R_\pi \subseteq D_\pi$
+
+\ForAll{$c \in \mathrm{coords}(u)$}
+    \State $V_c \gets \textsc{Bracket}(u, \pi, c)$
+    \Comment{one ladder, over-approximating}
+    \ForAll{$\sigma \in \Sigma$}
+        \State $v \gets$ the value $\sigma$'s witness gives $c$
+        \If{$v \neq x_{\pi,c}$ \textbf{and} $\textsc{Collapse}(u, \sigma, c, v)$}
+            \State $V_c \gets V_c \setminus \{v\}$
+            \Comment{$\sigma$ occupies $\{v\}$ here; $v$ becomes a puncture}
+        \Else
+            \State $V_c \gets \textsc{CutTowards}(V_c,
+                   \textsc{Bracket}(u, \sigma, c), x_{\pi,c})$
+            \Comment{no cut where the bracket holds $x_{\pi,c}$}
+        \EndIf
+    \EndFor
+\EndFor
+\State $R \gets \prod_{c} V_c$
+
+\While{$m > 0$}
+    \If{\textbf{not} $\textsc{KnownNonEmpty}(R)$}
+        \Comment{an empty region is never reported as certified}
+        \State \Return $\{x_\pi\}$
+    \EndIf
+    \State $(\mathit{verdict}, y) \gets \textsc{Certify}(u, R, \pi)$
+    \If{$\mathit{verdict}$ is discharged}
+        \State \Return $R$
+    \ElsIf{$\mathit{verdict}$ is declined}
+        \State \Return $\{x_\pi\}$
+        \Comment{no counterexample to cut at}
+    \EndIf
+    \If{$y$ differs from $x_\pi$ on one coordinate $c$ \textbf{and} $|H_c| < h$}
+        \State $R \gets \textsc{Punch}(R, c, y_c)$
+        \Comment{removes $y$ alone; the next round decides the rest}
+    \ElsIf{some coordinate admits a cut at $y$ leaving it more than one value}
+        \State $R \gets \textsc{Cut}(R, y, x_\pi)$
+        \Comment{the query failed on $y$, not on $x_\pi$}
+    \Else
+        \State $R \gets \textsc{Pin}(R, y, x_\pi)$
+        \Comment{fix that coordinate at the witness; the others carry on}
+    \EndIf
+    \State $m \gets m - 1$
+\EndWhile
+\State \Return $R$
+\Comment{pinned where cutting could not narrow; $\{x_\pi\}$ where all are}
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Certification}\label{sec:cert}
+We now put one question to the verifier. In words: assuming the inputs lie in
+this region, does the call take $\pi$ and leave by the exit $\pi$ reaches?
+Formally, $R_\pi$ is supplied as the assumption, and an assertion stating that
+the run reaching this exit took $\pi$ is planted at every exit of $u$.
+
+At every exit, and not only at the exit $\pi$ reaches, for two reasons.
+(i)~An input inside the region that leaves along another path leaves by another
+exit, and were the assertion planted only where $\pi$ ends it would never meet
+one, leaving the query to hold for want of anything able to refute it. (ii)~An
+input may carry the record of $\pi$ and still leave elsewhere, where a decision
+the granularity does not record ends the call early; at that exit no run can
+satisfy the assertion, so such an input refutes it. Without the second, a region
+could be certified for a path whose exit it does not fix.
+
+Three answers are possible, and \tool{VeriPUT} keeps them apart. The verifier may
+discharge the query, and the region is certified. It may refute it and return an
+input inside the region on which one of the planted assertions fails, either
+because that input left along another path or because it tripped an inserted
+check; that input, together with $x_\pi$, which is known to lie in $D_\pi$, gives
+a definite cut, and the region is narrowed and the question asked again. Or the
+query may be declined.
+
+A refutation may differ from $x_\pi$ on several coordinates at once. On any
+coordinate where they do differ, keeping
+the side of $y_c$ on which $x_{\pi,c}$ lies removes $y$ and keeps $x_\pi$, so
+every such coordinate offers a sound cut, and \tool{VeriPUT} takes the one that
+leaves the largest fraction of its coordinate's values. A region is a product,
+so a cut costs the fraction it removes and not the count. A cut that takes
+fifty values from a hundred costs more than one that takes nine hundred from a
+thousand.
+Where $y$ and $x_\pi$ agree on every coordinate, they differ only on a quantity
+no test can set, and the path goes to the gate of Section~\ref{sec:coords}
+instead of to another round.
+
+Where $y$ differs from $x_\pi$ on one coordinate alone, removing that single
+value excludes $y$ and keeps every other value the region held, which no cut
+does. \tool{VeriPUT} punches it out instead, up to the budget on holes declared
+in Section~\ref{sec:task-def}. Such a puncture differs from those of
+Section~\ref{sec:candidate}, which a collapse test established. This one rests
+on a single refuted input. It removes the input in hand and says nothing about
+the values beside it, and the round that follows decides whether more remain.
+
+An assumption no input satisfies makes every assertion under it hold for want of
+a run to violate it, so such an outcome is indistinguishable, by its verdict
+alone, from a region the verifier has checked. Two ways of building one arise
+from our own construction: punching can empty an interval, and a bound written
+for a coordinate may not fit that coordinate's type. Both are checked before the
+question is put, and where satisfiability cannot be settled that way it is asked
+on its own; that check answers yes only where non-emptiness has been
+established, so an undecided answer and an empty region leave by the same exit.
+A declined query is reported as declined and never as a certification.
+
+The same hazard reaches every assumption the construction writes, and one rule
+keeps it out of all of them. Every assumption is built from a witness that
+satisfies it. The bracketing step asks about runs following $\pi$ under values
+$x_\pi$ carries, and a collapse test asks about runs following $\sigma$ at the
+value $\sigma$'s own witness gives. A rung whose expected answer is a refutation
+coming back discharged is what shows the rule broken.
+
+The same question carries the checks a compiler inserts. Section~\ref{sec:enum}
+kept those out of the identity of a path; here they are turned on, so that an
+input in the region that would overflow or index out of bounds refutes an
+assertion of its own and is cut away with the machinery already in place. Each
+is represented as an assertion, not as a recorded decision, so the number
+of paths is unchanged. A discharged region therefore contains only inputs that
+take the recorded decisions of the contract as written and satisfy every
+inserted check.
+
+Refinement need not end at a single point, and usually should not. Where a
+refutation cannot be answered by cutting the coordinate it points at, or where
+cutting would leave that coordinate one value, \tool{VeriPUT} pins the
+coordinate to the value $x_\pi$ gives it and carries on with the others. A region
+with some coordinates pinned and others left to range says less than one in which
+all of them range, more than a test at a single point, and it is the common
+outcome.
+
+Where the rounds run out on every coordinate, $R_\pi = \{x_\pi\}$, and a region
+of one point leaves nothing for a test to range over. That the witness
+follows $\pi$ needs no argument, since the path domains are pairwise disjoint
+and $x_\pi$ lies in $D_\pi$. The inserted checks are another matter, because the
+enumeration of Section~\ref{sec:enum} left them out and a witness may trip one.
+The same question is therefore put on the single point, where every quantity is
+fixed and the answer is a matter of evaluation. A witness that fails it receives
+no test and is reported with the path.
+
+\subsubsection{From a Region to a Test}\label{sec:emit}
+A region reaches a test as an assignment and not as a filter. In a testing
+framework a precondition that does not hold is a failing test, not a draw
+skipped, and the primitive that does skip a draw both throws the work away and
+is capped in how often it may be used. We write $A_t$ for the region a test $t$
+renders, which is $R_\pi$ itself unless the punctures below force it to be
+drawn in pieces, and which is in either case a product of coordinate sets. Each
+coordinate is therefore given a value inside its set by construction, and the
+punctures are the one thing left to skipping, in a proportion bounded by their
+number against the width of the interval. Where they are dense enough that
+skipping would exhaust that allowance, the interval is drawn in puncture-free
+pieces, each emitted as a test of its own and each carrying the assertions
+proved over the whole of $R_\pi$, since all of them lie inside it. What the budget on tests for
+one path leaves undrawn is reported.
+
+Some coordinates need no rendering at all. What matters is whether the values
+the test environment would supply for $c$ on its own already lie inside $V_c$.
+It is not whether $V_c$ is narrower than the type of $c$: that reading holds
+for an argument the framework draws over the whole type, and fails for the
+state a call starts from, where the environment may supply a single value left
+by deployment, one that can sit outside $V_c$ altogether.
+
+What the environment supplies is not knowable in general, so \tool{VeriPUT}
+makes it knowable. Every test opens with the same preamble, which puts the
+environment into a state the omission rule can be stated against, and every test
+checks, before it calls the unit, that each coordinate holds a value inside
+$V_c$, the omitted ones included.
+
+That check is not a filter under another name. A filter discards draws that lie
+outside the region legitimately, which is ordinary and must not fail a test. The
+check looks at coordinates the framework does not draw at all, coordinates the
+preamble was supposed to have established. A value outside $V_c$ there means the
+preamble did not do what the omission rule assumed of it, which is a defect on
+our side and not an input to be discarded. It therefore fails loudly, and it is
+what makes the omission rule falsifiable rather than asserted.
+
+What the rendering leaves decides which of the two tests a path receives. A test
+is parameterized when at least one coordinate it renders is left more than one
+value to take and is a coordinate whose order the text of the unit uses. The
+second condition is what keeps a range that carries nothing from counting: on a
+quantity a unit only tests for equality, such as an account, a range wider than
+one value and narrower than the type admits inputs the unit cannot tell apart
+from one another. The range is emitted and reported; what it does not do is
+decide which of the two tests the path receives. A region wider than a point does not settle this on its own,
+since the coordinates the omission rule leaves out are not rendered and a region
+can be wide only on those. Where no rendered coordinate takes more than one
+value, what the path receives is the concrete replay test of
+Section~\ref{sec:enum}, whatever the width of $R_\pi$.
+
+\subsubsection{Soundness of Emission}\label{sec:sound-emit}
+We now show that a test emitted for a path speaks only about that path: every
+input it admits follows the path it names, and every assertion it carries holds
+on that input. Four things are needed, and each is established elsewhere rather
+than assumed here. (i) The record has to be written at every decision point,
+which is what the instrumentation of Section~\ref{sec:enum} does. (ii) Every
+coordinate the region constrains has to be established by the test itself,
+which the preamble of Section~\ref{sec:emit} does and its check confirms while
+the test runs. (iii) The emitted test has to deploy the fixture the queries
+were put under and to answer its external calls as they assumed, which the same
+preamble does. And (iv) a declined query must not be read as a discharged one,
+which is what the gate of Section~\ref{sec:cert} is for.
+
+\textbf{Proposition (Soundness of Emission).}
+Let $t$ be a test emitted for a path $\pi$ of a unit $u$ from a certified region
+$R_\pi$, and let (i) to (iv) above hold. Then, under the bounds declared in
+Section~\ref{sec:task-def}, every input $t$ admits lies in
+$A_t \subseteq R_\pi \subseteq D_\pi$, and every assertion $t$ carries holds on
+every run of $t$.
+
+\noindent\textbf{Proof Sketch.}
+We first show that $R_\pi \subseteq D_\pi$. By (i) a run reaches its exit carrying
+the path it took and not the path anyone asked about. Intuitively, an input that
+slips out of $R_\pi$ into a sibling path arrives at that sibling's exit with a
+record that is not $\pi$, and the assertion waiting there refutes the query. Such
+an input cannot be present in a region the verifier discharged, and by (iv) a
+certificate reports a region it did discharge and not one it declined.
+
+We then show that every run of $t$ lies in $A_t$ and satisfies the assertions. By
+(ii) and (iii), each coordinate the region constrains is given a value inside the
+corresponding set of $A_t$ or checked to hold one before the call, so a run of
+$t$ cannot leave the part the verifier was asked about;
+Section~\ref{sec:oracle} proves every emitted assertion over $R_\pi$, which
+contains $A_t$. Composing the two parts, every run of $t$ is one of the
+executions the verifier quantified over, and the assertions hold on it.
+
+\noindent\textbf{Corollary.} None of this depends on $\Pi_G(u)$ being complete.
+A path never enumerated, one dropped when the target budget ran out, and a
+decision no longer recorded because its call site was withdrawn all cost
+strength. The first two leave fewer siblings, so the candidate arrives wider
+and may take more rounds to certify; the third leaves a coarser class of runs
+for an assertion to hold over. Intuitively, each takes information away from
+the construction and none away from the check, and it is the check the
+certificate rests on. Soundness therefore rests on $\Delta_G(u)$ being
+instrumented completely, which is local and can be inspected point by point,
+and not on the enumeration being complete, which is global.
+
+Four limits belong with the proposition rather than with the threats to
+validity. A witness names quantities of the model, and where one of them has no
+value a test can write, the preamble of Section~\ref{sec:emit} cannot establish
+it and the check placed before the call fails aloud; that gap is closed by a
+test that stops, and not by an assumption. Where an unsettable quantity can
+change the recorded path, the region leaves it free, the certification of
+Section~\ref{sec:cert} is refuted or left undecided, and no region beyond the
+witness is emitted. A path that exists in the model and not in the contract is
+set aside in Section~\ref{sec:enum}, and certification could not have caught
+it, there being no execution for a refutation to exhibit. And the verifier is
+taken to be free of defects, as Section~\ref{sec:task-def} states.
+
+\subsection{Verified Assertion Synthesis}\label{sec:oracle}
+
+Section~\ref{sec:region} leaves a set of inputs that all follow one path, and
+nothing yet says what those inputs do. This stage receives the path $\pi$, the
+certified region $R_\pi$, the quantities the contract declares, and the values
+the witness of Section~\ref{sec:enum} carried at its exit. It returns a set of
+\emph{verified assertions}, statements the verifier has proved to hold on every
+input $R_\pi$ admits. What may be stated is
+decided before anything is proved, and what decides it is the set of quantities
+a caller can observe.
+
+\subsubsection{What Can Be Asserted}
+An \emph{observable} of a unit is a quantity whose identity the fixture and the
+path fix and whose value the emitted test can read once the call has finished.
+The execution model settles the list: the balance and the stored values of each
+account the call touched, the data it returned, whether it succeeded, and the
+entries it logged. Nothing else outlives the call. Candidates are therefore
+enumerated from what the contract declares, and not drawn from a catalogue of
+properties. Where they are read is settled as well, since the path fixes the
+exit the call reaches and leaves no observation point to choose.
+
+The statements come in three layers that differ in what they cost. The first is
+carried by the path itself. Which exit the call reaches is fixed by $\pi$, and
+so is any reason or log entry the recorded decisions determine on their own, so
+those hold on every input of $R_\pi$ with no query put at all. A test states
+them as an expected revert, an expected reason, or an expected log entry; where
+a path returns and leaves nothing else to name, the test states that the call
+succeeded, which the framework would otherwise leave implicit. What
+a withdrawn call site does inside itself is not among them, since two runs of
+one class may fail different checks or log different entries there. Neither is
+the content of a reason or an entry, which moves with the input. Those go to
+the layers below.
+
+The second layer says which observables the call left alone. Each is placed in
+one of three states over the part in hand: unchanged on every input it admits,
+changed on every one, or settled by neither answer. The vocabulary is two
+comparisons, that an observable equals the value it held before the call or
+that it differs from it, which is what a specification language states as a
+frame condition. Each observable carries two candidates, one for each
+comparison: a refuted equality shows only that some input changes the
+observable, and the other candidate is what settles whether every input does.
+Neither answer can be read off the text of the path, since a write need not
+change the value it writes to, and a value can change inside a call the path
+makes. Reads are not among the three states: a caller cannot see a read once
+the call is over, so a read noted during verification has nowhere to go in a
+test.
+
+The third layer says what the changed ones became. Its statements are order
+relations between an observable and the value it held before the call, and
+bounds on that value or on the difference between the two. They apply to an
+observable whose type orders its values, and whose order the unit itself uses.
+Addresses and booleans are integers underneath, and a statement about where one
+address falls relative to another holds without saying anything. The third layer
+is therefore offered only where the text of the unit compares the quantity or
+does arithmetic on it. The two comparisons of the second layer apply to every
+observable, and for one whose type carries no equality of its own a test
+compares the bytes. Those two quantities,
+the final value and the change, are the only subjects. A wider vocabulary would
+turn into a catalogue of shapes, and which shapes belong in it is a question
+about a domain, not about the contract at hand.
+
+\subsubsection{Candidates and Dominance}
+The forms of the last two layers carry an order of strength. Writing
+$\mathit{post}$ and $\mathit{pre}$ for the value of an observable after and
+before the call, they are
+(1)~$\mathit{post} = \mathit{pre}$;
+(2)~$\mathit{post} \neq \mathit{pre}$;
+(3)~$\mathit{post} \geq \mathit{pre}$;
+(4)~$\mathit{post} > \mathit{pre}$;
+(5)~$a \leq \mathit{post} \leq b$;
+and (6)~$a \leq \mathit{post} - \mathit{pre} \leq b$.
+The first two say whether the observable moved and the next two which way, each
+of those two standing for its mirror as well. The last two say by how much, the
+difference in (6) taken in whichever direction (3) settled. Form (1) implies
+both directions of (3), and (4) implies (3) together with (2). The two bounds
+neither imply nor follow from the order relations. A bound can be wide where an
+order relation is exact, and narrow where none holds at all. Some forms are
+therefore incomparable, and for each observable \tool{VeriPUT} keeps every form
+the verifier discharges that no other discharged form implies.
+
+No form equates an observable with a term outright. The forms above are proposed
+without reading what the path computes, each being a fixed shape filled from a
+fixed vocabulary. An order relation or a bound holds for many terms at once, so
+an enumeration to the declared depth finds one wherever one exists. An equality
+holds for a single term and fails for the terms beside it, so proposing one
+means searching that space until it lands exactly. That is a different
+construction, and we leave it to later work.
+
+A form may also be written with a condition in front of it, and checked only
+where that condition holds. This is for the inputs a region cannot separate.
+Where the runs on which an observable moves are not a product of ranges, no
+division of the region describes them. Two things bound the condition.
+(i)~It draws on what a term draws on, so a condition the path computes and the
+test cannot evaluate is not available. (ii)~It is not invented. Within one path
+every recorded decision is fixed, so the decisions left open are those the
+granularity of Section~\ref{sec:budget} does not record, and those, rewritten
+over the quantities the test holds, are the conditions on offer. A withdrawn
+call site returns here what it gave up at the path. Both sides are put to the
+verifier separately, and a side left unproved is dropped.
+
+The ends of (5) and (6) are written as terms and not as numbers. A term is built by a grammar of sums, differences, products and
+division by a literal, to a declared depth. What it draws on is what the test
+has in hand where the assertion stands: the values it rendered for the
+coordinates, the values it read before the call, the constants the contract
+declares, and the literals the text of the unit contains. Gathering those is a
+reading of declarations and of literals. No value is substituted for another,
+no flow is followed, and which terms hold is left to the verifier; the
+generator never reads the expression a path computes. The depth is therefore
+what keeps an emitted assertion from becoming a transcription of the
+implementation, and it decides how many candidates an observable receives.
+
+Each term must also be one the test can evaluate. The query that discharges an
+assertion discharges at the same time that its terms are defined on every input
+of the part, so an overflow in the oracle cannot be read as a fault in the
+contract.
+
+Terms keep two quantities apart that numbers would tie together. A bound written
+as a number has to hold at the worst input its part admits, so the wider that
+part the weaker the bound. What a wider region buys in coverage it would give
+back in strength. A bound built from the quantities of the path does not move
+when the part does, which leaves the queries spent and the tests emitted as the
+only price of strength.
+
+\subsubsection{What the Verifier Is Asked}
+Each candidate is decided on its own, and the verdicts of Section~\ref{sec:enum}
+apply here unchanged: discharged, refuted with an input, or declined. Candidates
+do not depend on one another, so an implementation may put several to the
+verifier at once, in the shape Section~\ref{sec:candidate} already used, but
+nothing below rests on their being asked together. The order changes how many
+are asked and not which are provable. A discharged form settles every form it
+implies, and the second layer decides for each observable whether the third has
+anything left to say. For a candidate $a$ and a
+region $A$, what is asked is
+\begin{equation}
+\mathsf{Proved}(A, a) \;\equiv\;
+\mathsf{Discharged}\bigl(\mathsf{assume}(A),\ \mathsf{assert}(a)\bigr),
+\label{eq:oracle-query}
+\end{equation}
+where $\mathsf{assume}(A)$ is the same text the emitted test writes to
+constrain its arguments. The verifier is asked under the same constraint on the
+inputs that the emitted test renders, and not under a restatement of it. The
+path plays no part in the query: $A$ lies inside $R_\pi$, which
+Section~\ref{sec:cert} certified, so every run under that assumption follows
+$\pi$ already.
+
+A declined candidate is dropped and recorded with the reason it received. A
+refuted one is not, where the input the verifier returned can divide the region.
+That input is the split point, and on the side of it holding $x_\pi$ the
+candidate is asked again. The parts cover exactly what they divided, so nothing
+is given up in coverage, and the price is one further emitted test each.
+The division keeps a statement that a single region would have lost, and the
+budget on tests for one path is where it stops.
+
+A path therefore yields a family of parts, each with the assertions proved over
+it, drawn from $R_\pi$ by Section~\ref{sec:emit}:
+\begin{equation}
+R_\pi \;=\; A_1 \cup \cdots \cup A_k \cup E_\pi ,
+\label{eq:parts}
+\end{equation}
+where each $A_i$ is the set of inputs one emitted test admits and $E_\pi$
+collects the inputs left unrendered. Two things divide $R_\pi$: a candidate
+refuted on one side of an input the verifier returned, and punctures on a
+coordinate too dense for a rendering to skip. Every $A_i$ lies inside $R_\pi$,
+so what was proved over the whole of it holds on all of them and is not asked
+again, while what a division saved holds on the part that saved it. $E_\pi$
+holds what the budget on tests for one path leaves, and is reported and not
+absorbed.
+
+Where no candidate at all is discharged over $R_\pi$, no parameterized test is
+emitted and the concrete replay test of Section~\ref{sec:enum} stands in its
+place. It is not left without an oracle. At a single input every observable has
+one value, and the refutation that produced that input reported them, so the
+test states those values at no further query. It is the weakest oracle the
+construction emits and the strongest available at one point, and it is why every
+test carries an assertion the verifier established.
+
+\subsubsection{What Each Test Carries}
+Listing~\ref{lst:skeleton} gives the shape every emitted test takes. The
+contract is held in a field (Line~2) and deployed by the fixture the run settled
+on (Line~4), which every test repeats. The name records the unit and the path
+(Lines~1 and~6), and the parameters are the coordinates the rendering left more
+than one value (Line~6). Each of those receives its range on entry, and a
+coordinate the refinement pinned is written as the value it holds (Line~7). The
+preamble then establishes the state and context coordinates (Line~8). The values
+the statements below compare against are read before the call (Line~9). Where
+the framework needs a statement of the first layer ahead of the call, it goes
+there (Line~10). The call follows (Line~11). Statements proved over the whole
+part come after it (Line~12), and those a condition separates carry that
+condition (Line~13). A test for a reverting path carries the first layer alone,
+since a revert undoes what the other two would have compared, and one that fell
+back to a single input carries the values the refutation reported. Line~7
+assigns and never filters, and Line~13 holds the only conditions a test
+contains.
+
+\begin{lstlisting}[language=Solidity, numbers=left, numberstyle=\scriptsize,
+xleftmargin=1.5em, basicstyle=\ttfamily\scriptsize, breaklines=true,
+columns=fullflexible, keepspaces=true, float=tbp,
+caption={The shape of an emitted test. Slots in braces are filled per path;
+those that a path leaves nothing for are dropped.},
+label={lst:skeleton}]
+contract {UNIT}_{PATH}_Test is Test {
+    {CONTRACT} c;
+
+    function setUp() public { {FIXTURE} }
+
+    function test_{UNIT}_{PATH}({PARAMS}) public {
+        {RANGES}      // one per coordinate: bound(p, L, U), or a fixed value
+        {PREAMBLE}    // establish the state and context coordinates
+        {PRE}         // read every observable the statements below compare
+        {EXIT}        // first layer, where it must precede the call
+        c.{UNIT}({ARGS});
+        {FLAT}        // statements proved over the whole part
+        if ({COND}) { {THEN} } else { {ELSE} }   // statements a condition separates
+    }
+}
+\end{lstlisting}
+
+Take the withdrawal of Listing~\ref{lst:motivation} on the path where a discount
+applies and the fee stays under the cap. From the first layer, the call returns
+instead of reverting and logs one withdrawal. From the second, the owner, the
+account the fee is paid to and the caller's discount are as they were, while the
+caller's deposit and the balance of the account the fee reaches are not. From
+the third, the deposit falls by exactly the amount passed in, and the fee lies
+between that amount taken at the lowest rate the discount range leaves in force
+and the same amount taken at the highest.
+
+$M_2$ charges the rate on the caller's whole deposit rather than on the amount
+withdrawn, and refutes the upper of those two bounds where the deposit is large
+enough against the amount, which is a proper part of the region. $M_1$
+multiplies every fee by a hundred, so the subtraction computing the amount
+returned underflows and the call reverts, which refutes the statement of the
+first layer on every input the region admits.
+
+A developer writing this test by hand might state the amount returned exactly,
+as Listing~\ref{lst:motivation-put} states two bounds on the fee.
+\tool{VeriPUT} states a bound instead, for the reason given in
+Section~\ref{sec:oracle}. Weakening an exact value into a bound has a price, and
+this is where it is paid.
+
+An assertion may relate one coordinate to another. The restriction of
+Section~\ref{sec:candidate} is on the region, which a framework has to render by
+assigning each coordinate a value of its own. A statement checked once the call
+is over is under no such constraint, and the last of the three above names both
+the amount passed in and the amount returned. Each assertion a test carries was
+proved under the assumption that test itself writes, which is what
+Section~\ref{sec:sound-emit} takes from this stage.
+
+\subsection{Implementation}\label{sec:implementation}
+
+\begin{answerbox}
+\noindent\textbf{Summary.}
+\end{answerbox}
+
+\section{Evaluation}\label{sec:eval}
+
+\begin{rqbox}
+\begin{enumerate}
+  \item[\textbf{RQ1}] (Performance)
+  \item[\textbf{RQ2}] (Failure study)
+  \item[\textbf{RQ3}] (Ablation study)
+  \item[\textbf{RQ4}] (Robustness study)
+\end{enumerate}
+\end{rqbox}
+
+\subsection{Benchmarks and Environment Setup}\label{sec:setup}
+
+\subsubsection{Dataset Selection Criteria}
+
+\subsubsection{<Subject categories with counts>}
+
+\subsubsection{Pre-processing}\label{sec:preprocess}
+
+\subsubsection{Environment}
+
+\subsection{RQ1: Performance}
+\begin{answerbox}\textbf{Answer to RQ1.}\end{answerbox}
+
+\subsection{RQ2: Failure Study}
+\begin{answerbox}\textbf{Answer to RQ2.}\end{answerbox}
+
+\subsection{RQ3: Ablation Study}
+\begin{answerbox}\textbf{Answer to RQ3.}\end{answerbox}
+
+\subsection{RQ4: Robustness across <backends>}
+\begin{answerbox}\textbf{Answer to RQ4.}\end{answerbox}
+
+\subsection{Case Study}\label{sec:case_study}
+
+\subsubsection{Case Study 1: <the motivation example>}
+
+\subsubsection{Case Study 2: <the complementary situation>}
+\begin{answerbox}\textbf{Summary.}\end{answerbox}
+
+\section{Threats to Validity}\label{sec:threats}
+
+We summarize the main threats to validity of this study.
+
+\subsection{Internal Validity}
+\textbf{<Threat>.}
+
+\subsection{External Validity}
+\textbf{<Threat>.}
+
+\subsection{Construct Validity}
+\textbf{<Threat>.}
+
+\subsection{Statistical Conclusion Validity}
+\textbf{<Threat>.}
+
+\section{Related Work}\label{sec:related}
+
+A generated unit test needs a criterion that settles which tests the suite
+contains, an input part, and a part that decides whether a run was correct. We
+review coverage-driven test generation for smart contracts
+(Section~\ref{sec:rw-cov}), the synthesis of parameterized unit tests
+(Section~\ref{sec:rw-put}), and the inference of invariants and properties of
+contracts (Section~\ref{sec:rw-inv}).
+
+\subsection{Coverage-driven test generation for smart contracts}\label{sec:rw-cov}
+
+For smart contracts, \tool{SolAR}~\cite{solar_sbst}, developed from the earlier
+\tool{AGSolT} framework~\cite{agsolt}, and
+\tool{SynTest-Solidity}~\cite{syntest_solidity} are search-based tools that
+evolve test cases toward higher branch coverage. \tool{SolAR} emits a sequence
+of transactions with concrete arguments, while \tool{SynTest-Solidity} executes
+each candidate on a local chain through \tool{Truffle} and records the values
+observed in that execution as the assertions of the test it emits.
+\tool{SolTG}~\cite{SolTG-1} instead encodes the contract's executions as
+constrained Horn clauses, enumerates the path constraints of that encoding one
+function at a time and for call sequences of growing length, solves each with
+an SMT solver, and writes the arguments it obtains into \tool{Foundry} test
+functions, stopping once every branch is covered. \tool{CC-SolBMC}~\cite{CCSolBMC2024}
+works below the branch: at each atomic condition it plants a trap assertion,
+one that fails exactly when the condition takes a given value, and takes the
+counterexample a bounded model checker returns as the test input for that
+condition. \tool{TestSmart}~\cite{TestSmart2021} draws its
+test data from an off-the-shelf symbolic execution engine and contributes a
+mutation-based reduction of that engine's output, and
+\tool{Griffin}~\cite{Griffin2024} takes a target line as part of its input and
+returns the data that reaches it.
+
+Beyond smart contracts, trap assertions are the usual device for driving a
+verifier toward a coverage target, and three lines of work bear on ours. Wei et
+al.~\cite{wei2025esbmc} plant one per branch in the GOTO program of a C program
+and compute coverage from the verifier's answers, but do not address turning the
+counterexamples into tests. Seeding Contradiction~\cite{SeedingContradiction2025}
+does collect them, into a regression suite for an Eiffel program, planting one
+trap assertion per branch in the Boogie translation and requiring the program to
+have been proved correct beforehand so that the only failures are the ones it
+planted. \tool{DTest}~\cite{DTest2023} plants one at a time in the Boogie
+translation of a Dafny program and turns each counterexample into a unit test,
+filling the arguments the counterexample leaves unconstrained with default
+values and taking the oracle from the postcondition of the method under test
+where the developer wrote one.
+
+\tool{VeriPUT} differs from these tools in three ways. First, its coverage
+target is a complete decision sequence rather than a branch, an atomic
+condition, or a basic block. A target of the latter kind is reached in the
+middle of a run, so the counterexample witnesses that the target is reachable
+and says nothing about how the run ends. Criteria that keep a path as the
+target but bound its length fall short on the same count, and on a second.
+Among them are $k$-limiting path coverage and the prime path coverage recently
+added to a production compiler as a
+measurement~\cite{AmmannOffutt,primepath_gcc}. A prime path is a maximal simple
+path, so it need not reach an exit, and a single run covers many prime paths at
+once, so the targets do not divide the inputs into classes that a test can
+assume. Second, these tools fix every argument of the test they emit, so one
+path is exercised at one point of the inputs that follow it, and where an
+argument is left unconstrained a default value stands in for the range it could
+have taken; \tool{VeriPUT} emits a region of inputs and proves that every input
+in it follows the same path. Third, none of them synthesizes an assertion
+proved over a range of inputs. An emitted test either reports a fault only when
+the fault stops the run, transcribes the values one execution produced, or
+inherits an assertion the developer already wrote, as in \tool{DTest}, whose
+tests for a method without a postcondition are left with none. We compare
+against a generator when it (i) takes the contract source as its only input and
+(ii) produces a suite of its own tests rather than a witness for a target that
+the user supplies. \tool{Griffin} fails both. \tool{TestSmart} meets both, but
+its implementation is not available, and its own contribution is a
+mutation-based reduction of a suite that a separate symbolic execution engine
+produces, so the generator a comparison would measure is that engine.
+
+\subsection{Synthesizing parameterized unit tests}\label{sec:rw-put}
+
+To the best of our knowledge, no prior work synthesizes parameterized unit
+tests for smart contracts, so we review this line beyond the contract domain.
+Tillmann and Schulte~\cite{Tillmann2005} introduced the parameterized unit
+test, in which the developer writes both the assumption that constrains the
+arguments and the assertion that judges the run, and later work derives one or
+both of these from tests that already exist~\cite{Danglot2019}. The assumption
+is the easier of the two. Thummalapenta et al.~\cite{Thummalapenta2011} leave it
+to the developer and supply a methodology for writing it,
+\tool{JARVIS}~\cite{Peleg2018Jarvis} fits a template drawn from a library of
+abstract domains to a group of tests that repeat one scenario, and
+\tool{PROZE}~\cite{Proze2024} takes the arguments a method is observed to
+receive at runtime, while \tool{Teralizer}~\cite{Glock2025} extracts the path
+condition of one execution symbolically, which is exact but requires the method
+under test to be a pure function. The assertion is harder, because deriving one
+presupposes a notion of what the code ought to do, and most of this line
+therefore reuses the assertion the developer already wrote, keeping it when it
+survives the widened inputs~\cite{Peleg2018Jarvis,Proze2024}. Fraser and
+Zeller~\cite{FraserZeller2011} are the exception: they generalize the
+postcondition of a concrete test into candidates and retain those that mutation
+analysis fails to refute.
+
+\tool{VeriPUT} differs from these tools in three ways. First, it too widens a
+concrete input into a region, but the input it widens is a counterexample it
+obtained in order to reach a path that the coverage criterion named, whereas
+these methods widen a test the developer had already written, so the paths their
+output reaches are the paths that test reached. Second, they establish the
+widened assumption by running it. Sampling and mutation analysis can refute a
+candidate but cannot establish one, so what these methods report is that the
+inputs they tried behaved as expected; what \tool{VeriPUT} reports is that a
+verifier has proved the property for every input the assumption admits. Third,
+exact extraction, as in \tool{Teralizer}, buys its exactness with a purity
+requirement that the entry points of interest here do not meet, since they read
+and write persistent state by construction.
+
+\subsection{Invariant and property inference for smart contracts}\label{sec:rw-inv}
+
+For smart contracts, \tool{InvCon}~\cite{InvCon2022} mines the transaction
+history of a deployed contract for likely invariants, relations over its state
+variables and function arguments reported at the level of the contract and of
+individual functions, and \tool{InvCon+}~\cite{InvConPlus2024} adds a static
+phase so that the relations it reports are proved rather than likely.
+\tool{SmartOracle}~\cite{SmartOracle2025} mines the same histories for
+finer-grained relations over the values a function reads and writes, organized
+per branch, and checks them against later transactions.
+\tool{Trace2Inv}~\cite{Trace2Inv2024} instead fixes the shape of the invariant
+in advance, instantiating a set of templates from history and deploying the
+result as a guard that rejects offending transactions. Where no history is
+available the evidence is the code itself: \tool{SmartInv}~\cite{SmartInv2024}
+learns invariants from the code together with its comments in order to locate
+vulnerabilities, and \tool{PropertyGPT}~\cite{PropertyGPT2025} retrieves
+human-written properties to produce formal ones for a prover to discharge.
+Beyond smart contracts, \tool{Daikon}~\cite{Daikon2007} reports the properties
+that hold across the runs of an existing suite, and supplies the categories,
+such as a value left unchanged or one variable bounded by another, that this
+line reuses.
+
+None of these tools generates tests, so none can serve as a baseline: they emit
+no inputs, they carry no coverage criterion, and what they produce is an
+annotation for a prover, a guard deployed beside the contract, or a report of a
+suspected vulnerability, none of which a test framework can run. Two further
+differences bear on the assertions \tool{VeriPUT} synthesizes. First, they work
+in a different mode: most are on-chain analyses whose evidence is the
+transaction history of a contract already deployed, whereas \tool{VeriPUT} runs
+off-chain before deployment and reads only the source. Second, the statements
+sit at different levels of abstraction. An invariant has to survive every entry
+point and every order in which calls may arrive; what \tool{VeriPUT} attaches to
+a test is a property of one path through one entry point. A path-scoped
+statement need only hold on its path and may fail elsewhere, while a
+contract-wide invariant holds across all paths and does not by itself
+characterise the behaviour of any one of them.
+
+\section{Conclusion}\label{sec:conclusion}
+
+\section{Ethics, Responsible Disclosure, and Data Availability}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{ref}
+
+\end{document}

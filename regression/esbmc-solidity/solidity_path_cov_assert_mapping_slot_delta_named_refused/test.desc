@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--contract SlotMin --solidity-path-coverage --solidity-max-tx 2 --focus-function put,take --path-cov-instrument-only take --path-cov-assert spec.json
+^ERROR: --path-cov-assert: unit 'sol:@C@SlotMin@F@take#53' -- REFUSING THE LADDER: candidate 'bal\[k\]' delta_lo endpoint 'nosuchquantity' cannot be built: it is neither a decimal literal nor a name that resolves to an input of this unit
+\A(?!(.|\n)*ladder summary)
+\A(?!(.|\n)*INTERNAL DEFECT)

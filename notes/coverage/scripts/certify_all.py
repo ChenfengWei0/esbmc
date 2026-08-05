@@ -51,7 +51,21 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ESBMC_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
-INPUTS = os.path.join(ESBMC_ROOT, "notes", "coverage", "inputs")
+# ---- THE INPUTS DIRECTORY IS THE POC'S, NOT A SHARED CORPUS ----
+#
+# `notes/coverage/inputs/` has been DELETED. It was the benchmark: this file
+# resolves `INPUTS / BENCHMARKS[key][0]`, so while that directory existed a
+# whole-corpus sweep was one command away regardless of the refusals above.
+# Each PoC owns hardlinks to the files its unit needs, and `poc_one.py` points
+# this at them. Overridden at the DEFINITION so every consumer gets the PoC's
+# copy -- the same inode the corpus row was measured on -- by construction.
+# Unset, this still names the deleted directory, so a benchmark-shaped
+# invocation fails on a missing file instead of sweeping. Restore with
+# `git checkout -- notes/coverage/inputs/` if a baseline re-measurement is ever
+# needed; nothing was lost, it is all tracked.
+INPUTS = os.environ.get(
+    "VERIPUT_INPUTS_DIR",
+    os.path.join(ESBMC_ROOT, "notes", "coverage", "inputs"))
 DRIVER = os.path.join(ESBMC_ROOT, "scripts", "solidity_path_generalise.py")
 ESBMC = os.path.join(ESBMC_ROOT, "build", "src", "esbmc", "esbmc")
 
@@ -176,6 +190,54 @@ RE_NO_WITNESS_REFUSED = re.compile(
 RE_NO_WITNESS_DECIDED = re.compile(
     r"^\[enumerate\] no witnessed path for this unit, and every one of this "
     r"unit's claims was DECIDED")
+
+# ---- LEVEL 0 IS DECIDED IN SECONDS AND WAS BEING THROWN AWAY WHOLE ----
+#
+# MEASURED, farming/setDistributor, from the KILLED arm's own driver.log:
+#
+#     [round] level-0: 7.5s wall, 4 coordinate(s), ~5 candidate value(s) ...
+#     [level0] enc=2  single-point on: state._distributor==0, state._owner==1, ...
+#     [level0] enc=12 single-point on: distributor_==0, state._distributor==0, ...
+#     [level0] enc=13 single-point on: state._distributor==0, state._totalSupply==0
+#     [level0] enc=14 single-point on: distributor_==0, state._distributor==0, ...
+#     [level0] enc=15 single-point on: state._distributor==0, state._totalSupply==0
+#     [run] TIMEOUT after 240s
+#
+# Five paths had a decided level-0 projection SEVEN AND A HALF SECONDS IN. The
+# run was then killed 232 seconds later in the geometric ladder, the driver
+# never reached the write of `generalise-result.json`, and this file recorded
+# `certified {} / not_certified {}` -- a bare ZERO for a unit whose level 0 had
+# answered for every path it had.
+#
+# That is the single largest failure shape on the corpus: 53 of 137
+# non-certified paths say `no outer-box round finished, so nothing was measured
+# for this path (a BUDGET outcome)`.
+#
+# THIS IS NOT A SECOND LEDGER. This file's contract, stated in its own header,
+# is that the funnel is "read off the driver's own lines rather than recomputed
+# here, so the sweep cannot disagree with the tool about what was measured".
+# The driver already prints these lines; nothing here derives, infers or
+# re-solves anything. What changes is only that a line the driver emits at
+# second 7 is no longer discarded because the process died at second 240.
+#
+# ⛔ IT DOES NOT PROMOTE THE OUTCOME. `bucket()` is untouched: a KILLED run
+# stays KILLED, because level 0 is a PROJECTION and not a certified region --
+# it has not been through the certification query. The row simply stops
+# claiming that a killed run measured nothing when its own log says otherwise.
+RE_LEVEL0_POINT = re.compile(
+    r"^\[level0\] enc=(\d+) single-point on: (.+)$")
+# The tool's OWN warning that a one-value candidate list cannot tell a genuine
+# point domain from a path with NO inputs at all. It is the discriminator for
+# the `region is EMPTY (lo > hi)` bucket -- 20 of the 137 -- and it names the
+# repair (try a second value on those coordinates). Recorded per path, because
+# a level-0 point carrying this flag is NOT usable as a region without that
+# second probe, and a consumer that could not tell the two apart would read a
+# vacuous antecedent as an established single point.
+RE_LEVEL0_VACUITY = re.compile(
+    r"^\[level0\] ⚠ enc=(\d+): the point\(s\) on (.+?) came from a ONE-VALUE "
+    r"candidate list")
+RE_LEVEL0_ROUND = re.compile(
+    r"^\[round\] level-0: ([\d.]+)s wall, (\d+) coordinate\(s\)")
 
 
 def binary_identity():
@@ -367,6 +429,14 @@ def units_of(bench):
     return (units, killed), None
 
 
+# A REFUSAL, IN THE DRIVER'S OWN WORDS. The shape is `[<tag>] REFUSING ...`,
+# which is how the driver declines to start: a workdir holding another
+# configuration's artefacts, an artefact cell whose writer set is empty. The tag
+# is captured separately so the row says WHICH gate fired without this sweep
+# holding a list of them.
+RE_DRIVER_REFUSED = re.compile(r"^\[([A-Za-z0-9_-]+)\] REFUS(?:ING|ED)\b")
+
+
 def parse_driver(out):
     """The driver's own report, as a record. Nothing is inferred."""
     rec = {"witnessed": None, "coords": [], "pins": None,
@@ -381,8 +451,40 @@ def parse_driver(out):
            # or a run that died before reaching the branch. Deliberately not
            # defaulted to either side: a missing field is an unknown, and this
            # sweep already makes that distinction for `env_coord`.
-           "empty_witness_verdict": None, "empty_witness_reason": None}
+           "empty_witness_verdict": None, "empty_witness_reason": None,
+           # LEVEL 0, kept even when the run later dies. Empty dict means the
+           # driver printed no level-0 point line at all; that is different from
+           # "level 0 decided nothing", and the round line below is what tells
+           # the two apart -- if level 0 never RAN there is no round line either.
+           "level0_points": {}, "level0_vacuity_risk": {},
+           "level0_round_s": None, "level0_coords": None,
+           # THE DRIVER DECLINED TO START, and this is the sentence it said it
+           # with. None means no refusal line was printed; it is not defaulted
+           # to a string, because "" would read as a refusal with no reason.
+           "driver_refusal": None, "driver_refusal_tag": None}
     for line in out.splitlines():
+        m = RE_LEVEL0_POINT.match(line)
+        if m:
+            rec["level0_points"][m.group(1)] = m.group(2)
+            continue
+        m = RE_LEVEL0_VACUITY.match(line)
+        if m:
+            rec["level0_vacuity_risk"][m.group(1)] = [
+                c.strip() for c in m.group(2).split(",") if c.strip()]
+            continue
+        m = RE_LEVEL0_ROUND.match(line)
+        if m:
+            rec["level0_round_s"] = float(m.group(1))
+            rec["level0_coords"] = int(m.group(2))
+            continue
+        m = RE_DRIVER_REFUSED.match(line)
+        if m and rec["driver_refusal"] is None:
+            # FIRST ONE WINS. A refusal is a stop, so a later line cannot be a
+            # better explanation of it -- and letting one overwrite the other
+            # would report the last gate rather than the one that fired.
+            rec["driver_refusal"] = line.strip()
+            rec["driver_refusal_tag"] = m.group(1)
+            continue
         m = RE_WITNESSED.match(line)
         if m:
             rec["witnessed"] = int(m.group(1))
@@ -458,6 +560,12 @@ def bucket(rec, rc, out):
         return "KILLED"
     if rc not in (0, 1):
         return "CRASHED"
+    # A DECLINED RUN IS NOT AN EMPTY ONE. Guarded on having produced nothing
+    # else, so a refusal printed alongside real work cannot hide it -- the same
+    # ordering rule the KILLED branch above follows.
+    if (rec.get("driver_refusal") and rec["witnessed"] is None
+            and not rec["certified"] and not rec["no_coordinate_reason"]):
+        return "DRIVER-REFUSED"
     if rec["no_coordinate_reason"]:
         return "NO-COORDINATE"
     if rec["certified"]:
@@ -557,7 +665,132 @@ def main():
                          "its budget and measured NOTHING still produced every "
                          "exact region from level 0 plus refinement. ONE shape, "
                          "so this is offered rather than made default.")
+    ap.add_argument("--env-coord-disagreed", action="store_true",
+                    help="let the DRIVER name the environment coordinate "
+                         "instead of the caller. It promotes every environment "
+                         "quantity the witnessed paths DISAGREE on -- the "
+                         "partition it already computes and already prints as "
+                         "'Left unconstrained, so a path guarded by one of "
+                         "these cannot certify' -- and skips anything already "
+                         "pinned, which is what keeps the non-payable "
+                         "msg.value pin intact. Default OFF, same house rule "
+                         "as every other coordinate-set flag here.")
+    ap.add_argument("--pin-agreed-state", action="store_true",
+                    help="let the DRIVER name the entry-state pin instead of "
+                         "the caller. It pins every state coordinate all "
+                         "witnessed paths' counterexamples agree on, which is "
+                         "the mirror of --pin-env. MEASURED on "
+                         "farming/setDistributor: with the sender promoted but "
+                         "the owner left free, 0 of 5 certify in 347.5s and "
+                         "every path blames the owner; pinning it certifies 4 "
+                         "of 5 in 87s. Default OFF: every region measured "
+                         "under it is a statement about that entry-state "
+                         "slice.")
     ap.add_argument("--level0", action="store_true", default=True)
+    # ---- THE SECOND VALUE, REACHABLE FROM A SWEEP INSTEAD OF BY HAND ----
+    #
+    # The driver has printed, per path, that its level-0 point came from a
+    # ONE-VALUE candidate list and therefore cannot be told apart from a path
+    # with no inputs at all -- and it has named the repair in the same sentence.
+    # MEASURED, farming/setDistributor: FIVE of five witnessed paths carried
+    # that warning. Corpus-wide the shape it predicts is already in the records:
+    # 20 of 137 non-certified paths report `region is EMPTY (lo > hi) under the
+    # current pins`, i.e. the inversion, found one stage later at full ladder
+    # cost.
+    #
+    # Recorded on every row and DEFAULT OFF, same house rule as --env-coord and
+    # --max-holes: it changes the candidate list of every unit, so it changes
+    # what every region measured under it is a statement about, and an arm whose
+    # configuration is not in its records is an arm nobody can re-derive.
+    ap.add_argument("--level0-perturb", action="store_true",
+                    help="passed to the driver: after the level-0 round, "
+                         "re-probe each at-risk coordinate at its value's "
+                         "NEIGHBOURS, clamped to the type range the round "
+                         "itself published. Both directions holding on a "
+                         "neighbour means the antecedent is unsatisfiable and "
+                         "the path is excluded from the slice -- not that the "
+                         "domain is that point. ⚠ Use --out to give this arm "
+                         "its OWN file.")
+    # ---- THE PER-PATH OUTWARD LADDER, REACHABLE FROM A SWEEP ----
+    #
+    # These two exist in the driver, with their own unit tests and a tool-side
+    # regression, and the sweep had no way to pass them -- so every ladder this
+    # file has ever recorded was anchored at zero. That is the same failure
+    # --env-coord above was added to prevent, one flag later: an arm that can
+    # only be hand-run is an arm nobody can re-derive.
+    #
+    # WHAT NAMED THEM AS THE REPAIR, measured on farming/deposit and both arms
+    # on disk: four paths report `shrink round budget exhausted; the witness
+    # differs on: amount`, and the reason text is BYTE-IDENTICAL between an arm
+    # at shrink 3 / refine 2 and one at 6 / 4 -- only the refuting witness value
+    # moved. So the round budget is refuted as the cause; what is missing is a
+    # BOUNDARY, and locating one is the geometric bracket's job.
+    #
+    # Recorded on every row and DEFAULT OFF, same house rule as --level0-perturb
+    # directly above: they change the ladder, hence what every region measured
+    # under them is a statement about.
+    ap.add_argument("--probe-witnesses", type=int, default=0, metavar="N",
+                    help="passed to the driver: ask the ENUMERATION run for up "
+                         "to N distinct inputs per path (--all-witnesses "
+                         "--max-witnesses N) and use the extra ones as KNOWN "
+                         "MEMBERS of that path's domain. Costs no extra run -- "
+                         "the enumeration happens anyway. A coordinate that "
+                         "takes more than one value across a path's witnesses "
+                         "is PROVED not to be a point before any query, which "
+                         "is the blindness --level0-perturb attacks from the "
+                         "other side. DEFAULT 0, i.e. OFF. ⚠ Use --out to give "
+                         "this arm its OWN file.")
+    ap.add_argument("--probe-ladder", action="store_true",
+                    help="passed to the driver: lay the geometric bracket's "
+                         "ladder PER PATH, anchored at that path's own known "
+                         "members and doubling OUTWARD, instead of one shared "
+                         "ladder anchored at zero. REQUIRES --probe-witnesses "
+                         "(and --level0, which publishes the type ranges the "
+                         "outward rungs are clamped to). The driver's own "
+                         "measured example: a domain `amt in [10, 20]` "
+                         "separated at 21 brackets to (16, 32] from zero and "
+                         "to (20, 21] from the known member 20 -- same queries, "
+                         "better places. ⚠ Use --out to give this arm its OWN "
+                         "file.")
+    ap.add_argument("--probe-ladder-budget", type=int, default=0, metavar="N",
+                    help="passed to the driver: keep only the N rungs NEAREST "
+                         "the member bracket on each side of a per-path ladder. "
+                         "DEFAULT 0 = uncapped. MEASURED on farming/deposit: "
+                         "uncapped the per-path ladder laid 5264 rungs and the "
+                         "solver batch did not return in 780s; at budget 4 the "
+                         "same 24 pairs lay about 156. ⚠ It is a LOSS and the "
+                         "driver prints it -- a boundary beyond the last kept "
+                         "rung comes back as a span reaching the type limit.")
+    # ---- THE ABI VALUE-GATE PATH, REACHABLE FROM A SWEEP ----
+    #
+    # The driver pins msg.value to 0 on a non-payable unit BY DEFAULT, and that
+    # default is right: a non-payable function's ABI gate reverts every call
+    # carrying value, so no input with msg.value != 0 reaches the body. What it
+    # excludes is the GATE PATH ITSELF, whose whole domain is msg.value != 0 --
+    # the driver reports that path's region as EMPTY and says so.
+    #
+    # MEASURED, and it is why this is worth a flag rather than a hand run: on
+    # farming/setDistributor that excluded path is enc=2, and with the pin lifted
+    # and msg.value promoted to a coordinate it certifies and emits
+    # `FarmingPoolCovTest_FarmingPool_setDistributor_put2.t.sol` -- 2 fuzz
+    # parameters, 12 post-state assertions plus the gate's own assertFalse, green
+    # under forge at `runs: 256`. That is a DELIVERABLE the pinned arm cannot
+    # produce, and until now it could only be made by running the driver by hand.
+    #
+    # ⚠ IT COSTS THE OTHER PATHS. Same contract, same command apart from the
+    # environment: 0 of 5 paths certified with msg.value unconstrained, 4 of 5
+    # with it pinned. So this is an ARM -- its own --out, recorded on every row --
+    # and never a new default.
+    ap.add_argument("--no-auto-pin-value", action="store_true",
+                    help="passed to the driver: do NOT pin msg.value to 0 on a "
+                         "unit the source declares non-payable. This is the arm "
+                         "that recovers the ABI value-gate path, whose entire "
+                         "domain is msg.value != 0 and which the pinned arm "
+                         "reports as an EMPTY region. Pair it with `--env-coord "
+                         "msg.value` to make the value a FREE coordinate rather "
+                         "than merely unpinned. ⚠ It costs the other paths -- "
+                         "measured 0 of 5 certified unpinned vs 4 of 5 pinned -- "
+                         "so give this arm its OWN --out.")
     ap.add_argument("--memlimit-gib", type=int, default=8, metavar="N",
                     help="per-ESBMC-process memory limit, in GiB. DEFAULT 8, "
                          "the value that used to be hardcoded for --jobs 1 and "
@@ -614,16 +847,31 @@ def main():
     # can repeat. Same house rule as `--cert` there -- point the sweep at its own
     # input and its own output, and record the flag ON EVERY ROW so two arms can
     # never be summed by accident.
-    ap.add_argument("--env-coord", default=None,
-                    help="passed to the driver: promote ONE environment quantity "
-                         "(e.g. msg.sender, block.timestamp) to a FREE coordinate "
-                         "instead of a pin. Recorded on every row, because a "
-                         "region certified with an environment coordinate free is "
-                         "a different statement from one certified with it "
-                         "pinned, and the two must never share a table. ⚠ Use "
-                         "--out to give this arm its OWN file: writing it into "
-                         "results.jsonl would put two arms under one "
-                         "(benchmark, unit) key.")
+    # REPEATABLE, because the driver's own flag is and this one was not.
+    #
+    # MEASURED, today, and it is the same failure the paragraph above describes
+    # happening a second time: the green PUT
+    # `FarmingPoolCovTest_FarmingPool_setDistributor_put2.t.sol` fuzzes msg.sender
+    # AND is entered through a low-level call carrying msg.value, so its region
+    # needs BOTH promoted. Every one of the seven recorded arms for that unit was
+    # walked; each lists enc=2 as NOT certified, so no arm on disk produced it --
+    # it was hand-run. The sweep could not express it: the driver takes
+    # `--env-coord` with action="append" and this file forwarded exactly one.
+    ap.add_argument("--env-coord", action="append", default=[],
+                    help="passed to the driver: promote an environment quantity "
+                         "(e.g. msg.sender, msg.value, block.timestamp) to a FREE "
+                         "coordinate instead of a pin. REPEATABLE -- the driver "
+                         "accepts several and a region may need several, e.g. a "
+                         "sender-guarded path entered through a value-carrying "
+                         "call. ⚠ Ladder cost is multiplicative in the coordinate "
+                         "count, which is why the driver's help says to name them "
+                         "one at a time; naming two is a deliberate purchase. "
+                         "Recorded on every row, because a region certified with "
+                         "an environment coordinate free is a different statement "
+                         "from one certified with it pinned, and the two must "
+                         "never share a table. ⚠ Use --out to give this arm its "
+                         "OWN file: writing it into results.jsonl would put two "
+                         "arms under one (benchmark, unit) key.")
     # ---- THE PUNCH ARM, AND WHY ITS ABSENCE PRODUCED A FALSE ZERO ----
     #
     # MEASURED, and it is the reason these exist: not one line of this file
@@ -777,6 +1025,86 @@ def main():
                          "state._balances[msg.sender] (driver --slot-coord). "
                          "Repeatable, and honoured independently of the "
                          "--slot-coords budget.")
+    ap.add_argument("--pin-extcall", action="store_true",
+                    help="passed to the driver: fix every quantity the HARNESS "
+                         "chose inside the execution -- an external call's "
+                         "success bit is the common one -- at each path's OWN "
+                         "counterexample value. ⚠ IT IS AN ARM AND NEEDS ITS "
+                         "OWN --out. Such a quantity is not a call argument, so "
+                         "a region certified under it holds only of the "
+                         "executions in which the callee behaved that way, and "
+                         "a test rendering it must realise the value some other "
+                         "way.\n"
+                         "MEASURED on farming/deposit, THREE ARMS, and the "
+                         "result is an applicability limit rather than a knob:\n"
+                         "  (1) bit FREE, bracket on -- KILLED at 420s, 0 of 7 "
+                         "paths reached a verdict (a budget outcome).\n"
+                         "  (2) bit PINNED, --skip-bracket -- all 7 reached a "
+                         "verdict, 0 certified. `success` is gone from every "
+                         "divergence line (it is pinned, so both sides agree by "
+                         "construction) and the separator has MOVED: all six "
+                         "name msg.sender, plus extcall.account which is "
+                         "SafeERC20's own parameter bound to msg.sender and so "
+                         "a mirror of it, not a second quantity.\n"
+                         "  (3) bit PINNED + msg.sender promoted to a free "
+                         "coordinate -- the refine rounds report "
+                         "UNSEPARATED=[26,27,246,247,3622,3623] and the run "
+                         "ends on `INVARIANT VIOLATED: certified regions "
+                         "intersect`, each sibling PAIR sharing every point.\n"
+                         "WHY (3) IS THE END OF THIS LINE. deposit's six paths "
+                         "are three sibling PAIRS that differ in the success "
+                         "bit and in nothing else. A region is a PRODUCT OF "
+                         "PER-COORDINATE SETS over quantities a generated test "
+                         "can SET; the bit is not one, so it is not a "
+                         "coordinate, so no region can separate a pair. Pinning "
+                         "it at certification time fixes the QUERY and leaves "
+                         "the two REGIONS identical -- which the partition "
+                         "invariant then correctly refuses. Making the bit a "
+                         "region coordinate would change Definition 6, and is "
+                         "not attempted here.\n"
+                         "WHERE IT DOES WORK, measured: "
+                         "notes/coverage/poc/B5_extcall_coord_fixture.py, both "
+                         "units, four cases each -- the bit pinned to the "
+                         "path's own value CERTIFIES, pinned to the sibling's "
+                         "value comes back VACUOUS, left free comes back "
+                         "REFUTED, and a name that does not exist is REFUSED.\n"
+                         "⚠ COST. The driver offers every parseable nondet "
+                         "local, and the instrumenter accepts only those it can "
+                         "resolve: on deposit it took `extcall.success` and "
+                         "refused account/value/fpt/supply/return_value$*, each "
+                         "refusal costing one extra ESBMC invocation before the "
+                         "re-query.")
+    ap.add_argument("--pin", action="append", default=[], metavar="COORD=VALUE",
+                    help="pass one `coord=value` PIN straight to the driver "
+                         "(driver --pin). Repeatable. A pinned coordinate is "
+                         "NOT generalised, and every region reported is a "
+                         "statement about that slice. ⚠ WHY THIS SWEEP NEEDS "
+                         "IT AND DID NOT HAVE IT: the driver's --level0 help "
+                         "states its own scope as `coordinate == constant` "
+                         "only, and says `coordinate A == coordinate B` is a "
+                         "cross-coordinate relation that changes definition 6 "
+                         "and is NOT attempted. A region is a PRODUCT of "
+                         "per-coordinate intervals, so a box can never exclude "
+                         "the set {x : c1 == c2} -- the certification query "
+                         "keeps returning a fresh witness inside the box and "
+                         "the shrink loop cuts a handful of values per round "
+                         "against a refuting set of type-range size. MEASURED "
+                         "on farming/setDistributor, gate cell, --env-coord "
+                         "msg.sender: every refutation of enc 12/13/14/15 in "
+                         "BOTH the 3-round and the 6-round arm named the same "
+                         "PAIR, msg.sender and state._owner, and the 6-round "
+                         "arm cut 2, 6, 128, 1280 and 43008 values per round "
+                         "off a box of size ~2.6e94. Doubling the round budget "
+                         "changed 0 certified to 0 certified and 187s to 348s. "
+                         "Pinning ONE member of the pair is the smallest thing "
+                         "that turns the relation back into `coordinate == "
+                         "constant`, which is the case the method DOES cover. "
+                         "⛔ IT IS NOT FREE: the region stops being a statement "
+                         "about the pinned coordinate, so a rate measured with "
+                         "a pin and one measured without are two measurements "
+                         "wearing one name -- which is why the value is "
+                         "recorded on every row and why this needs its own "
+                         "--out.")
     # ---- WHICH CUT RULE PRODUCED A ROW IS PART OF WHAT THE ROW MEASURED ----
     #
     # The driver's default moved from "apply the tool's first `retry with ...`
@@ -819,7 +1147,48 @@ def main():
     want_units = set(args.unit)
 
     names = args.benchmarks or [b for b in BENCHMARKS if b != "st1inch_St1inch"]
+
+    # ---- THERE IS NO CORPUS SWEEP ANY MORE, ONLY ONE POC AT A TIME ----
+    #
+    # This file's own docstring calls itself a sweep, and that is exactly what
+    # is banned: a benchmark key names 8 to 28 units, the default names five
+    # benchmarks, and one invocation therefore commits to 65 driver runs at
+    # 600s each. The corpus is split into PoCs, one per TARGET
+    # public/external function (`poc_split.py`), and a run must name one.
+    #
+    # Refused rather than truncated to the first unit: silently running one and
+    # writing it under the sweep's name is the one-fact-two-ledgers failure
+    # this file already refuses for --redo and for the arm files.
+    if len(names) != 1 or len(want_units) != 1:
+        print(
+            f"[sweep] REFUSED: this driver now certifies exactly ONE unit of "
+            f"ONE benchmark per invocation, and it was given "
+            f"{len(names)} benchmark(s) and {len(want_units)} --unit name(s).\n"
+            f"  The corpus is split into PoCs, one per target public/external "
+            f"function. A benchmark key by itself commits to every unit it "
+            f"has, which is the run the work order bans.\n"
+            f"    python3 notes/coverage/scripts/poc_split.py --list\n"
+            f"    python3 notes/coverage/scripts/poc_one.py <poc-id>\n"
+            f"  To drive it directly: {os.path.basename(__file__)} <one-bench> "
+            f"--unit <one-unit> --out <that PoC's own file>")
+        return 1
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
+
+    # ---- REFUSED HERE TOO, NOT ONLY IN THE DRIVER ----
+    #
+    # The driver raises on --probe-ladder without --probe-witnesses, so this
+    # cannot silently mis-measure. It is repeated here because the driver raises
+    # PER UNIT, after the enumeration run: a sweep would pay a full ESBMC pass
+    # and write a row whose bucket is a driver crash, and a crash row is read as
+    # a fact about the unit. Refusing before any run costs nothing and keeps the
+    # failure named after the flag that caused it.
+    if args.probe_ladder and not args.probe_witnesses:
+        print("[sweep] REFUSED: --probe-ladder needs --probe-witnesses. The "
+              "ladder is anchored at each path's own KNOWN MEMBERS, and "
+              "without extra witnesses every path has exactly one, so the "
+              "'ladder' would be a single point wearing the name of a "
+              "bracket.")
+        return 1
 
     # ---- THE ARM OWNS ITS SCRATCH DIRECTORY, DERIVED FROM ITS --out ----
     #
@@ -1062,10 +1431,32 @@ def main():
                    "--max-region-pieces", str(args.max_region_pieces)]
             if args.level0:
                 cmd.append("--level0")
+            if args.level0_perturb:
+                cmd.append("--level0-perturb")
+            # PASSED ONLY WHEN ASKED FOR, unlike --max-holes below. The driver's
+            # default is 0/off and 0 is a MEANINGFUL value there ("one witness
+            # per path"), so an always-passed `--probe-witnesses 0` would be
+            # byte-identical in behaviour -- but the row already carries the
+            # value, and the command line is what a reader replays by hand. Kept
+            # off the line when off so a replayed command is the one that ran.
+            if args.probe_witnesses:
+                cmd += ["--probe-witnesses", str(args.probe_witnesses)]
+            if args.probe_ladder:
+                cmd.append("--probe-ladder")
+            if args.probe_ladder_budget:
+                cmd += ["--probe-ladder-budget", str(args.probe_ladder_budget)]
+            if args.no_auto_pin_value:
+                cmd.append("--no-auto-pin-value")
+            if args.pin_extcall:
+                cmd.append("--pin-extcall")
             if args.skip_bracket:
                 cmd.append("--skip-bracket")
-            if args.env_coord:
-                cmd += ["--env-coord", args.env_coord]
+            if args.env_coord_disagreed:
+                cmd.append("--env-coord-disagreed")
+            if args.pin_agreed_state:
+                cmd.append("--pin-agreed-state")
+            for ec in args.env_coord:
+                cmd += ["--env-coord", ec]
             # ALWAYS PASSED, like --max-holes above and for the same reason: a
             # flag that only sometimes appears cannot be read back off the
             # record. The defaults equal the driver's, so an unflagged sweep is
@@ -1073,6 +1464,12 @@ def main():
             cmd += ["--slot-coords", str(args.slot_coords)]
             for sc in args.slot_coord:
                 cmd += ["--slot-coord", sc]
+            # Passed only when asked for, unlike --max-holes above, and the
+            # difference is deliberate: an empty list IS the default value and
+            # the row carries it verbatim, so "we passed none" is readable off
+            # the record without a placeholder token on the command line.
+            for p in args.pin:
+                cmd += ["--pin", p]
             # ALWAYS PASSED, same rule again: the row must be able to say which
             # cut rule made it, and "the driver's default at the time" is not a
             # value anyone can read back off an artefact.
@@ -1138,7 +1535,37 @@ def main():
                         # whose numerator and denominator came from runs that
                         # shared only a benchmark name.
                         "skip_bracket": bool(args.skip_bracket),
+                        # WHO CHOSE THE COORDINATE SET. A region measured with
+                        # the sender promoted and the owner pinned BY THE
+                        # DRIVER is the same measurement as one where a human
+                        # typed both names -- but only these two fields say
+                        # which run can be reproduced without knowing what the
+                        # human knew. `false` means the arm declined; an absent
+                        # key means the row predates the flags.
+                        "env_coord_disagreed": bool(args.env_coord_disagreed),
+                        "pin_agreed_state": bool(args.pin_agreed_state),
                         "level0": bool(args.level0),
+                        # THE ARM'S OWN FIELD. `false` means "we asked for the
+                        # one-value list", not "the question did not arise" --
+                        # every row recorded before this flag existed carries no
+                        # key at all, and that absence is what marks it as
+                        # predating the arm rather than as having declined it.
+                        "level0_perturb": bool(args.level0_perturb),
+                        # THE LADDER'S ANCHOR AND ITS WIDTH. A bracket measured
+                        # from zero and one measured from a path's own members
+                        # are different measurements of the same domain, and a
+                        # reader who cannot see which reads the rungs as a
+                        # property of the contract. Recorded as values rather
+                        # than omitted when default, for the same reason
+                        # `env_coord: null` is.
+                        "probe_witnesses": args.probe_witnesses,
+                        "probe_ladder": bool(args.probe_ladder),
+                        "probe_ladder_budget": args.probe_ladder_budget,
+                        # WHICH ENVIRONMENT THE REGIONS WERE MEASURED IN. A row
+                        # with msg.value pinned and one with it free are two
+                        # different statements about the same unit, and this is
+                        # the field that stops them sharing a table.
+                        "no_auto_pin_value": bool(args.no_auto_pin_value),
                         # NOT omitted when unset. `None` here means "this arm
                         # ran with every environment quantity pinned or dropped",
                         # which is a DIFFERENT measurement from msg.sender being
@@ -1146,7 +1573,18 @@ def main():
                         # information", i.e. as the thing certify_arms.py prints
                         # as MIXED. A recorded null is a fact; a missing field is
                         # an unknown.
-                        "env_coord": args.env_coord,
+                        # THE FULL LIST, always. This is the authoritative field.
+                        "env_coords": list(args.env_coord),
+                        # KEPT FOR READERS WRITTEN BEFORE THE FLAG BECAME
+                        # REPEATABLE, and deliberately NULL as soon as there is
+                        # more than one. A reader that knows only this key would
+                        # otherwise read a two-coordinate arm as a one-coordinate
+                        # arm -- a wrong value, where null is the honest
+                        # "no arm information" those readers already handle. It is
+                        # a projection of `env_coords` computed at write time, not
+                        # a second place the fact is kept.
+                        "env_coord": (args.env_coord[0]
+                                      if len(args.env_coord) == 1 else None),
                         # THE PUNCH ARM'S CONFIGURATION, on every row. A hole
                         # count read off rows that do not carry these two is a
                         # count whose denominator is unknown: `max_holes: 0`
@@ -1165,6 +1603,20 @@ def main():
                         # the same reason env_coord: null is.
                         "slot_coords": args.slot_coords,
                         "slot_coord": list(args.slot_coord),
+                        # WHAT WE ASKED TO PIN, which is NOT the same field as
+                        # `pins` -- that one is the driver's own report of what
+                        # it ENDED UP pinning (auto msg.value, constants it
+                        # refused to generalise), and it would read as though
+                        # the sweep had requested them. `[]` means we requested
+                        # none; an absent key means the row predates the flag.
+                        "pin_requested": list(args.pin),
+                        # WHETHER THE HARNESS-CHOSEN QUANTITIES WERE FIXED. A
+                        # region certified with them pinned is a statement about
+                        # a slice no generated test can enter by choosing
+                        # arguments, so a row measured with this and one without
+                        # are two measurements wearing one name. An absent key
+                        # means the row predates the flag, i.e. `false`.
+                        "pin_extcall": bool(args.pin_extcall),
                         # WHICH CUT RULE. An absent key means the row predates
                         # the flag and was therefore measured under `tool`; it
                         # must never be read as the current default. See the
@@ -1193,8 +1645,19 @@ def main():
                         # file whose records came from another build is refused
                         # rather than continued.
                         "binary": ident})
+            # THE COMMAND, THEN ITS OUTPUT. The log is read when a unit's row
+            # cannot say what happened, and the first question then is what was
+            # actually run -- the row records the sweep's flags, not the child's
+            # argv, and the two differ by everything this function assembles.
+            # MEASURED: a 0.0-second exit-1 row was attributed only after the
+            # child was replayed by hand, which needed exactly this line.
+            #
+            # ⛔ ONE WRITER. A second write of this file was added earlier today
+            # on the false premise that this one did not exist; two writers can
+            # drift in format, and then which content a reader gets depends on
+            # which ran last.
             with open(os.path.join(uwd, "driver.log"), "w") as f:
-                f.write(out)
+                f.write(" ".join(cmd) + "\n\n" + (out or ""))
             # ONE WRITER AT A TIME. Two processes appending to the same JSONL
             # can interleave a partial line, and a half-written record is worse
             # than a missing one -- it survives the resume check and is parsed
@@ -1233,6 +1696,37 @@ def main():
                     tally = (f"{nc} certified / {nn} not / {nw} witnessed"
                              + (f" ⚠ {gap} path(s) reached NO verdict"
                                 if gap else ""))
+                    # ---- WHAT LEVEL 0 HAD ALREADY DECIDED, ON THE SAME LINE ----
+                    #
+                    # A path with no verdict used to print as nothing but a
+                    # number, and on this corpus that number is the largest
+                    # bucket there is: 53 of 137. But level 0 answers in
+                    # SECONDS -- measured 7.5s on farming/setDistributor, for
+                    # all five of its paths -- and the run that reported "0
+                    # certified / 0 not" was killed 232 seconds LATER, in the
+                    # geometric ladder, with those five projections in its own
+                    # log.
+                    #
+                    # Printed rather than only stored, because the operator
+                    # reads this line and not the JSONL, and a recovery nobody
+                    # sees is a recovery that will be re-derived by hand.
+                    #
+                    # ⛔ NOT a certified region and never counted as one: level
+                    # 0 is a projection that has not been through the
+                    # certification query, and `bucket()` is untouched. The
+                    # vacuity count is carried WITH it because a point from a
+                    # ONE-VALUE candidate list cannot be told apart from a path
+                    # with no inputs at all -- the tool says so itself, and a
+                    # reader shown only the point would take a vacuous
+                    # antecedent for an established equality.
+                    if gap and rec["level0_points"]:
+                        nv = len(rec["level0_vacuity_risk"])
+                        tally += (
+                            f" [level 0 HAD decided {len(rec['level0_points'])}"
+                            f" of them at {rec['level0_round_s']}s"
+                            + (f", {nv} needing a second probe before use"
+                               if nv else "")
+                            + "]")
                 print(f"  [{i}/{len(units)}] {unit}: {rec['bucket']}, "
                       f"{tally}, "
                       f"{len(rec['coords'])} free coordinate(s), "

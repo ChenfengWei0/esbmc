@@ -94,6 +94,7 @@ passed; state is stored; environment pins are checked.
 """
 
 import argparse
+import itertools
 import json
 import os
 import re
@@ -279,7 +280,28 @@ def run_esbmc(esbmc, sol, ast, contract, unit, extra, cwd, max_tx, timeout,
     t0 = time.time()
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     out = p.stdout + p.stderr
+    # ---- ONE LOG PER INVOCATION, OR THE FIRST ONE'S EVIDENCE IS DESTROYED ---
+    #
+    # `cwd` is the same directory for every ladder call of a unit -- the first
+    # pass and each R2 pass all land in `assert/` -- and this wrote `run.log`
+    # with mode "w". So the R2 pass silently overwrote the FIRST pass's output.
+    #
+    # MEASURED, and it is what blocked a live diagnosis rather than being a
+    # tidiness point. aqua `push` proposed 48 mapping-slot candidates to the
+    # ladder and got back 6 rows over one unrelated variable. The tool prints a
+    # per-candidate REFUSAL saying why each name carries no candidate -- and
+    # that text was in the first pass's log, which the R2 pass had already
+    # replaced by the time anyone looked. One file, two writers, and the
+    # question could not be answered from disk.
+    #
+    # `run.log` still exists and still holds the LAST invocation, so every
+    # existing reader is unchanged; the per-invocation copies sit beside it.
     with open(os.path.join(cwd, "run.log"), "w") as f:
+        f.write(" ".join(cmd) + "\n\n" + out)
+    n = 1
+    while os.path.exists(os.path.join(cwd, f"run.{n}.log")):
+        n += 1
+    with open(os.path.join(cwd, f"run.{n}.log"), "w") as f:
         f.write(" ".join(cmd) + "\n\n" + out)
     return out, p.returncode, time.time() - t0
 
@@ -497,6 +519,44 @@ def parse_ladder(log):
     return rows, summary, refusal, blocker
 
 
+def ladder_answer_gap(asked, rows):
+    """(unanswered, unasked) -- names put in `vars` that came back with NO row,
+    and names that came back that `vars` never mentioned.
+
+    ⛔ A SET DIFFERENCE OVER NAMES, DELIBERATELY NOT A LOG PARSE. esbmc does
+    print a reason beside each candidate it drops, and reading that prose was
+    the obvious implementation. But the prose has ALREADY CHANGED ONCE: a single
+    global "REFUSING THE LADDER" was split into per-candidate drops, and a
+    detector keyed to the old sentence would have gone on reporting nothing
+    wrong while every candidate died. What cannot drift is that the driver
+    wrote N names into the spec and got rows about none of them.
+
+    ---- MEASURED, aqua `push` enc=6, and it is why this exists --------------
+
+    48 slot names were written into `vars`. Seven rows came back, ALL of them
+    for `_DOCKED` -- a name the spec never mentions. The component loop is
+    deliberately NOT whitelisted by a slot-only spec (goto_coverage.cpp, "A
+    SLOT ENTRY MUST NOT TURN THE COMPONENT LOOP INTO A WHITELIST"), so rows for
+    unasked names are EXPECTED and are not an error. What was not expected, and
+    what nothing on either side counted, is 0 of 48.
+
+    So `answered` is INTERSECTED with `asked` rather than merely counted: seven
+    rows from forty-eight questions is not "7 of 48 answered". It is ZERO of 48
+    answered, plus seven nobody asked for, and those two numbers have to be
+    printed separately or the second disguises the first.
+
+    The cause on aqua turned out to be that every one of the 48 names keys a
+    level with `strategyHash`, which resolves to an AGGREGATE and cannot be a
+    coordinate -- a real capability limit. But finding that took an hour of
+    reading C++ and hunting for a log that a later pass had overwritten, and
+    the ONE LINE this function prints would have said "48 asked, 0 answered"
+    immediately.
+    """
+    asked_set = set(asked or [])
+    answered = {v for v, _t, _d in rows}
+    return (sorted(asked_set - answered), sorted(answered - asked_set))
+
+
 CHANGE_UNDER_CATCH = (
     "this rung asserts the state CHANGED, and the emitted call is "
     "REVERT-TOLERANT (`try {} catch {}`) because the exit kind could not be "
@@ -549,7 +609,662 @@ def rung_asserts_a_change(text):
 
 # Rung text -> a renderer producing forge-std assertion lines.  `post`/`pre`
 # are the expression texts the caller has already built.
-def rung_assertions(text, pre, post, label):
+# An R2 endpoint: a decimal, or a name. A name is only ever accepted after it
+# is looked up in the emitter's own identifier table -- see `bound_term`.
+_BND = r"([0-9]+|[A-Za-z_]\w*)"
+
+
+def bound_term(tok, idents):
+    """The Solidity text for one R2 endpoint, or None if it cannot be spelled.
+
+    ⛔ RETURNING None DROPS THE WHOLE RUNG, and that is the intended
+    behaviour. The alternative -- emitting the name and hoping it resolves --
+    fails at `forge build`, i.e. it breaks the entire generated file rather
+    than losing one assertion out of it.
+    """
+    if tok.isdigit():
+        return tok
+    if idents and tok in idents:
+        return idents[tok]
+    return None
+
+
+NUMERIC_TY = re.compile(r"^u?int(\d+)?$")
+# An endpoint may also NAME an identity rather than an amount. `address` and a
+# contract type are the two that occur; both are ordered integers underneath, so
+# the C++ builds the comparison in the CANDIDATE's type and an equality over
+# them is well formed. They are kept apart from the numeric ones because the
+# distinction is not cosmetic -- see `endpoint_candidates`.
+IDENTITY_TY = re.compile(r"^(address|contract\s|interface\s|enum\s)")
+
+# Worst case is (numeric params) + (identity params) + (a refuted-only second
+# round), and every one of those is an esbmc invocation. Capped, and the cap is
+# LOGGED with what it dropped: a silent truncation reads exactly like "there was
+# nothing more to ask", which is the one thing a yield number must never mean.
+R2_MAX_QUERIES = 6
+
+
+# How many bytes a value of this endpoint type occupies in storage. Used to
+# decide WHICH CANDIDATES an identity endpoint may be asked about; see
+# `propose_r2_specs`. `None` means "do not filter on width".
+IDENTITY_BYTES = {"address": 20, "address payable": 20}
+
+
+def endpoint_bytes(t):
+    """Storage width of an identity endpoint type, or None if not known."""
+    if t in IDENTITY_BYTES:
+        return IDENTITY_BYTES[t]
+    if t.startswith(("contract ", "interface ")):
+        return 20
+    return None
+
+
+def endpoint_candidates(params):
+    """[(name, kind, nbytes)] for the R2 endpoints this unit can name.
+
+    kind is `"num"` or `"id"`, and the split decides WHICH BOUND CLASS the name
+    may appear in:
+
+      num  -- an amount. May bound a DELTA (`post - pre in [amt, amt]`) and an
+              ABSOLUTE value (`post in [amt, amt]`).
+      id   -- an identity: an address, a contract, an enum. May bound an
+              ABSOLUTE value only. `post - pre in [newOwner, newOwner]` is not
+              a weak claim, it is a MEANINGLESS one -- the difference of two
+              balances is not an address -- and asking it would spend a query
+              to be told REFUTED about a question nobody has.
+
+    ⛔ WHY `id` EXISTS AT ALL, rather than the numeric filter simply standing.
+    The filter was `NUMERIC_TY.match(...)` and nothing else, so a unit whose
+    only parameter is an address proposed NO R2 QUERY WHATSOEVER. That is the
+    SETTER, the most common shape in the corpus: `_distributor = d`. Its
+    ordering rungs both come back REFUTED (the new value can be above or below
+    the old one), which is also the arm under which the delta proposer says
+    "no single direction is sound" and stops. So the two filters agreed, for
+    different reasons, to leave the setter with no R2 at all -- while the one
+    property a setter obviously has, `post == the argument`, was expressible
+    the whole time.
+    """
+    out = []
+    for pn, pt in params or []:
+        if not pn:
+            continue
+        t = _norm_ty(pt)
+        if NUMERIC_TY.match(t):
+            out.append((pn, "num", None))
+        elif IDENTITY_TY.match(t):
+            out.append((pn, "id", endpoint_bytes(t)))
+    return out
+
+
+def propose_r2_specs(ladder_rows, params, log=None, var_bytes=None):
+    """R2 delta specs to ASK FOR, derived from a ladder pass already measured.
+
+    ---- WHY R2 HAS NEVER RUN --------------------------------------------
+
+    `spec["vars"]` was built as `[{"name": s} for s in slot_vars]` -- names
+    only. Nothing in 128 driver files ever wrote `abs_lo` or `delta_dir`, so
+    the whole R2 class (`post in [lo, hi]`, `post - pre in [lo, hi]`) was
+    reachable only from a hand-written spec. The ladder's R1 rungs are emitted
+    unconditionally by the tool; R2 has to be REQUESTED, and nobody requested.
+
+    ---- THE DIRECTION IS READ, NOT GUESSED -------------------------------
+
+    `delta_dir` is mandatory in the spec and defaulting it is a
+    false-certificate route: candidates are unsigned, so `post - pre` wraps on
+    a decrease and a spec meaning "decreases by 1..10" answered as `inc` is
+    answered about the wrapped difference. The direction is therefore taken
+    from the ordering rungs the FIRST ladder pass already measured:
+
+        ge HOLDS, le REFUTED  -> only ever increases  -> inc
+        le HOLDS, ge REFUTED  -> only ever decreases  -> dec
+        both HOLD             -> post == pre on the whole region. The delta is
+                                 identically 0 and `post - pre in [p, p]` is
+                                 false for every nonzero p. NOTHING PROPOSED --
+                                 not because it is hard, because it is empty.
+        both REFUTED          -> the region contains an increasing execution
+                                 AND a decreasing one, so NO single direction
+                                 is sound. Nothing proposed, and said out loud.
+
+    ---- ONE ENTRY PER VARIABLE PER SPEC, WHICH IS WHY THIS RETURNS A LIST -
+
+    `goto_coverage.cpp` keeps ONE `assert_vart` per name (it now refuses a
+    duplicate outright rather than silently keeping the last). So a variable
+    can carry one endpoint pair per query, and testing it against P different
+    parameters needs P queries. Returning the list makes that cost visible
+    instead of hiding it behind a spec that would have been half-dropped.
+
+    ---- THE ABSOLUTE BOUND IS FREE, AND IT WAS NEVER ASKED FOR -----------
+
+    `assert_vart` carries `has_abs` and `has_delta` as TWO INDEPENDENT flags on
+    the SAME entry (goto_coverage.cpp:4283-4286), and both rungs are emitted
+    from the same walk of the same candidate list (:9816-9853). So adding
+    `abs_lo`/`abs_hi` beside `delta_*` asks a second question per variable at
+    the cost of ZERO extra queries -- the query count stays one per endpoint
+    name, exactly as before.
+
+    That half of R2 had never been requested by anything. The class was
+    reachable only from a hand-written spec, the same way the delta class was
+    before this proposer existed, and the consequence is concentrated in one
+    shape: a SETTER gets nothing today. Its ordering rungs both come back
+    REFUTED, so no `delta_dir` is sound and the delta arm correctly declines --
+    but `post in [d, d]` needs no direction, and it is the entire property.
+
+    ---- AND A SECOND ROUND THAT ONLY ASKS ABOUT WHAT FAILED --------------
+
+    `delta in [p, p]` is the strongest delta a single parameter can express and
+    is therefore refuted whenever the unit takes a fee, scales by a rate, or
+    splits the amount. Refuted there does NOT mean the delta is unbounded, so a
+    stage-2 spec asks the cap `delta in [0, p]` -- "it moved by at most what
+    you passed in", which is the property a withdraw-shaped unit is about.
+
+    ⛔ STAGE 2 IS FILTERED BY STAGE 1'S ANSWERS, in `run_r2_passes`, and only
+    the variables whose exact bound came back REFUTED stay in it. Asking the
+    cap about a variable whose exact bound already HOLDS buys a strictly weaker
+    rung for a whole query; asking it about one that got no verdict buys a
+    second no-verdict. A stage-2 spec left with no variables is not run.
+
+    ---- AND AN IDENTITY IS ONLY ASKED ABOUT CANDIDATES IT COULD EQUAL ----
+
+    `var_bytes` maps a candidate to its storage width, so an `address`
+    endpoint (20 bytes) is proposed only for the 20-byte candidates.
+
+    MEASURED on farming setDistributor enc=15, which is why the filter exists
+    rather than being an optimisation on paper. The identity query went out
+    with all TEN candidates:
+
+        _distributor   20 bytes   HOLDS      <- the answer that was wanted
+        _owner         20 bytes   REFUTED    <- a real question: did it also
+                                                overwrite the owner?
+        _totalSupply   32 bytes   REFUTED  \\
+        _balances[..]  32 bytes   REFUTED   |  a balance is not an address;
+        _MAX_BALANCE   no slot    REFUTED   |  eight questions nobody has
+        _allowances[..][..]  x4   NO VERDICT (solver unknown)
+
+    Four of the eight did not merely waste solver time, they ran it to
+    exhaustion: the nested-mapping shape is the one this corpus already knows
+    returns `solver-unknown`. Cutting them costs no verdict at all -- every
+    row removed was REFUTED-by-construction or undecided -- and the query
+    keeps both rows anyone would read.
+
+    ⛔ A CANDIDATE OF UNKNOWN WIDTH IS EXCLUDED, NOT INCLUDED. `_MAX_BALANCE`
+    has no storage slot, so no test can read it and any rung over it is
+    dropped downstream anyway; asking about it spends solver time to obtain a
+    row that is discarded. With `var_bytes=None` nothing is filtered and the
+    behaviour is exactly what it was, so a caller that cannot supply the
+    layout is not silently narrowed.
+    """
+    say = log or (lambda _m: None)
+    verdicts = {}
+    for var, text, verdict in ladder_rows or []:
+        verdicts.setdefault(var, {})[text] = verdict
+
+    direction = {}
+    for var, d in sorted(verdicts.items()):
+        ge, le = d.get("post >= pre"), d.get("post <= pre")
+        if ge == "HOLDS" and le == "REFUTED":
+            direction[var] = "inc"
+        elif le == "HOLDS" and ge == "REFUTED":
+            direction[var] = "dec"
+        elif ge == "HOLDS" and le == "HOLDS":
+            say(f"[put]   R2 not proposed for {var}: `post == pre` over the "
+                f"whole region, so every delta is 0 and a `[p, p]` bound is "
+                f"false for every nonzero p")
+        elif ge == "REFUTED" and le == "REFUTED":
+            say(f"[put]   R2 not proposed for {var}: the region contains BOTH "
+                f"an increasing and a decreasing execution, so no single "
+                f"delta_dir is sound. This is a fact about the region, not a "
+                f"gap in the proposer")
+        else:
+            say(f"[put]   R2 not proposed for {var}: the ordering rungs did "
+                f"not both decide (ge={ge}, le={le})")
+
+    # EVERY candidate the ladder ranged over is eligible for an ABSOLUTE bound,
+    # not just the directed ones. `direction` is the delta arm's whitelist and
+    # using it for both is what tied the setter's fate to an ordering verdict
+    # that a setter can never produce.
+    allvars = sorted(verdicts)
+    ends = endpoint_candidates(params)
+    numeric = [pn for pn, k, _b in ends if k == "num"]
+    identity = [(pn, b) for pn, k, b in ends if k == "id"]
+    if not ends:
+        say("[put]   R2 not proposed at all: the unit has no parameter an "
+            "endpoint could name -- no integer to bound an amount and no "
+            "address/contract/enum to bound an identity")
+        return []
+    if not allvars:
+        say("[put]   R2 not proposed at all: the first pass ranged over no "
+            "candidate, so there is nothing for a bound to be about")
+        return []
+
+    # ---- A CANDIDATE WITH NO STORAGE SLOT COSTS A QUERY AND BUYS NOTHING ----
+    #
+    # Whatever verdict comes back for it, the emitter drops the rung with "no
+    # storage slot: ... a rung over it is a compile-time tautology, not an
+    # oracle" -- no test can read the value at all. Asking is a query spent on
+    # a row that is discarded downstream.
+    #
+    # MEASURED on aqua `push`, where `_DOCKED` is the ONLY candidate the ladder
+    # ranged over: the whole R2 pass went out, came back `post in [amount,
+    # amount] REFUTED`, and was then dropped for having no slot. One esbmc
+    # query for a row nobody could use.
+    #
+    # `var_bytes is None` means the caller could not supply the layout, and an
+    # absent table must read as "no information", never as "no candidates".
+    if var_bytes is None:
+        slotted, unslotted = allvars, []
+    else:
+        slotted = [v for v in allvars if v in var_bytes]
+        unslotted = [v for v in allvars if v not in var_bytes]
+    if unslotted:
+        say(f"[put]     {len(unslotted)} candidate(s) have NO storage slot, so "
+            f"no R2 bound is asked about them -- solc's layout does not list "
+            f"them, which makes them constant/immutable and unreadable by any "
+            f"test: {', '.join(unslotted)}")
+
+    out, dropped = [], []
+    for p in numeric:
+        # ONE entry per variable carrying BOTH questions where both apply.
+        entries = []
+        for v in slotted:
+            e = {"name": v, "abs_lo": p, "abs_hi": p}
+            if v in direction:
+                e["delta_dir"] = direction[v]
+                e["delta_lo"] = p
+                e["delta_hi"] = p
+            entries.append(e)
+        if not entries:
+            say(f"[put]     amount `{p}`: every candidate is unreadable by a "
+                f"test, so no query is sent. This is a fact about the "
+                f"contract's storage, not a gap in the proposer")
+            continue
+        out.append({"param": p, "stage": 1, "kind": "num", "vars": entries})
+    for p, pbytes in identity:
+        if var_bytes is None or pbytes is None:
+            fit, unfit = allvars, []
+        else:
+            fit = [v for v in allvars if var_bytes.get(v) == pbytes]
+            unfit = [v for v in allvars if v not in fit]
+        if unfit:
+            # ⛔ THE MESSAGE MAY NOT NAME A CAUSE IT HAS NOT CHECKED. What
+            # stood here ended "...and four of these are the nested-mapping
+            # shape that answers solver-unknown", which is a fact about ONE
+            # run on farming welded into a message every contract prints. On
+            # aqua the single excluded candidate is `_DOCKED`, a constant --
+            # not a mapping, and not four of anything. A diagnostic that
+            # asserts a specific mechanism it did not measure is worse than
+            # one that says less: the next reader believes it.
+            say(f"[put]     identity `{p}` is {pbytes} byte(s), so "
+                f"{len(unfit)} candidate(s) of a different (or unknown) "
+                f"width are NOT asked about it -- an equality between values "
+                f"of different widths is false by construction, and a "
+                f"candidate with no storage slot has no width to compare: "
+                f"{', '.join(unfit)}")
+        if not fit:
+            say(f"[put]     identity `{p}`: NO candidate has its width, so no "
+                f"query is sent. This is a fact about the contract's storage, "
+                f"not a gap in the proposer")
+            continue
+        out.append({"param": p, "stage": 1, "kind": "id",
+                    "vars": [{"name": v, "abs_lo": p, "abs_hi": p}
+                             for v in fit]})
+    # Stage 2 exists only where a direction was established; `run_r2_passes`
+    # narrows it further to the variables stage 1 actually refuted.
+    for p in numeric:
+        # Same slot rule as stage 1: a cap on a value no test can read is a
+        # query spent on a row the emitter drops.
+        cap_vars = [v for v in sorted(direction) if v in slotted]
+        if cap_vars:
+            out.append({"param": p, "stage": 2, "kind": "cap",
+                        "vars": [{"name": v, "delta_dir": direction[v],
+                                  "delta_lo": "0", "delta_hi": p}
+                                 for v in cap_vars]})
+    if len(out) > R2_MAX_QUERIES:
+        dropped = out[R2_MAX_QUERIES:]
+        out = out[:R2_MAX_QUERIES]
+    say(f"[put]   R2 proposed: {len(out)} query(ies) over "
+        f"{len(allvars)} candidate(s) ({', '.join(allvars)}).")
+    if numeric:
+        say(f"[put]     stage 1 / amounts ({', '.join(numeric)}): "
+            f"`post in [p, p]` for every candidate, and "
+            f"`delta in [p, p]` for the {len(direction)} with a decided "
+            f"direction -- both on the same spec entry, so the second costs "
+            f"no extra query")
+    if identity:
+        say(f"[put]     stage 1 / identities "
+            f"({', '.join(p for p, _b in identity)}): "
+            f"`post in [p, p]` only. A delta of two identities is not a "
+            f"weaker question, it is a meaningless one")
+    if numeric and direction:
+        say(f"[put]     stage 2 / caps: `delta in [0, p]`, run ONLY for the "
+            f"variables stage 1 refuted the exact bound on")
+    for s in dropped:
+        say(f"[put]     ⛔ NOT ASKED (over the {R2_MAX_QUERIES}-query cap): "
+            f"stage {s['stage']} {s['kind']} bound on `{s['param']}`")
+    return out
+
+
+FORGE_RESULT_RE = re.compile(r"^\s*\[(PASS|FAIL[^\]]*)\]\s+(\w+)\s*\(")
+
+
+def fuzz_prefilter_verdicts(labels, forge_out):
+    """{rung label -> REFUTED | NOT-REFUTED | NOT-RUN} from one forge run.
+
+    ---- WHY A FUZZ PASS BEFORE THE VERIFIER -------------------------------
+
+    Measured on this corpus: of 1470 complementary ladder pairs, 1456 have one
+    side REFUTED -- i.e. about HALF of every R1 rung the ladder emits is
+    refutable. A refutation is a concrete counterexample, and a fuzzer finds
+    those in milliseconds (a 256-draw forge run is 3-44 ms) where a ladder
+    query costs 18-30 s. Asking forge first and the solver only about the
+    survivors is therefore sound in ONE direction and cheap.
+
+    ⛔ SOUND IN ONE DIRECTION ONLY. `forge found a failing draw` IS a
+    refutation and may skip the solver. `forge found none in 256 draws` is NOT
+    a proof and may never skip it. This function therefore never returns
+    "HOLDS"; the strongest thing it says is NOT-REFUTED, which still costs a
+    query.
+
+    ⛔ AND ABSENCE IS ITS OWN ANSWER. A probe whose test name is not in the
+    forge output DID NOT RUN -- the file failed to compile, the name was
+    misspelled, the filter excluded it. Folding that into NOT-REFUTED would be
+    the cheapest possible way to lose an oracle: every rung would "survive"
+    and the prefilter would report a perfect pass rate while measuring
+    nothing. This project has already shipped one always-true reader; this is
+    where the next one would live.
+    """
+    seen = {}
+    for ln in (forge_out or "").splitlines():
+        m = FORGE_RESULT_RE.match(ln)
+        if m:
+            seen[m.group(2)] = m.group(1)
+    out = {}
+    for name, label in labels.items():
+        r = seen.get(name)
+        if r is None:
+            out[label] = "NOT-RUN"
+        elif r == "PASS":
+            out[label] = "NOT-REFUTED"
+        else:
+            out[label] = "REFUTED"
+    return out
+
+
+def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
+    """Run one extra ladder query per proposed R2 spec; return the NEW rows.
+
+    `write_spec(path_suffix, spec_dict) -> path`, `runner(spec_path) -> text`
+    and `parse(text) -> (rows, summary, refusal, blocker)` are injected so the
+    DECISION LOGIC is testable without esbmc: whether a pass runs at all, what
+    goes into the spec, and -- the part that matters -- how a pass that comes
+    back empty is treated.
+
+    ⛔ AN EMPTY PASS IS REPORTED, NEVER ABSORBED. A query that produced no
+    delta row means the request did not reach the ladder (a name the ladder
+    does not carry, a refusal, a dead run). Merging silently would leave the
+    PUT looking exactly like one where R2 was never asked for -- the whole
+    reason R2 went unnoticed for this long.
+
+    ⛔ AND IT NEVER OVERWRITES A ROW THE FIRST PASS ALREADY DECIDED. Only rows
+    whose (var, text) is new are returned; a second pass disagreeing with the
+    first about an R1 rung is a fact worth seeing, not a silent update.
+    """
+    seen = set()
+    out = []
+    # (var -> verdict) for the EXACT delta asked in stage 1. Stage 2's cap is
+    # narrowed against this, so a variable whose exact bound already HOLDS does
+    # not spend a whole query buying a strictly weaker rung, and one that came
+    # back without a verdict does not spend it buying a second no-verdict.
+    exact_delta = {}
+    for i, s in enumerate(specs or []):
+        stage, kind = s.get("stage", 1), s.get("kind", "num")
+        entries = s["vars"]
+        if stage == 2:
+            entries = [e for e in entries
+                       if exact_delta.get(e["name"]) == "REFUTED"]
+            if not entries:
+                log(f"[put]   R2 pass {i + 1}/{len(specs)} NOT RUN (cap on "
+                    f"`{s['param']}`): stage 1 refuted the exact delta on no "
+                    f"variable, so a cap would be asked about nothing")
+                continue
+        spec = dict(base_spec)
+        spec["vars"] = entries
+        path = write_spec(f".r2_{s['param']}_s{stage}", spec)
+        log(f"[put]   R2 pass {i + 1}/{len(specs)}: stage {stage} {kind} "
+            f"bound by `{s['param']}` on {len(entries)} variable(s)")
+        text = runner(path)
+        rows, _summary, refusal, _blocker = parse(text)
+        # ⛔ `post in [` IS IN THIS LIST ON PURPOSE. The filter used to accept
+        # the two delta shapes only, so an absolute row -- the entire point of
+        # asking for one -- was parsed, matched nothing, and was dropped as
+        # though the pass had come back empty. A request whose answer no reader
+        # accepts is indistinguishable from a request never sent.
+        fresh = [(v, t, d) for v, t, d in rows
+                 if t.startswith(("post in [", "post - pre in [",
+                                  "pre - post in ["))
+                 and (v, t) not in seen]
+        for v, t, d in fresh:
+            seen.add((v, t))
+            if stage == 1 and t.startswith(("post - pre in [", "pre - post in [")):
+                exact_delta[v] = d
+        if not fresh:
+            log(f"[put]     NO DELTA ROW came back from this pass"
+                + (f" (ladder refusal: {refusal})" if refusal else
+                   " and the ladder reported no refusal, so the request "
+                   "reached it and produced nothing -- that is a defect, not "
+                   "a measurement"))
+            continue
+        for v, t, d in fresh:
+            log(f"[put]     {v}: {t}  {d}")
+        out += fresh
+    return out
+
+
+def _norm_ty(t):
+    """A Solidity type spelled the one way, for comparing a parameter's type
+    against a mapping's key type. Module level, not nested in `main()`, so the
+    proposer below is reachable from a test."""
+    t = (t or "").strip()
+    for suf in (" payable", " memory", " calldata", " storage"):
+        t = t.replace(suf, "")
+    return {"uint": "uint256", "int": "int256"}.get(t, t)
+
+
+SLOT_VAR_BUDGET = 24
+
+
+def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print):
+    """The mapping slot names to ASK THE LADDER ABOUT, one key per level.
+
+    Lifted out of `main()` because it was inline there, which is precisely why
+    the defect below survived: no test could reach it.
+
+    ---- THE DEFECT THIS FUNCTION EXISTS TO PIN -------------------------------
+
+    `maps[m]`'s key-type field is a STRING for a one-level store and a TUPLE of
+    key types for a nested one. The inline version read it as a string
+    unconditionally and died with `'tuple' object has no attribute 'strip'` the
+    first time a nested mapping appeared -- farming's `_allowances`
+    (`address => address => uint256`) and aqua's four-level store. Three PUTs
+    that had been emitting for weeks stopped emitting.
+
+    ⛔ THE ROOT CAUSE IS NOT THE CRASH. The key-type field gained a second
+    shape and only TWO of its THREE readers were updated (`m_pin` and `m_slot`
+    were; this one was not). Nothing pointed here because every one-level
+    corpus row kept working, so the suite stayed green while the corpus broke.
+
+    A nested name needs one parameter PER LEVEL, so the candidates are the
+    cross product of the per-level type matches -- and one parameter may
+    legitimately serve two levels: `bal[u][u]` is a real slot.
+
+    ---- WHY `msg.sender` IS A CANDIDATE AND WHY IT GOES FIRST ----------------
+
+    An address-keyed mapping in a real contract is overwhelmingly keyed by the
+    CALLER, not by an argument: `_balances[msg.sender]`, `allowance[msg.sender]`
+    and aqua's `_balances[msg.sender][app][...]` are all that shape. A proposer
+    that draws keys only from the parameter list can never name any of them, so
+    the unit's own storage effect is invisible to the ladder and the PUT comes
+    back with an empty oracle -- which is exactly what the corpus was doing.
+
+    ⛔ IT IS NOT A GUESS ON THE VERIFIER'S SIDE. `--path-cov-assert`'s key
+    resolver already accepts it; its refusal text says so in as many words
+    ("Name a parameter, an environment value as `msg.sender` / `msg.value`, or
+    a state variable at entry as `state.<field>`"). And it is not a guess on the
+    EMITTER's side either, but only conditionally: `slot_key_expr` still refuses
+    the key unless `establish_env_sender` has rewritten the governing prank, so
+    a proposal that survives the ladder and then cannot be pointed at a definite
+    address is dropped with a reason rather than hashed at whatever the test's
+    own sender happens to be.
+
+    FIRST at each level, ahead of the sorted parameters, because the budget
+    keeps a PREFIX. Sorting it in by name would put `msg.sender` behind every
+    parameter spelled with an earlier letter, and on the four-level store where
+    it matters most the cap would drop every candidate containing it -- the
+    truncation would silently undo the change.
+    """
+    out = []
+    for mname in sorted(maps):
+        # A struct-valued mapping contributes one row PER FIELD, so the name
+        # the ladder is asked about is `<map>[<param>].<field>` while the row
+        # is keyed `<map>.<field>`. A scalar-valued one has member None and the
+        # name is unchanged, byte for byte.
+        _s, ktype, _n, _o, base, member = maps[mname]
+        ktypes = list(ktype) if isinstance(ktype, tuple) else [ktype]
+        per_level = []
+        for kt in ktypes:
+            # SORTED HERE rather than by sorting the product afterwards. The
+            # two were the same thing while every level held only parameters;
+            # they stop being the same once a level is deliberately NOT in name
+            # order, and the product of sorted lists is already in lexicographic
+            # tuple order, so the old output is reproduced byte for byte.
+            cands = sorted(pn for pn, pt in (params or [])
+                           if pn and _norm_ty(pt) == _norm_ty(kt))
+            if _norm_ty(kt) == "address":
+                cands = ["msg.sender"] + cands
+            per_level.append(cands)
+        # EVERY level needs a key. A four-level store with a match on three of
+        # them yields NO name -- a partially-keyed name would address a word
+        # nothing wrote, which the depth check refuses downstream anyway.
+        if not all(per_level):
+            continue
+        combos = list(itertools.product(*per_level))
+        # NO SILENT CAP. Four levels against four address parameters is 256
+        # candidate names, each costing a ladder query. What the budget drops
+        # is printed, because a truncated candidate set that says nothing reads
+        # exactly like "the tool found only these".
+        if len(combos) > budget:
+            log(f"[put]   {base}: {len(ktypes)} level(s) x per-level matches "
+                f"{[len(x) for x in per_level]} = {len(combos)} candidate slot "
+                f"name(s); keeping the first {budget} in sorted order, "
+                f"DROPPING {len(combos) - budget}. A rung this cap removed is "
+                f"not a rung that was refused.")
+            combos = combos[:budget]
+        for keys in combos:
+            out.append(base + "".join(f"[{k}]" for k in keys)
+                       + (f".{member}" if member else ""))
+    return out
+
+
+# A rung that HOLDS makes weaker rungs on the SAME variable follow for free.
+# `post > pre` gives `post >= pre` and `post != pre` with no further evidence,
+# and the delta rung gives its own direction conjunct back.
+IMPLIED_BY = {
+    "post > pre": ("post >= pre", "post != pre"),
+    "post < pre": ("post <= pre", "post != pre"),
+    "post == pre": ("post >= pre", "post <= pre"),
+}
+
+
+def antichain(rows, revert_tolerant=False):
+    """(kept, implied) -- drop every HOLDS rung another HOLDS rung entails.
+
+    ⛔ THIS REMOVES NO ORACLE. `assertGe(post, pre)` beside `assertGt(post,
+    pre)` cannot fail on any execution the second one passes, so the pair
+    detects exactly what the strict one detects alone. What it does change is
+    the NUMBER, and the number is read as strength: a PUT reporting six
+    assertions of which three are entailed by the other three is claiming an
+    oracle twice as sharp as the one it has.
+
+    ⛔ AND IT IS `implied`, NOT `skipped`. The two are different facts with
+    different repairs -- a skipped rung is oracle that was LOST and wants
+    fixing, an implied one is oracle that is still fully present in a stronger
+    form. Filing the second under the first is how a healthy pipeline comes to
+    look broken; filing the first under the second is how a broken one comes
+    to look healthy.
+
+    Only rows whose verdict is HOLDS take part: a REFUTED `post > pre` entails
+    nothing at all, and using it to drop `post >= pre` would delete a rung
+    that HOLDS on the strength of one that does not.
+
+    ⛔ ONLY THE ORDERING FAMILY DOMINATES, AND THAT IS A SAFETY RULE, NOT A
+    SIMPLIFICATION. This filter runs BEFORE rendering, so a rung it removes is
+    gone whether or not the rung that dominated it turns out to be
+    renderable. The six ordering rungs all render through the same branch and
+    the same slot lookup, so within that family they succeed or fail together
+    and nothing can be lost. A DELTA rung is different: its endpoints can be
+    unspellable (`bound_term` returns None and the whole rung is dropped),
+    and letting it dominate `post >= pre` would trade a rung that renders for
+    one that does not -- losing the oracle outright in exactly the case the
+    domination was supposed to be free. The redundancy it leaves behind is one
+    duplicated `assertGe` line, which is the cheaper mistake.
+
+    ⛔ AND DOMINATION MAY NOT CROSS THE GUARD BOUNDARY. On a revert-tolerant
+    call the CHANGE rungs are emitted inside `if (_put_ok)` and the rest are
+    emitted unconditionally, so they are not assertions of equal standing:
+
+        assertGe(post, pre, ...)                 <- always runs
+        if (_put_ok) { assertGt(post, pre, ...) } <- skipped on a revert
+
+    `post > pre` entails `post >= pre` as a proposition, but the ASSERTION it
+    renders is skipped exactly when the call reverts -- and a revert is
+    precisely when the unconditional one still has something to say. Dropping
+    the outer rung because the inner one dominates it leaves that execution
+    asserting NOTHING, which is oracle destroyed by a filter whose whole
+    premise is that it destroys none. MEASURED on the shape this is written
+    against: farming setDistributor enc=13 emits `_distributor: post >= pre`
+    unconditionally and `post != pre` / `post > pre` under the guard.
+
+    Under a BARE call every rung is unconditional and the boundary does not
+    exist, so `revert_tolerant=False` keeps the full table.
+    """
+    holds = {}
+    for var, text, verdict in rows:
+        if verdict == "HOLDS":
+            holds.setdefault(var, set()).add(text)
+    dominated = {}
+    for var, texts in holds.items():
+        d = set()
+        for t in texts:
+            for weaker in IMPLIED_BY.get(t, ()):
+                if weaker not in texts:
+                    continue
+                if (revert_tolerant
+                        and rung_asserts_a_change(t)
+                        and not rung_asserts_a_change(weaker)):
+                    continue
+                d.add(weaker)
+        dominated[var] = d
+    kept, implied = [], []
+    for row in rows:
+        var, text, verdict = row
+        if verdict == "HOLDS" and text in dominated.get(var, ()):
+            implied.append(row)
+        else:
+            kept.append(row)
+    return kept, implied
+
+
+def rung_assertions(text, pre, post, label, idents=None, idents_abs=None):
+    """Forge assertion lines for one rung, or None if it cannot be spelled.
+
+    `idents` are the endpoints a DELTA bound may name -- arithmetic
+    coordinates only. `idents_abs` are the ones an ABSOLUTE bound may name,
+    which additionally includes the address coordinates: `post == the address
+    you passed in` is the property of a setter, while `post - pre == an
+    address` is meaningless. Defaults to `idents` so every existing caller
+    keeps its exact behaviour.
+    """
+    if idents_abs is None:
+        idents_abs = idents
     lit = json.dumps(label)
     m = re.match(r"^post (==|!=|>=|<=|>|<) pre$", text)
     if m:
@@ -559,20 +1274,41 @@ def rung_assertions(text, pre, post, label):
         if fn:
             return [f"    {fn}({post}, {pre}, {lit});"]
         return [f"    assertTrue({post} != {pre}, {lit});"]
-    m = re.match(r"^post in \[(\d+), (\d+)\]$", text)
+
+    def ends(m):
+        """(lo, hi) as Solidity text, or None if either endpoint is unspellable."""
+        lo = bound_term(m.group(1), idents)
+        hi = bound_term(m.group(2), idents)
+        return None if lo is None or hi is None else (lo, hi)
+
+    m = re.match(r"^post in \[%s, %s\]$" % (_BND, _BND), text)
     if m:
-        return [f"    assertGe({post}, {m.group(1)}, {lit});",
-                f"    assertLe({post}, {m.group(2)}, {lit});"]
-    m = re.match(r"^post - pre in \[(\d+), (\d+)\] with post >= pre$", text)
+        # THE ABSOLUTE BOUND, and the only shape allowed to name an address.
+        lo = bound_term(m.group(1), idents_abs)
+        hi = bound_term(m.group(2), idents_abs)
+        e = None if lo is None or hi is None else (lo, hi)
+        if e is None:
+            return None
+        return [f"    assertGe({post}, {e[0]}, {lit});",
+                f"    assertLe({post}, {e[1]}, {lit});"]
+    m = re.match(r"^post - pre in \[%s, %s\] with post >= pre$" % (_BND, _BND),
+                 text)
     if m:
+        e = ends(m)
+        if e is None:
+            return None
         return [f"    assertGe({post}, {pre}, {lit});",
-                f"    assertGe({post} - {pre}, {m.group(1)}, {lit});",
-                f"    assertLe({post} - {pre}, {m.group(2)}, {lit});"]
-    m = re.match(r"^pre - post in \[(\d+), (\d+)\] with pre >= post$", text)
+                f"    assertGe({post} - {pre}, {e[0]}, {lit});",
+                f"    assertLe({post} - {pre}, {e[1]}, {lit});"]
+    m = re.match(r"^pre - post in \[%s, %s\] with pre >= post$" % (_BND, _BND),
+                 text)
     if m:
+        e = ends(m)
+        if e is None:
+            return None
         return [f"    assertGe({pre}, {post}, {lit});",
-                f"    assertGe({pre} - {post}, {m.group(1)}, {lit});",
-                f"    assertLe({pre} - {post}, {m.group(2)}, {lit});"]
+                f"    assertGe({pre} - {post}, {e[0]}, {lit});",
+                f"    assertLe({pre} - {post}, {e[1]}, {lit});"]
     return None
 
 
@@ -706,6 +1442,38 @@ def bind_return(call_line, unit, decl_type, var):
 # both rules, the dynamic-key case is refused by name.
 MAP_KEY_OK = re.compile(r"^(?:u?int(?:\d+)?|address|bool|bytes(?:[12]?\d|3[0-2])?)$")
 
+# ---- ONE SLOT-NAME PARSER, USED BY BOTH SITES -----------------------------
+#
+# `bal[k]`, `bal[a][b][c]`, `pack[k].tag` -- a mapping name, one or more keys,
+# an optional member tail. There are two places in `build_put` that take a
+# slot name apart (the entry-state PIN and the oracle READ), and they used to
+# carry the same regex twice. Both spelled the key as `(.+?)`, which on a
+# nested name matches the whole run of brackets: `bal[a][b]` came out as the
+# single key `a][b`, which resolves to nothing. Two copies also means a fix to
+# one is invisible in the other -- the divergence this file has already paid
+# for elsewhere.
+#
+# `[^\[\]]+` rather than `.+?` on purpose: a key is an identifier, a numeric
+# or hex literal, or `msg.sender`, never something containing a bracket, so
+# forbidding brackets inside a key makes the split unambiguous instead of
+# backtracking into a wrong one.
+SLOT_NAME_RE = re.compile(
+    r"^([A-Za-z_]\w*)((?:\[[^\[\]]+\])+)((?:\.[A-Za-z_]\w*)*)$")
+SLOT_KEY_RE = re.compile(r"\[([^\[\]]+)\]")
+
+
+def parse_slot_name(s):
+    """(mapping, [key, ...], tail) -- or (None, [], "") if it is not a slot.
+
+    The tail keeps its leading dot, exactly as the old group(3) did, because
+    `maps` is keyed by `<label>` and `<label>.<member>` and the lookup is
+    built by concatenation.
+    """
+    m = SLOT_NAME_RE.match(s)
+    if not m:
+        return None, [], ""
+    return m.group(1), SLOT_KEY_RE.findall(m.group(2)), m.group(3)
+
 
 def storage_layout(project, contract):
     """({var: (slot, off, size)}, {map: (slot, key_type, value_size)}, err).
@@ -743,15 +1511,173 @@ def storage_layout(project, contract):
             # The VALUE must itself be a plain inplace scalar. A nested mapping
             # (`encoding == "mapping"`) or a struct value needs a second hash
             # or a member offset, and guessing either reads the wrong word.
+            #
+            # ---- WHAT THIS `continue` COSTS, AND WHY LIFTING IT BUYS NOTHING --
+            #
+            # MEASURED on aqua, whose ONE state variable hits both arms at once
+            # (`forge inspect Aqua storageLayout --json`):
+            #
+            #   _balances: mapping(address => mapping(address =>
+            #                mapping(bytes32 => mapping(address => Balance))))
+            #   struct Balance { uint248 amount; uint8 tokensCount; }
+            #                                 -- both in slot 0, offset 0 / 31
+            #
+            # so every aqua unit reports, in its own emit log:
+            #
+            #   step 2a: storage layout -- 0 readable scalar slot(s): none;
+            #                              0 mapping(s) with a value-type key: none
+            #
+            # and the arm's four units yield ONE PUT with an oracle: rawBalances,
+            # on its RETURN VALUE. push and dock declare no return, safeBalances'
+            # certified path never reaches one, and none of the three has a
+            # scalar slot to read. That is the whole of aqua's oracle ceiling.
+            #
+            # ⛔ A MAPPING-ENTRY ORACLE IS NOT A MISSING CAPABILITY. It works
+            # end to end for the shape this table admits, and the emitted proof
+            # is on disk -- P28_MapMin.take path 15, `mapping(uint256 =>
+            # uint256)`, four POST-STATE assertions read through `vm.load` at
+            # the slot this file computes:
+            #
+            #   uint256 _pre_bal_k  = uint256(vm.load(address(c0),
+            #       keccak256(abi.encode(<key>, uint256(0)))));
+            #   c0.take(<key>, v);
+            #   uint256 _post_bal_k = ...same...;
+            #   assertTrue(_post_bal_k != _pre_bal_k, "bal[k]: post != pre");
+            #   assertLe (_post_bal_k,  _pre_bal_k,   "bal[k]: post <= pre");
+            #   assertLt (_post_bal_k,  _pre_bal_k,   "bal[k]: post < pre");
+            #   assertLe (_post_bal_v,  _pre_bal_v,   "bal[v]: post <= pre");
+            #
+            # So naming, solving and rendering all exist for a ONE-level mapping
+            # with a scalar value. What aqua asks for differs from P28 by TWO
+            # changes at once: FOUR levels of nesting, and a packed STRUCT value
+            # (`Balance{uint248 amount; uint8 tokensCount}`, offsets 0 and 31).
+            #
+            # BOTH SIDES REFUSE IT, AND THE STRUCT ALONE IS ENOUGH. Measured on
+            # D44_MapStructValue, which is P28's shape with a matched pair of
+            # units over two mappings differing ONLY in the value type --
+            # `mapping(uint256 => uint256)` and `mapping(uint256 => Bal)` with
+            # `Bal { uint248 amount; uint8 tag; }`. One contract, one run, so
+            # cell, bound and entry state cannot explain a difference.
+            #
+            # SIDE 1, HERE. All eight emitted PUTs report the same step 2a line:
+            #     storage layout -- 0 readable scalar slot(s): none;
+            #                       1 mapping(s) with a value-type key: balScalar
+            #     mapping slots proposed to the ladder: balScalar[k], balScalar[v]
+            # `balStruct` never appears, not even for `takeStruct`, the unit that
+            # touches nothing else. The `continue` below is why: the SCRIPT picks
+            # which mapping slots go into the spec's `vars`, so this table is
+            # upstream of the ladder for mappings (it is NOT upstream for scalar
+            # state variables -- those the verifier names itself, which is why
+            # aqua's ladder still finds the immutable `_DOCKED`).
+            #
+            # SIDE 2, THE VERIFIER, probed directly by hand-writing the `vars`
+            # this table would have to produce. `balScalar[k]` is the control and
+            # it returns six judged rows in the same harness. All three spellings
+            # of the struct member are REFUSED, and the middle one says what is
+            # actually missing:
+            #     balStruct[k].amount -> "not a scalar component of this
+            #         contract's instance object"
+            #     balStruct[k]        -> "the mapping's VALUE type cannot carry a
+            #         candidate: it resolves to an AGGREGATE (struct / contract
+            #         instance) -- bounding it would need a COORDINATE PER FIELD,
+            #         which is a different coordinate kind, not a wider interval"
+            #     balStruct.amount[k] -> "'balStruct.amount' is not a
+            #         contract-scope store ... available are: balScalar, balStruct"
+            #
+            # SO THE ORDER IS FIXED: a per-field coordinate kind has to exist in
+            # the verifier BEFORE widening the `continue` below buys anything.
+            # Widening it first proposes names that come back refused, and the
+            # emitted PUT looks exactly as oracle-free as it does today.
+            #
+            # aqua's `_balances` is blocked on this arm AND on nesting, and only
+            # this arm has been isolated. Whether four levels with a SCALAR value
+            # would be named is untested here; note P16_Mapping is the two-level
+            # scalar shape and returns `solver-unknown` for every path, so that
+            # arm may fail at the solver rather than at the naming.
+            #
+            # Meanwhile this table has a SECOND consumer that does fire on the
+            # one-level shape: the mapping-slot PIN `state.<m>[<key>]` in
+            # `build_put`, which establishes an entry value with `vm.store`.
+            # ---- ⚠ THE LONG NOTE ABOVE IS PARTLY STALE, and here is what ----
+            #
+            # It concludes "a per-field coordinate kind has to exist in the
+            # verifier BEFORE widening the `continue` below buys anything".
+            # That prerequisite has since been MET: D44's emitted PUTs carry
+            # `balStruct[k].amount` and `.tag` assertions, read with the right
+            # mask and shift, so the per-field kind exists end to end. The
+            # struct arm of the note is history; the NESTING arm is what is
+            # handled here.
+            #
+            # ---- PEEL EVERY MAPPING LEVEL, COLLECTING THE KEY TYPES --------
+            #
+            # A nested mapping's value is itself `encoding == "mapping"`, so
+            # the old guard dropped the whole variable at level 0 and aqua's
+            # `_balances` never entered this table at all. Peeling reaches the
+            # scalar (or packed-struct) leaf and records what each level's key
+            # must be; `map_slot_expr` hashes them in the same order.
+            kts = [kt]
+            depth_guard = 0
+            while vt.get("encoding") == "mapping":
+                depth_guard += 1
+                if depth_guard > 16:
+                    # Not reachable from Solidity, but a malformed or cyclic
+                    # `types` table would otherwise spin here forever, and a
+                    # hang in a layout reader looks exactly like a slow solver.
+                    kts = None
+                    break
+                kts.append((types.get(vt.get("key")) or {}).get("label") or "")
+                vt = types.get(vt.get("value")) or {}
+            if kts is None:
+                continue
             if (vt.get("encoding") != "inplace"
-                    or vt.get("members") is not None
                     or vt.get("numberOfBytes") is None):
                 continue
-            if not MAP_KEY_OK.match(kt.strip()):
+            # EVERY level's key must be a value type, not just the first. One
+            # dynamic key anywhere in the chain makes the whole address
+            # uncomputable by `abi.encode`, and computing it anyway would name
+            # a word nothing wrote.
+            if not all(MAP_KEY_OK.match((k or "").strip()) for k in kts):
                 continue
             try:
-                maps[e["label"]] = (int(e["slot"]), kt.strip(),
-                                    int(vt["numberOfBytes"]))
+                # One level keeps the plain string, so every reader that has
+                # only ever seen a string is bit-identical on the shapes it
+                # already handled.
+                ktxt = (kts[0].strip() if len(kts) == 1
+                        else tuple(k.strip() for k in kts))
+                mslot = int(e["slot"])
+                if vt.get("members") is None:
+                    maps[e["label"]] = (mslot, ktxt,
+                                        int(vt["numberOfBytes"]), 0,
+                                        e["label"], None)
+                else:
+                    # ---- A PACKED STRUCT VALUE: ONE ENTRY PER SCALAR FIELD --
+                    #
+                    # The element is an aggregate and carries no candidate --
+                    # the verifier says so in as many words, "bounding it would
+                    # need a COORDINATE PER FIELD, which is a different
+                    # coordinate kind". Its scalar FIELDS are ordinary
+                    # coordinates, so each becomes its own row, named
+                    # `<map>.<field>` here and proposed as `<map>[k].<field>`.
+                    #
+                    # ONLY FIELDS IN THE ELEMENT'S FIRST WORD. solc reports a
+                    # member's own `slot` relative to the struct's base, and a
+                    # member at slot n lives at `keccak(...) + n` -- expressible,
+                    # but it is address arithmetic this file does not do yet, and
+                    # emitting it with the offset ignored would read the wrong
+                    # word. A skipped field costs a candidate; a wrong one costs
+                    # a green assertion about an unrelated quantity.
+                    for mem in vt["members"]:
+                        mty = types.get(mem.get("type")) or {}
+                        if (mty.get("encoding") != "inplace"
+                                or mty.get("members") is not None
+                                or mty.get("numberOfBytes") is None):
+                            continue
+                        if int(mem.get("slot", 0)) != 0:
+                            continue
+                        maps["%s.%s" % (e["label"], mem["label"])] = (
+                            mslot, ktxt, int(mty["numberOfBytes"]),
+                            int(mem.get("offset", 0)),
+                            e["label"], mem["label"])
             except (KeyError, TypeError, ValueError):
                 continue
             continue
@@ -812,15 +1738,31 @@ def slot_read_expr(addr, slot, off, nbytes):
     return slot_read_expr_at(addr, f"bytes32(uint256({slot}))", off, nbytes)
 
 
-def map_slot_expr(key_expr, slot):
-    """The bytes32 storage slot of `m[key]` for a mapping declared at `slot`.
+def map_slot_expr(key_exprs, slot):
+    """The bytes32 storage slot of `m[k1][k2]...` for a mapping at `slot`.
 
     Solidity: `keccak256(h(k) . p)` with h padding a VALUE-type key to 32
     bytes, which is what `abi.encode` does. `abi.encodePacked` would NOT --
     it is the rule for a dynamic key -- and those are refused in
     `storage_layout` rather than encoded here.
+
+    NESTED IS THE SAME RULE APPLIED AGAIN, with the previous level's hash
+    taking the place of `p`. The keys are applied LEFT TO RIGHT, outermost
+    first, because `m[a][b]` is `(m[a])[b]`: the slot of `m[a]` is the `p` the
+    second hash consumes. Applying them in the other order produces a
+    perfectly well-formed address of a word nothing ever wrote, and a
+    `post == pre` rung over it would stay GREEN -- the silent-wrong-quantity
+    failure, in its most convincing costume.
+
+    A bare string is still accepted, so every existing caller is unchanged and
+    the one-level output is byte for byte what it was.
     """
-    return f"keccak256(abi.encode({key_expr}, uint256({slot})))"
+    if isinstance(key_exprs, str):
+        key_exprs = [key_exprs]
+    acc = f"uint256({slot})"
+    for k in key_exprs:
+        acc = f"keccak256(abi.encode({k}, {acc}))"
+    return acc
 
 
 # `bal[k]` is not an identifier, and a local named after it would not compile.
@@ -861,6 +1803,89 @@ def slot_write_lines(addr, slot, off, nbytes, value_expr, indent="    "):
     """Read-modify-write of one packed storage variable at a literal slot."""
     return slot_write_lines_at(
         addr, f"bytes32(uint256({slot}))", off, nbytes, value_expr, indent)
+
+
+def slot_landing_check_at(addr, slot_expr, off, nbytes, value_expr, what,
+                          indent="    "):
+    """Read the word back and assert the establishment LANDED.
+
+    ⛔ WHY A WRITE NEEDS A CHECK AT ALL. `vm.store` cannot fail. Hand it a slot
+    address the contract never reads -- a mapping hashed with the wrong key
+    order, a packed field whose offset was mis-taken, a name that moved when
+    the contract was recompiled -- and it writes the word, returns, and the
+    PUT runs green. The region is a statement about the slice `owner == 0`;
+    every rung then holds of a slice the test never entered, and the whole
+    file is 256 green runs standing for a different execution.
+
+    That is not hypothetical bookkeeping: this emitter has already shipped a
+    pin that was "satisfied by coincidence and reported as unestablishable"
+    (see the mapping-pin comment in `build_put`), and the only reason it was
+    caught was that a human read the preamble. A read-back turns the whole
+    class into a RED test with the coordinate's name on it.
+
+    The check is emitted right after the write, before the call, so a failure
+    names the establishment rather than the oracle.
+    """
+    rd = slot_read_expr_at(addr, slot_expr, off, nbytes)
+    msg = json.dumps(
+        f"entry pin {what} did NOT land: vm.store wrote a word the contract "
+        f"does not read back at this slot, so the test is not inside the "
+        f"certified region and every rung below is about a different state")
+    return [f"{indent}assertEq({rd}, uint256({value_expr}), {msg});"]
+
+
+def slot_landing_check(addr, slot, off, nbytes, value_expr, what,
+                       indent="    "):
+    """`slot_landing_check_at` for a literal slot number."""
+    return slot_landing_check_at(
+        addr, f"bytes32(uint256({slot}))", off, nbytes, value_expr, what,
+        indent)
+
+
+def slot_inside_region_check_at(addr, slot_expr, off, nbytes, lo, hi, what,
+                                indent="    "):
+    """Assert the ENTRY value already lies inside a bound the test cannot set.
+
+    A wide `state.<v>` bound is not established -- the entry state is never
+    havoc'd, so storing a fuzz-chosen value would explore entry states the
+    proof never saw, and doing it is what turned three PoC PUTs RED. But
+    DROPPING it silently leaves the other half unchecked: the query ASSUMED
+    the entry value is in `[lo, hi]`, and if the constructor's actual value is
+    outside, that assumption was vacuous and the certificate is about no
+    execution at all.
+
+    So the bound becomes a READ-ONLY check. Nothing is written, the entry
+    state the proof was about is kept exactly, and the one thing the drop used
+    to hide -- a region that is vacuous at this entry state -- becomes a RED
+    test naming the coordinate instead of a comment nobody reads.
+
+    ⛔ AN ENDPOINT AT THE TYPE'S OWN LIMIT IS NOT EMITTED. `state.tag in
+    [0, 2^256-1]` constrains nothing, so `assertLe(tag, 2^256-1)` is a
+    compile-time tautology -- an assertion that cannot fail, which is the one
+    shape this file must never add: it makes the checked count go up while the
+    oracle stays where it was. Both endpoints trivial means an EMPTY list, and
+    the caller reports the coordinate as unchecked rather than as checked.
+    """
+    rd = slot_read_expr_at(addr, slot_expr, off, nbytes)
+    msg = json.dumps(
+        f"the entry state is OUTSIDE the certified region: {what} was assumed "
+        f"in [{lo}, {hi}] when the path was certified, so a value outside it "
+        f"means the assumption was vacuous and the rungs below were proved "
+        f"about no execution this test can reach")
+    tmax = (1 << (8 * nbytes)) - 1
+    out = []
+    if int(lo) > 0:
+        out.append(f"{indent}assertGe({rd}, uint256({lo}), {msg});")
+    if int(hi) < tmax:
+        out.append(f"{indent}assertLe({rd}, uint256({hi}), {msg});")
+    return out
+
+
+def slot_inside_region_check(addr, slot, off, nbytes, lo, hi, what,
+                             indent="    "):
+    """`slot_inside_region_check_at` for a literal slot number."""
+    return slot_inside_region_check_at(
+        addr, f"bytes32(uint256({slot}))", off, nbytes, lo, hi, what, indent)
 
 
 # A key written as a LITERAL has no Solidity type until it is given one, and
@@ -1228,6 +2253,54 @@ def _arg0(line, open_idx):
     return split_top_level(line[start:i])[0] if line[start:i].strip() else None
 
 
+def _strip_strings(s):
+    """`s` with every double-quoted literal emptied.
+
+    Parens INSIDE a string are not grouping. The emitter's own value-gate line
+    carries `"setDistributor(address)"`, whose two parens happen to balance --
+    so a naive count is right there BY LUCK and would be wrong the moment a
+    signature took two arguments, or a revert string contained one bracket.
+    """
+    return re.sub(r'"(?:\\.|[^"\\])*"', '""', s)
+
+
+def statement_start(lines, i):
+    """Index of the FIRST line of the statement whose LAST line is `i`.
+
+    ---- WHY A STATEMENT IS NOT A LINE, MEASURED --------------------------------
+    `find_unit_call` returns the line that NAMES the unit, and for the low-level
+    value-gate shape the emitter puts that name on the SECOND line:
+
+        (bool ok5, ) = address(c0).call{value: 1}(
+            abi.encodeWithSignature("setDistributor(address)", address(uint160(0))));
+
+    Every consumer that treated that index as "the call statement" was then
+    reading, splicing or inserting in the middle of a statement:
+
+      * `observed_env` searched `{value: ...}` on the returned line, did not
+        find it, and reported `msg.value == 0` -- which REFUSED the PUT for
+        farming/setDistributor enc=2, whose certified region is
+        `msg.value in [1, 2^256-1]`, on the grounds that the emitted case ran
+        outside it. The emitted case does not; the reader could not see it.
+      * `establish_env_sender` would have inserted its `vm.prank(...)` at that
+        index, i.e. BETWEEN the two halves of the statement.
+      * `build_put`'s head/tail split would have spliced the entry-state
+        `vm.store`s and the oracle's pre-reads there too.
+
+    The first produced a wrong REFUSAL; the other two would have produced a
+    file that does not compile. Paren depth over the lines, with string literals
+    emptied first, is what tells the three of them the same answer.
+    """
+    j = i
+    t = _strip_strings(lines[i])
+    depth = t.count(")") - t.count("(")
+    while depth > 0 and j > 0:
+        j -= 1
+        t = _strip_strings(lines[j])
+        depth += t.count(")") - t.count("(")
+    return j
+
+
 def observed_env(body, call_i, call_line):
     """What the emitted case sets for `msg.sender` / `msg.value` at THIS call.
 
@@ -1236,32 +2309,51 @@ def observed_env(body, call_i, call_line):
     comes from the call's own `{value: ...}` option; its ABSENCE is 0, which is
     a fact about the EVM and not a guess.
 
+    The `{value: ...}` is looked for over the WHOLE STATEMENT, not over
+    `call_line` alone: see `statement_start` for the shape that breaks it across
+    two lines and for the wrong refusal that cost.
+
     Returns {name: (value_or_None, evidence_text)}. A None value with evidence
     means "found something and could not read it"; a None value with no
     evidence means "the preamble says nothing about this".
     """
+    start, text = call_i, call_line
+    if 0 <= call_i < len(body):
+        start = statement_start(body, call_i)
+        text = "\n".join(body[start:call_i + 1])
     sender, sender_ev = None, None
-    for ln in body[:call_i]:
+    for ln in body[:start]:
         m = _PRANK_RE.search(ln)
         if m:
             sender_ev = ln.strip()
             sender = _lit_int(_arg0(ln, m.end() - 1))
     value, value_ev = 0, "no {value:} option on the call, so msg.value is 0"
-    m = _VALUE_RE.search(call_line)
+    m = _VALUE_RE.search(text)
     if m:
         value_ev = m.group(0)
         value = _lit_int(m.group(1))
     return {"msg.sender": (sender, sender_ev), "msg.value": (value, value_ev)}
 
 
-def establish_env_sender(body, call_i, region, pins, used):
+def establish_env_sender(body, call_i, region, holes, pins, used):
     """Rewrite the governing `vm.prank` so the test runs inside the certified
     `msg.sender` slice, instead of refusing because it does not.
 
-    Returns `(body, call_i, established, sig_add, pre_add, note)`. `body` and
-    `call_i` come back unchanged, and `established` is None, when the region
-    says nothing about `msg.sender` -- the caller then behaves exactly as it
-    did before, so every existing PUT is reproduced verbatim.
+    Returns `(body, call_i, established, sig_add, pre_add, note, sender_expr)`.
+    `body` and `call_i` come back unchanged, and `established` is None, when
+    the region says nothing about `msg.sender` -- the caller then behaves
+    exactly as it did before, so every existing PUT is reproduced verbatim.
+
+    `sender_expr` IS THE SOLIDITY TEXT THIS FUNCTION PUT INSIDE THE PRANK, and
+    it is returned so that a storage slot keyed by `msg.sender` can be read at
+    the SAME address the call will run as. Before it was returned, the caller
+    only got the marker string `"msg.sender"` and had no way to name the
+    address, so `slot_key_expr` refused every such key -- correctly, because
+    guessing would have produced a vacuously green `post == pre` over a slot
+    the unit never touches. It is None on the early return (the region says
+    nothing about the sender, so this function chose no address and the
+    refusal must stay), and non-None on BOTH other paths: the fuzz-parameter
+    branch sets it to the parameter name, the point branch to the literal cast.
 
     WHICH PRANK IS "GOVERNING". The LAST one above the call, which is the same
     rule `observed_env` reads by and the same one forge implements
@@ -1277,6 +2369,16 @@ def establish_env_sender(body, call_i, region, pins, used):
     hence `call_i` is returned rather than assumed unchanged; forgetting it
     would splice the new statement into the middle of the caller's later
     `body[head_end:call_i]` slice.
+
+    ⛔ `holes` IS NOT OPTIONAL AND MUST COME FROM THE CALLER'S OWN DICT. The
+    certified region on this coordinate can be an interval MINUS a set, and a
+    value in the hole is NOT in the region: the certification query was never
+    asked about it. Rendering the interval and dropping the punch produces a
+    test whose header claims the certified region and whose body ranges over a
+    strictly larger one -- green on draws the proof does not cover. This
+    argument used to be a literal `()` here while the PARAMETER path four lines
+    below passed `holes.get(pname, ())`, which is the one-fact-two-readers shape
+    the rest of this file is full of warnings about.
     """
     lo = hi = None
     if "msg.sender" in region:
@@ -1284,7 +2386,7 @@ def establish_env_sender(body, call_i, region, pins, used):
     elif "msg.sender" in pins:
         lo = hi = pins["msg.sender"]
     if lo is None:
-        return body, call_i, None, None, [], None
+        return body, call_i, None, None, [], None, None
 
     sig_add, pre_add = None, []
     if hi > lo:
@@ -1297,32 +2399,88 @@ def establish_env_sender(body, call_i, region, pins, used):
         # the address width; a certified bound outside it would be a bound the
         # coordinate's own type cannot hold, and bound_lines clamps in uint256
         # before the cast exactly as it does for an address parameter.
-        pre_add = bound_lines(var, "address", 160, lo, hi, ())
+        # Same call the parameter path makes, holes included: `bound_lines`
+        # renders each as `vm.assume(x != h)`, and a hole removes one value out
+        # of an interval so rejection stays rare by construction.
+        sender_holes = sorted(holes.get("msg.sender", ()))
+        pre_add = bound_lines(var, "address", 160, lo, hi, sender_holes)
+        sender_expr = var
         prank = f"    vm.prank({var});"
-        note = (f"msg.sender in [{lo}, {hi}] is ESTABLISHED and FUZZED: the "
-                f"governing vm.prank now takes the bound() fuzz parameter "
-                f"`{var}`, so this PUT ranges over the certified sender "
-                f"interval rather than over one point of it")
+        note = (f"msg.sender in [{lo}, {hi}]"
+                + ("  \\ {" + ", ".join(str(h) for h in sender_holes) + "}"
+                   if sender_holes else "")
+                + f" is ESTABLISHED and FUZZED: the "
+                  f"governing vm.prank now takes the bound() fuzz parameter "
+                  f"`{var}`, so this PUT ranges over the certified sender "
+                  f"interval rather than over one point of it"
+                + (f", and the {len(sender_holes)} punched value(s) are "
+                   f"excluded by vm.assume" if sender_holes else ""))
     else:
-        prank = f"    vm.prank(address(uint160({lo})));"
+        sender_expr = f"address(uint160({lo}))"
+        prank = f"    vm.prank({sender_expr});"
         note = (f"msg.sender == {lo} is ESTABLISHED: the governing vm.prank "
                 f"was rewritten to the certified value. The emitted case's own "
                 f"sender came from a different query's counterexample and is "
                 f"not the value this region is a statement about")
 
     new_body = list(body)
+    # The prank goes above the STATEMENT, not above the line that names the
+    # unit: for the low-level value-gate shape those are two different indices
+    # and the second one is inside the statement. See `statement_start`.
+    stmt_i = (statement_start(new_body, call_i)
+              if 0 <= call_i < len(new_body) else call_i)
+
+    # ---- FUNDING THE SENDER THIS DRIVER JUST CHOSE ---------------------------
+    #
+    # A `{value: v}` call is paid for BY THE SENDER, and after the rewrite the
+    # sender is a value this driver chose rather than the one the emitter
+    # funded. The emitter writes `vm.deal(address(this), v)` because ITS
+    # counterexample ran the call from the test contract; once the prank moves
+    # msg.sender, that account is no longer the one paying and the call fails
+    # for INSUFFICIENT FUNDS.
+    #
+    # ⛔ AND THE TEST WOULD STILL BE GREEN, which is why this is not cosmetic.
+    # The value-gate case's own assertion is
+    #     assertFalse(ok, "value sent to a non-payable entry must revert")
+    # and an out-of-funds failure satisfies it WITHOUT the value ever reaching
+    # the entry -- so the assertion passes while the path it is named after is
+    # never walked. Every `post == pre` rung passes too, for the same wrong
+    # reason. That is a test that is green while standing for something else,
+    # which is the outcome this pipeline exists never to produce.
+    fund = None
+    if 0 <= call_i < len(new_body):
+        mv = _VALUE_RE.search("\n".join(new_body[stmt_i:call_i + 1]))
+        if mv:
+            v = _lit_int(mv.group(1))
+            if v is None:
+                note += (f" (⚠ the call carries `{mv.group(0)}`, whose amount "
+                         f"this driver cannot read, so the chosen sender was "
+                         f"NOT funded -- the call may fail for lack of funds "
+                         f"rather than at the value gate)")
+            elif v > 0:
+                fund = f"    vm.deal({sender_expr}, {v});"
+                note += (f" (and funded with `vm.deal({sender_expr}, {v})`, "
+                         f"because the call sends value and the sender pays)")
+
     last = None
-    for i in range(min(call_i, len(new_body))):
+    for i in range(min(stmt_i, len(new_body))):
         if _PRANK_RE.search(new_body[i]):
             last = i
     if last is None:
-        new_body.insert(call_i, prank)
-        call_i += 1
+        add = ([fund] if fund else []) + [prank]
+        new_body[stmt_i:stmt_i] = add
+        call_i += len(add)
         note += " (no prank was present, so one was inserted)"
     else:
         note += f" (replacing `{new_body[last].strip()}`)"
         new_body[last] = prank
-    return new_body, call_i, "msg.sender", sig_add, pre_add, note
+        # BEFORE the prank, never after: `vm.prank` binds to the NEXT call, and
+        # foundry.cpp's own comment states it "must be the last cheatcode
+        # before the call".
+        if fund:
+            new_body.insert(last, fund)
+            call_i += 1
+    return new_body, call_i, "msg.sender", sig_add, pre_add, note, sender_expr
 
 
 def env_disagreements(body, call_i, call_line, region, pins, established=()):
@@ -1481,6 +2639,36 @@ def slot_key_expr(kname, key_expr_of):
 
 CALL_LINE_RE_TMPL = r"^(\s*)(try )?(\w+)\.{unit}\("
 
+# ---- THE SECOND SHAPE THE EMITTER WRITES, WHICH THE LIFTER COULD NOT SEE ----
+#
+# A path whose exit is the ABI VALUE GATE cannot be replayed as
+# `c0.f(args)`: Solidity refuses to attach `{value: v}` to a call on a
+# non-payable function at COMPILE time, so the emitter writes the only form
+# that compiles --
+#
+#     (bool ok5, ) = address(c0).call{value: 1}(
+#         abi.encodeWithSignature("setDistributor(address)", address(uint160(0))));
+#     assertFalse(ok5, "value sent to a non-payable entry must revert");
+#
+# -- which is a CORRECT, ASSERTED concrete test. The lifter matched only the
+# member-call shape, so it reported `no call to setDistributor found in
+# test_cov_4; nothing to lift` and the path produced no PUT.
+#
+# MEASURED end to end on farming/setDistributor: with msg.value probed instead
+# of auto-pinned, enc=2 CERTIFIES (`msg.value in [1, 2^256-1]`, `distributor_`
+# and `msg.sender` both wide) and its ladder comes back 30 rows, 15 HOLDS --
+# every state variable `post == pre`, which is exactly the oracle a value-gate
+# path should have. Everything was in hand except the ability to read the
+# emitter's own line back.
+#
+# The unit's arguments live inside `abi.encodeWithSignature`, one place to the
+# right: element 0 of that call is the SIGNATURE STRING and the unit's argument
+# k is element k+1. Nothing else about the statement is touched -- the
+# `{value: ...}`, the tuple destructuring and the following `assertFalse` stay
+# the emitter's, which is what keeps the R0 exit-kind expectation true by
+# construction rather than re-derived here.
+LOWLEVEL_CALL_RE_TMPL = r'abi\.encodeWithSignature\(\s*"{unit}\('
+
 
 def find_unit_call(lines, unit):
     """Index of the LAST line in `lines` that calls `unit` on an instance.
@@ -1492,9 +2680,13 @@ def find_unit_call(lines, unit):
     sequence that establishes the entry state and are kept verbatim.
     """
     rx = re.compile(CALL_LINE_RE_TMPL.format(unit=re.escape(unit)))
+    # The low-level shape is SEARCHED, not matched at the line start: the
+    # emitter breaks that statement across two lines and the signature sits on
+    # the second, indented and inside a string.
+    rx_low = re.compile(LOWLEVEL_CALL_RE_TMPL.format(unit=re.escape(unit)))
     hit = None
     for i, ln in enumerate(lines):
-        if rx.match(ln):
+        if rx.match(ln) or rx_low.search(ln):
             hit = i
     return hit
 
@@ -1507,10 +2699,26 @@ def rewrite_call_args(line, unit, replacements):
     emitter's -- that is what makes requirement 5 (the R0 exit-kind
     expectation) hold by construction instead of being re-derived here.
     """
+    # ---- TWO SHAPES, ONE REWRITER ----
+    #
+    # Member call:      c0.setDistributor(a0, a1)
+    # Low-level call:   abi.encodeWithSignature("setDistributor(address)", a0)
+    #
+    # In the second, element 0 of the argument list is the SIGNATURE STRING and
+    # the unit's argument k is element k+1. The offset is applied here, in the
+    # one place that knows which shape it is looking at -- a caller that had to
+    # know would be a second reader of the same fact.
     key = "." + unit + "("
     k = line.find(key)
+    sig_offset = 0
     if k < 0:
-        return None, None
+        m = re.search(LOWLEVEL_CALL_RE_TMPL.format(unit=re.escape(unit)), line)
+        if not m:
+            return None, None
+        # Start of `abi.encodeWithSignature(`'s argument list.
+        k = line.find("(", m.start())
+        key = "("
+        sig_offset = 1
     start = k + len(key)
     depth, i = 1, start
     while i < len(line) and depth:
@@ -1528,9 +2736,12 @@ def rewrite_call_args(line, unit, replacements):
         args = []
     new = list(args)
     for idx, txt in replacements.items():
-        if idx < len(new):
-            new[idx] = txt
-    return line[:start] + ", ".join(new) + line[i:], args
+        if idx + sig_offset < len(new):
+            new[idx + sig_offset] = txt
+    # The UNIT's arguments are returned, never the signature string: every
+    # caller counts them against the unit's declared parameter list, and an
+    # extra leading element would shift every index by one silently.
+    return line[:start] + ", ".join(new) + line[i:], args[sig_offset:]
 
 
 # ---------------------------------------------------------------------------
@@ -1565,9 +2776,60 @@ def bound_lines(pname, kind, width, lo, hi, holes):
     return out
 
 
+# ---- DID THIS PATH EXIT THROUGH A ROLLBACK REVERT? -------------------------
+#
+# The tool says so in the ladder run, in its own words:
+#
+#   WARNING: --path-cov-assert: unit '<uid>' path enc=13 exits through a
+#   ROLLBACK revert. ...
+#
+# ⛔ WHY THE EMITTER HAS TO READ IT. The literal `ROLLBACK` appeared ZERO times
+# in this file before this block: the fact existed in the log and NO reader
+# consumed it, so layer-2/3 rungs were emitted on reverting paths as though the
+# state they compare were observable. It is not.
+#
+# A reverting path's assertion is planted BEFORE the operation that fails, and
+# that placement is not negotiable -- put after it, the assertion is unreachable
+# on every input, the verifier reports it as holding, and that reads exactly
+# like a proof that the path cannot be taken. The consequence is that the value
+# the ladder compares is the one BETWEEN the write and the rollback, a moment no
+# test and no chain can observe.
+#
+# MEASURED, farming setDistributor enc=13: the same run printed the ROLLBACK
+# warning AND `✗ FAILED: eq__distributor` / `✓ PASSED: ne__distributor` with the
+# region pinning state._distributor to [0, 0]. Restored state cannot refute
+# `post == pre`; pre-rollback state can.
+#
+# §oracle already settles what to do: "A test for a reverting path carries the
+# first layer alone, since a revert undoes what the other two would have
+# compared." This is the wiring for that sentence.
+ROLLBACK_EXIT_RE = re.compile(
+    r"--path-cov-assert: unit '([^']*)' path enc=(\d+) exits through a "
+    r"ROLLBACK revert")
+
+ROLLBACK_UNOBSERVABLE = (
+    "this path exits through a ROLLBACK revert, so the value the ladder "
+    "compared is the one between the write and the rollback -- a moment no "
+    "test and no chain can read. A revert restores storage, so the only "
+    "post-state a test can observe on this path is the pre-state, and the "
+    "only layer left with anything to say is the exit kind")
+
+
+def rollback_exit_paths(log):
+    """{(unit_id, enc)} the ladder run reported as leaving through a rollback.
+
+    Keyed on BOTH names the line carries rather than on `enc` alone: an enc is
+    unique only within its unit, and reading one unit's rollback onto another's
+    path would drop an oracle that was fine.
+    """
+    return {(m.group(1), int(m.group(2)))
+            for m in ROLLBACK_EXIT_RE.finditer(log or "")}
+
+
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
-              unwind=None, rettypes=None, maps=None, piece_label=""):
+              unwind=None, rettypes=None, maps=None, piece_label="",
+              derived_by=None, rollback_exit=False):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -1596,6 +2858,25 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # coordinate -> how many values the EMITTED test leaves it. See the floor
     # test below; `lifted` alone cannot answer it.
     rendered_width = {}
+    # WHAT AN R2 BOUND IS ALLOWED TO NAME, and it is a much smaller set than
+    # "the unit's parameters". A rung may now carry a NAMED endpoint --
+    # `post - pre in [amount, amount]`, the property a deposit is actually
+    # about -- but the test can only spell a coordinate that this emitter
+    # LIFTED into its own signature. Three kinds of coordinate look nameable
+    # and are not:
+    #   * a PINNED one -- not in the region, so it never becomes a parameter
+    #     and keeps the emitter's literal;
+    #   * one whose type `lift_kind` refuses -- also never a parameter;
+    #   * one the emitter RENAMED to `p_<name>` to dodge a collision.
+    # Rendering any of those produces a test that does not COMPILE, which is
+    # strictly worse than dropping the rung. So the identifier is recorded
+    # here, at the one place that knows it, and a bound naming anything absent
+    # from this table is refused by `rung_assertions`.
+    coord_ident = {}
+    # The same table PLUS the address coordinates, spelled with the cast the
+    # uint256 slot read needs. Only the ABSOLUTE bound may draw on it; see the
+    # comment at the assignment below.
+    coord_ident_abs = {}
     used = {b[0] for b in emitted.blocks}
 
     # The environment the emitted case runs under must be the one certified.
@@ -1609,8 +2890,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # it has to happen first, and the rewritten body is what everything below
     # -- the call rewrite, the head/pre-state slices, the emitted text -- must
     # use. `call_i` can move, because a missing prank is inserted.
-    body, call_i, env_est, sig_add, pre_add, env_note = establish_env_sender(
-        body, call_i, region, pins, used)
+    (body, call_i, env_est, sig_add, pre_add, env_note,
+     env_sender_expr) = establish_env_sender(
+        body, call_i, region, holes, pins, used)
     call_line = body[call_i]
     env_established = []
     if env_est is not None:
@@ -1625,7 +2907,18 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             # branch rewrites the prank to a constant and renders one value.
             if "msg.sender" in region:
                 _slo, _shi = region["msg.sender"]
-                rendered_width["msg.sender"] = _shi - _slo + 1
+                # MINUS THE PUNCHED VALUES, exactly as the parameter loop below
+                # does. This number is what the floor test reads, so counting a
+                # hole as a value the test may take would let a coordinate whose
+                # interval is entirely punched out stand as the reason a PUT is
+                # parameterized.
+                # A SET, not a list: a hole repeated in the spec would be
+                # subtracted twice and the interval would be reported narrower
+                # than it is -- narrow enough, on a width-2 coordinate, to fail
+                # the floor test and silently cost the whole PUT.
+                rendered_width["msg.sender"] = (_shi - _slo + 1) - len(
+                    {h for h in holes.get("msg.sender", ())
+                     if _slo <= h <= _shi})
 
     env_refusals, env_unchecked = env_disagreements(
         body, call_i, call_line, region, pins,
@@ -1651,13 +2944,43 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                  sorted(holes.get(pname, ())))
         repl[idx] = var
         lifted.append(pname)
+        # ---- AN ADDRESS BOUNDS AN ABSOLUTE VALUE, NEVER A DELTA ------------
+        #
+        # What stood here dropped the address coordinate from the table
+        # entirely, on the argument that `assertGe(post - pre, someAddress)`
+        # is a question nobody asked. That argument is right about a DELTA and
+        # wrong about an ABSOLUTE bound, and the two were being decided by one
+        # flag -- the same conflation the R2 proposer had on the request side.
+        #
+        # MEASURED, and it cost the strongest oracle in the corpus: on
+        # farming setDistributor the ladder answered
+        #     _distributor: post in [distributor_, distributor_]   HOLDS
+        # -- `the state ends equal to the argument`, which IS the property of
+        # a setter -- and the emitter then dropped it with `rung shape not
+        # rendered`, because `bound_term` could not spell `distributor_`.
+        # Proven and thrown away at the last step.
+        #
+        # The slot read is a uint256, so the endpoint carries the cast that
+        # makes the comparison well typed. It goes in a SEPARATE table:
+        # `coord_ident` still holds only the arithmetic coordinates, so the
+        # delta shapes cannot reach an address and the original rule stands
+        # exactly where it was right.
+        if kind == "address":
+            coord_ident_abs[pname] = f"uint256(uint160({var}))"
+        else:
+            coord_ident[pname] = var
+            coord_ident_abs[pname] = var
         # HOW MANY VALUES THIS RENDERED COORDINATE MAY TAKE. Recorded per
         # coordinate rather than inferred from `lifted` being non-empty, because
         # a coordinate whose region is a POINT is still rendered -- `bound(x, 0,
         # 0)` is a real line in the emitted tests -- and "rendered" and "free to
         # vary" are the two things the floor test below must not confuse.
+        # A SET, and only the holes INSIDE the interval. A repeated hole
+        # subtracted twice understates the width; a hole outside the interval
+        # subtracted at all understates it for a value the bound already
+        # excludes. Both directions cost a PUT that should have been emitted.
         rendered_width[pname] = (hi - lo + 1) - len(
-            [h for h in holes.get(pname, ()) if lo <= h <= hi])
+            {h for h in holes.get(pname, ()) if lo <= h <= hi})
 
     # ---- §From a Region to a Test: THE FLOOR TEST IS ON THE RENDERED SET ----
     #
@@ -1692,6 +3015,33 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # The concrete replay test the method points to is not built here: the
     # emitter has already written it into this same file (`test_cov_*`), so the
     # correct action is to emit no PUT and say why.
+    # ---- A RENDERED COORDINATE WITH NO VALUE LEFT REFUSES THE WHOLE PUT ----
+    #
+    # The holes are emitted as `vm.assume`, which is REJECTION SAMPLING. A
+    # coordinate whose interval is entirely holed rejects every fuzz input, and
+    # forge then fails the run for too many rejections -- a RED test, on the
+    # unmodified contract, for a reason that has nothing to do with the
+    # contract. Worse, it only happens when some OTHER coordinate is wide
+    # enough to pass the floor test below, so the failure appears on exactly
+    # the PUTs that looked healthiest.
+    #
+    # The driver is not supposed to produce this. That is the reason to CHECK
+    # it here rather than to assume it: a proposition the method rests on is
+    # worth a runtime check, and the ones this project has been bitten by were
+    # all "cannot happen" until they did.
+    _empty = sorted(n for n, w in rendered_width.items() if w < 1)
+    if _empty:
+        notes.append(
+            "REFUSED: the certified region leaves NO value for "
+            + ", ".join(f"{n} (rendered width {rendered_width[n]})"
+                        for n in _empty)
+            + ". Holes are emitted as `vm.assume`, i.e. rejection sampling, so "
+              "an empty coordinate rejects every fuzz input and forge fails "
+              "the run for too many rejections -- a RED test on the unmodified "
+              "contract, for a reason that is not about the contract. Emitting "
+              "nothing is the correct outcome; the region and its holes "
+              "disagree and that is a fact about the region")
+        return None, None
     if not any(w > 1 for w in rendered_width.values()):
         widths = ", ".join(f"{n}={w}" for n, w in sorted(rendered_width.items()))
         notes.append(
@@ -1716,6 +3066,32 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     key_expr_of = {}
     for idx, (pname, _pt) in enumerate(params):
         key_expr_of[pname] = repl.get(idx, args[idx].strip())
+    # ---- msg.sender IS NAMEABLE ONLY WHERE THIS PUT DECIDED IT ---------------
+    #
+    # `slot_key_expr` refuses `msg.sender` as a mapping key, and its docstring
+    # says exactly why: the address the unit will see as its caller is chosen by
+    # THIS emitter's preamble, while the region names a quantity in the
+    # verifier's namespace, so hashing the wrong one writes/reads a word the
+    # contract never touches and every `post == pre` rung over it stays GREEN
+    # while establishing nothing. That docstring also names the fix -- "making
+    # the two agree is a separate change with its own evidence" -- and this is
+    # it: `establish_env_sender` has just rewritten the governing `vm.prank`, so
+    # the address is no longer a guess, it is a string this file emitted.
+    #
+    # ⛔ THE REFUSAL IS NOT REMOVED, it is given an antecedent. When the region
+    # says nothing about `msg.sender` this driver chose no address,
+    # `env_sender_expr` is None, nothing is added here, and `slot_key_expr`
+    # refuses with its wording unchanged. That branch is the negative control
+    # and it must keep firing.
+    #
+    # ORDERING, which is what makes the fuzzed branch sound: the prank may take
+    # the bound() parameter `p_msg_sender`, whose `bound()` lines go into
+    # `pre_lines`. `out += pre_lines` runs BEFORE `out += store_lines` and
+    # before the `pre_reads`, so every slot address computed from this
+    # expression is computed from the value the call will actually run as, not
+    # from the raw draw.
+    if env_sender_expr is not None:
+        key_expr_of["msg.sender"] = env_sender_expr
 
     # --- entry-state coordinates: ESTABLISHED with vm.store -----------------
     #
@@ -1768,10 +3144,14 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         # established the same value by luck. A pin that is satisfied by
         # coincidence and reported as unestablishable is the shape of defect
         # this file already carries three comments about.
-        m_pin = re.match(r"^([A-Za-z_]\w*)\[(.+)\]$", v)
-        if m_pin:
-            mname, kname = m_pin.group(1), m_pin.group(2)
-            if not maps or mname not in maps:
+        # The optional `.field` tail is a scalar member of a struct-valued
+        # element; `mkey` is how that row is named in `maps`, which keys by
+        # `<map>.<field>` so one mapping can contribute several coordinates.
+        mname, pin_keys, pin_tail = parse_slot_name(v)
+        if mname is not None:
+            kname = ", ".join(pin_keys)
+            mkey = mname + pin_tail
+            if not maps or mkey not in maps:
                 state_skipped.append(
                     f"{name} (`{mname}` is not a mapping solc's layout reports "
                     f"with a value-type key and a scalar value, so its slot "
@@ -1783,18 +3163,75 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 # havoc'd, so a wide bound constrained nothing in the query and
                 # the rungs were proved about ONE entry value. Establishing a
                 # fuzz-chosen one would test entry states the proof never saw.
+                # Same two halves as the scalar case below: the WRITE stays
+                # forbidden, the CHECK does not. A mapping slot's entry value
+                # is read with the same hash the write would have used, so a
+                # vacuous assumption here is caught by the same line that
+                # would catch a wrong key order.
+                mslot, _kt2, vnb2, voff2, _mb2, _mm2 = maps[mkey]
+                kx, kerr2 = [], None
+                for kn in pin_keys:
+                    ke2, err2 = slot_key_expr(kn, key_expr_of)
+                    if err2 is not None:
+                        kerr2 = err2
+                        break
+                    kx.append(ke2)
+                chk = ([] if kerr2 is not None else
+                       slot_inside_region_check_at(
+                           "address(c0)", map_slot_expr(kx, mslot),
+                           voff2, vnb2, lo, hi, name))
+                if chk:
+                    store_lines += chk
+                    stored.append(f"{name} in [{lo}, {hi}] (checked, not set)")
+                    continue
                 state_skipped.append(
                     f"{name} in [{lo}, {hi}] (width > 1, DROPPED: the entry "
                     f"state is not havoc'd, so this bound constrained nothing "
-                    f"in the query)")
+                    f"in the query"
+                    + (f"; and its key is not spellable either: {kerr2}"
+                       if kerr2 is not None else
+                       "; both endpoints are the type's own limits, so there "
+                       "is not even an in-region check to make") + ")")
                 continue
-            mslot, _kt, vnb = maps[mname]
-            kexpr, kerr = slot_key_expr(kname, key_expr_of)
+            mslot, _kt, vnb, voff, _mb, _mm = maps[mkey]
+            # ---- THE KEY COUNT IS CHECKED, NOT ASSUMED ----
+            #
+            # `_kt` is the key type for one level and a TUPLE of them for a
+            # nested store, so it carries the depth. A name with the wrong
+            # number of keys still hashes to a perfectly well-formed address --
+            # of a word nothing ever wrote -- and every rung over it would hold
+            # trivially. Refused with both numbers named.
+            nlev = 1 if isinstance(_kt, str) else len(_kt)
+            if len(pin_keys) != nlev:
+                state_skipped.append(
+                    f"{name} (`{mname}` is a {nlev}-level store but the name "
+                    f"gives {len(pin_keys)} key(s); a name with the wrong "
+                    f"depth addresses a word nothing wrote)")
+                continue
+            kexprs, kerr = [], None
+            for kn in pin_keys:
+                ke, err = slot_key_expr(kn, key_expr_of)
+                if err is not None:
+                    kerr = err
+                    break
+                kexprs.append(ke)
             if kerr is not None:
                 state_skipped.append(f"{name} ({kerr})")
                 continue
+            kexpr = kexprs
+            # `voff`, not 0. A packed field does not start at bit 0 of the word,
+            # and the read-modify-write is the only reason its neighbour survives
+            # being established.
             store_lines += slot_write_lines_at(
-                "address(c0)", map_slot_expr(kexpr, mslot), 0, vnb, str(lo))
+                "address(c0)", map_slot_expr(kexpr, mslot), voff, vnb, str(lo))
+            # READ IT BACK. A mapping address is a keccak of key and slot, so
+            # a wrong key order, a wrong level count or a stale slot number
+            # all produce a perfectly well-formed write to a word the contract
+            # never reads -- and `vm.store` cannot fail. See
+            # `slot_landing_check_at`.
+            store_lines += slot_landing_check_at(
+                "address(c0)", map_slot_expr(kexpr, mslot), voff, vnb,
+                str(lo), name)
             stored.append(f"{name} := {lo}")
             continue
         if v not in layout:
@@ -1837,16 +3274,36 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             # then, `lo == hi` is the only state bound a test may establish,
             # because that is the one case where storing the value cannot move
             # the entry state away from the one that was checked.
+            #
+            # NOT ESTABLISHED, BUT NO LONGER UNCHECKED. The write stays
+            # forbidden for the reason above; what the drop used to also throw
+            # away is the other half of the bound -- whether the entry value
+            # the proof assumed is where the proof assumed it. That costs
+            # nothing to check and is RED exactly when the assumption was
+            # vacuous. See `slot_inside_region_check`.
+            chk = slot_inside_region_check("address(c0)", slot, off, nb,
+                                           lo, hi, name)
+            if chk:
+                store_lines += chk
+                stored.append(f"{name} in [{lo}, {hi}] (checked, not set)")
+                continue
             state_skipped.append(
                 f"{name} in [{lo}, {hi}] (width > 1, DROPPED: the entry state "
                 f"is not havoc'd, so this bound constrained nothing in the "
                 f"query -- the rungs were proved about the constructor's own "
                 f"value. Establishing a fuzz-chosen value here would test "
                 f"entry states the proof never covered, which is how this PUT "
-                f"came back RED on the unmodified contract)")
+                f"came back RED on the unmodified contract. Both endpoints "
+                f"are the type's own limits, so there is not even an "
+                f"in-region check to make: the bound says nothing at all)")
             continue
         val = str(lo)
         store_lines += slot_write_lines("address(c0)", slot, off, nb, val)
+        # READ IT BACK -- see `slot_landing_check`. A packed field whose
+        # offset was mis-taken lands in its neighbour's bits and the PUT is
+        # green about a state nobody set.
+        store_lines += slot_landing_check("address(c0)", slot, off, nb, val,
+                                          name)
         stored.append(f"{name} := {val}")
 
     # --- the oracle: the unit's OWN RETURN VALUE ----------------------------
@@ -1976,7 +3433,25 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
 
     # --- the oracle: post-state --------------------------------------------
     pre_reads, post_reads, asserts, oracle_skipped = [], [], [], []
+    # RUNGS THAT SAY THE STATE CHANGED, kept apart from the rest because they
+    # are emitted under a condition and the header has to report them as such.
+    guarded, guard_notes = [], []
+    okvar = "_put_ok"
+    while any(okvar in ln for ln in body):
+        okvar += "_"
     seen_vars = []
+    # ---- THE ANTICHAIN. Only the rungs nothing else entails are rendered ----
+    #
+    # `assertGe` beside `assertGt` on the same pair detects exactly what the
+    # `assertGt` detects alone, so the pair is one oracle reported as two. The
+    # dropped rows are recorded as IMPLIED, never as SKIPPED: one of those two
+    # words means oracle was lost and wants fixing, the other means it is still
+    # there in a sharper form, and swapping them makes a healthy pipeline read
+    # as broken or a broken one as healthy.
+    ladder_rows, implied_rows = antichain(ladder_rows, call_is_revert_tolerant)
+    oracle_implied = [f"{v}: {t} (entailed by a stronger rung that also HOLDS "
+                      f"on {v}, so asserting it detects nothing the stronger "
+                      f"one misses)" for v, t, _d in implied_rows]
     for var, text, verdict in ladder_rows:
         # `return` AND `return.<k>`. Skipping only the bare name filed every
         # tuple MEMBER row as a state variable with no storage slot -- a wrong
@@ -2000,40 +3475,62 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         # than a delta rung and the header below says which is which, so a
         # reader is never left to infer strength from the fact that something
         # was asserted.
-        m_slot = re.match(r"^([A-Za-z_]\w*)\[(.+)\]$", var)
-        if m_slot:
-            mname, kname = m_slot.group(1), m_slot.group(2)
-            if not maps or mname not in maps:
+        mname, slot_keys, slot_tail = parse_slot_name(var)
+        if mname is not None:
+            kname = ", ".join(slot_keys)
+            mkey = mname + slot_tail
+            if not maps or mkey not in maps:
                 oracle_skipped.append(
                     f"{var} (`{mname}` is not a mapping solc's layout reports "
                     f"with a value-type key and a scalar value, so the slot "
                     f"address cannot be computed; a guessed one would read a "
                     f"word nothing wrote)")
                 continue
-            mslot, _ktype, vnb = maps[mname]
+            mslot, _ktype, vnb, voff, _mb, _mm = maps[mkey]
+            # Same depth check as the entry-state pin above, for the same
+            # reason: a name with the wrong number of keys reads a word nothing
+            # wrote, and `post == pre` over it is green and meaningless.
+            nlev = 1 if isinstance(_ktype, str) else len(_ktype)
+            if len(slot_keys) != nlev:
+                oracle_skipped.append(
+                    f"{var} (`{mname}` is a {nlev}-level store but the name "
+                    f"gives {len(slot_keys)} key(s); a name with the wrong "
+                    f"depth reads a word nothing wrote)")
+                continue
             # SAME decision as the entry-state pin above, through the same
             # function: the two used to answer differently, and the WRITING side
             # was the permissive one. See `slot_key_expr`.
-            kexpr, kerr = slot_key_expr(kname, key_expr_of)
+            kexprs, kerr = [], None
+            for kn in slot_keys:
+                ke, err = slot_key_expr(kn, key_expr_of)
+                if err is not None:
+                    kerr = err
+                    break
+                kexprs.append(ke)
             if kerr is not None:
                 oracle_skipped.append(f"{var} ({kerr})")
                 continue
+            kexpr = kexprs
             ident = _slot_ident(var)
             if var not in seen_vars:
                 seen_vars.append(var)
                 rd = slot_read_expr_at(
-                    "address(c0)", map_slot_expr(kexpr, mslot), 0, vnb)
+                    "address(c0)", map_slot_expr(kexpr, mslot), voff, vnb)
                 pre_reads.append(f"    uint256 _pre_{ident} = {rd};")
                 post_reads.append(f"    uint256 _post_{ident} = {rd};")
-            if call_is_revert_tolerant and rung_asserts_a_change(text):
-                oracle_skipped.append(f"{var}: {text} ({CHANGE_UNDER_CATCH})")
-                continue
+            # GUARDED, not dropped. See the block comment at `okvar`.
+            _chg = call_is_revert_tolerant and rung_asserts_a_change(text)
             a = rung_assertions(text, f"_pre_{ident}", f"_post_{ident}",
-                                f"{var}: {text}")
+                                f"{var}: {text}", coord_ident,
+                                coord_ident_abs)
             if a is None:
                 oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
                 continue
-            asserts += a
+            if _chg:
+                guarded += a
+                guard_notes.append(f"{var}: {text}")
+            else:
+                asserts += a
             continue
         if var not in layout:
             msg = (f"{var} (no storage slot: solc's layout does not list it, "
@@ -2048,15 +3545,60 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             rd = slot_read_expr("address(c0)", slot, off, nb)
             pre_reads.append(f"    uint256 _pre_{var.lstrip('_')} = {rd};")
             post_reads.append(f"    uint256 _post_{var.lstrip('_')} = {rd};")
-        if call_is_revert_tolerant and rung_asserts_a_change(text):
-            oracle_skipped.append(f"{var}: {text} ({CHANGE_UNDER_CATCH})")
-            continue
+        # GUARDED, not dropped. See the block comment at `okvar`.
+        _chg = call_is_revert_tolerant and rung_asserts_a_change(text)
         a = rung_assertions(text, f"_pre_{var.lstrip('_')}",
-                            f"_post_{var.lstrip('_')}", f"{var}: {text}")
+                            f"_post_{var.lstrip('_')}", f"{var}: {text}",
+                            coord_ident, coord_ident_abs)
         if a is None:
             oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
             continue
-        asserts += a
+        if _chg:
+            guarded += a
+            guard_notes.append(f"{var}: {text}")
+        else:
+            asserts += a
+    # ---- THE CALL HAS TO CARRY THE FLAG, OR THE GUARD IS NOT A GUARD -------
+    #
+    # Only a call ending in `catch {}` is rewritten. Anything else -- a catch
+    # with a body, a shape this emitter did not write -- keeps the OLD DROP and
+    # says so: a flag left permanently true would make every guarded assertion
+    # unconditional, which is the red test the drop rule exists to prevent.
+    # ---- A REVERTING PATH CARRIES THE FIRST LAYER ALONE (§oracle) ----
+    #
+    # Every layer-2/3 rung goes, and it goes NAMED: dropping them silently would
+    # turn "this oracle was about an unobservable moment" into "this path has
+    # nothing assertable", which are different facts with different repairs.
+    # What replaces them is not nothing -- see the `assertFalse` below. Today a
+    # reverting path is emitted as `try c0.f() {} catch {}`, an oracle that
+    # cannot fail whatever the contract does; asserting the revert turns a
+    # mutant that stops reverting from invisible into RED.
+    rollback_layer1 = bool(rollback_exit)
+    if rollback_layer1:
+        n_dropped = len(asserts) + len(guarded) + len(ret_asserts)
+        if n_dropped:
+            oracle_skipped.append(
+                f"{n_dropped} layer-2/3 rung(s) DROPPED ({ROLLBACK_UNOBSERVABLE})")
+        asserts, guarded, guard_notes, ret_asserts = [], [], [], []
+        if not new_call.rstrip().endswith("catch {}"):
+            # The call is already emitted with its exit ASSERTED -- a bare call
+            # whose revert fails the test, or the non-payable value gate's own
+            # assertFalse. There is no `catch` to clear a flag in and nothing to
+            # add: layer 1 is already carried, and emitting a second expectation
+            # here would be a duplicate, not a stronger oracle.
+            rollback_layer1 = False
+    if guarded or rollback_layer1:
+        if new_call.rstrip().endswith("catch {}"):
+            new_call = (new_call.rstrip()[:-len("catch {}")]
+                        + "catch { " + okvar + " = false; }")
+        else:
+            for n in guard_notes:
+                oracle_skipped.append(
+                    f"{n} ({CHANGE_UNDER_CATCH}; and the guard could NOT be "
+                    f"applied: this call does not end in `catch {{}}`, so there "
+                    f"is nowhere to clear the flag, and an always-true flag "
+                    f"would make the assertion unconditional)")
+            guarded, guard_notes = [], []
     oracle_skipped += ret_skipped
 
     # ---- ONE PATH, SEVERAL CERTIFIED BOXES: THE NAME HAS TO SAY WHICH -------
@@ -2118,6 +3660,47 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                        f"dropped-bound line]")
         else:
             out.append(f"  //   PIN {n} == {v}")
+    # ---- WHERE THE WIDTH CAME FROM -----------------------------------------
+    #
+    # The work order: a width must come from a boundary the LADDER measured or
+    # from what is left after subtracting the sibling paths, and a width that
+    # rests only on a neighbourhood probe (±1) does not count. The region
+    # string cannot say which -- it is `name in [lo, hi]` -- so the arm's
+    # switches are printed here.
+    #
+    # ⛔ ROW GRANULARITY, SAID OUT LOUD. These switches describe the whole
+    # region of this row, not one coordinate. A reader who took them as a
+    # per-bound trace would be reading a precision that was never measured,
+    # and that misreading is likelier than no information at all.
+    if derived_by:
+        _ladder = bool(derived_by.get("probe_ladder")
+                       or derived_by.get("probes"))
+        _cut = bool(derived_by.get("cut_policy")
+                    or derived_by.get("max_region_pieces"))
+        _probe_only = (not _ladder) and (not _cut) and bool(
+            derived_by.get("level0") or derived_by.get("level0_perturb")
+            or derived_by.get("level0_points"))
+        out.append("  // WIDTH PROVENANCE (stage-2 switches for this ROW, not "
+                   "per coordinate):")
+        for k in sorted(derived_by):
+            out.append(f"  //   {k} = {derived_by[k]}")
+        if _probe_only:
+            out.append("  // ⚠ NO LADDER AND NO SUBTRACTION RAN FOR THIS ROW. "
+                       "Every interval below rests on")
+            out.append("  // a neighbourhood probe, which the work order does "
+                       "NOT accept as a width: a")
+            out.append("  // probe shows some nearby value also walks the "
+                       "path, not where the path stops.")
+            out.append("  // The region is still CERTIFIED -- an independent "
+                       "query admitted it -- but its")
+            out.append("  // WIDTH is not evidence of a measured boundary.")
+        elif _ladder or _cut:
+            out.append("  // Width sources that ran: "
+                       + ", ".join(s for s, on in
+                                   (("the assertion ladder's boundary probes",
+                                     _ladder),
+                                    ("subtraction of the sibling paths", _cut))
+                                   if on))
     out.append(f"  // Arguments the region does NOT bound keep the "
                f"counterexample's own")
     out.append(f"  // literal: the region is a statement about THAT slice, "
@@ -2132,7 +3715,25 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"  // unliftable type, so this PUT is a single "
                    f"deterministic point of the")
         out.append(f"  // region rather than a fuzz test over it.")
-    if asserts or ret_asserts:
+    if rollback_layer1:
+        out.append(f"  // ORACLE: the FIRST LAYER ONLY, and that is the rule "
+                   f"rather than a shortfall.")
+        out.append(f"  // This path exits through a ROLLBACK revert. A revert "
+                   f"restores storage, so")
+        out.append(f"  // every before/after comparison is `post == pre` on "
+                   f"the chain whatever the")
+        out.append(f"  // contract does, and the ladder's own verdicts were "
+                   f"read at the moment")
+        out.append(f"  // BETWEEN the write and the rollback -- which no test "
+                   f"can observe. They")
+        out.append(f"  // are dropped and counted below. What is asserted "
+                   f"instead is the exit")
+        out.append(f"  // itself: the call MUST fail. That is a real oracle -- "
+                   f"it goes RED on a")
+        out.append(f"  // contract that stops reverting -- and it replaces a "
+                   f"`try {{}} catch {{}}`")
+        out.append(f"  // body that could not fail whatever happened.")
+    elif asserts or ret_asserts:
         out.append(f"  // ORACLE: {len(asserts) + len(ret_asserts)} "
                    f"assertion(s) from the surviving (HOLDS) rungs of")
         out.append(f"  // --path-cov-assert -- {len(asserts)} over POST-STATE, "
@@ -2186,8 +3787,27 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                        f"does, including")
             out.append(f"  // reverting. It is a reachability witness, not a "
                        f"test.")
+    if guarded:
+        out.append(f"  // CONDITIONAL: {len(guarded)} further assertion(s) say "
+                   f"the state CHANGED.")
+        out.append(f"  // A revert leaves storage untouched, and this call is "
+                   f"revert-tolerant because")
+        out.append(f"  // the exit kind could not be confirmed -- so they are "
+                   f"emitted under `if ({okvar})`,")
+        out.append(f"  // which is false exactly when the call reverted. Sound "
+                   f"because every input of")
+        out.append(f"  // the certified region walks this path: one that did "
+                   f"not revert walked it.")
+        out.append(f"  // ⚠ WHETHER THE GUARD'S TRUE BRANCH IS EVER TAKEN IS "
+                   f"NOT MEASURED HERE. If it")
+        out.append(f"  // never is, these assertions are green and say "
+                   f"nothing.")
+        for s in guard_notes:
+            out.append(f"  //   rung CONDITIONAL: {s}")
     for s in oracle_skipped:
         out.append(f"  //   rung DROPPED: {s}")
+    for s in oracle_implied:
+        out.append(f"  //   rung IMPLIED (not lost, not asserted twice): {s}")
     for s in state_skipped:
         out.append(f"  //   entry-state bound DROPPED: {s}")
     for s in env_unchecked:
@@ -2218,7 +3838,12 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # So the tail (the contiguous run of comments and `vm.*` statements
     # directly above the call) is re-attached immediately above the call, and
     # everything the PUT adds goes in front of it.
-    head_end = call_i
+    #
+    # The walk starts at the statement's FIRST line, not at the line that names
+    # the unit. For the low-level value-gate shape those differ, and starting at
+    # the second one puts the stores and the pre-reads BETWEEN the two halves of
+    # one statement -- a file that does not compile. See `statement_start`.
+    head_end = statement_start(body, call_i)
     while head_end > 0:
         prev = body[head_end - 1].strip()
         if prev.startswith("//") or prev.startswith("vm."):
@@ -2237,6 +3862,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out += pre_reads
     for ln in body[head_end:call_i]:
         out.append(ln)
+    if guarded or rollback_layer1:
+        out.append(f"    bool {okvar} = true;")
     out.append(new_call)
     # NOT `if post_reads:`. That guard was equivalent while every assertion
     # came from a state rung -- a var with no post-read produced no assert
@@ -2246,14 +3873,51 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # assertions while the header above still announced them.
     out += post_reads
     out += asserts
+    if guarded:
+        out.append(f"    if ({okvar}) {{")
+        out += guarded
+        out.append("    }")
+    if rollback_layer1:
+        # LAYER 1, and it is the whole oracle for this path. `okvar` is false
+        # exactly when the call reverted, and the certified region says every
+        # input of it walks THIS path, whose exit is a rollback -- so a call
+        # that succeeds is a contract that no longer does what was certified.
+        out.append(
+            f'    assertFalse({okvar}, "path enc={enc}{piece_label} exits '
+            f'through a REVERT: the call must fail on the unmodified '
+            f'contract");')
     out += ret_asserts
     for ln in body[call_i + 1:]:
         out.append(ln)
     out.append("  }")
     stats = {"fuzz_params": len(sig), "lifted": lifted,
-             "asserts": len(asserts) + len(ret_asserts),
-             "state_asserts": len(asserts), "return_asserts": len(ret_asserts),
+             # COUNTED, and counted separately. A conditional assertion is an
+             # assertion the test carries, so it belongs in the total; it is a
+             # WEAKER one, so a reader who cannot see how many are conditional
+             # is reading a strength the file does not have.
+             # ⛔ THE ROLLBACK PATH'S ONE ASSERTION IS AN ORACLE AND IS
+             # COUNTED. It reported `oracle asserts : 0` on a PUT whose body
+             # carries `assertFalse(_put_ok, "... must fail ...")` -- an
+             # assertion a mutant that stops reverting turns RED. A zero there
+             # reads as "this PUT checks nothing", which is exactly the
+             # conclusion the layer-1 rule exists to make false, and it would
+             # have sent the next reader looking for a bug that is not there.
+             "asserts": (len(asserts) + len(ret_asserts) + len(guarded)
+                         + (1 if rollback_layer1 else 0)),
+             "state_asserts": len(asserts) + len(guarded),
+             "guarded_asserts": len(guarded),
+             "exit_kind_asserts": 1 if rollback_layer1 else 0,
+             # Recorded so the B table can say WHY a row's oracle is one line:
+             # a rollback path is a measurement, not a missing feature, and the
+             # two must not read alike.
+             "rollback_exit": bool(rollback_layer1),
+             "return_asserts": len(ret_asserts),
              "oracle_skipped": oracle_skipped,
+             # SEPARATE KEY, not folded into `oracle_skipped`. An implied rung
+             # is oracle still fully present in a stronger form; a skipped one
+             # is oracle that was lost. One number wants investigating and the
+             # other does not.
+             "oracle_implied": oracle_implied,
              "state_stored": stored, "state_skipped": state_skipped,
              "env_unchecked": env_unchecked}
     return out, stats
@@ -2348,6 +4012,36 @@ def exit_kind_asserted(body_lines):
 # main
 # ---------------------------------------------------------------------------
 
+def binary_identity(esbmc_path):
+    """Who produced this put.json. Three fields, and each is load-bearing.
+
+    Byte-for-byte the shape `pathcov_collect.py::binary_identity()` records,
+    so one reader can check a runs.jsonl row and a put.json with one rule.
+    `head` is the commit the tree was on; `binaryMtime` is the executable's own
+    timestamp and is the ONLY field that distinguishes two builds sharing a
+    HEAD; `srcDirty` says the commit named does not identify the binary at all.
+
+    MEASURED, and the reason this exists: the pieces_corpus arm reported
+    `B = 7 of 10` where one of the seven was emitted on Aug 3 by a build the
+    current tree no longer reproduces -- the emit run finds no claim for that
+    path. Nothing in put.json could have shown that.
+    """
+    def _sh(args):
+        try:
+            return subprocess.run(
+                args, capture_output=True, text=True,
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    return {
+        "head": _sh(["git", "rev-parse", "--short", "HEAD"]),
+        "srcDirty": bool(_sh(["git", "status", "--porcelain", "--", "src/"])),
+        "binaryMtime": (int(os.stat(esbmc_path).st_mtime)
+                        if os.path.exists(esbmc_path) else 0),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -2397,6 +4091,30 @@ def main():
                          "function, the test contract and the file. Omit for an "
                          "unsplit region -- every existing name is then "
                          "reproduced byte for byte.")
+    ap.add_argument("--propose-r2", action="store_true",
+                    help="after the ladder's first pass, ASK for the R2 delta "
+                         "bound its ordering rungs made answerable: `post - "
+                         "pre in [p, p]` for each integer parameter p, i.e. "
+                         "'the state changed by exactly the amount passed in'. "
+                         "R2 exists in the tool and has never been requested "
+                         "by this pipeline -- the spec carried variable NAMES "
+                         "only. ⚠ COSTS ONE EXTRA esbmc RUN PER INTEGER "
+                         "PARAMETER, which is why it is opt-in: a flag that "
+                         "silently multiplies a serial sweep's run count is "
+                         "not a feature. `delta_dir` is never guessed; it is "
+                         "read from the ge/le verdicts already measured, and "
+                         "a variable whose region holds both an increasing "
+                         "and a decreasing execution is skipped and said so.")
+    ap.add_argument("--derived-by", default="{}", metavar="JSON",
+                    help="the stage-2 switches this region was derived under, "
+                         "as a JSON object, printed on the emitted test. The "
+                         "work order requires a rendered width to say WHICH "
+                         "STEP produced it and forbids one that rests on a "
+                         "neighbourhood probe alone; the certified region "
+                         "string carries no such information, so it is passed "
+                         "here. ⚠ ROW granularity, not per coordinate -- the "
+                         "test says so in as many words rather than letting "
+                         "the reader assume each bound was traced.")
     ap.add_argument("--auto-unwind", type=int, default=0, metavar="N",
                     help="on an UNDECIDED-TRUNCATED ladder, RE-RUN it up to N "
                          "times, widening every loop the tool NAMED with "
@@ -2446,6 +4164,18 @@ def main():
 
     os.makedirs(a.workdir, exist_ok=True)
     emit_dir = os.path.join(a.workdir, "emit")
+    # ---- ABSOLUTE, BECAUSE ESBMC DOES NOT RUN IN THIS PROCESS'S CWD ---------
+    #
+    # Every esbmc child below is started with `cwd=` set to a run directory, so
+    # a RELATIVE --workdir makes `--path-cov-assert <workdir>/assert/spec.json`
+    # resolve against the wrong directory. esbmc then prints
+    #     ERROR: --path-cov-assert: cannot open '<path>'
+    # and ABORTS -- the driver sees `exit=-6 rows=0` and reports "the ladder
+    # produced no rows", which reads as a fact about the region and is a fact
+    # about a path string. This exact failure has already cost one session on
+    # `spec_dup_probe.py`, whose fix was the same one line; the fix reached that
+    # script and not this one, which is the two-readers-of-one-fact shape.
+    a.workdir = os.path.abspath(a.workdir)
     assert_dir = os.path.join(a.workdir, "assert")
     os.makedirs(emit_dir, exist_ok=True)
     os.makedirs(assert_dir, exist_ok=True)
@@ -2596,18 +4326,9 @@ def main():
     # one it does write yields the sign and delta rungs. Which of the two a
     # given slot produced is visible in the table, so over-proposing costs
     # candidates, never correctness.
-    def _norm_ty(t):
-        t = (t or "").strip()
-        for suf in (" payable", " memory", " calldata", " storage"):
-            t = t.replace(suf, "")
-        return {"uint": "uint256", "int": "int256"}.get(t, t)
 
     slot_vars = []
-    for mname in sorted(maps):
-        ktype = maps[mname][1]
-        for pname, ptype in (params or []):
-            if pname and _norm_ty(ptype) == _norm_ty(ktype):
-                slot_vars.append(f"{mname}[{pname}]")
+    slot_vars += propose_slot_vars(maps, params)
     if slot_vars:
         print(f"[put]   mapping slots proposed to the ladder: "
               f"{', '.join(slot_vars)}")
@@ -2635,6 +4356,11 @@ def main():
          "--cov-report-json"] + a.esbmc_arg,
         assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
     rows, summary, refusal, blocker = parse_ladder(out2)
+    # The ladder run is asked about exactly ONE (unit, enc), so any rollback
+    # line in ITS log is about this path -- but the pair is still matched rather
+    # than assumed, because a log that ever covers two paths would otherwise
+    # silently apply one path's rollback to the other.
+    rollback_here = any(e == int(a.enc) for _u, e in rollback_exit_paths(out2))
 
     # ---- THE UNWIND LADDER: widen the loops the tool NAMED, and say so -----
     unwind_attempts, unwind_applied = [], []
@@ -2700,6 +4426,96 @@ def main():
         print(f"[put]   ladder REFUSED: {refusal}")
         notes.append(f"ladder refused: {refusal}")
     print(f"[put]   exit={rc2} {w2:.1f}s  rows={len(rows)} summary={summary}")
+
+    # ---- WHAT WAS ASKED MINUS WHAT WAS ANSWERED. See ladder_answer_gap. -----
+    #
+    # Printed BEFORE R2 and BEFORE the emit, because every number after this
+    # point is computed from `rows`, and a `rows` that answers none of the
+    # questions asked reads exactly like a unit with nothing to assert.
+    unanswered, unasked = ladder_answer_gap(slot_vars, rows)
+    if slot_vars:
+        print(f"[put]   slot candidates: {len(slot_vars)} asked, "
+              f"{len(slot_vars) - len(unanswered)} answered, "
+              f"{len(unanswered)} came back with NO ROW; "
+              f"{len(unasked)} row(s) name a variable the spec never asked "
+              f"about (the component loop is not whitelisted by a slot-only "
+              f"spec, so those are expected)")
+        if unanswered and len(unanswered) == len(slot_vars):
+            print(f"[put]   ⛔ ZERO of {len(slot_vars)} slot candidate(s) came "
+                  f"back with a verdict. THE EMPTY SLOT ORACLE BELOW IS A "
+                  f"REFUSAL, NOT A MEASUREMENT -- this unit was never told to "
+                  f"have no assertable slot, it was never answered about any. "
+                  f"The per-candidate reason is in the run log for this "
+                  f"invocation ({os.path.join(assert_dir, 'run.1.log')}); "
+                  f"esbmc prints one line per dropped candidate")
+        elif unanswered:
+            print(f"[put]     unanswered: {', '.join(unanswered)}")
+    notes.append(f"slot candidates asked={len(slot_vars)} "
+                 f"unanswered={len(unanswered)}")
+
+    # ---- R2: ASK FOR THE DELTA BOUND THE FIRST PASS MADE ANSWERABLE --------
+    #
+    # OPT-IN, and it stays opt-in. Each proposed spec is one more esbmc
+    # invocation; a flag that silently multiplies the run count of a serial
+    # sweep is not a feature. The direction comes from the ordering rungs
+    # `rows` already carries, so this cannot run before the first pass and
+    # never guesses `delta_dir`.
+    if a.propose_r2:
+        # ---- THE CANDIDATE WIDTH TABLE, FROM solc's OWN LAYOUT --------------
+        #
+        # Built here rather than inside the proposer because this is where the
+        # layout lives, and guessed nowhere: a candidate absent from BOTH
+        # dicts has no storage slot at all (a constant/immutable), and it is
+        # left out so the proposer excludes it rather than spending a solver
+        # query on a row that is discarded downstream anyway.
+        _var_bytes = {}
+        for _v, (_slot, _off, _nb) in (layout or {}).items():
+            _var_bytes[_v] = _nb
+        for _v, _t, _d in rows:
+            _mn, _keys, _tail = parse_slot_name(_v)
+            if _mn is None:
+                continue
+            _mk = _mn + _tail
+            if maps and _mk in maps:
+                _var_bytes[_v] = maps[_mk][2]
+        _r2 = propose_r2_specs(rows, params, log=print,
+                               var_bytes=_var_bytes)
+        r2_requested = True
+
+        def _write_r2(suffix, spec_dict):
+            p = os.path.join(assert_dir, "spec" + suffix + ".json")
+            with open(p, "w") as f:
+                json.dump(spec_dict, f)
+            return p
+
+        def _run_r2(spec_path):
+            o, _rc, _w = run_esbmc(
+                a.esbmc, a.sol, a.ast, a.contract, a.unit,
+                ["--path-cov-assert", spec_path, "--cov-report-json"]
+                + a.esbmc_arg,
+                assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+            return o
+
+        rows += run_r2_passes(_r2, spec, _write_r2, _run_r2, parse_ladder)
+    else:
+        # ---- AN R2 CLASS THAT WAS NEVER ASKED FOR MUST NOT READ AS ONE ------
+        #
+        # THAT ABSENCE IS THE CORPUS'S ACTUAL STATE. Of the 218 put.json files
+        # on disk, 201 carry a ladder with no R2 row of either kind, and NOT
+        # ONE corpus unit carries an R2 row at all -- because `--propose-r2` is
+        # opt-in and the corpus runs did not pass it. The single delta row that
+        # has ever HELD is on a hand-written fixture.
+        #
+        # Without this line, a `put.json` whose ladder holds no delta row is
+        # indistinguishable from one where the delta was asked for and came
+        # back refuted. Reading the first as the second turns "we never asked"
+        # into "the class does not work on this corpus", which is a conclusion
+        # about the method drawn from a missing command-line flag.
+        r2_requested = False
+        print("[put]   R2 NOT REQUESTED (`--propose-r2` is off). The absolute "
+              "and delta bounds were not asked for on this run, so their "
+              "absence below is a fact about this INVOCATION and says nothing "
+              "about whether they hold. Do not read it as a measurement.")
     for v, t, verdict in rows:
         print(f"[put]     {v}: {t}  {verdict}")
 
@@ -2802,7 +4618,9 @@ def main():
                            layout, rows, notes,
                            cell=(cell_name, cell_rule),
                            unwind=unwind_applied, rettypes=rettypes,
-                           maps=maps, piece_label=plabel)
+                           maps=maps, piece_label=plabel,
+                           derived_by=json.loads(a.derived_by or "{}"),
+                           rollback_exit=rollback_here)
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
@@ -2840,6 +4658,8 @@ def main():
           f"{stats['return_asserts']} return value)")
     for s in stats["oracle_skipped"]:
         print(f"[put]     rung dropped: {s}")
+    for s in stats.get("oracle_implied", []):
+        print(f"[put]     rung implied: {s}")
     for s in stats["state_stored"]:
         print(f"[put]     entry state stored: {s}")
     for s in stats["state_skipped"]:
@@ -2866,6 +4686,23 @@ def main():
                    "ladder": [{"var": v, "text": t, "verdict": d}
                               for v, t, d in rows],
                    "ladder_summary": summary, "ladder_refusal": refusal,
+                   # ⛔ WITHOUT THIS FIELD, "no R2 row" IS UNREADABLE. A ladder
+                   # that was never asked for an absolute or delta bound and
+                   # one that was asked and got nothing produce byte-identical
+                   # `ladder` arrays. 201 of the 218 put.json files on disk are
+                   # the first kind, and reading them as the second would turn
+                   # a missing command-line flag into a conclusion about the
+                   # method.
+                   "r2_requested": r2_requested,
+                   # ⛔ ASKED, AND ANSWERED, AS TWO NUMBERS. A ladder that was
+                   # asked about 48 slots and answered about none produces the
+                   # same `ladder` array as a unit with no slot to ask about.
+                   # aqua `push` enc=6 is the first kind and was read as the
+                   # second for as long as this field did not exist.
+                   "slot_candidates": {
+                       "asked": list(slot_vars),
+                       "unanswered": unanswered,
+                       "rows_for_unasked_names": unasked},
                    # A region certified under one set of flags and a test
                    # emitted under another are two measurements; the artefact
                    # has to say which one it is.
@@ -2877,6 +4714,12 @@ def main():
                    "unwind_attempts": unwind_attempts,
                    "cell": {"name": cell_name, "scope": a.scope,
                             "max_tx": a.max_tx, "rule": cell_rule},
+                   # WHICH EXECUTABLE PRODUCED THIS. Without it a reader
+                   # that re-reads put.json (put_all --forge-only) cannot tell
+                   # a row emitted by this tree from one left behind by a build
+                   # that no longer exists, and it counted one of each toward
+                   # the same B.
+                   "binary": binary_identity(a.esbmc),
                    "stats": stats, "notes": notes}, f, indent=2)
     return 0
 

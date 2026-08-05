@@ -1285,12 +1285,76 @@ static expr2tc zero_fill_aggregate(
   return value;
 }
 
+// ---- IS THERE A NIL ANYWHERE UNDER THIS VALUE? --------------------------
+//
+// ⛔ THIS IS A CRASH GUARD, AND THE CRASH IS MEASURED. `--all-witnesses
+// --max-witnesses 8` on
+// notes/coverage/poc_units/farming__Distributor__setDistributor died with
+// SIGSEGV (exit 139) while `--max-witnesses 1` and plain `--multi-property`
+// on the identical input both exited 1 with a report written. Under gdb:
+//
+//   Program received signal SIGSEGV, Segmentation fault.
+//   0x00005555576eac68 in do_type_crc (theval=std::vector of length 2, ...)
+//     at src/irep2/templates/irep2_template_utils.cpp:559
+//   559       boost::hash_combine(crc, it->do_crc());
+//   #1  constant_struct2t::do_crc_rec        (datatype_members.size() == 2)
+//   #6  constant_struct2t::do_crc_rec        (datatype_members.size() == 7)
+//   #14 equality2t::do_crc
+//
+// -- i.e. hashing an `equality2t` whose side_2 is a struct constant with a
+// NULL member. That equality is built right below, in make_blocking_expr,
+// from `value_expr`. The stack at frame 0 sits at 0x7fffffffa710, about 21 KiB
+// into an 8192 KiB stack, so THIS IS NOT STACK EXHAUSTION and the earlier
+// conjunction-balancing hypothesis (recorded as refuted in make_blocking_expr)
+// could never have addressed it.
+//
+// WHERE THE NIL COMES FROM. `zero_fill_aggregate` model-completes an aggregate
+// only when it RECOGNISES the expected type as struct/union/array. Its final
+// two lines are
+//     if (!value || !is_constant_expr(value)) return gen_zero(expected_type);
+//     return value;
+// and `is_constant_expr` is true for `constant_struct_id`, so a struct constant
+// the solver returned with unmaterialised members is handed back VERBATIM
+// whenever the expected type did not take the struct branch. `gen_zero` is not
+// the source: it `abort()`s on a type it cannot zero rather than returning nil.
+//
+// WHY THE GUARD IS HERE AND NOT IN zero_fill_aggregate. One fact, one place:
+// this is the single point where a collected value becomes an equality, and it
+// catches every route that can produce an unresolved component, including ones
+// nobody has hit yet. A fix inside one branch of zero_fill_aggregate would be a
+// second reader of the same fact and would still leave the other branches.
+static bool first_nil_component(const expr2tc &e, std::string &path)
+{
+  if (!e)
+    return true;
+  size_t n = e->get_num_sub_exprs();
+  for (size_t i = 0; i < n; ++i)
+  {
+    const expr2tc *sub = e->get_sub_expr(i);
+    // A null POINTER is a field this expression kind does not have; a present
+    // field holding a nil container is the defect. The two are different and
+    // conflating them would report every optional field as broken.
+    if (!sub)
+      continue;
+    std::string deeper;
+    if (!*sub || first_nil_component(*sub, deeper))
+    {
+      path += "[" + std::to_string(i) + "]" + deeper;
+      return true;
+    }
+  }
+  return false;
+}
+
 // Shared nondet collection logic (used by both TestComp and CTest)
 std::vector<collected_nondet_value>
 collect_nondet_values(const symex_target_equationt &target, smt_convt &smt_conv)
 {
   std::vector<collected_nondet_value> results;
   std::unordered_set<std::string> seen_nondets;
+  // See the CENSUS block below. First pass only; this function runs once per
+  // re-solve per claim and the census would otherwise be reprinted 40 times.
+  static bool census_done = false;
 
   // Use the EXACT same logic as generate_testcase
   for (auto const &SSA_step : target.SSA_steps)
@@ -1335,6 +1399,64 @@ collect_nondet_values(const symex_target_equationt &target, smt_convt &smt_conv)
       auto concrete_value = zero_fill_aggregate(
         nondet_expr->type, smt_conv.get(nondet_expr), nondet_expr, smt_conv);
 
+      // ---- A VALUE WITH AN UNRESOLVED COMPONENT IS DROPPED, LOUDLY --------
+      //
+      // See first_nil_component for the measured crash this stops. Dropping is
+      // the right action rather than merely the safe one: `sym == <a struct
+      // with a hole in it>` is not a weaker constraint, it is not a constraint
+      // at all, and every consumer of this list either hashes it (the blocking
+      // clause) or renders it (the test case).
+      //
+      // WHICH DIRECTION THIS ERRS IN, stated because it is a real cost. The
+      // blocking clause is NOT (s1 == v1 AND ... AND sk == vk); removing a
+      // conjunct makes the negation STRONGER, so the re-solve is blocked from
+      // MORE models, never from fewer. No duplicate witness can result -- what
+      // can is a genuinely distinct witness, differing only in this symbol,
+      // that is never returned. That is a completeness loss in the witness set
+      // and it is why this warns instead of staying silent: a caller counting
+      // witnesses has to be able to see that the count was capped by a
+      // modelling gap rather than by the domain.
+      std::string nil_path;
+      if (!concrete_value || first_nil_component(concrete_value, nil_path))
+      {
+        log_warning(
+          "--all-witnesses: nondet symbol '{}' has an UNRESOLVED COMPONENT at "
+          "{} -- the solver's model left part of this aggregate "
+          "unmaterialised and zero_fill_aggregate did not recognise the "
+          "expected type, so there is no value to equate it to. It is left "
+          "OUT of the blocking clause. Consequence: witnesses that differ "
+          "from this one ONLY in '{}' will not be enumerated, so the witness "
+          "count for this claim is a lower bound. Nothing else about the "
+          "witnesses already found changes",
+          sym.thename.as_string(),
+          nil_path.empty() ? "the whole value" : nil_path,
+          sym.thename.as_string());
+        continue;
+      }
+
+      // ---- TEMPORARY CENSUS (to be removed once the filter below exists) ---
+      //
+      // WHY PRINT BEFORE FILTERING. The witness pool is being spent on a
+      // quantity the unit never reads: measured on farming setDistributor,
+      // 8 witnesses per path yielded only 2-3 DISTINCT published points, and
+      // the only quantity that moved on all five paths was block.difficulty.
+      // A filter written from a guess about which nondet is which would be a
+      // filter nobody can check. The producing code already knows the LHS name
+      // and the source location of every nondet it collects; nothing printed
+      // them.
+      //
+      // ONCE ONLY, on the first collection of the run: this runs per re-solve
+      // per claim, and 5 claims x 8 witnesses x ~60 nondets is a census
+      // reprinted 40 times.
+      if (!census_done)
+        log_status(
+          "--all-witnesses CENSUS: nondet '{}' <- lhs '{}' at {}",
+          sym.thename.as_string(),
+          is_symbol2t(SSA_step.lhs)
+            ? to_symbol2t(SSA_step.lhs).thename.as_string()
+            : std::string("<not a plain symbol>"),
+          SSA_step.source.pc->location.as_string());
+
       // Store the collected value
       collected_nondet_value val;
       val.symbol_name = sym.thename.as_string();
@@ -1345,6 +1467,7 @@ collect_nondet_values(const symex_target_equationt &target, smt_convt &smt_conv)
       results.push_back(val);
     }
   }
+  census_done = true;
   return results;
 }
 
@@ -1375,7 +1498,42 @@ expr2tc make_blocking_expr(const std::vector<collected_nondet_value> &nondets)
   // any other float value compare bit patterns via bitcast to an
   // unsigned bv of the same width — structural equality, distinguishing
   // +0 from -0 and finite values exactly.
-  expr2tc conj;
+  // ---- THE CONJUNCTION IS BALANCED, NOT A LEFT SPINE ----
+  //
+  // `conj = and2tc(conj, eq)` builds a chain whose DEPTH is the number of
+  // nondets, and every structural walk over an irep is recursive (do_crc_rec,
+  // and with it every hash of the expression), so such a walk needs one stack
+  // frame per conjunct. Balancing takes the depth from N to ceil(log2(N)).
+  //
+  // ⛔ THIS DOES NOT FIX THE KNOWN CRASH, AND IT WAS WRITTEN BELIEVING IT
+  // WOULD. Recorded here rather than quietly kept, because a change whose
+  // stated reason has been refuted is exactly what later gets quoted as a fix.
+  //
+  // MEASURED on notes/coverage/poc_units/farming__Distributor__setDistributor,
+  // same input, same bound, same binary within each row:
+  //
+  //   --multi-property, no --all-witnesses          exit 1, report written
+  //   --all-witnesses --max-witnesses 1             exit 1, report written
+  //   --all-witnesses --max-witnesses 8             exit 139 (SIGSEGV)
+  //   ... and 139 again AFTER this balancing landed
+  //
+  // So the defect needs at least TWO witnesses -- i.e. it is on the
+  // blocking-clause / re-solve path, not on multi-property -- and the deep
+  // recursion the backtrace shows (40 frames of `and2t::do_crc_rec` above an
+  // `equality2t` whose side is a 7-member `constant_struct2t`) is NOT, or not
+  // only, the spine built here. Where it is built is still unknown.
+  //
+  // The change is kept because it is semantically identical (`and` is
+  // associative, the same conjunct set is negated, nothing is capped or
+  // dropped) and strictly reduces depth. It is NOT evidence about the crash.
+  //
+  // ⛔ THE ALTERNATIVE "FIX" WAS NOT TAKEN, deliberately. Dropping the
+  // struct-typed nondets would shorten the walk and would silently weaken the
+  // clause: two witnesses differing only inside a struct would stop being
+  // distinguished, and the enumeration would return duplicates that READ as
+  // distinct inputs.
+  std::vector<expr2tc> conjuncts;
+  conjuncts.reserve(nondets.size());
   for (const auto &n : nondets)
   {
     expr2tc eq;
@@ -1396,9 +1554,23 @@ expr2tc make_blocking_expr(const std::vector<collected_nondet_value> &nondets)
     {
       eq = equality2tc(n.symbol_expr, n.value_expr);
     }
-    conj = conj ? expr2tc(and2tc(conj, eq)) : eq;
+    conjuncts.push_back(eq);
   }
-  return not2tc(conj);
+  // Fold pairwise until one term remains. An odd tail is carried, not paired
+  // with a synthesised `true`: an extra constant would change the expression
+  // the solver sees for no reason, and this file's whole claim is that the
+  // clause is the same one.
+  while (conjuncts.size() > 1)
+  {
+    std::vector<expr2tc> next;
+    next.reserve((conjuncts.size() + 1) / 2);
+    for (size_t i = 0; i + 1 < conjuncts.size(); i += 2)
+      next.push_back(and2tc(conjuncts[i], conjuncts[i + 1]));
+    if (conjuncts.size() % 2)
+      next.push_back(conjuncts.back());
+    conjuncts.swap(next);
+  }
+  return not2tc(conjuncts.front());
 }
 
 // TestComp XML generation

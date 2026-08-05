@@ -70,7 +70,7 @@ UINT256_MAX = (1 << 256) - 1
 
 
 def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
-        memlimit="8g", esbmc_args=()):
+        memlimit="8g", esbmc_args=(), result_only=True):
     """One ESBMC invocation. Returns its combined output.
 
     `ast` names a PREBUILT .solast, passed positionally with --sol still naming
@@ -100,7 +100,28 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
         cmd.append(os.path.abspath(ast))
     cmd += ["--sol", os.path.abspath(sol), "--contract", contract,
             "--solidity-path-coverage", "--solidity-max-tx", str(max_tx),
-            "--result-only", "--memlimit", memlimit]
+            "--memlimit", memlimit]
+    # ---- --result-only SUPPRESSES THE COUNTEREXAMPLE, AND ONE QUERY NEEDS IT
+    #
+    # Every round here judges on the RESULT line alone, so the trace is noise
+    # and the flag stays on -- that is why it is the default of this parameter
+    # and why no other call site passes it.
+    #
+    # The single-point check of §Certification is the exception. Its FAILED
+    # verdict has TWO possible causes -- the witness trips a compiler-inserted
+    # check, or a quantity outside the coordinate set is still free -- and this
+    # driver has been REPORTING THEM UNSEPARATED, in those words, for want of
+    # the one thing that names which: ESBMC's own `Violated property:` block.
+    # That block is part of the counterexample, so asking for the verdict while
+    # suppressing the trace was asking a question whose answer was thrown away
+    # before it could be read.
+    #
+    # It is an OUTPUT flag. The query put to the solver is the same either way;
+    # only what gets printed changes. The certified region of a path that does
+    # NOT reach this branch must therefore come back byte-identical, which is
+    # the control on this change.
+    if result_only:
+        cmd.append("--result-only")
     if focus:
         cmd += ["--focus-function", focus]
     cmd += extra
@@ -398,8 +419,39 @@ def coord_values(c, state_structs=False):
 
 def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     ast=None, focus=None, memlimit="8g", path_function=None,
-                    esbmc_args=(), state_structs=False):
-    """Step 1. Returns (paths, refused) where paths = [(enc, depth, ce)]."""
+                    esbmc_args=(), state_structs=False, probe_witnesses=0):
+    """Step 1. Returns (paths, refused, caveats, members).
+
+    `paths` = [(enc, depth, ce)]; `members` = {enc: {coord: [v, ...]}}, the
+    values a coordinate is KNOWN to take on that path.
+
+    ---- WHY THE MEMBERS COME FROM THIS RUN AND NOT A SECOND ONE ----
+
+    `--all-witnesses --max-witnesses N` makes each REFUTED claim report up to N
+    distinct input tuples instead of one. Under `--solidity-path-coverage` a
+    refuted claim IS a path, so every witness arrives ALREADY ATTRIBUTED to the
+    path it walks -- there is no "which path does this input take" question to
+    answer and no query to pay for it. The enumeration run happens anyway, so
+    the extra witnesses cost one flag.
+
+    MEASURED on a 17-line contract, same unit and same bound, one flag apart:
+        without:  witnesses_total  6,  F_with_multiple_witnesses 0
+        with -8:  witnesses_total 48,  F_with_multiple_witnesses 6
+    and `U_undecided` stayed 2 in both -- the two paths that merely held inside
+    the bound gained NO witnesses, which is the negative control: the flag
+    cannot manufacture evidence for a path nothing reaches.
+
+    ⛔ ONE DIRECTION ONLY IS EVIDENCE. A coordinate taking MORE THAN ONE value
+    across the witnesses is proof it is not a point. A coordinate taking ONE
+    value proves NOTHING -- the solver returns whatever model it likes and is
+    under no obligation to vary anything it was not asked about. So this returns
+    the member SET and never a flag saying "point".
+
+    Read by `coord_values`, the SAME function that reads the claim's own
+    counterexample. A witness node carries the same `inputs`/`env`/
+    `entry_storage` shape, and one fact read by two readers is how this project
+    has already made two ledgers disagree.
+    """
     # FRESHNESS, BY REMOVAL -- the same guard `certify` already has, and this is
     # the step that needed it more.
     #
@@ -427,7 +479,11 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     report = os.path.join(cwd, "cov-report.json")
     if os.path.exists(report):
         os.remove(report)
-    log = run(esbmc, sol, contract, ["--cov-report-json"], max_tx, timeout, cwd,
+    enum_args = ["--cov-report-json"]
+    if probe_witnesses:
+        enum_args += ["--all-witnesses", "--max-witnesses",
+                      str(probe_witnesses)]
+    log = run(esbmc, sol, contract, enum_args, max_tx, timeout, cwd,
               ast=ast, focus=focus, memlimit=memlimit, esbmc_args=esbmc_args)
     if not os.path.exists(report):
         # Do NOT let this surface as a FileNotFoundError about a JSON file.
@@ -477,18 +533,43 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                 f"That is a wiring failure, not a result.")
 
     out, refused = [], set()
+    # Payload quantities that are NOT candidate coordinates, kept BESIDE the
+    # coordinate dictionary rather than inside it. See payload_extras: they are
+    # carried so the comparison can say the two counterexamples disagree about
+    # them, and they must never reach a box.
+    path_extras = {}
     for c in witnessed:
         ce, ref = coord_values(c, state_structs=state_structs)
+        path_extras[int(c["path_id"])] = payload_extras(c)
         refused.update(ref)
-        out.append((int(c["path_id"]), int(c["path_depth"]), ce))
+        # THE WITNESSES OF THIS CLAIM, AND OF NO OTHER. A claim's witnesses are
+        # inputs that walk THIS (enc, depth); the duplicate-enc claim dropped
+        # below is a different transaction instance at a different depth, and a
+        # stage-2 query identifies a path by BOTH. Attributing its witnesses
+        # here would hand the kept path members of a domain it does not have.
+        #
+        # KEPT AS WHOLE VECTORS, NOT PROJECTED TO PER-COORDINATE SETS. A witness
+        # is a member of the path's domain only if it also satisfies the PINS,
+        # and the pins are not known here -- they are settled in `main`, after
+        # the auto msg.value pin and the unsettable-coordinate pins. Projecting
+        # first would destroy exactly the information the pin filter needs: a
+        # vector violating one pin would still contribute its values on every
+        # OTHER coordinate, as though a member of a slice it is not in.
+        vecs = [ce]
+        for w in (c.get("witnesses") or []):
+            wce, _ = coord_values(w, state_structs=state_structs)
+            vecs.append(wce)
+        out.append((int(c["path_id"]), int(c["path_depth"]), ce, vecs))
     # Same enc can appear once per transaction instance; keep one of each.
-    seen, uniq = set(), []
-    for enc, depth, ce in out:
+    seen, uniq, members = set(), [], {}
+    for enc, depth, ce, vecs in out:
         if enc in seen:
             continue
         seen.add(enc)
         uniq.append((enc, depth, ce))
-    return uniq, sorted(refused), extraction_caveats(witnessed)
+        members[enc] = vecs
+    return (uniq, sorted(refused), extraction_caveats(witnessed), members,
+            path_extras)
 
 
 # ---- WHY THERE IS NO WITNESS, READ FROM THE REPORT RATHER THAN ASSUMED -------
@@ -906,10 +987,28 @@ def mapping_state_vars(ast_path, contract=None):
     values and that coordinate is a function of an input. That one is reachable
     only by proposing it, which is what this function exists to do.
 
-    ONLY A VALUE-TYPE KEY AND A SCALAR VALUE are returned. A nested mapping or a
-    struct value is refused for the same reason the storage-layout side refuses
-    it -- a second hash or a member offset -- and the caller reports each
-    refusal by name rather than dropping it silently.
+    NESTING AND STRUCT VALUES ARE BOTH RETURNED NOW, and the entry says which.
+    The old refusal read "a nested mapping needs a second hash and a struct
+    needs a member offset", and by the time this was written HALF of it was
+    stale: notes/coverage/poc/D44_MapStructValue.sol is a matched pair whose
+    emitted PUTs carry `balStruct[k].amount` and `balStruct[k].tag` with the
+    right mask and shift, so the member offset demonstrably works end to end.
+    What that pair also settled is where the remaining cost is -- with the
+    struct ruled out, aqua's silent four-level `_balances` is the NESTING.
+
+    THE SHAPE, and it is backward compatible on purpose so the callers and
+    their tests keep working unchanged:
+
+        {name: (key_type, value_type)}                  -- one level, scalar
+        {name: ((kt1, kt2, ...), value_type, tails)}    -- nested and/or struct
+
+    `tails` is [""] for a scalar value and [".field", ...] for a struct one.
+    A caller that only understands the 2-tuple still reads element 0 as the key
+    type; it will see a tuple rather than a string and match no parameter,
+    which fails CLOSED -- it proposes nothing rather than proposing a
+    one-level name for a four-level store.
+
+    A key that is not a value type is still refused, per level and by level.
     """
     ast = _ast_root(ast_path)
     if ast is None:
@@ -918,6 +1017,12 @@ def mapping_state_vars(ast_path, contract=None):
     if nodes is None:
         nodes = [ast]
     out, refused = {}, []
+    # Struct definitions are collected from the WHOLE root, never from the
+    # contract chain: a struct used as a mapping value is routinely declared in
+    # a library or at file scope, and scoping the search to the chain would
+    # refuse it as "unknown" for a reason that is about this walk, not about
+    # the source.
+    structs = _struct_scalar_fields(ast)
 
     def walk(n):
         if isinstance(n, dict):
@@ -925,20 +1030,47 @@ def mapping_state_vars(ast_path, contract=None):
                     and n.get("stateVariable") and n.get("name")):
                 tn = n.get("typeName") or {}
                 if tn.get("nodeType") == "Mapping":
-                    vt = tn.get("valueType") or {}
-                    kt = tn.get("keyType") or {}
                     nm = n["name"]
-                    if vt.get("nodeType") != "ElementaryTypeName":
-                        refused.append(
-                            f"{nm} (value is {_type_string(vt) or 'non-scalar'};"
-                            f" a nested mapping needs a second hash and a struct"
-                            f" needs a member offset)")
-                    elif kt.get("nodeType") != "ElementaryTypeName":
-                        refused.append(
-                            f"{nm} (key is {_type_string(kt) or 'non-scalar'},"
-                            f" not a value type)")
+                    # ---- PEEL EVERY LEVEL, collecting the key types ----
+                    kts, cur, bad = [], tn, False
+                    while isinstance(cur, dict) and cur.get("nodeType") == "Mapping":
+                        kt = cur.get("keyType") or {}
+                        if kt.get("nodeType") != "ElementaryTypeName":
+                            refused.append(
+                                f"{nm} (key at level {len(kts)} is "
+                                f"{_type_string(kt) or 'non-scalar'}, not a "
+                                f"value type)")
+                            bad = True
+                            break
+                        kts.append(_type_string(kt))
+                        cur = cur.get("valueType") or {}
+                    if bad:
+                        pass
+                    elif cur.get("nodeType") == "ElementaryTypeName":
+                        vts = _type_string(cur)
+                        if len(kts) == 1:
+                            # Unchanged 2-tuple for the one-level scalar case,
+                            # so every existing caller and test is bit-identical.
+                            out.setdefault(nm, (kts[0], vts))
+                        else:
+                            out.setdefault(nm, (tuple(kts), vts, [""]))
                     else:
-                        out.setdefault(nm, (_type_string(kt), _type_string(vt)))
+                        sname = _user_type_name(cur)
+                        fields = structs.get(sname) if sname else None
+                        if fields:
+                            out.setdefault(
+                                nm,
+                                (tuple(kts) if len(kts) > 1 else (kts[0],),
+                                 f"struct {sname}",
+                                 ["." + f for f, _t in fields]))
+                        else:
+                            refused.append(
+                                f"{nm} (value is "
+                                f"{_type_string(cur) or sname or 'non-scalar'}"
+                                f"; it is neither an elementary type nor a "
+                                f"struct with scalar fields this walk can "
+                                f"resolve, so no scalar observable can be "
+                                f"named inside it)")
             for v in n.values():
                 walk(v)
         elif isinstance(n, list):
@@ -948,6 +1080,60 @@ def mapping_state_vars(ast_path, contract=None):
     for node in nodes:
         walk(node)
     return out, refused
+
+
+def _user_type_name(tn):
+    """The struct/contract name a UserDefinedTypeName node refers to.
+
+    Two spellings, because solc changed it: modern ASTs put it in
+    `pathNode.name`, older ones directly in `name`. Reading only one silently
+    returns None on the other and the value is then refused as unresolvable --
+    a refusal about the reader, reported as a fact about the source.
+    """
+    if not isinstance(tn, dict):
+        return None
+    pn = tn.get("pathNode")
+    if isinstance(pn, dict) and pn.get("name"):
+        return str(pn["name"]).split(".")[-1]
+    if tn.get("name"):
+        return str(tn["name"]).split(".")[-1]
+    return None
+
+
+def _struct_scalar_fields(root):
+    """{struct name: [(field, elementary type)]} -- SCALAR members only.
+
+    NOT the same question as `declared_struct_fields`, which returns a flat set
+    of every field name declared anywhere and exists to spot lowering
+    artifacts. This one needs the fields OF ONE struct, in order, with their
+    types, so a mapping's struct value can be named field by field. Two
+    functions because they answer two questions; the flat set cannot answer
+    this one and narrowing it would break its own caller.
+
+    A non-scalar member (a nested struct, an array, a mapping) is simply not
+    listed: it carries no interval, exactly as for a struct parameter.
+    """
+    out = {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("nodeType") == "StructDefinition" and n.get("name"):
+                fields = []
+                for m in n.get("members", []) or []:
+                    if not isinstance(m, dict) or not m.get("name"):
+                        continue
+                    mt = m.get("typeName") or {}
+                    if mt.get("nodeType") == "ElementaryTypeName":
+                        fields.append((m["name"], _type_string(mt)))
+                out.setdefault(n["name"], fields)
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(root)
+    return out
 
 
 def unit_params(ast_path, contract, unit):
@@ -1004,18 +1190,55 @@ def propose_slot_coords(maps, params, limit):
     """
     cand, skipped = [], []
     for m in sorted(maps):
-        kt, _vt = maps[m]
-        keys = [p for p, pt in params if pt == kt]
-        if kt == "address":
-            keys.append("msg.sender")
-        if not keys:
-            skipped.append(
-                f"state.{m}[...] (this unit has no parameter of the key type "
-                f"'{kt}', and the key type is not address so msg.sender does "
-                f"not apply)")
+        spec = maps[m]
+        kts = spec[0]
+        # A one-level scalar mapping still arrives as the plain 2-tuple, so
+        # both shapes are read here rather than forcing every caller to change.
+        if isinstance(kts, str):
+            kts = (kts,)
+        tails = list(spec[2]) if len(spec) > 2 else [""]
+
+        # ---- ONE CANDIDATE KEY SET PER LEVEL ----
+        per_level, bad = [], False
+        for lvl, kt in enumerate(kts):
+            keys = [p for p, pt in params if pt == kt]
+            if kt == "address":
+                keys.append("msg.sender")
+            if not keys:
+                skipped.append(
+                    f"state.{m}[...] (at key level {lvl} this unit has no "
+                    f"parameter of the key type '{kt}', and the key type is "
+                    f"not address so msg.sender does not apply). A nested "
+                    f"store needs a key at EVERY level: one missing level "
+                    f"leaves no slot to name, and a name with fewer keys "
+                    f"would denote a whole sub-store instead")
+                bad = True
+                break
+            per_level.append(keys)
+        if bad:
             continue
-        for k in keys:
-            cand.append(f"state.{m}[{k}]")
+
+        # ---- THE CROSS PRODUCT IS MULTIPLICATIVE, AND THAT IS SAID OUT LOUD --
+        #
+        # levels x keys-per-level x struct-fields. Four levels with three
+        # candidate keys each and a two-field value is 162 names for ONE
+        # mapping, and the ladder's cost is multiplicative in the coordinate
+        # count. The caller's --slot-coords budget still cuts, and whatever it
+        # cuts is named below rather than dropped -- but the reader has to know
+        # the pool is this large before reading a truncated list.
+        combos = [[]]
+        for keys in per_level:
+            combos = [c + [k] for c in combos for k in keys]
+        if len(kts) > 1 or tails != [""]:
+            skipped.append(
+                f"state.{m} is a {len(kts)}-level store with "
+                f"{len(tails)} scalar observable(s) per slot: "
+                f"{len(combos) * len(tails)} candidate name(s) before the "
+                f"budget. This is a note, not a refusal")
+        for combo in combos:
+            base = f"state.{m}" + "".join(f"[{k}]" for k in combo)
+            for t in tails:
+                cand.append(base + t)
     if limit and len(cand) > limit:
         skipped += [f"{c} (over the --slot-coords budget of {limit})"
                     for c in cand[limit:]]
@@ -1161,7 +1384,7 @@ def budget_probe_values(values_by_coord, n_paths, budget):
                  f"solver in 300s, of which 6.9s was solving")
 
 
-def level0_candidates(paths, coords):
+def level0_candidates(paths, coords, perturb=False, type_ranges=None):
     """LEVEL 0. Per coordinate, the values its siblings' counterexamples take.
 
     The five-level descent is single point -> small set -> interval, and this
@@ -1188,13 +1411,272 @@ def level0_candidates(paths, coords):
     is a cross-coordinate relation; it changes definition 6 (a region is a
     PRODUCT of per-coordinate sets) and lands on proposition 11, so it is an
     open method-layer item and is deliberately not attempted here.
+
+    ---- `perturb` : THE SECOND VALUE THE TOOL ITSELF ASKS FOR ----
+
+    A coordinate whose candidate list holds ONE value cannot distinguish a
+    genuine point domain from a path with NO INPUTS AT ALL under the current
+    pins: an unsatisfiable antecedent makes every probe hold vacuously, in both
+    directions, at any value. That is not an inference -- the tool prints it,
+    once per affected path, and names the repair:
+
+        [level0] ⚠ enc=2: the point(s) on state._distributor, state._owner,
+        state._totalSupply came from a ONE-VALUE candidate list, which CANNOT
+        distinguish a genuine point domain from this path having NO inputs at
+        all ... Try a second value on those coordinates: if both directions
+        still hold, the interval inverts and the path is excluded from this
+        slice.
+
+    MEASURED, farming/setDistributor: FIVE of five witnessed paths carried that
+    warning, on `state._distributor` and `state._totalSupply` every time. And
+    the corpus-wide shape it predicts is already in the records -- 20 of the 137
+    non-certified paths report `region is EMPTY on <coords> (lo > hi) under the
+    current pins`, which IS the inversion, discovered one stage later and at
+    full ladder cost.
+
+    So `perturb` adds the neighbours v-1 and v+1 to any coordinate whose list is
+    a single value. Three outcomes, and they are three different facts:
+
+      * BOTH neighbours hold  -> the antecedent is vacuous; the interval
+        inverts and the path is excluded from this slice. Not a point.
+      * ONE neighbour holds   -> the domain is contiguous on that side only, so
+        generalise in that direction and nowhere else.
+      * NEITHER holds         -> a genuine single point. This is the only
+        reading under which the old one-value list was right.
+
+    CLAMPED TO THE COORDINATE'S OWN TYPE RANGE, from `type_ranges` -- the tool
+    publishes `coordinate '<c>' has TYPE RANGE [lo, hi]` and this file already
+    parses it (TYPE_RANGE_RE). Probing outside the type is not a neighbour: the
+    value wraps and the probe measures a different number, which is the same
+    defect that once produced an impossible bracket `lower in [2^255, 1)`.
+    Without a range for a coordinate the neighbour is added only where it cannot
+    leave an unsigned type (v-1 needs v > 0), which is the conservative half.
+
+    OFF BY DEFAULT. Turning it on changes the candidate list of every unit, so
+    it changes what every recorded region is a statement ABOUT -- the same house
+    rule --level0, --max-holes and --max-region-pieces follow.
     """
     out = {}
     for c in coords:
         vals = sorted({ce[c] for _, _, ce in paths if c in ce})
-        if vals:
-            out[c] = vals
+        if not vals:
+            continue
+        if perturb and len(vals) == 1:
+            v = vals[0]
+            lo, hi = (type_ranges or {}).get(c, (None, None))
+            nb = []
+            if v - 1 >= (lo if lo is not None else 0):
+                nb.append(v - 1)
+            # No range known -> do NOT add v+1. An unsigned coordinate sitting
+            # at its type maximum would wrap to 0, and a probe at 0 answers
+            # about a value the path may genuinely contain -- turning "no
+            # neighbour above" into "the neighbour above holds", i.e. inventing
+            # the vacuity verdict. The conservative half is added instead, and
+            # the caller reports which coordinates got only one side.
+            if hi is not None and v + 1 <= hi:
+                nb.append(v + 1)
+            vals = sorted(set(vals) | set(nb))
+        out[c] = vals
     return out
+
+
+def outward_ladder(m, M, tlo, thi, budget=0):
+    """The ladder ANCHORED at what is already known, walking OUTWARD only.
+
+    `[m, M]` is bracketed by known members of the path's domain, so the boundary
+    this ladder is looking for cannot be inside it. Rungs go at m and M, then
+    double away from them: M+1, M+2, M+4, ... and m-1, m-2, m-4, ..., ending at
+    the coordinate's own type limits.
+
+    WHY THIS IS THE WHOLE POINT, and it is a RESOLUTION argument, not a cost one.
+    The shared geometric ladder is 0, 1, 2, 4, ... 2^k -- anchored at ZERO, which
+    is a place with no evidence attached to it. MEASURED on
+    notes/coverage/poc/P14_Ladder.sol `bump`, whose enc=7 domain is amt in
+    [10, 20] with the separation at 21:
+
+        from 0   the rungs nearest the boundary are 16 and 32, so the bracket
+                 comes back (16, 32] -- resolution 16, and the refine round
+                 starts from a span it has to bisect four more times
+        from M   the first rung is 21 itself, so the bracket is (20, 21] --
+                 exact, in the SAME batch, with no refine round at all
+
+    Same number of queries, different places to put them, and the places are
+    chosen by evidence the enumeration already produced.
+
+    ⛔ IT IS NOT A SEARCH. Every rung is laid before the batch and judged in it;
+    nothing here reacts to an answer. That is the property the withdrawn
+    widening route lost and the one the method is built on.
+
+    The type limits are included so the coordinate stays FULLY BOUNDED: a
+    half-open coordinate blocks the subtraction entirely, which is the defect
+    `brackets_for` already records.
+
+    ---- `budget`: HOW MANY RUNGS PER SIDE, AND WHY THE CAP IS NEEDED ----
+
+    MEASURED on farming/deposit, and it is a cost result the resolution argument
+    above does not cover: uncapped, this laid 5264 rungs across 24
+    (path, coordinate) pairs -- 259 for a uint256 anchored at [0, 1] -- and the
+    single solver batch carrying them did not return in 780s. The run died as
+    `[run] TIMEOUT after 900s` inside that round, while the arm that skips the
+    round entirely finished the same unit in 281s with every path named. Per-path
+    anchoring changed WHERE the rungs go, not HOW MANY there are, and on a
+    256-bit coordinate the count is what binds.
+
+    `budget=N` keeps the N rungs NEAREST the member bracket on each side and
+    drops the rest. Nearest, because those are the ones the evidence points at:
+    the first rung beyond a value already proved to be in the domain is where the
+    boundary is if it is anywhere close, and that is the entire reason for
+    anchoring here rather than at zero.
+
+    ⛔ WHAT IT COSTS, and the caller must print it: the outer rungs are the ones
+    that would have bracketed a FAR boundary. Dropped, a far boundary comes back
+    as a span reaching the type limit, which the refine round then bisects -- the
+    same coarse outcome as the shared ladder, on that coordinate only. The
+    anchors `m`, `M` and both type limits are NEVER dropped: without the limits
+    the coordinate is half-open and the subtraction is blocked outright.
+
+    `budget=0` means UNCAPPED and is the default, so a run that does not ask for
+    the cap lays exactly the ladder it laid before this parameter existed.
+    """
+    vals = {m, M, tlo, thi}
+    up, down = [], []
+    step = 1
+    while M + step <= thi:
+        up.append(M + step)
+        step *= 2
+    step = 1
+    while m - step >= tlo:
+        down.append(m - step)
+        step *= 2
+    if budget > 0:
+        # NEAREST-FIRST. Both lists are already generated outward from the
+        # anchors, so a prefix IS the nearest N.
+        up, down = up[:budget], down[:budget]
+    vals.update(up)
+    vals.update(down)
+    return sorted(v for v in vals if tlo <= v <= thi)
+
+
+def known_inside(paths, members, coords, pins, type_ranges=None):
+    """The PATH-LABELLED POINT POOL, turned into two things the ladder can use.
+
+    Returns (prune, endpoints, kept, notes).
+
+      prune[c]     = (lo, hi), an OPEN interval every one of whose interior
+                     values has a pre-determined answer on EVERY path of this
+                     round, so laying a ladder probe there buys nothing.
+      endpoints[c] = the values that DO buy something: each path's extreme
+                     known members, and their immediate neighbours.
+      kept[enc][c] = the member values that survived the pin filter, so the
+                     caller can report what the pool actually holds.
+      notes        = lines the caller must print; several of them are the
+                     difference between "measured nothing" and "not collected".
+
+    ---- WHY AN INTERIOR PROBE IS PRE-DETERMINED, WHICH IS NOT A HEURISTIC ----
+
+    An outer-box round asks, per path p and per candidate v, whether `c <= v`
+    holds for every input walking p, and whether `c >= v` does. Let m and M be
+    the smallest and largest values c takes across p's KNOWN members. Then for
+    any m < v < M:
+
+        `c <= v` is REFUTED   -- the member at M walks p and exceeds v
+        `c >= v` is REFUTED   -- the member at m walks p and falls below it
+
+    Both answers are known before the query is issued. The probe is not a
+    weaker probe or a probe likely to be uninformative; it is a question whose
+    answer is already on disk. Dropping it removes emitted claims and nothing
+    else, and the round is EMISSION-bound (measured: 1548 values per coordinate
+    put 148 queries in front of the solver in 300s, of which 6.9s was solving).
+
+    ---- WHY THE BRACKET CANNOT GET WORSE, PROVIDED THE ENDPOINTS ARE KEPT ----
+
+    The upper bracket is (a, b] where a is the largest probed value REFUTED and
+    b the smallest that HELD. Dropping interior values removes candidates for a,
+    which could only make a smaller -- i.e. the bracket wider -- if nothing at
+    or above them were probed. `endpoints` keeps M itself, and every dropped
+    value is strictly below M, so a >= M >= every dropped value. The same
+    argument mirrored gives the lower bracket. So this is a strict reduction in
+    claims at no cost in resolution, and the must-flip is exactly that: fewer
+    ladder values, IDENTICAL regions.
+
+    ---- THE INTERSECTION, AND WHY IT IS OFTEN EMPTY ----
+
+    One ladder is laid per COORDINATE and answered for every path in the batch,
+    so a value may be dropped only when it is pre-determined for ALL of them:
+    lo = max over paths of m_p, hi = min over paths of M_p. Paths whose domains
+    do not overlap on c yield an empty intersection and nothing is dropped. That
+    is the honest outcome, it is reported as such, and it is NOT read as "the
+    probes bought nothing" -- see the second half, which is unconditional.
+
+    ---- THE NEIGHBOURS ARE THE PERTURBATION PROBE ----
+
+    m-1 and M+1 are added, clamped to the coordinate's published TYPE RANGE.
+    They are what answers "is this side a WALL or a HOLE": if `c <= M` holds,
+    the domain stops exactly at M and no ladder above it can find anything; if
+    M+1 is refuted the domain continues and the search has a direction. Probing
+    outside the type is NOT a neighbour -- the value wraps and the probe
+    measures a different number -- so a side with no published range is left
+    out and named, rather than guessed.
+
+    ⛔ THE POOL IS NOT A CERTIFIED REGION. [m, M] means "both endpoints are
+    known members", never "everything between them is". For a path whose domain
+    is disconnected the interior may hold non-members; that is precisely why
+    this only removes QUESTIONS WHOSE ANSWER IS KNOWN and never widens a box.
+    """
+    notes, kept = [], {}
+    n_violate = n_missing = 0
+    for enc, _, _ in paths:
+        live = []
+        for v in (members.get(enc) or []):
+            bad = [n for n, pv in pins.items() if n in v and v[n] != pv]
+            gone = [n for n in pins if n not in v]
+            if bad:
+                n_violate += 1
+                continue
+            if gone:
+                # NOT a member of the slice as far as anything here can tell.
+                # Discarded rather than assumed to satisfy the pin: a vector
+                # silently admitted on a pin nobody checked would put values
+                # into the pool from outside the slice being generalised, and
+                # every use below treats a pool value as a KNOWN MEMBER.
+                n_missing += 1
+                continue
+            live.append(v)
+        per = {}
+        for c in coords:
+            vals = sorted({v[c] for v in live if c in v})
+            if vals:
+                per[c] = vals
+        kept[enc] = per
+    if n_violate or n_missing:
+        notes.append(
+            f"[probe] {n_violate} witness vector(s) DISCARDED for violating a "
+            f"pin and {n_missing} for not carrying every pinned name. A pooled "
+            f"value is used as a KNOWN MEMBER of the slice, so a vector that "
+            f"is not in the slice may not contribute one")
+
+    prune, endpoints = {}, {}
+    for c in coords:
+        per_path = [kept[enc].get(c) for enc, _, _ in paths]
+        if any(v is None for v in per_path):
+            # A path with no member on c leaves every value on c informative
+            # FOR THAT PATH, and the ladder is shared, so nothing may be
+            # dropped. A proposed mapping slot is exactly this case.
+            continue
+        los = [v[0] for v in per_path]
+        his = [v[-1] for v in per_path]
+        lo, hi = max(los), min(his)
+        if lo + 1 < hi:
+            prune[c] = (lo, hi)
+        ends = set(los) | set(his)
+        tlo, thi = (type_ranges or {}).get(c, (None, None))
+        for v in sorted(ends):
+            if tlo is not None and v - 1 >= tlo:
+                ends.add(v - 1)
+            if thi is not None and v + 1 <= thi:
+                ends.add(v + 1)
+        endpoints[c] = sorted(ends)
+    return prune, endpoints, kept, notes
 
 
 def single_point_coords(box):
@@ -1377,7 +1859,8 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
                 max_tx, timeout, cwd, spans=None, geometric=False,
                 ast=None, focus=None, memlimit="8g", values_by_coord=None,
                 extra_values=None, type_ranges=None,
-                claim_budget=0, esbmc_args=()):
+                claim_budget=0, esbmc_args=(), prune_inside=None,
+                path_values=None):
     """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned).
 
     `values_by_coord` overrides the ladder for the coordinates it names, which
@@ -1391,6 +1874,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     extra_values = extra_values or {}
     spec_coords = []
     geo = {}
+    pruned = {}
     for c in coords:
         if c in values_by_coord:
             spec_coords.append(
@@ -1424,6 +1908,20 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             # measured before it.
             tr = (type_ranges or {}).get(c, (0, UINT256_MAX))
             vals = [str(v) for v in geometric_values(tr[1], tr[0])]
+            # ---- DROP THE RUNGS WHOSE ANSWER IS ALREADY ON DISK ----
+            #
+            # `prune_inside[c]` is an OPEN interval whose interior is bracketed
+            # by KNOWN MEMBERS of every path in this batch, so both directions
+            # are refuted there before the query is issued (see `known_inside`).
+            # The endpoints themselves arrive through `extra_values` and are
+            # deliberately NOT dropped: they are what keeps the bracket from
+            # widening, and without them this would trade claims for resolution
+            # instead of removing questions that have no answer to give.
+            pr = (prune_inside or {}).get(c)
+            if pr:
+                before = len(vals)
+                vals = [v for v in vals if not (pr[0] < int(v) < pr[1])]
+                pruned[c] = (before - len(vals), pr)
             geo[c] = sorted(set(vals + extra), key=int)
             spec_coords.append({"name": c, "values": None})
         else:
@@ -1471,6 +1969,69 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
             "paths": [{"enc": e, "depth": d,
                        "ce": {k: str(v) for k, v in ce.items() if k in coords}}
                       for e, d, ce in paths]}
+    # ---- PER-PATH LADDERS, WHICH ONE SHARED `coords` LIST CANNOT EXPRESS ----
+    #
+    # A rung is worth laying for a path only OUTSIDE that path's known domain,
+    # and two paths of one unit are separated precisely by the coordinate being
+    # measured -- so what is worth probing for one is exactly what is not worth
+    # probing for its sibling. MEASURED on P14_Ladder/bump with eight witnesses
+    # per path: enc=7's known members bracket [16, 20] and enc=6's bracket
+    # [2^256-4, 2^256-1]. The intersection is EMPTY, so the shared list could
+    # drop nothing at all -- which the round reported, and which is the general
+    # case rather than bad luck on that contract.
+    #
+    # The tool takes this as `paths[].coords[].values` and REPLACES the shared
+    # ladder for that (path, coordinate). It refuses an EMPTY list rather than
+    # reading it as "no probe here", so a coordinate can never end up silently
+    # unmeasured for one path while the spec claims to have specified it.
+    # ---- THE CLAIM BUDGET HAS TO REACH THIS LIST TOO ----
+    #
+    # `budget_probe_values` thins `geo`, and `geo` is the SHARED ladder. A
+    # per-path list bypasses it entirely, so --claim-budget would silently stop
+    # binding the moment per-path ladders were switched on -- a flag that cannot
+    # fire looks exactly like one that fired and found nothing, which is the
+    # shape this file names in six other places. Same arithmetic as the shared
+    # case: claims = values x 2 directions, summed over the (path, coordinate)
+    # pairs, and never below 2 per pair (one value cannot tell a point domain
+    # from a vacuous path).
+    pv_note = None
+    if path_values and claim_budget > 0:
+        npair = sum(len(p) for p in path_values.values()) or 1
+        per_pair = max(2, claim_budget // (npair * 2))
+        thinned = {}
+        n_thin = 0
+        for enc, per in path_values.items():
+            thinned[enc] = {}
+            for c, vs in per.items():
+                if len(vs) > per_pair:
+                    thinned[enc][c] = thin_to(list(vs), per_pair)
+                    n_thin += 1
+                else:
+                    thinned[enc][c] = list(vs)
+        if n_thin:
+            pv_note = (f"{n_thin} per-path ladder(s) thinned to {per_pair} "
+                       f"rung(s) to keep the round inside {claim_budget} "
+                       f"emitted claim(s) over {npair} (path, coordinate) "
+                       f"pair(s). Endpoints are always kept, so the coordinate "
+                       f"stays fully bounded")
+        path_values = thinned
+    n_over = 0
+    for entry in spec["paths"]:
+        per = (path_values or {}).get(entry["enc"]) or {}
+        over = [{"name": n, "values": [str(v) for v in vs]}
+                for n, vs in sorted(per.items()) if vs and n in coords]
+        if over:
+            entry["coords"] = over
+            n_over += len(over)
+    if pv_note:
+        print(f"[round] PER-PATH LADDERS THINNED: {pv_note}")
+    if path_values is not None:
+        print(f"[round] PER-PATH LADDERS: {n_over} (path, coordinate) "
+              f"override(s) written into the spec"
+              + ("" if n_over else
+                 " — none, so every path gets the shared ladder. This is a "
+                 "statement about the evidence available per path, not about "
+                 "the mechanism"))
     if geo:
         geo, note = budget_probe_values(geo, len(paths), claim_budget)
         if note:
@@ -1478,6 +2039,25 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
         for sc in spec_coords:
             if sc.get("values") is None:
                 sc["values"] = geo[sc["name"]]
+    # SAID EITHER WAY. A pruning step that prints only when it fires is
+    # indistinguishable from one that can never fire -- this project's own
+    # always-empty-channel shape -- and the "nothing was dropped" case is the
+    # COMMON one on paths whose domains do not overlap, so its silence would be
+    # read as "the probes bought nothing" when the truth is "these paths share
+    # no interior".
+    if geometric and prune_inside is not None:
+        if pruned:
+            print("[probe] LADDER PRUNED: "
+                  + f"{sum(n for n, _ in pruned.values())} rung(s) dropped "
+                    "whose answer is already on disk — "
+                  + "; ".join(f"{c}: {n} inside ({pr[0]}, {pr[1]})"
+                              for c, (n, pr) in sorted(pruned.items())))
+        else:
+            print("[probe] LADDER NOT PRUNED: no coordinate is bracketed by "
+                  "known members on EVERY path of this batch, so no rung has a "
+                  "pre-determined answer. The ladder is laid exactly as it "
+                  "would have been without the probes — this is a statement "
+                  "about the paths' overlap, NOT about the probes")
     path = os.path.join(cwd, "outer.json")
     with open(path, "w") as f:
         json.dump(spec, f)
@@ -2164,8 +2744,40 @@ def witness_values(cwd, unit, state_structs=False):
     for c in rep.get("claims", []):
         if c.get("status") == "F" and claim_unit(c) == unit:
             ce, _ = coord_values(c, state_structs=state_structs)
+            ce.update(payload_extras(c))
             return ce
     return {}
+
+
+def payload_extras(c):
+    """The claim's payload quantities that are NOT candidate coordinates.
+
+    Today that is `extcall_returns`: nondet locals of the unit under test, of
+    which an external call's success flag or return value is the common case.
+    They are namespaced `extcall.<name>` -- a Solidity identifier cannot
+    contain a dot, and the environment's own dotted names (`msg.value`) start
+    with a different word, so nothing can collide.
+
+    ⛔ THESE ARE NOT COORDINATES AND MUST NEVER BECOME ONE HERE. A coordinate
+    is a quantity a generated test can supply as a call argument; a local the
+    harness chose is not. They are carried so the comparison can SAY they
+    differ, which is a different job from acting on the difference.
+
+    Non-scalar entries are skipped rather than refused loudly: the aggregates
+    in this list (`_sol_save_this`, a whole mapping store) are restore-snapshot
+    plumbing, and naming them in a refusal line would bury the one scalar that
+    matters under them.
+    """
+    out = {}
+    for e in (c.get("extcall_returns") or []):
+        name = e.get("symbol") if isinstance(e, dict) else None
+        if not name:
+            continue
+        try:
+            out["extcall." + name] = parse_int(e.get("value"))
+        except (ValueError, TypeError):
+            continue
+    return out
 
 
 def extraction_caveats(claims):
@@ -2727,9 +3339,56 @@ def split_on_cut(box, coord, lo, hi):
     return kept, rest
 
 
+VIOLATED_HEAD_RE = re.compile(r"^Violated property:\s*$")
+
+
+def violated_properties(log):
+    """Every `Violated property:` block ESBMC printed, VERBATIM.
+
+    ⛔ THIS QUOTES, IT DOES NOT CLASSIFY. The caller wants to know whether a
+    refuted single-point query died on a compiler-inserted check or on a
+    quantity outside the coordinate set, and the temptation is to answer that
+    here with a keyword test over the block's text. A reader hard-wired to one
+    vocabulary is a failure this file has already had twice: it fires on every
+    run or on none, and from outside those two look identical. So the block is
+    carried out whole and the judgement is left to whoever reads it.
+
+    ESBMC prints
+
+        Violated property:
+          file X.sol line N column C function f
+          <the property's own description>
+          <the expression>
+
+    and closes it with a blank line. A run may print more than one.
+
+    RETURNS a list of strings. An EMPTY list is NOT "no property was violated":
+    it is also what --result-only produces, and that is this driver's own
+    default on every other query. The caller must say which of the two it is
+    rather than reading the absence as a fact about the run.
+    """
+    out, cur = [], None
+    for line in log.splitlines():
+        if VIOLATED_HEAD_RE.match(line.rstrip()):
+            if cur:
+                out.append("\n".join(cur))
+            cur = [line.rstrip()]
+            continue
+        if cur is not None:
+            if not line.strip():
+                out.append("\n".join(cur))
+                cur = None
+            else:
+                cur.append(line.rstrip())
+    if cur:
+        out.append("\n".join(cur))
+    return out
+
+
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g",
-            holes=None, esbmc_args=(), state_structs=False):
+            holes=None, esbmc_args=(), state_structs=False,
+            want_property=False):
     """Step 5. Returns (verdict, suggested_box_or_None, witness).
 
     `holes` is Definition 5's punched set, and it must reach the query or the
@@ -2769,7 +3428,7 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     log = run(esbmc, sol, contract,
               ["--path-cov-certify", path, "--cov-report-json"],
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit,
-              esbmc_args=esbmc_args)
+              esbmc_args=esbmc_args, result_only=not want_property)
     v = verdict(log)
     # REFUSED IS NOT UNKNOWN. A query the tool declined to attempt because one
     # coordinate cannot be expressed is a fact about the SPEC, and it is fixable
@@ -2804,6 +3463,38 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
                    "this line")
         return v, None, {}, [], unexp, why
     why = None
+    if want_property:
+        # ---- THE WHOLE LOG, ON DISK, NAMED BY THE PATH IT BELONGS TO ----
+        #
+        # One file per (path, query) so a later reader cannot attribute one
+        # refutation's trace to another -- the workdir is reused across rounds
+        # and a single fixed filename would hand back whichever round wrote
+        # last, confidently and with nothing to notice it by. Written before
+        # anything is parsed out of it, so a parse that goes wrong still
+        # leaves the evidence.
+        try:
+            with open(os.path.join(cwd, "singlepoint_enc%s.log" % enc),
+                      "w") as _lf:
+                _lf.write(log)
+        except OSError as _e:
+            print("[certify] could not persist the single-point log for "
+                  "enc=%s: %s -- the verdict below still stands, only the "
+                  "trace behind it is unavailable" % (enc, _e))
+        # THE THIRD STATE IS WRITTEN OUT, not left as an empty string. "No
+        # block" and "a block saying X" are different findings, and only one
+        # of them is a reason.
+        blocks = violated_properties(log)
+        if blocks:
+            why = ("ESBMC's own `Violated property` block(s) on this "
+                   "refutation, quoted: "
+                   + " || ".join(b.replace("\n", " / ") for b in blocks))
+        else:
+            why = ("ESBMC printed NO `Violated property:` block on this "
+                   "refutation. The counterexample WAS requested for this "
+                   "query, so the absence is a fact about the run rather than "
+                   "about --result-only -- but it still leaves which cause "
+                   "applies UNKNOWN, and is never evidence that no inserted "
+                   "check was tripped")
     # Harvested on every refutation, not only when the shrink fails: the caller
     # needs it in the budget-exhausted branch too, and by then this run's report
     # has been overwritten by the next one.
@@ -2917,7 +3608,7 @@ def resolve_scope(scope, focus_flag, unit):
 # hung old-build numbers on a new build's name without anything objecting. Its
 # size and mtime are cheap and change on every rebuild.
 CONFIG_FIELDS = ("contract", "unit", "path_function", "max_tx", "scope",
-                 "esbmc", "esbmc_size", "esbmc_mtime")
+                 "esbmc", "esbmc_size", "esbmc_mtime", "probe_witnesses")
 
 
 def run_config(args, scope_label):
@@ -2928,10 +3619,32 @@ def run_config(args, scope_label):
         size, mtime = st.st_size, int(st.st_mtime)
     except OSError:
         size, mtime = None, None
-    return {"contract": args.contract, "unit": args.unit,
-            "path_function": args.path_function, "max_tx": args.max_tx,
-            "scope": scope_label, "esbmc": os.path.abspath(esbmc),
-            "esbmc_size": size, "esbmc_mtime": mtime}
+    cfg = {"contract": args.contract, "unit": args.unit,
+           "path_function": args.path_function, "max_tx": args.max_tx,
+           "scope": scope_label, "esbmc": os.path.abspath(esbmc),
+           "esbmc_size": size, "esbmc_mtime": mtime}
+    # ---- PRESENT ONLY WHEN IT IS ON, AND THAT IS NOT A SHORTCUT ----
+    #
+    # The ladder is part of what was measured, so a run WITH probes and one
+    # WITHOUT must not share a directory. But `stamp_workdir` compares
+    # `old.get(k) != cfg.get(k)`, and a stamp written before this key existed
+    # returns None for it -- so writing `probe_witnesses: 0` unconditionally
+    # would refuse every pre-existing workdir on a difference that is not one
+    # (None against 0, both meaning "no probes"). Omitting the key when it is 0
+    # makes the four cases come out right: off/off compares None to None and is
+    # allowed, on/off and off/on both differ and are refused, on/on must match.
+    if args.probe_witnesses:
+        cfg["probe_witnesses"] = args.probe_witnesses
+    # Same present-only-when-on rule, and for the same reason: each changes the
+    # coordinate set, so a run with one and a run without must not share a
+    # directory -- but writing the key as False unconditionally would refuse
+    # every workdir stamped before the key existed, on a difference that is not
+    # one.
+    if args.env_coord_disagreed:
+        cfg["env_coord_disagreed"] = True
+    if args.pin_agreed_state:
+        cfg["pin_agreed_state"] = True
+    return cfg
 
 
 def stamp_workdir(cwd, cfg):
@@ -3196,6 +3909,33 @@ def main():
                          "== coordinate B` is a cross-coordinate relation, "
                          "changes definition 6, and is an open method-layer "
                          "item -- it is not attempted here.")
+    ap.add_argument("--level0-perturb", action="store_true",
+                    help="LEVEL 0b: after the level-0 round, re-probe every "
+                         "coordinate whose point came from a ONE-VALUE "
+                         "candidate list, at that value's NEIGHBOURS (v-1, "
+                         "v+1), clamped to the coordinate's published TYPE "
+                         "RANGE.\n"
+                         "WHY IT EXISTS: level 0 asks `c <= v` and `c >= v`. "
+                         "Both hold when the domain really is {v} -- and both "
+                         "ALSO hold, at ANY v, when the antecedent is "
+                         "UNSATISFIABLE, because every probe then holds "
+                         "vacuously. From one value the two are "
+                         "indistinguishable, and the vacuous case renders as a "
+                         "tight, confident-looking point box. The round already "
+                         "prints that warning per path; this is the action it "
+                         "names ('try a second value on those coordinates').\n"
+                         "WHY A SECOND ROUND: the neighbours must be clamped to "
+                         "the type range, and the type range is published BY "
+                         "the level-0 round -- probing outside the type wraps, "
+                         "and a wrapped probe would MANUFACTURE the 'both "
+                         "directions hold' verdict. Level 0 is measured at "
+                         "6.6-7.5s on a real unit, so the extra round is cheap "
+                         "against the geometric bracket that follows it.\n"
+                         "It DECIDES nothing new: it widens the candidate list "
+                         "so the EXISTING empty-region guard can fire. Requires "
+                         "--level0. Off by default, because it changes the "
+                         "candidate list of every unit and therefore what every "
+                         "recorded region is a statement about.")
     ap.add_argument("--skip-bracket", action="store_true",
                     help="skip round 1 and start refining from each "
                          "coordinate's full type range. This is NOT a new "
@@ -3209,6 +3949,94 @@ def main():
                          "starts at full-type resolution, so separation now "
                          "depends on the counterexamples being far apart "
                          "rather than on a measured bracket.")
+    ap.add_argument("--probe-witnesses", type=int, default=0, metavar="N",
+                    help="ask the ENUMERATION run for up to N distinct inputs "
+                         "per path instead of one (--all-witnesses "
+                         "--max-witnesses N), and use the extra ones as KNOWN "
+                         "MEMBERS of that path's domain.\n"
+                         "WHAT IT BUYS, and the two halves are different:\n"
+                         "  * UNCONDITIONAL: a coordinate that takes more than "
+                         "one value across a path's witnesses is PROVED not to "
+                         "be a point, before any query. The one-value "
+                         "blindness --level0-perturb exists to break is simply "
+                         "absent on those coordinates.\n"
+                         "  * CONDITIONAL: where every path in the batch has "
+                         "members bracketing the same interval, every ladder "
+                         "rung strictly inside it has an answer that is "
+                         "already on disk (both directions refuted, by the "
+                         "members themselves), so those rungs are dropped. "
+                         "Paths whose domains do not overlap yield nothing "
+                         "here, and the round says so rather than staying "
+                         "silent.\n"
+                         "The extreme members and their immediate neighbours "
+                         "are always KEPT on the ladder: they are what stops "
+                         "the bracket widening (the largest refuted probe is "
+                         "then at least the largest known member), and the "
+                         "neighbours are the perturbation that tells a WALL "
+                         "from a HOLE at the boundary.\n"
+                         "COST: no extra run. The enumeration happens anyway; "
+                         "this is one flag on it. The witnesses arrive already "
+                         "attributed, because under --solidity-path-coverage a "
+                         "refuted claim IS a path.\n"
+                         "DEFAULT 0, i.e. OFF, so every recorded number "
+                         "reproduces verbatim -- the same house rule --level0, "
+                         "--max-holes, --slot-coords and --state-struct-fields "
+                         "follow. It changes the ladder, and therefore what "
+                         "every region was measured by.")
+    ap.add_argument("--probe-ladder", action="store_true",
+                    help="lay the GEOMETRIC BRACKET round's ladder PER PATH, "
+                         "anchored at that path's own known members and "
+                         "doubling OUTWARD, instead of one shared ladder "
+                         "anchored at zero. Requires --probe-witnesses.\n"
+                         "WHY: the shared ladder's rungs are 0, 1, 2, 4, ... "
+                         "2^k -- anchored at a value with no evidence attached "
+                         "to it. MEASURED on P14_Ladder/bump, whose enc=7 "
+                         "domain is `amt in [10, 20]` with the separation at "
+                         "21: from zero the nearest rungs are 16 and 32, so "
+                         "the bracket is (16, 32]; anchored at the known "
+                         "member 20 the first rung IS 21 and the bracket is "
+                         "(20, 21] -- exact, in the same batch. Same queries, "
+                         "better places, and the places come from evidence the "
+                         "enumeration already produced.\n"
+                         "It needs the TOOL side: one shared `coords` list "
+                         "cannot say where one path's rungs go, and two paths "
+                         "of a unit are separated precisely by the coordinate "
+                         "being measured, so their known domains are disjoint "
+                         "on it by construction. The spec therefore carries "
+                         "`paths[].coords[].values`, which REPLACES the shared "
+                         "ladder for that (path, coordinate).\n"
+                         "⛔ REQUIRES A PUBLISHED TYPE RANGE for the "
+                         "coordinate, i.e. --level0 (which publishes them). "
+                         "Without one the outward rungs would run past the "
+                         "type, wrap, and measure different numbers; such a "
+                         "coordinate is left on the shared ladder and named.\n"
+                         "GEOMETRIC ROUND ONLY. The refine rounds send `lo`/"
+                         "`hi` and the TOOL lays the values inside them; "
+                         "freezing a per-path list there would fix the "
+                         "resolution the refine loop exists to improve.\n"
+                         "Off by default, same house rule as every other "
+                         "ladder-changing flag here.")
+    ap.add_argument("--probe-ladder-budget", type=int, default=0, metavar="N",
+                    help="keep only the N rungs NEAREST the member bracket on "
+                         "each side of a per-path ladder, and print how many "
+                         "were dropped. DEFAULT 0 = uncapped, i.e. the ladder "
+                         "as it was laid before this flag existed.\n"
+                         "MEASURED, farming/deposit: uncapped, the per-path "
+                         "ladder laid 5264 rungs across 24 (path, coordinate) "
+                         "pairs -- 259 for a uint256 anchored at [0, 1] -- and "
+                         "the solver batch carrying them did not return in "
+                         "780s; the run died as `[run] TIMEOUT after 900s` "
+                         "inside that round, while the arm skipping the round "
+                         "finished the same unit in 281s. Anchoring per path "
+                         "changed WHERE the rungs go, not HOW MANY, and on a "
+                         "256-bit coordinate the count is what binds.\n"
+                         "⛔ IT IS A LOSS, and it is printed as one: a boundary "
+                         "beyond the last kept rung is no longer bracketed and "
+                         "comes back as a span reaching the type limit, which "
+                         "the refine round then bisects. The anchors and both "
+                         "type limits are never dropped -- without the limits "
+                         "the coordinate is half-open and the subtraction is "
+                         "blocked outright.")
     ap.add_argument("--no-auto-pin-value", action="store_true",
                     help="do NOT pin msg.value to 0 on a unit the source "
                          "declares non-payable. The pin is ON by default, and "
@@ -3234,6 +4062,56 @@ def main():
                          "it a non-payable function certifies nothing, because "
                          "its ABI gate is a decision on an unconstrained "
                          "msg.value.")
+    ap.add_argument("--env-coord-disagreed", action="store_true",
+                    help="promote EVERY environment quantity the witnessed "
+                         "paths DISAGREE on to a free coordinate, instead of "
+                         "requiring each to be named with --env-coord.\n"
+                         "WHY: --pin-env already computes this exact partition "
+                         "and already prints of the disagreeing side 'Left "
+                         "unconstrained, so a path guarded by one of these "
+                         "cannot certify.' The repair it names was the "
+                         "operator's job; this applies it. A quantity the "
+                         "paths disagree on is DISCRIMINATING by construction "
+                         "-- pinning it is impossible and dropping it leaves "
+                         "the guard unconstrained -- so it is the one kind of "
+                         "environment quantity that has to be probed.\n"
+                         "⛔ ANYTHING ALREADY PINNED IS SKIPPED, and msg.value "
+                         "is why. On a non-payable unit the ABI-gate path's "
+                         "counterexample carries a nonzero value while every "
+                         "other path carries 0, so msg.value DISAGREES -- and "
+                         "promoting it would cancel the auto-pin whose "
+                         "measured effect is 0 of 5 paths certified against 4 "
+                         "of 5.\n"
+                         "Off by default: it changes the coordinate set, and "
+                         "ladder cost is multiplicative in the coordinate "
+                         "count.")
+    ap.add_argument("--pin-agreed-state", action="store_true",
+                    help="pin every STATE coordinate on which all witnessed "
+                         "paths' counterexamples agree, at that value -- the "
+                         "mirror of --pin-env, for state variables instead of "
+                         "the environment.\n"
+                         "WHY IT IS NOT A LOSS OF YIELD: the entry state is "
+                         "never havoc'd, so a region bound on a state variable "
+                         "is assumed against a value the constructor already "
+                         "fixed, and the emitter DROPS every such bound wider "
+                         "than a point rather than establish it. A wide state "
+                         "coordinate therefore cannot reach the emitted test "
+                         "under any circumstances; leaving it free only gives "
+                         "the shrink loop a degree of freedom to produce "
+                         "refuting witnesses on.\n"
+                         "MEASURED, farming/setDistributor: with msg.sender "
+                         "promoted but state._owner left free, all five paths "
+                         "end 'shrink round budget exhausted; the witness "
+                         "differs ... state._owner (path=1, witness=8119...)' "
+                         "and 0 certify in 347.5s. Pinning it certifies 4 of 5 "
+                         "in 87s.\n"
+                         "RUNS AFTER the immutable/constant classification, so "
+                         "a constant -- which every path agrees on by "
+                         "definition -- is still reported as NOT SETTABLE "
+                         "rather than silently folded into this line.\n"
+                         "Off by default: every region measured under it is a "
+                         "statement about that entry-state slice, and the pin "
+                         "is printed with it.")
     ap.add_argument("--path-function", default=None,
                     help="disambiguate overloads: the exact mangled "
                          "path_function to generalise.")
@@ -3280,6 +4158,19 @@ def main():
                     help="coord=value, e.g. state.bal=50. Pinned coordinates "
                          "are NOT generalised; every region reported is a "
                          "statement about that slice and carries the pin.")
+    ap.add_argument("--pin-extcall", action="store_true",
+                    help="fix every quantity the HARNESS chose inside the "
+                         "execution -- an external call's success bit is the "
+                         "common one -- at THIS path's counterexample value, "
+                         "as `extcall.<name>`. Off by default and deliberately "
+                         "so: such a quantity is not a call argument, so a "
+                         "region certified under it holds only of the "
+                         "executions in which the callee behaved that way, and "
+                         "a generated test must realise the value some other "
+                         "way (a mock) for the region to describe it. The pin "
+                         "is PER PATH, unlike --pin, because the sibling paths "
+                         "of a call site differ in exactly this quantity; it "
+                         "is recorded on every region it applies to.")
     ap.add_argument("--esbmc-arg", action="append", default=[], metavar="ARG",
                     help="pass one extra argument straight to EVERY ESBMC "
                          "invocation this driver makes -- enumeration, every "
@@ -3371,11 +4262,12 @@ def main():
             f"the call sequence and max-tx is its LENGTH; both are recorded in "
             f"run-config.json and in the result, because a run of one "
             f"configuration may not be quoted into another's table")
-    paths, refused, caveats = enumerate_paths(
+    paths, refused, caveats, members, path_extras = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
         args.timeout, cwd, ast=args.ast, focus=focus, memlimit=args.memlimit,
         path_function=args.path_function, esbmc_args=args.esbmc_arg,
-        state_structs=args.state_struct_fields)
+        state_structs=args.state_struct_fields,
+        probe_witnesses=args.probe_witnesses)
     if not paths:
         # ⛔ THE OLD TEXT HERE ASSERTED A RESULT AND WAS WRONG ON REAL INPUT.
         # It said "That is a result, not an error ... (The report was checked:
@@ -3483,6 +4375,44 @@ def main():
               f"excluded. The ABI-gate revert path itself IS excluded, and its "
               f"region will be reported EMPTY. Disable with "
               f"--no-auto-pin-value")
+    # ---- THE PARTITION THIS FILE ALREADY COMPUTES, APPLIED ------------------
+    #
+    # Placed HERE, after the msg.value auto-pin, so a pinned quantity is never
+    # promoted: msg.value disagrees across the paths of every non-payable unit
+    # (the ABI-gate path's counterexample carries a nonzero value) and promoting
+    # it would cancel the pin that buys 4 of 5 certifications instead of 0.
+    #
+    # The agreement test is character for character the one `--pin-env` uses
+    # below. Two tests that could disagree about what "the paths agree" means
+    # would put one quantity in both groups.
+    if args.env_coord_disagreed:
+        promoted, kept = [], []
+        for n in list(env_names):
+            if n in pins:
+                kept.append(f"{n} (already pinned at {pins[n]})")
+                continue
+            vals = {ce.get(n) for _, _, ce in paths}
+            if len(vals) == 1 and None not in vals:
+                kept.append(f"{n} (all {len(paths)} paths agree)")
+                continue
+            promoted.append(n)
+        if promoted:
+            env_names = [n for n in env_names if n not in promoted]
+            print(f"[env] PROMOTED to free coordinate(s) because the "
+                  f"{len(paths)} witnessed paths DISAGREE on the value: "
+                  + ", ".join(promoted)
+                  + ". A quantity the paths disagree on is what separates them, "
+                    "so pinning it is impossible and leaving it unconstrained "
+                    "refuses certification however far the box is shrunk")
+        else:
+            # ⛔ SAY IT. A derivation that finds nothing must not look like one
+            # that never ran.
+            print("[env] --env-coord-disagreed derived NOTHING"
+                  + (": no environment quantity is in this unit's payload"
+                     if not env_names else
+                     ": every candidate was excluded -- "
+                     + "; ".join(kept))
+                  + ". No coordinate was added")
     if args.pin_env and env_names:
         agreed, disagreed = {}, []
         for n in env_names:
@@ -3569,6 +4499,49 @@ def main():
               "be checked: an immutable or constant coordinate would be "
               "generalised over as if a test could set it. Pass --ast to have "
               "them pinned instead")
+
+    # ---- THE STATE MIRROR OF --pin-env --------------------------------------
+    #
+    # AFTER the immutable/constant classification above, on purpose: a constant
+    # is agreed on by every path by definition, and pinning it here first would
+    # take it out of `coords` before `unsettable_coords` ever saw it -- turning
+    # an accurate "NOT SETTABLE ... immutable/constant" line into a generic
+    # "pinned" one. The classification would be lost with nothing on screen
+    # saying so.
+    if args.pin_agreed_state:
+        agreed_state, varying = {}, []
+        for c in list(coords):
+            if not c.startswith("state."):
+                continue
+            vals = {ce.get(c) for _, _, ce in paths}
+            if len(vals) == 1 and None not in vals:
+                agreed_state[c] = next(iter(vals))
+            else:
+                varying.append(c)
+        for n, v in agreed_state.items():
+            pins.setdefault(n, v)          # an explicit --pin always wins
+        if agreed_state:
+            coords = [c for c in coords if c not in agreed_state]
+            print(f"[coords] STATE PINNED (all {len(paths)} paths' "
+                  f"counterexamples agree): "
+                  + ", ".join(f"{n}=={v}" for n, v in sorted(
+                      agreed_state.items()))
+                  + ". The entry state is not havoc'd, so a bound on one of "
+                    "these constrained nothing in the query and the emitter "
+                    "drops it unless it is a point -- leaving it free only "
+                    "gives the shrink loop somewhere to find refuting "
+                    "witnesses. Every region below is a statement about this "
+                    "entry-state slice"
+                  + (f". STILL FREE, the paths disagree on: "
+                     + ", ".join(sorted(varying)) if varying else ""))
+        else:
+            # ⛔ The same must-say rule as the environment side above.
+            print("[coords] --pin-agreed-state derived NOTHING"
+                  + (": no state coordinate survived to this point"
+                     if not varying else
+                     f": the {len(paths)} paths disagree on every state "
+                     f"coordinate -- " + ", ".join(sorted(varying)))
+                  + ". No pin was added")
 
     # ---- MAPPING SLOTS: PROPOSED from the source, never harvested ----
     #
@@ -3715,6 +4688,11 @@ def main():
     # round has published one, so the FIRST ladder falls back to the full 256-bit
     # range exactly as before -- there is nothing to know it from yet.
     type_ranges = {}
+    # Coordinates whose level-0 point rests on a ONE-VALUE candidate list, i.e.
+    # the ones the round's own warning says cannot be told apart from a vacuous
+    # antecedent. Union across paths, because the candidate list is laid per
+    # COORDINATE for every path at once.
+    at_risk = set()
     if args.level0:
         cand = level0_candidates(paths, coords)
         # ---- LEVEL 0 CAN ONLY ASK ABOUT COORDINATES A WITNESS NAMES ----
@@ -3806,6 +4784,12 @@ def main():
                 # the ones whose siblings all agreed, so their candidate list
                 # had one value. The path was vacuous on every coordinate.
                 blind = [n for n in pts if len(cand.get(n, ())) < 2]
+                # COLLECTED, not just printed. The warning has named this set
+                # on every run since it was written and nothing could act on
+                # it; --level0-perturb below is the action, and it needs the
+                # union across paths because the candidate list is laid PER
+                # COORDINATE for all paths at once.
+                at_risk.update(blind)
                 if blind:
                     print(f"[level0] ⚠ enc={enc}: the point(s) on "
                           + ", ".join(blind)
@@ -3831,6 +4815,229 @@ def main():
                       "is NOT the same as 'no path has a point projection' -- "
                       "the per-path results are printed above")
 
+        # ---- LEVEL 0b: THE SECOND VALUE, WHICH IS THE ONLY THING THAT CAN
+        # ---- TELL A POINT DOMAIN FROM AN EMPTY ONE ----
+        #
+        # WHY IT IS A SECOND ROUND AND NOT AN ARGUMENT TO THE FIRST. The
+        # neighbours have to be clamped to the coordinate's own type range, and
+        # the type range is published BY the round above (`type_ranges` is empty
+        # until `tr_new` lands). Probing outside the type is not a neighbour: an
+        # unsigned coordinate at its maximum wraps to 0, and a probe at 0 answers
+        # about a value the path may genuinely contain -- which would MANUFACTURE
+        # the "both directions hold" verdict, i.e. invent the vacuity this round
+        # exists to detect. So the ordering is forced, and it is affordable:
+        # level 0 is measured at 6.6s and 7.5s on farming/setDistributor against
+        # a 240s budget the geometric bracket then blows entirely.
+        #
+        # ⛔ IT DECIDES NOTHING BY ITSELF. It widens the candidate list and lets
+        # the EXISTING empty-region guard fire, exactly as the warning above says
+        # ("with two values v1 < v2 both holding, u <= v1 < v2 <= l inverts the
+        # interval"). No new verdict is invented here; a mechanism that was blind
+        # is given the second value it was blind for.
+        if args.level0_perturb and at_risk:
+            pert = level0_candidates(paths, coords, perturb=True,
+                                     type_ranges=type_ranges)
+            widened = {c: pert[c] for c in sorted(at_risk)
+                       if len(pert.get(c, ())) > len(cand.get(c, ()))}
+            no_range = [c for c in sorted(at_risk) if c not in type_ranges]
+            if no_range:
+                # NAMED, never silent. Without a published range only the lower
+                # neighbour is added, so those coordinates get a ONE-SIDED probe
+                # -- enough to refute a point, not enough to establish vacuity --
+                # and a reader who could not see which is which would take a
+                # half-probed coordinate for a fully probed one.
+                print("[level0b] ⚠ no TYPE RANGE published for "
+                      + ", ".join(no_range)
+                      + ": only the LOWER neighbour is probed there. That can "
+                        "refute a point but cannot establish vacuity, because "
+                        "vacuity needs BOTH directions to hold")
+            if not widened:
+                print("[level0b] no at-risk coordinate could be widened "
+                      "(every neighbour fell outside its type range), so the "
+                      "one-value blindness above STANDS -- it is not resolved")
+            else:
+                print("[level0b] re-probing "
+                      + ", ".join(f"{c}: {cand.get(c)} -> {widened[c]}"
+                                  for c in widened)
+                      + " -- both directions holding on a NEIGHBOUR means the "
+                        "antecedent is unsatisfiable and the path is excluded "
+                        "from this slice, not that the domain is that point")
+                cand2 = dict(cand)
+                cand2.update(widened)
+                (b2, _, _, _, f2, _, tr2, unres2) = outer_round(
+                    args.esbmc, args.sol, args.contract, args.unit, paths,
+                    [c for c in coords if c in cand2], pins, args.probes,
+                    args.max_tx, args.timeout, cwd, values_by_coord=cand2,
+                    ast=args.ast, focus=focus, memlimit=args.memlimit,
+                    esbmc_args=args.esbmc_arg)
+                type_ranges.update(tr2)
+                unresolvable.update(unres2)
+                if f2:
+                    print(f"[level0b] round measured NOTHING — {f2}; the "
+                          f"one-value blindness above STANDS")
+                else:
+                    for enc, b in sorted(l0_boxes.items()):
+                        was = single_point_coords(b)
+                        nb = b2.get(enc)
+                        if nb is None:
+                            print(f"[level0b] enc={enc}: NO BOX in the widened "
+                                  f"round. That is not a verdict -- the path "
+                                  f"produced no measurement here, so its "
+                                  f"level-0 point is neither confirmed nor "
+                                  f"refuted")
+                            continue
+                        inverted = sorted(n for n in was
+                                          if n in nb and nb[n][0] > nb[n][1])
+                        still = sorted(n for n in was
+                                       if n in nb and nb[n][0] == nb[n][1])
+                        if inverted:
+                            print(f"[level0b] enc={enc}: VACUOUS on "
+                                  + ", ".join(inverted)
+                                  + " — both directions held at a neighbour, so "
+                                    "the interval inverted. This path has NO "
+                                    "input under the current pins; its level-0 "
+                                    "'point' measured nothing")
+                        if still:
+                            print(f"[level0b] enc={enc}: CONFIRMED point on "
+                                  + ", ".join(still)
+                                  + " — the neighbour was refuted, so this is a "
+                                    "genuine single-value domain")
+                    # The widened list descends to the ladder, which is where the
+                    # existing empty-region guard turns an inversion into an
+                    # excluded path without any new decision rule.
+                    cand = cand2
+
+    # ---- THE PATH-LABELLED POINT POOL, BUILT BEFORE THE LADDER IS LAID ----
+    #
+    # Placed HERE, after level 0 and before the bracket, because the neighbours
+    # must be clamped to each coordinate's published TYPE RANGE and the ranges
+    # are published BY a round -- level 0's, when it ran. Without --level0 the
+    # ranges are still empty and the neighbours are left out and named, rather
+    # than guessed: a probe above the type wraps and measures a different
+    # number, which is how an impossible bracket (`lower in [2^255, 1)`) arose.
+    #
+    # `probe_extra` starts as `cand` exactly, so with --probe-witnesses 0 every
+    # call below is byte-for-byte the call it was before this existed.
+    prune, endpoints, kept_pool = {}, {}, {}
+    probe_extra = dict(cand)
+    if args.probe_witnesses:
+        n_vec = {enc: len(members.get(enc) or []) for enc, _, _ in paths}
+        if max(n_vec.values(), default=0) <= 1:
+            # A REPORT-LEVEL REFUSAL, NOT A RESULT. One vector per path is what
+            # a run WITHOUT --all-witnesses produces, so reading it as "no
+            # coordinate varies" would report the absence of collection as the
+            # absence of evidence -- the shape this project keeps paying for.
+            print(f"[probe] ⚠ --probe-witnesses {args.probe_witnesses} was "
+                  f"requested and every path came back with ONE input vector. "
+                  f"Nothing below can fire. That is a statement about this "
+                  f"report, not about the paths: it is what a run without "
+                  f"--all-witnesses looks like")
+        prune, endpoints, kept_pool, notes = known_inside(
+            paths, members, coords, pins, type_ranges)
+        for n in notes:
+            print(n)
+        varied = sorted((enc, c, vs)
+                        for enc, per in kept_pool.items()
+                        for c, vs in per.items() if len(vs) > 1)
+        # COLLECTED, not admitted. The pin filter runs between the two, and its
+        # count is on the DISCARD line printed just above -- two numbers side by
+        # side that mean different things is how this project has already made
+        # one quantity read as another, so each says which it is.
+        print(f"[probe] pool: {sum(n_vec.values())} input vector(s) COLLECTED "
+              f"over {len(paths)} path(s) (the DISCARD line above, if any, "
+              f"says how many of them were kept out of the pool); "
+              f"{len(varied)} (path, coordinate) pair(s) PROVED not a point")
+        for enc, c, vs in varied:
+            print(f"[probe]   enc={enc} {c}: known members bracket "
+                  f"[{vs[0]}, {vs[-1]}] ({len(vs)} distinct)")
+        # ⛔ ONE DIRECTION ONLY. A pair NOT listed above is not thereby a point:
+        # the solver varies what it likes and is under no obligation to move a
+        # coordinate nothing asked about. Said here so the list above is not
+        # read as a partition.
+        if not varied:
+            print("[probe] no (path, coordinate) pair varied. ⛔ That is NOT "
+                  "evidence that any of them is a point -- a single value "
+                  "proves nothing about the domain, only about the model the "
+                  "solver happened to return")
+        no_range = sorted(c for c in endpoints if c not in type_ranges)
+        if no_range:
+            print("[probe] ⚠ no TYPE RANGE published for "
+                  + ", ".join(no_range)
+                  + ": their boundary NEIGHBOURS are left out, so the wall/hole "
+                    "question is not asked there. Run with --level0 (which "
+                    "publishes the ranges) to get them")
+        for c, vs in endpoints.items():
+            probe_extra[c] = sorted(set(probe_extra.get(c, ())) | set(vs))
+
+    # ---- THE PER-PATH LADDER, ANCHORED AT EACH PATH'S OWN MEMBERS ----
+    path_ladders = None
+    if args.probe_ladder:
+        if not args.probe_witnesses:
+            raise SystemExit(
+                "[probe] --probe-ladder needs --probe-witnesses: the anchor is "
+                "the path's own KNOWN MEMBERS, and without extra witnesses "
+                "every path has exactly one, so the 'ladder' would be a single "
+                "point wearing the name of a bracket")
+        path_ladders, no_tr, dropped = {}, set(), {}
+        for enc, _, _ in paths:
+            for c, vs in sorted((kept_pool.get(enc) or {}).items()):
+                if c not in type_ranges:
+                    # LEFT ON THE SHARED LADDER AND NAMED. Doubling outward
+                    # without a type limit runs past the type, and such a value
+                    # is built as a constant OF that type, so it wraps and the
+                    # probe asks about a different number -- the defect that
+                    # once produced `lower in [2^255, 1)`.
+                    no_tr.add(c)
+                    continue
+                tlo, thi = type_ranges[c]
+                path_ladders.setdefault(enc, {})[c] = outward_ladder(
+                    vs[0], vs[-1], tlo, thi, budget=args.probe_ladder_budget)
+                if args.probe_ladder_budget:
+                    dropped[(enc, c)] = (
+                        len(outward_ladder(vs[0], vs[-1], tlo, thi))
+                        - len(path_ladders[enc][c]))
+        if no_tr:
+            print("[probe] ⚠ no TYPE RANGE published for "
+                  + ", ".join(sorted(no_tr))
+                  + ": they keep the SHARED ladder. Run with --level0, which "
+                    "publishes the ranges, to anchor them too")
+        n_rungs = sum(len(v) for per in path_ladders.values()
+                      for v in per.values())
+        print(f"[probe] PER-PATH LADDER: "
+              f"{sum(len(p) for p in path_ladders.values())} (path, "
+              f"coordinate) pair(s) anchored at their own known members, "
+              f"{n_rungs} rung(s) in total. Each doubles OUTWARD from the "
+              f"member bracket, so the first rung sits one step beyond a value "
+              f"already proved to be in the domain")
+        for enc, per in sorted(path_ladders.items()):
+            for c, vs in sorted(per.items()):
+                mem = kept_pool[enc][c]
+                print(f"[probe]   enc={enc} {c}: anchored at [{mem[0]}, "
+                      f"{mem[-1]}], {len(vs)} rung(s)")
+        # ---- NO SILENT CAP ----
+        #
+        # A capped ladder that printed only its own size would read as "this
+        # coordinate needed 6 rungs", which is a statement about the contract.
+        # It is a statement about the budget, so the number dropped is printed
+        # beside it, with what the loss IS: a boundary further out than the last
+        # kept rung is no longer bracketed and comes back as a span reaching the
+        # type limit.
+        n_dropped = sum(dropped.values())
+        if n_dropped:
+            print(f"[probe] LADDER CAPPED at --probe-ladder-budget "
+                  f"{args.probe_ladder_budget} rung(s) per side: "
+                  f"{n_dropped} rung(s) DROPPED across "
+                  f"{sum(1 for v in dropped.values() if v)} (path, coordinate) "
+                  f"pair(s), the ones FURTHEST from the known members. On a "
+                  f"coordinate whose boundary is beyond the last kept rung the "
+                  f"bracket now reaches the type limit and the refine round "
+                  f"bisects it -- the same coarse outcome as the shared ladder, "
+                  f"on that coordinate only. The anchors and both type limits "
+                  f"are never dropped")
+            for (enc, c), n in sorted(dropped.items()):
+                if n:
+                    print(f"[probe]   enc={enc} {c}: {n} rung(s) dropped")
+
     # Round 1: geometric bracket.
     if args.skip_bracket:
         brackets, regions, warned, round_failure = {}, {}, set(), None
@@ -3844,9 +5051,11 @@ def main():
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, geometric=True,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
-            values_by_coord=eq_values, extra_values=cand,
+            values_by_coord=eq_values, extra_values=probe_extra,
             type_ranges=type_ranges, claim_budget=args.claim_budget,
-            esbmc_args=args.esbmc_arg)
+            esbmc_args=args.esbmc_arg,
+            prune_inside=prune if args.probe_witnesses else None,
+            path_values=path_ladders)
         type_ranges.update(tr_new)
         unresolvable.update(unres)
         print(f"[bracket] {brackets}")
@@ -3880,7 +5089,7 @@ def main():
             args.esbmc, args.sol, args.contract, args.unit, paths, coords, pins,
             args.probes, args.max_tx, args.timeout, cwd, spans=spans,
             ast=args.ast, focus=focus, memlimit=args.memlimit,
-            values_by_coord=eq_values, extra_values=cand,
+            values_by_coord=eq_values, extra_values=probe_extra,
             type_ranges=type_ranges, esbmc_args=args.esbmc_arg)
         type_ranges.update(tr_new)
         unresolvable.update(unres)
@@ -3917,6 +5126,11 @@ def main():
 
     # Certify every candidate, shrinking on the witness when refuted.
     ok, failed, ok_holes, ok_retreated = {}, {}, {}, {}
+    # Per (enc, piece), like ok_retreated and for the same reason: a region
+    # reported without naming the harness-chosen values it was certified under
+    # reads as an unconditional statement, and the emitter's rendering decision
+    # depends on the difference.
+    ok_extcall = {}
     # §Certification's floor, per path: what the single-point query answered.
     # A path absent from here was never asked (--no-witness-check), which is a
     # DIFFERENT state from "asked and discharged" and must stay one.
@@ -4031,6 +5245,21 @@ def main():
         # -- which is a real guarantee (the query is refuted exactly when the
         # box admits an execution walking the path) but a different one, and the
         # report must not present the two as the same thing.
+        # ---- WHAT THE HARNESS CHOSE, FIXED AT THIS PATH'S OWN VALUE ----
+        #
+        # PER PATH, not global like `pins`. The sibling paths of one call site
+        # differ in exactly this quantity -- measured on
+        # notes/coverage/poc/B5_ExtcallInCallee, enc=6 carries success=0 and
+        # enc=7 carries success=1 -- so a single dict shared across paths would
+        # certify one of them about the other's slice.
+        xpins = dict(path_extras.get(enc, {})) if args.pin_extcall else {}
+        if xpins:
+            print(f"[certify enc={enc}] --pin-extcall: fixing "
+                  + ", ".join(f"{n}=={v}" for n, v in sorted(xpins.items()))
+                  + " at this path's counterexample value. These are NOT call "
+                    "arguments: the region below holds of the executions in "
+                    "which the callee behaved this way, and a test rendering it "
+                    "has to realise that some other way")
         queue = [(dict(box), copy_holes(holes), True)]
         piece_no, piece_fail = 0, []
         while queue:
@@ -4054,7 +5283,7 @@ def main():
             for _ in range(args.shrink_rounds):
                 v, nb, wit, punches, unexp, unknown_why = certify(
                     args.esbmc, args.sol, args.contract, args.unit,
-                    enc, depth, box, ce, pins, args.max_tx,
+                    enc, depth, box, ce, dict(pins, **xpins), args.max_tx,
                     args.timeout, cwd, ast=args.ast, focus=focus,
                     memlimit=args.memlimit, holes=holes,
                     esbmc_args=args.esbmc_arg,
@@ -4072,8 +5301,13 @@ def main():
                 # certificate gets STRONGER, not wider. It is announced anyway,
                 # because it changes what the region is a statement about.
                 while unexp:
+                    # `xpins` is in the list because the merged dict is what
+                    # reaches the spec: a refusal naming one of these names
+                    # would otherwise fall into the "this driver holds no pin
+                    # under that spelling" hard stop, which is true of `pins`
+                    # and false of the query that was actually sent.
                     gone = [n for n in unexp
-                            if n in pins or n in box or n in holes]
+                            if n in pins or n in box or n in holes or n in xpins]
                     if not gone:
                         # THE TOOL REFUSED AND THIS DRIVER CANNOT ACT ON IT --
                         # a name under a spelling we do not hold. Falling
@@ -4097,6 +5331,7 @@ def main():
                         break
                     for n in gone:
                         pins.pop(n, None)
+                        xpins.pop(n, None)
                         box.pop(n, None)
                         holes.pop(n, None)
                     # RECORDED, because `pins` is GLOBAL across paths: only the
@@ -4121,7 +5356,7 @@ def main():
                     prev_size = region_size(box, holes)
                     v, nb, wit, punches, unexp, unknown_why = certify(
                         args.esbmc, args.sol, args.contract, args.unit,
-                        enc, depth, box, ce, pins, args.max_tx,
+                        enc, depth, box, ce, dict(pins, **xpins), args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
                         memlimit=args.memlimit, holes=holes,
                         # ⛔ THIS RE-QUERY DROPPED --esbmc-arg, and that
@@ -4225,6 +5460,7 @@ def main():
                     # parameterized/concrete decision depends on the
                     # difference.
                     ok_retreated[(enc, piece_no)] = dict(retreated)
+                    ok_extcall[(enc, piece_no)] = dict(xpins)
                     if retreated:
                         print(f"[certify {tag}] certified with "
                               f"{len(retreated)} coordinate(s) PINNED at x_pi "
@@ -4369,7 +5605,7 @@ def main():
                             "to the coordinate gate INSTEAD of to another "
                             "shrink round, because no cut on any coordinate "
                             "could answer it"
-                            + divergence_text(ce, last_wit,
+                            + divergence_text(dict(ce, **path_extras.get(enc, {})), last_wit,
                                               set(last_wit_box) | set(pins),
                                               caveats, _rng, _ahs))
                         break
@@ -4379,7 +5615,7 @@ def main():
                             "against this path's counterexample, so no cut is "
                             "derivable -- this is not the agree-on-everything "
                             "case"
-                            + divergence_text(ce, last_wit,
+                            + divergence_text(dict(ce, **path_extras.get(enc, {})), last_wit,
                                               set(last_wit_box) | set(pins),
                                               caveats, _rng, _ahs))
                         break
@@ -4409,7 +5645,7 @@ def main():
                               "of this path would collapse onto the same set. "
                               "⛔ This is NOT the coordinate gate: the witness "
                               "and x_pi DO differ here"
-                            + divergence_text(ce, last_wit,
+                            + divergence_text(dict(ce, **path_extras.get(enc, {})), last_wit,
                                               set(last_wit_box) | set(pins),
                                               caveats, _rng, _ahs))
                         break
@@ -4441,7 +5677,7 @@ def main():
                             "points at is ALREADY pinned at its x_pi value, so "
                             "the retreat of §Certification has nothing left to "
                             "give up"
-                            + divergence_text(ce, last_wit,
+                            + divergence_text(dict(ce, **path_extras.get(enc, {})), last_wit,
                                               set(last_wit_box) | set(pins),
                                               caveats, _rng, _ahs))
                         break
@@ -4454,7 +5690,7 @@ def main():
                 if nb is None or nb == box:
                     reason = (
                         "refuted with no single-coordinate cut available"
-                        + divergence_text(ce, last_wit,
+                        + divergence_text(dict(ce, **path_extras.get(enc, {})), last_wit,
                                           set(last_wit_box) | set(pins),
                                           caveats,
                                           assumed_ranges(last_wit_box, pins),
@@ -4530,7 +5766,7 @@ def main():
             else:
                 reason = (
                     "shrink round budget exhausted"
-                    + divergence_text(ce, last_wit,
+                    + divergence_text(dict(ce, **path_extras.get(enc, {})), last_wit,
                                       set(last_wit_box) | set(pins),
                                       caveats,
                                       assumed_ranges(last_wit_box, pins),
@@ -4593,10 +5829,10 @@ def main():
                 else:
                     wv, _wnb, _ww, _wp, _wunexp, wwhy = certify(
                         args.esbmc, args.sol, args.contract, args.unit,
-                        enc, depth, point, ce, pins, args.max_tx,
+                        enc, depth, point, ce, dict(pins, **xpins), args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
                         memlimit=args.memlimit, holes={},
-                        esbmc_args=args.esbmc_arg)
+                        esbmc_args=args.esbmc_arg, want_property=True)
                     witness_check[enc] = wv
                     if wv == "SUCCESSFUL":
                         print(f"[witness enc={enc}] the single point survives "
@@ -4634,6 +5870,19 @@ def main():
                             "way the path's own counterexample is not shown to "
                             "walk it under the checks a real run performs, so "
                             "no test is emitted")
+                        # ---- WHAT THE TOOL ITSELF SAID WAS VIOLATED ----
+                        #
+                        # The two causes named just above ARE separable, and
+                        # the separator was being discarded before it could be
+                        # read: this query used to run with the counterexample
+                        # suppressed, so the line naming which property failed
+                        # never reached this text. It is QUOTED, not
+                        # classified.
+                        failed[enc] += (
+                            ". " + (wwhy or
+                                    "No `Violated property` block was "
+                                    "harvested for this refutation, so which "
+                                    "of the two causes applies stays UNKNOWN"))
                     else:
                         print(f"[witness enc={enc}] single-point check "
                               f"{wv}; the replay test is NOT cleared")
@@ -4798,6 +6047,12 @@ def main():
                 # numbers plus which coordinates were pinned by the retreat.
                 "retreated": {n: str(v) for n, v in
                               sorted((ok_retreated.get(key) or {}).items())},
+                # THE HARNESS-CHOSEN VALUES THIS REGION WAS CERTIFIED UNDER.
+                # Empty unless --pin-extcall was passed. A consumer that
+                # renders the region as a test and ignores this field emits a
+                # test that claims more than was certified.
+                "extcall_pins": {n: str(v) for n, v in
+                                 sorted((ok_extcall.get(key) or {}).items())},
                 "box": [
                     {"name": n, "lo": str(lo), "hi": str(hi),
                      "holes": [str(h) for h in sorted(

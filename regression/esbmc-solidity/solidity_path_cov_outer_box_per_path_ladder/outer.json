@@ -1,0 +1,6 @@
+{ "unit": "send",
+  "probes": 2,
+  "coords": [ { "name": "to", "values": ["100"] } ],
+  "paths": [ { "enc": 2, "depth": 1, "ce": { "to": "255" },
+               "coords": [ { "name": "to", "values": ["777", "888"] } ] },
+             { "enc": 3, "depth": 1, "ce": { "to": "0" } } ] }

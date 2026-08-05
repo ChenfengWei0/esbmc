@@ -187,6 +187,29 @@ def main():
     rows = []
     # test-contract name -> PoC stem, so `forge test` output maps back
     owner = {}
+    # ---- AN `--only` THAT SELECTS NOTHING IS A HARD FAILURE ----------------
+    #
+    # `--only` matches the FILE STEM, so `--only N01` selects nothing while
+    # `--only N01_TwoLevelScalar` selects the PoC. The old behaviour was to run
+    # the loop over an empty selection and print a complete, well-formed funnel
+    # reading `paths 0 -> F 0 -> GREEN 0 of 0`, exit 0.
+    #
+    # ⛔ THAT TABLE IS INDISTINGUISHABLE FROM A REAL ANSWER. It was read, on
+    # this very run, as "N01 produced no paths" -- a conclusion about two-level
+    # mappings drawn from a run that never invoked esbmc once. A missing input
+    # that silently rewrites the scope is the failure this project has an entry
+    # for; the fix is to refuse at the point of selection, and to print the
+    # stems so the caller can see what they should have typed.
+    stems = sorted(p.stem for p in POC.glob("*.sol"))
+    missing = sorted(only - set(stems))
+    if missing:
+        print("⛔ --only names %d PoC(s) that do not exist in %s: %s"
+              % (len(missing), POC, ", ".join(missing)))
+        print("   --only matches the FILE STEM. The %d available are:"
+              % len(stems))
+        for s in stems:
+            print("     %s" % s)
+        return 2
     for sol in sorted(POC.glob("*.sol")):
         if only and sol.stem not in only:
             continue

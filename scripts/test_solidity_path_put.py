@@ -58,7 +58,8 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                build_put, check_esbmc_args, cell_of,
-                               exit_kind_asserted, no_oracle_reason,
+                               exit_kind_asserted, find_unit_call,
+                               no_oracle_reason, observed_env, statement_start,
                                truncated_loops, unwindset_args)
 
 
@@ -856,7 +857,1163 @@ def test_a_refuted_return_rung_is_never_asserted():
 #
 # `bal` is declared `mapping(address => uint256)` at slot 2. Only the key
 # changes across the three cases below.
-SLOT_MAPS = {"bal": (2, "address", 32)}
+# THE SIX-TUPLE IS `storage_layout`'s OWN SHAPE, not a convenience for this
+# test: (base slot, key type, value bytes, value BIT-OFFSET in the word, the
+# mapping's label, the member's label or None).
+#
+# It was a 3-tuple here and a 6-tuple in `build_put`, so `_slot_pin_put` raised
+# `ValueError: not enough values to unpack` -- and because this module runs its
+# tests as a plain sequence, that traceback ABORTED the run. Every test after
+# this one had silently not executed since the widening landed. A suite that
+# stops early and a suite that passes are the same green from outside, which is
+# why the count is checked at the bottom of this file rather than trusted.
+SLOT_MAPS = {"bal": (2, "address", 32, 0, "bal", None),
+             # A PACKED STRUCT FIELD, offset 31, which is aqua's own shape
+             # (`Balance{uint248 amount; uint8 tokensCount}`). Its row exists
+             # so the read-modify-write path is exercised by something other
+             # than offset 0, where a dropped `voff` is invisible.
+             "pack.tag": (3, "address", 1, 31, "pack", "tag"),
+             # A TWO-LEVEL store. Its key element is a TUPLE, which is how the
+             # layout reader records depth; one level stays a bare string so
+             # every reader that only ever saw a string is unchanged.
+             "two": (5, ("address", "address"), 32, 0, "two", None)}
+
+
+def _deriv_put(derived_by):
+    """A PUT carrying a stage-2 derivation configuration, for the provenance
+    tests. Region and holes are the ordinary wide ones so the PUT is actually
+    emitted and the header can be read."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=LADDER, notes=notes, maps=SLOT_MAPS,
+        derived_by=derived_by)
+    return "\n".join(put or []), notes
+
+
+def test_a_probe_only_width_is_FLAGGED_on_the_test():
+    """MUST FLIP against the ladder control below.
+
+    The work order does not accept a width that rests on a neighbourhood probe:
+    a probe shows that some nearby value also walks the path, not where the
+    path STOPS. When the arm ran neither the ladder nor the subtraction, the
+    emitted test has to say so on its face -- the region is still certified, but
+    its WIDTH is not evidence of a measured boundary, and those are different
+    claims that a reader cannot separate from the region string alone.
+    """
+    text, _notes = _deriv_put({"level0": True, "level0_points": 8})
+    bad = 0
+    bad += check("WIDTH PROVENANCE" in text,
+                 "the provenance block is on the test")
+    bad += check("NO LADDER AND NO SUBTRACTION RAN" in text,
+                 "and a probe-only row is FLAGGED")
+    bad += check("level0_points = 8" in text,
+                 "the switches themselves are printed, not just a verdict")
+    return bad
+
+
+def test_a_ladder_derived_width_is_NOT_flagged():
+    """CONTROL. With the ladder's boundary probes recorded, the width has a
+    measured source and the warning must be ABSENT. A flag that fires on every
+    row says nothing -- the always-true reader this project has already been
+    bitten by."""
+    text, _notes = _deriv_put({"probe_ladder": True, "probes": 8})
+    bad = 0
+    bad += check("WIDTH PROVENANCE" in text,
+                 "the provenance block is still printed")
+    bad += check("NO LADDER AND NO SUBTRACTION RAN" not in text,
+                 "and the probe-only warning is ABSENT")
+    bad += check("Width sources that ran" in text
+                 and "assertion ladder" in text,
+                 "the measured source is named")
+    return bad
+
+
+def test_no_derivation_recorded_prints_no_provenance_block():
+    """CONTROL 2. An older sweep row carries none of these switches. Printing
+    an EMPTY provenance block would read as 'nothing ran', which is a claim;
+    printing nothing reads as 'not recorded', which is the truth."""
+    text, _notes = _deriv_put({})
+    return check("WIDTH PROVENANCE" not in text,
+                 "no block is printed when nothing was recorded")
+
+
+def _region_put(region, holes):
+    """A PUT over a caller-chosen region and hole set, for the interval tests.
+
+    Deliberately a SECOND fixture rather than more optional arguments on
+    `_slot_pin_put`: that one pins a region so the slot tests always describe
+    the same slice, and widening it would make every slot test's region a
+    function of whichever interval test ran last.
+    """
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region=region, holes=holes, pins={}, params=PARAMS, emitted=em,
+        case=case, layout=LAYOUT, ladder_rows=LADDER, notes=notes,
+        maps=SLOT_MAPS)
+    return put, stats, notes
+
+
+def test_an_entirely_holed_coordinate_REFUSES_the_put():
+    """MUST FLIP against the two controls below.
+
+    `bps` in [7, 8] with both 7 and 8 holed has NO value left, while `u` is the
+    full address space -- so the floor test is satisfied by `u` and the PUT
+    would be emitted with a `bps` whose every `vm.assume` rejects. forge then
+    fails the run for too many rejections: a RED test on the unmodified
+    contract, for a reason that is not about the contract, appearing only on
+    PUTs that had a wide coordinate to look healthy with.
+    """
+    put, _stats, notes = _region_put({"bps": (7, 8), "u": (0, (1 << 160) - 1)},
+                                     {"bps": [7, 8]})
+    bad = 0
+    bad += check(put is None, "no PUT is emitted")
+    bad += check(any("leaves NO value for" in n for n in notes),
+                 f"and the refusal names the empty coordinate: {notes}")
+    bad += check(any("bps" in n for n in notes),
+                 "the note says WHICH coordinate is empty")
+    return bad
+
+
+# ---- THE R2 PROPOSER -------------------------------------------------------
+#
+# R2 (`post - pre in [lo, hi]`) has never been requested by the pipeline: the
+# spec carried names only, and 0 of 128 driver files ever wrote `delta_dir`.
+# These pin the rule that turns an already-measured ladder pass into the
+# request -- above all the two cases where the honest answer is to propose
+# NOTHING, because a proposer that always proposes is how a false certificate
+# gets asked for.
+
+INC_ROWS = [("bal", "post == pre", "REFUTED"), ("bal", "post != pre", "HOLDS"),
+            ("bal", "post >= pre", "HOLDS"), ("bal", "post <= pre", "REFUTED")]
+DEC_ROWS = [("bal", "post >= pre", "REFUTED"), ("bal", "post <= pre", "HOLDS")]
+FROZEN_ROWS = [("bal", "post >= pre", "HOLDS"), ("bal", "post <= pre", "HOLDS")]
+MIXED_ROWS = [("bal", "post >= pre", "REFUTED"),
+              ("bal", "post <= pre", "REFUTED")]
+
+
+def test_an_INCREASING_variable_proposes_an_inc_delta_named_by_the_parameter():
+    """THE PROPERTY THE WHOLE R2 CHAIN EXISTS FOR: `post - pre == amount`."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    got = propose_r2_specs(INC_ROWS, [("to", "address"), ("amount", "uint256")])
+    bad = 0
+    s1 = [g for g in got if g["stage"] == 1 and g["kind"] == "num"]
+    bad += check(len(s1) == 1, f"one stage-1 amount query: {got}")
+    if not s1:
+        return bad + 1
+    bad += check(s1[0]["param"] == "amount",
+                 "the address parameter is NOT used as a delta bound")
+    bad += check(s1[0]["vars"] == [{"name": "bal",
+                                    "abs_lo": "amount", "abs_hi": "amount",
+                                    "delta_dir": "inc",
+                                    "delta_lo": "amount",
+                                    "delta_hi": "amount"}],
+                 f"ONE entry carries BOTH questions -- `has_abs` and "
+                 f"`has_delta` are independent flags on the same "
+                 f"`assert_vart`, so the absolute bound costs no extra "
+                 f"query: {s1[0]}")
+    return bad
+
+
+def test_a_DECREASING_variable_proposes_dec_not_inc():
+    """⛔ THE DIRECTION IS NOT DECORATION. Candidates are unsigned, so
+    `post - pre` WRAPS on a decrease; a `dec` region answered as `inc` is
+    answered about 2^256 - d and the certificate would be false."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    got = propose_r2_specs(DEC_ROWS, [("amount", "uint256")])
+    bad = 0
+    s1 = [g for g in got if g["stage"] == 1]
+    bad += check(len(s1) == 1, f"one stage-1 query: {got}")
+    if not s1:
+        return bad + 1
+    bad += check(s1[0]["vars"][0]["delta_dir"] == "dec",
+                 f"direction read from the ladder, not defaulted: {s1[0]}")
+    bad += check(all(e["delta_dir"] == "dec"
+                     for g in got for e in g["vars"] if "delta_dir" in e),
+                 f"and the stage-2 cap inherits the SAME direction -- a cap "
+                 f"answered as `inc` is answered about the wrapped "
+                 f"difference, exactly like the exact bound: {got}")
+    return bad
+
+
+def test_an_UNCHANGED_variable_proposes_NO_DELTA_and_says_why():
+    """Both ordering rungs holding means `post == pre` over the whole region:
+    the delta is identically 0, so `[p, p]` is false for every nonzero p.
+    Proposing a DELTA would spend a query to be told something already known.
+
+    The ABSOLUTE bound is still proposed, and it is a different question: it
+    asks whether the (unchanged) value equals the argument, which is how a
+    no-op branch of a setter is told apart from a real write."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    said = []
+    got = propose_r2_specs(FROZEN_ROWS, [("amount", "uint256")],
+                           log=said.append)
+    bad = 0
+    deltas = [e for g in got for e in g["vars"] if "delta_dir" in e]
+    bad += check(deltas == [], f"no delta entry anywhere: {deltas}")
+    bad += check(any("every delta is 0" in s for s in said),
+                 f"and the reason is printed: {said}")
+    bad += check(any(e.get("abs_lo") == "amount"
+                     for g in got for e in g["vars"]),
+                 f"the absolute bound IS still asked: {got}")
+    return bad
+
+
+def test_a_MIXED_DIRECTION_region_proposes_NO_DELTA_but_DOES_propose_ABS():
+    """⛔ THE CASE THAT MUST NOT BE GUESSED. Both ordering rungs REFUTED means
+    the region holds an increasing execution AND a decreasing one. No single
+    `delta_dir` is sound, and picking one would ask for a certificate about
+    the wrapped difference on half the region.
+
+    ⛔ AND THIS IS THE SETTER, which is why the arm now proposes something.
+    `_distributor = d` moves the value up on some inputs and down on others,
+    so BOTH ordering rungs are refuted and the delta arm correctly declines --
+    and the old proposer stopped there, leaving the single most common shape
+    in the corpus with no R2 at all. `post in [d, d]` needs no direction and
+    is the entire property of a setter."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    said = []
+    got = propose_r2_specs(MIXED_ROWS, [("amount", "uint256")],
+                           log=said.append)
+    bad = 0
+    deltas = [e for g in got for e in g["vars"] if "delta_dir" in e]
+    bad += check(deltas == [], f"no delta entry anywhere: {deltas}")
+    bad += check(any("no single" in s and "delta_dir" in s for s in said),
+                 f"and it says the region, not the proposer, is the reason: "
+                 f"{said}")
+    bad += check(any(e.get("abs_lo") == "amount" and e.get("abs_hi") == "amount"
+                     for g in got for e in g["vars"]),
+                 f"but the absolute bound IS proposed: {got}")
+    return bad
+
+
+def test_a_unit_whose_ONLY_PARAMETER_IS_AN_ADDRESS_proposes_an_ABS_bound():
+    """farming `setDistributor`'s only parameter is an address.
+
+    ⛔ NO DELTA, EVER. The difference of two balances is not an address, so
+    `post - pre in [d, d]` is not a weaker question but a meaningless one.
+
+    ⛔ BUT NOT `nothing`, WHICH IS WHAT IT USED TO BE. The numeric filter
+    dropped the parameter and the proposer returned an empty list, so this
+    unit -- the shape the corpus has most of -- asked for no R2 and the one
+    property it obviously has, `post == the argument`, went unasked while
+    being expressible the whole time."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    said = []
+    got = propose_r2_specs(INC_ROWS, [("distributor_", "address")],
+                           log=said.append)
+    bad = 0
+    bad += check(len(got) == 1, f"exactly one query: {got}")
+    if not got:
+        return bad + 1
+    bad += check(got[0]["kind"] == "id" and got[0]["param"] == "distributor_",
+                 f"and it is an identity query: {got[0]}")
+    bad += check(got[0]["vars"] == [{"name": "bal", "abs_lo": "distributor_",
+                                     "abs_hi": "distributor_"}],
+                 f"absolute endpoints only, no delta key: {got[0]['vars']}")
+    bad += check(any("meaningless" in s for s in said),
+                 f"and the log says why no delta was asked: {said}")
+    return bad
+
+
+MIXED_WIDTH_ROWS = [("_distributor", "post >= pre", "HOLDS"),
+                    ("_owner", "post >= pre", "HOLDS"),
+                    ("_totalSupply", "post >= pre", "HOLDS"),
+                    ("_balances[k]", "post >= pre", "HOLDS")]
+MIXED_WIDTH_BYTES = {"_distributor": 20, "_owner": 20,
+                     "_totalSupply": 32, "_balances[k]": 32}
+
+
+def test_an_IDENTITY_endpoint_is_only_asked_about_candidates_of_ITS_WIDTH():
+    """⛔ EIGHT QUESTIONS NOBODY HAS, AND FOUR OF THEM RUN THE SOLVER OUT.
+
+    MEASURED on farming setDistributor enc=15. The identity query went out
+    with all ten candidates and came back:
+
+        _distributor   20 bytes   HOLDS      <- the answer that was wanted
+        _owner         20 bytes   REFUTED    <- a real question: did the call
+                                                also overwrite the owner?
+        _totalSupply   32 bytes   REFUTED  \\
+        _balances[..]  32 bytes   REFUTED   |  a balance is not an address
+        _MAX_BALANCE   no slot    REFUTED   |
+        _allowances[..][..] x4    NO VERDICT (solver unknown)
+
+    A 32-byte balance cannot equal a 20-byte address, so those rows were
+    REFUTED by construction; the four `_allowances` rows are the nested-mapping
+    shape this corpus already knows answers solver-unknown, so they spent the
+    solver to exhaustion for nothing. Cutting them loses NO verdict."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    said = []
+    got = propose_r2_specs(MIXED_WIDTH_ROWS, [("d_", "address")],
+                           log=said.append, var_bytes=MIXED_WIDTH_BYTES)
+    bad = 0
+    ids = [g for g in got if g["kind"] == "id"]
+    bad += check(len(ids) == 1, f"one identity query: {got}")
+    if not ids:
+        return bad + 2
+    names = sorted(e["name"] for e in ids[0]["vars"])
+    bad += check(names == ["_distributor", "_owner"],
+                 f"only the 20-byte candidates are asked: {names}")
+    bad += check(any("NOT asked about it" in s for s in said),
+                 f"and the exclusion is announced with its reason, never "
+                 f"silent: {said}")
+    return bad
+
+
+def test_the_WIDTH_FILTER_leaves_a_NUMERIC_endpoint_alone():
+    """⛔ THE FILTER IS ABOUT IDENTITIES ONLY. An amount legitimately bounds a
+    candidate of any width -- `uint8 fee` bounding a `uint256 total` is
+    routine, and the C++ builds the comparison in the CANDIDATE's type. A
+    width rule applied to the numeric arm would delete the delta bound that is
+    the whole reason R2 exists."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    got = propose_r2_specs(MIXED_WIDTH_ROWS, [("amt", "uint8")],
+                           var_bytes=MIXED_WIDTH_BYTES)
+    bad = 0
+    nums = [g for g in got if g["kind"] == "num"]
+    bad += check(len(nums) == 1, f"the amount query is still there: {got}")
+    if not nums:
+        return bad + 1
+    names = sorted(e["name"] for e in nums[0]["vars"])
+    bad += check(names == sorted(MIXED_WIDTH_BYTES),
+                 f"and it reaches EVERY candidate regardless of width: "
+                 f"{names}")
+    return bad
+
+
+def test_WITHOUT_a_width_table_NOTHING_is_filtered():
+    """⛔ A MISSING INPUT MAY NOT SILENTLY NARROW THE QUESTION. A caller that
+    cannot supply the layout gets exactly the behaviour it had before the
+    filter existed, rather than a quietly smaller query -- an absent table
+    reads as `no information`, never as `no candidates`."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    got = propose_r2_specs(MIXED_WIDTH_ROWS, [("d_", "address")],
+                           var_bytes=None)
+    bad = 0
+    ids = [g for g in got if g["kind"] == "id"]
+    bad += check(len(ids) == 1 and len(ids[0]["vars"]) == 4,
+                 f"all four candidates are asked: {ids}")
+    return bad
+
+
+def test_an_IDENTITY_with_NO_CANDIDATE_OF_ITS_WIDTH_sends_NO_QUERY():
+    """A contract whose every candidate is a 32-byte number has nothing an
+    address could equal. Sending the query anyway buys a column of REFUTED at
+    the price of a whole esbmc run -- and it must be REPORTED, because a query
+    that was never sent and a query that came back empty are different facts
+    with different repairs."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    said = []
+    got = propose_r2_specs(
+        [("_totalSupply", "post >= pre", "HOLDS")], [("d_", "address")],
+        log=said.append, var_bytes={"_totalSupply": 32})
+    bad = 0
+    bad += check([g for g in got if g["kind"] == "id"] == [],
+                 f"no identity query is emitted: {got}")
+    bad += check(any("NO candidate has its width" in s for s in said),
+                 f"and it says so, naming the contract's storage as the "
+                 f"cause rather than the proposer: {said}")
+    return bad
+
+
+def test_TWO_esbmc_invocations_do_not_share_ONE_log_file():
+    """⛔ ONE FILE, TWO WRITERS, AND THE FIRST ONE'S EVIDENCE IS GONE.
+
+    Every ladder call for a unit runs in the SAME directory, and the log was
+    opened with mode "w", so each R2 pass silently replaced the first pass's
+    output.
+
+    MEASURED, and it blocked a live diagnosis rather than being a tidiness
+    point: aqua `push` proposed 48 mapping-slot candidates and got back 6 rows
+    over one unrelated variable. The tool prints a per-candidate REFUSAL
+    saying why each name carries no candidate -- and that text was in the
+    first pass's log, which the R2 pass had already overwritten by the time
+    anyone looked. The question could not be answered from disk at all.
+
+    Pinned in both directions: two calls leave two numbered logs with
+    DIFFERENT contents, and `run.log` still holds the last one so no existing
+    reader changes."""
+    import tempfile
+    from solidity_path_put import run_esbmc  # noqa: E402
+    bad = 0
+    with tempfile.TemporaryDirectory() as d:
+        # `true` and `false` stand in for two esbmc calls: what matters is that
+        # two invocations landed in one directory, not what they printed.
+        run_esbmc("/bin/echo", "/dev/null", None, "C", "u", ["FIRST"], d,
+                  1, 10, "1g", scope="whole")
+        run_esbmc("/bin/echo", "/dev/null", None, "C", "u", ["SECOND"], d,
+                  1, 10, "1g", scope="whole")
+        names = sorted(os.listdir(d))
+        bad += check("run.1.log" in names and "run.2.log" in names,
+                     f"each invocation left its OWN log: {names}")
+        if "run.1.log" in names and "run.2.log" in names:
+            a = open(os.path.join(d, "run.1.log")).read()
+            b = open(os.path.join(d, "run.2.log")).read()
+            bad += check("FIRST" in a and "FIRST" not in b,
+                         "the first call's output survives the second")
+            bad += check("SECOND" in b,
+                         "and the second call has its own")
+        bad += check("run.log" in names
+                     and "SECOND" in open(os.path.join(d, "run.log")).read(),
+                     f"`run.log` still holds the LAST call, so every existing "
+                     f"reader is unchanged: {names}")
+    return bad
+
+
+def test_a_candidate_with_NO_STORAGE_SLOT_gets_NO_R2_QUERY():
+    """⛔ A QUERY SPENT ON A ROW THE EMITTER THEN DISCARDS.
+
+    Whatever verdict comes back for a candidate solc's layout does not list,
+    the emitter drops the rung -- "no storage slot ... a compile-time
+    tautology, not an oracle" -- because no test can read the value at all.
+
+    MEASURED on aqua `push`, where `_DOCKED` is the ONLY candidate the ladder
+    ranges over: the R2 pass went out, came back `post in [amount, amount]
+    REFUTED`, and the row was then dropped for having no slot. One whole esbmc
+    query, zero usable output.
+
+    ⛔ AND THE EMPTY CASE IS ANNOUNCED, not silent: a query that was never
+    sent and a query that came back empty are different facts."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    said = []
+    got = propose_r2_specs(
+        [("_DOCKED", "post >= pre", "HOLDS")], [("amount", "uint256")],
+        log=said.append, var_bytes={})          # nothing has a slot
+    bad = 0
+    bad += check(got == [], f"no query at all is proposed: {got}")
+    bad += check(any("NO storage slot" in s for s in said),
+                 f"and the exclusion names the candidate: {said}")
+    bad += check(any("no query is sent" in s for s in said),
+                 f"and the empty query is announced: {said}")
+    return bad
+
+
+def test_a_SLOTTED_candidate_beside_an_UNSLOTTED_one_still_gets_ITS_query():
+    """⛔ THE DIRECTION THAT WOULD LOSE ORACLE. Excluding the unreadable
+    candidate must not take the readable one with it -- one contract routinely
+    has both, and dropping the query because part of it was useless would cost
+    the part that was not."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    got = propose_r2_specs(
+        [("_DOCKED", "post >= pre", "HOLDS"),
+         ("_total", "post >= pre", "HOLDS")],
+        [("amount", "uint256")], var_bytes={"_total": 32})
+    bad = 0
+    s1 = [g for g in got if g["stage"] == 1]
+    bad += check(len(s1) == 1, f"the query is still sent: {got}")
+    if not s1:
+        return bad + 1
+    names = [e["name"] for e in s1[0]["vars"]]
+    bad += check(names == ["_total"],
+                 f"carrying the readable candidate only: {names}")
+    return bad
+
+
+def test_asked_but_never_answered_is_counted_as_zero_not_as_seven():
+    """⛔ THE aqua SHAPE: 48 questions, 7 answers, none of them to a question.
+
+    Rows came back for `_DOCKED`, which the spec never named -- the component
+    loop is deliberately not whitelisted by a slot-only spec. Counting rows
+    would score that 7-of-48; the truth is 0-of-48 plus 7 nobody asked for, and
+    a counter that cannot tell those apart is how this went unnoticed."""
+    from solidity_path_put import ladder_answer_gap  # noqa: E402
+    asked = [f"_balances[a{i}][b].amount" for i in range(48)]
+    rows = [("_DOCKED", "post == pre", "HOLDS"),
+            ("_DOCKED", "post >= pre", "HOLDS")]
+    unanswered, unasked = ladder_answer_gap(asked, rows)
+    bad = 0
+    bad += check(len(unanswered) == 48,
+                 f"all 48 are unanswered, not 41: {len(unanswered)}")
+    bad += check(unasked == ["_DOCKED"],
+                 f"and the row nobody asked for is reported separately, once: "
+                 f"{unasked}")
+    return bad
+
+
+def test_a_ladder_that_answered_everything_reports_no_gap():
+    """THE NEGATIVE CONTROL. Without it the gate above is indistinguishable
+    from one that reports every run as broken -- which is the always-true
+    reader this project has already shipped once."""
+    from solidity_path_put import ladder_answer_gap  # noqa: E402
+    asked = ["_bal[msg.sender]", "_bal[to]"]
+    rows = [("_bal[msg.sender]", "post <= pre", "HOLDS"),
+            ("_bal[to]", "post >= pre", "HOLDS"),
+            ("_bal[to]", "post > pre", "REFUTED")]
+    unanswered, unasked = ladder_answer_gap(asked, rows)
+    bad = 0
+    bad += check(unanswered == [],
+                 f"nothing is unanswered when every name came back: "
+                 f"{unanswered}")
+    bad += check(unasked == [], f"and nothing is unasked: {unasked}")
+    # a REFUTED row still counts as an ANSWER -- the question was answered,
+    # the answer was no. Conflating them would report a working ladder as a
+    # silent one.
+    unanswered2, _ = ladder_answer_gap(
+        ["x"], [("x", "post in [a, a]", "REFUTED")])
+    bad += check(unanswered2 == [],
+                 f"a REFUTED verdict is an answer, not a gap: {unanswered2}")
+    return bad
+
+
+def test_no_slot_asked_means_no_gap_and_no_claim():
+    """A unit with no mapping asks nothing, so it must not be reported as a
+    unit whose questions went unanswered. Zero asked and zero answered is not
+    the aqua shape and must not print like it."""
+    from solidity_path_put import ladder_answer_gap  # noqa: E402
+    unanswered, unasked = ladder_answer_gap([], [("_owner", "post == pre",
+                                                  "HOLDS")])
+    bad = 0
+    bad += check(unanswered == [], f"nothing was asked: {unanswered}")
+    bad += check(unasked == ["_owner"],
+                 f"the component row is still reported as unasked: {unasked}")
+    return bad
+
+
+def test_the_EXCLUSION_MESSAGE_names_no_cause_it_did_not_measure():
+    """⛔ A DIAGNOSTIC THAT ASSERTS A MECHANISM IT NEVER CHECKED.
+
+    The width-exclusion line used to end "...and four of these are the
+    nested-mapping shape that answers solver-unknown" -- a fact about ONE run
+    on farming, welded into a message every contract prints. On aqua the
+    single excluded candidate is `_DOCKED`, a constant: not a mapping, and not
+    four of anything. The next reader believes it, which makes it worse than
+    saying less."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    said = []
+    propose_r2_specs([("_DOCKED", "post >= pre", "HOLDS")],
+                     [("who", "address")], log=said.append,
+                     var_bytes={"_DOCKED": 32})
+    joined = "\n".join(said)
+    bad = 0
+    bad += check("nested-mapping" not in joined,
+                 f"the message does not claim a mapping it never saw: "
+                 f"{joined}")
+    bad += check("four of these" not in joined,
+                 f"nor a count it did not take: {joined}")
+    bad += check("_DOCKED" in joined,
+                 f"but it DOES name what it excluded: {joined}")
+    return bad
+
+
+def test_a_unit_with_NO_USABLE_PARAMETER_AT_ALL_proposes_nothing():
+    """The honest empty case survives: `bool` and `bytes` name neither an
+    amount nor an identity, so there is no endpoint and nothing to ask."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    said = []
+    got = propose_r2_specs(INC_ROWS, [("flag", "bool"), ("data", "bytes")],
+                           log=said.append)
+    bad = 0
+    bad += check(got == [], f"nothing proposed: {got}")
+    bad += check(any("no parameter an endpoint could name" in s for s in said),
+                 f"and the reason names the cause: {said}")
+    return bad
+
+
+def test_TWO_integer_parameters_produce_TWO_SEPARATE_queries():
+    """⛔ ONE ENTRY PER VARIABLE PER SPEC. `goto_coverage.cpp` keeps one
+    `assert_vart` per name and now REFUSES a duplicate outright, so a variable
+    cannot carry two endpoint pairs in one query. Two parameters therefore
+    cost two runs, and that cost must be visible rather than hidden behind a
+    spec that would have been half-dropped."""
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    got = propose_r2_specs(INC_ROWS,
+                           [("a", "uint256"), ("b", "uint128")])
+    bad = 0
+    s1 = [g for g in got if g["stage"] == 1]
+    bad += check(len(s1) == 2, f"two stage-1 queries, not one merged: {got}")
+    if len(s1) != 2:
+        return bad + 1
+    names = [g["param"] for g in s1]
+    bad += check(names == ["a", "b"], f"one per parameter: {names}")
+    for g in got:
+        seen = [e["name"] for e in g["vars"]]
+        bad += check(len(seen) == len(set(seen)),
+                     f"no duplicate variable name inside a spec: {seen}")
+    return bad
+
+
+FORGE_OUT = """
+Ran 3 tests for test/Probe.t.sol:Probe
+[PASS] test_probe_0(uint256) (runs: 256, mu: 31451, ~: 31450)
+[FAIL: assertion failed] test_probe_1(uint256) (runs: 3, mu: 100, ~: 100)
+[FAIL: panic: arithmetic underflow or overflow (0x11)] test_probe_2(uint256) (runs: 1, mu: 9, ~: 9)
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped
+"""
+
+
+def test_a_fuzz_REFUTATION_is_read_and_a_pass_is_NOT_a_proof():
+    """The prefilter's whole value is the FAIL rows; its whole danger is
+    reading a PASS as a verdict. `forge found no failing draw in 256` is not a
+    proof, so the strongest label must be NOT-REFUTED -- which still costs a
+    solver query."""
+    from solidity_path_put import fuzz_prefilter_verdicts  # noqa: E402
+    got = fuzz_prefilter_verdicts(
+        {"test_probe_0": "bal: post == pre",
+         "test_probe_1": "bal: post != pre",
+         "test_probe_2": "bal: post - pre in [amt, amt] with post >= pre"},
+        FORGE_OUT)
+    bad = 0
+    bad += check(got["bal: post == pre"] == "NOT-REFUTED",
+                 f"a PASS is NOT-REFUTED, never HOLDS: {got}")
+    bad += check(got["bal: post != pre"] == "REFUTED",
+                 f"an assertion failure is a refutation: {got}")
+    bad += check(got["bal: post - pre in [amt, amt] with post >= pre"]
+                 == "REFUTED",
+                 f"a panic is also a refutation, not a NOT-RUN: {got}")
+    bad += check("HOLDS" not in set(got.values()),
+                 f"the word HOLDS never appears: {set(got.values())}")
+    return bad
+
+
+def test_a_probe_THAT_NEVER_RAN_is_NOT_RUN_not_a_pass():
+    """⛔ THE ALWAYS-TRUE READER THIS FUNCTION EXISTS TO PREVENT. A probe whose
+    test name is absent from the forge output did not execute -- the file did
+    not compile, the name was wrong, the filter excluded it. Folding that into
+    NOT-REFUTED would make every rung 'survive' and the prefilter would report
+    a perfect pass rate while measuring nothing at all."""
+    from solidity_path_put import fuzz_prefilter_verdicts  # noqa: E402
+    got = fuzz_prefilter_verdicts({"test_probe_9": "bal: post > pre"},
+                                  FORGE_OUT)
+    bad = 0
+    bad += check(got["bal: post > pre"] == "NOT-RUN",
+                 f"absent means NOT-RUN: {got}")
+    bad += check(fuzz_prefilter_verdicts({"test_probe_0": "x"}, "")
+                 == {"x": "NOT-RUN"},
+                 "and an EMPTY forge output is all NOT-RUN, not all passing")
+    return bad
+
+
+def _r2_harness(reply):
+    """(new_rows, log, specs_written) for one R2 pass against a fake ladder.
+
+    The runner is INJECTED so the wiring is proven to fire without esbmc. A
+    proposer with no call site and a call site that never runs look identical
+    from the outside, and this file exists because that keeps happening.
+    """
+    from solidity_path_put import run_r2_passes  # noqa: E402
+    said, written = [], []
+
+    def write_spec(suffix, spec):
+        written.append((suffix, spec))
+        return "/tmp/spec" + suffix + ".json"
+
+    def parse(text):
+        return reply, None, ("a refusal" if text == "REFUSED" else None), None
+
+    new = run_r2_passes(
+        [{"param": "amount", "stage": 1, "kind": "num",
+          "vars": [{"name": "bal",
+                    "abs_lo": "amount", "abs_hi": "amount",
+                    "delta_dir": "inc",
+                    "delta_lo": "amount", "delta_hi": "amount"}]}],
+        {"unit": "u", "enc": 7}, write_spec,
+        lambda p: ("REFUSED" if reply == [] else "ok"), parse,
+        log=said.append)
+    return new, said, written
+
+
+def test_an_R2_PASS_actually_runs_and_carries_the_proposed_vars():
+    """⛔ THE WIRING, not the proposer. The spec handed to the extra run must
+    keep the base fields AND replace `vars` with the proposal; a pass that
+    posted the ORIGINAL vars would run, cost a query, and come back with the
+    same R1 rungs looking like R2 produced nothing."""
+    new, said, written = _r2_harness(
+        [("bal", "post - pre in [amount, amount] with post >= pre", "HOLDS")])
+    bad = 0
+    bad += check(len(written) == 1, f"exactly one spec written: {written}")
+    if not written:
+        return bad + 1
+    suffix, spec = written[0]
+    bad += check(spec.get("unit") == "u" and spec.get("enc") == 7,
+                 f"the base spec's fields survive: {spec}")
+    bad += check(spec["vars"][0]["delta_dir"] == "inc"
+                 and spec["vars"][0]["delta_lo"] == "amount",
+                 f"and `vars` is the PROPOSAL: {spec['vars']}")
+    bad += check(suffix == ".r2_amount_s1",
+                 f"written beside the first spec, not over it, and the STAGE "
+                 f"is in the name -- two stages on one parameter must not "
+                 f"collide on one file: {suffix}")
+    bad += check(len(new) == 1 and new[0][1].startswith("post - pre in ["),
+                 f"the delta row is returned: {new}")
+    return bad
+
+
+def test_an_ABSOLUTE_row_is_MERGED_and_not_silently_dropped():
+    """⛔ THE READER, NOT THE REQUEST. `run_r2_passes` accepted the two DELTA
+    shapes and nothing else, so an absolute row -- the entire point of asking
+    for one -- came back from the ladder, matched no prefix, and was discarded
+    as though the pass had returned empty.
+
+    A request whose answer no reader accepts is indistinguishable from a
+    request that was never sent, and this file exists because that keeps
+    happening. Pinned in BOTH directions: the abs row is merged, and the pass
+    is NOT reported as empty."""
+    new, said, _w = _r2_harness(
+        [("bal", "post in [amount, amount]", "HOLDS")])
+    bad = 0
+    bad += check(len(new) == 1, f"exactly the abs row is merged: {new}")
+    if not new:
+        return bad + 1
+    bad += check(new[0] == ("bal", "post in [amount, amount]", "HOLDS"),
+                 f"verbatim, verdict included: {new[0]}")
+    bad += check(not any("NO DELTA ROW" in s for s in said),
+                 f"and the pass is NOT announced as empty: {said}")
+    return bad
+
+
+def _stage2_harness(stage1_reply):
+    """(specs actually written, log) for a two-stage proposal whose stage-1
+    verdict is `stage1_reply`."""
+    from solidity_path_put import run_r2_passes  # noqa: E402
+    said, written = [], []
+
+    def write_spec(suffix, spec):
+        written.append((suffix, spec))
+        return "/tmp/spec" + suffix + ".json"
+
+    replies = [stage1_reply,
+               [("bal", "post - pre in [0, amount] with post >= pre",
+                 "HOLDS")]]
+
+    def parse(_text):
+        return (replies.pop(0) if replies else []), None, None, None
+
+    new = run_r2_passes(
+        [{"param": "amount", "stage": 1, "kind": "num",
+          "vars": [{"name": "bal", "abs_lo": "amount", "abs_hi": "amount",
+                    "delta_dir": "inc",
+                    "delta_lo": "amount", "delta_hi": "amount"}]},
+         {"param": "amount", "stage": 2, "kind": "cap",
+          "vars": [{"name": "bal", "delta_dir": "inc",
+                    "delta_lo": "0", "delta_hi": "amount"}]}],
+        {"unit": "u", "enc": 7}, write_spec,
+        lambda _p: "ok", parse, log=said.append)
+    return new, said, written
+
+
+def test_the_CAP_pass_RUNS_when_stage_1_REFUTED_the_exact_delta():
+    """The property a withdraw-shaped unit is actually about. `delta == amt`
+    is refuted the moment the unit takes a fee, and refuted there does NOT
+    mean the delta is unbounded -- `delta <= amt` is still an oracle, and a
+    mutant that moves MORE than the argument goes RED on it."""
+    new, said, written = _stage2_harness(
+        [("bal", "post - pre in [amount, amount] with post >= pre",
+          "REFUTED")])
+    bad = 0
+    bad += check(len(written) == 2, f"both passes ran: "
+                                    f"{[s for s, _ in written]}")
+    bad += check(any(t.startswith("post - pre in [0, amount]")
+                     for _v, t, _d in new),
+                 f"and the cap row came back: {new}")
+    return bad
+
+
+def test_the_CAP_pass_IS_SKIPPED_when_stage_1_ALREADY_HOLDS():
+    """⛔ THE NEGATIVE CONTROL, and the reason the filter exists. The cap is
+    STRICTLY WEAKER than the exact bound: `delta in [0, amt]` is implied by
+    `delta in [amt, amt]`. Running it anyway would spend a whole esbmc query
+    to buy an assertion the test already carries a stronger version of."""
+    new, said, written = _stage2_harness(
+        [("bal", "post - pre in [amount, amount] with post >= pre", "HOLDS")])
+    bad = 0
+    bad += check(len(written) == 1,
+                 f"only stage 1 was written: {[s for s, _ in written]}")
+    bad += check(any("NOT RUN" in s for s in said),
+                 f"and the skip is announced with its reason: {said}")
+    bad += check(not any(t.startswith("post - pre in [0,")
+                         for _v, t, _d in new),
+                 f"no cap row merged: {new}")
+    return bad
+
+
+def test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT():
+    """⛔ NO-VERDICT IS NOT REFUTED. A solver-unknown on the exact bound says
+    nothing about the cap, and re-asking a question the solver already could
+    not answer buys a second no-verdict for a second query."""
+    new, said, written = _stage2_harness(
+        [("bal", "post - pre in [amount, amount] with post >= pre",
+          "no verdict (solver unknown)")])
+    bad = 0
+    bad += check(len(written) == 1,
+                 f"only stage 1 was written: {[s for s, _ in written]}")
+    bad += check(any("NOT RUN" in s for s in said),
+                 f"and the skip is announced: {said}")
+    return bad
+
+
+def test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed():
+    """⛔ THE FAILING BRANCH. A pass that produced no delta row means the
+    request never reached the ladder. Absorbed silently, the PUT is
+    indistinguishable from one where R2 was never asked for -- which is
+    exactly how R2 went unrequested for this long without anyone noticing."""
+    new, said, _w = _r2_harness([])
+    bad = 0
+    bad += check(new == [], f"nothing merged: {new}")
+    bad += check(any("NO DELTA ROW" in s for s in said),
+                 f"and the empty pass is announced: {said}")
+    return bad
+
+
+def test_an_R2_PASS_never_overwrites_a_row_the_FIRST_pass_decided():
+    """Only delta rows are taken. A second run disagreeing with the first
+    about an R1 rung is a fact worth seeing, not a silent update -- and an R1
+    row merged twice would double-count in the oracle total."""
+    new, _s, _w = _r2_harness(
+        [("bal", "post == pre", "HOLDS"),
+         ("bal", "post - pre in [amount, amount] with post >= pre", "HOLDS")])
+    bad = 0
+    bad += check(len(new) == 1, f"only the delta row is merged: {new}")
+    bad += check(all("post - pre" in t for _v, t, _d in new),
+                 f"and nothing else: {new}")
+    return bad
+
+
+# ---- THE SLOT-NAME PROPOSER ------------------------------------------------
+#
+# Regression for a defect that reached the CORPUS: the key-type field of a
+# `maps` row is a string for one level and a TUPLE for a nested store, and the
+# proposer read it as a string unconditionally. aqua dock, farming
+# setDistributor 12 and 13 -- three PUTs that had been emitting -- died with
+# `'tuple' object has no attribute 'strip'`, while every test here stayed
+# green because every fixture mapping was one level.
+
+
+def test_a_ONE_LEVEL_mapping_proposes_one_key():
+    """The one-level spelling of a PARAMETER key must stay byte-identical: if
+    the nested branch had changed it, every corpus row would have moved at once
+    and the change would have looked like a nesting fix.
+
+    `bal[msg.sender]` now rides ALONGSIDE it, and first. That is the shape a
+    real address-keyed mapping actually has, and a proposer drawing only from
+    the parameter list could never name it -- the ladder was being asked about
+    a slot the unit does not write while the one it does write went unmentioned.
+    """
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+    got = propose_slot_vars(
+        {"bal": (2, "address", 32, 0, "bal", None)},
+        [("u", "address"), ("amt", "uint256")])
+    bad = 0
+    bad += check(got == ["bal[msg.sender]", "bal[u]"],
+                 f"the caller-keyed name comes first, the parameter-keyed one "
+                 f"is unchanged: {got}")
+    bad += check("bal[amt]" not in got,
+                 "and a uint256 parameter is still not offered for an address "
+                 "level")
+    return bad
+
+
+def test_a_NESTED_mapping_proposes_ONE_KEY_PER_LEVEL():
+    """⛔ THE CRASH. A tuple key type must produce a two-key name, not an
+    exception. `[u][u]` is included on purpose -- one parameter may serve both
+    levels and `bal2[u][u]` is a real slot.
+
+    Every level of an address-keyed store offers `msg.sender`, so the cross
+    product is 3x3, and the ORDER is the one the budget's prefix depends on:
+    msg.sender first at each level, then the parameters by name.
+    """
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+    got = propose_slot_vars(
+        {"two": (5, ("address", "address"), 32, 0, "two", None)},
+        [("o", "address"), ("s", "address")])
+    return check(
+        got == ["two[msg.sender][msg.sender]", "two[msg.sender][o]",
+                "two[msg.sender][s]", "two[o][msg.sender]", "two[o][o]",
+                "two[o][s]", "two[s][msg.sender]", "two[s][o]", "two[s][s]"],
+        f"two levels, cross product, msg.sender-first then sorted: {got}")
+
+
+def test_a_NESTED_STRUCT_mapping_keeps_its_FIELD_TAIL():
+    """aqua's shape: nested AND struct-valued. The field tail must survive the
+    key cross product, or the name addresses the whole word instead of the
+    packed member -- including on the caller-keyed candidates, which is the
+    combination aqua actually needs (`_balances[msg.sender][...]`.amount)."""
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+    got = propose_slot_vars(
+        {"pack.amount": (7, ("address", "address"), 31, 0, "pack", "amount")},
+        [("o", "address")])
+    return check(got == ["pack[msg.sender][msg.sender].amount",
+                         "pack[msg.sender][o].amount",
+                         "pack[o][msg.sender].amount",
+                         "pack[o][o].amount"],
+                 f"field tail survives on every candidate: {got}")
+
+
+def test_a_LEVEL_WITH_NO_MATCHING_PARAMETER_proposes_NOTHING():
+    """A partially-keyed name would address a word nothing wrote. Refusing the
+    whole store is correct; emitting `two[o]` for a 2-level store is the defect
+    `test_a_slot_named_with_the_WRONG_DEPTH_is_refused` catches downstream, and
+    it must not be produced here in the first place.
+
+    ALSO THE CONTROL ON `msg.sender`: the address level gains it, the bytes32
+    level does not, and one empty level still kills the whole store. If the new
+    candidate had been added unconditionally rather than per key type, this test
+    would go green with `two[msg.sender][msg.sender]` -- a name whose second key
+    is an address where the store wants a bytes32.
+    """
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+    got = propose_slot_vars(
+        {"two": (5, ("address", "bytes32"), 32, 0, "two", None)},
+        [("o", "address")])
+    return check(got == [], f"no bytes32 parameter, so no name at all: {got}")
+
+
+def test_the_CANDIDATE_BUDGET_says_what_it_dropped():
+    """⛔ NO SILENT CAP. Four levels against three address parameters PLUS the
+    caller is 4^4 = 256 names; the cap keeps 24 and must SAY so, or a truncated
+    candidate set reads as 'the tool found only these'.
+
+    ⛔ AND THIS IS WHERE `msg.sender`-FIRST EARNS ITS PLACE. Sorted by name it
+    would fall behind `a`, `b` and `c`, and on a four-level store the 24-name
+    prefix would contain not one candidate mentioning it -- the cap would
+    silently undo the change on exactly the deepest store, which is the one
+    whose outer key is most certainly the caller.
+    """
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+    said = []
+    got = propose_slot_vars(
+        {"deep": (9, ("address",) * 4, 32, 0, "deep", None)},
+        [("a", "address"), ("b", "address"), ("c", "address")],
+        log=said.append)
+    bad = 0
+    bad += check(len(got) == 24, f"the cap holds: {len(got)}")
+    bad += check(any("DROPPING 232" in s for s in said),
+                 f"and it names what it dropped: {said}")
+    bad += check(got[0] == "deep[msg.sender][msg.sender][msg.sender]"
+                           "[msg.sender]",
+                 f"the kept ones are the msg.sender-first prefix, not an "
+                 f"arbitrary subset: {got[0]}")
+    bad += check(any("[a]" in g for g in got),
+                 "and the parameter-keyed candidates are NOT starved out -- "
+                 "the prefix reaches past the all-caller corner")
+    return bad
+
+
+# ---- R2 WITH A NAMED ENDPOINT ---------------------------------------------
+#
+# A SEPARATE layout and fixture, deliberately. Widening the shared LAYOUT would
+# change the input of every slot test at once, and those tests are the negative
+# control for this work -- their output must stay bit-identical.
+R2_LAYOUT = {"owner": (0, 0, 20), "feeReceiver": (1, 0, 20),
+             "totalFees": (2, 0, 32)}
+
+
+def _r2_put(ladder, region=None):
+    """A PUT over a caller-chosen ladder, for the named-R2-bound tests."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region=region or {"bps": (0, 100), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em,
+        case=case, layout=R2_LAYOUT, ladder_rows=ladder, notes=notes,
+        maps=SLOT_MAPS)
+    return put, stats, notes
+
+
+def test_an_ADDRESS_endpoint_renders_for_an_ABSOLUTE_bound():
+    """⛔ THE SETTER PROPERTY, PROVEN AND THEN THROWN AWAY AT THE LAST STEP.
+
+    MEASURED on farming setDistributor enc=13, in the run that added the
+    absolute-bound request. The ladder answered
+
+        _distributor: post in [distributor_, distributor_]   HOLDS
+
+    -- `the state ends equal to the argument`, which IS the whole property of
+    a setter and the strongest oracle available on that unit -- and the
+    emitter dropped it with `rung shape not rendered`, because the address
+    coordinate was deliberately kept out of the endpoint table.
+
+    The reason it was kept out is sound for a DELTA (`post - pre == an
+    address` is meaningless) and does not transfer to an ABSOLUTE bound. Two
+    questions, one flag: the same conflation the R2 proposer had on the
+    request side, sitting on the render side.
+
+    The slot read is a uint256, so the endpoint must carry the cast."""
+    from solidity_path_put import rung_assertions  # noqa: E402
+    got = rung_assertions("post in [d_, d_]", "_pre_x", "_post_x", "x: abs",
+                          idents={},               # arithmetic table: empty
+                          idents_abs={"d_": "uint256(uint160(d_))"})
+    bad = 0
+    bad += check(got is not None, "the absolute rung RENDERS at all")
+    if got is None:
+        return bad + 2
+    body = "\n".join(got)
+    bad += check("assertGe(_post_x, uint256(uint160(d_))," in body,
+                 f"lower endpoint is the cast address parameter: {body}")
+    bad += check("assertLe(_post_x, uint256(uint160(d_))," in body,
+                 f"and so is the upper: {body}")
+    return bad
+
+
+def test_an_ADDRESS_endpoint_is_STILL_REFUSED_for_a_DELTA_bound():
+    """⛔ THE NEGATIVE CONTROL, and the rule the change must not break. The
+    difference of two balances is not an address, so `post - pre in [d_, d_]`
+    is not a weaker question but a meaningless one. The arithmetic table is
+    what the delta shapes read, and the address is NOT in it -- so the rung is
+    dropped whole rather than rendered against a nonsense endpoint.
+
+    MUST FLIP against the absolute arm above: same endpoint name, same tables,
+    opposite outcome."""
+    from solidity_path_put import rung_assertions  # noqa: E402
+    got = rung_assertions("post - pre in [d_, d_] with post >= pre",
+                          "_pre_x", "_post_x", "x: delta",
+                          idents={},
+                          idents_abs={"d_": "uint256(uint160(d_))"})
+    bad = 0
+    bad += check(got is None,
+                 f"the delta rung is DROPPED, not rendered against an "
+                 f"address: {got}")
+    # And an arithmetic endpoint still renders, so the refusal above is about
+    # the TYPE and not about the table being empty.
+    ok = rung_assertions("post - pre in [amt, amt] with post >= pre",
+                         "_pre_x", "_post_x", "x: delta",
+                         idents={"amt": "amt"})
+    bad += check(ok is not None and any("- _pre_x, amt," in l for l in ok),
+                 f"while an arithmetic endpoint still renders: {ok}")
+    return bad
+
+
+def test_a_named_R2_bound_renders_as_the_test_parameter():
+    """THE POINT OF THE WHOLE CHANGE. `post - pre in [bps, bps]` is the shape
+    a deposit-like unit is actually about, and until now R2 could only carry a
+    decimal -- which on a fuzzed parameter is false on all but one draw and had
+    to be dropped. The endpoint must come out as the test's OWN identifier."""
+    put, _stats, notes = _r2_put(
+        [("totalFees", "post - pre in [bps, bps] with post >= pre", "HOLDS")])
+    bad = 0
+    bad += check(put is not None, f"the PUT is emitted (notes: {notes})")
+    if put is None:
+        return bad + 1
+    # ⛔ `put` is a LIST OF LINES. `"..." in put` is an ELEMENT test, which is
+    # false for every substring -- so a positive check written that way fails
+    # loudly (harmless) and a `not in` check passes VACUOUSLY (an always-true
+    # reader). Join once, here, and compare against text.
+    body = "\n".join(put)
+    bad += check("assertGe(_post_totalFees - _pre_totalFees, bps," in body,
+                 "the lower endpoint is the parameter `bps`, not a literal")
+    bad += check("assertLe(_post_totalFees - _pre_totalFees, bps," in body,
+                 "and so is the upper endpoint")
+    if bad:
+        print(body)
+    return bad
+
+
+def test_an_R2_bound_naming_an_UNLIFTED_COORDINATE_is_DROPPED():
+    """⛔ THE REFUSING BRANCH, which is the one that decides whether this
+    change is safe. `u` is a real, lifted, spellable parameter -- and an
+    ADDRESS, so it is not a number and must not bound anything. `qty` is not a
+    coordinate at all. Rendering either would produce a file `forge build`
+    rejects, i.e. it would break the whole suite rather than lose one
+    assertion. A numeric rung rides along so the PUT is emitted either way and
+    the test cannot pass by the PUT simply being absent."""
+    put, _stats, notes = _r2_put(
+        [("totalFees", "post in [0, 500]", "HOLDS"),
+         ("owner", "post - pre in [u, u] with post >= pre", "HOLDS"),
+         ("feeReceiver", "post in [qty, qty]", "HOLDS")])
+    bad = 0
+    bad += check(put is not None, f"the PUT is emitted (notes: {notes})")
+    if put is None:
+        return bad + 1
+    body = "\n".join(put)
+    bad += check("assertGe(_post_totalFees, 0," in body,
+                 "the numeric rung that rides along IS rendered")
+    bad += check("_post_owner - _pre_owner" not in body,
+                 "the address-named endpoint produced NO assertion")
+    bad += check("assertGe(_post_feeReceiver" not in body
+                 and "assertLe(_post_feeReceiver" not in body,
+                 "and neither did the endpoint naming a non-coordinate")
+    # AND THE DROP IS VISIBLE. Silence here would be the same artefact as a
+    # rendered rung from the reader's side: a test with two fewer assertions
+    # and no statement anywhere that two were refused.
+    bad += check("rung DROPPED: owner: post - pre in [u, u]" in body,
+                 "the address-named drop is REPORTED on the test")
+    bad += check("rung DROPPED: feeReceiver: post in [qty, qty]" in body,
+                 "and so is the non-coordinate drop")
+    if bad:
+        print(body)
+    return bad
+
+
+def test_a_numeric_R2_bound_is_UNCHANGED():
+    """NEGATIVE CONTROL for the widened regex. A decimal endpoint must render
+    exactly as it did before names were allowed; if `([0-9]+|name)` had been
+    written so that a digit string falls into the name branch, every existing
+    R2 rung would silently vanish and only this test would notice."""
+    put, _stats, notes = _r2_put(
+        [("totalFees", "post in [10, 20]", "HOLDS")])
+    bad = 0
+    bad += check(put is not None, f"the PUT is emitted (notes: {notes})")
+    if put is None:
+        return bad + 1
+    body = "\n".join(put)
+    bad += check("assertGe(_post_totalFees, 10," in body, "the literal low bound")
+    bad += check("assertLe(_post_totalFees, 20," in body, "the literal high bound")
+    if bad:
+        print(body)
+    return bad
+
+
+def test_a_RENAMED_coordinate_is_spelled_with_its_TEST_name():
+    """The emitter renames a coordinate to `p_<name>` when it would collide in
+    the test's own scope. A bound that emitted the SOURCE name would compile
+    against whatever else happens to be in scope, or not at all -- so the
+    lookup must go through the emitter's table and not through the ladder's
+    spelling. Exercised directly on `rung_assertions`, because provoking the
+    collision through a fixture would be testing the collision rule instead."""
+    from solidity_path_put import bound_term, rung_assertions  # noqa: E402
+    lines = rung_assertions(
+        "post - pre in [bps, bps] with post >= pre",
+        "_pre_x", "_post_x", "x: r", {"bps": "p_bps"})
+    bad = 0
+    bad += check(lines is not None, "the rung renders")
+    if lines is None:
+        return bad + 1
+    body = "\n".join(lines)
+    bad += check("_post_x - _pre_x, p_bps," in body,
+                 "the endpoint uses the TEST name `p_bps`")
+    bad += check(", bps," not in body,
+                 "and the source name `bps` appears nowhere")
+    bad += check(bound_term("bps", {"bps": "p_bps"}) == "p_bps",
+                 "bound_term maps a known name")
+    bad += check(bound_term("bps", {}) is None,
+                 "bound_term REFUSES an unknown name")
+    bad += check(bound_term("42", {}) == "42",
+                 "bound_term passes a decimal through with no table at all")
+    if bad:
+        print(body)
+    return bad
+
+
+def test_a_hole_OUTSIDE_the_interval_costs_no_width():
+    """CONTROL 1. Subtracting a hole the bound already excludes understates the
+    width, and a width-2 coordinate understated to 1 fails the floor test --
+    losing a PUT that was perfectly emittable."""
+    put, _stats, notes = _region_put({"bps": (7, 9), "u": (0, (1 << 160) - 1)},
+                                     {"bps": [7, 999]})
+    bad = 0
+    bad += check(put is not None, f"the PUT is still emitted (notes: {notes})")
+    bad += check(not any("leaves NO value" in n for n in notes),
+                 "and nothing is reported empty")
+    return bad
+
+
+def test_a_REPEATED_hole_is_counted_once():
+    """CONTROL 2. `bps` in [7, 8] with the hole 7 listed twice has ONE value
+    left, not zero. Counting the list rather than the set would make this
+    indistinguishable from the empty case above -- two different regions, one
+    outcome, and the discriminator would decide nothing."""
+    put, _stats, notes = _region_put({"bps": (7, 8), "u": (0, (1 << 160) - 1)},
+                                     {"bps": [7, 7]})
+    bad = 0
+    bad += check(put is not None, f"the PUT is still emitted (notes: {notes})")
+    bad += check(not any("leaves NO value" in n for n in notes),
+                 f"and it is NOT reported empty: {notes}")
+    return bad
 
 
 def _slot_pin_put(pins, ladder=None):
@@ -879,6 +2036,111 @@ def test_a_slot_pin_keyed_by_a_parameter_is_established():
                  f"the slot pin is established: {stats['state_stored']}")
     bad += check("keccak256(abi.encode(u, uint256(2)))" in text,
                  "the slot address is hashed from the FUZZ parameter")
+    return bad
+
+
+def _entry_state_put(region, pins=None):
+    em, case = make_case()
+    notes = []
+    base = {"bps": (0, 250), "u": (0, (1 << 160) - 1)}
+    base.update(region)
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region=base, holes={}, pins=pins or {}, params=PARAMS, emitted=em,
+        case=case, layout=LAYOUT, ladder_rows=LADDER, notes=notes,
+        maps=SLOT_MAPS)
+    return "\n".join(put or []), stats
+
+
+def test_an_ESTABLISHED_SCALAR_PIN_is_READ_BACK_and_checked():
+    """⛔ `vm.store` CANNOT FAIL. Hand it a slot the contract never reads -- a
+    packed offset mis-taken, a slot number gone stale after a recompile -- and
+    it writes the word, returns, and every rung below runs green about a state
+    nobody set. The region is a statement about a SLICE, and a test that never
+    entered the slice is evidence about a different execution.
+
+    The write is therefore followed by a read of the same address, so the
+    whole class of silent non-landings becomes a RED test with the
+    coordinate's name in the message."""
+    text, stats = _entry_state_put({}, pins={"state.owner": 5})
+    bad = 0
+    bad += check(stats["state_stored"] == ["state.owner := 5"],
+                 f"the pin is established: {stats['state_stored']}")
+    bad += check("vm.store(address(c0)" in text, "and it is a real store")
+    lands = [ln for ln in text.splitlines()
+             if "assertEq(" in ln and "did NOT land" in ln]
+    bad += check(len(lands) == 1,
+                 f"exactly one read-back check for the one pin: {lands}")
+    bad += check(bool(lands) and "state.owner" in lands[0],
+                 f"and it names the coordinate, not just 'a pin': {lands}")
+    # POSITION. A check that lands after the call is checking the POST state,
+    # which the unit may legitimately have changed -- it would be red for the
+    # wrong reason, or green for one.
+    body = text.splitlines()
+    ci = [i for i, ln in enumerate(body) if "c0.setDiscount(" in ln]
+    li = [i for i, ln in enumerate(body) if "did NOT land" in ln]
+    bad += check(bool(ci) and bool(li) and li[0] < ci[0],
+                 f"and it sits BEFORE the call (check at {li}, call at {ci})")
+    return bad
+
+
+def test_an_ESTABLISHED_MAPPING_PIN_is_READ_BACK_at_the_HASHED_slot():
+    """The mapping case is the one that actually went wrong. A mapping address
+    is keccak(key, slot), so a wrong key order, a wrong level count or a stale
+    slot all write a well-formed word nothing reads. This emitter has already
+    shipped a pin that was satisfied by coincidence."""
+    text, stats = _slot_pin_put({"state.bal[255]": 7})
+    bad = 0
+    lands = [ln for ln in text.splitlines() if "did NOT land" in ln]
+    bad += check(len(lands) == 1, f"one read-back check: {lands}")
+    bad += check(bool(lands)
+                 and "keccak256(abi.encode(uint256(255), uint256(2)))"
+                 in lands[0],
+                 f"and it reads the SAME hashed address the store wrote, not "
+                 f"a literal slot: {lands}")
+    return bad
+
+
+def test_a_WIDE_entry_bound_is_CHECKED_READ_ONLY_instead_of_dropped():
+    """⛔ THE HALF THE DROP USED TO THROW AWAY. The write stays forbidden --
+    the entry state is never havoc'd, so storing a fuzz-chosen value explores
+    entry states the proof never saw, and doing it is what turned three PoC
+    PUTs RED. But the query ASSUMED the entry value is in `[lo, hi]`, and if
+    the constructor's value is outside it the assumption was vacuous and the
+    certificate is about no execution at all. That costs one read to check."""
+    text, stats = _entry_state_put({"state.owner": (3, 100)})
+    bad = 0
+    ins = [ln for ln in text.splitlines() if "OUTSIDE the certified" in ln]
+    bad += check(len(ins) == 2,
+                 f"both endpoints checked, neither being a type limit: {ins}")
+    bad += check(all("vm.load(address(c0)" in ln for ln in ins),
+                 f"read-only -- it LOADS: {ins}")
+    bad += check(not any("vm.store" in ln and "owner" in ln
+                         for ln in text.splitlines()),
+                 "and nothing is STORED for it: the entry state the proof was "
+                 "about is kept exactly")
+    bad += check(any("checked, not set" in s
+                     for s in stats.get("state_stored", [])),
+                 f"the accounting says checked-not-set, so it is never read "
+                 f"as an established pin: {stats.get('state_stored')}")
+    return bad
+
+
+def test_a_WHOLE_TYPE_entry_bound_emits_NO_TAUTOLOGY_and_says_so():
+    """⛔ THE NEGATIVE CONTROL, and the failure mode it rules out. `owner in
+    [0, 2^160-1]` constrains nothing, so `assertLe(owner, 2^160-1)` cannot
+    fail. Emitting it would raise the assertion count while the oracle stayed
+    exactly where it was -- an always-true reader, which this project has
+    already shipped once. Nothing is emitted and the coordinate is reported
+    UNCHECKED rather than checked."""
+    text, stats = _entry_state_put({"state.owner": (0, (1 << 160) - 1)})
+    bad = 0
+    ins = [ln for ln in text.splitlines() if "OUTSIDE the certified" in ln]
+    bad += check(ins == [], f"no check at all is emitted: {ins}")
+    bad += check(any("state.owner" in s and "not even an in-region check" in s
+                     for s in stats.get("state_skipped", [])),
+                 f"and the coordinate is reported as UNCHECKED, with the "
+                 f"reason: {stats.get('state_skipped')}")
     return bad
 
 
@@ -917,6 +2179,54 @@ def test_a_slot_pin_keyed_by_msg_sender_is_REFUSED():
     return bad
 
 
+def test_a_nested_slot_is_read_at_the_ITERATED_hash():
+    """MUST FLIP against the one-level tests above, which stay bit-identical.
+
+    `m[a][b]` lives at `keccak(b . keccak(a . p))` -- the rule applied twice,
+    with the inner hash taking the place of the mapping's declared slot. One
+    hash would be a perfectly well-formed address of a word nothing ever wrote,
+    and every rung over it would hold trivially: green, and about nothing.
+
+    The two hashes are COUNTED rather than matched against a full expected
+    string, so the test does not also pin how a key is cast -- that is
+    `slot_key_expr`'s business and it has its own tests.
+    """
+    text, stats = _slot_pin_put(
+        {}, ladder=[("two[u][u]", "post == pre", "HOLDS")])
+    bad = 0
+    reads = [ln for ln in text.splitlines() if "_pre_" in ln and "vm.load" in ln]
+    bad += check(len(reads) == 1, f"one pre-read is emitted: {len(reads)}")
+    if not reads:
+        return bad + 3
+    bad += check(reads[0].count("keccak256(abi.encode(") == 2,
+                 f"the address is hashed TWICE, once per level: {reads[0]}")
+    bad += check("uint256(5)" in reads[0],
+                 "and the innermost operand is the mapping's declared slot")
+    bad += check(not stats["oracle_skipped"],
+                 f"nothing was dropped: {stats['oracle_skipped']}")
+    return bad
+
+
+def test_a_slot_named_with_the_WRONG_DEPTH_is_refused():
+    """THE NEGATIVE CONTROL for the test above, and the reason it exists.
+
+    A two-level store named with one key is the failure that cannot be seen in
+    the output: `keccak(a . p)` is a valid address, `vm.load` returns the zero
+    word, and `post == pre` passes forever. So the depth is compared against
+    the layout rather than trusted, and the refusal names both numbers.
+    """
+    text, stats = _slot_pin_put(
+        {}, ladder=[("two[u]", "post == pre", "HOLDS")])
+    bad = 0
+    bad += check(any("2-level store but the name gives 1 key(s)" in s
+                     for s in stats["oracle_skipped"]),
+                 f"the wrong depth is refused, with both numbers: "
+                 f"{stats['oracle_skipped']}")
+    bad += check("_pre_two" not in text,
+                 "and no read of the wrong word reaches the emitted body")
+    return bad
+
+
 def test_the_oracle_side_refuses_the_same_key():
     """One fact, one place: the ORACLE side used to refuse a non-parameter key
     while the WRITING side accepted it. Both go through `slot_key_expr` now."""
@@ -929,6 +2239,104 @@ def test_the_oracle_side_refuses_the_same_key():
                  f"{stats['oracle_skipped']}")
     bad += check("_pre_bal_msg_sender" not in text,
                  "and no read of the wrong slot is emitted")
+    return bad
+
+
+def _sender_keyed_put(sender_region, pins=None, ladder=None):
+    """A PUT whose region ESTABLISHES `msg.sender` and whose slot is keyed by it.
+
+    Deliberately `_slot_pin_put`'s fixture with exactly ONE thing added --
+    `msg.sender` in the region -- so the only difference between this and the
+    two refusal tests directly above is the antecedent under test. If the
+    refusal were being removed rather than given a precondition, those two
+    would go green here too and the pair would stop being a control.
+    """
+    em, case = make_case()
+    notes = []
+    region = {"bps": (0, 250), "u": (0, (1 << 160) - 1),
+              "msg.sender": sender_region}
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region=region, holes={}, pins=pins or {}, params=PARAMS, emitted=em,
+        case=case, layout=LAYOUT,
+        ladder_rows=ladder if ladder is not None else LADDER,
+        notes=notes, maps=SLOT_MAPS)
+    return "\n".join(put or []), stats
+
+
+def test_a_slot_keyed_by_an_ESTABLISHED_FUZZED_sender_is_READ():
+    """THE FLIP. `slot_key_expr` refuses `msg.sender` because the address the
+    unit sees as its caller is chosen by THIS emitter's preamble while the
+    region names the verifier's quantity -- so the two could disagree and the
+    resulting `post == pre` over an untouched word would be green and empty.
+
+    Once `establish_env_sender` has rewritten the governing prank, they cannot
+    disagree: the address IS the string this file emitted. So the key becomes
+    nameable, and the read must be at the hash of THAT expression -- not at
+    some other address that merely also exists in the test.
+    """
+    text, stats = _sender_keyed_put(
+        (0, 100), ladder=[("bal[msg.sender]", "post == pre", "HOLDS")])
+    bad = 0
+    bad += check(not any("ENVIRONMENT quantity" in s
+                         for s in stats["oracle_skipped"]),
+                 f"the key is no longer refused: {stats['oracle_skipped']}")
+    bad += check("keccak256(abi.encode(p_msg_sender, uint256(2)))" in text,
+                 "and the slot is read at the hash of the PRANKED address, "
+                 "which is the fuzz parameter the prank was given")
+    bad += check("vm.prank(p_msg_sender);" in text,
+                 "the prank really does use that same expression -- without "
+                 "this the hash could be of an address nothing runs as")
+    bad += check(text.index("p_msg_sender = ")
+                 < text.index("keccak256(abi.encode(p_msg_sender"),
+                 "and the bound() of that parameter PRECEDES the hash, or the "
+                 "slot would be computed from the raw draw and the call would "
+                 "run as the bounded one -- two different words")
+    bad += check("_pre_bal_msg_sender" in text and
+                 "_post_bal_msg_sender" in text,
+                 "the rung's two reads are both emitted")
+    return bad
+
+
+def test_a_slot_keyed_by_an_ESTABLISHED_POINT_sender_is_WRITTEN():
+    """The width-one branch chooses a LITERAL rather than a parameter, and the
+    pin (WRITING) side must use that same literal. This side is the dangerous
+    one: `slot_key_expr` exists because the writing side used to be the
+    permissive one, so a fix that only reached the oracle would restore exactly
+    the asymmetry that function was written to remove.
+    """
+    text, stats = _sender_keyed_put(
+        (5, 5), pins={"state.bal[msg.sender]": 7})
+    bad = 0
+    bad += check(not any("ENVIRONMENT quantity" in s
+                         for s in stats["state_skipped"]),
+                 f"the pin is no longer refused: {stats['state_skipped']}")
+    bad += check(
+        "keccak256(abi.encode(address(uint160(5)), uint256(2)))" in text,
+        "and the store lands at the hash of the CERTIFIED address")
+    bad += check("vm.prank(address(uint160(5)));" in text,
+                 "which is the address the prank was rewritten to")
+    bad += check(any("bal[msg.sender]" in s for s in stats["state_stored"]),
+                 f"and it is reported as stored: {stats['state_stored']}")
+    return bad
+
+
+def test_ESTABLISHING_THE_SENDER_makes_ONLY_THAT_KEY_nameable():
+    """NEGATIVE CONTROL, and the reason it is separate from the two refusal
+    tests above: those show the refusal surviving when NOTHING was established.
+    This shows that establishing the sender does not quietly open the gate for
+    every other environment quantity -- `msg.value` is decided by the call, not
+    by the prank, and no expression for it was returned.
+    """
+    text, stats = _sender_keyed_put(
+        (0, 100), ladder=[("bal[msg.value]", "post == pre", "HOLDS")])
+    bad = 0
+    bad += check(any("ENVIRONMENT quantity" in s
+                     for s in stats["oracle_skipped"]),
+                 f"msg.value is STILL refused, with the wording unchanged: "
+                 f"{stats['oracle_skipped']}")
+    bad += check("_pre_bal_msg_value" not in text,
+                 "and no read of that slot reaches the body")
     return bad
 
 
@@ -981,41 +2389,200 @@ def _mixed_put(emitted_text):
     return put, stats, notes
 
 
-def test_a_change_rung_is_DROPPED_on_a_revert_tolerant_call():
+def test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call():
     """MUST FLIP against the bare-call control below.
 
-    A revert leaves storage untouched, so a `post != pre` rung is FALSE on
-    exactly the outcome a `try {} catch {}` exists to tolerate. Measured on
-    farming.setDistributor enc=13, which emitted such a pair and came back
+    ---- WHAT THIS TEST USED TO ASSERT, AND WHY IT CHANGED ------------------
 
-        [FAIL: _distributor: post != pre; counterexample:
-         args=[0x...0064]]
+    It asserted the change rung was DROPPED. The measurement behind that rule
+    is real and still stands: farming.setDistributor enc=13 emitted a
+    `post != pre` pair and came back
 
-    on the UNMODIFIED contract -- the one outcome this pipeline must never
-    produce.
+        [FAIL: _distributor: post != pre; counterexample: args=[0x...0064]]
 
-    THE DROP MUST BE SELECTIVE. `post == pre` holds on a revert too, so it is
-    still emitted; a rule that dropped every rung under try/catch would be
-    "emit no oracle", which is worse than the bug.
+    on the UNMODIFIED contract -- a revert leaves storage untouched, so the
+    rung is FALSE on exactly the outcome a `try {} catch {}` exists to
+    tolerate.
+
+    Dropping was not the only sound answer, and it was the weakest one: it
+    threw away the only rungs that say the call DID something, leaving a PUT
+    whose whole oracle is the frame condition. The rung is a statement about
+    executions THAT WALK THE PATH, and a reverting execution does not -- so it
+    is now emitted UNDER the condition that the call did not revert. Every
+    input of the certified region walks this path, so an in-region input that
+    did not revert walked it and the rung holds of it.
+
+    ⛔ THIS TEST WAS INVISIBLE FOR THE WHOLE OF THAT CHANGE. `SLOT_MAPS` was a
+    3-tuple against a 6-tuple consumer, so an earlier test raised ValueError
+    and ABORTED the module -- every test from that point on, including this
+    one, silently did not run. A suite that stops early and a suite that
+    passes look identical from outside. That is why `main` now also checks that
+    every `test_` function in this module is registered.
+
+    THE GUARD MUST BE SELECTIVE, exactly as the drop had to be. `post == pre`
+    holds on a revert too, so it stays UNCONDITIONAL; putting every rung behind
+    the flag would weaken assertions that never needed it.
+
+    ⛔ WHAT IS STILL NOT ESTABLISHED HERE, and the header of every guarded PUT
+    says so too: whether the guard's true branch is ever TAKEN. A guarded
+    assertion skipped on all 256 fuzz runs is green and says nothing.
     """
     put, stats, notes = _mixed_put(TOLERANT_EMITTED)
     bad = 0
     bad += check(put is not None, f"a PUT is still produced (notes: {notes})")
     if put is None:
-        return bad + 3
+        return bad + 6
     # Asserted on the STATEMENT, not on the substring "post != pre": that text
     # legitimately appears in the header (the certified ladder is printed) and
-    # in the drop reason (which quotes the rung it dropped). A first version of
-    # this check searched the whole text and failed for that reason -- the same
-    # comment-versus-code confusion the sender test already records.
-    bad += check(not any("assertTrue(_post_feeReceiver != _pre_feeReceiver"
-                         in ln for ln in put),
-                 "the change assertion is absent from the CODE")
-    bad += check(any("REVERT-TOLERANT" in s for s in stats["oracle_skipped"]),
-                 f"and the drop NAMES the reason: {stats['oracle_skipped']}")
-    bad += check(any("assertEq(_post_owner, _pre_owner" in ln for ln in put),
-                 "while the `post == pre` rung of the SAME ladder survives -- "
-                 "the drop is selective, not a blanket refusal")
+    # in the CONDITIONAL note (which quotes the rung it guarded). A first
+    # version of this check searched the whole text and matched the comment.
+    code = [ln for ln in put if not ln.strip().startswith("//")]
+    chg = [i for i, ln in enumerate(code)
+           if "assertTrue(_post_feeReceiver != _pre_feeReceiver" in ln]
+    bad += check(len(chg) == 1,
+                 f"the change assertion IS rendered, not dropped: {len(chg)}")
+    gdecl = [i for i, ln in enumerate(code) if "bool _put_ok = true;" in ln]
+    gopen = [i for i, ln in enumerate(code) if "if (_put_ok) {" in ln]
+    bad += check(len(gdecl) == 1 and len(gopen) == 1,
+                 f"the flag is declared once and opens one block: "
+                 f"{len(gdecl)}, {len(gopen)}")
+    # POSITION, not mere presence. A change assertion that sits BEFORE the
+    # guard, or after its closing brace, is unconditional while every printed
+    # note claims it is conditional -- the exact red test the drop rule existed
+    # to prevent, wearing the name of the fix.
+    bad += check(bool(chg) and bool(gopen) and chg[0] > gopen[0],
+                 f"and the change assertion is INSIDE the guarded block "
+                 f"(guard at {gopen}, assertion at {chg})")
+    # The catch must CLEAR the flag. Left permanently true, the guard is
+    # decoration and the assertion is unconditional.
+    bad += check(any("catch { _put_ok = false; }" in ln for ln in code),
+                 "the catch clears the flag, so the guard can be false")
+    bad += check(stats.get("guarded_asserts", 0) > 0,
+                 f"the accounting counts them apart: "
+                 f"{stats.get('guarded_asserts')}")
+    eq = [i for i, ln in enumerate(code)
+          if "assertEq(_post_owner, _pre_owner" in ln]
+    bad += check(bool(eq) and bool(gopen) and eq[0] < gopen[0],
+                 f"while the `post == pre` rung of the SAME ladder stays "
+                 f"UNCONDITIONAL -- the guard is selective (eq at {eq}, "
+                 f"guard at {gopen})")
+    return bad
+
+
+def _rollback_put(emitted_text, rollback):
+    em, case = _make_case_from(emitted_text)
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=MIXED_LADDER, notes=notes,
+        rollback_exit=rollback)
+    return put, stats, notes
+
+
+def test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT():
+    """⛔ THE BRANCH THAT HAD NO RUN. The emitter grew a whole reverting-path
+    arm and not one test entered it, which is this project's recurring failure
+    -- a new defence that compiles, is called, and never fires looks exactly
+    like one that works.
+
+    WHAT IT IS FOR. A path that exits through a rollback is emitted as
+    `try c0.f() {} catch {}`: an oracle that cannot fail whatever the contract
+    does. Meanwhile the ladder's layer-2/3 verdicts on such a path compare the
+    value BETWEEN the write and the rollback -- a moment no test and no chain
+    can read -- so they are not merely weak, they are about nothing.
+
+    The trade is deliberate and it is a NET GAIN: 25 assertions about an
+    unobservable moment, none of which can ever be red, are replaced by ONE
+    that says the call must revert. A mutant that stops reverting goes from
+    invisible to RED.
+    """
+    put, stats, notes = _rollback_put(TOLERANT_EMITTED, True)
+    bad = 0
+    bad += check(put is not None, f"a PUT is still produced (notes: {notes})")
+    if put is None:
+        return bad + 6
+    code = [ln for ln in put if not ln.strip().startswith("//")]
+    body = "\n".join(code)
+    bad += check("assertTrue(_post_feeReceiver != _pre_feeReceiver" not in body,
+                 "the change rung is GONE -- it compared a pre-rollback value")
+    bad += check("assertEq(_post_owner, _pre_owner" not in body,
+                 "and so is the unchanged rung: layer 2 goes as a whole, not "
+                 "selectively -- both were read at the same unreadable moment")
+    bad += check(any("assertFalse(_put_ok," in ln for ln in code),
+                 f"and the FIRST layer replaces them: the call must revert")
+    bad += check(any("catch { _put_ok = false; }" in ln for ln in code),
+                 "the catch clears the flag, or the assertFalse can never fail")
+    bad += check(stats.get("rollback_exit") is True,
+                 f"the accounting records WHY the oracle is one line: "
+                 f"{stats.get('rollback_exit')}")
+    bad += check(stats.get("guarded_asserts", 0) == 0
+                 and not any("if (_put_ok) {" in ln for ln in code),
+                 f"no guarded block survives -- a guard with nothing in it is "
+                 f"an oracle that reads as present and asserts nothing")
+    bad += check(any("DROPPED" in s and "rollback" in s.lower()
+                     for s in stats.get("oracle_skipped", [])),
+                 f"and the drop is NAMED, not silent: "
+                 f"{stats.get('oracle_skipped')}")
+    return bad
+
+
+def test_a_NON_rollback_path_is_BYTE_IDENTICAL_to_before():
+    """⛔ THE NEGATIVE CONTROL, without which the test above proves nothing.
+    A change that dropped layer 2/3 on EVERY path would pass every check above
+    while destroying the oracle on the paths that still have one. The same
+    fixture with the flag off must produce exactly what it produced before the
+    arm existed -- guarded rung inside the block, unchanged rung outside it."""
+    on, _s1, _n1 = _rollback_put(TOLERANT_EMITTED, True)
+    off, stats, notes = _rollback_put(TOLERANT_EMITTED, False)
+    bad = 0
+    bad += check(off is not None, f"a PUT is produced (notes: {notes})")
+    if off is None:
+        return bad + 4
+    code = [ln for ln in off if not ln.strip().startswith("//")]
+    bad += check(any("assertTrue(_post_feeReceiver != _pre_feeReceiver" in ln
+                     for ln in code),
+                 "the change rung is BACK")
+    bad += check(any("assertEq(_post_owner, _pre_owner" in ln for ln in code),
+                 "the unchanged rung is BACK")
+    bad += check(not any("assertFalse(_put_ok," in ln for ln in code),
+                 "and no revert expectation is planted on a path that does "
+                 "not revert -- that would be RED on the unmodified contract")
+    bad += check(stats.get("rollback_exit") is False,
+                 f"the flag is off in the accounting too: "
+                 f"{stats.get('rollback_exit')}")
+    bad += check(on != off,
+                 "and the two arms actually differ -- if they were equal the "
+                 "flag would be reaching nothing")
+    return bad
+
+
+def test_the_ROLLBACK_LINE_of_the_ladder_log_is_PARSED_in_both_directions():
+    """The fact lived in the tool's own log and the emitter had NO READER for
+    it: `ROLLBACK` appeared zero times in solidity_path_put.py. Pinned by
+    (unit, enc) PAIR, not by enc alone -- one log carries many units and an
+    enc collision across them would plant a revert expectation on the wrong
+    path."""
+    from solidity_path_put import rollback_exit_paths  # noqa: E402
+    log = (
+        "WARNING: --path-cov-assert: unit 'sol:@C@F@F@setDistributor#5926' "
+        "path enc=13 exits through a ROLLBACK revert. The rollback IS "
+        "modelled, so the values below are the correctly RESTORED state\n"
+        "--path-cov-assert: unit 'sol:@C@F@F@deposit#77' path enc=4 exits "
+        "normally\n")
+    got = rollback_exit_paths(log)
+    bad = 0
+    bad += check(got == {("sol:@C@F@F@setDistributor#5926", 13)},
+                 f"exactly the reverting pair, and the unit id is carried: "
+                 f"{got}")
+    bad += check(rollback_exit_paths("") == set()
+                 and rollback_exit_paths(None) == set(),
+                 "an empty or missing log names no path, rather than raising")
+    bad += check(rollback_exit_paths(
+        "unit 'x' path enc=4 exits normally") == set(),
+        "and a NON-reverting line is not matched -- a reader that matched "
+        "every line would silently strip the oracle off every path")
     return bad
 
 
@@ -1229,12 +2796,132 @@ def test_dropped_rungs_are_not_reported_as_no_rung_holding():
                  "the header says the rungs held and could not be rendered")
     bad += check("NOT ONE RUNG HOLDS" not in text,
                  "and does NOT claim nothing held")
-    bad += check("3 rung(s) HOLD" in text,
-                 f"the count is the number that HELD, not the number of rows")
+    # ONE, not three. `post == pre` HOLDS entails `post >= pre` and
+    # `post <= pre`, so the ladder's three HOLDS are one INDEPENDENT rung --
+    # and one is the honest count of what was lost when it could not be
+    # rendered. Reporting three would claim three times the oracle.
+    bad += check("1 rung(s) HOLD" in text,
+                 f"the count is the number of INDEPENDENT rungs that HELD, "
+                 f"not the number of rows")
+    bad += check(len(stats["oracle_implied"]) == 2,
+                 f"and the other two are filed as IMPLIED, which is not the "
+                 f"same fact as dropped: {stats['oracle_implied']}")
     bad += check(any("_DOCKED" in s and "compile-time tautology" in s
                      for s in stats["oracle_skipped"]),
                  f"the per-rung reason is still printed: "
                  f"{stats['oracle_skipped']}")
+    return bad
+
+
+def test_the_ANTICHAIN_keeps_the_STRICT_rung_and_drops_what_it_entails():
+    """⛔ THE NUMBER IS READ AS STRENGTH. `assertGe(post, pre)` beside
+    `assertGt(post, pre)` cannot fail on any execution the strict one passes,
+    so the pair detects exactly what the strict one detects alone -- while a
+    PUT reporting six assertions of which three are entailed claims an oracle
+    twice as sharp as the one it has."""
+    from solidity_path_put import antichain  # noqa: E402
+    rows = [("bal", "post > pre", "HOLDS"),
+            ("bal", "post >= pre", "HOLDS"),
+            ("bal", "post != pre", "HOLDS"),
+            ("bal", "post <= pre", "REFUTED")]
+    kept, implied = antichain(rows)
+    bad = 0
+    bad += check([t for _v, t, _d in kept]
+                 == ["post > pre", "post <= pre"],
+                 f"the strict rung stays and so does the REFUTED row: {kept}")
+    bad += check(sorted(t for _v, t, _d in implied)
+                 == ["post != pre", "post >= pre"],
+                 f"and both entailed rungs are named: {implied}")
+    bad += check(len(kept) + len(implied) == len(rows),
+                 f"nothing vanishes between the two lists: "
+                 f"{len(kept)} + {len(implied)} vs {len(rows)}")
+    return bad
+
+
+def test_the_ANTICHAIN_may_not_let_a_GUARDED_rung_dominate_an_UNGUARDED_one():
+    """⛔ THE BUG THIS FILTER WOULD OTHERWISE HAVE INTRODUCED. On a
+    revert-tolerant call the CHANGE rungs are emitted inside `if (_put_ok)`
+    and the rest unconditionally:
+
+        assertGe(post, pre, ...)                  <- always runs
+        if (_put_ok) { assertGt(post, pre, ...) }  <- skipped on a revert
+
+    `post > pre` entails `post >= pre` as a PROPOSITION, but the assertion it
+    renders is skipped exactly when the call reverts -- which is the execution
+    where the unconditional one still has something to say. Dropping the outer
+    rung leaves that execution asserting NOTHING: oracle destroyed by a filter
+    whose entire premise is that it destroys none.
+
+    MEASURED SHAPE: farming setDistributor enc=13 emits `_distributor:
+    post >= pre` unconditionally and `post != pre` / `post > pre` guarded.
+
+    MUST FLIP against the bare-call arm below."""
+    from solidity_path_put import antichain  # noqa: E402
+    rows = [("d", "post > pre", "HOLDS"),
+            ("d", "post != pre", "HOLDS"),
+            ("d", "post >= pre", "HOLDS")]
+    kept, implied = antichain(rows, revert_tolerant=True)
+    bad = 0
+    bad += check([t for _v, t, _d in implied] == ["post != pre"],
+                 f"only the rung on the SAME side of the guard is dropped -- "
+                 f"`post != pre` is a change rung like `post > pre`: "
+                 f"{implied}")
+    bad += check(("d", "post >= pre", "HOLDS") in kept,
+                 f"and the UNCONDITIONAL rung survives: {kept}")
+    # THE CONTROL. Under a bare call there is no guard, every rung is
+    # unconditional, and the full table applies -- otherwise this rule would
+    # be leaving redundancy behind everywhere instead of only where it must.
+    kept2, implied2 = antichain(rows, revert_tolerant=False)
+    bad += check(sorted(t for _v, t, _d in implied2)
+                 == ["post != pre", "post >= pre"],
+                 f"on a BARE call both entailed rungs go: {implied2}")
+    return bad
+
+
+def test_the_ANTICHAIN_never_uses_a_REFUTED_rung_to_drop_a_HOLDING_one():
+    """⛔ THE DIRECTION THAT WOULD DESTROY ORACLE. A REFUTED `post > pre`
+    entails nothing whatsoever, so using it to drop `post >= pre` would delete
+    a rung that HOLDS on the strength of one that does not -- the emitted test
+    would lose a real assertion and the count would say it was redundant."""
+    from solidity_path_put import antichain  # noqa: E402
+    kept, implied = antichain([("bal", "post > pre", "REFUTED"),
+                               ("bal", "post >= pre", "HOLDS")])
+    bad = 0
+    bad += check(implied == [], f"nothing is dropped: {implied}")
+    bad += check(("bal", "post >= pre", "HOLDS") in kept,
+                 f"the holding rung survives: {kept}")
+    return bad
+
+
+def test_the_ANTICHAIN_does_not_reach_ACROSS_VARIABLES():
+    """`a: post > pre` says nothing about `b: post >= pre`. Domination that
+    ignored the variable would silently strip the frame condition off every
+    other slot the moment one slot moved."""
+    from solidity_path_put import antichain  # noqa: E402
+    kept, implied = antichain([("a", "post > pre", "HOLDS"),
+                               ("b", "post >= pre", "HOLDS")])
+    bad = 0
+    bad += check(implied == [], f"nothing is dropped: {implied}")
+    bad += check(len(kept) == 2, f"both survive: {kept}")
+    return bad
+
+
+def test_the_ANTICHAIN_lets_a_DELTA_rung_dominate_NOTHING():
+    """⛔ IT RUNS BEFORE RENDERING, so a rung it removes is gone whether or not
+    the dominating rung turns out to be renderable. The six ordering rungs
+    render through one branch and one slot lookup, so within that family
+    nothing can be lost. A DELTA rung's endpoints can be UNSPELLABLE, and
+    letting it dominate `post >= pre` would trade a rung that renders for one
+    that does not -- losing the oracle in exactly the case where the
+    domination was supposed to be free."""
+    from solidity_path_put import antichain  # noqa: E402
+    kept, implied = antichain(
+        [("bal", "post - pre in [amt, amt] with post >= pre", "HOLDS"),
+         ("bal", "post >= pre", "HOLDS")])
+    bad = 0
+    bad += check(implied == [],
+                 f"the ordering rung is NOT dropped by the delta: {implied}")
+    bad += check(len(kept) == 2, f"both survive: {kept}")
     return bad
 
 
@@ -1345,9 +3032,230 @@ def test_a_piece_label_distinguishes_two_boxes_of_one_path():
     return bad
 
 
+# ---------------------------------------------------------------------------
+# THE LOW-LEVEL VALUE-GATE SHAPE: two lines, one statement
+# ---------------------------------------------------------------------------
+#
+# A path whose exit is the ABI VALUE GATE cannot be replayed as `c0.f(args)` --
+# Solidity refuses `{value: v}` on a non-payable function at COMPILE time -- so
+# the emitter writes the only form that compiles, and it BREAKS IT ACROSS TWO
+# LINES with the unit's name on the second.
+#
+# Everything in this driver that says "the call" meant "the line that names the
+# unit", and for this shape those are different indices. Three separate
+# consumers were wrong in three different ways (see `statement_start`); the one
+# that had already been MEASURED is the reader:
+#
+#   [put] REFUSED: the emitted case does not run in the certified environment
+#   slice: msg.value is certified over [1, 115792089237316195423570985008687907
+#   853269984665640564039457584007913129639935] but the emitted case sets it to
+#   0 (`no {value:} option on the call, so msg.value is 0`), which is OUTSIDE
+#   that range
+#
+# -- a refusal produced by looking at the wrong line. The case DOES send 1.
+VALUE_GATE_EMITTED = """\
+// SPDX-License-Identifier: MIT
+// Auto-generated by ESBMC 8.2.0
+pragma solidity >=0.8.0;
+
+import {Test} from "forge-std/Test.sol";
+import {FarmingPool} from "./farming__FarmingPool.flat.sol";
+
+contract FarmingPoolCovTest is Test {
+  FarmingPool c0;
+  function setUp() public {
+    c0 = new FarmingPool();
+  }
+  // claim: sol:@C@FarmingPool@F@setDistributor#5926:path:2
+  function test_cov_4() public {
+    vm.deal(address(this), 1);
+    // [asserted] value sent to a NON-PAYABLE entry: the call must fail
+    (bool ok5, ) = address(c0).call{value: 1}(
+        abi.encodeWithSignature("setDistributor(address)", address(uint160(0))));
+    assertFalse(ok5, "value sent to a non-payable entry must revert");
+  }
+}
+"""
+# The four `test_cov_*` member-call cases of the same emitted file, its two
+# mock contracts and its real constructor arguments are omitted. What is pinned
+# here is the STATEMENT SHAPE, and the five lines of `test_cov_4` are a VERBATIM
+# capture of it -- line break, indentation and all -- from
+# tmp/enc2/put/emit/FarmingPool.cov.t.sol.
+
+FARM_LAYOUT = {"_distributor": (0, 0, 20), "_totalSupply": (1, 0, 32)}
+FARM_PARAMS = [("distributor_", "address")]
+FARM_LADDER = [("_distributor", "post == pre", "HOLDS"),
+               ("_totalSupply", "post == pre", "HOLDS")]
+UINT256_MAX = (1 << 256) - 1
+
+
+def _value_gate_case():
+    # NOT `_make_case_from`: that helper looks up the FeeVault claim by name,
+    # and this fixture is a different unit. Matching on the FULL mangled
+    # identity is the whole reason `case_for` takes one -- two units of one
+    # contract have independent path-id spaces.
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(VALUE_GATE_EMITTED)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@FarmingPool@F@setDistributor#5926", 2)
+    assert case is not None, "fixture: the value-gate case for enc=2 was missing"
+    return em, case
+
+
+def _value_gate_put(region_extra, pins=None):
+    em, case = _value_gate_case()
+    notes = []
+    region = {"distributor_": (0, (1 << 160) - 1),
+              "msg.sender": (0, (1 << 160) - 1)}
+    region.update(region_extra)
+    put, stats = build_put(
+        "FarmingPool", "setDistributor", 2, 1,
+        "sol:@C@FarmingPool@F@setDistributor#5926",
+        region=region, holes={}, pins=pins or {}, params=FARM_PARAMS,
+        emitted=em, case=case, layout=FARM_LAYOUT, ladder_rows=FARM_LADDER,
+        notes=notes)
+    return put, stats, notes
+
+
+def test_the_value_gate_statement_is_read_as_ONE_statement():
+    """`find_unit_call` lands on line 2 of 2; the statement starts on line 1."""
+    em, case = _value_gate_case()
+    body = em.lines[case[3][0] + 1:case[3][1]]
+    call_i = find_unit_call(body, "setDistributor")
+    bad = 0
+    bad += check(call_i is not None, "the low-level call is found at all")
+    if call_i is None:
+        return bad + 4
+    bad += check("abi.encodeWithSignature" in body[call_i],
+                 f"and the hit is the SECOND line: {body[call_i].strip()!r}")
+    st = statement_start(body, call_i)
+    bad += check(st == call_i - 1,
+                 f"the statement starts one line earlier: {st} vs {call_i}")
+    bad += check("{value: 1}" in body[st],
+                 f"which is the line carrying the value option: "
+                 f"{body[st].strip()!r}")
+    # THE MEASURED BUG. Reading the matched line alone yields 0.
+    obs = observed_env(body, call_i, body[call_i])
+    bad += check(obs["msg.value"][0] == 1,
+                 f"msg.value is read as 1, not 0: {obs['msg.value']}")
+    return bad
+
+
+def test_a_single_line_call_still_reports_its_own_statement():
+    """THE NEGATIVE CONTROL for `statement_start`.
+
+    If it were hard-wired to `i - 1` -- or to any walk that always steps back --
+    it would pass the case above and silently move every ordinary call's
+    insertion point one line up, which is where the emitter's `vm.prank` sits.
+    The FeeVault fixture's call is a plain one-line statement and must report
+    itself.
+    """
+    em, case = make_case()
+    body = em.lines[case[3][0] + 1:case[3][1]]
+    call_i = find_unit_call(body, "setDiscount")
+    bad = 0
+    bad += check(statement_start(body, call_i) == call_i,
+                 "a one-line call statement starts at its own line")
+    obs = observed_env(body, call_i, body[call_i])
+    bad += check(obs["msg.value"][0] == 0,
+                 f"and a call with no value option is still 0: "
+                 f"{obs['msg.value']}")
+    bad += check(obs["msg.sender"][0] == 0,
+                 f"and the prank above it is still read: {obs['msg.sender']}")
+    return bad
+
+
+def test_the_low_level_value_gate_emits_a_PUT():
+    """THE END-TO-END DIRECTION: enc=2's certified region reaches a test."""
+    put, stats, notes = _value_gate_put({"msg.value": (1, UINT256_MAX)})
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    if put is None:
+        return bad + 6
+    txt = "\n".join(put)
+    bad += check("abi.encodeWithSignature(\"setDistributor(address)\", "
+                 "distributor_))" in txt,
+                 "the unit's argument is rewritten INSIDE encodeWithSignature, "
+                 "past the signature string")
+    bad += check("\"setDistributor(address)\"" in txt,
+                 "and the signature string itself is untouched")
+    # THE STATEMENT MUST NOT BE SPLIT. Everything the PUT adds goes in front of
+    # its first line, never between the two.
+    code = [ln for ln in put if not ln.strip().startswith("//")]
+    i = [k for k, ln in enumerate(code) if "{value: 1}(" in ln]
+    bad += check(len(i) == 1 and "abi.encodeWithSignature" in code[i[0] + 1],
+                 "the two lines of the statement are still adjacent")
+    bad += check(any("assertFalse(ok5," in ln for ln in put),
+                 "the emitter's own exit-kind assertion survives")
+    bad += check(any(ln.strip() == "vm.prank(p_msg_sender);" for ln in put),
+                 "the established prank sits above the statement, not inside "
+                 "it")
+    bad += check(any(ln.strip() == "vm.deal(p_msg_sender, 1);" for ln in put),
+                 "and the chosen sender is FUNDED, or the call fails for lack "
+                 "of funds and assertFalse passes for the wrong reason")
+    return bad
+
+
+def test_the_funding_line_precedes_the_prank():
+    """`vm.prank` binds to the NEXT call; a deal placed after it would consume
+    nothing but must not be the last cheatcode standing between it and the
+    call. foundry.cpp's own comment states the ordering rule."""
+    put, _stats, _n = _value_gate_put({"msg.value": (1, UINT256_MAX)})
+    code = [ln.strip() for ln in (put or []) if not ln.strip().startswith("//")]
+    bad = 0
+    if "vm.deal(p_msg_sender, 1);" not in code:
+        return check(False, "the funding line is present")
+    bad += check(code.index("vm.deal(p_msg_sender, 1);")
+                 < code.index("vm.prank(p_msg_sender);"),
+                 "the deal comes before the prank")
+    return bad
+
+
+def test_a_value_gate_certified_at_ZERO_still_REFUSES():
+    """THE MUST-FLIP, and it flips the OTHER WAY from the case above.
+
+    The reader used to answer 0 for this statement. That wrong answer REFUSED
+    `msg.value in [1, ...]` (previous test) and would have ACCEPTED
+    `msg.value == 0` (this one). A reader hard-wired to either constant passes
+    exactly one of the two; only one that actually reads `{value: 1}` passes
+    both.
+    """
+    put, _stats, notes = _value_gate_put({}, pins={"msg.value": 0})
+    bad = 0
+    bad += check(put is None, "a call that sends 1 is NOT in the slice value==0")
+    bad += check(any("msg.value is certified at 0" in n and "sets it to 1" in n
+                     for n in notes),
+                 f"and the refusal quotes the value it actually read: {notes}")
+    return bad
+
+
 def main():
     bad = 0
+    # ---- THE REGISTRY BELOW IS HAND-MAINTAINED, SO IT IS CHECKED ----------
+    #
+    # Two ways this module has silently measured nothing, both real:
+    #   * a `test_` function written and never added here -- it simply never
+    #     runs, and the suite is green because it asked no question;
+    #   * an exception in an early test ABORTING the loop, so every later test
+    #     is skipped. That is what a stale `SLOT_MAPS` did, hiding an
+    #     already-broken assertion behind an unrelated ValueError.
+    #
+    # The first is caught here. The second is caught by counting how many
+    # tests actually reported, below.
+    registered = set()
+    declared = {k for k, v in list(globals().items())
+                if k.startswith("test_") and callable(v)}
+    ran = 0
     for t in (test_dropped_rungs_are_not_reported_as_no_rung_holding,
+              test_the_ANTICHAIN_keeps_the_STRICT_rung_and_drops_what_it_entails,
+              test_the_ANTICHAIN_may_not_let_a_GUARDED_rung_dominate_an_UNGUARDED_one,
+              test_the_ANTICHAIN_never_uses_a_REFUTED_rung_to_drop_a_HOLDING_one,
+              test_the_ANTICHAIN_does_not_reach_ACROSS_VARIABLES,
+              test_the_ANTICHAIN_lets_a_DELTA_rung_dominate_NOTHING,
               test_a_ladder_where_nothing_held_still_says_so,
               test_the_retlive_witness_is_not_counted_as_a_rung_that_held,
               test_a_revert_tolerant_body_is_NOT_called_an_assertion,
@@ -1380,18 +3288,92 @@ def main():
               test_bind_return_refuses_the_exit_kind_shapes,
               test_a_return_only_oracle_still_reaches_the_test,
               test_a_refuted_return_rung_is_never_asserted,
+              test_an_ESTABLISHED_SCALAR_PIN_is_READ_BACK_and_checked,
+              test_an_ESTABLISHED_MAPPING_PIN_is_READ_BACK_at_the_HASHED_slot,
+              test_a_WIDE_entry_bound_is_CHECKED_READ_ONLY_instead_of_dropped,
+              test_a_WHOLE_TYPE_entry_bound_emits_NO_TAUTOLOGY_and_says_so,
               test_a_slot_pin_keyed_by_a_parameter_is_established,
               test_a_slot_pin_keyed_by_a_literal_is_established,
               test_a_slot_pin_keyed_by_msg_sender_is_REFUSED,
+              test_a_probe_only_width_is_FLAGGED_on_the_test,
+              test_a_ladder_derived_width_is_NOT_flagged,
+              test_no_derivation_recorded_prints_no_provenance_block,
+              test_an_entirely_holed_coordinate_REFUSES_the_put,
+              test_an_INCREASING_variable_proposes_an_inc_delta_named_by_the_parameter,
+              test_a_DECREASING_variable_proposes_dec_not_inc,
+              test_an_UNCHANGED_variable_proposes_NO_DELTA_and_says_why,
+              test_a_MIXED_DIRECTION_region_proposes_NO_DELTA_but_DOES_propose_ABS,
+              test_a_unit_whose_ONLY_PARAMETER_IS_AN_ADDRESS_proposes_an_ABS_bound,
+              test_a_unit_with_NO_USABLE_PARAMETER_AT_ALL_proposes_nothing,
+              test_TWO_esbmc_invocations_do_not_share_ONE_log_file,
+              test_a_candidate_with_NO_STORAGE_SLOT_gets_NO_R2_QUERY,
+              test_a_SLOTTED_candidate_beside_an_UNSLOTTED_one_still_gets_ITS_query,
+              test_asked_but_never_answered_is_counted_as_zero_not_as_seven,
+              test_a_ladder_that_answered_everything_reports_no_gap,
+              test_no_slot_asked_means_no_gap_and_no_claim,
+              test_the_EXCLUSION_MESSAGE_names_no_cause_it_did_not_measure,
+              test_an_IDENTITY_endpoint_is_only_asked_about_candidates_of_ITS_WIDTH,
+              test_the_WIDTH_FILTER_leaves_a_NUMERIC_endpoint_alone,
+              test_WITHOUT_a_width_table_NOTHING_is_filtered,
+              test_an_IDENTITY_with_NO_CANDIDATE_OF_ITS_WIDTH_sends_NO_QUERY,
+              test_TWO_integer_parameters_produce_TWO_SEPARATE_queries,
+              test_a_fuzz_REFUTATION_is_read_and_a_pass_is_NOT_a_proof,
+              test_a_probe_THAT_NEVER_RAN_is_NOT_RUN_not_a_pass,
+              test_an_R2_PASS_actually_runs_and_carries_the_proposed_vars,
+              test_an_ABSOLUTE_row_is_MERGED_and_not_silently_dropped,
+              test_the_CAP_pass_RUNS_when_stage_1_REFUTED_the_exact_delta,
+              test_the_CAP_pass_IS_SKIPPED_when_stage_1_ALREADY_HOLDS,
+              test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT,
+              test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed,
+              test_an_R2_PASS_never_overwrites_a_row_the_FIRST_pass_decided,
+              test_a_ONE_LEVEL_mapping_proposes_one_key,
+              test_a_NESTED_mapping_proposes_ONE_KEY_PER_LEVEL,
+              test_a_NESTED_STRUCT_mapping_keeps_its_FIELD_TAIL,
+              test_a_LEVEL_WITH_NO_MATCHING_PARAMETER_proposes_NOTHING,
+              test_the_CANDIDATE_BUDGET_says_what_it_dropped,
+              test_an_ADDRESS_endpoint_renders_for_an_ABSOLUTE_bound,
+              test_an_ADDRESS_endpoint_is_STILL_REFUSED_for_a_DELTA_bound,
+              test_a_named_R2_bound_renders_as_the_test_parameter,
+              test_an_R2_bound_naming_an_UNLIFTED_COORDINATE_is_DROPPED,
+              test_a_numeric_R2_bound_is_UNCHANGED,
+              test_a_RENAMED_coordinate_is_spelled_with_its_TEST_name,
+              test_a_hole_OUTSIDE_the_interval_costs_no_width,
+              test_a_REPEATED_hole_is_counted_once,
+              test_a_nested_slot_is_read_at_the_ITERATED_hash,
+              test_a_slot_named_with_the_WRONG_DEPTH_is_refused,
               test_the_oracle_side_refuses_the_same_key,
-              test_a_change_rung_is_DROPPED_on_a_revert_tolerant_call,
+              test_a_slot_keyed_by_an_ESTABLISHED_FUZZED_sender_is_READ,
+              test_a_slot_keyed_by_an_ESTABLISHED_POINT_sender_is_WRITTEN,
+              test_ESTABLISHING_THE_SENDER_makes_ONLY_THAT_KEY_nameable,
+              test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call,
+              test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT,
+              test_a_NON_rollback_path_is_BYTE_IDENTICAL_to_before,
+              test_the_ROLLBACK_LINE_of_the_ladder_log_is_PARSED_in_both_directions,
               test_the_same_change_rung_IS_asserted_on_a_bare_call,
               test_a_wide_env_coordinate_is_FUZZED_not_disclosed_as_one_point,
               test_a_wide_env_coordinate_EXCLUDING_the_sender_is_also_fuzzed,
               test_a_width_one_env_coordinate_emits_at_the_certified_value,
-              test_a_piece_label_distinguishes_two_boxes_of_one_path):
+              test_a_piece_label_distinguishes_two_boxes_of_one_path,
+              test_the_value_gate_statement_is_read_as_ONE_statement,
+              test_a_single_line_call_still_reports_its_own_statement,
+              test_the_low_level_value_gate_emits_a_PUT,
+              test_the_funding_line_precedes_the_prank,
+              test_a_value_gate_certified_at_ZERO_still_REFUSES):
         print(f"--- {t.__name__}")
+        registered.add(t.__name__)
         bad += t()
+        ran += 1
+    missing = sorted(declared - registered)
+    if missing:
+        print(f"\n⛔ {len(missing)} test function(s) exist in this module and "
+              f"are NOT in the registry above, so they never ran: "
+              f"{', '.join(missing)}")
+        bad += len(missing)
+    if ran != len(registered):
+        print(f"\n⛔ {len(registered)} test(s) registered but {ran} reported -- "
+              f"the loop did not reach the end")
+        bad += 1
+    print(f"\n{ran} test(s) ran, {len(declared)} declared in this module")
     if bad:
         print(f"\n{bad} check(s) FAILED")
         return 1

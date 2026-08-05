@@ -1,0 +1,11 @@
+CORE
+contract.sol
+--contract MixedKeys --solidity-path-coverage --solidity-max-tx 2 --focus-function put,take --path-cov-instrument-only take --path-cov-assert spec.json
+tagged\[h\] \(the key 'h' resolves but cannot be expressed: it resolves to an AGGREGATE \(struct / contract instance\).*This candidate is DROPPED; the other candidates of this run are unaffected\)
+^--path-cov-assert: region NON-VACUITY witnessed
+^--path-cov-assert: bal\[k\]: post != pre  HOLDS
+^--path-cov-assert: bal\[k\]: post < pre  HOLDS
+^--path-cov-assert: bal\[k\]: post > pre  REFUTED
+^--path-cov-assert: ladder summary -- 6 candidate\(s\): 3 HOLDS, 3 REFUTED, 0 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)
+\A(?!(.|\n)*INTERNAL DEFECT)
+\A(?!(.|\n)*REFUSING THE LADDER)

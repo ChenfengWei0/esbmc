@@ -52,6 +52,49 @@ BENCHES = {
     "farming": ("farming__FarmingPool.flat.sol", "FarmingPool"),
 }
 
+POC_UNITS = os.path.join(NOTES, "coverage", "poc_units")
+
+
+def corpus_inputs_dir(bench, unit):
+    """Where THIS (benchmark, unit)'s source lives now, or None.
+
+    The shared corpus directory `notes/coverage/inputs/` has been DELETED: it
+    was the benchmark, and every driver reached a whole-corpus sweep by
+    building `INPUTS / <basename>` off a benchmark key. Each PoC now owns
+    hardlinks to the files its own unit needs.
+
+    Stage 4 is the one consumer that cannot use a single per-process override
+    the way the two drivers do: it walks SEVERAL units, from several
+    benchmarks, in one pass, so the directory has to be resolved PER ROW. That
+    is what this does -- it asks the PoC index which PoC is this exact
+    (benchmark, unit) and returns that PoC's private input directory.
+
+    Returns None when no PoC matches, and the caller then falls back to the old
+    shared path and fails there with its own message. Silently substituting
+    another unit's directory would be worse than the missing file: the
+    basenames are identical across PoCs of one benchmark, so a wrong directory
+    would RESOLVE and stage 4 would emit a PUT against a source nobody chose.
+    """
+    idx = os.path.join(POC_UNITS, "index.json")
+    if not os.path.exists(idx):
+        return None
+    try:
+        pocs = json.load(open(idx)).get("pocs") or []
+    except ValueError:
+        return None
+    for pid in pocs:
+        p = os.path.join(POC_UNITS, pid, "poc.json")
+        if not os.path.exists(p):
+            continue
+        try:
+            d = json.load(open(p))
+        except ValueError:
+            continue
+        if d.get("benchmark") == bench and d.get("unit") == unit:
+            return d.get("inputs_dir")
+    return None
+
+
 FOUNDRY_TOML = """[profile.default]
 src = "src"
 test = "test"
@@ -88,6 +131,48 @@ def parse_certified(text):
     return region, holes, pins
 
 
+def current_binary_identity():
+    """The identity of the executable THIS run would use.
+
+    Same three fields as `pathcov_collect.py::binary_identity()` and as the
+    `binary` block `solidity_path_put.py` now writes into put.json, so one
+    comparison rule covers a runs.jsonl row and a put.json alike. `binaryMtime`
+    is the load-bearing field: HEAD alone cannot separate two builds of one
+    commit, which is the state this tree is in whenever a fix is uncommitted.
+    """
+    def _sh(args):
+        try:
+            return subprocess.run(args, capture_output=True, text=True,
+                                  cwd=REPO, timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    return {
+        "head": _sh(["git", "rev-parse", "--short", "HEAD"]),
+        "srcDirty": bool(_sh(["git", "status", "--porcelain", "--", "src/"])),
+        "binaryMtime": (int(os.stat(ESBMC).st_mtime)
+                        if os.path.exists(ESBMC) else 0),
+    }
+
+
+def stale_reason(rec, now):
+    """Why this put.json may not be counted, or None.
+
+    Absence of the field is NOT treated as agreement. A put.json written before
+    the stamp existed carries no evidence either way, and 'no evidence' must not
+    read as 'same binary' -- that is precisely how the Aug-3 artefact was
+    counted in the first place.
+    """
+    b = rec.get("binary")
+    if not isinstance(b, dict):
+        return ("put.json carries no `binary` block, so the executable that "
+                "wrote it is unknown; it predates the stamp. Re-emit this row")
+    if b.get("binaryMtime") != now.get("binaryMtime"):
+        return (f"put.json was written by a DIFFERENT executable "
+                f"(binaryMtime {b.get('binaryMtime')} vs {now.get('binaryMtime')}"
+                f", head {b.get('head')} vs {now.get('head')}). Re-emit this row")
+    return None
+
+
 def ensure_project(name, flat, shared=None):
     """The forge project a PUT is written into.
 
@@ -113,6 +198,29 @@ def ensure_project(name, flat, shared=None):
     if not os.path.exists(lib):
         os.symlink(FORGE_STD, lib)
     return proj
+
+
+def cells_of(results):
+    """(cell names over rows that PRODUCED a PUT, count of rows that did not).
+
+    ⛔ SEPARATED FROM main() ON PURPOSE. This is the part that DECIDES whether
+    a table may be quoted, and a deciding part has to be provable in both
+    directions: silent when the only extra "cell" comes from a region that was
+    never run, and firing when two rows that WERE run disagree. Left inline it
+    could only ever be checked by reading it.
+
+    A row counts as having produced a PUT when its return code is 0 AND its
+    record names a file. An emitted row whose record carries no cell keeps the
+    UNRECORDED sentinel -- that one IS a real unknown about a real run.
+    """
+    made, norun = [], 0
+    for r in results:
+        rc, rec = r[4], (r[5] or {})
+        if rc == 0 and rec.get("file"):
+            made.append((rec.get("cell") or {}).get("name", "UNRECORDED"))
+        else:
+            norun += 1
+    return sorted(set(made)), norun
 
 
 def main():
@@ -143,6 +251,32 @@ def main():
                          "on whichever arm happens to own the default filename. "
                          "The arm a table came from is printed with it, because "
                          "two arms' PUT counts must never be summed.")
+    ap.add_argument("--only", default="", metavar="SUBSTR",
+                    help="emit only the regions whose `<benchmark>.<unit>` "
+                         "contains this substring. WITHOUT IT EVERY "
+                         "MEASUREMENT COSTS THE WHOLE SWEEP: each region is "
+                         "two sequential esbmc invocations, so re-checking one "
+                         "row after a one-line fix was costing twenty runs. "
+                         "⛔ A value that matches NOTHING is a hard failure, "
+                         "not an empty table -- an empty sweep prints a "
+                         "well-formed report reading `0 of 0` and exits 0, "
+                         "which is indistinguishable from a real answer.")
+    ap.add_argument("--propose-r2", action="store_true",
+                    help="passed through to the driver: after the ladder's "
+                         "first pass, ASK for the R2 bounds its ordering rungs "
+                         "made answerable -- BOTH the absolute `post in [p, p]` "
+                         "and, for a variable whose direction the ordering "
+                         "rungs fixed, the delta `post - pre in [p, p]`. The "
+                         "two ride the SAME spec entry, so the delta costs no "
+                         "query the absolute did not already cost. ⚠ ONE EXTRA "
+                         "esbmc RUN PER ENDPOINT PER REGION, capped at "
+                         "R2_MAX_QUERIES; pair it with --only. ⛔ IT IS OPT-IN "
+                         "AND NOTHING SETS IT BY DEFAULT: measured 2026-08-05, "
+                         "201 of the 218 put.json files on disk carry a ladder "
+                         "with no R2 row of either kind, and every one of them "
+                         "is a run this flag was absent from -- not a unit "
+                         "that was asked and had nothing to say. put.json's "
+                         "`r2_requested` is what tells the two apart.")
     ap.add_argument("--forge-only", action="store_true",
                     help="do NOT emit anything: read the put.json each region "
                          "already produced, run `forge test` per project, and "
@@ -159,6 +293,7 @@ def main():
     if not os.path.exists(cert_path):
         sys.exit(f"no certify sweep at {cert_path}")
     rows = []
+    n_certified = 0   # BEFORE --only, so the header can say what was filtered
     for line in open(cert_path):
         line = line.strip()
         if not line:
@@ -201,7 +336,30 @@ def main():
                       f"is neither `<enc>` nor `<enc>#<piece>`, so this row "
                       f"cannot be resolved to a path")
                 continue
-            rows.append((key, is_poc, r["unit"], enc_i, piece or None, text))
+            # THE ARM'S OWN FLAG TRAVELS WITH THE REGION. Absent means the
+            # row predates --pin-extcall, i.e. false -- never "unknown", because
+            # every sweep that could set it writes it.
+            # ---- THE DERIVATION CONFIGURATION TRAVELS WITH THE ROW ----
+            #
+            # The work order requires a rendered width to say WHICH STEP
+            # produced it, and forbids a width that rests only on a
+            # neighbourhood probe. The certified region string carries no such
+            # information -- it is `name in [lo, hi]` and nothing else -- but
+            # the sweep row does, because it records the switches the arm ran
+            # under. It is ROW granularity, not per coordinate, and it is
+            # labelled as such on the emitted test rather than being allowed
+            # to read as if each bound had been traced.
+            deriv = {k: r.get(k) for k in
+                     ("level0", "level0_perturb", "level0_points",
+                      "probe_ladder", "probe_ladder_budget", "probes",
+                      "shrink_rounds", "refine_rounds", "skip_bracket",
+                      "cut_policy", "max_region_pieces", "max_holes")
+                     if r.get(k) is not None}
+            n_certified += 1
+            if args.only and args.only not in f"{key}.{r['unit']}":
+                continue
+            rows.append((key, is_poc, r["unit"], enc_i, piece or None, text,
+                         bool(r.get("pin_extcall")), deriv))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
     #
@@ -216,14 +374,33 @@ def main():
     if os.path.abspath(cert_path) != os.path.abspath(default_cert):
         arm = "__" + os.path.splitext(os.path.basename(cert_path))[0]
 
-    print(f"=== {len(rows)} CERTIFIED region(s) recorded by stage 2 "
-          f"({os.path.basename(cert_path)}) ===")
+    # ⛔ THE TOTAL IS WHAT STAGE 2 RECORDED, NOT WHAT --only KEPT. Printing
+    # `len(rows)` here made a filtered run announce "0 CERTIFIED region(s)
+    # recorded by stage 2" -- a false statement about stage 2 produced by this
+    # sweep's own filter, and exactly the kind of line that gets quoted later.
+    print(f"=== {n_certified} CERTIFIED region(s) recorded by stage 2 "
+          f"({os.path.basename(cert_path)}) ==="
+          + (f"\n=== --only '{args.only}' keeps {len(rows)} of them; the "
+             f"other {n_certified - len(rows)} were NOT measured by this run "
+             f"and their absence is a filter, not a result ==="
+             if args.only else ""))
     if arm:
         print(f"=== ARM {arm[2:]}: PUTs go to their OWN project and workdir, so "
               f"this table does not overwrite or get confused with another "
               f"arm's. Two arms' PUT counts must never be summed. ===")
     results = []
-    for bench, is_poc, unit, enc, piece, text in rows:
+    # ⛔ AN --only THAT SELECTS NOTHING IS A HARD FAILURE. The sweep would
+    # otherwise print a complete, well-formed `0 of 0 certified region(s)`
+    # table and exit 0 -- indistinguishable from "this arm has no regions",
+    # which is a different fact entirely. Same shape as poc_funnel's --only,
+    # and it is here because that one was found by being read wrong first.
+    if args.only and not rows:
+        print(f"⛔ --only '{args.only}' selected NONE of the {n_certified} "
+              f"region(s) in this arm. It matches against `<benchmark>.<unit>`. "
+              f"Refusing to print an empty sweep, which reads exactly like a "
+              f"real measurement of nothing.")
+        return 2
+    for bench, is_poc, unit, enc, piece, text, pin_extcall, deriv in rows:
         # The label every downstream name is built from, derived ONCE and in
         # the same shape the emitter builds it (`p<K>`). Two derivations is how
         # the gate below comes to look up a function the emitted file does not
@@ -245,7 +422,23 @@ def main():
             continue
         else:
             flat_name, contract = BENCHES[bench]
-            flat = os.path.join(INPUTS, flat_name)
+            # PER ROW, because one pass covers several units of several
+            # benchmarks and there is no longer one directory that holds them
+            # all. See corpus_inputs_dir: a miss returns None and falls back to
+            # the deleted shared path, which then fails by name -- it never
+            # borrows a neighbouring PoC's directory, where the identical
+            # basename would resolve and quietly emit against a source nobody
+            # chose.
+            own = corpus_inputs_dir(bench, unit)
+            flat = os.path.join(own or INPUTS, flat_name)
+            if own and not os.path.exists(flat):
+                print(f"  SKIP {bench}.{unit} enc={encs}: this unit's PoC "
+                      f"input directory {own} does not hold {flat_name}. The "
+                      f"shared corpus is deleted, so this is the only copy "
+                      f"there should be -- rebuild it with "
+                      f"notes/coverage/scripts/poc_split.py rather than "
+                      f"letting stage 4 resolve somewhere else")
+                continue
         # ---- TWO AST NAMING CONVENTIONS, AND ONLY ONE IS RIGHT PER SOURCE ----
         #
         # The corpus flats are named `<x>.flat.sol` and their AST is generated
@@ -272,6 +465,21 @@ def main():
         if not os.path.exists(ast):
             print(f"  SKIP {bench}.{unit} enc={encs}: no AST at {ast}")
             continue
+        if pin_extcall:
+            # ⛔ NOT A SKIP FOR CONVENIENCE. The region is real and it certified;
+            # what is missing is any way for the emitted test to be INSIDE it.
+            print(f"  REFUSE {bench}.{unit} enc={encs}: this region was "
+                  f"certified with --pin-extcall, i.e. under a fixed value for "
+                  f"a quantity the HARNESS chose inside the execution (an "
+                  f"external call's success bit is the usual one). A generated "
+                  f"test chooses ARGUMENTS and cannot choose what a callee "
+                  f"returns, so emitting it would produce a file that states "
+                  f"the certified property while not being known to run inside "
+                  f"the certified slice at all. WHAT LIFTS THIS: an emitter "
+                  f"that makes the value happen -- a mock at the called address "
+                  f"whose behaviour matches the pinned value -- after which "
+                  f"this row becomes emittable unchanged")
+            continue
         region, holes, pins = parse_certified(text)
         if not region and not pins:
             print(f"  SKIP {bench}.{unit} enc={encs}: the recorded region "
@@ -292,7 +500,10 @@ def main():
                # and forbids quoting one into the other's table, so it is an
                # argument here and it is printed with the result.
                "--scope", args.scope, "--max-tx", str(args.max_tx),
-               "--auto-unwind", str(args.auto_unwind)]
+               "--auto-unwind", str(args.auto_unwind),
+               "--derived-by", json.dumps(deriv)]
+        if args.propose_r2:
+            cmd.append("--propose-r2")
         # ONLY when this row IS a piece, so an unsplit region's command line is
         # byte-identical to every one already recorded.
         if piece:
@@ -324,11 +535,16 @@ def main():
     # quoted into the branch-coverage gate table and a run of the GATE cell may
     # not be quoted as the method's reach, so the table has to say which it is
     # rather than leaving the reader to remember the flags.
-    cells = sorted({(r[5].get("cell") or {}).get("name", "UNRECORDED")
-                    for r in results})
+    cells, n_norun = cells_of(results)
     print(f"CELL: scope={args.scope} --solidity-max-tx={args.max_tx} "
           f"-> {', '.join(cells) if cells else 'no run recorded one'}"
           + (f", --auto-unwind {args.auto_unwind}" if args.auto_unwind else ""))
+    if n_norun:
+        print(f"   ({n_norun} certified region(s) in this arm produced no PUT "
+              f"and therefore carry NO CELL. That is a missing measurement, "
+              f"not a second cell, and it is deliberately not folded into the "
+              f"line above -- doing so printed the MIXED-CELLS refusal over "
+              f"tables whose emitted rows were all one cell.)")
     if len(cells) > 1:
         print("** MIXED CELLS IN ONE TABLE. These rows are not comparable and "
               "the table must not be quoted anywhere. **")
@@ -340,11 +556,18 @@ def main():
         encs = f"{enc}#{piece}" if piece else str(enc)
         st = rec.get("stats") or {}
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
+        # PRINTED APART, for the same reason gate 3 counts them apart: a rung
+        # under `if (_put_ok)` runs only when the call did not revert, and on
+        # farming setDistributor 13 that branch is never taken on 256 draws
+        # (measured with guard_probe.py against a RED control). `12` there was
+        # 10 assertions and 2 pieces of decoration.
+        gd = st.get("guarded_asserts", 0)
+        ar_txt = f"{ar - gd}+{gd}c" if gd else str(ar)
         if rc == 0:
             n_put += 1
             n_fuzz += 1 if fz else 0
-            n_oracle += 1 if ar else 0
-            n_both += 1 if (fz and ar) else 0
+            n_oracle += 1 if (ar - gd) else 0
+            n_both += 1 if (fz and (ar - gd)) else 0
             outcome = os.path.basename(rec.get("file", ""))
         elif rc == 2:
             outcome = "REFUSED: " + str(rec.get("refused"))
@@ -359,7 +582,8 @@ def main():
             outcome = "NOT EMITTED YET (no put.json; re-run without --forge-only)"
         else:
             outcome = "REFUSED (see log above)"
-        print(f"{bench:<28}{unit:<16}{encs:>7}{rc:>4}{fz:>6}{ar:>9}  {outcome}")
+        print(f"{bench:<28}{unit:<16}{encs:>7}{rc:>4}{fz:>6}{ar_txt:>9}  "
+              f"{outcome}")
     print()
     print(f"  PUTs emitted                     : {n_put} of {len(results)} "
           f"certified region(s)")
@@ -400,11 +624,87 @@ def main():
 # coordinate whose certified interval is a single point (lo == hi) is established,
 # not fuzzed, so a `bound(x, v, v)` is a constant wearing a fuzz parameter's type.
 # At least ONE fuzzed coordinate must have hi > lo or gate 2 fails.
+def disable_red_replays(projects):
+    """Rename RED CONCRETE REPLAYS out of forge's `test*` prefix. Never a PUT.
+
+    THE SAME SELF-CHECK GATE forge_roundtrip.py already runs, brought to stage 4
+    because the two emitters were disagreeing about the same suite. MEASURED,
+    farming/deposit: the roundtrip's project disabled both of its concrete cases
+    as "RED on the unmodified contract", and stage 4's project shipped the same
+    two cases enabled -- so one artefact said the replay was not ours to claim
+    and the other handed it over.
+
+    ⛔ A PUT IS NEVER DISABLED, and that is the whole reason this is a separate
+    function rather than a copy of the roundtrip's loop. Disabling a red PUT
+    would turn gate 4 from a measurement into a formality: the row would go green
+    because the test stopped running. A red PUT stays red and is reported red.
+
+    A concrete replay is different in kind: it asserts the exit the MODEL
+    predicted, and the model gives an external call a nondet return, so it may
+    choose an outcome the chain does not produce. That is a known, recorded gap
+    -- not a defect in the region under test -- and the roundtrip already
+    decided that such a case is kept, renamed, and not counted.
+    """
+    for proj in projects:
+        p = subprocess.run(["forge", "test", "--json"], cwd=proj,
+                           capture_output=True, text=True)
+        try:
+            data = json.loads(p.stdout)
+        except json.JSONDecodeError:
+            continue
+        red = {}
+        for suite, body in data.items():
+            for name, res in (body.get("test_results") or {}).items():
+                fn = name.split("(")[0]
+                if res.get("status") == "Failure":
+                    red.setdefault(suite.split(":")[0], []).append(fn)
+        for path, fns in sorted(red.items()):
+            # `path` is the source file forge reports for the suite.
+            full = path if os.path.isabs(path) else os.path.join(proj, path)
+            if not os.path.exists(full):
+                print(f"  [self-check] cannot locate {path} under "
+                      f"{os.path.basename(proj)} -- NOT disabling anything in "
+                      f"it; the red test(s) {sorted(fns)} stay enabled and will "
+                      f"be reported red")
+                continue
+            with open(full) as fh:
+                txt = fh.read()
+            changed = []
+            for fn in sorted(fns):
+                if fn.startswith("test_put_"):
+                    print(f"  [self-check] {os.path.basename(full)}: {fn} is "
+                          f"RED and is a PUT -- LEFT ENABLED on purpose. A red "
+                          f"PUT is a failed gate 4, not a test to hide")
+                    continue
+                needle = f"  function {fn}() public {{"
+                if needle not in txt:
+                    print(f"  [self-check] {os.path.basename(full)}: {fn} is "
+                          f"RED but its declaration was not found verbatim, so "
+                          f"nothing was renamed -- it stays enabled")
+                    continue
+                txt = txt.replace(
+                    needle,
+                    f"  // DISABLED: RED on the unmodified contract, so its\n"
+                    f"  // coverage is not ours to claim. Kept, renamed out of\n"
+                    f"  // forge's `test*` prefix, so the artefact still shows\n"
+                    f"  // what was generated. The PUT in this file is NOT\n"
+                    f"  // affected: a red PUT is never disabled.\n"
+                    f"  function disabled_{fn}() public {{")
+                changed.append(fn)
+            if changed:
+                with open(full, "w") as fh:
+                    fh.write(txt)
+                print(f"  [self-check] {os.path.basename(full)}: disabled "
+                      f"{len(changed)} red concrete replay(s): "
+                      + ", ".join(changed))
+
+
 def b_report(results):
     print()
     print("=" * 84)
     print("DELIVERABLE B — all five WORKORDER gates, per PUT")
     print("=" * 84)
+    disable_red_replays(sorted({r[6] for r in results if r[6]}))
 
     # forge, once per project, and the verdict per TEST FUNCTION. Running it per
     # row would recompile the benchmark flat once per region (70-180 KB each),
@@ -431,6 +731,14 @@ def b_report(results):
           f"{'1.fuzz':>7}{'2.width':>8}{'3.assert':>9}{'4.green':>8}"
           f"{'5.corpus':>9}  B")
     b = 0
+    n_stale = 0
+    n_refused = 0
+    # ONE identity for the whole table: asking git and stat per row would let
+    # a mid-report rebuild split the table's own notion of "this tree".
+    _now_binary = current_binary_identity()
+    print(f"  this tree: head={_now_binary['head']} "
+          f"srcDirty={_now_binary['srcDirty']} "
+          f"binaryMtime={_now_binary['binaryMtime']}")
     for bench, unit, enc, piece, rc, rec, proj, region in results:
         # SAME shape the emitter builds, and the reason it is here rather than
         # inferred: a lookup that cannot match is a gate that never fires, and
@@ -441,13 +749,31 @@ def b_report(results):
         encs = f"{enc}#{piece}" if piece else str(enc)
         st = rec.get("stats") or {}
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
+        # ---- GATE 3 COUNTS UNCONDITIONAL ASSERTIONS ONLY ------------------
+        #
+        # The emitter records `guarded_asserts` apart from the total because a
+        # rung under `if (_put_ok)` is weaker: it runs only when the call did
+        # not revert. This reader was taking the TOTAL, so a PUT whose guard
+        # is never true would pass gate 3 on decoration.
+        #
+        # ⛔ MEASURED, farming setDistributor enc=13: `guard_probe.py` replaced
+        # the two guarded assertions with `assertTrue(false, ...)` and forge
+        # stayed GREEN over 256 draws, while the same false assertion placed
+        # OUTSIDE the guard went RED. The true branch is never taken -- the
+        # region pins a sender outside the owner bound, so every draw reverts.
+        # Those two are 0 assertions, not 2, and the file's own header already
+        # said so (`ORACLE: 10` + `CONDITIONAL: 2 further`) while this table
+        # printed 12. One fact, two ledgers, and only the writing side carried
+        # the distinction.
+        guarded = st.get("guarded_asserts", 0)
+        uncond = ar - guarded
         # Gate 1 counts the parameters the emitter actually wrote. Gate 2 asks
         # whether ANY certified interval is wider than a point -- a PUT whose
         # every bound is [v, v] explores one input however many `runs:` forge
         # reports.
         g1 = rc == 0 and fz > 0
         g2 = any(hi > lo for lo, hi in region.values())
-        g3 = ar > 0
+        g3 = uncond > 0
         # The PUT's own test function, named by the emitter as
         # `test_put_<CONTRACT>_<unit>_path<enc>`; the concrete `test_cov_*` cases
         # in the same file are NOT the deliverable and must not decide this gate.
@@ -470,16 +796,60 @@ def b_report(results):
         # than inferred -- and it stays visible so a future shared table cannot
         # silently mix them.
         g5 = bench in BENCHES
-        ok = g1 and g2 and g3 and g4 and g5
+        # ---- GATE 0: WAS THIS ARTEFACT PRODUCED BY THIS TREE? ----
+        # Not one of WORKORDER's five, and deliberately not folded into them: a
+        # stale row's other five gates were measured by a build that no longer
+        # exists, so reporting them as NO would be as wrong as reporting them as
+        # yes. It is excluded from B and named.
+        # ---- rc != 0 MEANS THIS TREE PRODUCED NO ARTEFACT FOR THIS ROW ------
+        #
+        # `rec` is the put.json ON DISK and the .t.sol is the one still sitting
+        # in the project -- on a REFUSED emission both are the PREVIOUS run's.
+        # Only gate 1 was guarded by `rc`; gates 2-5 read them anyway, and the
+        # staleness check itself was gated on `rc == 0`, so a REFUSED row
+        # printed
+        #     1.fuzz NO   2.width yes   3.assert yes   4.green yes   5.corpus yes
+        # while the summary said `0 row(s) were EXCLUDED as STALE`. Four gates
+        # asserted about an artefact this run did not write, and the one line
+        # that exists to catch exactly that was switched off for the rows that
+        # needed it.
+        #
+        # MEASURED: the farming re-emit in which all three regions REFUSED on
+        # `forge inspect: storage layout missing from artifact`. Nothing was
+        # emitted and the table read as three nearly-passing rows.
+        #
+        # UNKNOWN, not NO: the gates were not evaluated against anything this
+        # tree produced, so reporting them as failures would be as wrong as
+        # reporting them as passes. Either way they are not B.
+        refused = rc != 0
+        stale = stale_reason(rec, _now_binary) if rc == 0 else None
+        ok = g1 and g2 and g3 and g4 and g5 and not stale and not refused
         b += 1 if ok else 0
         def m(x, unknown=False):
             return "?" if unknown else ("yes" if x else "NO")
         print(f"{bench:<24}{unit:<16}{encs:>7}  "
-              f"{m(g1):>7}{m(g2):>8}{m(g3):>9}"
-              f"{m(g4, status is None):>8}{m(g5):>9}  "
-              + ("**B**" if ok else ""))
+              f"{m(g1):>7}{m(g2, refused):>8}{m(g3, refused):>9}"
+              f"{m(g4, refused or status is None):>8}{m(g5, refused):>9}  "
+              + ("**B**" if ok else
+                 ("REFUSED" if refused else ("STALE" if stale else ""))))
+        if refused:
+            print(f"      ⛔ NOT COUNTED: the emitter exited {rc} and wrote no "
+                  f"PUT in this tree, so gates 2-5 above are UNKNOWN -- they "
+                  f"would have been read off the PREVIOUS run's put.json and "
+                  f"the .t.sol still on disk. See the per-region log for the "
+                  f"refusal.")
+            n_refused += 1
+        if stale:
+            print(f"      ⛔ NOT COUNTED: {stale}")
+            n_stale += 1
     print()
     print(f"  B = {b} of {len(results)} emitted PUT(s)")
+    print(f"  {n_refused} row(s) were EXCLUDED as REFUSED -- the emitter "
+          f"produced no PUT for them in this tree, so nothing in their row was "
+          f"measured here. They are UNKNOWN, not failures.")
+    print(f"  {n_stale} row(s) were EXCLUDED as STALE -- their put.json names a "
+          f"different executable, so nothing about them was measured by this "
+          f"tree. Re-emit (drop --forge-only) to bring them back.")
     print("  A row failing gate 4 with '?' was never seen by forge -- that is an")
     print("  UNKNOWN, not a failure, and it is not counted toward B either.")
 

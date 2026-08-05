@@ -593,6 +593,26 @@ public:
     // about the contract made out of an absence in the harvest.
     std::string return_value;
     bool return_value_known = false;
+    // ---- WHAT THE UNIT IS DECLARED TO RETURN, READ FROM THE SYMBOL TABLE ----
+    //
+    // "none" / "present" / "" (could not be looked up). It lives HERE, on the
+    // payload, rather than being recomputed where the report is written,
+    // because the two live in different functions: the harvest has the goto
+    // function id and the namespace, and the reporter has neither. Recomputing
+    // it there was tried and does not compile, which is the cheap version of
+    // the failure this project already has a rule about -- one fact kept in two
+    // places drifts, and the drift is invisible.
+    //
+    // WHY THE FIELD IS WORTH ITS WEIGHT. `return_value_unavailable_reason`
+    // listed three situations and refused to choose between them, which kept
+    // the unit's own return on the candidate list for every unexplained
+    // certification failure. Whether a unit returns ANYTHING is not a property
+    // of the trace; it is in the declaration. With this, the commonest of the
+    // three is settled by the tool instead of by a reader looking at the source.
+    //
+    // ⛔ EMPTY MEANS THE LOOKUP FAILED, never "returns nothing". An unavailable
+    // declaration is not evidence of a void return.
+    std::string declared_return;
   };
   static std::map<std::string, path_ce_t> path_ce;
 

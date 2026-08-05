@@ -69,6 +69,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -82,7 +83,31 @@ import collect as base  # noqa: E402  -- the LOCKED baseline side, reused verbat
 
 REPO = Path("/home/samson/workspace/esbmc")
 ESBMC = REPO / "build/src/esbmc/esbmc"
-INPUTS = REPO / "notes/coverage/inputs"
+
+# ---- WHERE THE INPUT LIVES IS NOW THE POC'S ANSWER, NOT A CONSTANT ----
+#
+# The shared corpus directory `notes/coverage/inputs/` has been DELETED. It was
+# the benchmark: every driver here resolves `INPUTS / <basename>` off a
+# benchmark key, so while it existed a whole-corpus sweep was one command away
+# no matter how many refusals were bolted on above.
+#
+# Each PoC now owns hardlinks to exactly the files ITS unit needs, under
+# `notes/coverage/poc_units/<poc-id>/inputs/`, and `poc_one.py` names that
+# directory here. Overridden at the DEFINITION rather than at each use: every
+# consumer then gets the PoC's copy by construction, and the copy is the same
+# inode as the corpus row was measured on, so nothing downstream can tell the
+# difference except that it cannot see the other five benchmarks.
+#
+# Unset, this still points at the old location -- which no longer exists, so a
+# benchmark-shaped invocation dies on a missing file instead of sweeping. That
+# is the intended failure, and `collect()` says so by name.
+INPUTS = Path(os.environ.get("VERIPUT_INPUTS_DIR",
+                             str(REPO / "notes/coverage/inputs")))
+# `collect` resolves the project scope file out of ITS own copy of this
+# constant, and collect.py is LOCKED (it is the branch-coverage baseline side).
+# Rebinding the imported module's attribute is how the override reaches it
+# without editing a locked file.
+base.INPUTS = INPUTS
 OUT = REPO / "notes/coverage/pathcov"
 
 # 8g matches the baseline's --memlimit. Running several ESBMC processes at once
@@ -365,12 +390,133 @@ def one_run(tag, cmd, timeout, workdir):
         rec["depthBound"] = int(m.group(2))
     else:
         rec["depthBoundUnexpandedSites"] = 0
+    # ---- AND WHICH ONES, BY NAME ----
+    #
+    # The count alone cannot be acted on. The tool prints the mangled ids of
+    # every function it did not expand, and those names are the join key to the
+    # other modelling limits: on farming/setDistributor the list contains
+    # `FarmingLib@F@_contextToInfo` and `FarmingLib@F@_infoToContext`, which are
+    # exactly the two functions whose inline assembly does the struct
+    # reinterpret that havocs `FarmingLib.Info` (see asmHavocStructTypes below).
+    # Two separate over-approximations landing on ONE object is a different
+    # finding from two unrelated ones, and only the names show it.
+    #
+    # `[]` means the warning did not appear; a record predating this field has
+    # no key at all.
+    m = re.search(
+        r"call site\(s\) are deeper than the call depth bound \(\d+\) and "
+        r"were NOT expanded \(([^)]*)\)", out)
+    rec["depthBoundUnexpandedNames"] = (
+        [n.strip() for n in m.group(1).split(",") if n.strip()] if m else [])
+
+    # ---- TWO MORE MODELLING LIMITS THAT NOBODY READ ----
+    #
+    # Both are printed by every run and neither reached any record.
+    #
+    # LOOPS TRUNCATED: the tool's own words are "silently assumed away", and it
+    # says the goals behind them "are counted as uncovered" -- i.e. this deflates
+    # the numerator of the very gate this project is measured against, and does
+    # so without any per-path token. None, not 0, when the warning is absent:
+    # a run that did not reach the warning point did not say there were none.
+    #
+    # ARITHMETIC RE-SOLVE: recorded as the STRING the tool printed, because the
+    # consequence is asymmetric and a boolean would hide it -- OFF means a
+    # witnessed path whose counterexample wraps is emitted as a normal-exit test
+    # and is RED on the unmodified contract, which is a defect in the DELIVERABLE
+    # and not merely a coverage loss.
+    m = re.search(r"(\d+) loop\(s\) hit the unwind bound", out)
+    rec["loopsTruncatedAtUnwindBound"] = int(m.group(1)) if m else None
+    m = re.search(r"Arithmetic Re-solve: (\w+)", out)
+    rec["arithResolve"] = m.group(1) if m else None
     # Each DEGRADED unit line names one unit whose call sites were withdrawn to
     # fit the goal cap. Counted, not just flagged: st1inch shows twelve on a
     # single run and the count is what distinguishes that from an isolated one.
     rec["degradedUnits"] = out.count("DEGRADED unit ")
     m = re.search(r"(\d+) short-circuit site\(s\)[^.\n]*cap", out)
     rec["scSitesOverCap"] = int(m.group(1)) if m else 0
+
+    # ---- THE THREE MULTI-PROPERTY SELF-ASSESSMENT COUNTERS ----
+    #
+    # These already existed in ESBMC's output and NOTHING in this pipeline read
+    # them. That is the exact shape this project keeps paying for: an instrument
+    # that is printed, never parsed, and then re-derived by hand from a
+    # suspicion. The suspicion here was specific -- that `--multi-property`
+    # loses verdicts it had already obtained when a later claim blocks or the
+    # outer timeout cuts the run -- and all three counters exist to answer it.
+    #
+    # Recorded as `None` when the line is ABSENT rather than as 0, because the
+    # line is printed only by a run that got as far as its own summary: a run
+    # killed before then has no counter, and "the run did not say" is not "the
+    # run said zero". Same third-state rule as `depthBoundUnexpandedSites`
+    # above, and the opposite default, deliberately -- that one is a census of
+    # sites which is genuinely 0 when unmentioned, this one is a self-report.
+    m = re.search(r"Claim Budget: (\d+)s per claim — (\d+) claim\(s\) "
+                  r"abandoned over budget", out)
+    rec["claimBudgetSeconds"] = int(m.group(1)) if m else None
+    rec["claimsAbandonedOverBudget"] = int(m.group(2)) if m else None
+    m = re.search(r"Verdicts Preserved: (\d+)", out)
+    rec["verdictsPreserved"] = int(m.group(1)) if m else None
+    m = re.search(r"Claim Multiplicity: (\d+) extra solve\(s\)", out)
+    rec["claimExtraSolves"] = int(m.group(1)) if m else None
+    m = re.search(r"(\d+) decided verdict\(s\) superseded by a different "
+                  r"decided verdict", out)
+    rec["claimVerdictsSuperseded"] = int(m.group(1)) if m else None
+
+    # ---- WHAT THE ASSEMBLY OVER-APPROXIMATION TOOK AWAY, BY NAME ----
+    #
+    # A certification refutation can fail for a reason this driver cannot name:
+    # a quantity OUTSIDE the coordinate set is still free, so the witness escapes
+    # the path through it. Where that quantity was made free by ESBMC's own
+    # inline-assembly over-approximation, ESBMC SAYS SO, in its own words, on
+    # stdout -- and until now those words were thrown away with the rest of the
+    # log. Parsing them turns "the two reasons cannot be told apart" into a
+    # NAME, which is what R14 bucket (1) requires as its first item.
+    #
+    # TWO FAMILIES, kept apart because they have different consequences:
+    #
+    #   * unsupported Yul construct -- the assembly BLOCK is over-approximated.
+    #     Names the construct (mload/mstore/call/staticcall/chainid/byte/
+    #     convert_failure) and the source line.
+    #   * struct/value reinterpret -- ESBMC names the variable it HAVOC'D and
+    #     the two struct types involved. This is the one that reaches a
+    #     coordinate: the havoc'd local's declared type is the join key back to
+    #     a refused state variable. MEASURED on farming/setDistributor: 20
+    #     warnings on a unit with no assembly of its own, of which the last two
+    #     havoc 'tag-struct FarmingLib.Info' -- the declared type of
+    #     `state._farm`, which the generalise driver refuses as a coordinate.
+    #
+    # `tag-struct ` is ESBMC's internal type-tag prefix and is stripped, so the
+    # recorded name is the Solidity type a reader can look up. The RAW line is
+    # not kept: run.log beside this record has all 20 verbatim.
+    #
+    # COUNTS ARE ALWAYS SET (0, not None) -- unlike the three counters above,
+    # this is a census over lines that appear during parsing, long before any
+    # summary, so a run that produced no such line genuinely produced none.
+    asm_constructs = {}
+    asm_lines = set()
+    for m in re.finditer(
+            r"\[approx\] inline assembly at \S+?:(\d+): over-approximating "
+            r"- unsupported Yul construct '([^']+)'", out):
+        asm_lines.add(int(m.group(1)))
+        k = m.group(2)
+        asm_constructs[k] = asm_constructs.get(k, 0) + 1
+    asm_havoc_locals = set()
+    asm_havoc_types = set()
+    for m in re.finditer(
+            r"\[approx\] inline assembly at \S+?:(\d+): over-approximating "
+            r"struct/value reinterpret '[^']*' \(struct '([^']+)' := "
+            r"struct '([^']+)'\) - '([^']+)' havoc'd to nondet", out):
+        asm_lines.add(int(m.group(1)))
+        for t in (m.group(2), m.group(3)):
+            asm_havoc_types.add(t[len("tag-struct "):]
+                                if t.startswith("tag-struct ") else t)
+        asm_havoc_locals.add(m.group(4))
+    rec["asmApproxSites"] = out.count("[approx] inline assembly at ")
+    rec["asmApproxLines"] = sorted(asm_lines)
+    rec["asmApproxConstructs"] = asm_constructs
+    rec["asmHavocLocals"] = sorted(asm_havoc_locals)
+    rec["asmHavocStructTypes"] = sorted(asm_havoc_types)
+
     if report.exists():
         try:
             d = json.loads(report.read_text())
@@ -447,7 +593,27 @@ def collect(bench_key, whole, timeout, goals, out_suffix="", solver_override=(),
         flat = INPUTS / flat_rel
         solast = INPUTS / (flat_rel + ".solast")
     if not solast.exists():
-        sys.exit(f"missing AST: {solast} (run collect.py first, it generates it)")
+        # SAY WHICH OF THE TWO THIS IS. "Run collect.py first" was true while a
+        # shared corpus directory existed; it has been deleted, and the common
+        # way to land here now is a BENCHMARK-shaped invocation -- exactly the
+        # run the deletion exists to stop. Telling that operator to regenerate
+        # an AST would send them to rebuild the corpus.
+        if os.environ.get("VERIPUT_INPUTS_DIR"):
+            sys.exit(f"missing AST: {solast}\n"
+                     f"  VERIPUT_INPUTS_DIR is set to {INPUTS}, so this is a "
+                     f"PoC whose private input directory is incomplete. "
+                     f"Rebuild it: python3 "
+                     f"notes/coverage/scripts/poc_split.py")
+        sys.exit(
+            f"missing AST: {solast}\n"
+            f"  The shared corpus directory notes/coverage/inputs/ HAS BEEN "
+            f"DELETED on purpose: it was the benchmark, and a benchmark is not "
+            f"a runnable thing here. Each PoC owns its input.\n"
+            f"    python3 notes/coverage/scripts/poc_one.py --list\n"
+            f"    python3 notes/coverage/scripts/poc_one.py <poc-id>\n"
+            f"  To restore the corpus for a baseline re-measurement (it is in "
+            f"git, nothing was lost):\n"
+            f"    git checkout -- notes/coverage/inputs/")
 
     # THE OUTPUT DIRECTORY IS PART OF THE CONFIGURATION, not a convenience.
     # `index.json` is REWRITTEN at the end of every collection with only the
@@ -1053,6 +1219,45 @@ def main():
         a.bench = "poc__" + p.stem
     elif a.bench not in base.BENCHES:
         sys.exit(f"unknown bench: {a.bench}")
+
+    # ---- THE BENCHMARK IS NOT A RUNNABLE THING ANY MORE ----
+    #
+    # The corpus is split into PoCs, one per TARGET public/external function
+    # (`poc_split.py`). A benchmark key names 8 to 28 units and this script
+    # sweeps all of them, which is the shape that turns a one-unit question
+    # into a multi-hour run -- and it is banned.
+    #
+    # Refused rather than defaulted to the first unit: picking one silently
+    # would file a one-unit measurement under the benchmark's name, which is
+    # the one-fact-two-ledgers failure this file already refuses in three other
+    # places.
+    #
+    # AD-HOC `--sol` TARGETS ARE UNAFFECTED. Those are hand-written minimal
+    # reproductions, which the work order REQUIRES before any investigation;
+    # they are the opposite of a full-corpus run.
+    if adhoc is None:
+        if scope == "whole":
+            sys.exit(
+                f"{a.bench}: --scope whole enumerates EVERY unit of this "
+                f"benchmark in one run, and the corpus no longer has runnable "
+                f"benchmarks -- it has PoCs, one per target public/external "
+                f"function.\n"
+                f"  python3 notes/coverage/scripts/poc_split.py --list\n"
+                f"  python3 notes/coverage/scripts/poc_one.py <poc-id>\n"
+                f"An ad-hoc minimal reproduction (--sol <file> --contract C "
+                f"--scope whole) is still allowed and is the intended route "
+                f"for an investigation.")
+        if len(only) != 1:
+            sys.exit(
+                f"{a.bench}: this collector now runs exactly ONE unit per "
+                f"invocation, and --only named "
+                f"{len(only)} ({', '.join(only) or 'nothing'}).\n"
+                f"  The corpus is split into PoCs, one per target "
+                f"public/external function; a benchmark key by itself would "
+                f"sweep every unit it has, which is the run this work order "
+                f"bans.\n"
+                f"  python3 notes/coverage/scripts/poc_split.py --list\n"
+                f"  python3 notes/coverage/scripts/poc_one.py <poc-id>")
 
     idx = collect(a.bench, scope == "whole", a.timeout, a.goals, a.out_suffix,
                   a.solver_flags.split(), a.fresh, a.max_tx, focus_with,

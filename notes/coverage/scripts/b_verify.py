@@ -38,6 +38,29 @@ import sys
 SIG_RE = re.compile(r"function\s+(test_put_\w+)\s*\(([^)]*)\)")
 BOUND_RE = re.compile(r"\bbound\s*\(\s*[^,]+,\s*([0-9]+)\s*,\s*([0-9]+)\s*\)")
 ASSERT_RE = re.compile(r"\b(assert\w*|vm\s*\.\s*expect\w*)\s*\(")
+GUARD_OPEN = re.compile(r"^\s*if\s*\(\s*_put_ok\s*\)\s*\{\s*$")
+
+
+def guarded_asserts(body):
+    """How many of the body's assertions sit inside an `if (_put_ok)` block.
+
+    Brace-counted from the guard's own line, so a guard containing a nested
+    block is not closed early. Reported apart rather than subtracted silently:
+    a conditional assertion is still IN the file, and a reader who cannot see
+    how many are conditional is reading a strength the test does not have.
+    """
+    n, depth, inside = 0, 0, False
+    for ln in body:
+        if not inside and GUARD_OPEN.match(ln):
+            inside, depth = True, 1
+            continue
+        if inside:
+            depth += ln.count("{") - ln.count("}")
+            if depth <= 0:
+                inside = False
+                continue
+            n += len(ASSERT_RE.findall(ln))
+    return n
 
 
 def put_body(lines, start):
@@ -87,9 +110,28 @@ def main():
             widths = [(int(b.group(2)) - int(b.group(1)))
                       for b in BOUND_RE.finditer(text)]
             asserts = ASSERT_RE.findall(text)
+            # ---- AN ASSERTION UNDER `if (_put_ok)` IS NOT AN ASSERTION -----
+            #
+            # A revert-tolerant PUT puts the rungs that say the state CHANGED
+            # inside `if (_put_ok) { ... }`, which is false exactly when the
+            # call reverted. If the guard's true branch is never taken, those
+            # lines never execute and the test is green whatever the contract
+            # does.
+            #
+            # ⛔ MEASURED, farming setDistributor enc=13, with guard_probe.py:
+            # replacing the two guarded assertions with `assertTrue(false,...)`
+            # left forge GREEN over 256 draws, while the same false assertion
+            # OUTSIDE the guard went RED. The region pins a sender outside the
+            # owner bound, so every draw reverts. Counting them made this file
+            # report 12 where the honest number is 10 -- and the emitted file's
+            # own header already said `ORACLE: 10` + `CONDITIONAL: 2 further`.
+            # Third reader of one fact; the other two now carry the split.
+            guarded = guarded_asserts(body)
+            uncond = len(asserts) - guarded
             g1 = len(params) > 0
             g2 = any(w > 0 for w in widths)
-            g3 = len(asserts) > 0
+            g3 = uncond > 0
+            atxt = (f"{uncond}+{guarded}c" if guarded else str(len(asserts)))
             ok = g1 and g2 and g3
             ok_n += 1 if ok else 0
             wtxt = ("bounds=" + ",".join(
@@ -98,7 +140,7 @@ def main():
             print(f"{os.path.basename(f):<52}"
                   f"{('yes' if g1 else 'NO'):>7}{('yes' if g2 else 'NO'):>8}"
                   f"{('yes' if g3 else 'NO'):>9}  "
-                  f"{len(params)} param(s), {wtxt}, {len(asserts)} assert(s)"
+                  f"{len(params)} param(s), {wtxt}, {atxt} assert(s)"
                   + ("   **1-2-3 PASS**" if ok else ""))
     print()
     print(f"  {ok_n} file(s) pass gates 1-3 read from the TEXT.")

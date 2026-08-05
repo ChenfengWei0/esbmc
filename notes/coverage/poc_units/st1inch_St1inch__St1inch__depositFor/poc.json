@@ -1,0 +1,30 @@
+{
+  "schema": "poc-unit/2",
+  "id": "st1inch_St1inch__St1inch__depositFor",
+  "benchmark": "st1inch_St1inch",
+  "project": "st1inch",
+  "inputs_dir": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__depositFor/inputs",
+  "flat": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__depositFor/inputs/st1inch__St1inch.flat.sol",
+  "ast": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__depositFor/inputs/st1inch__St1inch.flat.sol.solast",
+  "harness_contract": "St1inch",
+  "declaring_contract": "St1inch",
+  "declaring_kind": "contract",
+  "unit": "depositFor",
+  "visibility": "external",
+  "cells": {
+    "gate": {
+      "why": "compared against the branch-coverage baseline, which is MEASURED to run at one transaction; running deeper than the thing being compared to is not a comparison",
+      "scope": "single",
+      "max_tx": 1,
+      "focus_function": "depositFor",
+      "instrument_only": "depositFor"
+    },
+    "artefact": {
+      "why": "no second party to match, so the question is what this method can REACH. tx>=2 is the only configuration measured to reach cross-function state at all",
+      "scope": "set",
+      "max_tx": 2,
+      "focus_with": [],
+      "instrument_only": "depositFor"
+    }
+  }
+}

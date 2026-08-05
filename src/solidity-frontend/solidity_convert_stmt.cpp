@@ -2103,6 +2103,37 @@ bool solidity_convertert::convert_yul_expression(
         args[i], src_to_decl, slot_refs, locals, loc, dst);
     };
     auto u256_const = [&](const BigInt &v) { return from_integer(v, u256); };
+    // ---- THIS TERNARY IS A PATH DECISION, AND IT IS MEASURED ----
+    //
+    // Used by `lt`/`gt`/`eq` (below), `slt`/`sgt`, and `iszero`. A ternary's
+    // condition in an ASSIGN right-hand side IS a path decision: the enumerator
+    // fans out on every one with no feasibility check. But Yul's `lt(a, b)` is
+    // a VALUE, not a branch -- there is no control flow here in the source.
+    //
+    // MEASURED, notes/coverage/poc/D43_YulCompareDecision.sol, three units that
+    // differ only in how many comparisons they contain, no shift anywhere, one
+    // unit per run at --solidity-max-tx 1:
+    //     noCompare   (0 cmp)  2 paths  F 2 U 0   (1 before expansion)
+    //     oneCompare  (1 cmp)  3 paths  F 3 U 0   (2 before expansion)
+    //     twoCompares (2 cmp)  5 paths  F 5 U 0   (4 before expansion)
+    // Before internal-call expansion: 1, 2, 4. EACH COMPARISON DOUBLES THE
+    // UNIT'S PATH COUNT.
+    //
+    // ⛔ AND YET THIS IS NOT THE SAME DEFECT AS THE CONSTANT-SHIFT FOLD BELOW,
+    // which is why it is recorded rather than repaired. There, the paths the
+    // fold removed were all `U` filed `bounded-holds` -- unreachable by
+    // construction, and F did not move on a single corpus unit. Here every
+    // added path is `F`: WITNESSED, reachable, carrying its own counterexample.
+    // Removing the ternary would therefore LOWER the number of paths the tool
+    // reports as covered. That is a decision about what "path" means -- the
+    // coverage criterion itself -- not a bug fix, and the ratio would not
+    // improve because numerator and denominator shrink together. What it would
+    // buy is solver calls and duplicate generated tests, i.e. speed.
+    //
+    // The replacement, if that call is ever made, is a bool -> uint256
+    // typecast (`solidity_gen_typecast`, already used a few lines down for the
+    // signed comparison operands) -- not a constant fold, because the cost is
+    // there for symbolic operands too.
     auto bool_to_u256 = [&](const exprt &cond) {
       return if_exprt(cond, u256_const(1), u256_const(0));
     };
@@ -2274,6 +2305,74 @@ bool solidity_convertert::convert_yul_expression(
       const char *id = (fname == "shl") ? "shl" : "lshr";
       exprt shifted(id, u256);
       shifted.copy_to_operands(v, s);
+
+      // ---- A LITERAL SHIFT AMOUNT DECIDES THE CLAMP HERE, NOT AT RUNTIME ----
+      //
+      // The clamp itself is not optional: EVM's SHL/SHR really do return 0 for
+      // a shift amount of 256 or more, so for a SYMBOLIC amount both arms are
+      // reachable and the ternary below is the only faithful model. What is
+      // optional is paying for a ternary whose condition is already decided.
+      //
+      // WHY IT IS NOT MERELY A TIDINESS QUESTION. A ternary's condition in an
+      // ASSIGN right-hand side IS a path decision -- `collect_short_circuit_
+      // decisions` emits `to_if2t(e).cond`, and the path enumerator fans out on
+      // every decision with NO feasibility check and NO constant folding. So a
+      // literal amount does not merely leave a dead expression behind: it
+      // DOUBLES the unit's path count, and every path in the half that needs
+      // `248 < 256` to be false is unreachable by construction. Those paths can
+      // never be witnessed, are filed `bounded-holds`, and are indistinguishable
+      // in the report from a path the solver simply could not reach. They also
+      // can never be proven unreachable, because unreachability is deliberately
+      // never emitted, so they stay in the denominator forever.
+      //
+      // MEASURED on this exact shape, D42_ConstShiftGuard.sol, before this
+      // change, one unit per run at --solidity-max-tx 1:
+      //     shr(248, x)  -> 3 complete paths, Path Status F 2, I 0, U 1
+      //     shr(k,   x)  -> 3 complete paths, Path Status F 3, I 0, U 0
+      // The literal arm carries one path nothing can ever walk; the symbolic
+      // arm carries none. That difference is the whole justification, and the
+      // second line is also the negative control this fold must NOT disturb.
+      //
+      // The same shape is what 1inch aqua's BalanceLib.load/store contribute:
+      // `shr(248, packed)` and `shl(248, tokensCount)`.
+      //
+      // MEASURED on the corpus, not predicted. Stage 1 re-run per unit at
+      // --solidity-max-tx 1, scope single; the BEFORE rows carry
+      // binary.head 3f0395e60c srcDirty=false and the AFTER rows
+      // b8d6964b6a srcDirty=true, so both sides name their executable:
+      //
+      //     unit           pathsInstrumented   F (witnessed) / U
+      //     rawBalances     3 ->  2            2/1  -> 2/0
+      //     safeBalances   11 ->  4            2/9  -> 2/2
+      //     push           19 ->  6            2/17 -> 2/4
+      //     dock           63 -> 11            2/61 -> 2/9
+      //     TOTAL          96 -> 23            8    -> 8
+      //
+      // Every path removed was a U filed `bounded-holds`; F did not move on a
+      // single unit. So 73 of aqua's 96 enumerated paths -- 76% -- were
+      // combinations needing a false `248 < 256`, and they sat in the
+      // denominator of every path-coverage number this corpus reported. They
+      // could never be witnessed and, because unreachability is deliberately
+      // never emitted, they could never be discharged either.
+      //
+      // The negative control is D42_ConstShiftGuard.sol, whose expectations
+      // were written before this branch existed: `constShift` 3 paths F2/U1 ->
+      // 2 paths F2/U0, while `varShift` (a PARAMETER shift amount, whose clamp
+      // is real) stays at 3 paths F3/U0.
+      //
+      // SEMANTICS ARE UNCHANGED. When `s` is constant the condition `s < 256`
+      // has one truth value, and the expression emitted is exactly the arm the
+      // ternary would have selected. When `s` is not constant nothing here
+      // fires and the ternary is built as before.
+      BigInt shift_amount;
+      if (!to_integer(s, shift_amount))
+      {
+        out = (shift_amount < BigInt(256)) ? shifted : u256_const(BigInt(0));
+        out.type() = u256;
+        out.location() = loc;
+        return false;
+      }
+
       binary_relation_exprt in_range(s, "<", u256_const(256));
       out = if_exprt(in_range, shifted, u256_const(0));
       out.type() = u256;

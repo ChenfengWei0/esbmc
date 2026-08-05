@@ -915,6 +915,38 @@ const foundry_generator::mock_spec &foundry_generator::build_mock_spec(
         rst = mock_string_type(rt);
       ret_sol = sol_type_to_solidity(rst);
       ret_default = default_sol_literal(rst);
+      // ---- A MOCKED `bool` RETURNS true, NOT THE TYPE DEFAULT ----
+      //
+      // MEASURED, and this is the whole reason: the generated replay for
+      // FarmingPool.deposit has TWO of its four cases marked "DISABLED: RED on
+      // the unmodified contract". Their body is `c0.deposit(...)`, whose last
+      // statement is `STAKING_TOKEN.safeTransferFrom(...)` -- and the stub this
+      // function writes for `transferFrom` returned `false`. OpenZeppelin's
+      // SafeERC20 reverts on a false return, so the replay aborts BEFORE the end
+      // of the path ESBMC actually walked, and the roundtrip's red/green check
+      // correctly disables it. The redness is a property of the value chosen
+      // here, not of the contract.
+      //
+      // `false` is not the neutral choice it looks like. In the two dominant
+      // idioms for a token call -- SafeERC20's `_callOptionalReturn` and a plain
+      // `require(token.transferFrom(...))` -- false ABORTS THE CALLER, which
+      // prunes exactly the suffix of the path the replay exists to walk. `true`
+      // continues. For a numeric or address return there is no such asymmetry,
+      // which is why only BOOL is special-cased and the rest keep
+      // `default_sol_literal`.
+      //
+      // IT IS A CHOICE AND IT IS RECORDED AS ONE. The counterexample's actual
+      // return value is not available -- `extcall_returns` in the CE payload is
+      // always empty, for three separate reasons named where it is written -- so
+      // nothing here knows what the callee returned on this path.
+      //
+      // ⛔ WHAT IT COSTS: a path reached BECAUSE the call returned false (`if
+      // (!ok) revert`) is no longer reproducible by this mock, and its replay is
+      // the one that will go red. That is the same red/green check quoted above,
+      // pointing the other way -- so the loss is visible in the artefact rather
+      // than silent, and it is the reason the mock header says [approx].
+      if (rst == "BOOL")
+        ret_default = "true";
       if (ret_sol.empty() || ret_default.empty())
         return mock_specs.emplace(iface, std::move(ms)).first->second;
       if (rst == "STRING" || rst == "BYTES_DYN" || has_prefix(rst, "ARRAY:"))
@@ -3004,6 +3036,15 @@ size_t foundry_generator::write_foundry_file(
     f << "\n// [approx] mock for interface " << iface
       << ": all methods return fixed defaults; branches on its return values "
          "are not reproduced.\n";
+    f << "// A `bool` return is `true` -- the SUCCESS value, not the type "
+         "default. `false`\n";
+    f << "// aborts the caller under SafeERC20 and under `require(token.f"
+         "(...))`, which\n";
+    f << "// prunes the suffix of the very path this replay walks. The "
+         "counterexample's\n";
+    f << "// own return value is not harvested, so this is a CHOICE; a path "
+         "reached\n";
+    f << "// BECAUSE the call failed is not reproducible by this mock.\n";
     f << "contract ESBMCMock_" << iface << " is " << iface << " {\n";
     for (const auto &stub : it->second.stubs)
       f << stub << "\n";
