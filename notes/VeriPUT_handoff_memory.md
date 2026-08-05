@@ -3023,3 +3023,61 @@ Both passed. Do not rerun `setMaxLossRatio` unless the budget is explicitly
 reopened: its three official attempts are now spent. The fix should benefit the
 next rollback/overflow owner-gated setter POCs, especially
 `setMinLockPeriodRatio`.
+
+## 2026-08-06 st1inch setMinLockPeriodRatio gate
+
+Ground truth:
+
+```solidity
+function setMinLockPeriodRatio(uint256 minLockPeriodRatio_) external onlyOwner {
+    if (minLockPeriodRatio_ > _ONE_E9) revert MaxLossOverflow();
+    minLockPeriodRatio = minLockPeriodRatio_;
+    emit MinLockPeriodRatioSet(minLockPeriodRatio_);
+}
+```
+
+Expected paths mirror `setMaxLossRatio`:
+
+- value gate: `msg.value != 0`, exit-kind oracle only.
+- non-owner paths: `msg.value == 0`, `msg.sender != 1`, rollback exit-kind
+  oracle; source still splits on `minLockPeriodRatio_ > 1e9`.
+- owner overflow path: `msg.value == 0`, `msg.sender == 1`,
+  `minLockPeriodRatio_ > 1e9`, rollback exit-kind oracle.
+- owner normal path: `msg.value == 0`, `msg.sender == 1`,
+  `minLockPeriodRatio_ in [0, 1e9]`, desired strongest oracle
+  `state.minLockPeriodRatio post == minLockPeriodRatio_`.
+
+Attempt 1:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMinLockPeriodRatio \
+  --stage all --cell gate --attempt 1 --fresh
+```
+
+Budget: 60s/8GiB per ESBMC process.
+
+Result:
+
+- Stage 1 completed in 42.8s with a report, 0 killed.
+- Stage 2 reused the report and finished in 0.6s:
+  `CERTIFIED, 5 certified / 0 not / 5 witnessed`.
+- Stage 3 finished in 581.8s and emitted 5 PUTs.
+- Final B: `5 of 5 emitted PUT(s)`.
+
+Notes:
+
+- This confirms the structural region fix on another `_ONE_E9` setter.
+- This also confirms the bare rollback `vm.expectRevert()` emitter repair:
+  owner overflow path enc=14 now carries 1 exit-kind oracle and is green.
+- The owner normal path enc=15 was B but did not recover the strongest setter
+  R2 under attempt1's 60s/8GiB limit. Its log says the R2 batch produced no
+  delta rows before timeout, so the emitted oracle was `_owner post == pre`
+  rather than `minLockPeriodRatio post == minLockPeriodRatio_`. For aggregate
+  success-rate accounting this is acceptable; for oracle-strength experiments,
+  the next code-level improvement is a direct setter-oracle proposal from the
+  source assignment `minLockPeriodRatio = minLockPeriodRatio_`, not simply a
+  longer blind R2 batch.
+
+Do not rerun this POC unless explicitly reopened. Attempts 2 and 3 were not
+spent, but attempt 1 already achieved B=5/5.
