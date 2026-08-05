@@ -3357,3 +3357,48 @@ Accounting recommendation:
   witnessed level0 points avoid redundant vacuity probes, and same-payload
   `NONDET(...)` decision siblings are classified before they drag certification
   into large unsupported regions.
+
+## 2026-08-06 Aqua pull pre-run classification
+
+Ground truth:
+
+```solidity
+function pull(address maker, bytes32 strategyHash, address token,
+              uint256 amount, address to) external {
+    Balance storage balance = _balances[maker][msg.sender][strategyHash][token];
+    (uint248 prevBalance, uint8 tokensCount) = balance.load();
+    balance.store(prevBalance - amount.toUint248(), tokensCount);
+
+    IERC20(token).safeTransferFrom(maker, to, amount);
+    emit Pulled(maker, msg.sender, strategyHash, token, amount);
+}
+```
+
+Old Stage-1 report:
+
+- 17 instrumented paths.
+- 5 witnessed paths: enc=2, enc=58, enc=59, enc=62, enc=63.
+- enc=2 is the ABI non-payable value gate.
+- enc=58/59 and enc=62/63 are sibling pairs with the same generated-test-settable
+  payload and different `safeTransferFrom` success/failure arms.
+
+Code-level repair before spending the current POC:
+
+- `extcall_inseparable_failures` now also recognizes same-payload siblings whose
+  only split is a `success` / `!success` branch inside known external-call helper
+  functions such as `safeTransferFrom`.
+- A pure JSON-level probe over the existing `Aqua.pull` Stage-1 report now
+  classifies exactly enc=58, enc=59, enc=62, and enc=63 as method-level
+  unsupported external-call siblings. enc=2 remains available.
+
+Validation:
+
+```sh
+python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py
+python3 scripts/test_solidity_path_generalise.py
+```
+
+Both passed. The next real spend should be `aqua_Aqua__Aqua__pull` attempt1
+under 60s/8GiB. Expected Stage2: one certified value-gate region, four
+method-level unsupported external-call regions. Expected Stage3: one B PUT for
+enc=2 with a low-level value-call exit-kind oracle.

@@ -1039,6 +1039,24 @@ _MISSING = object()
 
 
 def _nondet_decision_splits(decisions_a, decisions_b):
+    external_success_helpers = {
+        "safeTransfer",
+        "safeTransferFrom",
+        "safeApprove",
+        "safeIncreaseAllowance",
+        "safeDecreaseAllowance",
+        "functionCall",
+        "functionCallWithValue",
+        "verifyCallResult",
+    }
+
+    def is_external_success_decision(d):
+        claim = (d or {}).get("branch_claim") or ""
+        fun = (d or {}).get("function") or ""
+        if fun not in external_success_helpers:
+            return False
+        return claim in ("!success", "!(!success)", "success", "!(success)")
+
     by_key = {}
     for d in decisions_a or []:
         key = (d.get("index"), d.get("function"), d.get("line"))
@@ -1049,12 +1067,17 @@ def _nondet_decision_splits(decisions_a, decisions_b):
         other = by_key.get(key)
         claim = d.get("branch_claim") or ""
         other_claim = (other or {}).get("branch_claim") or ""
-        if other is None or ("NONDET(" not in claim and
-                             "NONDET(" not in other_claim):
+        if other is None:
+            continue
+        is_nondet = "NONDET(" in claim or "NONDET(" in other_claim
+        is_external_success = (
+            is_external_success_decision(d) or
+            is_external_success_decision(other))
+        if not is_nondet and not is_external_success:
             continue
         if other.get("arm") != d.get("arm"):
             out.append(f"decision#{d.get('index')} "
-                       f"{claim if 'NONDET(' in claim else other_claim}")
+                       f"{claim if is_nondet and 'NONDET(' in claim else other_claim}")
     return out
 
 

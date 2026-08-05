@@ -2695,6 +2695,25 @@ check("nondet-decision-with-settable-difference-is-not-inseparable",
           [(28, 4, {"defaultFarm_": 1}), (29, 4, {"defaultFarm_": 2})],
           {}, _nondet_decisions),
       {})
+_safe_transfer_decisions = {
+    58: [{"index": 5, "function": "safeTransferFrom", "line": 1820,
+          "branch_claim": "!(!success)", "arm": "fall-through"}],
+    59: [{"index": 5, "function": "safeTransferFrom", "line": 1820,
+          "branch_claim": "!success", "arm": "taken"}],
+}
+_safe_transfer_fail = extcall_inseparable_failures(
+    [(58, 5, {"amount": 1, "maker": 0, "token": 0}),
+     (59, 5, {"amount": 1, "maker": 0, "token": 0})],
+    {}, _safe_transfer_decisions)
+check("safe-transfer-success-sibling-split-is-statically-inseparable",
+      sorted(_safe_transfer_fail), [58, 59])
+check("safe-transfer-success-inseparable-reason-names-decision",
+      "decision#5" in _safe_transfer_fail[58], True)
+check("safe-transfer-success-with-settable-difference-is-not-inseparable",
+      extcall_inseparable_failures(
+          [(58, 5, {"amount": 1}), (59, 5, {"amount": 2})],
+          {}, _safe_transfer_decisions),
+      {})
 
 # Stage 2 may reuse stage 1 only when the structured collection manifest proves
 # that both stages mean the same run. This test exercises the accepting edge and
