@@ -72,6 +72,7 @@ from solidity_ast_dependencies import (  # noqa: E402,F401
     unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
+ADDRESS_MAX = (1 << 160) - 1
 
 
 def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
@@ -647,6 +648,188 @@ def structural_abi_gate_certificate(decisions, box, holes, ce):
                 "decision beyond the compiler-inserted non-payable reject "
                 "gate, and its measured region excludes msg.value == 0")
     return None
+
+
+SIMPLE_BRANCH_RE = re.compile(r"^(.+?)\s*(==|!=)\s*(.+)$")
+
+
+def _unwrap_not(expr):
+    expr = (expr or "").strip()
+    if expr.startswith("!(") and expr.endswith(")"):
+        return expr[2:-1].strip(), True
+    return expr, False
+
+
+def _decision_relation(branch_claim):
+    """Return the path condition encoded by a coverage decision.
+
+    ESBMC's branch claim is the assertion used to witness the arm, so the path
+    condition is its negation. The report prints either `x == y` or `!(x == y)`;
+    this helper turns both spellings back into the condition the path actually
+    follows. Only equality/inequality is admitted here.
+    """
+    inner, was_not = _unwrap_not(branch_claim)
+    m = SIMPLE_BRANCH_RE.match(inner)
+    if not m:
+        return None
+    lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
+    if not was_not:
+        op = "!=" if op == "==" else "=="
+    return lhs, op, rhs
+
+
+def _decision_term(term, ce, pins):
+    """Resolve a simple branch term to either a coordinate or a constant."""
+    term = term.strip()
+    if term in ce:
+        return "coord", term
+    if term == "return_value$__msgSender$2" or \
+       re.match(r"^return_value\$__msgSender\$\d+$", term):
+        return "coord", "msg.sender"
+    m = re.match(r"^return_value\$(_[A-Za-z0-9_]+)\$\d+$", term)
+    if m:
+        state_name = "state." + m.group(1)
+        if state_name in pins:
+            return "const", pins[state_name]
+    if term in pins:
+        return "const", pins[term]
+    try:
+        return "const", parse_int(term)
+    except ValueError:
+        return None
+
+
+def _coord_range(name, coord_types=None, type_ranges=None):
+    if type_ranges and name in type_ranges:
+        return type_ranges[name]
+    if name in ("msg.sender", "tx.origin"):
+        return 0, ADDRESS_MAX
+    if name == "msg.value":
+        return 0, UINT256_MAX
+    ty = (coord_types or {}).get(name)
+    if ty:
+        norm = ty.strip()
+        if (norm in ("address", "address payable")
+                or norm.startswith(("contract ", "interface "))
+                or norm.startswith("enum ")):
+            return 0, ADDRESS_MAX
+    return 0, UINT256_MAX
+
+
+def _box_intersect_eq(box, holes, name, value, coord_types=None,
+                      type_ranges=None):
+    lo, hi = box.get(name, _coord_range(name, coord_types, type_ranges))
+    value = int(value)
+    if value < lo or value > hi or value in holes.get(name, set()):
+        return False
+    box[name] = (value, value)
+    holes.pop(name, None)
+    return True
+
+
+def _box_intersect_neq(box, holes, name, value, coord_types=None,
+                       type_ranges=None):
+    lo, hi = box.get(name, _coord_range(name, coord_types, type_ranges))
+    value = int(value)
+    if value < lo or value > hi:
+        box[name] = (lo, hi)
+        return True
+    if lo == hi == value:
+        return False
+    if value == lo:
+        box[name] = (lo + 1, hi)
+        return True
+    if value == hi:
+        box[name] = (lo, hi - 1)
+        return True
+    box[name] = (lo, hi)
+    holes.setdefault(name, set()).add(value)
+    return True
+
+
+def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
+                               type_ranges=None):
+    """Derive a product region directly from simple complete-path decisions.
+
+    This is a fast path for source shapes such as:
+
+      nonpayable ABI gate; onlyOwner; if (arg == 0) revert; state = arg
+
+    It is intentionally not a prover for arbitrary Solidity. Every decision
+    must be a simple equality/inequality whose terms resolve to one coordinate
+    and one constant/pin. If any decision is outside that grammar the caller
+    falls back to the measured ladder and ESBMC certification.
+    """
+    decisions = decisions or []
+    if not decisions:
+        return None
+    coord_set = set(coords or [])
+    box = {n: _coord_range(n, coord_types, type_ranges) for n in coord_set}
+    holes = {}
+    clauses = []
+    for d in decisions:
+        rel = _decision_relation(d.get("branch_claim"))
+        if rel is None:
+            return None
+        lhs, op, rhs = rel
+        lt = _decision_term(lhs, ce, pins)
+        rt = _decision_term(rhs, ce, pins)
+        if lt is None or rt is None:
+            return None
+        if lt[0] == "const" and rt[0] == "coord":
+            lt, rt = rt, lt
+        if lt[0] == "coord" and rt[0] == "const":
+            name, value = lt[1], rt[1]
+            if name not in coord_set:
+                # A decision on a pinned coordinate must already be satisfied
+                # by the slice. It contributes no rendered box coordinate.
+                if name not in pins:
+                    return None
+                ok = (pins[name] == value) if op == "==" else \
+                     (pins[name] != value)
+                if not ok:
+                    return None
+                clauses.append(f"{name} {op} {value} (pinned)")
+                continue
+            if op == "==":
+                ok = _box_intersect_eq(
+                    box, holes, name, value, coord_types, type_ranges)
+            else:
+                ok = _box_intersect_neq(
+                    box, holes, name, value, coord_types, type_ranges)
+            if not ok:
+                return None
+            clauses.append(f"{name} {op} {value}")
+            continue
+        if lt[0] == "const" and rt[0] == "const":
+            ok = (lt[1] == rt[1]) if op == "==" else (lt[1] != rt[1])
+            if not ok:
+                return None
+            clauses.append(f"{lt[1]} {op} {rt[1]} (constant)")
+            continue
+        # Coordinate-to-coordinate constraints are not product regions.
+        return None
+    reason = ("STRUCTURAL simple decision region: every complete-path decision "
+              "is an equality/inequality over a rendered coordinate and a "
+              "constant or pinned state value; clauses: "
+              + "; ".join(clauses))
+    return box, holes, reason
+
+
+def structural_decision_regions(paths, path_decisions, pins, coords,
+                                coord_types=None, type_ranges=None):
+    out, holes, reasons = {}, {}, {}
+    for enc, _depth, ce in paths:
+        got = structural_decision_region(
+            path_decisions.get(enc), ce, pins, coords,
+            coord_types=coord_types, type_ranges=type_ranges)
+        if got is None:
+            return None, None, None
+        box, h, reason = got
+        out[enc] = box
+        holes[enc] = h
+        reasons[enc] = reason
+    return out, holes, reasons
 
 
 # ---- WHY THERE IS NO WITNESS, READ FROM THE REPORT RATHER THAN ASSUMED -------
@@ -4970,6 +5153,21 @@ def main():
     # defect pointing the other way.
     print(f"[coords] FREE: {', '.join(coords)}"
           + (f"   [pinned: {pins}]" if pins else ""))
+    declaration_id = path_function_declaration_id(args.path_function) \
+        if args.path_function else None
+    coord_types = dict(unit_params(args.ast, args.contract, args.unit,
+                                   declaration_id=declaration_id))
+    early_structural_regions, _, _ = structural_decision_regions(
+        paths, path_decisions, pins, coords, coord_types=coord_types,
+        type_ranges={})
+    if early_structural_regions is not None:
+        if args.level0 or args.probe_witnesses or args.probe_ladder:
+            print("[structural] every witnessed path is already expressible as "
+                  "a simple decision product region; skipping level0, witness "
+                  "pool probes, per-path ladders, bracket and refine")
+        args.level0 = False
+        args.probe_witnesses = 0
+        args.probe_ladder = False
 
     # ---- LEVEL 0: is the real constraint an EQUALITY? ----
     #
@@ -5344,27 +5542,60 @@ def main():
                 if n:
                     print(f"[probe]   enc={enc} {c}: {n} rung(s) dropped")
 
-    # Round 1: geometric bracket.
-    if args.skip_bracket:
-        brackets, regions, warned, round_failure = {}, {}, set(), None
-        region_holes = {}
-        print("[bracket] SKIPPED (--skip-bracket): refining from each "
-              "coordinate's full type range, which is the same fallback the "
-              "code takes when the bracket measures nothing")
+    # ---- STRUCTURAL DECISION REGION FAST PATH ------------------------------
+    #
+    # Must run BEFORE the geometric bracket, because that bracket is the binding
+    # cost on the exact class this shortcut handles. Measured on farming
+    # setDistributor: level 0 decides the 2x2 source partition in 16s, then the
+    # bracket/refine machinery spends the rest of a 120s attempt rediscovering
+    # that `msg.value == 0`, `msg.sender == owner`, and `distributor_ != 0` are
+    # equality/inequality gates. If every complete-path decision is already a
+    # simple product constraint over rendered coordinates and pins, the region
+    # is the decision tree itself and certification can be structural.
+    structural_region_source = {}
+    structural_regions, structural_holes, structural_reasons = \
+        structural_decision_regions(
+            paths, path_decisions, pins, coords, coord_types=coord_types,
+            type_ranges=type_ranges)
+    if structural_regions is not None:
+        brackets, regions, warned, round_failure = {}, structural_regions, \
+            set(), None
+        region_holes = structural_holes
+        structural_region_source = structural_reasons
+        print("[structural] simple decision regions derived for every "
+              f"witnessed path; skipping geometric bracket and refine. "
+              f"{len(regions)} region(s) now go directly to structural "
+              f"certification")
+        for enc in sorted(regions):
+            bits = []
+            for n, (lo, hi) in sorted(regions[enc].items()):
+                h = sorted((region_holes.get(enc) or {}).get(n, ()))
+                bits.append(f"{n} in [{lo}, {hi}]"
+                            + (f" \\ {{{', '.join(map(str, h))}}}" if h
+                               else ""))
+            print(f"[structural] enc={enc}: " + ", ".join(bits))
     else:
-        (_, brackets, regions, warned, round_failure, region_holes,
-         tr_new, unres) = outer_round(
-            args.esbmc, args.sol, args.contract, query_unit, paths, coords, pins,
-            args.probes, args.max_tx, args.timeout, cwd, geometric=True,
-            ast=args.ast, focus=focus, memlimit=args.memlimit,
-            values_by_coord=eq_values, extra_values=probe_extra,
-            type_ranges=type_ranges, claim_budget=args.claim_budget,
-            esbmc_args=args.esbmc_arg,
-            prune_inside=prune if args.probe_witnesses else None,
-            path_values=path_ladders)
-        type_ranges.update(tr_new)
-        unresolvable.update(unres)
-        print(f"[bracket] {brackets}")
+        # Round 1: geometric bracket.
+        if args.skip_bracket:
+            brackets, regions, warned, round_failure = {}, {}, set(), None
+            region_holes = {}
+            print("[bracket] SKIPPED (--skip-bracket): refining from each "
+                  "coordinate's full type range, which is the same fallback "
+                  "the code takes when the bracket measures nothing")
+        else:
+            (_, brackets, regions, warned, round_failure, region_holes,
+             tr_new, unres) = outer_round(
+                args.esbmc, args.sol, args.contract, query_unit, paths, coords,
+                pins, args.probes, args.max_tx, args.timeout, cwd,
+                geometric=True, ast=args.ast, focus=focus,
+                memlimit=args.memlimit, values_by_coord=eq_values,
+                extra_values=probe_extra, type_ranges=type_ranges,
+                claim_budget=args.claim_budget, esbmc_args=args.esbmc_arg,
+                prune_inside=prune if args.probe_witnesses else None,
+                path_values=path_ladders)
+            type_ranges.update(tr_new)
+            unresolvable.update(unres)
+            print(f"[bracket] {brackets}")
     # MEASURED, and it is the binding cost on real input: the geometric round
     # ignores --probes entirely (see geometric_values) and lays down one probe
     # per power of two, i.e. 258 candidate bounds per coordinate per direction.
@@ -5388,27 +5619,28 @@ def main():
                   or (0, UINT256_MAX))
         tlo, thi = type_ranges.get(c, (0, UINT256_MAX))
         return (max(lo, tlo), min(hi, thi))
-    spans = {c: _span(c) for c in coords}
-    for r in range(args.refine_rounds):
-        (_, brackets, regions, warned, round_failure, region_holes,
-         tr_new, unres) = outer_round(
-            args.esbmc, args.sol, args.contract, query_unit, paths, coords, pins,
-            args.probes, args.max_tx, args.timeout, cwd, spans=spans,
-            ast=args.ast, focus=focus, memlimit=args.memlimit,
-            values_by_coord=eq_values, extra_values=probe_extra,
-            type_ranges=type_ranges, esbmc_args=args.esbmc_arg)
-        type_ranges.update(tr_new)
-        unresolvable.update(unres)
-        last_failure = round_failure or last_failure
-        print(f"[refine {r+1}] spans={spans} regions={regions}"
-              + (f" holes={ {k: v for k, v in region_holes.items() if v} }"
-                 if any(region_holes.values()) else "")
-              + (f" UNSEPARATED={sorted(warned)}" if warned else ""))
-        new = {c: (brackets_for(c, brackets, type_ranges.get(c))
-                   or spans[c]) for c in coords}
-        if new == spans:
-            break
-        spans = new
+    if structural_regions is None:
+        spans = {c: _span(c) for c in coords}
+        for r in range(args.refine_rounds):
+            (_, brackets, regions, warned, round_failure, region_holes,
+             tr_new, unres) = outer_round(
+                args.esbmc, args.sol, args.contract, query_unit, paths, coords,
+                pins, args.probes, args.max_tx, args.timeout, cwd, spans=spans,
+                ast=args.ast, focus=focus, memlimit=args.memlimit,
+                values_by_coord=eq_values, extra_values=probe_extra,
+                type_ranges=type_ranges, esbmc_args=args.esbmc_arg)
+            type_ranges.update(tr_new)
+            unresolvable.update(unres)
+            last_failure = round_failure or last_failure
+            print(f"[refine {r+1}] spans={spans} regions={regions}"
+                  + (f" holes={ {k: v for k, v in region_holes.items() if v} }"
+                     if any(region_holes.values()) else "")
+                  + (f" UNSEPARATED={sorted(warned)}" if warned else ""))
+            new = {c: (brackets_for(c, brackets, type_ranges.get(c))
+                       or spans[c]) for c in coords}
+            if new == spans:
+                break
+            spans = new
 
     if unresolvable:
         # STATE ONLY WHAT IS TRUE AT THIS POINT. An earlier version of this line
@@ -5513,6 +5745,15 @@ def main():
             # region that a cut could not separate is EXPECTED to be refuted.
             print(f"[certify enc={enc}] region overlaps an unseparated sibling; "
                   f"certifying anyway, the query is what decides")
+        if enc in structural_region_source:
+            key = (enc, 1)
+            ok[key] = dict(box)
+            ok_holes[key] = copy_holes(holes)
+            ok_source[key] = "structural-simple-decision"
+            witness_check[enc] = "STRUCTURAL"
+            print(f"[certify enc={enc}] {structural_region_source[enc]}. "
+                  f"No ESBMC certification query is started for this path.")
+            continue
         structural = structural_abi_gate_certificate(
             path_decisions.get(enc), box, holes, ce)
         if structural:

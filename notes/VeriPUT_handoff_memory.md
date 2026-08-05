@@ -1539,3 +1539,107 @@ entry state are low-value targets for parameterized unit tests unless the
 method intentionally supports parameterized state setup. Fuzz cannot prove the
 getter body path; it can only cheaply refute bad assertions or bad regions when
 there is an exposed runtime parameter to vary.
+
+## 35. setDistributor ground truth and structural decision fast path
+
+`farming__Distributor__setDistributor` attempt 2 has now been spent under the
+official 120s/8GiB ladder:
+
+```
+python3 notes/coverage/scripts/poc_one.py \
+  farming__Distributor__setDistributor --stage all --fresh --attempt 2
+```
+
+Stage 1 completed in 118.3s and wrote a full 5/5 report, so the journal salvage
+path was not needed for this run. Stage 2 then timed out at 120s:
+
+```
+KILLED, 0 certified / 0 not / 5 witnessed
+5 path(s) reached NO verdict
+level 0 HAD decided 5 of them at 16.2s
+3 free coordinate(s): distributor_, msg.sender, msg.value
+```
+
+The important diagnosis is that the source-level ground truth is simple and
+should not need the geometric/refine ladder at all:
+
+```solidity
+modifier onlyOwner() { _checkOwner(); _; }
+function _checkOwner() internal view virtual {
+    if (owner() != _msgSender()) revert OwnableUnauthorizedAccount(_msgSender());
+}
+function setDistributor(address distributor_) public virtual onlyOwner {
+    if (distributor_ == address(0)) revert ZeroDistributorAddress();
+    emit DistributorChanged(distributor_);
+    _distributor = distributor_;
+}
+```
+
+With the tx-1 entry slice pinned to `state._owner == 1` and
+`state._distributor == 0`, the expected complete-path regions are:
+
+- enc=2: ABI non-payable reject,
+  `msg.value != 0`; `distributor_` and `msg.sender` are irrelevant to the body.
+- enc=12: body path, non-owner rollback, zero distributor:
+  `msg.value == 0`, `msg.sender != 1`, `distributor_ == 0`.
+- enc=13: body path, non-owner rollback, nonzero distributor:
+  `msg.value == 0`, `msg.sender != 1`, `distributor_ != 0`.
+- enc=14: owner call, zero-distributor rollback:
+  `msg.value == 0`, `msg.sender == 1`, `distributor_ == 0`.
+- enc=15: owner call, normal success:
+  `msg.value == 0`, `msg.sender == 1`, `distributor_ != 0`.
+
+The report's enc=13 shows `DistributorChanged` and `_distributor` updated even
+though the path is a rollback revert. That is not evidence of a chain-observable
+post-state; the Solidity revert model can continue through later instrumentation
+after the rollback marker. The existing emitter is right to drop layer-2/3
+storage/event rungs on rollback paths. For PUT value, enc=15 is the strong path:
+it should fuzz `distributor_` over nonzero addresses and assert the semantic
+oracle `_distributor post == distributor_` (plus related R1/R2 rungs if ESBMC
+proves them). Enc=2/12/13 are mostly exit-kind-only negative paths; enc=14 is a
+point revert path.
+
+The code repair is a structural decision-region fast path in
+`scripts/solidity_path_generalise.py`. It recognizes only complete paths whose
+recorded decisions are simple `==` / `!=` clauses over a rendered coordinate
+and a constant or pinned state getter:
+
+- ABI `msg.value` gate,
+- `_msgSender()` resolved to `msg.sender`,
+- `return_value$_<state>$N` resolved only when `state.<state>` is pinned,
+- address-like coordinates bounded to `[0, 2^160-1]`, `msg.value` to
+  `[0, 2^256-1]`,
+- coordinate-to-coordinate constraints are refused and fall back to the old
+  ladder.
+
+If every witnessed path of the unit is covered by that grammar, Stage 2 now
+skips level0, witness-pool probes, per-path ladders, geometric bracket, linear
+refine, and ESBMC certification queries. The certification source is recorded
+as `structural-simple-decision`. This is still proof-side logic, not fuzz:
+it certifies only the product region implied by the already-enumerated complete
+path decision sequence.
+
+Validation without consuming another ESBMC POC attempt:
+
+```
+python3 scripts/solidity_path_generalise.py ... \
+  --enumeration-index notes/coverage/pathcov/farming__poc_Distributor_setDistributor_gate/index.json \
+  --enumeration-report notes/coverage/pathcov/farming__poc_Distributor_setDistributor_gate/reports/Distributor__setDistributor.json \
+  --level0 --level0-perturb --probe-witnesses 8 --probe-ladder ...
+```
+
+With the existing Stage-1 report, this completed in 0.047s, printed no ESBMC
+solver round, and wrote 5/5 certified regions. Running the real wrapper stage
+only:
+
+```
+python3 notes/coverage/scripts/poc_one.py \
+  farming__Distributor__setDistributor --stage 2 --fresh --attempt 2
+```
+
+completed in 0.5s with `CERTIFIED, 5 certified / 0 not / 5 witnessed`. This
+rerun reused the already-spent Stage-1 report and did not start a new ESBMC
+enumeration/certification run. Stage 3 has deliberately not been rerun yet:
+before spending the remaining POC budget, inspect whether the emitter will spend
+unnecessary ladder/R2 ESBMC queries on rollback paths whose only observable
+oracle is the exit kind, and prioritize enc=15 as the expected strong PUT.

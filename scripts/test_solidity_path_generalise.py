@@ -71,6 +71,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       stamp_workdir,
                                       abi_gate_class,
                                       structural_abi_gate_certificate,
+                                      structural_decision_region,
+                                      structural_decision_regions,
                                       file_identity,
                                       validate_enumeration_import)
 
@@ -2290,6 +2292,67 @@ check("source-decision-plus-abi-does-not-structurally-certify",
           "arm": "taken",
           "branch_claim": "x == 0"
       }], {"msg.value": (0, 0)}, {}, {"msg.value": 0}), None)
+
+_setdist_decisions = [
+    {"synthetic_abi_gate": True, "arm": "taken",
+     "branch_claim": "!(msg.value == 0)"},
+    {"arm": "taken",
+     "branch_claim":
+     "return_value$_owner$1 != return_value$__msgSender$2"},
+    {"arm": "taken", "branch_claim": "distributor_ == 0"},
+]
+_setdist_box, _setdist_holes, _setdist_reason = structural_decision_region(
+    _setdist_decisions,
+    {"msg.value": 0, "msg.sender": 1, "distributor_": 7},
+    {"state._owner": 1},
+    ["distributor_", "msg.sender", "msg.value"],
+    coord_types={"distributor_": "address"})
+check("simple-decision-region-pins-owner-sender",
+      _setdist_box["msg.sender"], (1, 1))
+check("simple-decision-region-keeps-address-width-for-nonzero-arg",
+      _setdist_box["distributor_"], (1, (1 << 160) - 1))
+check("simple-decision-region-pins-nonpayable-body-value",
+      _setdist_box["msg.value"], (0, 0))
+check("simple-decision-region-has-no-hole-for-endpoint-nonzero",
+      _setdist_holes, {})
+check("simple-decision-region-records-structural-reason",
+      _setdist_reason.startswith("STRUCTURAL simple decision region"), True)
+
+_setdist_reject = structural_decision_region(
+    [{"synthetic_abi_gate": True, "arm": "fall-through",
+      "branch_claim": "msg.value == 0"}],
+    {"msg.value": 1, "msg.sender": 0, "distributor_": 0},
+    {"state._owner": 1},
+    ["distributor_", "msg.sender", "msg.value"],
+    coord_types={"distributor_": "address"})
+check("simple-decision-region-abi-reject-is-value-positive",
+      _setdist_reject[0]["msg.value"], (1, (1 << 256) - 1))
+
+_setdist_nonowner = structural_decision_region(
+    [{"synthetic_abi_gate": True, "arm": "taken",
+      "branch_claim": "!(msg.value == 0)"},
+     {"arm": "fall-through",
+      "branch_claim":
+      "!(return_value$_owner$1 != return_value$__msgSender$2)"}],
+    {"msg.value": 0, "msg.sender": 9, "distributor_": 4},
+    {"state._owner": 1},
+    ["distributor_", "msg.sender", "msg.value"],
+    coord_types={"distributor_": "address"})
+check("simple-decision-region-nonowner-punches-owner-hole",
+      _setdist_nonowner[1]["msg.sender"], {1})
+
+_setdist_all = structural_decision_regions(
+    [(15, 3, {"msg.value": 0, "msg.sender": 1, "distributor_": 7})],
+    {15: _setdist_decisions},
+    {"state._owner": 1},
+    ["distributor_", "msg.sender", "msg.value"],
+    coord_types={"distributor_": "address"})
+check("simple-decision-regions-batches-all-paths",
+      sorted(_setdist_all[0]), [15])
+check("simple-decision-region-refuses-coordinate-equality",
+      structural_decision_region(
+          [{"branch_claim": "a == b"}], {"a": 1, "b": 2}, {},
+          ["a", "b"]), None)
 
 # Stage 2 may reuse stage 1 only when the structured collection manifest proves
 # that both stages mean the same run. This test exercises the accepting edge and
