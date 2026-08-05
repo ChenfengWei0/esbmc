@@ -1653,3 +1653,70 @@ which expensive PUT/R2 ESBMC work is attempted. For `setDistributor`, a
 first, followed by enc=2/12/13/14. This means the remaining attempt-3 Stage 3
 run should try the only expected strong PUT before spending time on exit-only
 negative paths.
+
+Attempt 3 was then spent for Stage 3 only:
+
+```
+python3 notes/coverage/scripts/poc_one.py \
+  farming__Distributor__setDistributor --stage 3 --attempt 3
+```
+
+It exited 0 after 744s wall clock. The configured attempt tier was
+600s/10GiB; that limit applies to the ESBMC subprocesses, while the wrapper
+serially ran five certified regions. The scheduling guard worked: enc=15 ran
+first and produced the expected strong PUT:
+
+- region: `msg.value == 0`, `msg.sender == 1`,
+  `distributor_ in [1, 2^160-1]`, entry state `_owner == 1`,
+  `_distributor == 0`, `_totalSupply == 0`;
+- fuzz: one parameter, `distributor_`;
+- oracle: 19 post-state assertions, including the important semantic assertion
+  `_distributor post == distributor_`;
+- B gate: yes.
+
+The remaining regions behaved as exit/rollback cases:
+
+- enc=2 wrote a value-gate PUT with `msg.sender`, `msg.value`, and
+  `distributor_` fuzzed, but the old stats ledger reported 0 oracle assertions
+  even though the emitted test contains the concrete `assertFalse(ok5, "value
+  sent to a non-payable entry must revert")`. This was a bookkeeping bug, not
+  an absence of an exit oracle.
+- enc=12 and enc=13 wrote rollback PUTs with two fuzz parameters and one
+  exit-kind assertion each. Their post-state rungs are deliberately dropped:
+  the ladder observed pre-rollback intermediate state, not chain-observable
+  storage after revert.
+- enc=14 refused: every rendered coordinate was width one
+  (`msg.sender == 1`, `distributor_ == 0`, `msg.value == 0`), so emitting it
+  would be a replay point wearing PUT syntax.
+
+The Stage-3 table from that run was therefore `PUTs emitted = 4/5`,
+`B = 3/5 emitted PUT(s)`, with enc=14 excluded as refused. This is the old
+artefact's measured result. Do not quote it as the result of the new code below
+unless Stage 3 is re-emitted.
+
+Two follow-up code fixes are now in the working tree and have not consumed
+another POC run:
+
+1. `scripts/solidity_path_put.py` now skips the ESBMC R2 pass for rollback
+   paths after the first assertion ladder has already identified
+   `ROLLBACK revert`. Previously the Forge R2 prefilter was skipped, but the
+   R2 candidate batch still went to ESBMC and was later thrown away before
+   emit because rollback post-state is unobservable. This saves the slowest
+   part of enc=12/13/14-style paths without changing any observable oracle.
+2. The same file now counts the emitter's explicit low-level value-gate
+   `assertFalse(ok...)` call as `exit_kind_asserts` in `stats.asserts`. The
+   matcher is deliberately narrow: arbitrary user assertions such as
+   `assertFalse(c0.flag())` are not classified as exit-kind oracles. This fixes
+   the B Gate-3 accounting for enc=2-like PUTs: a nonpayable value-gate test
+   with a real `assertFalse(ok)` should not be reported as assertion-free.
+
+Focused verification already run:
+
+```
+python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py
+python3 scripts/test_solidity_path_put.py
+ctest --test-dir build -R '^regression/scripts/solidity_path_put$' --output-on-failure
+```
+
+All three passed. No additional `setDistributor` POC rerun has been spent after
+these two code fixes.

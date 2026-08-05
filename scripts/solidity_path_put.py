@@ -1534,6 +1534,28 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
     return out
 
 
+def maybe_run_r2_passes(specs, base_spec, write_spec, runner, parse,
+                        rollback_here=False, notes=None, log=print):
+    """Run R2 unless this path's post-state is hidden by rollback.
+
+    R2 rows are post-state or delta claims. On a rollback path they are proved
+    about an intermediate state that no Foundry test can observe, and the
+    emitter drops them before writing assertions. Skipping here saves the ESBMC
+    query without weakening the emitted test.
+    """
+    if not rollback_here:
+        return run_r2_passes(specs, base_spec, write_spec, runner, parse,
+                             log=log)
+    n_candidates = len(r2_candidates(specs))
+    log("[put]   R2 ESBMC pass NOT RUN: this path rolls back, so its "
+        "layer-2/3 post-state is unobservable; "
+        f"{n_candidates} candidate(s) would be dropped before emit")
+    if notes is not None:
+        notes.append("R2 ESBMC skipped: rollback path has no observable "
+                     "post-state")
+    return []
+
+
 def _norm_ty(t):
     """A Solidity type spelled the one way, for comparing a parameter's type
     against a mapping's key type. Module level, not nested in `main()`, so the
@@ -2926,6 +2948,35 @@ def observed_env(body, call_i, call_line):
         value_ev = m.group(0)
         value = _lit_int(m.group(1))
     return {"msg.sender": (sender, sender_ev), "msg.value": (value, value_ev)}
+
+
+def low_level_value_gate_asserts_exit(body, call_i, call_line):
+    """Whether the emitted low-level value-gate assertion survived the rewrite.
+
+    This intentionally recognizes only the shape the cov emitter writes for a
+    non-payable ABI value gate:
+
+        (bool ok5, ) = address(c0).call{value: ...}(...);
+        assertFalse(ok5, ...);
+
+    A user assertion such as `assertFalse(c0.flag())` is a functional oracle,
+    not an exit-kind assertion, and must not be counted in this ledger.
+    """
+    if not (0 <= call_i < len(body)):
+        return False
+    stmt_i = statement_start(body, call_i)
+    stmt = "\n".join(body[stmt_i:call_i + 1])
+    if ".call" not in stmt or _VALUE_RE.search(stmt) is None:
+        return False
+    m = re.search(r"\(\s*bool\s+([A-Za-z_][A-Za-z0-9_]*)\s*,[^)]*\)\s*=",
+                  stmt)
+    if not m:
+        return False
+    ok_name = m.group(1)
+    if call_i + 1 >= len(body):
+        return False
+    return bool(re.match(r"\s*assertFalse\s*\(\s*" + re.escape(ok_name)
+                         + r"\s*(?:,|\))", body[call_i + 1]))
 
 
 def establish_env_sender(body, call_i, region, holes, pins, used,
@@ -4585,6 +4636,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     for ln in body[call_i + 1:]:
         out.append(ln)
     out.append("  }")
+    exit_kind_asserts = 1 if rollback_layer1 else 0
+    original_call_body = list(body[:call_i]) + [new_call] + list(
+        body[call_i + 1:])
+    if low_level_value_gate_asserts_exit(original_call_body, call_i, new_call):
+        exit_kind_asserts += 1
     stats = {"fuzz_params": len(sig), "lifted": lifted,
              # COUNTED, and counted separately. A conditional assertion is an
              # assertion the test carries, so it belongs in the total; it is a
@@ -4598,10 +4654,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              # conclusion the layer-1 rule exists to make false, and it would
              # have sent the next reader looking for a bug that is not there.
              "asserts": (len(asserts) + len(ret_asserts) + len(guarded)
-                         + (1 if rollback_layer1 else 0)),
+                         + exit_kind_asserts),
              "state_asserts": len(asserts) + len(guarded),
              "guarded_asserts": len(guarded),
-             "exit_kind_asserts": 1 if rollback_layer1 else 0,
+             "exit_kind_asserts": exit_kind_asserts,
              # Recorded so the B table can say WHY a row's oracle is one line:
              # a rollback path is a measurement, not a missing feature, and the
              # two must not read alike.
@@ -5411,27 +5467,27 @@ def main():
         r2_term_lookup = r2_terms_from_specs(_r2)
         r2_requested = True
 
-        if a.fuzz_r2_prefilter:
-            if rollback_here:
+        if rollback_here:
+            if a.fuzz_r2_prefilter:
                 r2_fuzz_prefilter.update(skipped_forge_r2_evidence(
                     _r2, a.fuzz_r2_candidate_budget,
                     "rollback path has no observable R2 post-state",
                     a.fuzz_runs))
                 print("[put]   Forge R2 prefilter NOT RUN: this path rolls "
                       "back, so its layer-2/3 post-state is unobservable")
-            else:
-                _fuzz_verdicts, r2_fuzz_prefilter = run_forge_r2_prefilter(
-                    a.forge_project, a.workdir, emitted, case, a.contract,
-                    a.unit, a.enc, a.depth, pf, region, holes, pins, params,
-                    layout, maps, _r2, r2_term_lookup,
-                    (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
-                    a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
-                    a.fuzz_r2_candidate_budget)
-                r2_fuzz_prefilter["enabled"] = True
-                _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
-                survivors = len(r2_candidates(_r2))
-                print(f"[put]   Forge R2 survivors sent to ESBMC: "
-                      f"{survivors}; a Forge pass was NOT counted as proof")
+        elif a.fuzz_r2_prefilter:
+            _fuzz_verdicts, r2_fuzz_prefilter = run_forge_r2_prefilter(
+                a.forge_project, a.workdir, emitted, case, a.contract,
+                a.unit, a.enc, a.depth, pf, region, holes, pins, params,
+                layout, maps, _r2, r2_term_lookup,
+                (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
+                a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
+                a.fuzz_r2_candidate_budget)
+            r2_fuzz_prefilter["enabled"] = True
+            _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
+            survivors = len(r2_candidates(_r2))
+            print(f"[put]   Forge R2 survivors sent to ESBMC: "
+                  f"{survivors}; a Forge pass was NOT counted as proof")
 
         def _write_r2(suffix, spec_dict):
             p = os.path.join(assert_dir, "spec" + suffix + ".json")
@@ -5447,7 +5503,9 @@ def main():
                 assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
             return o
 
-        rows += run_r2_passes(_r2, spec, _write_r2, _run_r2, parse_ladder)
+        rows += maybe_run_r2_passes(
+            _r2, spec, _write_r2, _run_r2, parse_ladder,
+            rollback_here=rollback_here, notes=notes)
     else:
         # ---- AN R2 CLASS THAT WAS NEVER ASKED FOR MUST NOT READ AS ONE ------
         #
@@ -5592,7 +5650,8 @@ def main():
           f"({', '.join(stats['lifted']) or 'none'})")
     print(f"[put]   oracle asserts  : {stats['asserts']} "
           f"({stats['state_asserts']} post-state, "
-          f"{stats['return_asserts']} return value)")
+          f"{stats['return_asserts']} return value, "
+          f"{stats.get('exit_kind_asserts', 0)} exit-kind)")
     for s in stats["oracle_skipped"]:
         print(f"[put]     rung dropped: {s}")
     for s in stats.get("oracle_implied", []):

@@ -2030,6 +2030,36 @@ def test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed():
     return bad
 
 
+def test_a_ROLLBACK_path_DOES_NOT_SPEND_an_R2_ESBMC_pass():
+    from solidity_path_put import maybe_run_r2_passes  # noqa: E402
+    said, written, notes = [], [], []
+
+    def write_spec(suffix, spec):
+        written.append((suffix, spec))
+        return "/tmp/spec" + suffix
+
+    def runner(_path):
+        raise AssertionError("rollback R2 must not call ESBMC")
+
+    specs = [{"param": "amount", "stage": 1, "kind": "num",
+              "vars": [{"name": "bal",
+                        "abs_lo": "amount", "abs_hi": "amount",
+                        "delta_dir": "inc",
+                        "delta_lo": "amount", "delta_hi": "amount"}]}]
+    got = maybe_run_r2_passes(
+        specs, {"unit": "u", "enc": 7}, write_spec, runner,
+        lambda _text: ([], None, None, None), rollback_here=True,
+        notes=notes, log=said.append)
+    bad = 0
+    bad += check(got == [], f"no R2 rows are merged: {got}")
+    bad += check(written == [], f"no R2 spec is written: {written}")
+    bad += check(any("R2 ESBMC pass NOT RUN" in s for s in said),
+                 f"the skip is logged: {said}")
+    bad += check(any("rollback path" in s for s in notes),
+                 f"put.json notes will carry the reason: {notes}")
+    return bad
+
+
 def test_an_R2_PASS_never_overwrites_a_row_the_FIRST_pass_decided():
     """Only delta rows are taken. A second run disagreeing with the first
     about an R1 rung is a fact worth seeing, not a silent update -- and an R1
@@ -3510,6 +3540,24 @@ def test_the_value_gate_statement_is_read_as_ONE_statement():
     return bad
 
 
+def test_only_the_low_level_value_gate_assertion_counts_as_exit_kind():
+    from solidity_path_put import (find_unit_call,  # noqa: E402
+                                   low_level_value_gate_asserts_exit)
+    em, case = _value_gate_case()
+    body = em.lines[case[3][0] + 1:case[3][1]]
+    call_i = find_unit_call(body, "setDistributor")
+    bad = 0
+    bad += check(low_level_value_gate_asserts_exit(
+        body, call_i, body[call_i]),
+        "the emitter's assertFalse(ok) value gate is recognized")
+    bad_body = list(body)
+    bad_body[call_i + 1] = "    assertFalse(c0.paused());"
+    bad += check(not low_level_value_gate_asserts_exit(
+        bad_body, call_i, bad_body[call_i]),
+        "an arbitrary assertFalse after the call is NOT an exit-kind oracle")
+    return bad
+
+
 def test_a_single_line_call_still_reports_its_own_statement():
     """THE NEGATIVE CONTROL for `statement_start`.
 
@@ -3561,6 +3609,10 @@ def test_the_low_level_value_gate_emits_a_PUT():
                  "the two lines of the statement are still adjacent")
     bad += check(any("assertFalse(ok5," in ln for ln in put),
                  "the emitter's own exit-kind assertion survives")
+    bad += check(stats["asserts"] == 3 and stats["state_asserts"] == 2
+                 and stats["exit_kind_asserts"] == 1,
+                 f"and the B gate ledger counts that explicit exit oracle: "
+                 f"{stats}")
     bad += check(any(ln.strip() == "vm.prank(p_msg_sender);" for ln in put),
                  "the established prank sits above the statement, not inside "
                  "it")
@@ -3711,6 +3763,7 @@ def main():
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_ALREADY_HOLDS,
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT,
               test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed,
+              test_a_ROLLBACK_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
               test_an_R2_PASS_never_overwrites_a_row_the_FIRST_pass_decided,
               test_a_ONE_LEVEL_mapping_proposes_one_key,
               test_a_NESTED_mapping_proposes_ONE_KEY_PER_LEVEL,
@@ -3741,6 +3794,7 @@ def main():
               test_a_width_one_env_coordinate_emits_at_the_certified_value,
               test_a_piece_label_distinguishes_two_boxes_of_one_path,
               test_the_value_gate_statement_is_read_as_ONE_statement,
+              test_only_the_low_level_value_gate_assertion_counts_as_exit_kind,
               test_a_single_line_call_still_reports_its_own_statement,
               test_the_low_level_value_gate_emits_a_PUT,
               test_the_funding_line_precedes_the_prank,
