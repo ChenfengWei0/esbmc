@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--contract BoolR2Eq --solidity-path-coverage --solidity-max-tx 1 --path-cov-assert spec.json --memlimit 8g
+^--path-cov-assert: flag: post == b  HOLDS$
+^--path-cov-assert: flag: post == true  REFUTED.*$
+^--path-cov-assert: ladder summary -- [0-9]+ candidate\(s\): [0-9]+ HOLDS, [0-9]+ REFUTED

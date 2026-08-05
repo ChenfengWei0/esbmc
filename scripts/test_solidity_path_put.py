@@ -1845,7 +1845,7 @@ def test_skipped_forge_R2_accounting_is_complete_and_conservative():
     return bad
 
 
-def test_typed_R2_omits_bool_instead_of_counting_unanswered_claims():
+def test_typed_R2_omits_bool_without_a_bool_endpoint():
     from solidity_path_put import propose_r2_batch  # noqa: E402
     said = []
     got = propose_r2_batch(
@@ -1858,6 +1858,78 @@ def test_typed_R2_omits_bool_instead_of_counting_unanswered_claims():
     bad += check(any("ordering-capable unsigned scalar" in line
                      for line in said),
                  f"the omission is named rather than silent: {said}")
+    return bad
+
+
+def test_typed_R2_proposes_bool_equality_to_bool_coordinate():
+    from solidity_path_put import propose_r2_batch, r2_candidates  # noqa: E402
+    got = propose_r2_batch(
+        [("flag", "post == pre", "REFUTED"),
+         ("flag", "post != pre", "HOLDS")],
+        [("flag_", "bool")], var_bytes={"flag": 1},
+        rendered_coords=[("flag_", "bool", 1)], log=lambda _line: None)
+    candidates = r2_candidates(got)
+    bad = 0
+    bad += check(len(got) == 1, f"one bool R2 batch: {got}")
+    bad += check(candidates == [{
+        "key": "s0:v0:equals:e0",
+        "var": "flag",
+        "text": "post == flag_",
+    }], f"only equality to the bool coordinate is asked: {candidates}")
+    entry = got[0]["vars"][0] if got else {}
+    bad += check(not entry.get("abs") and not entry.get("deltas"),
+                 f"bool R2 has no interval or delta candidates: {entry}")
+    return bad
+
+
+def test_a_bool_region_parameter_is_lifted_and_can_feed_R2():
+    bool_emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Flagger} from "./Flagger.sol";
+contract FlaggerCovTest is Test {
+  Flagger c0;
+  function setUp() public {
+    c0 = new Flagger();
+  }
+  // claim: sol:@C@Flagger@F@set#10:path:2
+  function test_cov_0() public {
+    // [asserted] path exits normally; a revert fails the test
+    c0.set(false);
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as out:
+        out.write(bool_emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Flagger@F@set#10", 2)
+    notes = []
+    r2_terms = {"flag_": {"kind": "coord", "name": "flag_"}}
+    put, stats = build_put(
+        "Flagger", "set", 2, 1, "sol:@C@Flagger@F@set#10",
+        region={"flag_": (0, 1)}, holes={}, pins={},
+        params=[("flag_", "bool")], emitted=em, case=case,
+        layout={"flag": (0, 0, 1)},
+        ladder_rows=[("flag", "post == flag_", "HOLDS")],
+        notes=notes, r2_terms=r2_terms)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a bool PUT is produced: {notes}")
+    bad += check("function test_put_Flagger_set_path2(bool flag_) public"
+                 in text,
+                 "the bool coordinate is lifted into the fuzz signature")
+    bad += check("bound(flag_" not in text,
+                 "a full bool domain needs no numeric bound() cast")
+    bad += check("assertEq(_post_flag, (flag_ ? uint256(1) : uint256(0))"
+                 in text,
+                 "the bool R2 endpoint is rendered as the storage bit")
+    bad += check(stats["fuzz_params"] == 1 and stats["asserts"] == 1,
+                 f"the bool PUT is parameterized and has one oracle: {stats}")
     return bad
 
 
@@ -3985,7 +4057,9 @@ def main():
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,
               test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,
               test_skipped_forge_R2_accounting_is_complete_and_conservative,
-              test_typed_R2_omits_bool_instead_of_counting_unanswered_claims,
+              test_typed_R2_omits_bool_without_a_bool_endpoint,
+              test_typed_R2_proposes_bool_equality_to_bool_coordinate,
+              test_a_bool_region_parameter_is_lifted_and_can_feed_R2,
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
               test_same_arity_overloads_use_the_exact_path_declaration,
               test_overload_persistence_keys_and_work_suffixes_are_distinct,

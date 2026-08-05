@@ -2463,3 +2463,66 @@ python3 scripts/test_put_all_accounting.py
 python3 scripts/test_solidity_path_generalise.py
 python3 scripts/test_solidity_path_put.py
 ```
+
+## 2026-08-06 Bool input and bool R2 support
+
+Implemented without spending any real POC ESBMC attempt.
+
+What changed:
+
+- The external PUT emitter now treats `bool` unit parameters as a liftable
+  two-point coordinate. A certified region `[0, 1]` becomes a `bool` fuzz
+  parameter with no numeric `bound()` cast; singleton regions become
+  `true`/`false`; holes become `vm.assume(p != true/false)`.
+- Typed R2 proposal now has a bool-only lane. If a state variable has the bool
+  equality ladder (`post == pre` / `post != pre`) and the unit exposes a bool
+  coordinate, the proposer asks only structured equality such as
+  `post == emergencyExit_`.
+- The C++ `--path-cov-assert` consumer now accepts structured equality over
+  bool state variables and bool coordinates/literals. It still refuses bool
+  interval and delta specs. This keeps the old soundness boundary: bool has no
+  ordering or arithmetic R2.
+- Generated Foundry oracles compare storage bits against
+  `(flag_ ? uint256(1) : uint256(0))`, because `vm.load` reads a `uint256`
+  storage word while the Solidity call parameter is `bool`.
+
+Why it matters for POCs:
+
+- `st1inch.setEmergencyExit(bool)` has a clean semantic ground truth:
+  owner-only, non-payable, normal owner path writes
+  `state.emergencyExit == emergencyExit_`.
+- Before this patch, the bool argument was not a useful R2 endpoint and a
+  strong PUT for that unit would either be deterministic or miss the main
+  post-state relation.
+- With this patch, the expected high-value PUT for the normal path is:
+  `msg.sender == owner`, `msg.value == 0`, `emergencyExit_ in {false,true}`,
+  bare call, assert `emergencyExit` storage bit equals the bool argument.
+
+Verification run:
+
+```sh
+python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py
+python3 scripts/test_solidity_path_put.py
+cmake --build build --target esbmc -j2
+./build/src/esbmc/esbmc \
+  regression/esbmc-solidity/solidity_path_cov_assert_bool_r2_equality/contract.sol \
+  --contract BoolR2Eq --solidity-path-coverage --solidity-max-tx 1 \
+  --path-cov-assert \
+  regression/esbmc-solidity/solidity_path_cov_assert_bool_r2_equality/spec.json \
+  --memlimit 8g
+./build/src/esbmc/esbmc \
+  regression/esbmc-solidity/solidity_path_cov_assert_bool_r2_refused/contract.sol \
+  --contract BoolR2 --solidity-path-coverage --solidity-max-tx 1 \
+  --path-cov-assert \
+  regression/esbmc-solidity/solidity_path_cov_assert_bool_r2_refused/spec.json \
+  --memlimit 8g
+```
+
+Expected direct ESBMC results:
+
+- `solidity_path_cov_assert_bool_r2_equality` exits with
+  `VERIFICATION FAILED`, which is normal for assertion-ladder mode, and prints
+  `flag: post == b  HOLDS` plus `flag: post == true  REFUTED`.
+- `solidity_path_cov_assert_bool_r2_refused` exits before the ladder summary
+  with the bool interval refusal. This pins that bool R2 equality is supported
+  without opening bool ordering/arithmetic.

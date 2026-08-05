@@ -366,9 +366,21 @@ Semantic ground truth from source:
   - non-owner reverts at `onlyOwner`;
   - owner exits normally, sets `state.emergencyExit == emergencyExit_`, and
     emits `EmergencyExitSet`.
-  - The only nontrivial input dimension is the boolean argument, so this may be
-    strong only if `msg.sender` or `msg.value` contributes a certified width
-    greater than one on a real path.
+  - non-payable value gate: `msg.value != 0` reverts before the body, so the
+    generated PUT oracle is a low-level-call failure or `expectRevert`, not a
+    post-state assertion.
+  - Expected normal-path input region: constructor owner is pinned, unit caller
+    is that owner, `msg.value == 0`, and `emergencyExit_ in {false,true}`.
+  - Expected dependency/input region: no external calls and no token fixture;
+    only the owner gate, value gate, and the bool argument control the clean
+    normal path.
+  - Expected assertion: after the normal call, the `emergencyExit` storage bit
+    equals the bool argument. This is now a real structured R2 equality target;
+    do not ask bool interval or delta candidates.
+  - Strength criterion: a PUT for the normal path is parameterized if it lifts
+    `emergencyExit_` over both boolean values and asserts the equality above.
+    It does not need a wide `msg.sender` interval; owner is legitimately a
+    gate pin here.
 - `setDefaultFarm(address defaultFarm_)`:
   - non-owner reverts at `onlyOwner`;
   - owner with `defaultFarm_ == 0` exits normally and clears `defaultFarm`;

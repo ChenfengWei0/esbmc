@@ -1,0 +1,17 @@
+{
+  "unit": "set",
+  "enc": 3,
+  "depth": 1,
+  "region": [{"name": "b", "lo": "0", "hi": "1"}],
+  "vars_policy": "state-exact",
+  "vars": [{
+    "name": "flag",
+    "equals": [{
+      "id": "arg",
+      "term": {"kind": "coord", "name": "b"}
+    }, {
+      "id": "true",
+      "term": {"kind": "literal", "value": "1"}
+    }]
+  }]
+}

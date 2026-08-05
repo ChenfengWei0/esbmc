@@ -6,9 +6,10 @@
   "vars_policy": "state-exact",
   "vars": [{
     "name": "flag",
-    "equals": [{
-      "id": "badBoolArithmetic",
-      "term": {"kind": "literal", "value": "1"}
+    "abs": [{
+      "id": "badBoolInterval",
+      "lo": {"kind": "literal", "value": "0"},
+      "hi": {"kind": "literal", "value": "1"}
     }]
   }]
 }

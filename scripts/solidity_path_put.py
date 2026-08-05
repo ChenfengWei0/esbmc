@@ -652,6 +652,7 @@ def bound_term(tok, idents):
 
 
 NUMERIC_TY = re.compile(r"^u?int(\d+)?$")
+BOOL_TY = re.compile(r"^bool$")
 # An endpoint may also NAME an identity rather than an amount. `address` and a
 # contract type are the two that occur; both are ordered integers underneath, so
 # the C++ builds the comparison in the CANDIDATE's type and an equality over
@@ -692,6 +693,8 @@ def endpoint_candidate(name, sol_type):
     t = _norm_ty(sol_type)
     if NUMERIC_TY.match(t):
         return (name, "num", None)
+    if BOOL_TY.match(t):
+        return (name, "bool", 1)
     if IDENTITY_TY.match(t):
         return (name, "id", endpoint_bytes(t))
     return None
@@ -700,8 +703,8 @@ def endpoint_candidate(name, sol_type):
 def endpoint_candidates(params):
     """[(name, kind, nbytes)] for the R2 endpoints this unit can name.
 
-    kind is `"num"` or `"id"`, and the split decides WHICH BOUND CLASS the name
-    may appear in:
+    kind is `"num"`, `"id"` or `"bool"`, and the split decides WHICH BOUND
+    CLASS the name may appear in:
 
       num  -- an amount. May bound a DELTA (`post - pre in [amt, amt]`) and an
               ABSOLUTE value (`post in [amt, amt]`).
@@ -710,6 +713,8 @@ def endpoint_candidates(params):
               a weak claim, it is a MEANINGLESS one -- the difference of two
               balances is not an address -- and asking it would spend a query
               to be told REFUTED about a question nobody has.
+      bool -- a two-point flag. May appear only in STRUCTURED EQUALITY
+              candidates. There is no ordering, interval or delta over bool.
 
     ⛔ WHY `id` EXISTS AT ALL, rather than the numeric filter simply standing.
     The filter was `NUMERIC_TY.match(...)` and nothing else, so a unit whose
@@ -857,7 +862,7 @@ def propose_r2_specs(ladder_rows, params, log=None, var_bytes=None):
     # using it for both is what tied the setter's fate to an ordering verdict
     # that a setter can never produce.
     allvars = sorted(verdicts)
-    ends = endpoint_candidates(params)
+    ends = [e for e in endpoint_candidates(params) if e[1] != "bool"]
     numeric = [pn for pn, k, _b in ends if k == "num"]
     identity = [(pn, b) for pn, k, b in ends if k == "id"]
     if not ends:
@@ -1109,15 +1114,26 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
         raise ValueError("R2 candidate budget must be positive")
     verdicts, direction = _r2_direction(ladder_rows, log)
     target_bytes = dict(var_bytes or {})
+    endpoint_kinds = {name: kind for name, kind, _width
+                      in endpoint_candidates(params)}
+    has_bool_endpoint = any(kind == "bool" for kind in endpoint_kinds.values())
+    target_kinds = {}
     allvars = []
     for name in sorted(verdicts):
         rows = verdicts[name]
         if "post >= pre" not in rows or "post <= pre" not in rows:
+            if (has_bool_endpoint and rows.get("post == pre") in
+                    ("HOLDS", "REFUTED") and rows.get("post != pre") in
+                    ("HOLDS", "REFUTED")):
+                allvars.append(name)
+                target_kinds[name] = "bool"
+                continue
             log(f"[put]   typed R2 omitted for {name}: the R1 ladder emitted "
                 "no ordering pair, so this is not an ordering-capable "
                 "unsigned scalar")
             continue
         allvars.append(name)
+        target_kinds[name] = "num"
 
     return_target = None
     if rettypes is not None and len(rettypes) == 1:
@@ -1146,7 +1162,7 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
                            for name, kind, width in endpoint_candidates(params)]
     coords = []
     for name, kind, width in rendered_coords:
-        if name and kind in ("num", "id"):
+        if name and kind in ("num", "id", "bool"):
             coords.append((name, kind, width,
                            {"kind": "coord", "name": name}))
     literals = [{"kind": "literal", "value": str(value)}
@@ -1191,33 +1207,41 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
         identity = [term for _name, kind, nbytes, term in coords
                     if kind == "id" and (width is None or nbytes is None
                                          or width == nbytes)]
-        equals = dedup(identity + [term for term in terms
-                                   if r2_term_text(term) != "pre"])
-        abs_ranges = [{"id": f"a{i}", "lo": term, "hi": term}
-                      for i, term in enumerate(numeric_atoms)
-                      if r2_term_text(term) != "pre"]
-        if zero is not None:
-            type_max = None if width is None else (1 << (8 * width)) - 1
-            abs_ranges += [
-                {"id": f"ac{i}", "lo": zero, "hi": term}
-                for i, term in enumerate(terms)
-                if r2_term_text(term) != "0"]
-            if type_max is not None:
-                abs_ranges = [item for item in abs_ranges
-                              if not (item["lo"] == zero
-                                      and item["hi"].get("kind") == "literal"
-                                      and int(item["hi"]["value"]) == type_max)]
-        deltas = []
-        if var != RETURN_VAR and var in direction:
-            deltas = [{"id": f"d{i}", "dir": direction[var],
-                       "lo": term, "hi": term}
-                      for i, term in enumerate(terms)]
+        bool_terms = [term for _name, kind, _nbytes, term in coords
+                      if kind == "bool"]
+        if target_kinds.get(var) == "bool":
+            equals = dedup(bool_terms)
+            abs_ranges = []
+            deltas = []
+        else:
+            equals = dedup(identity + [term for term in terms
+                                       if r2_term_text(term) != "pre"])
+            abs_ranges = [{"id": f"a{i}", "lo": term, "hi": term}
+                          for i, term in enumerate(numeric_atoms)
+                          if r2_term_text(term) != "pre"]
             if zero is not None:
-                deltas += [
-                    {"id": f"dc{i}", "dir": direction[var],
-                     "lo": zero, "hi": term}
+                type_max = None if width is None else (1 << (8 * width)) - 1
+                abs_ranges += [
+                    {"id": f"ac{i}", "lo": zero, "hi": term}
                     for i, term in enumerate(terms)
                     if r2_term_text(term) != "0"]
+                if type_max is not None:
+                    abs_ranges = [
+                        item for item in abs_ranges
+                        if not (item["lo"] == zero
+                                and item["hi"].get("kind") == "literal"
+                                and int(item["hi"]["value"]) == type_max)]
+            deltas = []
+            if var != RETURN_VAR and var in direction:
+                deltas = [{"id": f"d{i}", "dir": direction[var],
+                           "lo": term, "hi": term}
+                          for i, term in enumerate(terms)]
+                if zero is not None:
+                    deltas += [
+                        {"id": f"dc{i}", "dir": direction[var],
+                         "lo": zero, "hi": term}
+                        for i, term in enumerate(terms)
+                        if r2_term_text(term) != "0"]
         entry = {
             "name": var,
             "equals": [{"id": f"e{i}", "term": term}
@@ -2780,6 +2804,8 @@ def select_path_claim(report, unit, enc, path_function=None):
 # a concrete literal that would read like a generalised one.
 def lift_kind(sol_type):
     t = (sol_type or "").strip()
+    if t == "bool":
+        return ("bool", 1)
     if t in ("address", "address payable"):
         return ("address", 160)
     m = re.match(r"^uint(\d+)?$", t)
@@ -3630,7 +3656,13 @@ def bound_lines(pname, kind, width, lo, hi, holes):
     construction.
     """
     out = []
-    if kind == "address":
+    if kind == "bool":
+        if lo == hi:
+            out.append(f"    {pname} = {'true' if int(lo) else 'false'};")
+        for h in holes:
+            out.append(
+                f"    vm.assume({pname} != {'true' if int(h) else 'false'});")
+    elif kind == "address":
         out.append(f"    {pname} = address(uint160(bound("
                    f"uint256(uint160({pname})), {lo}, {hi})));")
         for h in holes:
@@ -3834,7 +3866,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         kind, width = lk
         var = pname if pname not in used and pname != "c0" else "p_" + pname
         lo, hi = region[pname]
-        sig.append((("address" if kind == "address" else f"uint{width}"), var))
+        sig_ty = "address" if kind == "address" else (
+            "bool" if kind == "bool" else f"uint{width}")
+        sig.append((sig_ty, var))
         pre_lines += bound_lines(var, kind, width, lo, hi,
                                  sorted(holes.get(pname, ())))
         repl[idx] = var
@@ -3862,6 +3896,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         # exactly where it was right.
         if kind == "address":
             coord_ident_abs[pname] = f"uint256(uint160({var}))"
+        elif kind == "bool":
+            bit = f"({var} ? uint256(1) : uint256(0))"
+            coord_ident[pname] = bit
+            coord_ident_abs[pname] = bit
         else:
             coord_ident[pname] = var
             coord_ident_abs[pname] = var

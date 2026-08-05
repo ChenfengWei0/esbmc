@@ -9497,7 +9497,19 @@ void goto_coveraget::solidity_path_coverage()
             subject);
           exit(1);
         }
-        if (!is_unsignedbv_type(ty))
+        const bool bool_structured = is_bool_type(ty);
+        if (bool_structured && (!spec->abs.empty() || !spec->deltas.empty()))
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: candidate "
+            "'{}' is BOOLEAN, but its structured R2 spec contains interval "
+            "or delta candidate(s). Bool R2 supports equality only; ordering "
+            "and arithmetic over bool remain refused",
+            uid,
+            owner);
+          exit(1);
+        }
+        if (!bool_structured && !is_unsignedbv_type(ty))
         {
           log_error(
             "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: candidate "
@@ -9541,6 +9553,14 @@ void goto_coveraget::solidity_path_coverage()
               throw std::runtime_error(
                 "variable '" + owner + "': literal '" + value +
                 "' is not an unsigned decimal");
+            if (bool_structured)
+            {
+              if (value == "0")
+                return {gen_false_expr(), gen_true_expr(), "false"};
+              if (value == "1")
+                return {gen_true_expr(), gen_true_expr(), "true"};
+              return {gen_false_expr(), gen_false_expr(), value};
+            }
             std::string tmax;
             if (!path_cov_fits_type(ty, value, tmax))
               return {gen_zero(ty), gen_false_expr(), value};
@@ -9591,9 +9611,16 @@ void goto_coveraget::solidity_path_coverage()
             assign.function = entry->location.get_function();
             goto_program.instructions.insert(entry, assign);
 
+            if (bool_structured && !is_bool_type(ghost->type))
+              throw std::runtime_error(
+                "variable '" + owner + "': coordinate '" + name +
+                "' is not BOOLEAN, so it cannot be compared to a BOOLEAN "
+                "state value");
             expr2tc value = ghost->type == ty ? ghost : typecast2tc(ty, ghost);
             expr2tc defined = gen_true_expr();
-            if (ghost->type != ty && ghost->type->get_width() > ty->get_width())
+            if (
+              !bool_structured && ghost->type != ty &&
+              ghost->type->get_width() > ty->get_width())
             {
               const expr2tc round_trip = typecast2tc(ghost->type, value);
               defined = equality2tc(ghost, round_trip);
@@ -9605,6 +9632,10 @@ void goto_coveraget::solidity_path_coverage()
           if (kind != "op")
             throw std::runtime_error(
               "variable '" + owner + "': unknown R2 term kind '" + kind + "'");
+          if (bool_structured)
+            throw std::runtime_error(
+              "variable '" + owner +
+              "': BOOLEAN structured R2 accepts literals and coordinates only");
 
           const std::string op = term.at("op").get<std::string>();
           const built_assert_termt lhs = build_term(term.at("lhs"), depth + 1);
@@ -9817,13 +9848,13 @@ void goto_coveraget::solidity_path_coverage()
             "it -- only the ordering, interval and delta rungs are not";
         if (
           !interval_ok && spec != nullptr &&
-          (!spec->equals.empty() || !spec->abs.empty() ||
-           !spec->deltas.empty()))
+          (!spec->abs.empty() || !spec->deltas.empty()))
         {
           log_error(
             "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: variable "
             "'{}' is BOOLEAN, but its spec contains structured R2 "
-            "candidate(s). Typed R2 arithmetic/interval terms require an "
+            "interval or delta candidate(s). Typed R2 arithmetic/interval "
+            "terms require an "
             "ordering-capable unsigned scalar; silently dropping ASKED "
             "candidates would leave the batch summary incomplete",
             uid,
@@ -9874,7 +9905,11 @@ void goto_coveraget::solidity_path_coverage()
         emit_rung(vname, "ne", "post != pre", notequal2tc(live, pre_v));
 
         if (!interval_ok)
+        {
+          emit_structured_rungs(
+            spec, vt, vname, live, pre_v, "post", true, true);
           continue;
+        }
 
         emit_rung(vname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
         emit_rung(vname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
