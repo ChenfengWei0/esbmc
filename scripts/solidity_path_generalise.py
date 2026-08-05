@@ -1212,7 +1212,117 @@ def unit_params(ast_path, contract, unit):
     return found[-1] if found else []
 
 
-def propose_slot_coords(maps, params, limit):
+SLOT_DEPENDENCY_POLICY = "solc-reference-closure/1"
+
+
+def unit_state_dependencies(ast_path, contract, unit):
+    """State declarations reached from a unit, ordered by call distance.
+
+    solc resolves every identifier, member call, and modifier invocation to a
+    declaration id. Following those ids is both narrower and more complete than
+    matching source text: modifier guards and internal/library helpers remain
+    visible, while inherited state that the target never touches does not enter
+    the coordinate budget.
+
+    Returns ``(names, evidence)``. ``names`` is None when the AST or target
+    cannot be resolved, so production callers can fail closed instead of
+    silently falling back to the old all-mappings cross product.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return None, ["dependency walk unavailable: AST is absent or unreadable"]
+    nodes = _chain_nodes(ast, contract) if contract else None
+    if nodes is None:
+        return None, [f"dependency walk unavailable: contract {contract!r} "
+                      "was not found in the AST"]
+
+    by_id = {}
+
+    def index(n):
+        if isinstance(n, dict):
+            if isinstance(n.get("id"), int):
+                by_id[n["id"]] = n
+            for v in n.values():
+                index(v)
+        elif isinstance(n, list):
+            for v in n:
+                index(v)
+
+    index(ast)
+    state_by_id = {}
+    targets = []
+    for owner in nodes:
+        for declaration in owner.get("nodes", []) or []:
+            if (declaration.get("nodeType") == "VariableDeclaration"
+                    and declaration.get("stateVariable")
+                    and declaration.get("name")):
+                state_by_id[declaration["id"]] = declaration["name"]
+            if (declaration.get("nodeType") == "FunctionDefinition"
+                    and declaration.get("name") == unit
+                    and declaration.get("body") is not None):
+                targets.append(declaration)
+    if not targets:
+        return None, [f"dependency walk unavailable: no implemented function "
+                      f"named {unit!r} was found in contract {contract!r} or "
+                      "its linearized bases"]
+
+    callables = {
+        node_id: node for node_id, node in by_id.items()
+        if node.get("nodeType") in ("FunctionDefinition", "ModifierDefinition")
+        and node.get("body") is not None
+    }
+    best_callable_depth = {}
+    found = {}
+
+    def label(node):
+        kind = "modifier" if node.get("nodeType") == "ModifierDefinition" \
+            else "function"
+        return f"{kind} {node.get('name') or '<anonymous>'}#{node.get('id')}"
+
+    def visit(node, depth, chain):
+        node_id = node.get("id")
+        old_depth = best_callable_depth.get(node_id)
+        if old_depth is not None and old_depth <= depth:
+            return
+        best_callable_depth[node_id] = depth
+        next_calls = []
+
+        def scan(n):
+            if isinstance(n, dict):
+                ref = n.get("referencedDeclaration")
+                if ref in state_by_id:
+                    name = state_by_id[ref]
+                    candidate = (depth, tuple(chain), n.get("src") or "")
+                    if name not in found or candidate < found[name]:
+                        found[name] = candidate
+                if ref in callables and ref != node_id:
+                    next_calls.append(callables[ref])
+                for v in n.values():
+                    scan(v)
+            elif isinstance(n, list):
+                for v in n:
+                    scan(v)
+
+        scan(node.get("modifiers") or [])
+        scan(node.get("body"))
+        for callee in next_calls:
+            visit(callee, depth + 1, chain + [label(callee)])
+
+    for target in targets:
+        visit(target, 0, [label(target)])
+
+    ordered = sorted(found, key=lambda name: (found[name][0], name))
+    evidence = []
+    for name in ordered:
+        depth, chain, src = found[name]
+        evidence.append(
+            f"state.{name} dependency distance {depth}: "
+            + " -> ".join(chain)
+            + (f" at AST src {src}" if src else ""))
+    return ordered, evidence
+
+
+def propose_slot_coords(maps, params, limit, dependencies=None):
     """Slot coordinate names to add, plus a line per candidate NOT added.
 
     A slot is proposed only where the KEY has a name the query can express and
@@ -1229,7 +1339,20 @@ def propose_slot_coords(maps, params, limit):
     is named, never dropped silently.
     """
     cand, skipped = [], []
-    for m in sorted(maps):
+    if dependencies is None:
+        map_order = sorted(maps)
+    else:
+        map_order = []
+        for name in dependencies:
+            if name in maps and name not in map_order:
+                map_order.append(name)
+        for name in sorted(set(maps) - set(map_order)):
+            skipped.append(
+                f"state.{name}[...] (excluded by {SLOT_DEPENDENCY_POLICY}: "
+                "the target, its modifiers, and the transitive callable "
+                "closure contain no solc-resolved reference to this mapping)")
+
+    for m in map_order:
         spec = maps[m]
         kts = spec[0]
         # A one-level scalar mapping still arrives as the plain 2-tuple, so
@@ -3647,7 +3770,7 @@ def resolve_scope(scope, focus_flag, unit):
 # means as surely as a different --max-tx does, and this project has already
 # hung old-build numbers on a new build's name without anything objecting. Its
 # size and mtime are cheap and change on every rebuild.
-RUN_CONFIG_SCHEMA = "solidity-path-generalise-config/2"
+RUN_CONFIG_SCHEMA = "solidity-path-generalise-config/3"
 
 
 def file_identity(path):
@@ -3836,6 +3959,7 @@ def run_config(args, scope_label):
         "pin_agreed_state": bool(
             arg_value(args, "pin_agreed_state", False)),
         "slot_coords": arg_value(args, "slot_coords", 0),
+        "slot_dependency_policy": SLOT_DEPENDENCY_POLICY,
         "slot_coord": sorted(arg_value(args, "slot_coord", []) or []),
         "pins": sorted(arg_value(args, "pin", []) or []),
         "pin_extcall": bool(arg_value(args, "pin_extcall", False)),
@@ -4796,7 +4920,11 @@ def main():
     if args.slot_coords or args.slot_coord:
         maps, map_refused = mapping_state_vars(args.ast, args.contract)
         params = unit_params(args.ast, args.contract, args.unit)
-        proposed, skipped = propose_slot_coords(maps, params, args.slot_coords)
+        dependencies, dependency_evidence = unit_state_dependencies(
+            args.ast, args.contract, args.unit)
+        proposed, skipped = propose_slot_coords(
+            maps, params, args.slot_coords,
+            dependencies=[] if dependencies is None else dependencies)
         if not args.slot_coords:
             proposed, skipped = [], []
         # An explicit --slot-coord is not rationed and not type-checked here:
@@ -4807,6 +4935,10 @@ def main():
                 proposed.append(c)
         slot_added = [c for c in proposed if c not in coords]
         coords = sorted(set(coords) | set(slot_added))
+        if dependency_evidence:
+            print(f"[coords] mapping dependency policy "
+                  f"{SLOT_DEPENDENCY_POLICY}: "
+                  + "; ".join(dependency_evidence))
         if slot_added:
             print("[coords] MAPPING SLOT(s) proposed from solc's declaration "
                   "(a payload can only offer a slot at a key some "

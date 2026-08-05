@@ -51,7 +51,7 @@ sys.path.insert(0, str(HERE))
 from pathcov_collect import solver_flags_for  # noqa: E402
 
 DEFAULT_TIMEOUT = 60
-STRONG_RECIPE_VERSION = "veriput-strong/1"
+STRONG_RECIPE_VERSION = "veriput-strong/2"
 STRONG_PROBE_WITNESSES = 8
 STRONG_CERTIFY_ARGS = [
     "--recipe-version", STRONG_RECIPE_VERSION,
@@ -73,10 +73,9 @@ STRONG_CERTIFY_ARGS = [
     "--max-region-pieces", "1",
     "--cut-policy", "spec",
     "--state-struct-fields",
-    # Mapping slots multiply every ladder round. They are enabled only after a
-    # unit-level dependency walk names the stores this target actually touches;
-    # a blanket 8 adds inherited ERC20 balances to unrelated setters.
-    "--slot-coords", "0",
+    # The generaliser admits only mappings reached through solc declaration
+    # references from this target, its modifiers, and transitive callees.
+    "--slot-coords", "8",
 ]
 
 

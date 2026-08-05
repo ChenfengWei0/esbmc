@@ -61,6 +61,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       unresolvable_coords,
                                       mapping_state_vars,
                                       unit_params,
+                                      unit_state_dependencies,
                                       propose_slot_coords,
                                       empty_enumeration_reason,
                                       brackets_for,
@@ -1728,6 +1729,76 @@ check("slot-the-budget-caps-the-proposal", _c2, ["state.bal[a]"])
 check("slot-the-budget-names-what-it-cut",
       "over the --slot-coords budget" in _s2[0], True)
 os.unlink(_p4)
+
+# Dependency selection follows solc declaration ids through modifiers and
+# internal calls. The direct state access ranks first; the unused mapping is
+# named as excluded instead of consuming the cap by alphabetical accident.
+_DEPS = {
+    "nodeType": "SourceUnit",
+    "nodes": [{
+        "nodeType": "ContractDefinition", "name": "Dep", "id": 1,
+        "linearizedBaseContracts": [1],
+        "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10,
+             "name": "direct", "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11,
+             "name": "modifierMap", "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 12,
+             "name": "helperMap", "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 13,
+             "name": "unused", "stateVariable": True},
+            {"nodeType": "ModifierDefinition", "id": 20,
+             "name": "guard", "body": {
+                 "nodeType": "Block", "statements": [{
+                     "nodeType": "Identifier", "name": "modifierMap",
+                     "referencedDeclaration": 11}]}},
+            {"nodeType": "FunctionDefinition", "id": 30,
+             "name": "helper", "body": {
+                 "nodeType": "Block", "statements": [{
+                     "nodeType": "Identifier", "name": "helperMap",
+                     "referencedDeclaration": 12}]}},
+            {"nodeType": "FunctionDefinition", "id": 40, "name": "f",
+             "modifiers": [{"nodeType": "ModifierInvocation",
+                            "modifierName": {"nodeType": "IdentifierPath",
+                                             "referencedDeclaration": 20}}],
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "Identifier", "name": "direct",
+                  "referencedDeclaration": 10},
+                 {"nodeType": "FunctionCall", "expression": {
+                     "nodeType": "Identifier", "name": "helper",
+                     "referencedDeclaration": 30}}]}}
+        ]
+    }]
+}
+_fd5, _p5 = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd5, "w") as _f5:
+    json.dump(_DEPS, _f5)
+_deps, _dep_evidence = unit_state_dependencies(_p5, "Dep", "f")
+check("slot-dependencies-rank-direct-before-transitive",
+      _deps, ["direct", "helperMap", "modifierMap"])
+_dc, _ds = propose_slot_coords(
+    {name: ("address", "uint256")
+     for name in ("direct", "helperMap", "modifierMap", "unused")},
+    [("who", "address")], 4, _deps)
+check("slot-dependencies-spend-budget-in-ranked-order", _dc, [
+    "state.direct[who]", "state.direct[msg.sender]",
+    "state.helperMap[who]", "state.helperMap[msg.sender]"])
+check("slot-dependencies-name-an-unreferenced-mapping",
+      any("state.unused[...]" in note and "excluded" in note for note in _ds),
+      True)
+check("slot-dependencies-publish-call-chain-evidence",
+      any("modifier guard#20" in note for note in _dep_evidence), True)
+os.unlink(_p5)
+
+_setdist_ast = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "notes", "coverage",
+    "poc_units", "farming__Distributor__setDistributor", "inputs",
+    "farming__FarmingPool.flat.sol.solast")
+check("setDistributor-real-ast-is-present", os.path.exists(_setdist_ast), True)
+_setdist_deps, _ = unit_state_dependencies(
+    _setdist_ast, "FarmingPool", "setDistributor")
+check("setDistributor-dependencies-cross-onlyOwner-but-not-erc20-mappings",
+      _setdist_deps, ["_distributor", "_owner"])
 
 # ---- AN EMPTY WITNESS SET IS NOT AUTOMATICALLY A RESULT ---------------------
 #
