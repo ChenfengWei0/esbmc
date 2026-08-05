@@ -2004,3 +2004,9 @@ Immediate diagnostic patch after the Aqua attempts:
 - This does not consume a POC retry by itself and does not certify anything.
   Its purpose is to make the next abort reproducible without rerunning the
   whole POC pipeline again.
+
+POC source-level ground truth has been split into
+`notes/VeriPUT_poc_ground_truth.md`. Read that file before spending another
+attempt: it records the expected path, input region, and PUT oracle for Aqua
+and Farming POCs, including the distinction between fuzz-refutable candidates
+and ESBMC-certified regions.
