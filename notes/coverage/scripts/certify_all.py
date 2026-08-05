@@ -562,6 +562,31 @@ def result_path_function(workdir):
         return None
 
 
+def result_not_certified_details(workdir, since_mtime=None):
+    """Machine-readable NOT_CERTIFIED rows written by the stage-2 driver.
+
+    `parse_driver` intentionally records the driver's prose because old logs
+    are still useful, but the prose loses important accounting fields such as
+    `concrete_fallback`. Keep those fields when `generalise-result.json`
+    exists so later stages can separate a concrete fallback from a method-level
+    unsupported path without re-running ESBMC.
+    """
+    path = os.path.join(workdir, "generalise-result.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return {}
+        with open(path) as stream:
+            rows = json.load(stream).get("not_certified") or []
+    except (OSError, ValueError):
+        return {}
+    details = {}
+    for row in rows:
+        if not isinstance(row, dict) or "enc" not in row:
+            continue
+        details[str(row["enc"])] = row
+    return details
+
+
 def certification_key(owner, unit, row_path_function, requested_path_function):
     """Resume identity; explicit overloads are independent measurements."""
     return (owner, unit,
@@ -1622,6 +1647,8 @@ def main():
             rec = parse_driver(out)
             rec.update({"benchmark": bench, "unit": unit,
                         "path_function": result_path_function(uwd),
+                        "not_certified_details":
+                            result_not_certified_details(uwd, t1),
                         "bucket": bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
                         "memlimit_gib": memlimit, "jobs": args.jobs,

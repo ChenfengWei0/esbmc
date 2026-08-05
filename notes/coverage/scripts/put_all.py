@@ -208,6 +208,107 @@ def stale_reason(rec, now):
     return None
 
 
+def record_key(record):
+    key = record.get("benchmark") or record.get("poc")
+    unit = record.get("unit")
+    return f"{key}.{unit}" if key and unit else None
+
+
+def _not_certified_detail(record, enc):
+    details = record.get("not_certified_details") or {}
+    if isinstance(details, dict):
+        got = details.get(str(enc))
+        return got if isinstance(got, dict) else {}
+    if isinstance(details, list):
+        for row in details:
+            if isinstance(row, dict) and str(row.get("enc")) == str(enc):
+                return row
+    return {}
+
+
+def classify_not_certified(record, enc, reason):
+    """Classify a NOT_CERTIFIED path for accounting only.
+
+    This is not a proof step. It separates paths that can still fall back to a
+    concrete replay from paths the current gate-cell method has already
+    attributed to an unsupported harness-controlled split.
+    """
+    detail = _not_certified_detail(record, enc)
+    if detail.get("concrete_fallback") is False:
+        return "method_unsupported"
+    if detail.get("concrete_fallback") is True:
+        return "concrete_fallback"
+    if record.get("static_extcall_inseparable") and \
+            "external-call behavior" in str(reason):
+        return "method_unsupported"
+    return "detail_unknown"
+
+
+def stage2_path_accounting(cert_path, only=""):
+    """Summarise Stage-2 path outcomes for the rows selected by Stage 4."""
+    out = {
+        "records": 0,
+        "witnessed": 0,
+        "witnessed_unknown": 0,
+        "certified": 0,
+        "not_certified": 0,
+        "concrete_fallback": 0,
+        "method_unsupported": 0,
+        "detail_unknown": 0,
+        "no_verdict": 0,
+    }
+    if not os.path.exists(cert_path):
+        return out
+    for line in open(cert_path):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        key = record_key(record)
+        if only and (not key or only not in key):
+            continue
+        out["records"] += 1
+        certified = record.get("certified") or {}
+        not_certified = record.get("not_certified") or {}
+        out["certified"] += len(certified)
+        out["not_certified"] += len(not_certified)
+        witnessed = record.get("witnessed")
+        if isinstance(witnessed, int):
+            out["witnessed"] += witnessed
+            gap = witnessed - len(certified) - len(not_certified)
+            if gap > 0:
+                out["no_verdict"] += gap
+        else:
+            out["witnessed_unknown"] += 1
+        for enc, reason in not_certified.items():
+            cls = classify_not_certified(record, enc, reason)
+            out[cls] += 1
+    return out
+
+
+def print_stage2_path_accounting(accounting):
+    print()
+    print("STAGE 2 PATH ACCOUNTING for the selected unit(s)")
+    print(f"  records                         : {accounting['records']}")
+    print(f"  witnessed paths                 : {accounting['witnessed']}"
+          + (f" ({accounting['witnessed_unknown']} record(s) unknown)"
+             if accounting["witnessed_unknown"] else ""))
+    print(f"  certified paths                 : {accounting['certified']}")
+    print(f"  not-certified paths             : {accounting['not_certified']}")
+    print(f"  ... with concrete fallback       : "
+          f"{accounting['concrete_fallback']}")
+    print(f"  ... method-level unsupported     : "
+          f"{accounting['method_unsupported']}")
+    print(f"  ... legacy/unknown detail        : "
+          f"{accounting['detail_unknown']}")
+    print(f"  witnessed paths with no verdict  : {accounting['no_verdict']}")
+    print("  These are Stage-2 outcomes, not B: fuzz/Foundry can refute "
+          "candidates, while ESBMC certification is still the proof gate.")
+
+
 def ensure_project(name, flat, shared=None):
     """The forge project a PUT is written into.
 
@@ -477,6 +578,7 @@ def main():
              f"other {n_certified - len(rows)} were NOT measured by this run "
              f"and their absence is a filter, not a result ==="
              if args.only else ""))
+    print_stage2_path_accounting(stage2_path_accounting(cert_path, args.only))
     if arm:
         print(f"=== ARM {arm[2:]}: PUTs go to their OWN project and workdir, so "
               f"this table does not overwrite or get confused with another "

@@ -2410,3 +2410,56 @@ Impact on POC ground truth:
   state, the PUT remains a deterministic oracle and should still be refused by
   the floor test. This is intentional: state pre-read is an oracle endpoint,
   not a fuzz dimension.
+
+## 2026-08-06 Stage2/Stage4 accounting repair
+
+User rule now in force:
+
+- Before spending a POC ESBMC attempt, first inspect the POC source and write
+  down the expected path/input-region/assertion shape as ground truth.
+- Official per-POC retry ladder:
+  - attempt 1: 60s, 8 GiB;
+  - attempt 2: 120s, 8 GiB;
+  - attempt 3: 600s, 10 GiB maximum.
+- Fuzz may be used as a cheap refutation layer for probes, regions,
+  instrumentation and R2/oracles. It cannot prove a region or assertion; every
+  survivor still needs the ESBMC proof gate.
+
+Implemented without spending any POC ESBMC attempt:
+
+- `notes/coverage/scripts/certify_all.py` and `certify_poc.py` now preserve the
+  driver's machine-readable `not_certified` rows from `generalise-result.json`
+  as `not_certified_details`.
+- `notes/coverage/scripts/put_all.py` now prints Stage-2 path accounting for
+  the selected unit(s): witnessed paths, certified paths, not-certified paths,
+  concrete fallbacks, method-level unsupported paths, legacy/unknown detail, and
+  no-verdict gaps.
+- Existing old cert JSONL files are still readable. If they predate
+  `not_certified_details`, a row with `static_extcall_inseparable` and an
+  `external-call behavior` reason is classified as method-level unsupported for
+  accounting only.
+- Added pure test `scripts/test_put_all_accounting.py`.
+
+Why this matters:
+
+- `solidity_path_generalise.py` already classifies external-call-only sibling
+  splits as method-level `NOT_CERTIFIED` when
+  `--static-extcall-inseparable` is passed.
+- Stage4 previously iterated only `certified` regions and printed `B = ... of
+  emitted PUT(s)`, so unsupported not-certified paths could disappear from the
+  final denominator unless a human read the Stage2 log.
+- The new accounting keeps unsupported paths visible without counting them as
+  B and without pretending fuzz/Foundry proved anything.
+
+Verification run:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/certify_all.py \
+  notes/coverage/scripts/certify_poc.py \
+  notes/coverage/scripts/put_all.py \
+  scripts/test_put_all_accounting.py
+python3 scripts/test_put_all_accounting.py
+python3 scripts/test_solidity_path_generalise.py
+python3 scripts/test_solidity_path_put.py
+```

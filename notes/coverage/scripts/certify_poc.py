@@ -300,6 +300,8 @@ def main():
             # emit flags reaching solidity_path_put.py but not poc_funnel.py.
             rec.update({"poc": sol.stem, "unit": unit,
                         "path_function": ca.result_path_function(str(uwd)),
+                        "not_certified_details":
+                            ca.result_not_certified_details(str(uwd), t0),
                         "bucket": ca.bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
                         "unit_timeout_s": a.timeout,

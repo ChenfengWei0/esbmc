@@ -399,6 +399,14 @@ Semantic ground truth from source:
 
 ## Next Static Checks Before Running Another POC
 
+- For every POC, spend the cheap pass first: read the source and current
+  Stage-1/Stage-2 artefacts, then write the expected path split, controllable
+  input region, storage/input dependency region, and assertion/oracle shape in
+  this file before launching ESBMC. The retry budget is per POC and finite:
+  60s/8GiB, then 120s/8GiB, then 600s/10GiB maximum.
+- Use fuzz only as a refuter. It may cheaply reject a bad probe, region,
+  instrumentation choice, fixture, or R2/oracle candidate. It never promotes a
+  candidate to certified; ESBMC remains the proof gate for any survivor.
 - Keep the Aqua ground truth above in front of the next run. The expected body
   region is an inactive selected Balance slot, not a free `strategyHash`.
 - Literal bytes32 mapping keys are now queryable by both region assumptions and
