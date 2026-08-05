@@ -3640,6 +3640,34 @@ def rewrite_call_args(line, unit, replacements):
     return line[:start] + ", ".join(new) + line[i:], args[sig_offset:]
 
 
+def target_instance_for_call(lines, call_i, unit):
+    """Contract instance variable whose unit call is lifted, e.g. `c1`."""
+    if not (0 <= call_i < len(lines)):
+        return None
+    start = statement_start(lines, call_i)
+    stmt = "\n".join(lines[start:call_i + 1])
+    m = re.search(r"address\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\.call",
+                  stmt)
+    if m:
+        return m.group(1)
+    m = re.search(r"(?:^|[\s({;])(?:try\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*"
+                  + re.escape(unit) + r"\s*\(", stmt)
+    if m:
+        return m.group(1)
+    return None
+
+
+def target_address_expr_for_call(lines, call_i, unit):
+    """Address expression for the contract instance whose unit call is lifted.
+
+    The concrete Foundry preamble names deployed contracts `c<N>`, but the
+    target is not always `c0`: interface mocks may be deployed first. Storage
+    slot oracles must read and write the same instance the lifted call targets.
+    """
+    inst = target_instance_for_call(lines, call_i, unit)
+    return f"address({inst})" if inst is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Building the PUT
 # ---------------------------------------------------------------------------
@@ -3991,6 +4019,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         return None, None
 
     new_call, _ = rewrite_call_args(call_line, unit, repl)
+    target_addr = target_address_expr_for_call(body, call_i, unit)
+    if target_addr is None:
+        notes.append("could not identify the contract instance targeted by the "
+                     "emitted call; refusing to guess storage oracle address")
+        return None, None
 
     # What each declared parameter is called IN THE PUT. A lifted coordinate is
     # the fuzz local, a pinned one keeps the emitter's own literal -- and a
@@ -4111,7 +4144,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                     kx.append(ke2)
                 chk = ([] if kerr2 is not None else
                        slot_inside_region_check_at(
-                           "address(c0)", map_slot_expr(kx, mslot),
+                           target_addr, map_slot_expr(kx, mslot),
                            voff2, vnb2, lo, hi, name))
                 if chk:
                     store_lines += chk
@@ -4156,14 +4189,14 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             # and the read-modify-write is the only reason its neighbour survives
             # being established.
             store_lines += slot_write_lines_at(
-                "address(c0)", map_slot_expr(kexpr, mslot), voff, vnb, str(lo))
+                target_addr, map_slot_expr(kexpr, mslot), voff, vnb, str(lo))
             # READ IT BACK. A mapping address is a keccak of key and slot, so
             # a wrong key order, a wrong level count or a stale slot number
             # all produce a perfectly well-formed write to a word the contract
             # never reads -- and `vm.store` cannot fail. See
             # `slot_landing_check_at`.
             store_lines += slot_landing_check_at(
-                "address(c0)", map_slot_expr(kexpr, mslot), voff, vnb,
+                target_addr, map_slot_expr(kexpr, mslot), voff, vnb,
                 str(lo), name)
             stored.append(f"{name} := {lo}")
             continue
@@ -4214,7 +4247,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             # the proof assumed is where the proof assumed it. That costs
             # nothing to check and is RED exactly when the assumption was
             # vacuous. See `slot_inside_region_check`.
-            chk = slot_inside_region_check("address(c0)", slot, off, nb,
+            chk = slot_inside_region_check(target_addr, slot, off, nb,
                                            lo, hi, name)
             if chk:
                 store_lines += chk
@@ -4231,11 +4264,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 f"in-region check to make: the bound says nothing at all)")
             continue
         val = str(lo)
-        store_lines += slot_write_lines("address(c0)", slot, off, nb, val)
+        store_lines += slot_write_lines(target_addr, slot, off, nb, val)
         # READ IT BACK -- see `slot_landing_check`. A packed field whose
         # offset was mis-taken lands in its neighbour's bits and the PUT is
         # green about a state nobody set.
-        store_lines += slot_landing_check("address(c0)", slot, off, nb, val,
+        store_lines += slot_landing_check(target_addr, slot, off, nb, val,
                                           name)
         stored.append(f"{name} := {val}")
 
@@ -4366,8 +4399,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                 if ident in planned_ret_pre_names:
                                     continue
                                 planned_ret_pre_names.add(ident)
-                                rd = slot_read_expr("address(c0)", slot, off,
-                                                    nb)
+                                rd = slot_read_expr(target_addr, slot, off, nb)
                                 planned_ret_pre_reads.append(
                                     f"    uint256 {ident} = {rd};")
                                 ret_coord_ident_abs[cname] = ident
@@ -4481,7 +4513,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             if var not in seen_vars:
                 seen_vars.append(var)
                 rd = slot_read_expr_at(
-                    "address(c0)", map_slot_expr(kexpr, mslot), voff, vnb)
+                    target_addr, map_slot_expr(kexpr, mslot), voff, vnb)
                 pre_reads.append(f"    uint256 _pre_{ident} = {rd};")
                 post_reads.append(f"    uint256 _post_{ident} = {rd};")
             # GUARDED, not dropped. See the block comment at `okvar`.
@@ -4509,7 +4541,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         slot, off, nb = layout[var]
         if var not in seen_vars:
             seen_vars.append(var)
-            rd = slot_read_expr("address(c0)", slot, off, nb)
+            rd = slot_read_expr(target_addr, slot, off, nb)
             pre_reads.append(f"    uint256 _pre_{var.lstrip('_')} = {rd};")
             post_reads.append(f"    uint256 _post_{var.lstrip('_')} = {rd};")
         # GUARDED, not dropped. See the block comment at `okvar`.
@@ -4990,7 +5022,133 @@ def exit_kind_asserted(body_lines):
     return "[asserted]" in txt or "vm.expectRevert()" in txt
 
 
-def assemble_put_source(emitted, case, puts, new_contract):
+def fixture_from_esbmc_args(extra):
+    """The JSON passed through `--path-cov-fixture`, or None."""
+    i = 0
+    while i < len(extra):
+        if extra[i] == "--path-cov-fixture" and i + 1 < len(extra):
+            try:
+                with open(extra[i + 1]) as f:
+                    return json.load(f)
+            except (OSError, ValueError):
+                return None
+            break
+        i += 1
+    return None
+
+
+def _fixture_value(v):
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, int):
+        return str(v)
+    s = str(v).strip()
+    if s.lower() == "true":
+        return "1"
+    if s.lower() == "false":
+        return "0"
+    return s
+
+
+def _statement_end(lines, start):
+    depth = 0
+    for i in range(start, len(lines)):
+        t = _strip_strings(lines[i])
+        depth += t.count("(") - t.count(")")
+        if ";" in t and depth <= 0:
+            return i
+    return start
+
+
+def _replace_constructor_args(lines, start, args):
+    end = _statement_end(lines, start)
+    stmt = "\n".join(lines[start:end + 1])
+    open_i = stmt.find("(")
+    close_i = stmt.rfind(")")
+    if open_i < 0 or close_i < open_i:
+        return lines[start:end + 1]
+    prefix = stmt[:open_i + 1]
+    suffix = stmt[close_i:]
+    return [prefix + ", ".join(args) + suffix]
+
+
+def _fixture_foundry_args(fixture):
+    foundry = fixture.get("foundry") or {}
+    args = foundry.get("constructor_args")
+    if args is None:
+        return None
+    if not isinstance(args, list):
+        return None
+    return [str(a) for a in args]
+
+
+def _fixture_foundry_skip(fixture):
+    foundry = fixture.get("foundry") or {}
+    return bool(foundry.get("skip_constructor"))
+
+
+def apply_foundry_fixture(lines, emitted, case, unit, contract, fixture, layout):
+    """Mirror a path-cov fixture in the Foundry preamble.
+
+    ESBMC's `--path-cov-fixture` may skip a constructor and install scalar
+    state. If Stage 4 keeps Foundry's constructor-based `setUp`, the generated
+    PUT is checked from a different entry state than the one ESBMC certified.
+    """
+    if not fixture or not fixture.get("skip_constructor"):
+        return lines
+    if fixture.get("contract") and fixture.get("contract") != contract:
+        return lines
+    body = emitted.lines[case[3][0] + 1:case[3][1]]
+    call_i = find_unit_call(body, unit)
+    inst = target_instance_for_call(body, call_i, unit)
+    if inst is None:
+        return lines
+    rx = re.compile(r"^(\s*)" + re.escape(inst) + r"\s*=\s*new\s+"
+                    + re.escape(contract) + r"\s*\(")
+    out, i, replaced = [], 0, False
+    while i < len(lines):
+        m = rx.match(lines[i])
+        if not replaced and m:
+            indent = m.group(1)
+            end = _statement_end(lines, i)
+            replay_args = _fixture_foundry_args(fixture)
+            if replay_args is not None:
+                out.append(f"{indent}// path-cov fixture: ESBMC skipped the "
+                           "constructor; Foundry replays a legal deployment")
+                out += _replace_constructor_args(lines, i, replay_args)
+            elif _fixture_foundry_skip(fixture):
+                out.append(f"{indent}// path-cov fixture: constructor skipped "
+                           "by ESBMC")
+                out.append(f"{indent}address _esbmc_fixture_{inst} = "
+                           "address(uint160(1337));")
+                out.append(f"{indent}vm.etch(_esbmc_fixture_{inst}, "
+                           f"type({contract}).runtimeCode);")
+                out.append(f"{indent}{inst} = {contract}(_esbmc_fixture_{inst});")
+            else:
+                out.extend(lines[i:end + 1])
+            for name, value in sorted((fixture.get("state") or {}).items()):
+                v = name[6:] if name.startswith("state.") else name
+                if not layout or v not in layout:
+                    out.append(f"{indent}// path-cov fixture state `{name}` "
+                               "not established: no scalar storage slot")
+                    continue
+                slot, off, nb = layout[v]
+                val = _fixture_value(value)
+                out += slot_write_lines(f"address({inst})", slot, off, nb, val,
+                                        indent)
+                out += slot_landing_check(f"address({inst})", slot, off, nb,
+                                          val, f"path-cov fixture {name}",
+                                          indent)
+            i = end + 1
+            replaced = True
+            continue
+        out.append(lines[i])
+        i += 1
+    return out
+
+
+def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
+                        layout=None, contract=None, unit=None):
     """Insert PUT functions into the emitter's contract and rename safely."""
     cname, _cstart, cend = emitted.blocks[case[0]]
     lines = list(emitted.lines)
@@ -4998,6 +5156,9 @@ def assemble_put_source(emitted, case, puts, new_contract):
     for put in puts:
         inserted += put
     lines[cend:cend] = inserted
+    if fixture is not None and contract is not None and unit is not None:
+        lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
+                                      fixture, layout)
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
@@ -5015,7 +5176,7 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                            enc, depth_, path_function, region, holes, pins,
                            params, layout, maps, specs, r2_terms, cell,
                            derived_by, timeout, fuzz_runs, candidate_budget,
-                           log=print):
+                           fixture=None, log=print):
     """Refute R2 candidates with one Forge run; never produce proof verdicts."""
     candidates = r2_candidates(specs)
     verdicts = {candidate["key"]: "NOT-RUN" for candidate in candidates}
@@ -5073,7 +5234,8 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
 
     base_contract = emitted.blocks[case[0]][0]
     probe_contract = f"{base_contract}_{contract}_{unit}_put{enc}_FuzzR2"
-    source = assemble_put_source(emitted, case, puts, probe_contract)
+    source = assemble_put_source(emitted, case, puts, probe_contract, fixture,
+                                 layout, contract, unit)
     artifact = os.path.join(workdir, "fuzz-r2-prefilter.t.sol")
     with open(artifact, "w") as stream:
         stream.write(source)
@@ -5319,6 +5481,7 @@ def main():
     if refusal:
         print(f"[put] REFUSED: {refusal}")
         return 1
+    foundry_fixture = fixture_from_esbmc_args(a.esbmc_arg)
     if (a.r2_term_budget <= 0 or a.r2_candidate_budget <= 0
             or a.fuzz_runs <= 0 or a.fuzz_r2_prefilter_timeout <= 0
             or a.fuzz_r2_candidate_budget <= 0):
@@ -5750,7 +5913,7 @@ def main():
                 layout, maps, _r2, r2_term_lookup,
                 (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
                 a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
-                a.fuzz_r2_candidate_budget)
+                a.fuzz_r2_candidate_budget, foundry_fixture)
             r2_fuzz_prefilter["enabled"] = True
             _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
             survivors = len(r2_candidates(_r2))
@@ -5911,7 +6074,8 @@ def main():
     # concrete tests use rather than carrying a second copy of it.
     cname, _cstart, _cend = emitted.blocks[case[0]]
     newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{plabel}{a.test_suffix}"
-    txt = assemble_put_source(emitted, case, [put], newc)
+    txt = assemble_put_source(emitted, case, [put], newc, foundry_fixture,
+                              layout, a.contract, a.unit)
     dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
     with open(dest, "w") as f:
         f.write(txt)

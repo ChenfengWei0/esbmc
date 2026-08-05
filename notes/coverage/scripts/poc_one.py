@@ -151,6 +151,11 @@ def materialize_fixture(poc, cell_name, outdir):
         "skip_constructor": bool(fx.get("skip_constructor", True)),
         "state": state,
     }
+    if "foundry" in fx:
+        if not isinstance(fx["foundry"], dict):
+            sys.exit(f"{poc['id']}: fixture foundry metadata for cell "
+                     f"{cell_name} must be an object")
+        doc["foundry"] = fx["foundry"]
     path = outdir / f"fixture_{cell_name}.json"
     path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
     return path, ["--path-cov-fixture", str(path)], fx.get("why")

@@ -13,8 +13,8 @@ rule against creating new Markdown files.
 - Working branch: `feat/veriput-fuzz-first`
 - Original takeover snapshot: `5efe5b3252`
   (`[solidity] Strengthen parameterized path test synthesis`)
-- Latest pushed commit: `dc4e8bed82`
-  (`[solidity] Pin Aqua push slot ground truth`)
+- Latest pushed commit when the st1inch attempt-3 replay repair began:
+  `bb9443d52f` (`[solidity] Recognize all corpus benches in PUT sweep`)
 - Pushed remote branch: `E-SOL/feat/veriput-fuzz-first`
 - Snapshot checks:
   - `python3 -m py_compile scripts/solidity_path_generalise.py
@@ -2666,3 +2666,84 @@ Next rule:
   scheduling/reporting: solve complete paths before probes, write partial
   reports/journals earlier, or provide a no-probe/low-probe arm for fixture
   runs.
+
+## 2026-08-06 st1inch setEmergencyExit attempt 3 result
+
+Official attempt spent:
+
+- POC: `st1inch_St1inch__St1inch__setEmergencyExit`
+- Cell: `gate`
+- Attempt: 3, therefore 600s / 10 GiB.
+- Stage-1/2 command first run:
+  `python3 notes/coverage/scripts/poc_one.py
+  st1inch_St1inch__St1inch__setEmergencyExit --stage all --cell gate
+  --attempt 3 --fresh`
+- Stage-3 replay command after script repairs:
+  `python3 notes/coverage/scripts/poc_one.py
+  st1inch_St1inch__St1inch__setEmergencyExit --stage 3 --cell gate
+  --attempt 3`
+
+Result:
+
+- Stage 1 succeeded under the gate fixture in about 70s and produced one report
+  with the three expected `setEmergencyExit(bool)` paths.
+- Stage 2 certified all three witnessed paths:
+  `3 certified / 0 not / 3 witnessed`.
+- Stage 3 emitted three PUTs and the final Forge gate was green for all:
+  `B = 3 of 3 emitted PUT(s)`.
+- Delivered PUTs:
+  - enc=7 normal owner path: 1 fuzz parameter (`emergencyExit_`), 4
+    post-state assertions. Dependency region selected only `emergencyExit` and
+    `_owner`; mappings were excluded by solc-reference closure. This is the
+    high-value setter PUT and includes the expected
+    `state.emergencyExit == emergencyExit_` behavior.
+  - enc=2 nonpayable value gate: 3 fuzz parameters (`msg.sender`,
+    `msg.value`, `emergencyExit_`), 1 exit-kind oracle.
+  - enc=6 non-owner revert: 2 fuzz parameters (`msg.sender`,
+    `emergencyExit_`), 1 exit-kind oracle.
+
+Repairs made during attempt 3 without re-running ESBMC Stage 1/2:
+
+- `put_all.py` initially treated `st1inch_St1inch` as an unknown benchmark key;
+  the corpus table now includes both `limit_order_protocol` and
+  `st1inch_St1inch`, and `scripts/test_put_all_accounting.py` checks the PUT
+  sweep table against the collection table.
+- PUT storage oracles initially read `address(c0)`, but the emitted st1inch
+  preamble deploys interface mocks before the target and calls `c1`. The PUT
+  emitter now derives the actual receiver of the lifted unit call and uses that
+  address for state pins, pre/post reads, mapping reads, and landing checks.
+- Foundry replay initially tried to mirror ESBMC's skipped constructor with
+  `type(St1inch).runtimeCode`, which Solidity rejects for contracts with
+  immutables. The st1inch POC fixture now carries Foundry-only replay metadata:
+  deploy with a legal constructor value
+  `expBase = 999999952502977889`, then overwrite `_owner = 1` with `vm.store`.
+  The legal interval was computed from the contract's own integer
+  `_votingPowerAt` checks as
+  `[999999952502977513, 999999952502978265]`.
+- `poc_one.py` now preserves fixture `foundry` metadata when materializing
+  `fixture_gate.json`; otherwise Stage 3 sees only the verifier fixture and
+  cannot replay constructor-sensitive contracts in Foundry.
+
+Validation after the repairs:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/poc_one.py \
+  scripts/test_poc_stage_drivers.py \
+  scripts/solidity_path_put.py \
+  scripts/test_solidity_path_put.py
+python3 scripts/test_poc_stage_drivers.py
+python3 scripts/test_solidity_path_put.py
+git diff --check -- \
+  notes/coverage/scripts/poc_one.py \
+  scripts/test_poc_stage_drivers.py \
+  scripts/solidity_path_put.py \
+  scripts/test_solidity_path_put.py \
+  notes/coverage/poc_units/st1inch_St1inch__St1inch__setEmergencyExit/poc.json
+```
+
+Important accounting rule:
+
+- Do not rerun st1inch `setEmergencyExit` through ESBMC. Its three official
+  attempts are spent, and the POC now has complete gate-cell closure at B=3/3.
+  Further work should move to another POC or to generic code-level fixes.

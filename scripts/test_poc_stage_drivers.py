@@ -72,6 +72,7 @@ def test_poc_one_materializes_declared_fixture():
             "gate": {
                 "why": "owner setter",
                 "skip_constructor": True,
+                "foundry": {"constructor_args": ["address(uint160(7))"]},
                 "state": {"_owner": "1"},
             }
         },
@@ -82,9 +83,10 @@ def test_poc_one_materializes_declared_fixture():
     bad = 0
     bad += check(data == {
         "contract": "C",
+        "foundry": {"constructor_args": ["address(uint160(7))"]},
         "skip_constructor": True,
         "state": {"_owner": "1"},
-    }, f"fixture JSON is minimal and explicit: {data}")
+    }, f"fixture JSON carries verifier and replay metadata: {data}")
     bad += check(args == ["--path-cov-fixture", str(path)],
                  f"fixture is passed as two ESBMC argv tokens: {args}")
     bad += check(why == "owner setter", f"fixture rationale is returned: {why}")
