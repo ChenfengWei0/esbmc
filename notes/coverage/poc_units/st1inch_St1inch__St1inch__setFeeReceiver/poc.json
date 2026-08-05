@@ -16,6 +16,7 @@
       "why": "compared against the branch-coverage baseline, which is MEASURED to run at one transaction; running deeper than the thing being compared to is not a comparison",
       "scope": "single",
       "max_tx": 1,
+      "probe_witnesses": 0,
       "focus_function": "setFeeReceiver",
       "instrument_only": "setFeeReceiver"
     },

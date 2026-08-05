@@ -2833,3 +2833,46 @@ Recommended next spend:
   (60s/8GiB), because its source has no address zero special-case and no
   external call. If attempt 1 times out near the old 78s no-fixture baseline,
   attempt 2 is the likely first decisive run.
+
+Attempt 1 result:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMaxLossRatio \
+  --stage all --cell gate --attempt 1 --fresh
+```
+
+- Stage 1 hit the 60s outer timeout but salvaged a partial journal report.
+- The partial report decided only 2 feasible paths, enc=14 and enc=15, with
+  33 undecided paths and `decisionSequences = null`.
+- Stage 2 correctly refused the partial report:
+  `DRIVER-REFUSED ... msg.value pin not seen`. This is not a proof failure.
+  A partial report with no decision sequence cannot justify the synthetic ABI
+  value gate or a complete unit path set.
+- Stage 3 then refused the empty certification file. No B result was measured.
+
+Code-level speed repair before attempt 2:
+
+- `notes/coverage/scripts/poc_one.py` now lets a POC cell override
+  `probe_witnesses`; the default remains 8 for the strong recipe.
+- When a cell sets `probe_witnesses: 0`, Stage 1 runs without
+  `--path-cov-probe --all-witnesses`, Stage 2 receives the same
+  `--probe-witnesses 0`, and `--probe-ladder` is omitted because it requires a
+  witness pool.
+- The four simple st1inch setter gate cells above now set
+  `probe_witnesses: 0`. They are relying on the simple-decision/structural
+  fast path, not on multi-witness bracketing.
+
+Validation:
+
+```sh
+python3 -m py_compile notes/coverage/scripts/poc_one.py scripts/test_poc_stage_drivers.py
+python3 scripts/test_poc_stage_drivers.py
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMaxLossRatio \
+  --stage all --cell gate --attempt 2 --dry-run
+```
+
+The dry run confirms `--probe-witnesses 0` in Stage 1 and Stage 2, and no
+`--probe-ladder` in Stage 2. Attempt 2 remains available and should be the next
+official spend for this POC: 120s/8GiB.

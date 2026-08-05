@@ -93,11 +93,33 @@ def test_poc_one_materializes_declared_fixture():
     return bad
 
 
+def test_poc_one_can_disable_stage1_probe_witnesses_for_a_cell():
+    poc = {
+        "id": "bench__C__set",
+        "cells": {"gate": {"probe_witnesses": 0}},
+    }
+    bad = 0
+    bad += check(poc_one.cell_probe_witnesses(poc, "gate") == 0,
+                 "cell-level probe_witnesses=0 is accepted")
+    args = poc_one.strong_certify_args(0)
+    bad += check(args[args.index("--probe-witnesses") + 1] == "0",
+                 f"stage2 sees the same probe witness count: {args}")
+    bad += check("--probe-ladder" not in args,
+                 "per-path ladder is disabled without probe witnesses")
+    bad += check("--probe-ladder-budget" not in args,
+                 "probe ladder budget is omitted with the ladder")
+    poc["cells"]["gate"]["probe_witnesses"] = "3"
+    bad += check(poc_one.cell_probe_witnesses(poc, "gate") == 3,
+                 "string values from JSON are parsed")
+    return bad
+
+
 def main():
     tests = [
         test_poc_enumeration_index_supplies_one_unit,
         test_poc_enumeration_index_is_fail_closed,
         test_poc_one_materializes_declared_fixture,
+        test_poc_one_can_disable_stage1_probe_witnesses_for_a_cell,
     ]
     bad = 0
     for t in tests:

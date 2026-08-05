@@ -89,6 +89,40 @@ STRONG_CERTIFY_ARGS = [
 ]
 
 
+def strong_certify_args(probe_witnesses):
+    args = list(STRONG_CERTIFY_ARGS)
+    idx = args.index("--probe-witnesses")
+    args[idx + 1] = str(probe_witnesses)
+    if probe_witnesses > 0:
+        return args
+    out = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--probe-ladder":
+            continue
+        if arg == "--probe-ladder-budget":
+            skip_next = True
+            continue
+        out.append(arg)
+    return out
+
+
+def cell_probe_witnesses(poc, cell_name):
+    cell = poc["cells"][cell_name]
+    value = cell.get("probe_witnesses", STRONG_PROBE_WITNESSES)
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        sys.exit(f"{poc['id']}: cell {cell_name} probe_witnesses must be an "
+                 "integer")
+    if value < 0:
+        sys.exit(f"{poc['id']}: cell {cell_name} probe_witnesses must be >= 0")
+    return value
+
+
 def index_pocs():
     p = POCS / "index.json"
     if not p.exists():
@@ -286,6 +320,7 @@ def main():
 
     poc = load(a.poc)
     cell = poc["cells"][a.cell]
+    probe_witnesses = cell_probe_witnesses(poc, a.cell)
     solver_flags, solver_reason = solver_flags_for(poc["benchmark"], ())
     if a.cell == "artefact" and not cell["focus_with"]:
         sys.exit(
@@ -323,6 +358,7 @@ def main():
     print(f"[poc] memory       : {memlimit_gib} GiB per ESBMC process, jobs=1")
     print(f"[poc] solver       : {' '.join(solver_flags) if solver_flags else '(default)'}"
           f" ({solver_reason})")
+    print(f"[poc] stage1 probes: {probe_witnesses} witness(es) per path")
     if fixture_path:
         print(f"[poc] fixture      : {fixture_path}")
         if fixture_why:
@@ -349,7 +385,7 @@ def main():
                    "--scope", cell["scope"],
                    "--max-tx", str(cell["max_tx"]),
                    "--memlimit-gib", str(memlimit_gib),
-                   "--probe-witnesses", str(STRONG_PROBE_WITNESSES),
+                   "--probe-witnesses", str(probe_witnesses),
                    "--timeout", str(timeout)]
         # ---- THE GATE'S OWN ADVICE HAS TO BE REACHABLE FROM HERE ----------
         #
@@ -377,7 +413,8 @@ def main():
                    "--enumeration-report", str(enumeration_report),
                    "--timeout", str(timeout),
                    "--run-timeout", str(timeout),
-                   "--memlimit-gib", str(memlimit_gib)] + STRONG_CERTIFY_ARGS \
+                   "--memlimit-gib", str(memlimit_gib)] + \
+                  strong_certify_args(probe_witnesses) \
                   + [f"--esbmc-arg={flag}"
                      for flag in list(solver_flags) + fixture_args] \
                   + list(a.certify_arg)
