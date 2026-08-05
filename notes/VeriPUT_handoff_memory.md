@@ -2588,3 +2588,81 @@ Next rule for this POC:
   reducing probe witness overhead for st1inch, solver/encoder arm choice for
   this single unit, or a cheap fuzz/refute prepass outside ESBMC's internal
   path instrumentation.
+
+## 2026-08-06 st1inch setEmergencyExit attempt 2 and fixture prep
+
+Official attempt spent:
+
+- POC: `st1inch_St1inch__St1inch__setEmergencyExit`
+- Cell: `gate`
+- Attempt: 2, therefore 120s / 8 GiB.
+- Command:
+  `python3 notes/coverage/scripts/poc_one.py
+  st1inch_St1inch__St1inch__setEmergencyExit --stage all --cell gate
+  --attempt 2 --fresh`
+
+Observed result:
+
+- Stage 1 again timed out before producing `cov-report.json`.
+- The previous fail-closed repair worked: `pathcov_collect.py` refused success
+  for the restricted `--only setEmergencyExit` run because no Stage-1 report
+  existed, so Stage 2 and Stage 3 did not convert the timeout into an empty PUT
+  measurement.
+- The log shows conversion/symex are not the bottleneck:
+  - GOTO program processing: about 2.2s.
+  - Symex: about 0.1s.
+  - The solver phase is the bottleneck. Z3 returned
+    `unknown (reason: out of memory)` on multiple complete-path/probe claims,
+    spending about 13-26s per claim before the outer timeout killed the run.
+- The unit itself has only three complete paths. The hard formula comes from
+  deployment/constructor state, especially ERC20 string and voting-power setup,
+  not from `setEmergencyExit(bool)` body complexity.
+
+Ground truth for the remaining official attempt:
+
+- Normal useful PUT path: owner sender, zero value, and
+  `emergencyExit_ in {false,true}`.
+- Expected R2/oracle: after the bare call,
+  `state.emergencyExit == emergencyExit_`.
+- Non-owner and nonpayable paths are valid gate/revert behavior but are not the
+  high-value parameterized setter PUT.
+
+Code prepared before spending attempt 3:
+
+- `notes/coverage/poc_units/st1inch_St1inch__St1inch__setEmergencyExit/poc.json`
+  now declares a gate fixture for this POC:
+  skip the constructor and set only `_owner = 1`.
+- `notes/coverage/scripts/poc_one.py` materializes the declared fixture as
+  `fixture_gate.json` and passes it to every stage as:
+  `--path-cov-fixture <fixture>`.
+- `notes/coverage/scripts/pathcov_collect.py` accepts repeated
+  `--esbmc-arg=...`, appends those args to Stage-1 ESBMC commands, and records
+  the exact full ESBMC argument list in `index.json`. This is required because
+  Stage 2 validates that the enumeration was produced under the same solver,
+  encoder, and fixture assumptions.
+- Stage 2 and Stage 3 also receive the same solver/fixture args from
+  `poc_one.py`, keeping the certificate and emitted PUT aligned with Stage 1.
+
+Validation already done without another POC ESBMC run:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/poc_one.py \
+  notes/coverage/scripts/pathcov_collect.py \
+  notes/coverage/scripts/certify_all.py \
+  scripts/test_poc_stage_drivers.py
+python3 scripts/test_poc_stage_drivers.py
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setEmergencyExit \
+  --stage all --cell gate --attempt 3 --fresh --dry-run
+```
+
+Next rule:
+
+- Only attempt 3 remains for this POC: 600s / 10 GiB.
+- Run it only after the fixture plumbing is committed and pushed.
+- If it still OOMs, do not spend more st1inch runs unless the budget is
+  explicitly reopened. The next code-level target should be Stage-1 claim
+  scheduling/reporting: solve complete paths before probes, write partial
+  reports/journals earlier, or provide a no-probe/low-probe arm for fixture
+  runs.

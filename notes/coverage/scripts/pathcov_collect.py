@@ -792,6 +792,7 @@ def collect(bench_key,
             goals,
             out_suffix="",
             solver_override=(),
+            esbmc_extra=(),
             fresh=False,
             max_tx=1,
             focus_with=(),
@@ -838,7 +839,10 @@ def collect(bench_key,
     # for benchmarks where whole does not finish. It only buys anything at
     # max_tx >= 2, because a word of length 1 cannot contain both letters.
     sflags, sreason = solver_flags_for(bench_key, solver_override)
+    esbmc_flags = list(sflags) + list(esbmc_extra)
     print(f"  [solver] {' '.join(sflags) if sflags else '(none)'} -- {sreason}", flush=True)
+    if esbmc_extra:
+        print(f"  [esbmc-arg] {' '.join(esbmc_extra)}", flush=True)
     if adhoc is not None:
         # AD-HOC TARGET: a hand-written PoC rather than a corpus benchmark.
         # R6 requires every investigation to start from a minimal reproduction,
@@ -1132,7 +1136,7 @@ def collect(bench_key,
                           None if pkind == "library" else primary,
                           None,
                           goals,
-                          sflags,
+                          esbmc_flags,
                           max_tx,
                           unwind=unwind,
                           probe_witnesses=probe_witnesses), timeout, out_dir / "work" / tag)
@@ -1320,7 +1324,7 @@ def collect(bench_key,
                             primary,
                             focus_arg,
                             goals,
-                            sflags,
+                            esbmc_flags,
                             max_tx,
                             fname if focus_with else None,
                             unwind=unwind,
@@ -1404,7 +1408,7 @@ def collect(bench_key,
             # non-default encoder is not comparable to one that did not, and
             # that difference has to travel WITH the data.
             "solverFlags":
-            sflags,
+            esbmc_flags,
             "solverFlagsReason":
             sreason,
             "outerTimeoutSeconds":
@@ -1450,6 +1454,13 @@ def main():
                     "'--z3 --tuple-node-flattener'. Overrides the "
                     "per-benchmark ENCODER_EXCEPTIONS table; whichever "
                     "applies is printed and recorded in index.json")
+    ap.add_argument("--esbmc-arg", action="append", default=[], metavar="ARG",
+                    help="one extra ESBMC argument appended after the "
+                         "solver/encoder flags and recorded in index.json. "
+                         "Repeat it for two-token options, e.g. "
+                         "--esbmc-arg=--path-cov-fixture "
+                         "--esbmc-arg=fixture.json. Stage 2 validates this "
+                         "exact list before reusing the enumeration report.")
     ap.add_argument("--memlimit-gib",
                     type=int,
                     default=8,
@@ -1646,8 +1657,8 @@ def main():
                      f"  python3 notes/coverage/scripts/poc_one.py <poc-id>")
 
     idx = collect(a.bench, scope == "whole", a.timeout, a.goals, a.out_suffix,
-                  a.solver_flags.split(), a.fresh, a.max_tx, focus_with, scope, adhoc, only,
-                  a.unwind, a.probe_witnesses)
+                  a.solver_flags.split(), a.esbmc_arg, a.fresh, a.max_tx,
+                  focus_with, scope, adhoc, only, a.unwind, a.probe_witnesses)
     ok = sum(1 for r in idx["runs"] if r["reportPresent"])
     killed = sum(1 for r in idx["runs"] if r["killedByOuterTimeout"])
     print(f"{a.bench}: {ok}/{len(idx['runs'])} run(s) produced a report, "

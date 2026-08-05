@@ -26,5 +26,14 @@
       "focus_with": [],
       "instrument_only": "setEmergencyExit"
     }
+  },
+  "fixtures": {
+    "gate": {
+      "why": "setEmergencyExit is an owner-gated setter; its constructor initializes ERC20 metadata and voting-power tables that are not part of this unit's path predicate and make Z3 return unknown/out-of-memory on the path claims. The fixture replaces deployment with the minimal entry state needed for the gate: a nonzero Ownable._owner. The unit still distinguishes owner and non-owner paths through msg.sender.",
+      "skip_constructor": true,
+      "state": {
+        "_owner": "1"
+      }
+    }
   }
 }

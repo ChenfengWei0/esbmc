@@ -136,6 +136,26 @@ def load(pid):
     return json.loads(p.read_text())
 
 
+def materialize_fixture(poc, cell_name, outdir):
+    fx = ((poc.get("fixtures") or {}).get(cell_name) or
+          (poc.get("fixture") if cell_name == "gate" else None))
+    if not fx:
+        return None, [], None
+    if not isinstance(fx, dict):
+        sys.exit(f"{poc['id']}: fixture for cell {cell_name} must be an object")
+    state = fx.get("state") or {}
+    if not isinstance(state, dict):
+        sys.exit(f"{poc['id']}: fixture state for cell {cell_name} must be an object")
+    doc = {
+        "contract": fx.get("contract") or poc["harness_contract"],
+        "skip_constructor": bool(fx.get("skip_constructor", True)),
+        "state": state,
+    }
+    path = outdir / f"fixture_{cell_name}.json"
+    path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+    return path, ["--path-cov-fixture", str(path)], fx.get("why")
+
+
 def run(cmd, timeout, cwd, inputs_dir):
     """One child, its own process group, reaped on every exit path.
 
@@ -284,6 +304,8 @@ def main():
 
     suffix = f"__poc_{poc['declaring_contract']}_{poc['unit']}_{a.cell}"
     outdir = POCS / a.poc
+    fixture_path, fixture_args, fixture_why = materialize_fixture(
+        poc, a.cell, outdir)
     print(f"[poc] {a.poc}")
     print(f"[poc] target unit  : {poc['declaring_contract']}.{poc['unit']} "
           f"(dispatched through --contract {poc['harness_contract']})")
@@ -296,6 +318,10 @@ def main():
     print(f"[poc] memory       : {memlimit_gib} GiB per ESBMC process, jobs=1")
     print(f"[poc] solver       : {' '.join(solver_flags) if solver_flags else '(default)'}"
           f" ({solver_reason})")
+    if fixture_path:
+        print(f"[poc] fixture      : {fixture_path}")
+        if fixture_why:
+            print(f"[poc] fixture why  : {fixture_why}")
 
     arm = "".join(c if c.isalnum() else "_" for c in a.arm)
     out = outdir / (f"certify_{a.cell}" + (f"__{arm}" if arm else "")
@@ -333,6 +359,8 @@ def main():
                 cmd.append("--fresh")
             if cell["scope"] == "set":
                 cmd += ["--focus-with", ",".join(cell["focus_with"])]
+            for flag in fixture_args:
+                cmd.append(f"--esbmc-arg={flag}")
         elif stage == "2":
             cmd = [sys.executable, "-u",
                    str(HERE / "certify_all.py"), poc["benchmark"],
@@ -345,7 +373,8 @@ def main():
                    "--timeout", str(timeout),
                    "--run-timeout", str(timeout),
                    "--memlimit-gib", str(memlimit_gib)] + STRONG_CERTIFY_ARGS \
-                  + [f"--esbmc-arg={flag}" for flag in solver_flags] \
+                  + [f"--esbmc-arg={flag}"
+                     for flag in list(solver_flags) + fixture_args] \
                   + list(a.certify_arg)
             if a.cell == "gate":
                 cmd.append("--static-extcall-inseparable")
@@ -384,6 +413,8 @@ def main():
                    "--fuzz-runs", "256",
                    "--fuzz-r2-candidate-budget", "128"]
             for flag in solver_flags:
+                cmd.append(f"--esbmc-arg={flag}")
+            for flag in fixture_args:
                 cmd.append(f"--esbmc-arg={flag}")
         commands.append((stage, cmd))
 

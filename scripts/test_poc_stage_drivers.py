@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
 import certify_all  # noqa: E402
+import poc_one  # noqa: E402
 
 
 def check(cond, msg):
@@ -63,10 +64,38 @@ def test_poc_enumeration_index_is_fail_closed():
     return bad
 
 
+def test_poc_one_materializes_declared_fixture():
+    poc = {
+        "id": "bench__C__set",
+        "harness_contract": "C",
+        "fixtures": {
+            "gate": {
+                "why": "owner setter",
+                "skip_constructor": True,
+                "state": {"_owner": "1"},
+            }
+        },
+    }
+    with tempfile.TemporaryDirectory() as td:
+        path, args, why = poc_one.materialize_fixture(poc, "gate", Path(td))
+        data = json.loads(path.read_text())
+    bad = 0
+    bad += check(data == {
+        "contract": "C",
+        "skip_constructor": True,
+        "state": {"_owner": "1"},
+    }, f"fixture JSON is minimal and explicit: {data}")
+    bad += check(args == ["--path-cov-fixture", str(path)],
+                 f"fixture is passed as two ESBMC argv tokens: {args}")
+    bad += check(why == "owner setter", f"fixture rationale is returned: {why}")
+    return bad
+
+
 def main():
     tests = [
         test_poc_enumeration_index_supplies_one_unit,
         test_poc_enumeration_index_is_fail_closed,
+        test_poc_one_materializes_declared_fixture,
     ]
     bad = 0
     for t in tests:
