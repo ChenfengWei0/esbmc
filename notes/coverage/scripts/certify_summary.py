@@ -98,7 +98,8 @@ def main():
     # defence existed in the data format and nowhere in the code, which is this
     # project's own recurring "written but never wired" shape.
     CONFIG_KEYS = ["skip_bracket", "level0", "probes", "refine_rounds",
-                   "shrink_rounds", "unit_timeout_s", "jobs", "memlimit_gib"]
+                   "shrink_rounds", "unit_timeout_s", "jobs", "memlimit_gib",
+                   "static_extcall_inseparable"]
 
     def config_of(r):
         return tuple(r.get(k) for k in CONFIG_KEYS)

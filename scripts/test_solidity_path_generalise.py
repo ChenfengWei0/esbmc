@@ -73,6 +73,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       structural_abi_gate_certificate,
                                       structural_decision_region,
                                       structural_decision_regions,
+                                      extcall_inseparable_failures,
                                       file_identity,
                                       validate_enumeration_import)
 
@@ -2353,6 +2354,25 @@ check("simple-decision-region-refuses-coordinate-equality",
       structural_decision_region(
           [{"branch_claim": "a == b"}], {"a": 1, "b": 2}, {},
           ["a", "b"]), None)
+
+_extcall_fail = extcall_inseparable_failures(
+    [(26, 4, {"amount": 0, "msg.value": 0, "msg.sender": 0}),
+     (27, 4, {"amount": 0, "msg.value": 0, "msg.sender": 0})],
+    {26: {"extcall.success": 0}, 27: {"extcall.success": 1}})
+check("extcall-only-sibling-split-is-statically-inseparable",
+      sorted(_extcall_fail), [26, 27])
+check("extcall-inseparable-reason-names-uncontrolled-behaviour",
+      "external-call behavior" in _extcall_fail[26], True)
+check("settable-difference-is-not-extcall-inseparable",
+      extcall_inseparable_failures(
+          [(26, 4, {"amount": 0}), (27, 4, {"amount": 1})],
+          {26: {"extcall.success": 0}, 27: {"extcall.success": 1}}),
+      {})
+check("missing-extcall-harvest-is-not-inseparable",
+      extcall_inseparable_failures(
+          [(26, 4, {"amount": 0}), (27, 4, {"amount": 0})],
+          {26: {"extcall.success": 0}}),
+      {})
 
 # Stage 2 may reuse stage 1 only when the structured collection manifest proves
 # that both stages mean the same run. This test exercises the accepting edge and

@@ -154,7 +154,8 @@ RE_CERT = re.compile(r"^  enc=(\d+)(?: piece \d+/\d+)?: (.*)$")
 # function name in one forge project.
 RE_CERT_PIECE = re.compile(
     r"^  enc=(\d+) piece (\d+) \(\d+ of \d+ certified\): (.*)$")
-RE_NOTCERT = re.compile(r"^  enc=(\d+): NOT CERTIFIED — (.*?); this path falls")
+RE_NOTCERT = re.compile(
+    r"^  enc=(\d+): NOT CERTIFIED — (.*?)(?:; (?:this path falls|no concrete)|$)")
 RE_PIN_FIRED = re.compile(r"^\[env\] msg\.value PINNED to 0")
 RE_PIN_PAYABLE = re.compile(r"^\[env\] msg\.value NOT pinned: this unit is PAYABLE")
 RE_PIN_UNKNOWN = re.compile(r"^\[env\] msg\.value NOT auto-pinned")
@@ -1125,6 +1126,16 @@ def main():
                          "refused account/value/fpt/supply/return_value$*, each "
                          "refusal costing one extra ESBMC invocation before the "
                          "re-query.")
+    ap.add_argument("--static-extcall-inseparable", action="store_true",
+                    help="passed to the driver: before region search, mark "
+                         "witnessed sibling paths that agree on every "
+                         "generated-test-settable payload and differ only on "
+                         "concrete harvested extcall.* values as "
+                         "NOT_CERTIFIED. OFF by default because an "
+                         "artefact/stub cell may intentionally realise the "
+                         "external-call behavior; the official gate-cell POC "
+                         "recipe enables it because that cell has no such "
+                         "fixture. Use a separate --out for this arm.")
     ap.add_argument("--pin", action="append", default=[], metavar="COORD=VALUE",
                     help="pass one `coord=value` PIN straight to the driver "
                          "(driver --pin). Repeatable. A pinned coordinate is "
@@ -1526,6 +1537,8 @@ def main():
                 cmd.append("--no-auto-pin-value")
             if args.pin_extcall:
                 cmd.append("--pin-extcall")
+            if args.static_extcall_inseparable:
+                cmd.append("--static-extcall-inseparable")
             if args.skip_bracket:
                 cmd.append("--skip-bracket")
             if args.env_coord_disagreed:
@@ -1712,6 +1725,12 @@ def main():
                         # are two measurements wearing one name. An absent key
                         # means the row predates the flag, i.e. `false`.
                         "pin_extcall": bool(args.pin_extcall),
+                        # Static, refutation-only attribution for gate cells
+                        # whose witnessed siblings differ only in extcall.*
+                        # values no generated test can set. Default false; a
+                        # stub/artefact arm must not inherit this silently.
+                        "static_extcall_inseparable":
+                            bool(args.static_extcall_inseparable),
                         # WHICH CUT RULE. An absent key means the row predates
                         # the flag and was therefore measured under `tool`; it
                         # must never be read as the current default. See the

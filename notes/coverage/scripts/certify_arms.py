@@ -88,8 +88,9 @@ def main():
     # and the fields are on the rows precisely so this can be checked rather
     # than remembered.
     def config(rows, label):
-        keys = ("unit_timeout_s", "run_timeout_s", "skip_bracket", "pin_env",
-                "level0", "memlimit", "binary")
+        keys = ("unit_timeout_s", "run_timeout_s", "skip_bracket",
+                "static_extcall_inseparable", "pin_env", "level0",
+                "memlimit", "binary")
         seen = {}
         for r in rows.values():
             for k in keys:

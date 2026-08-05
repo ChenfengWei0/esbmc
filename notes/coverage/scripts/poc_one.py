@@ -61,7 +61,7 @@ ATTEMPTS = {
     2: (120, 8),
     3: (600, 10),
 }
-STRONG_RECIPE_VERSION = "veriput-strong/6"
+STRONG_RECIPE_VERSION = "veriput-strong/7"
 STRONG_PROBE_WITNESSES = 8
 STRONG_CERTIFY_ARGS = [
     "--recipe-version", STRONG_RECIPE_VERSION,
@@ -75,6 +75,7 @@ STRONG_CERTIFY_ARGS = [
     "--probe-witnesses", str(STRONG_PROBE_WITNESSES),
     "--probe-ladder",
     "--probe-ladder-budget", "4",
+    "--skip-bracket",
     "--no-auto-pin-value",
     "--env-coord-disagreed",
     "--pin-agreed-state",
@@ -346,6 +347,8 @@ def main():
                    "--memlimit-gib", str(memlimit_gib)] + STRONG_CERTIFY_ARGS \
                   + [f"--esbmc-arg={flag}" for flag in solver_flags] \
                   + list(a.certify_arg)
+            if a.cell == "gate":
+                cmd.append("--static-extcall-inseparable")
         # ---- ONE FLAG, THE RIGHT VERB PER STAGE ---------------------------
         #
         # Stage 1's collector calls it `--fresh`, stage 2's sweep calls it

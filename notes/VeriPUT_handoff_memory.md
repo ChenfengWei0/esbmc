@@ -1720,3 +1720,172 @@ ctest --test-dir build -R '^regression/scripts/solidity_path_put$' --output-on-f
 
 All three passed. No additional `setDistributor` POC rerun has been spent after
 these two code fixes.
+
+## 34. POC ground truth before the next ESBMC spend
+
+The next ESBMC run must not be used to discover source-level expectations. The
+following is the current static ground truth from source, Stage-1 reports, and
+old cert arms.
+
+### `aqua_Aqua__Aqua__push`
+
+Source shape:
+
+```solidity
+function push(address maker, address app, bytes32 strategyHash,
+              address token, uint256 amount) external {
+    Balance storage balance = _balances[maker][app][strategyHash][token];
+    (uint248 prevBalance, uint8 tokensCount) = balance.load();
+    require(tokensCount > 0 && tokensCount != _DOCKED, ...);
+    balance.store(prevBalance + amount.toUint248(), tokensCount);
+    IERC20(token).safeTransferFrom(msg.sender, maker, amount);
+    emit Pushed(maker, app, strategyHash, token, amount);
+}
+```
+
+Gate-cell Stage 1 currently witnesses only the nonpayable value path and the
+inactive-strategy rollback path:
+
+- `path:2`: ABI nonpayable reject, expected region `msg.value != 0`; body
+  arguments irrelevant; only exit-kind oracle expected.
+- `path:6`: body entered with `msg.value == 0`, then rollback because the
+  entry mapping slot has `tokensCount == 0`; source condition is
+  `!(tokensCount > 0 && tokensCount != 255)`. This path is not a strong
+  post-state PUT in gate cell because the state write is rolled back and the
+  relevant state is a nested mapping slot not established by a one-tx fixture.
+
+Old evidence: default cert arm killed at 300s/8GiB; `--skip-bracket` arm
+certified `path:6` in about 18s with wide regions over
+`amount/app/maker/token` plus `msg.value == 0`. That says the geometric bracket
+was the cost center, not the Solidity model. The source-level useful artefact
+for this cell is exit-kind coverage, not a state oracle.
+
+### `aqua_Aqua__Aqua__safeBalances`
+
+Source shape:
+
+```solidity
+function safeBalances(address maker, address app, bytes32 strategyHash,
+                      address token0, address token1) external view
+    returns (uint256 balance0, uint256 balance1)
+{
+    (uint248 amount0, uint8 tokensCount0) =
+        _balances[maker][app][strategyHash][token0].load();
+    require(tokensCount0 > 0 && tokensCount0 != _DOCKED, ...);
+    balance0 = amount0;
+    (uint248 amount1, uint8 tokensCount1) =
+        _balances[maker][app][strategyHash][token1].load();
+    require(tokensCount1 > 0 && tokensCount1 != _DOCKED, ...);
+    balance1 = amount1;
+}
+```
+
+Gate-cell Stage 1 also witnesses only:
+
+- `path:2`: ABI nonpayable reject, expected region `msg.value != 0`; exit-kind
+  oracle only.
+- `path:6`: body entered with `msg.value == 0`, first token inactive because
+  entry mapping slot has `tokensCount0 == 0`; rollback before the second return
+  value is semantically available.
+
+Old evidence mirrors `push`: default killed at 300s/8GiB, `--skip-bracket`
+certified `path:6` in about 19s with wide regions over
+`app/maker/token0/token1` plus `msg.value == 0`. The expected PUT surface is
+again exit-kind for the gate cell. A strong return oracle requires an artefact
+cell that first establishes active mapping slots, e.g. through `ship`/`push`,
+not this one-tx post-constructor gate cell.
+
+### `farming__FarmingPool__deposit`
+
+Source shape:
+
+```solidity
+function deposit(uint256 amount) public virtual {
+    _mint(msg.sender, amount);
+    if (balanceOf(msg.sender) > _MAX_BALANCE) revert MaxBalanceExceeded();
+    STAKING_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
+}
+```
+
+Relevant internal decisions:
+
+- `_mint` rejects `msg.sender == 0`.
+- `_update` adjusts `_totalSupply` and `_balances[msg.sender]`, and FarmingLib
+  `updateBalances` introduces `amount > 0 && from != to` and zero-address
+  branches.
+- The final `safeTransferFrom` introduces an external-call success/failure
+  split that a generated test cannot choose unless a deterministic mock/stub
+  fixture is part of the cell.
+
+Gate-cell Stage 1 witnesses seven paths: `2`, `26`, `27`, `246`, `247`,
+`3622`, `3623`.
+
+- `path:2`: ABI nonpayable reject, `msg.value != 0`, expected exit-kind-only
+  PUT. This is structurally certifiable and should not consume the heavy ladder.
+- `path:26`/`27`: same settable inputs and state, differ only in
+  `extcall.success`; both are therefore inseparable by any product region over
+  generated-test inputs.
+- `path:246`/`247`: same issue, only `extcall.success` separates rollback vs
+  normal continuation around the external transfer.
+- `path:3622`/`3623`: same issue plus very large `amount`; old shrink logs show
+  the loop chasing `amount` while the remaining discriminator is still
+  external-call behavior.
+
+`pathcov_predict.py` already reports this gate cell as NO-GO for exactly those
+three inseparable pairs. That is not a proof failure and not a budget failure:
+the cell is asking a generated PUT to control a callee behavior bit. Correct
+next actions are either:
+
+- static attribution/early-stop those paths and keep only value-gate work in
+  the gate cell; or
+- define an artefact/stub cell where the ERC20 mock deterministically realizes
+  the desired success/revert behavior, and record the extcall pin as fixture
+  provenance.
+
+### Policy implication
+
+For the next official attempt, do not spend ESBMC on the geometric bracket for
+these POCs. The old Aqua arms demonstrate that `--skip-bracket` reaches the
+same useful certification quickly, while `deposit` demonstrates a separate
+uncontrolled-extcall limitation that no bracket can repair.
+
+Implemented policy update after this investigation:
+
+- `notes/coverage/scripts/poc_one.py` strong recipe is now
+  `veriput-strong/7` and includes `--skip-bracket` by default. The rest of the
+  strong recipe still keeps level0, perturbation, witness probes, probe ladder,
+  refinement, state pinning, environment promotion, and slot-coordinate support.
+- `scripts/solidity_path_generalise.py` now has a refutation-only static filter
+  for witnessed siblings that agree on every generated-test-settable payload
+  value and differ only on `extcall.*`. It is off by default and is enabled by
+  `notes/coverage/scripts/poc_one.py` only for the official gate cell, because
+  an artefact/stub cell may intentionally realize external-call success or
+  failure. The filter only fires when both sibling payloads actually contain the
+  differing `extcall.*` value; asymmetric/missing harvest evidence is not enough
+  to attribute the split. Those paths are recorded as `NOT_CERTIFIED` with a
+  method-level reason, `concrete_fallback=false`, and removed from region
+  search; no ESBMC bracket/refine/certification query is started for them.
+- If every witnessed path is removed by that attribution, the driver disables
+  level0/probe/bracket/refine and writes only the not-certified reasons. The
+  `enumerated` field still records the original Stage-1 witnessed path set.
+- `certify_all.py`, `certify_summary.py`, and `certify_arms.py` now record or
+  compare `static_extcall_inseparable`, so a static-attribution arm cannot be
+  silently aggregated with a normal certification arm.
+
+Focused checks already run after the change:
+
+```
+python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py notes/coverage/scripts/poc_one.py
+python3 scripts/test_solidity_path_generalise.py
+python3 scripts/test_solidity_path_put.py
+ctest --test-dir build -R '^regression/scripts/solidity_path_generalise$' --output-on-failure
+ctest --test-dir build -R '^regression/scripts/solidity_path_put$' --output-on-failure
+git diff --check
+python3 notes/coverage/scripts/poc_one.py aqua_Aqua__Aqua__push --stage 2 --attempt 1 --dry-run
+python3 notes/coverage/scripts/poc_one.py farming__FarmingPool__deposit --stage 2 --attempt 1 --dry-run
+python3 notes/coverage/scripts/poc_one.py aqua_Aqua__Aqua__safeBalances --stage 2 --attempt 1 --dry-run
+```
+
+The dry-runs confirmed the official Stage-2 command now carries
+`--skip-bracket`, `--static-extcall-inseparable`, `--timeout 60`,
+`--run-timeout 60`, and `--memlimit-gib 8` for attempt 1.

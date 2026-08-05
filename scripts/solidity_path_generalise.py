@@ -832,6 +832,49 @@ def structural_decision_regions(paths, path_decisions, pins, coords,
     return out, holes, reasons
 
 
+_MISSING = object()
+
+
+def extcall_inseparable_failures(paths, path_extras):
+    """Paths that no generated-test coordinate region can separate.
+
+    This is a refutation-only static filter. It fires only for the measured
+    deposit shape: two witnessed paths agree on every harvested settable value
+    and differ only on `extcall.*`, a value the harness chose inside the run.
+    A product region over call arguments, environment values, and entry state
+    cannot force one external-call behavior while excluding the other.
+    """
+    failed = {}
+    for i in range(len(paths)):
+        enc_a, _depth_a, ce_a = paths[i]
+        payload_a = dict(ce_a, **(path_extras.get(enc_a) or {}))
+        for enc_b, _depth_b, ce_b in paths[i + 1:]:
+            payload_b = dict(ce_b, **(path_extras.get(enc_b) or {}))
+            names = sorted(set(payload_a) | set(payload_b))
+            diff = [n for n in names
+                    if payload_a.get(n, _MISSING) !=
+                    payload_b.get(n, _MISSING)]
+            if not diff or any(not n.startswith("extcall.") for n in diff):
+                continue
+            if any(payload_a.get(n, _MISSING) is _MISSING or
+                   payload_b.get(n, _MISSING) is _MISSING for n in diff):
+                continue
+            reason = (
+                "STATICALLY INSEPARABLE: this path has a witnessed sibling "
+                f"with the same generated-test-settable payload and differs "
+                "only on harness-chosen external-call behavior "
+                f"({', '.join(diff)}). A generated PUT can choose call "
+                "arguments, supported environment values, and reproducible "
+                "entry state; it cannot choose whether the callee returns "
+                "success or failure unless a deterministic mock/stub fixture "
+                "is part of this cell. No ESBMC region query is started for "
+                "this path because any product region over the available "
+                "coordinates admits both siblings.")
+            failed.setdefault(enc_a, reason)
+            failed.setdefault(enc_b, reason)
+    return failed
+
+
 # ---- WHY THERE IS NO WITNESS, READ FROM THE REPORT RATHER THAN ASSUMED -------
 #
 # Every U claim carries a `u_reason`, and the two families below need OPPOSITE
@@ -4075,6 +4118,8 @@ def run_config(args, scope_label):
         "slot_coord": sorted(arg_value(args, "slot_coord", []) or []),
         "pins": sorted(arg_value(args, "pin", []) or []),
         "pin_extcall": bool(arg_value(args, "pin_extcall", False)),
+        "static_extcall_inseparable": bool(
+            arg_value(args, "static_extcall_inseparable", False)),
         "esbmc_args": list(arg_value(args, "esbmc_arg", []) or []),
         "state_struct_fields": bool(
             arg_value(args, "state_struct_fields", False)),
@@ -4613,6 +4658,15 @@ def main():
                          "is PER PATH, unlike --pin, because the sibling paths "
                          "of a call site differ in exactly this quantity; it "
                          "is recorded on every region it applies to.")
+    ap.add_argument("--static-extcall-inseparable", action="store_true",
+                    help="before region search, mark witnessed sibling paths "
+                         "that agree on every generated-test-settable payload "
+                         "and differ only on concrete harvested extcall.* "
+                         "values as NOT_CERTIFIED. This is OFF by default "
+                         "because an artefact/stub fixture may intentionally "
+                         "realise the extcall behavior; the official gate-cell "
+                         "POC recipe enables it because that cell has no such "
+                         "fixture.")
     ap.add_argument("--esbmc-arg", action="append", default=[], metavar="ARG",
                     help="pass one extra argument straight to EVERY ESBMC "
                          "invocation this driver makes -- enumeration, every "
@@ -4729,6 +4783,7 @@ def main():
         enumeration_report=args.enumeration_report,
         scope_label=scope_label)
     args.path_function = resolved_path_function
+    all_paths = list(paths)
     if not paths:
         # ⛔ THE OLD TEXT HERE ASSERTED A RESULT AND WAS WRONG ON REAL INPUT.
         # It said "That is a result, not an error ... (The report was checked:
@@ -5157,17 +5212,64 @@ def main():
         if args.path_function else None
     coord_types = dict(unit_params(args.ast, args.contract, args.unit,
                                    declaration_id=declaration_id))
-    early_structural_regions, _, _ = structural_decision_regions(
-        paths, path_decisions, pins, coords, coord_types=coord_types,
-        type_ranges={})
-    if early_structural_regions is not None:
-        if args.level0 or args.probe_witnesses or args.probe_ladder:
-            print("[structural] every witnessed path is already expressible as "
-                  "a simple decision product region; skipping level0, witness "
-                  "pool probes, per-path ladders, bracket and refine")
+
+    pre_failed = (extcall_inseparable_failures(paths, path_extras)
+                  if args.static_extcall_inseparable else {})
+    if pre_failed:
+        pairs = []
+        encs = [enc for enc, _, _ in paths]
+        for i, enc_a in enumerate(encs):
+            if enc_a not in pre_failed:
+                continue
+            for enc_b in encs[i + 1:]:
+                if enc_b not in pre_failed:
+                    continue
+                pa = dict(next(ce for e, _d, ce in paths if e == enc_a),
+                          **(path_extras.get(enc_a) or {}))
+                pb = dict(next(ce for e, _d, ce in paths if e == enc_b),
+                          **(path_extras.get(enc_b) or {}))
+                diff = [n for n in sorted(set(pa) | set(pb))
+                        if pa.get(n, _MISSING) != pb.get(n, _MISSING)]
+                if diff and all(n.startswith("extcall.") for n in diff):
+                    pairs.append(f"{enc_a}/{enc_b} on {', '.join(diff)}")
+        print("[inseparable] " + "; ".join(pairs)
+              + ". These path(s) are removed from region search and recorded "
+                "as NOT_CERTIFIED with a method-level attribution; this is a "
+                "refutation-only filter, not a proof.")
+        paths = [p for p in paths if p[0] not in pre_failed]
+
+    if not paths:
+        print("[inseparable] every witnessed path was attributed to an "
+              "uncontrolled external-call split; no ESBMC region query is "
+              "started for this unit.")
         args.level0 = False
         args.probe_witnesses = 0
         args.probe_ladder = False
+        args.skip_bracket = True
+        args.refine_rounds = 0
+        brackets, regions, warned, round_failure = {}, {}, set(), None
+        region_holes = {}
+        structural_regions = None
+        structural_region_source = {}
+        last_failure = None
+    else:
+        brackets = regions = warned = round_failure = region_holes = None
+        structural_regions = None
+        structural_region_source = {}
+
+    if paths:
+        early_structural_regions, _, _ = structural_decision_regions(
+            paths, path_decisions, pins, coords, coord_types=coord_types,
+            type_ranges={})
+        if early_structural_regions is not None:
+            if args.level0 or args.probe_witnesses or args.probe_ladder:
+                print("[structural] every witnessed path is already "
+                      "expressible as a simple decision product region; "
+                      "skipping level0, witness pool probes, per-path ladders, "
+                      "bracket and refine")
+            args.level0 = False
+            args.probe_witnesses = 0
+            args.probe_ladder = False
 
     # ---- LEVEL 0: is the real constraint an EQUALITY? ----
     #
@@ -5553,11 +5655,14 @@ def main():
     # simple product constraint over rendered coordinates and pins, the region
     # is the decision tree itself and certification can be structural.
     structural_region_source = {}
-    structural_regions, structural_holes, structural_reasons = \
-        structural_decision_regions(
-            paths, path_decisions, pins, coords, coord_types=coord_types,
-            type_ranges=type_ranges)
-    if structural_regions is not None:
+    if not paths:
+        structural_regions = {}
+    else:
+        structural_regions, structural_holes, structural_reasons = \
+            structural_decision_regions(
+                paths, path_decisions, pins, coords, coord_types=coord_types,
+                type_ranges=type_ranges)
+    if paths and structural_regions is not None:
         brackets, regions, warned, round_failure = {}, structural_regions, \
             set(), None
         region_holes = structural_holes
@@ -5574,7 +5679,7 @@ def main():
                             + (f" \\ {{{', '.join(map(str, h))}}}" if h
                                else ""))
             print(f"[structural] enc={enc}: " + ", ".join(bits))
-    else:
+    elif paths:
         # Round 1: geometric bracket.
         if args.skip_bracket:
             brackets, regions, warned, round_failure = {}, {}, set(), None
@@ -5663,7 +5768,7 @@ def main():
                  " and every region below holds for ALL their values"))
 
     # Certify every candidate, shrinking on the witness when refuted.
-    ok, failed, ok_holes, ok_retreated, ok_source = {}, {}, {}, {}, {}
+    ok, failed, ok_holes, ok_retreated, ok_source = {}, dict(pre_failed), {}, {}, {}
     # Per (enc, piece), like ok_retreated and for the same reason: a region
     # reported without naming the harness-chosen values it was certified under
     # reads as an unconditional statement, and the emitter's rendering decision
@@ -6522,8 +6627,12 @@ def main():
                   f"query; the union is certified because each member is, and "
                   f"they are pairwise disjoint (checked above)")
     for enc, why in sorted(failed.items()):
-        print(f"  enc={enc}: NOT CERTIFIED — {why}; this path falls back to its "
-              f"concrete counterexample test")
+        if enc in pre_failed:
+            suffix = ("; no concrete counterexample test is emitted without a "
+                      "deterministic external-call fixture")
+        else:
+            suffix = "; this path falls back to its concrete counterexample test"
+        print(f"  enc={enc}: NOT CERTIFIED — {why}{suffix}")
     if dropped_by_certify:
         # C5 ran ONCE, before any query, and every one of these names was in a
         # bucket then. The drop removed them afterwards, so as the run ends they
@@ -6561,8 +6670,8 @@ def main():
     # The per-path counterexample travels with it because the downstream plan
     # needs a KNOWN MEMBER of the domain -- for the concrete-replay fallback, and
     # for the C2 check that a region contains it.
-    ce_by_enc = {e: ce for e, _d, ce in paths}
-    depth_by_enc = {e: d for e, d, _ce in paths}
+    ce_by_enc = {e: ce for e, _d, ce in all_paths}
+    depth_by_enc = {e: d for e, d, _ce in all_paths}
     out = {
         "schema": "path-generalise-result/1",
         "contract": args.contract,
@@ -6641,6 +6750,7 @@ def main():
         "not_certified": [
             {"enc": e, "depth": depth_by_enc.get(e), "verdict": "NOT_CERTIFIED",
              "reason": why,
+             "concrete_fallback": e not in pre_failed,
              # §Certification's floor. "SUCCESSFUL" clears this path's concrete
              # replay test; "FAILED" means it gets NO test; anything else is
              # undecided and clears nothing. A path MISSING from this map was
@@ -6652,7 +6762,7 @@ def main():
             for e, why in sorted(failed.items())
         ],
         "enumerated": [
-            {"enc": e, "depth": d} for e, d, _ in paths
+            {"enc": e, "depth": d} for e, d, _ in all_paths
         ],
     }
     result_path = os.path.join(cwd, "generalise-result.json")
