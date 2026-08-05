@@ -70,6 +70,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       run_config,
                                       stamp_workdir,
                                       abi_gate_class,
+                                      structural_abi_gate_certificate,
                                       file_identity,
                                       validate_enumeration_import)
 
@@ -2270,6 +2271,25 @@ check("synthetic-abi-fallthrough-is-the-reject-path",
       "reject")
 check("a-source-only-path-has-no-abi-class",
       abi_gate_class([{"arm": "taken", "branch_claim": "x == 0"}]), None)
+_abi_body = [{"synthetic_abi_gate": True, "arm": "taken"}]
+_abi_reject = [{"synthetic_abi_gate": True, "arm": "fall-through"}]
+check("abi-only-body-structurally-certifies",
+      structural_abi_gate_certificate(_abi_body, {"msg.value": (0, 0)}, {},
+                                      {"msg.value": 0}) is not None, True)
+check("abi-only-reject-structurally-certifies",
+      structural_abi_gate_certificate(_abi_reject, {"msg.value": (1, 9)}, {},
+                                      {"msg.value": 3}) is not None, True)
+check("abi-body-wrong-region-does-not-structurally-certify",
+      structural_abi_gate_certificate(_abi_body, {"msg.value": (0, 1)}, {},
+                                      {"msg.value": 0}), None)
+check("abi-reject-containing-zero-does-not-structurally-certify",
+      structural_abi_gate_certificate(_abi_reject, {"msg.value": (0, 9)}, {},
+                                      {"msg.value": 3}), None)
+check("source-decision-plus-abi-does-not-structurally-certify",
+      structural_abi_gate_certificate(_abi_body + [{
+          "arm": "taken",
+          "branch_claim": "x == 0"
+      }], {"msg.value": (0, 0)}, {}, {"msg.value": 0}), None)
 
 # Stage 2 may reuse stage 1 only when the structured collection manifest proves
 # that both stages mean the same run. This test exercises the accepting edge and

@@ -616,6 +616,39 @@ def abi_gate_class(decisions):
     return "body" if gates[0].get("arm") == "taken" else "reject"
 
 
+def structural_abi_gate_certificate(decisions, box, holes, ce):
+    """Return a certificate reason for a path that is only the ABI value gate.
+
+    This is deliberately narrower than "has an ABI gate". It applies only when
+    the report says the complete path contains exactly that synthetic decision,
+    and the measured region already matches the compiler-inserted non-payable
+    split: body iff msg.value == 0, rejection iff msg.value != 0.
+    """
+    decisions = decisions or []
+    if len(decisions) != 1 or not decisions[0].get("synthetic_abi_gate"):
+        return None
+    if "msg.value" not in box:
+        return None
+    lo, hi = box["msg.value"]
+    punched = set((holes or {}).get("msg.value", ()))
+    value = ce.get("msg.value")
+    kind = abi_gate_class(decisions)
+    if kind == "body":
+        if (lo, hi) != (0, 0) or 0 in punched or value != 0:
+            return None
+        return ("STRUCTURAL ABI value gate: this complete path has no source "
+                "decision beyond the compiler-inserted non-payable body gate, "
+                "and its measured region is msg.value == 0")
+    if kind == "reject":
+        if lo <= 0 <= hi or value is None or value < lo or value > hi \
+           or value in punched:
+            return None
+        return ("STRUCTURAL ABI value gate: this complete path has no source "
+                "decision beyond the compiler-inserted non-payable reject "
+                "gate, and its measured region excludes msg.value == 0")
+    return None
+
+
 # ---- WHY THERE IS NO WITNESS, READ FROM THE REPORT RATHER THAN ASSUMED -------
 #
 # Every U claim carries a `u_reason`, and the two families below need OPPOSITE
@@ -5398,7 +5431,7 @@ def main():
                  " and every region below holds for ALL their values"))
 
     # Certify every candidate, shrinking on the witness when refuted.
-    ok, failed, ok_holes, ok_retreated = {}, {}, {}, {}
+    ok, failed, ok_holes, ok_retreated, ok_source = {}, {}, {}, {}, {}
     # Per (enc, piece), like ok_retreated and for the same reason: a region
     # reported without naming the harness-chosen values it was certified under
     # reads as an unconditional statement, and the emitter's rendering decision
@@ -5480,6 +5513,17 @@ def main():
             # region that a cut could not separate is EXPECTED to be refuted.
             print(f"[certify enc={enc}] region overlaps an unseparated sibling; "
                   f"certifying anyway, the query is what decides")
+        structural = structural_abi_gate_certificate(
+            path_decisions.get(enc), box, holes, ce)
+        if structural:
+            key = (enc, 1)
+            ok[key] = dict(box)
+            ok_holes[key] = copy_holes(holes)
+            ok_source[key] = "structural-abi-gate"
+            witness_check[enc] = "STRUCTURAL"
+            print(f"[certify enc={enc}] {structural}. No ESBMC certification "
+                  f"query is started for this path.")
+            continue
         # THE WITNESS AND THE BOX IT WAS SOLVED UNDER TRAVEL TOGETHER.
         #
         # They must, and getting this wrong produced a FALSE POSITIVE on real
@@ -6336,6 +6380,8 @@ def main():
                 # test that claims more than was certified.
                 "extcall_pins": {n: str(v) for n, v in
                                  sorted((ok_extcall.get(key) or {}).items())},
+                "certification_source":
+                    ok_source.get(key, "esbmc-certify"),
                 "box": [
                     {"name": n, "lo": str(lo), "hi": str(hi),
                      "holes": [str(h) for h in sorted(
