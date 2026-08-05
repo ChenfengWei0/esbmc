@@ -1441,3 +1441,37 @@ are refuted should no longer produce a zero-region Stage 2 solely because the
 final coverage report was not written. It will still be honest partial
 evidence: only paths with actual CE payloads enter certification, and ESBMC
 must still certify any region before PUT generation.
+
+## 33. Updated POC retry budget
+
+The per-POC ESBMC budget rule has changed. The old "one official ESBMC campaign
+per POC" limit is replaced by a three-attempt gradient, still serial and still
+not an invitation to iterate after every one-line edit:
+
+1. Attempt 1: 60 seconds, 8 GiB memory limit.
+2. Attempt 2: 120 seconds, 8 GiB memory limit.
+3. Attempt 3: 600 seconds maximum, 10 GiB memory limit.
+
+The first two attempts preserve the old 8-GiB discipline; the third is the
+maximum escalation cell and may use 10 GiB. The rule applies per POC, not per
+individual ESBMC subprocess inside a stage: the official POC driver may run
+Stage 1/2/3 under one attempt's timeout/memory settings, then escalate only if
+the attempt fails to produce a usable PUT result. Fuzz remains refutation-only:
+extra attempts can prove/certify with ESBMC, but fuzz may only remove candidates
+or expose cheap counterexamples.
+
+`notes/coverage/scripts/poc_one.py` now has `--attempt 1|2|3`, and this is the
+preferred way to invoke the official ladder. `--long` remains only as a legacy
+manual override and should not be used for accounting unless there is a separate
+reason to leave the ladder.
+
+Consequences for already consumed POCs:
+
+- `farming__Distributor__setDistributor`: attempt 1 was spent at 60s/8GiB and
+  failed before Stage 2 because Stage 1 did not publish a completed report.
+  The journal salvage repair means attempt 2 may reuse the stronger pipeline
+  shape, but it must be counted as the second official attempt for this POC.
+- `farming__Distributor__distributor`: attempt 1 was spent at 60s/8GiB. Stage 1
+  fully covered 2/2 paths; Stage 2 timed out after level0/bracket/refine with
+  no certified region. Attempt 2 may run at 120s/8GiB unless a code-level fix
+  removes the need first.

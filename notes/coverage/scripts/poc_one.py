@@ -25,14 +25,20 @@ TWO CELLS, never merged:
               empty, because guessing it would make every artefact number a
               measurement of the guess.
 
-THE PER-ESBMC TIME BOX IS ENFORCED HERE. The work order bans any single solver
-invocation longer than 60 seconds unless the task explicitly allows it, so that
-is the default and exceeding it needs `--long N`. Stage 3 can contain several
-serial region/R2 invocations; each keeps this bound, while the stage itself is
-not killed after the first invocation's allowance.
+THE PER-POC RETRY LADDER IS ENFORCED HERE. Each PoC has at most three official
+attempts:
+
+    --attempt 1   60s,  8 GiB
+    --attempt 2   120s, 8 GiB
+    --attempt 3   600s, 10 GiB
+
+Stage 3 can contain several serial region/R2 invocations; each keeps the
+attempt's ESBMC timeout/memory limit, while the aggregate stage itself is not
+killed after the first invocation's allowance.
 
 Usage:
-    python3 poc_one.py <poc-id> [--stage 1|2|3|all] [--cell gate|artefact]
+    python3 poc_one.py <poc-id> [--stage 1|2|3|all]
+                       [--cell gate|artefact] [--attempt 1|2|3]
     python3 poc_one.py --list
 """
 import argparse
@@ -50,12 +56,15 @@ POCS = REPO / "notes/coverage/poc_units"
 sys.path.insert(0, str(HERE))
 from pathcov_collect import solver_flags_for  # noqa: E402
 
-DEFAULT_TIMEOUT = 60
+ATTEMPTS = {
+    1: (60, 8),
+    2: (120, 8),
+    3: (600, 10),
+}
 STRONG_RECIPE_VERSION = "veriput-strong/6"
 STRONG_PROBE_WITNESSES = 8
 STRONG_CERTIFY_ARGS = [
     "--recipe-version", STRONG_RECIPE_VERSION,
-    "--memlimit-gib", "8",
     "--jobs", "1",
     "--probes", "8",
     "--refine-rounds", "2",
@@ -173,9 +182,12 @@ def main():
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--stage", choices=("1", "2", "3", "all"), default="1")
     ap.add_argument("--cell", choices=("gate", "artefact"), default="gate")
+    ap.add_argument("--attempt", type=int, choices=sorted(ATTEMPTS), default=1,
+                    help="official per-POC budget tier: 1=60s/8GiB, "
+                         "2=120s/8GiB, 3=600s/10GiB")
     ap.add_argument("--long", type=int, default=None, metavar="N",
-                    help="raise the per-run time box above the work order's "
-                         "60 seconds. Prints the rule it overrides.")
+                    help="legacy manual timeout override. Prefer --attempt so "
+                         "the 60/120/600s retry ladder is visible.")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the command and the cell, run nothing")
     ap.add_argument("--fresh", action="store_true",
@@ -260,14 +272,13 @@ def main():
             f"  Fill it in at {POCS / a.poc / 'poc.json'} and re-run, or use "
             f"--cell gate.")
 
-    timeout = DEFAULT_TIMEOUT
+    timeout, memlimit_gib = ATTEMPTS[a.attempt]
     if a.long is not None:
-        if a.long <= DEFAULT_TIMEOUT:
-            sys.exit(f"--long {a.long} is not longer than the {DEFAULT_TIMEOUT}s "
-                     f"default; drop the flag")
-        print(f"[poc] ⚠ TIME BOX RAISED to {a.long}s. The work order bans any "
-              f"single run over {DEFAULT_TIMEOUT}s unless the task explicitly "
-              f"allows it -- this run is claiming that allowance.", flush=True)
+        if a.long <= 0:
+            sys.exit("--long must be positive")
+        print(f"[poc] ⚠ TIME BOX MANUALLY OVERRIDDEN to {a.long}s on top of "
+              f"attempt {a.attempt}'s {timeout}s/{memlimit_gib}GiB tier. "
+              f"Prefer --attempt for official retry accounting.", flush=True)
         timeout = a.long
 
     suffix = f"__poc_{poc['declaring_contract']}_{poc['unit']}_{a.cell}"
@@ -279,7 +290,9 @@ def main():
           f"(--solidity-max-tx {cell['max_tx']}, scope {cell['scope']})")
     print(f"[poc] why this cell: {cell['why']}")
     print(f"[poc] time box     : {timeout}s")
-    print(f"[poc] memory       : 8 GiB per ESBMC process, jobs=1")
+    print(f"[poc] attempt      : {a.attempt} "
+          f"({ATTEMPTS[a.attempt][0]}s/{ATTEMPTS[a.attempt][1]}GiB tier)")
+    print(f"[poc] memory       : {memlimit_gib} GiB per ESBMC process, jobs=1")
     print(f"[poc] solver       : {' '.join(solver_flags) if solver_flags else '(default)'}"
           f" ({solver_reason})")
 
@@ -303,7 +316,7 @@ def main():
                    "--out-suffix", suffix,
                    "--scope", cell["scope"],
                    "--max-tx", str(cell["max_tx"]),
-                   "--memlimit-gib", "8",
+                   "--memlimit-gib", str(memlimit_gib),
                    "--probe-witnesses", str(STRONG_PROBE_WITNESSES),
                    "--timeout", str(timeout)]
         # ---- THE GATE'S OWN ADVICE HAS TO BE REACHABLE FROM HERE ----------
@@ -329,7 +342,8 @@ def main():
                    "--enumeration-index", str(enumeration_index),
                    "--enumeration-report", str(enumeration_report),
                    "--timeout", str(timeout),
-                   "--run-timeout", str(timeout)] + STRONG_CERTIFY_ARGS \
+                   "--run-timeout", str(timeout),
+                   "--memlimit-gib", str(memlimit_gib)] + STRONG_CERTIFY_ARGS \
                   + [f"--esbmc-arg={flag}" for flag in solver_flags] \
                   + list(a.certify_arg)
         # ---- ONE FLAG, THE RIGHT VERB PER STAGE ---------------------------
@@ -356,7 +370,7 @@ def main():
                    "--scope", certify_scope,
                    "--max-tx", str(cell["max_tx"]),
                    "--timeout", str(timeout),
-                   "--memlimit-gib", "8",
+                   "--memlimit-gib", str(memlimit_gib),
                    "--out-root", str(put_out),
                    "--auto-unwind", "1",
                    "--propose-r2",
