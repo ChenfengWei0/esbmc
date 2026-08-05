@@ -275,6 +275,17 @@ Stage-1 pathcov: 154 instrumented paths, 7 witnessed paths.
 - Paths `26/27`, `246/247`, `3622/3623`: sibling pairs with the same
   test-settable payload, differing only in external-call success/failure at
   `safeTransferFrom`.
+  - Source branch: `SafeERC20.safeTransferFrom` stores the low-level call result
+    in `success`, then reverts only when `!success`.
+  - Source-side payloads seen in the current Stage-1 CE report:
+    - `26/27`: `amount == 0`, `msg.sender == 0`, `msg.value == 0`;
+    - `246/247`: `amount == 0`, `msg.sender == 1`, `msg.value == 0`;
+    - `3622/3623`: a huge `amount` witness close to `uint256.max`,
+      `msg.sender == 1`, `msg.value == 0`.
+  - In each pair, one path is the callee-success branch and one is the
+    callee-failure branch. The pair's callable Solidity inputs and constructor
+    state are otherwise the same at the precision the generated Foundry test
+    can establish.
   - Current classification as statically inseparable is correct for a plain
     generated PUT.
   - A stronger future PUT would need a deterministic ERC20 fixture or mock so
@@ -299,6 +310,80 @@ Current attempt status:
   by a failed region search.
 - Only the 600s/10GiB tier remains for this POC, and there is no need to spend
   it unless the fixture/model strategy changes.
+
+## St1inch
+
+Source: `notes/coverage/poc_units/st1inch_St1inch__St1inch__setFeeReceiver/inputs/st1inch__St1inch.flat.sol`
+
+Important status of existing artefacts:
+
+- The old `notes/coverage/pathcov/st1inch_St1inch__poc_St1inch_*_gate`
+  reports are not witnessed CE reports. Their `cov-ce-journal.json` files have
+  zero witnesses, and their path rows are `U` with reasons such as
+  `solver-unknown`, not concrete failing path claims.
+- The old logs used the st1inch encoder exception
+  `--z3 --tuple-node-flattener`. Several simple-looking units still returned
+  `unknown (reason: out of memory)` under that configuration.
+- Therefore the path ids in those old reports are useful as an enumeration
+  sketch only. Do not treat them as Stage-1 ground truth for input values,
+  returns, or B denominator. A real st1inch POC attempt needs fresh witnessed CE
+  extraction under the current binary and the official 60/120/600s ladder.
+
+Semantic ground truth from source:
+
+- Common ABI gate: these functions are non-payable unless otherwise noted, so
+  `msg.value != 0` is a structural revert path with a low-level-call failure
+  oracle.
+- `setFeeReceiver(address feeReceiver_)`:
+  - non-owner reverts at `onlyOwner`;
+  - owner with `feeReceiver_ == 0` reverts with `ZeroAddress`;
+  - owner with `feeReceiver_ != 0` exits normally, sets
+    `state.feeReceiver == feeReceiver_`, and emits `FeeReceiverSet`.
+  - Expected strong PUT region mirrors `farming.setDistributor`, except owner
+    is constructor `msg.sender` and the writable state is `feeReceiver`.
+- `setMaxLossRatio(uint256 maxLossRatio_)`:
+  - non-owner reverts at `onlyOwner`;
+  - owner with `maxLossRatio_ > 1e9` reverts with `MaxLossOverflow`;
+  - owner with `maxLossRatio_ <= 1e9` exits normally, sets
+    `state.maxLossRatio == maxLossRatio_`, and emits `MaxLossRatioSet`.
+  - This is a high-value target for region synthesis because the meaningful
+    boundary is a small literal interval inside `uint256`.
+- `setMinLockPeriodRatio(uint256 minLockPeriodRatio_)`:
+  - same shape as `setMaxLossRatio`, writing `state.minLockPeriodRatio`.
+- `setEmergencyExit(bool emergencyExit_)`:
+  - non-owner reverts at `onlyOwner`;
+  - owner exits normally, sets `state.emergencyExit == emergencyExit_`, and
+    emits `EmergencyExitSet`.
+  - The only nontrivial input dimension is the boolean argument, so this may be
+    strong only if `msg.sender` or `msg.value` contributes a certified width
+    greater than one on a real path.
+- `setDefaultFarm(address defaultFarm_)`:
+  - non-owner reverts at `onlyOwner`;
+  - owner with `defaultFarm_ == 0` exits normally and clears `defaultFarm`;
+  - owner with `defaultFarm_ != 0` additionally calls
+    `Plugin(defaultFarm_).TOKEN()` and requires it to equal `this`.
+  - Nonzero branches depend on external-call return data. Without a
+    deterministic plugin fixture, only the zero-farm owner path and ABI/owner
+    gates are clean PUT targets.
+- `votingPower(uint256 balance)` and `votingPowerAt(uint256 balance,
+  uint256 timestamp)`:
+  - normal path returns `_votingPowerAt(balance, block.timestamp/timestamp)`.
+  - `_votingPowerAt` is a 30-bit exponentiation-by-table calculation with many
+    bit-test branches. Old pathcov deliberately degraded this callee out of the
+    path identity to fit the path budget, so the expected oracle is a return
+    relation to the same library calculation, not a simple constant unless the
+    region pins `balance`/`timestamp`.
+- `approve`, `transfer`, and `transferFrom`:
+  - the public overrides are pure and always revert with
+    `ApproveDisabled`/`TransferDisabled`.
+  - Expected PUTs are simple revert oracles over wide calldata and value-gate
+    regions; they should not require state R1/R2.
+- `deposit`, `withdraw`, and early-withdraw variants:
+  - these are stateful token-transfer units. Strong PUTs require entry-state
+    setup for `depositors`, balances, `emergencyExit`, time, and external
+    `ONE_INCH` transfer behavior.
+  - Treat external token success/failure as a fixture boundary, the same class
+    as `FarmingPool.deposit`, unless a deterministic token fixture is supplied.
 
 ## Next Static Checks Before Running Another POC
 

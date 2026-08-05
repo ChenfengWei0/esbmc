@@ -13,8 +13,8 @@ rule against creating new Markdown files.
 - Working branch: `feat/veriput-fuzz-first`
 - Original takeover snapshot: `5efe5b3252`
   (`[solidity] Strengthen parameterized path test synthesis`)
-- Latest pushed commit before this pending script patch: `02dacbfacf`
-  (`[solidity] Resolve literal path-cov slot keys`)
+- Latest pushed commit: `dc4e8bed82`
+  (`[solidity] Pin Aqua push slot ground truth`)
 - Pushed remote branch: `E-SOL/feat/veriput-fuzz-first`
 - Snapshot checks:
   - `python3 -m py_compile scripts/solidity_path_generalise.py
@@ -27,12 +27,12 @@ rule against creating new Markdown files.
     pending script patch.
   - `git diff --check` on the touched scripts/docs: passed after the pending
     script patch.
-- POC run after the pending script patch:
+- POC run after the script patch:
   - `aqua_Aqua__Aqua__rawBalances` Stage 2 attempt 2, 120s/8GiB:
     passed, `2 certified / 0 not / 2 witnessed`.
   - `aqua_Aqua__Aqua__rawBalances` Stage 3 attempt 2, 120s/8GiB:
     passed, `B = 2 of 2`.
-- Not run after the pending script patch beyond rawBalances attempt 2: C++
+- Not run after the script patch beyond rawBalances attempt 2: C++
   rebuild, CTest, or other POCs. Other experiments are using the machine, and
   a real POC run is a scarce measurement, not a compile check.
 - The worktree contains many untracked generated artefacts. They were
@@ -60,8 +60,16 @@ The user's current execution constraints tighten the work order:
 - Before spending a POC run, read the POC source and existing pathcov artefacts
   and write down the expected path, input region, slot region, and assertion
   oracle. Treat this as the ground truth for debugging.
+- Current official per-POC retry ladder:
+  - attempt 1: 60s ESBMC timeout, 8 GiB memlimit;
+  - attempt 2: 120s ESBMC timeout, 8 GiB memlimit;
+  - attempt 3: 600s ESBMC timeout, 10 GiB memlimit.
 - The eventual global generalisation target is at least 70%. This is a delivery
   threshold, not permission to abandon the remaining paths without attribution.
+- Fuzz is a refutation tool only. It may cheaply reject a bad region, bad
+  instrumentation, bad fixture, or bad R1/R2 candidate by finding a concrete
+  violating execution. It must never be counted as proof that a region or
+  assertion universally holds.
 
 The only deliverable counted as B is a generated `.t.sol` for a real corpus
 contract that simultaneously has:
