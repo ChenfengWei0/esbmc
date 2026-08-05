@@ -2343,3 +2343,70 @@ then ran the B gate. Current result:
 Only attempt 3 remains for `farming__FarmingPool__deposit`, but the supported
 certified path is already B; do not spend it unless a later code change
 requires regression confirmation.
+
+## 2026-08-06 return structured R2 support
+
+Implemented and verified a code-level repair for getter-style return oracles.
+This did not spend any POC ESBMC attempt.
+
+What changed:
+
+- `scripts/solidity_path_put.py`
+  - `propose_r2_batch` now treats `return` as an R2 target when the unit has a
+    single scalar return and the `retlive` witness is REFUTED.
+  - Region/pin scalar state coordinates are offered as structured R2 terms,
+    e.g. `state._distributor`, without lifting them into the Foundry fuzz
+    signature.
+  - `return_rung_assertions` now renders structured return rungs such as
+    `return == state._distributor` and structured return intervals when their
+    endpoints can be spelled by the emitted PUT.
+  - The emitted PUT pre-reads scalar state coordinates needed by return rungs
+    with `vm.load` before the unit call. This is a read of the certified entry
+    state, not a state fuzz coordinate and not a proof of arbitrary havoced
+    storage.
+- `src/goto-programs/goto_coverage.cpp`
+  - the existing structured R2 helper now accepts a text subject (`post` or
+    `return`) and flags controlling `pre`/delta support.
+  - state and mapping structured R2 keep the previous `post` behavior.
+  - return structured R2 emits equality/absolute rungs with `return == ...` /
+    `return in [...]`, and refuses `pre` terms or delta terms for returns.
+- Added regression
+  `regression/esbmc-solidity/solidity_path_cov_assert_return_structured_state`
+  pinning `return == state.owner`.
+
+Verification run:
+
+```sh
+cmake --build build --target esbmc -j2
+python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py
+python3 scripts/test_solidity_path_put.py
+/home/samson/workspace/esbmc/build/src/esbmc/esbmc \
+  regression/esbmc-solidity/solidity_path_cov_assert_return_structured_state/contract.sol \
+  --contract GetterR2 --solidity-path-coverage --solidity-max-tx 1 \
+  --path-cov-assert \
+  regression/esbmc-solidity/solidity_path_cov_assert_return_structured_state/spec.json
+```
+
+The direct ESBMC regression run exits with `VERIFICATION FAILED`, as expected
+for assertion-ladder mode, and prints:
+
+- `return: return == state.owner  HOLDS`
+- `ladder summary -- 4 candidate(s): 2 HOLDS, 2 REFUTED`
+
+An existing return regression,
+`solidity_path_cov_assert_refuses_mapping`, was also replayed directly and still
+prints:
+
+- `return: return == 0  REFUTED`
+- `return: return != 0  HOLDS`
+- `ladder summary -- 9 candidate(s): 4 HOLDS, 5 REFUTED`
+
+Impact on POC ground truth:
+
+- This enables a future fresh `Distributor.distributor` assert ladder to ask
+  and certify `return == state._distributor` instead of only `return == 0`.
+- It does not by itself make the normal getter path parameterized. If the
+  certified region still renders only `msg.value == 0` and constructor-pinned
+  state, the PUT remains a deterministic oracle and should still be refused by
+  the floor test. This is intentional: state pre-read is an oracle endpoint,
+  not a fuzz dimension.

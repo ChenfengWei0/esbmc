@@ -210,7 +210,8 @@ Stage-1 pathcov: 2 witnessed paths.
   - Expected PUT oracle: low-level call with value must fail.
 - Path `3`: normal getter.
   - Expected region: `msg.value == 0` and constructor pins above.
-  - Expected PUT oracle: return value equals `_distributor`, currently `0`.
+  - Expected PUT oracle: return value equals entry-state `_distributor`,
+    currently constructor-pinned to `0`.
 
 Current attempt status:
 
@@ -223,6 +224,17 @@ Current attempt status:
   constructor-pinned.
 - No official retry remains for this POC under the current three-attempt
   budget.
+
+Static support note, 2026-08-06:
+
+- The verifier and PUT emitter now support structured return R2 for scalar
+  state getter shapes: `return == state._distributor` can be asked, certified,
+  and rendered as a return assertion over a pre-call `vm.load`.
+- This strengthens the oracle shape for future fresh runs, but it does not
+  change the B denominator for the already-spent `Distributor.distributor`
+  attempt. The normal getter path still has no fuzz coordinate with width > 1
+  unless the region strategy deliberately introduces a sound, certified input
+  dimension.
 
 ### `Distributor.setDistributor`
 

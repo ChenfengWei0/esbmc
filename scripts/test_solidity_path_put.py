@@ -611,7 +611,7 @@ def test_region_coordinate_ladder_refusal_is_read():
 RETLIVE = "a value IS returned on this path (REFUTED == yes)"
 
 
-def _ret_put(ladder_rows, rettypes, layout=None):
+def _ret_put(ladder_rows, rettypes, layout=None, r2_terms=None):
     em, case = make_case()
     notes = []
     put, stats = build_put(
@@ -619,7 +619,8 @@ def _ret_put(ladder_rows, rettypes, layout=None):
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
         holes={}, pins={}, params=PARAMS, emitted=em, case=case,
         layout=LAYOUT if layout is None else layout,
-        ladder_rows=ladder_rows, notes=notes, rettypes=rettypes)
+        ladder_rows=ladder_rows, notes=notes, rettypes=rettypes,
+        r2_terms=r2_terms)
     return "\n".join(put or []), stats, notes
 
 
@@ -640,6 +641,42 @@ def test_return_rung_is_bound_and_asserted():
                  f"{stats['return_asserts']} return")
     bad += check("over the unit's OWN RETURN" in text,
                  "the header says the oracle has a return-value half")
+    return bad
+
+
+def test_return_rung_can_assert_a_scalar_entry_state_coord():
+    """Getter ground truth: a certified `return == state.x` rung is renderable.
+
+    The state coordinate is READ before the unit call; it is not lifted into the
+    fuzz signature and not havoc'd. That keeps this as an oracle over the
+    entry state ESBMC certified, rather than an unsupported state fuzz input.
+    """
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return", "return == state._distributor", "HOLDS")],
+        [("", "address")],
+        layout={"_distributor": (1, 0, 20)},
+        r2_terms={
+            "state._distributor": {
+                "kind": "coord",
+                "name": "state._distributor",
+            },
+        })
+    bad = 0
+    bad += check("uint256 _ret_pre_distributor = (uint256(vm.load("
+                 in text,
+                 "the entry-state storage coordinate is read before the call")
+    bad += check("address _put_ret = c0.setDiscount(" in text,
+                 "the return value is still bound from the call")
+    bad += check("assertEq(uint256(uint160(_put_ret)), "
+                 "_ret_pre_distributor" in text,
+                 "the HOLDS rung compares the return with the entry-state read")
+    bad += check(not any("state._distributor" in s
+                         for s in stats["oracle_skipped"]),
+                 f"the structured state coord was not dropped: "
+                 f"{stats['oracle_skipped']}")
+    bad += check(stats["return_asserts"] == 1,
+                 f"one return assertion: {stats['return_asserts']}")
     return bad
 
 
@@ -1700,6 +1737,28 @@ def test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate():
     lookup = r2_terms_from_specs(got)
     bad += check("(pre + amount)" in lookup,
                  f"the renderer receives the structured term: {lookup}")
+    return bad
+
+
+def test_typed_R2_proposes_return_equals_entry_state_coord_for_getters():
+    from solidity_path_put import propose_r2_batch, r2_candidates  # noqa: E402
+    got = propose_r2_batch(
+        [("return", RETLIVE, "REFUTED")],
+        [], rettypes=[("", "address")],
+        rendered_coords=[("state._distributor", "id", 20)],
+        term_budget=8, candidate_budget=8, log=lambda _line: None)
+    candidates = r2_candidates(got)
+    return_entry = next((v for v in got[0]["vars"]
+                         if v["name"] == "return"), None) if got else None
+    bad = 0
+    bad += check(return_entry is not None,
+                 f"the return value is an R2 target: {got}")
+    bad += check(any(c["var"] == "return"
+                     and c["text"] == "return == state._distributor"
+                     for c in candidates),
+                 f"the getter identity candidate is asked: {candidates}")
+    bad += check(return_entry is not None and not return_entry["deltas"],
+                 f"return R2 never asks post/pre deltas: {return_entry}")
     return bad
 
 
@@ -3873,6 +3932,7 @@ def main():
               test_msg_value_without_a_value_option_is_still_CHECKED_and_refuses,
               test_uncomparable_env_quantity_refuses_emission,
               test_return_rung_is_bound_and_asserted,
+              test_return_rung_can_assert_a_scalar_entry_state_coord,
               test_a_retlive_that_HOLDS_kills_every_return_rung,
               test_a_bool_return_uses_assertTrue_not_a_cast,
               test_a_whole_value_rung_on_a_tuple_unit_is_refused,
@@ -3920,6 +3980,7 @@ def main():
               test_JSON_fuzz_filter_refutes_only_its_labeled_assertion,
               test_R2_fuzz_filter_removes_only_concretely_refuted_candidates,
               test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate,
+              test_typed_R2_proposes_return_equals_entry_state_coord_for_getters,
               test_typed_R2_term_budget_is_VISIBLE_not_a_second_query,
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,
               test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,

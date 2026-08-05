@@ -5159,8 +5159,8 @@ void goto_coveraget::solidity_path_coverage()
   // one-fact-two-ledgers shape this file has already paid for elsewhere.
   std::function<bool(const symbolt *, const std::string &, expr2tc &)>
     resolve_coord;
-  std::function<
-    bool(const symbolt *, const std::string &, expr2tc &, std::string &)>
+  std::function<bool(
+    const symbolt *, const std::string &, expr2tc &, std::string &)>
     resolve_slot_key;
   resolve_coord =
     [&](const symbolt *fsym, const std::string &name, expr2tc &out) -> bool {
@@ -5397,11 +5397,11 @@ void goto_coveraget::solidity_path_coverage()
     return false;
   };
 
-  resolve_slot_key =
-    [&](const symbolt *fsym,
-        const std::string &kn,
-        expr2tc &kexpr,
-        std::string &why) -> bool {
+  resolve_slot_key = [&](
+                       const symbolt *fsym,
+                       const std::string &kn,
+                       expr2tc &kexpr,
+                       std::string &why) -> bool {
     bool klit = false;
     BigInt kval;
     if (kn.rfind("0x", 0) == 0 || kn.rfind("0X", 0) == 0)
@@ -9478,11 +9478,25 @@ void goto_coveraget::solidity_path_coverage()
                                      const type2tc &ty,
                                      const std::string &owner,
                                      const expr2tc &live,
-                                     const expr2tc &pre_v) {
+                                     const expr2tc &pre_v,
+                                     const std::string &subject,
+                                     bool allow_pre_terms,
+                                     bool allow_deltas) {
         if (
           spec == nullptr ||
           (spec->equals.empty() && spec->abs.empty() && spec->deltas.empty()))
           return;
+        if (!allow_deltas && !spec->deltas.empty())
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: candidate "
+            "'{}' asks structured delta term(s), but '{}' has no entry "
+            "snapshot. Return-value R2 may ask equality/absolute rungs only",
+            uid,
+            owner,
+            subject);
+          exit(1);
+        }
         if (!is_unsignedbv_type(ty))
         {
           log_error(
@@ -9508,7 +9522,14 @@ void goto_coveraget::solidity_path_coverage()
               "': structured R2 term exceeds implemented depth 1");
           const std::string kind = term.at("kind").get<std::string>();
           if (kind == "pre")
+          {
+            if (!allow_pre_terms)
+              throw std::runtime_error(
+                "variable '" + owner +
+                "': structured R2 term names pre, but '" + subject +
+                "' has no entry snapshot");
             return {pre_v, gen_true_expr(), "pre"};
+          }
           if (kind == "literal")
           {
             const std::string value = term.at("value").get<std::string>();
@@ -9653,7 +9674,7 @@ void goto_coveraget::solidity_path_coverage()
           emit_rung(
             owner,
             "r2e" + candidate.id,
-            "post == " + term.text,
+            subject + " == " + term.text,
             and2tc(term.defined, equality2tc(live, term.value)));
         }
         for (const auto &candidate : spec->abs)
@@ -9666,7 +9687,7 @@ void goto_coveraget::solidity_path_coverage()
           emit_rung(
             owner,
             "r2a" + candidate.id,
-            "post in [" + lo.text + ", " + hi.text + "]",
+            subject + " in [" + lo.text + ", " + hi.text + "]",
             and2tc(
               defined,
               and2tc(
@@ -9936,7 +9957,7 @@ void goto_coveraget::solidity_path_coverage()
               dir,
               and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
         }
-        emit_structured_rungs(spec, vt, vname, live, pre_v);
+        emit_structured_rungs(spec, vt, vname, live, pre_v, "post", true, true);
       }
 
       // ---- MAPPING SLOTS AS OBSERVABLES ----
@@ -10410,7 +10431,7 @@ void goto_coveraget::solidity_path_coverage()
               dir,
               and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
         }
-        emit_structured_rungs(&v, et, v.name, live, pre_v);
+        emit_structured_rungs(&v, et, v.name, live, pre_v, "post", true, true);
       }
 
       // ---- THE UNIT'S OWN RETURN VALUE IS A CANDIDATE TOO ----
@@ -10614,6 +10635,8 @@ void goto_coveraget::solidity_path_coverage()
                     lessthanequal2tc(
                       g, constant_int2tc(rt, string2integer(sp->abs_hi))))));
             }
+            emit_structured_rungs(
+              sp, rt, vname, g, gen_zero(rt), "return", false, false);
           };
 
           if (has_ret_ghost)

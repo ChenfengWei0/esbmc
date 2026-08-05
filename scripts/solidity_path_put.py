@@ -666,6 +666,8 @@ IDENTITY_TY = re.compile(r"^(address|contract\s|interface\s|enum\s)")
 R2_MAX_QUERIES = 6
 R2_TERM_BUDGET = 96
 R2_CANDIDATE_BUDGET = 128
+RETURN_VAR = "return"
+RETLIVE_PREFIX = "a value IS returned on this path"
 
 
 # How many bytes a value of this endpoint type occupies in storage. Used to
@@ -680,6 +682,18 @@ def endpoint_bytes(t):
         return IDENTITY_BYTES[t]
     if t.startswith(("contract ", "interface ")):
         return 20
+    return None
+
+
+def endpoint_candidate(name, sol_type):
+    """One R2 endpoint candidate for a declared Solidity type, or None."""
+    if not name:
+        return None
+    t = _norm_ty(sol_type)
+    if NUMERIC_TY.match(t):
+        return (name, "num", None)
+    if IDENTITY_TY.match(t):
+        return (name, "id", endpoint_bytes(t))
     return None
 
 
@@ -710,13 +724,9 @@ def endpoint_candidates(params):
     """
     out = []
     for pn, pt in params or []:
-        if not pn:
-            continue
-        t = _norm_ty(pt)
-        if NUMERIC_TY.match(t):
-            out.append((pn, "num", None))
-        elif IDENTITY_TY.match(t):
-            out.append((pn, "id", endpoint_bytes(t)))
+        candidate = endpoint_candidate(pn, pt)
+        if candidate is not None:
+            out.append(candidate)
     return out
 
 
@@ -1087,6 +1097,7 @@ def _r2_direction(ladder_rows, log):
 
 def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
                      var_bytes=None, rendered_coords=None,
+                     rettypes=None,
                      term_budget=R2_TERM_BUDGET,
                      candidate_budget=R2_CANDIDATE_BUDGET, log=print):
     """Build one typed depth-zero/one candidate batch for one certified path."""
@@ -1097,6 +1108,7 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
     if candidate_budget < 1:
         raise ValueError("R2 candidate budget must be positive")
     verdicts, direction = _r2_direction(ladder_rows, log)
+    target_bytes = dict(var_bytes or {})
     allvars = []
     for name in sorted(verdicts):
         rows = verdicts[name]
@@ -1106,8 +1118,25 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
                 "unsigned scalar")
             continue
         allvars.append(name)
+
+    return_target = None
+    if rettypes is not None and len(rettypes) == 1:
+        return_target = endpoint_candidate(RETURN_VAR, rettypes[0][1])
+    retlive_refuted = any(
+        name == RETURN_VAR and text.startswith(RETLIVE_PREFIX)
+        and verdict == "REFUTED"
+        for name, text, verdict in ladder_rows)
+    if return_target is not None and retlive_refuted:
+        allvars.append(RETURN_VAR)
+        if return_target[2] is not None:
+            target_bytes[RETURN_VAR] = return_target[2]
+    elif return_target is not None:
+        log("[put]   typed R2 omitted for return: the retlive witness was not "
+            "REFUTED, so return rungs would be vacuous")
+
     if var_bytes is not None:
-        allvars = [name for name in allvars if name in var_bytes]
+        allvars = [name for name in allvars
+                   if name == RETURN_VAR or name in target_bytes]
     if not allvars:
         log("[put]   typed R2 not proposed: no readable ladder candidate")
         return []
@@ -1158,7 +1187,7 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
     zero = next((term for term in literals if term["value"] == "0"), None)
     entries = []
     for var in allvars:
-        width = None if var_bytes is None else var_bytes.get(var)
+        width = target_bytes.get(var)
         identity = [term for _name, kind, nbytes, term in coords
                     if kind == "id" and (width is None or nbytes is None
                                          or width == nbytes)]
@@ -1179,7 +1208,7 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
                                       and item["hi"].get("kind") == "literal"
                                       and int(item["hi"]["value"]) == type_max)]
         deltas = []
-        if var in direction:
+        if var != RETURN_VAR and var in direction:
             deltas = [{"id": f"d{i}", "dir": direction[var],
                        "lo": term, "hi": term}
                       for i, term in enumerate(terms)]
@@ -1359,9 +1388,11 @@ def r2_candidates(specs):
         for vi, var in enumerate(spec.get("vars", [])):
             owner = var["name"]
             kind_queues = []
-            for kind, prefix in (("equals", "post == "),
-                                 ("abs", "post in ")):
+            for kind, state_prefix in (("equals", "post == "),
+                                       ("abs", "post in ")):
                 queue = []
+                prefix = (state_prefix.replace("post", "return", 1)
+                          if owner == RETURN_VAR else state_prefix)
                 for candidate in var.get(kind, []):
                     if kind == "equals":
                         text_ = prefix + r2_term_text(candidate["term"])
@@ -1793,6 +1824,30 @@ def render_r2_term(term, pre, idents):
     return None
 
 
+def r2_term_coord_names(term):
+    """Coordinate names mentioned by a structured R2 term."""
+    if not isinstance(term, dict):
+        return []
+    kind = term.get("kind")
+    if kind == "coord":
+        name = term.get("name")
+        return [name] if name else []
+    if kind == "op":
+        return (r2_term_coord_names(term.get("lhs")) +
+                r2_term_coord_names(term.get("rhs")))
+    return []
+
+
+def return_rung_term_spellings(text):
+    """Structured endpoint spellings a return rung may contain."""
+    if text.startswith("return == "):
+        return [text[len("return == "):]]
+    m = re.match(r"^return in \[(.*), (.*)\]$", text)
+    if m:
+        return [m.group(1), m.group(2)]
+    return []
+
+
 def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
                     r2_terms=None):
     """Forge assertion lines for one rung, or None if it cannot be spelled.
@@ -1901,10 +1956,6 @@ def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
 # is REFUTED exactly when some execution of this path does return one. Anything
 # other than REFUTED there and the other rungs say nothing -- so they are
 # dropped, by name, rather than rendered.
-RETURN_VAR = "return"
-RETLIVE_PREFIX = "a value IS returned on this path"
-
-
 def return_kind(sol_type):
     """(declared type for the local, uint256-cast template) or None.
 
@@ -1928,7 +1979,8 @@ def return_kind(sol_type):
     return None
 
 
-def return_rung_assertions(text, kind, var, label):
+def return_rung_assertions(text, kind, var, label, idents_abs=None,
+                           r2_terms=None):
     """forge-std lines for one HOLDS return rung, or None if not renderable.
 
     A text whose family does not match the declared type is NOT rendered.
@@ -1938,6 +1990,11 @@ def return_rung_assertions(text, kind, var, label):
     """
     decl_t, tou = kind
     lit = json.dumps(label)
+
+    def structured(spelling):
+        term = (r2_terms or {}).get(spelling)
+        return None if term is None else render_r2_term(term, None, idents_abs)
+
     if decl_t == "bool":
         if text == "return == false":
             return [f"    assertFalse({var}, {lit});"]
@@ -1945,10 +2002,21 @@ def return_rung_assertions(text, kind, var, label):
             return [f"    assertTrue({var}, {lit});"]
         return None
     v = tou.format(v=var)
+    if text.startswith("return == ") and text != "return == 0":
+        expr = structured(text[len("return == "):])
+        if expr is not None:
+            return [f"    assertEq({v}, {expr}, {lit});"]
     if text == "return == 0":
         return [f"    assertEq({v}, 0, {lit});"]
     if text == "return != 0":
         return [f"    assertTrue({v} != 0, {lit});"]
+    m = re.match(r"^return in \[(.*), (.*)\]$", text)
+    if m:
+        lo = structured(m.group(1))
+        hi = structured(m.group(2))
+        if lo is not None and hi is not None:
+            return [f"    assertGe({v}, {lo}, {lit});",
+                    f"    assertLe({v}, {hi}, {lit});"]
     m = re.match(r"^return in \[(\d+), (\d+)\]$", text)
     if m:
         return [f"    assertGe({v}, {m.group(1)}, {lit});",
@@ -4151,7 +4219,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # shared and always sits on the bare `return`.
     ret_rows_all = [(var, t, v) for var, t, v in ladder_rows
                     if var == RETURN_VAR or var.startswith(RETURN_VAR + ".")]
-    ret_asserts, ret_skipped = [], []
+    ret_asserts, ret_skipped, ret_pre_reads = [], [], []
     if ret_rows_all:
         live = [v for var, t, v in ret_rows_all
                 if var == RETURN_VAR and t.startswith(RETLIVE_PREFIX)]
@@ -4238,18 +4306,50 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 why = berr
             else:
                 new_call = bound_call
+                ret_coord_ident_abs = dict(coord_ident_abs)
+                planned_ret_pre_reads = []
+                planned_ret_pre_names = set()
+                for idx, _rk, _vn in plan:
+                    for t in holds[idx]:
+                        for spelling in return_rung_term_spellings(t):
+                            term = (r2_terms or {}).get(spelling)
+                            for cname in r2_term_coord_names(term):
+                                if not cname.startswith("state."):
+                                    continue
+                                svar = cname[len("state."):]
+                                if cname in ret_coord_ident_abs:
+                                    continue
+                                if parse_slot_name(svar)[0] is not None:
+                                    continue
+                                if svar not in layout:
+                                    continue
+                                slot, off, nb = layout[svar]
+                                ident = "_ret_pre_" + _slot_ident(svar)
+                                if ident in planned_ret_pre_names:
+                                    continue
+                                planned_ret_pre_names.add(ident)
+                                rd = slot_read_expr("address(c0)", slot, off,
+                                                    nb)
+                                planned_ret_pre_reads.append(
+                                    f"    uint256 {ident} = {rd};")
+                                ret_coord_ident_abs[cname] = ident
+                planned_ret_asserts = []
                 for idx, rk, vn in plan:
                     label_var = (RETURN_VAR if idx is None
                                  else f"{RETURN_VAR}.{idx}")
                     for t in holds[idx]:
-                        a = return_rung_assertions(t, rk, vn,
-                                                   f"{label_var}: {t}")
+                        a = return_rung_assertions(
+                            t, rk, vn, f"{label_var}: {t}",
+                            ret_coord_ident_abs, r2_terms)
                         if a is None:
                             ret_skipped.append(
                                 f"{label_var}: {t} (rung shape not renderable "
                                 f"for its declared type)")
                             continue
-                        ret_asserts += a
+                        planned_ret_asserts += a
+                ret_asserts += planned_ret_asserts
+                if planned_ret_asserts:
+                    ret_pre_reads += planned_ret_pre_reads
                 if not ret_asserts:
                     # Every HOLDS rung was unrenderable, so the binding buys
                     # nothing and would leave an unused local (a solc warning
@@ -4259,7 +4359,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             ret_skipped.append(f"all return rungs DROPPED: {why}")
 
     # --- the oracle: post-state --------------------------------------------
-    pre_reads, post_reads, asserts, oracle_skipped = [], [], [], []
+    pre_reads, post_reads = list(ret_pre_reads), []
+    asserts, oracle_skipped = [], []
     # RUNGS THAT SAY THE STATE CHANGED, kept apart from the rest because they
     # are emitted under a condition and the header has to report them as such.
     guarded, guard_notes = [], []
@@ -5575,9 +5676,20 @@ def main():
             _rendered_coords.append(("msg.sender", "id", 20))
         if "msg.value" in region:
             _rendered_coords.append(("msg.value", "num", None))
+        for _sn in sorted({n for n in list(region) + list(pins)
+                           if n.startswith("state.")}):
+            _sv = _sn[len("state."):]
+            if parse_slot_name(_sv)[0] is not None:
+                continue
+            if _sv not in layout:
+                continue
+            _nb = layout[_sv][2]
+            _rendered_coords.append(
+                (_sn, "id" if _nb == 20 else "num",
+                 _nb if _nb == 20 else None))
         _r2 = propose_r2_batch(
             rows, params, source_literals=_source_literals,
-            depth=a.r2_depth, var_bytes=_var_bytes,
+            depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,
             rendered_coords=_rendered_coords,
             term_budget=a.r2_term_budget,
             candidate_budget=a.r2_candidate_budget, log=print)
