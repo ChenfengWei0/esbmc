@@ -3118,3 +3118,64 @@ R2 source assignment candidate minLockPeriodRatio: post == minLockPeriodRatio_
 This probe used no ESBMC attempt. The next simple owner-gated setter should
 therefore get a stronger normal-path R2 candidate without spending the 60s
 attempt on a broad blind R2 batch.
+
+## 2026-08-06 st1inch setFeeReceiver gate
+
+Ground truth:
+
+```solidity
+function setFeeReceiver(address feeReceiver_) public onlyOwner {
+    if (feeReceiver_ == address(0)) revert ZeroAddress();
+    feeReceiver = feeReceiver_;
+    emit FeeReceiverSet(feeReceiver_);
+}
+```
+
+The constructor also calls `setFeeReceiver(feeReceiver_)`, but the POC gate
+fixture skips deployment for ESBMC and pins only `_owner = 1`, so the method
+entry state is the intended unit-level gate state rather than the expensive
+constructor/voting-power state.
+
+Attempt 1:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setFeeReceiver \
+  --stage all --cell gate --attempt 1 --fresh
+```
+
+Budget: 60s/8GiB per ESBMC process.
+
+Result:
+
+- Stage 1 completed in 48.7s with a report, 0 killed.
+- Stage 2 reused the report and finished in 0.6s:
+  `CERTIFIED, 5 certified / 0 not / 5 witnessed`.
+- Stage 3 finished in 529.4s.
+- Final B table:
+  - B: enc=15, enc=2, enc=12, enc=13.
+  - REFUSED: enc=14.
+
+Important observations:
+
+- enc=15 normal path used the source-assignment R2 fast path:
+  `feeReceiver: post == feeReceiver_  HOLDS`.
+  It emitted a strong PUT with one fuzz parameter (`feeReceiver_`) and two
+  post-state asserts (`feeReceiver == feeReceiver_`, `_owner == pre`).
+- enc=2, enc=12, and enc=13 are rollback/value-gate paths. The emitter
+  correctly dropped unobservable post-state/R2 candidates and kept a layer-1
+  exit-kind oracle.
+- enc=14 is `msg.value == 0`, `msg.sender == 1`, `feeReceiver_ == 0`. This is
+  a singleton rendered input region: every rendered coordinate is width one, so
+  there is no real parameter left to fuzz. The refusal is structural, not a
+  solver timeout, region failure, or rollback instrumentation bug. A second
+  attempt is unlikely to change this unless the tool grows support for
+  parameterizing pre-state setup with something like `vm.store`.
+
+Accounting recommendation:
+
+- Count `setFeeReceiver` as 4 parameterized green PUTs out of 5 certified
+  regions for the gate cell. This is above the 70% target.
+- Do not spend attempt 2 on this POC just to chase enc=14. The missing row is
+  not an ESBMC-strength issue; it is a singleton-region/parameterization policy
+  issue.
