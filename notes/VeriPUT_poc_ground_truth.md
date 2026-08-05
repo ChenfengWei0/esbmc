@@ -119,14 +119,48 @@ Stage-1 pathcov: 4 instrumented paths, 2 witnessed paths.
 
 Stage-1 pathcov: 2 witnessed paths in the current result.
 
-- ABI non-payable reject is structural and should assert call failure when
-  `msg.value != 0`.
-- Normal path with `msg.value == 0` returns the selected slot's amount and
-  `tokensCount`. With default state and zero keys, expected return is
-  `(0, 0)`.
-- Strong PUT expectation: fuzz `maker`, `app`, `token`; keep
-  `strategyHash = bytes32(0)` until bytes32 slot-region support is classified;
-  assert default return `(0, 0)` when no state setup is applied.
+- Path `2`: ABI non-payable reject.
+  - Witness: `msg.value = uint256.max`, all call arguments zero.
+  - Expected region: `msg.value != 0`. Under the current strong recipe this
+    should certify with `msg.value in [1, uint256.max]`, rather than being
+    excluded by the old auto `msg.value == 0` pin.
+  - Expected PUT oracle: low-level call with value must fail.
+- Path `3`: normal getter.
+  - Witness: `msg.value = 0`, `maker = app = token = 0`,
+    `strategyHash = bytes32(0)`, default selected slot.
+  - Expected region: `msg.value == 0`, wide `maker/app/token`, and, once slot
+    coordinates are enabled for this unit, the selected literal-key
+    `_balances[maker][app][0x2000...0000][token].{amount,tokensCount}` values.
+  - Expected PUT oracle: destructure the two return members and assert
+    `return.0 == 0` and `return.1 == 0` over the certified region. Do not assert
+    the Stage-1 CE string `(0)` directly; tuple returns must come from
+    `--path-cov-assert` member rows.
+- Current attempt status:
+  - Stage 2 attempt 1 under 60s/8GiB was spent fresh and certified both
+    witnessed paths. Path `2` has `msg.value in [1, uint256.max]`; path `3`
+    has `msg.value == 0`, wide `maker/app/token`, and the two selected
+    literal-key `_balances` leaf slots.
+  - Stage 3 attempt 1 under 60s/8GiB was spent and produced only `B = 1 of 2`:
+    the ABI nonpayable path emitted a strong value-gate PUT, but the normal
+    getter emitted a fuzzed replay with zero oracle assertions.
+  - The normal getter did not reach a semantic solver problem. Its assertion
+    ladder was refused before solving because Stage 2 gave
+    `.tokensCount` the default `uint256` upper bound instead of the declared
+    `uint8` upper bound `255`.
+  - Script fix: mapping struct leaf types are now carried from the AST into
+    static slot type ranges, so `_balances...amount` uses `uint248` and
+    `_balances...tokensCount` uses `uint8`. The PUT driver also now parses
+    `REFUSING THE LADDER on region coordinate ...` as a real refusal,
+    preventing another oracle-free emission if ESBMC rejects a spec.
+  - Stage 2 attempt 2 under 120s/8GiB validated the fix: `.tokensCount` is now
+    `[0, 255]` and `.amount` is `[0, 2^248-1]` in the certified region.
+  - Stage 3 attempt 2 under 120s/8GiB produced `B = 2 of 2`. Path `3` fuzzes
+    `maker/app/token` and asserts the tuple returns `return.0 == 0` and
+    `return.1 == 0` along with state non-change rungs; path `2` fuzzes
+    `msg.value/maker/app/token` and asserts the non-payable value-call revert.
+- Next run discipline: rawBalances should not be run again unless a later
+  regression needs confirmation. Its 60s and 120s opportunities have already
+  been spent; only the 600s/10GiB tier remains by the current budget ladder.
 
 ### `Aqua.dock`
 

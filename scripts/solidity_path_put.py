@@ -332,7 +332,7 @@ LADDER_SUMMARY_RE = re.compile(
     r"(\d+) REFUTED, (\d+) no verdict \(solver unknown\), (\d+) no verdict "
     r"\(never reached the solver\)")
 LADDER_REFUSAL_RE = re.compile(r"--path-cov-assert: unit '[^']*' -- "
-                               r"REFUSING THE LADDER[:,] (.*)$")
+                               r"REFUSING THE LADDER(?::|,|\s+)(.*)$")
 LADDER_VACUOUS_RE = re.compile(r"--path-cov-assert: THE REGION IS VACUOUS")
 
 # ---- THE `RESULT:` TOKENS OF THE ASSERT GATE, AND WHY AN UNKNOWN ONE IS FATAL

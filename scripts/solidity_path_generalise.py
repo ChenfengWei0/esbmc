@@ -456,6 +456,24 @@ def bytes_static_len(type_string):
     return int(m.group(1)) if m else None
 
 
+def elementary_type_range(type_string):
+    """Closed unsigned scalar range for a Solidity elementary type, if known."""
+    norm = (type_string or "").strip()
+    if norm in ("address", "address payable"):
+        return 0, ADDRESS_MAX
+    if norm == "bool":
+        return 0, 1
+    m = re.fullmatch(r"uint([0-9]*)", norm)
+    if m:
+        bits = int(m.group(1) or "256")
+        if 0 < bits <= 256 and bits % 8 == 0:
+            return 0, (1 << bits) - 1
+    n = bytes_static_len(norm)
+    if n is not None:
+        return 0, (1 << (8 * n)) - 1
+    return None
+
+
 def bytes_static_mapping_key_from_ce(type_string, raw_value):
     """Return the uint256 mapping-key literal for a bytesN CE value.
 
@@ -838,10 +856,10 @@ def _coord_range(name, coord_types=None, type_ranges=None):
         return 0, UINT256_MAX
     ty = (coord_types or {}).get(name)
     if ty:
-        norm = ty.strip()
-        if (norm in ("address", "address payable")
-                or norm.startswith(("contract ", "interface "))
-                or norm.startswith("enum ")):
+        tr = elementary_type_range(ty)
+        if tr is not None:
+            return tr
+        if ty.strip().startswith(("contract ", "interface ", "enum ")):
             return 0, ADDRESS_MAX
     return 0, UINT256_MAX
 
@@ -1433,9 +1451,14 @@ def mapping_state_vars(ast_path, contract=None):
     their tests keep working unchanged:
 
         {name: (key_type, value_type)}                  -- one level, scalar
-        {name: ((kt1, kt2, ...), value_type, tails)}    -- nested and/or struct
+        {name: ((kt1, kt2, ...), value_type, tails)}    -- nested scalar
+        {name: ((kt1, kt2, ...), value_type, tails,
+                {tail: leaf_type})}                     -- struct leaf typed
 
     `tails` is [""] for a scalar value and [".field", ...] for a struct one.
+    The optional fourth element gives callers the leaf's own elementary type;
+    older callers that ignore it still read the first three elements exactly as
+    before.
     A caller that only understands the 2-tuple still reads element 0 as the key
     type; it will see a tuple rather than a string and match no parameter,
     which fails CLOSED -- it proposes nothing rather than proposing a
@@ -1495,7 +1518,8 @@ def mapping_state_vars(ast_path, contract=None):
                                 nm,
                                 (tuple(kts) if len(kts) > 1 else (kts[0],),
                                  f"struct {sname}",
-                                 ["." + f for f, _t in fields]))
+                                 ["." + f for f, _t in fields],
+                                 {"." + f: t for f, t in fields}))
                         else:
                             refused.append(
                                 f"{nm} (value is "
@@ -1567,6 +1591,59 @@ def _struct_scalar_fields(root):
 
     walk(root)
     return out
+
+
+def _state_slot_tail(coord):
+    """(mapping_name, tail) for a `state.m[k]...tail` coordinate, if shaped so."""
+    if not (coord or "").startswith("state."):
+        return None
+    rest = coord[len("state."):]
+    m = re.match(r"^([A-Za-z_$][A-Za-z0-9_$]*)", rest)
+    if not m:
+        return None
+    name = m.group(1)
+    i = len(name)
+    if i >= len(rest) or rest[i] != "[":
+        return None
+    depth = 0
+    saw_slot = False
+    while i < len(rest):
+        ch = rest[i]
+        if ch == "[":
+            depth += 1
+            saw_slot = True
+        elif ch == "]":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif depth == 0:
+            break
+        i += 1
+    if depth != 0 or not saw_slot:
+        return None
+    return name, rest[i:]
+
+
+def mapping_slot_type_ranges(maps, coords):
+    """Type ranges for proposed mapping slot coordinates from source AST types."""
+    ranges = {}
+    for coord in coords:
+        parsed = _state_slot_tail(coord)
+        if parsed is None:
+            continue
+        name, tail = parsed
+        spec = maps.get(name)
+        if not spec:
+            continue
+        leaf_types = spec[3] if len(spec) > 3 and isinstance(spec[3], dict) \
+            else {}
+        ty = leaf_types.get(tail)
+        if ty is None and tail == "":
+            ty = spec[1] if len(spec) > 1 else None
+        tr = elementary_type_range(ty)
+        if tr is not None:
+            ranges[coord] = tr
+    return ranges
 
 
 def unit_params(ast_path, contract, unit, declaration_id=None):
@@ -5378,6 +5455,7 @@ def main():
     # not fire on any driver-generated run. Off by default, because the ladder
     # cost is multiplicative in the coordinate count.
     slot_added = []
+    static_slot_type_ranges = {}
     if args.slot_coords or args.slot_coord:
         maps, map_refused = mapping_state_vars(args.ast, args.contract)
         declaration_id = path_function_declaration_id(args.path_function)
@@ -5410,6 +5488,7 @@ def main():
         for c in args.slot_coord:
             if c not in proposed:
                 proposed.append(c)
+        static_slot_type_ranges = mapping_slot_type_ranges(maps, proposed)
         slot_added = [c for c in proposed if c not in coords]
         coords = sorted(set(coords) | set(slot_added))
         if dependency_evidence:
@@ -5425,6 +5504,8 @@ def main():
                   + ", ".join(f"{k}->{v}"
                               for k, v in sorted(key_literals.items())))
         if slot_added:
+            typed = {c: static_slot_type_ranges[c] for c in slot_added
+                     if c in static_slot_type_ranges}
             print("[coords] MAPPING SLOT(s) proposed from solc's declaration "
                   "(a payload can only offer a slot at a key some "
                   "counterexample already picked, so a PARAMETER-keyed one can "
@@ -5432,7 +5513,11 @@ def main():
                   + ". Each is laid over its FULL type range -- there is no "
                     "counterexample value for a slot, so no known member of the "
                     "domain constrains it, and the C2 membership check simply "
-                    "has nothing to say about it")
+                    "has nothing to say about it"
+                  + (". Static leaf type range(s): "
+                     + ", ".join(f"{c}=[{lo},{hi}]"
+                                 for c, (lo, hi) in sorted(typed.items()))
+                     if typed else ""))
         if skipped:
             print("[coords] slot candidate(s) NOT proposed: "
                   + "; ".join(skipped))
@@ -5631,7 +5716,7 @@ def main():
     # Learned from the tool, round by round, and never guessed. Empty until a
     # round has published one, so the FIRST ladder falls back to the full 256-bit
     # range exactly as before -- there is nothing to know it from yet.
-    type_ranges = {}
+    type_ranges = dict(static_slot_type_ranges)
     # Coordinates whose level-0 point rests on a ONE-VALUE candidate list, i.e.
     # the ones the round's own warning says cannot be told apart from a vacuous
     # antecedent. Union across paths, because the candidate list is laid per

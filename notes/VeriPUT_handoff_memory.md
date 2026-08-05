@@ -13,18 +13,28 @@ rule against creating new Markdown files.
 - Working branch: `feat/veriput-fuzz-first`
 - Original takeover snapshot: `5efe5b3252`
   (`[solidity] Strengthen parameterized path test synthesis`)
-- Current static pipeline commit before this batch: `6d3cb1f065`
-  (`[solidity] Document VeriPUT POC ground truth`)
+- Latest pushed commit before this pending script patch: `02dacbfacf`
+  (`[solidity] Resolve literal path-cov slot keys`)
 - Pushed remote branch: `E-SOL/feat/veriput-fuzz-first`
 - Snapshot checks:
-  - `python3 scripts/test_solidity_path_generalise.py`: passed
-  - `python3 scripts/test_solidity_path_put.py`: 110/110 passed
-  - Python byte compilation of staged scripts: passed
-  - `git clang-format` was applied to the two changed C++ files and then
-    reported no further changes
-- Not run after the static batch: C++ rebuild, CTest, Forge, or any POC ESBMC run.
-  Other experiments are using the machine, and a real POC run is a scarce
-  measurement, not a compile check.
+  - `python3 -m py_compile scripts/solidity_path_generalise.py
+    scripts/test_solidity_path_generalise.py scripts/solidity_path_put.py
+    scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py`:
+    passed after the pending script patch.
+  - `python3 scripts/test_solidity_path_generalise.py`: passed after the
+    pending script patch.
+  - `python3 scripts/test_solidity_path_put.py`: 132/132 passed after the
+    pending script patch.
+  - `git diff --check` on the touched scripts/docs: passed after the pending
+    script patch.
+- POC run after the pending script patch:
+  - `aqua_Aqua__Aqua__rawBalances` Stage 2 attempt 2, 120s/8GiB:
+    passed, `2 certified / 0 not / 2 witnessed`.
+  - `aqua_Aqua__Aqua__rawBalances` Stage 3 attempt 2, 120s/8GiB:
+    passed, `B = 2 of 2`.
+- Not run after the pending script patch beyond rawBalances attempt 2: C++
+  rebuild, CTest, or other POCs. Other experiments are using the machine, and
+  a real POC run is a scarce measurement, not a compile check.
 - The worktree contains many untracked generated artefacts. They were
   deliberately excluded from the snapshot. Do not delete or add them in bulk.
 
@@ -198,6 +208,38 @@ Aqua `push`/`safeBalances` outer-refine abort class:
 This is a source-slice restriction from the witnessed CE, not a proof and not a
 new fuzz dimension. If witnessed bytesN values disagree, the slot is refused
 rather than passed to ESBMC as a bad aggregate-key coordinate.
+
+### 5.0.1 Mapping struct leaf type ranges
+
+Static diagnosis from the first `Aqua.rawBalances` PUT attempt exposed a second
+driver-side slot issue:
+
+- Stage 2 correctly proposed the literal-key slots
+  `_balances[maker][app][0x2000...][token].amount` and `.tokensCount`.
+- It did not carry the struct member's elementary type into the generated
+  region, so `.tokensCount` inherited the default `uint256` range
+  `[0, UINT256_MAX]` instead of its declared `uint8` range `[0, 255]`.
+- ESBMC then correctly refused the assertion ladder before solving:
+  the high endpoint did not fit the coordinate's own type.
+- The pending script patch extends `mapping_state_vars()` with an optional
+  fourth tuple element `{tail: leaf_type}` for struct-valued mappings, adds
+  `mapping_slot_type_ranges()`, and seeds stage-2 `type_ranges` before the
+  first ladder. This should make `Balance.amount` use `uint248` and
+  `Balance.tokensCount` use `uint8` even when no counterexample payload carries
+  the slot value.
+- The same patch updates `solidity_path_put.py` so
+  `REFUSING THE LADDER on region coordinate ...` is parsed as a refusal. A
+  future ladder refusal must stop PUT emission instead of producing an
+  oracle-free fuzz replay.
+
+Validated by `Aqua.rawBalances` attempt 2:
+
+- Stage 2 cert now records `.tokensCount in [0, 255]` and `.amount in
+  [0, 2^248-1]`.
+- Stage 3 no longer refuses the ladder. Path `enc=3` emits a fuzzed normal
+  getter PUT with `maker/app/token` parameters and return assertions
+  `return.0 == 0`, `return.1 == 0`; path `enc=2` emits the value/revert oracle.
+- The B table reports `B = 2 of 2`.
 
 ### 5.1 Fixture and environment
 

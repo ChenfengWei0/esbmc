@@ -62,7 +62,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                build_put, check_esbmc_args, cell_of,
                                exit_kind_asserted, find_unit_call,
                                no_oracle_reason, observed_env,
-                               region_slot_vars, statement_start,
+                               parse_ladder, region_slot_vars, statement_start,
                                truncated_loops, unwindset_args)
 
 
@@ -558,6 +558,35 @@ def test_a_retry_that_produced_no_ladder_is_not_adopted():
                  "so the ladder can widen further rather than stopping")
     bad += check(attempt_is_usable([], "vacuous"),
                  "a run that answered VACUOUS IS adopted")
+    return bad
+
+
+def test_region_coordinate_ladder_refusal_is_read():
+    """The assert gate can refuse before printing any row, and that is fatal.
+
+    VERBATIM SHAPE from aqua rawBalances: this used to miss
+    LADDER_REFUSAL_RE because the producer wrote
+    `REFUSING THE LADDER on region coordinate ...` rather than a colon/comma
+    immediately after LADDER. The parser then returned rows=[] and
+    refusal=None, which let main() emit an oracle-free PUT.
+    """
+    log = (
+        "ERROR: --path-cov-assert: unit "
+        "'sol:@C@Aqua@F@rawBalances#2819' -- REFUSING THE LADDER on region "
+        "coordinate "
+        "'state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount': "
+        "the hi value UINT256_MAX does not fit the coordinate's own type "
+        "(admissible range [0, 255])."
+    )
+    rows, summary, refusal, blocker = parse_ladder(log)
+    bad = 0
+    bad += check(rows == [] and summary is None and blocker is None,
+                 "a pre-ladder refusal has no rows, summary or blocker")
+    bad += check(refusal is not None and "tokensCount" in refusal
+                 and "admissible range [0, 255]" in refusal,
+                 "the region-coordinate refusal is still read")
+    bad += check(attempt_is_usable(rows, blocker) is False,
+                 "without rows or a RESULT token it is not a widening answer")
     return bad
 
 
@@ -3830,6 +3859,7 @@ def main():
               test_both_truncation_shapes_are_read,
               test_the_ladder_widens_every_named_loop,
               test_a_retry_that_produced_no_ladder_is_not_adopted,
+              test_region_coordinate_ladder_refusal_is_read,
               test_a_widened_ladder_says_which_half_it_applies_to,
               test_the_cell_is_named_and_an_unsettled_one_says_so,
               test_the_emitted_test_carries_its_cell,

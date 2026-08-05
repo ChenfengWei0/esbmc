@@ -60,6 +60,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       unexpressible_coords,
                                       unresolvable_coords,
                                       mapping_state_vars,
+                                      mapping_slot_type_ranges,
                                       unit_params,
                                       unit_mapping_slot_accesses,
                                       unit_state_dependencies,
@@ -1713,6 +1714,13 @@ check("slot-struct-value-names-every-scalar-field",
                                  [".amount", ".tag"])},
                           [("k", "uint256")], 8)[0],
       ["state.b[k].amount", "state.b[k].tag"])
+check("slot-struct-value-leaf-types-drive-their-own-ranges",
+      mapping_slot_type_ranges(
+          {"b": (("uint256",), "struct Bal", [".amount", ".tag"],
+                 {".amount": "uint248", ".tag": "uint8"})},
+          ["state.b[k].amount", "state.b[k].tag"]),
+      {"state.b[k].amount": (0, (1 << 248) - 1),
+       "state.b[k].tag": (0, 255)})
 
 # A level with NO candidate key must yield NOTHING rather than a shorter name.
 # A name with fewer keys denotes a whole sub-store, and its rungs would be
@@ -1738,6 +1746,14 @@ check("d44-one-level-scalar-still-the-plain-two-tuple",
 check("d44-struct-valued-mapping-lists-its-scalar-fields",
       (_d44maps.get("balStruct") or (None, None, None))[2],
       [".amount", ".tag"])
+check("d44-struct-valued-mapping-keeps-leaf-types",
+      (_d44maps.get("balStruct") or (None, None, None, {}))[3],
+      {".amount": "uint248", ".tag": "uint8"})
+check("d44-struct-valued-mapping-slot-ranges-are-not-uint256-defaults",
+      mapping_slot_type_ranges(
+          _d44maps, ["state.balStruct[k].amount", "state.balStruct[k].tag"]),
+      {"state.balStruct[k].amount": (0, (1 << 248) - 1),
+       "state.balStruct[k].tag": (0, 255)})
 check("d44-struct-valued-mapping-is-no-longer-refused",
       any("balStruct" in r for r in _d44ref), False)
 # ...and on a NON-address key with no matching parameter there is nothing to
