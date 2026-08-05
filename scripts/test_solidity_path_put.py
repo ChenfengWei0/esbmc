@@ -58,9 +58,11 @@ import tempfile
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
+                               assert_query_pins, assert_query_region_entries,
                                build_put, check_esbmc_args, cell_of,
                                exit_kind_asserted, find_unit_call,
-                               no_oracle_reason, observed_env, statement_start,
+                               no_oracle_reason, observed_env,
+                               region_slot_vars, statement_start,
                                truncated_loops, unwindset_args)
 
 
@@ -875,6 +877,84 @@ SLOT_MAPS = {"bal": (2, "address", 32, 0, "bal", None),
              # layout reader records depth; one level stays a bare string so
              # every reader that only ever saw a string is unchanged.
              "two": (5, ("address", "address"), 32, 0, "two", None)}
+
+
+def test_certified_region_mapping_slots_are_ASKED_before_guesses():
+    """Aqua safeBalances' ground truth: the certified region already names the
+    source slots, including the literal bytes32 key produced by Stage 2.
+
+    The PUT side must reuse those coordinates instead of regenerating a
+    same-typed cross product containing `strategyHash`, which is a different
+    slot and not the certified region.
+    """
+    lit = "0x2000000000000000000000000000000000000000000000000000000000000000"
+    region = {
+        "maker": (0, (1 << 160) - 1),
+        f"state._balances[maker][app][{lit}][token0].amount": (0, 0),
+        f"state._balances[maker][app][{lit}][token0].tokensCount": (0, 0),
+    }
+    maps = {
+        "_balances.amount": (4, ("address", "address", "bytes32", "address"),
+                             31, 0, "_balances", "amount"),
+        "_balances.tokensCount": (
+            4, ("address", "address", "bytes32", "address"),
+            1, 31, "_balances", "tokensCount"),
+    }
+    got = region_slot_vars(region, maps)
+    bad = 0
+    bad += check(got == [
+        f"_balances[maker][app][{lit}][token0].amount",
+        f"_balances[maker][app][{lit}][token0].tokensCount",
+    ], f"the exact certified literal-key slots are reused: {got}")
+    bad += check(not any("strategyHash" in g for g in got),
+                 f"no guessed strategyHash slot is introduced: {got}")
+    return bad
+
+
+def test_assert_query_drops_semantic_pins_ESBMC_cannot_resolve():
+    """`state._DOCKED` is a semantic pin from source, not a storage-layout slot.
+
+    Keeping it in the PUT/report is useful; passing it to --path-cov-assert is
+    not, because the internal resolver cannot express it as a query coordinate.
+    """
+    keep, skipped = assert_query_pins(
+        {"state._DOCKED": 255, "state.owner": 7, "msg.value": 0},
+        layout={"owner": (0, 0, 20)}, maps={})
+    bad = 0
+    bad += check(keep == {"state.owner": 7, "msg.value": 0},
+                 f"only queryable pins remain in the assert spec: {keep}")
+    bad += check(any("state._DOCKED" in s and "semantic constant" in s
+                     for s in skipped),
+                 f"the skipped semantic pin is reported: {skipped}")
+    return bad
+
+
+def test_assert_query_region_keeps_slots_but_drops_semantic_state():
+    lit = "0x2000000000000000000000000000000000000000000000000000000000000000"
+    region = {
+        "msg.value": (0, 0),
+        "state._DOCKED": (255, 255),
+        f"state._balances[maker][app][{lit}][token0].amount": (0, 0),
+    }
+    maps = {
+        "_balances.amount": (4, ("address", "address", "bytes32", "address"),
+                             31, 0, "_balances", "amount"),
+    }
+    entries, skipped = assert_query_region_entries(
+        region, holes={"msg.value": [7]}, layout={}, maps=maps)
+    names = [e["name"] for e in entries]
+    bad = 0
+    bad += check("msg.value" in names and entries[0].get("holes") == ["7"],
+                 f"ordinary input coordinates and holes survive: {entries}")
+    bad += check(
+        f"state._balances[maker][app][{lit}][token0].amount" in names,
+        f"certified mapping-member region survives: {entries}")
+    bad += check("state._DOCKED" not in names,
+                 f"semantic state is not sent to the assert query: {entries}")
+    bad += check(any("state._DOCKED" in s for s in skipped),
+                 f"and the skipped semantic region coordinate is reported: "
+                 f"{skipped}")
+    return bad
 
 
 def _deriv_put(derived_by):
@@ -2055,7 +2135,37 @@ def test_a_ROLLBACK_path_DOES_NOT_SPEND_an_R2_ESBMC_pass():
     bad += check(written == [], f"no R2 spec is written: {written}")
     bad += check(any("R2 ESBMC pass NOT RUN" in s for s in said),
                  f"the skip is logged: {said}")
-    bad += check(any("rollback path" in s for s in notes),
+    bad += check(any("reverting path" in s for s in notes),
+                 f"put.json notes will carry the reason: {notes}")
+    return bad
+
+
+def test_a_REVERT_path_DOES_NOT_SPEND_an_R2_ESBMC_pass():
+    from solidity_path_put import maybe_run_r2_passes  # noqa: E402
+    said, written, notes = [], [], []
+
+    def write_spec(suffix, spec):
+        written.append((suffix, spec))
+        return "/tmp/spec" + suffix
+
+    def runner(_path):
+        raise AssertionError("revert R2 must not call ESBMC")
+
+    specs = [{"param": "amount", "stage": 1, "kind": "num",
+              "vars": [{"name": "bal",
+                        "abs_lo": "amount", "abs_hi": "amount",
+                        "delta_dir": "inc",
+                        "delta_lo": "amount", "delta_hi": "amount"}]}]
+    got = maybe_run_r2_passes(
+        specs, {"unit": "u", "enc": 7}, write_spec, runner,
+        lambda _text: ([], None, None, None), revert_here=True,
+        notes=notes, log=said.append)
+    bad = 0
+    bad += check(got == [], f"no R2 rows are merged: {got}")
+    bad += check(written == [], f"no R2 spec is written: {written}")
+    bad += check(any("Stage-1 says" in s for s in said),
+                 f"the skip is logged as a Stage-1 revert: {said}")
+    bad += check(any("reverting path" in s for s in notes),
                  f"put.json notes will carry the reason: {notes}")
     return bad
 
@@ -2870,7 +2980,7 @@ def test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call():
     return bad
 
 
-def _rollback_put(emitted_text, rollback):
+def _rollback_put(emitted_text, rollback, exit_kind=None):
     em, case = _make_case_from(emitted_text)
     notes = []
     put, stats = build_put(
@@ -2878,7 +2988,7 @@ def _rollback_put(emitted_text, rollback):
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
         holes={}, pins={}, params=PARAMS, emitted=em, case=case,
         layout=LAYOUT, ladder_rows=MIXED_LADDER, notes=notes,
-        rollback_exit=rollback)
+        rollback_exit=rollback, exit_kind=exit_kind)
     return put, stats, notes
 
 
@@ -2956,6 +3066,40 @@ def test_a_NON_rollback_path_is_BYTE_IDENTICAL_to_before():
     bad += check(on != off,
                  "and the two arms actually differ -- if they were equal the "
                  "flag would be reaching nothing")
+    return bad
+
+
+def test_a_STAGE1_revert_path_ASSERTS_THE_REVERT_without_calling_it_rollback():
+    """Aqua safeBalances enc=6 shape: Stage 1 says the path exits by revert,
+    but the assertion ladder did not print the rollback-specific warning.
+
+    That is still a layer-1 oracle. A `try c0.f() {} catch {}` with no
+    assertFalse is green even if a mutant stops reverting, so it is weaker than
+    the Stage-1 report already allows.
+    """
+    put, stats, notes = _rollback_put(TOLERANT_EMITTED, False,
+                                      exit_kind="revert")
+    bad = 0
+    bad += check(put is not None, f"a PUT is still produced (notes: {notes})")
+    if put is None:
+        return bad + 6
+    code = [ln for ln in put if not ln.strip().startswith("//")]
+    body = "\n".join(code)
+    bad += check("assertTrue(_post_feeReceiver != _pre_feeReceiver" not in body,
+                 "post-state rungs are dropped on an ordinary revert path")
+    bad += check(any("catch { _put_ok = false; }" in ln for ln in code),
+                 "the catch clears the success flag")
+    bad += check(any("assertFalse(_put_ok," in ln for ln in code),
+                 "the PUT asserts the call must revert")
+    bad += check(stats.get("rollback_exit") is False,
+                 f"the report does not mislabel it as rollback: {stats}")
+    bad += check(stats.get("exit_kind") == "revert"
+                 and stats.get("exit_kind_asserts") == 1,
+                 f"the ordinary revert is recorded as exit-kind oracle: "
+                 f"{stats}")
+    bad += check(any("Stage-1" in s or "revert" in s.lower()
+                     for s in stats.get("oracle_skipped", [])),
+                 f"the dropped rungs explain why: {stats.get('oracle_skipped')}")
     return bad
 
 
@@ -3764,12 +3908,16 @@ def main():
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT,
               test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed,
               test_a_ROLLBACK_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
+              test_a_REVERT_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
               test_an_R2_PASS_never_overwrites_a_row_the_FIRST_pass_decided,
               test_a_ONE_LEVEL_mapping_proposes_one_key,
               test_a_NESTED_mapping_proposes_ONE_KEY_PER_LEVEL,
               test_a_NESTED_STRUCT_mapping_keeps_its_FIELD_TAIL,
               test_a_LEVEL_WITH_NO_MATCHING_PARAMETER_proposes_NOTHING,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
+              test_certified_region_mapping_slots_are_ASKED_before_guesses,
+              test_assert_query_drops_semantic_pins_ESBMC_cannot_resolve,
+              test_assert_query_region_keeps_slots_but_drops_semantic_state,
               test_an_ADDRESS_endpoint_renders_for_an_ABSOLUTE_bound,
               test_an_ADDRESS_endpoint_is_STILL_REFUSED_for_a_DELTA_bound,
               test_a_named_R2_bound_renders_as_the_test_parameter,
@@ -3787,6 +3935,7 @@ def main():
               test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call,
               test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT,
               test_a_NON_rollback_path_is_BYTE_IDENTICAL_to_before,
+              test_a_STAGE1_revert_path_ASSERTS_THE_REVERT_without_calling_it_rollback,
               test_the_ROLLBACK_LINE_of_the_ladder_log_is_PARSED_in_both_directions,
               test_the_same_change_rung_IS_asserted_on_a_bare_call,
               test_a_wide_env_coordinate_is_FUZZED_not_disclosed_as_one_point,

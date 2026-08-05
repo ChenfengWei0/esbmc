@@ -1535,23 +1535,26 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
 
 
 def maybe_run_r2_passes(specs, base_spec, write_spec, runner, parse,
-                        rollback_here=False, notes=None, log=print):
-    """Run R2 unless this path's post-state is hidden by rollback.
+                        rollback_here=False, revert_here=False, notes=None,
+                        log=print):
+    """Run R2 unless this path's post-state is hidden by a reverting exit.
 
-    R2 rows are post-state or delta claims. On a rollback path they are proved
+    R2 rows are post-state or delta claims. On a reverting path they are proved
     about an intermediate state that no Foundry test can observe, and the
     emitter drops them before writing assertions. Skipping here saves the ESBMC
     query without weakening the emitted test.
     """
-    if not rollback_here:
+    if not (rollback_here or revert_here):
         return run_r2_passes(specs, base_spec, write_spec, runner, parse,
                              log=log)
     n_candidates = len(r2_candidates(specs))
-    log("[put]   R2 ESBMC pass NOT RUN: this path rolls back, so its "
-        "layer-2/3 post-state is unobservable; "
-        f"{n_candidates} candidate(s) would be dropped before emit")
+    reason = ("this path rolls back" if rollback_here
+              else "Stage-1 says this path exits through a revert")
+    log(f"[put]   R2 ESBMC pass NOT RUN: {reason}, so its layer-2/3 "
+        f"post-state is unobservable; {n_candidates} candidate(s) would be "
+        "dropped before emit")
     if notes is not None:
-        notes.append("R2 ESBMC skipped: rollback path has no observable "
+        notes.append("R2 ESBMC skipped: reverting path has no observable "
                      "post-state")
     return []
 
@@ -2039,6 +2042,81 @@ def parse_slot_name(s):
     if not m:
         return None, [], ""
     return m.group(1), SLOT_KEY_RE.findall(m.group(2)), m.group(3)
+
+
+def region_slot_vars(region, maps):
+    """Mapping-member coordinates already present in the certified region.
+
+    Stage 2 has already paid to certify these exact source dependency slots,
+    including any literal key that was needed to make a bytesN aggregate
+    expressible. Reusing them for the assertion ladder is both cheaper and more
+    faithful than regenerating a cross product of same-typed keys.
+    """
+    out = []
+    for name in region or {}:
+        if not name.startswith("state."):
+            continue
+        v = name[6:]
+        mname, _keys, tail = parse_slot_name(v)
+        if mname is None:
+            continue
+        if maps and mname + tail not in maps:
+            continue
+        if v not in out:
+            out.append(v)
+    return out
+
+
+def assert_query_pins(pins, layout, maps):
+    """Pins that the ESBMC assertion query can resolve, plus skipped reasons."""
+    keep, skipped = {}, []
+    for name, value in sorted((pins or {}).items()):
+        if not name.startswith("state."):
+            keep[name] = value
+            continue
+        v = name[6:]
+        mname, _keys, tail = parse_slot_name(v)
+        if mname is not None:
+            if maps and mname + tail in maps:
+                keep[name] = value
+            else:
+                skipped.append(
+                    f"{name} (not passed to --path-cov-assert: `{mname}` is "
+                    "not a queryable mapping member in solc's layout)")
+            continue
+        if layout and v in layout:
+            keep[name] = value
+        else:
+            skipped.append(
+                f"{name} (not passed to --path-cov-assert: solc's layout "
+                "does not list it, so it is a semantic constant/immutable pin)")
+    return keep, skipped
+
+
+def assert_query_region_entries(region, holes, layout, maps):
+    """Certified region entries that the ESBMC assertion query can resolve."""
+    entries, skipped = [], []
+    for name, (lo, hi) in (region or {}).items():
+        if name.startswith("state."):
+            v = name[6:]
+            mname, _keys, tail = parse_slot_name(v)
+            if mname is not None:
+                if not (maps and mname + tail in maps):
+                    skipped.append(
+                        f"{name} (not passed to --path-cov-assert: `{mname}` "
+                        "is not a queryable mapping member in solc's layout)")
+                    continue
+            elif not (layout and v in layout):
+                skipped.append(
+                    f"{name} (not passed to --path-cov-assert: solc's layout "
+                    "does not list it, so it is a semantic constant/immutable "
+                    "pin)")
+                continue
+        entry = {"name": name, "lo": str(lo), "hi": str(hi)}
+        if holes.get(name):
+            entry["holes"] = [str(h) for h in holes[name]]
+        entries.append(entry)
+    return entries, skipped
 
 
 def storage_layout(project, contract):
@@ -3538,6 +3616,11 @@ ROLLBACK_UNOBSERVABLE = (
     "post-state a test can observe on this path is the pre-state, and the "
     "only layer left with anything to say is the exit kind")
 
+REVERT_UNOBSERVABLE = (
+    "this path exits through a revert according to the Stage-1 path report, "
+    "so post-state and return-value rungs are not observable on the chain; "
+    "the layer left with anything to say is the exit kind")
+
 
 def rollback_exit_paths(log):
     """{(unit_id, enc)} the ladder run reported as leaving through a rollback.
@@ -3554,7 +3637,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
               unwind=None, rettypes=None, maps=None, piece_label="",
               derived_by=None, rollback_exit=False, r2_terms=None,
-              oracle_label_prefix=""):
+              oracle_label_prefix="", exit_kind=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -4319,12 +4402,14 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # reverting path is emitted as `try c0.f() {} catch {}`, an oracle that
     # cannot fail whatever the contract does; asserting the revert turns a
     # mutant that stops reverting from invisible into RED.
-    rollback_layer1 = bool(rollback_exit)
-    if rollback_layer1:
+    revert_layer1 = bool(rollback_exit) or (
+        exit_kind == "revert" and new_call.rstrip().endswith("catch {}"))
+    if revert_layer1:
         n_dropped = len(asserts) + len(guarded) + len(ret_asserts)
         if n_dropped:
+            why_drop = ROLLBACK_UNOBSERVABLE if rollback_exit else REVERT_UNOBSERVABLE
             oracle_skipped.append(
-                f"{n_dropped} layer-2/3 rung(s) DROPPED ({ROLLBACK_UNOBSERVABLE})")
+                f"{n_dropped} layer-2/3 rung(s) DROPPED ({why_drop})")
         asserts, guarded, guard_notes, ret_asserts = [], [], [], []
         if not new_call.rstrip().endswith("catch {}"):
             # The call is already emitted with its exit ASSERTED -- a bare call
@@ -4332,8 +4417,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             # assertFalse. There is no `catch` to clear a flag in and nothing to
             # add: layer 1 is already carried, and emitting a second expectation
             # here would be a duplicate, not a stronger oracle.
-            rollback_layer1 = False
-    if guarded or rollback_layer1:
+            revert_layer1 = False
+    if guarded or revert_layer1:
         if new_call.rstrip().endswith("catch {}"):
             new_call = (new_call.rstrip()[:-len("catch {}")]
                         + "catch { " + okvar + " = false; }")
@@ -4461,17 +4546,23 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"  // unliftable type, so this PUT is a single "
                    f"deterministic point of the")
         out.append(f"  // region rather than a fuzz test over it.")
-    if rollback_layer1:
+    if revert_layer1:
         out.append(f"  // ORACLE: the FIRST LAYER ONLY, and that is the rule "
                    f"rather than a shortfall.")
-        out.append(f"  // This path exits through a ROLLBACK revert. A revert "
-                   f"restores storage, so")
-        out.append(f"  // every before/after comparison is `post == pre` on "
-                   f"the chain whatever the")
-        out.append(f"  // contract does, and the ladder's own verdicts were "
-                   f"read at the moment")
-        out.append(f"  // BETWEEN the write and the rollback -- which no test "
-                   f"can observe. They")
+        if rollback_exit:
+            out.append(f"  // This path exits through a ROLLBACK revert. A "
+                       f"revert restores storage, so")
+            out.append(f"  // every before/after comparison is `post == pre` "
+                       f"on the chain whatever the")
+            out.append(f"  // contract does, and the ladder's own verdicts "
+                       f"were read at the moment")
+            out.append(f"  // BETWEEN the write and the rollback -- which no "
+                       f"test can observe. They")
+        else:
+            out.append(f"  // Stage 1 reports this complete path exits through "
+                       f"a revert. Post-state")
+            out.append(f"  // and return-value rungs are not observable on the "
+                       f"chain for this path. They")
         out.append(f"  // are dropped and counted below. What is asserted "
                    f"instead is the exit")
         out.append(f"  // itself: the call MUST fail. That is a real oracle -- "
@@ -4608,7 +4699,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out += pre_reads
     for ln in body[head_end:call_i]:
         out.append(ln)
-    if guarded or rollback_layer1:
+    if guarded or revert_layer1:
         out.append(f"    bool {okvar} = true;")
     out.append(new_call)
     # NOT `if post_reads:`. That guard was equivalent while every assertion
@@ -4623,11 +4714,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"    if ({okvar}) {{")
         out += guarded
         out.append("    }")
-    if rollback_layer1:
+    if revert_layer1:
         # LAYER 1, and it is the whole oracle for this path. `okvar` is false
         # exactly when the call reverted, and the certified region says every
-        # input of it walks THIS path, whose exit is a rollback -- so a call
-        # that succeeds is a contract that no longer does what was certified.
+        # input of it walks THIS path, whose exit is a revert -- so a call that
+        # succeeds is a contract that no longer does what was certified.
         out.append(
             f'    assertFalse({okvar}, "path enc={enc}{piece_label} exits '
             f'through a REVERT: the call must fail on the unmodified '
@@ -4636,7 +4727,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     for ln in body[call_i + 1:]:
         out.append(ln)
     out.append("  }")
-    exit_kind_asserts = 1 if rollback_layer1 else 0
+    exit_kind_asserts = 1 if revert_layer1 else 0
     original_call_body = list(body[:call_i]) + [new_call] + list(
         body[call_i + 1:])
     if low_level_value_gate_asserts_exit(original_call_body, call_i, new_call):
@@ -4661,7 +4752,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              # Recorded so the B table can say WHY a row's oracle is one line:
              # a rollback path is a measurement, not a missing feature, and the
              # two must not read alike.
-             "rollback_exit": bool(rollback_layer1),
+             "rollback_exit": bool(rollback_exit),
+             "exit_kind": exit_kind,
              "return_asserts": len(ret_asserts),
              "oracle_skipped": oracle_skipped,
              # SEPARATE KEY, not folded into `oracle_skipped`. An implied rung
@@ -4971,6 +5063,12 @@ def main():
                          "Legacy callers may omit it only when unit+enc "
                          "selects one unique path function in the fresh "
                          "emission report")
+    ap.add_argument("--exit-kind", default=None,
+                    choices=("normal", "revert", "unknown"),
+                    help="Stage-1 path report exit_kind for this path. A "
+                         "revert path has no observable post-state/return "
+                         "oracle on chain, so the PUT asserts the exit kind "
+                         "instead of shipping a try/catch that can never fail")
     ap.add_argument("--enc", type=int, required=True)
     ap.add_argument("--depth", type=int, default=None,
                     help="the path's decision depth. Omit to read it from the "
@@ -5280,8 +5378,22 @@ def main():
     else:
         for evidence in slot_dependency_evidence:
             print(f"[put]   {evidence}")
+        direct_slot_vars = region_slot_vars(region, maps)
+        if direct_slot_vars:
+            print("[put]   certified-region mapping slots sent to the "
+                  "assertion ladder first: " + ", ".join(direct_slot_vars))
+            slot_vars += direct_slot_vars
+        direct_mkeys = set()
+        for v in direct_slot_vars:
+            mname, _keys, tail = parse_slot_name(v)
+            if mname is not None:
+                direct_mkeys.add(mname + tail)
+        remaining_maps = {
+            name: spec for name, spec in (maps or {}).items()
+            if name not in direct_mkeys
+        }
         slot_vars += propose_slot_vars(
-            maps, params, dependencies=slot_dependencies)
+            remaining_maps, params, dependencies=slot_dependencies)
     scalar_vars = [name for name in (slot_dependencies or ())
                    if name in (layout or {})]
     oracle_vars = scalar_vars + slot_vars
@@ -5294,13 +5406,17 @@ def main():
 
     # ---- 2b. the assertion ladder -----------------------------------------
     print("[put] step 2b: post-state assertion ladder over the certified region")
+    query_pins, skipped_query_pins = assert_query_pins(pins, layout, maps)
+    query_region, skipped_query_region = assert_query_region_entries(
+        region, holes, layout, maps)
+    for s in skipped_query_region:
+        print(f"[put]   {s}")
+    for s in skipped_query_pins:
+        print(f"[put]   {s}")
     spec = {"unit": pf, "enc": a.enc, "depth": a.depth,
-            "region": [{"name": n, "lo": str(lo), "hi": str(hi)}
-                       | ({"holes": [str(h) for h in holes[n]]}
-                          if holes.get(n) else {})
-                       for n, (lo, hi) in region.items()]
+            "region": query_region
                       + [{"name": n, "lo": str(v), "hi": str(v)}
-                         for n, v in pins.items()]}
+                         for n, v in query_pins.items()]}
     # Exact means exact even when the closure is empty or names only mappings.
     # Omitting vars requests the legacy all-state scan, which would turn "this
     # unit has no state dependency" into unrelated frame conditions. Return
@@ -5421,6 +5537,7 @@ def main():
     # never guesses `delta_dir`.
     r2_term_lookup = {}
     r2_fuzz_prefilter = {"enabled": bool(a.fuzz_r2_prefilter)}
+    path_reverts = a.exit_kind == "revert"
     if a.propose_r2:
         # ---- THE CANDIDATE WIDTH TABLE, FROM solc's OWN LAYOUT --------------
         #
@@ -5467,14 +5584,15 @@ def main():
         r2_term_lookup = r2_terms_from_specs(_r2)
         r2_requested = True
 
-        if rollback_here:
+        if rollback_here or path_reverts:
+            reason = ("rollback path has no observable R2 post-state"
+                      if rollback_here else
+                      "revert path has no observable R2 post-state")
             if a.fuzz_r2_prefilter:
                 r2_fuzz_prefilter.update(skipped_forge_r2_evidence(
-                    _r2, a.fuzz_r2_candidate_budget,
-                    "rollback path has no observable R2 post-state",
+                    _r2, a.fuzz_r2_candidate_budget, reason,
                     a.fuzz_runs))
-                print("[put]   Forge R2 prefilter NOT RUN: this path rolls "
-                      "back, so its layer-2/3 post-state is unobservable")
+                print(f"[put]   Forge R2 prefilter NOT RUN: {reason}")
         elif a.fuzz_r2_prefilter:
             _fuzz_verdicts, r2_fuzz_prefilter = run_forge_r2_prefilter(
                 a.forge_project, a.workdir, emitted, case, a.contract,
@@ -5505,7 +5623,8 @@ def main():
 
         rows += maybe_run_r2_passes(
             _r2, spec, _write_r2, _run_r2, parse_ladder,
-            rollback_here=rollback_here, notes=notes)
+            rollback_here=rollback_here, revert_here=path_reverts,
+            notes=notes)
     else:
         # ---- AN R2 CLASS THAT WAS NEVER ASKED FOR MUST NOT READ AS ONE ------
         #
@@ -5632,7 +5751,8 @@ def main():
                            maps=maps, piece_label=plabel,
                            derived_by=json.loads(a.derived_by or "{}"),
                            rollback_exit=rollback_here,
-                           r2_terms=r2_term_lookup)
+                           r2_terms=r2_term_lookup,
+                           exit_kind=a.exit_kind)
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1

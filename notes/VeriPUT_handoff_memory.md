@@ -2048,3 +2048,121 @@ POC source-level ground truth has been split into
 attempt: it records the expected path, input region, and PUT oracle for Aqua
 and Farming POCs, including the distinction between fuzz-refutable candidates
 and ESBMC-certified regions.
+
+## 2026-08-06 current safeBalances PUT repair
+
+This section supersedes the older Aqua safeBalances diagnosis above for the
+current branch state. Before spending a POC attempt, read
+`notes/VeriPUT_poc_ground_truth.md` and check four facts from source plus
+Stage-1/Stage-2 artefacts:
+
+1. expected path and exit kind;
+2. expected input region;
+3. expected storage/input dependency region;
+4. expected observable PUT oracle.
+
+For `aqua_Aqua__Aqua__safeBalances`, that ground truth is now concrete:
+
+- `enc=2`: ABI nonpayable reject. Region `msg.value != 0`; strong PUT is a
+  low-level value call that asserts `ok == false`.
+- `enc=6`: body path enters with `msg.value == 0` and reverts on the inactive
+  first-token balance guard. The certified source dependency region is
+  `maker/app/token0/token1` plus the four `_balances[maker][app][literal
+  bytes32(0)][token{0,1}].{amount,tokensCount}` leaf slots fixed at zero.
+  `state._DOCKED == 255` is a semantic constant pin, not an assert-query
+  coordinate. Strong PUT is still exit-kind: the call must revert. Post-state
+  and return-value rungs are unobservable on chain for this path.
+
+Official spend in this branch:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  aqua_Aqua__Aqua__safeBalances --stage 2 --cell gate --attempt 1 --fresh
+```
+
+This consumed Stage-2 attempt 1 for safeBalances under 60s/8GiB. It completed
+in 27.6s wall with `2 witnessed / 2 certified / 0 not certified`. The body
+path `enc=6` certified the expected literal-key source slots, not the old
+`strategyHash` guessed slot cross product.
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  aqua_Aqua__Aqua__safeBalances --stage 3 --cell gate --attempt 1
+```
+
+This consumed Stage-3 attempt 1 for safeBalances. It emitted `enc=2` as a
+strong value-gate PUT, but emitted `enc=6` as an assertion-free `try/catch`
+replay. Two PUT-side defects were identified without needing another POC run:
+
+- `put_all.py` read Stage-1 `exit_kind` but did not pass it into
+  `solidity_path_put.py`, so ordinary `revert` paths were not turned into
+  exit-kind oracles unless the assertion ladder printed the special rollback
+  warning.
+- `solidity_path_put.py` passed semantic pins such as `state._DOCKED` to
+  `--path-cov-assert`, where ESBMC cannot resolve them as storage coordinates.
+  It also regenerated guessed mapping slot candidates instead of first reusing
+  the literal-key mapping slots already certified in Stage 2.
+
+Current code repair:
+
+- `put_all.py` passes `--exit-kind` from the Stage-1 report to
+  `solidity_path_put.py`.
+- `solidity_path_put.py` treats `exit_kind == "revert"` like the observable
+  layer-1 oracle it is: for a revert-tolerant `try/catch`, it drops
+  post-state/return rungs and emits `assertFalse(_put_ok, ...)` without marking
+  the path as rollback.
+- R2 ESBMC and Forge R2 prefilter are skipped for any reverting path because
+  R2 rows are post-state/delta claims and would be dropped before emission.
+- The PUT assertion spec filters out unqueryable semantic pins, while keeping
+  them visible as semantic pins in the generated PUT/report.
+- The assertion ladder asks first about mapping-member coordinates already
+  present in the certified region. For Aqua this means literal-key
+  `_balances[maker][app][0x20...][token].amount/tokensCount`, not guessed
+  `[strategyHash]` candidates.
+
+Validation already done without consuming another ESBMC POC attempt:
+
+```sh
+python3 -m py_compile scripts/solidity_path_put.py \
+  scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py
+python3 scripts/test_solidity_path_put.py
+git diff --check -- scripts/solidity_path_put.py \
+  notes/coverage/scripts/put_all.py scripts/test_solidity_path_put.py
+```
+
+`scripts/test_solidity_path_put.py` now has 131/131 checks green, including
+regressions for literal-key certified region slots, semantic-pin filtering, R2
+skip on ordinary revert paths, and Stage-1 revert paths becoming exit-kind
+oracles. The next real validation should be exactly one safeBalances Stage-3
+rerun at attempt 2:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  aqua_Aqua__Aqua__safeBalances --stage 3 --cell gate --attempt 2
+```
+
+Expected result: `enc=2` stays B; `enc=6` becomes B with a fuzzed
+`maker/app/token0/token1` input region, zeroed literal-key balance slots, and
+`assertFalse(_put_ok, ...)` as the oracle.
+
+That validation has now been spent. The command above ran under 120s/8GiB and
+exited 0 after 96.6s wall. Result:
+
+- `B = 2 of 2 emitted PUT(s)`.
+- `enc=2`: 5 fuzz coordinates (`msg.value`, `maker`, `app`, `token0`,
+  `token1`) and one exit-kind assertion. This is the ABI nonpayable value
+  reject.
+- `enc=6`: 4 fuzz coordinates (`maker`, `app`, `token0`, `token1`), four
+  established zero literal-key balance leaf slots with readback checks, and
+  one exit-kind assertion:
+  `assertFalse(_put_ok, "path enc=6 exits through a REVERT: ...")`.
+- The assertion ladder still refuses literal bytes32 slot keys with:
+  `the key ... cannot be expressed: the key does not resolve to an input of
+  this unit`. This means no R1/R2 slot row was proved for the literal-key
+  slots. It is a future ESBMC slot-coordinate resolver/modeling issue. It does
+  not invalidate the current gate-cell PUT because the observable oracle for
+  this path is the rollback/revert exit, not post-state.
+
+Do not spend safeBalances again for this code change. The next useful work is
+either another POC's ground-truth-first repair or an internal ESBMC fix so
+`--path-cov-assert` can query certified literal mapping-key slots.

@@ -619,6 +619,8 @@ def main():
                "--derived-by", json.dumps(deriv)]
         if path_function:
             cmd += ["--path-function", path_function]
+        if exit_kind:
+            cmd += ["--exit-kind", exit_kind]
         if args.propose_r2:
             cmd += ["--propose-r2", "--r2-depth", str(args.r2_depth),
                     "--r2-term-budget", str(args.r2_term_budget),

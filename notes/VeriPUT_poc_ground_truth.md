@@ -94,6 +94,21 @@ Stage-1 pathcov: 4 instrumented paths, 2 witnessed paths.
     checks against the real Stage-1 report now propose literal-key slots for
     both `token0` and `token1`; the next ESBMC run should verify whether this
     removes the outer-refine abort.
+  - Current branch check: Stage 2 attempt 1 under 60s/8GiB completed with
+    `2 witnessed / 2 certified / 0 not certified`. The certified body-path
+    region contains the expected input slice (`msg.value == 0`, wide
+    `maker/app/token0/token1`) and the four literal-key balance leaf slots
+    fixed at zero. Stage 3 attempt 1 then emitted the value-gate PUT, but the
+    body-path PUT was only a `try/catch` replay. The expected strong PUT for
+    body path `enc=6` is therefore still an exit-kind oracle:
+    catch the call and assert `ok == false`.
+  - Current branch PUT check: Stage 3 attempt 2 under 120s/8GiB produced
+    `B = 2 of 2`. Path `enc=6` now fuzzes `maker/app/token0/token1`,
+    establishes the four zero literal-key slots with `vm.store` plus readback
+    checks, calls `safeBalances(...)` inside `try/catch`, and asserts the call
+    reverted. The assertion ladder still cannot query the literal bytes32 key
+    as an ESBMC slot coordinate; this is a slot-resolver/R1 issue, not a
+    blocker for the gate-cell exit-kind PUT.
 
 ### `Aqua.rawBalances`
 
