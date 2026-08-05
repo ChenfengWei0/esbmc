@@ -2876,3 +2876,90 @@ python3 notes/coverage/scripts/poc_one.py \
 The dry run confirms `--probe-witnesses 0` in Stage 1 and Stage 2, and no
 `--probe-ladder` in Stage 2. Attempt 2 remains available and should be the next
 official spend for this POC: 120s/8GiB.
+
+Attempt 2 result:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMaxLossRatio \
+  --stage all --cell gate --attempt 2 --fresh
+```
+
+- Stage 1 completed in 38.6s with a full, non-partial report:
+  `F_feasible_with_ce=5`, `covered=5`, `U=0`, `decisionSequences` present.
+- Stage 2 timed out at 120s/8GiB before certifying anything:
+  `0 certified / 0 not / 5 witnessed`, with 5 paths at no verdict. The log
+  showed level0 had already decided 4 of them around 36s, but the driver still
+  entered a second probe/refine path instead of using the source decision tree.
+- Root cause was structural fast path incompleteness, not an ESBMC modeling
+  failure:
+  - `structural_decision_region` only accepted `==` and `!=`, so
+    `maxLossRatio_ > _ONE_E9` forced the expensive ladder.
+  - `_ONE_E9` was not resolved as a constant; the solc AST spells its literal
+    as `value: "1e9"`.
+  - Stage 2 did not import scalar state fixed by `--path-cov-fixture`, so
+    `return_value$_owner$1` could not be resolved unless `state._owner` happened
+    to appear in `entry_storage`.
+
+Code-level repair after attempt 2:
+
+- `scripts/solidity_path_generalise.py` structural decisions now accept
+  `==`, `!=`, `<`, `<=`, `>`, `>=`, including the required ESBMC claim
+  inversion (`x > c` means path condition `x <= c`; `!(x > c)` means
+  `x > c`).
+- Ordered product regions intersect coordinate boxes directly:
+  `coord <= c` tightens `hi`, `coord > c` tightens `lo`, and stale holes are
+  clipped after a bound update.
+- Literal Solidity integer constants visible in the target contract's
+  linearized base chain are extracted from the AST, including exact scientific
+  integer literals such as `1e9`.
+- Stage 2 imports scalar fixture state pins from `--path-cov-fixture`, e.g.
+  `state._owner==1`, and refuses explicit `--pin` conflicts.
+
+Validation without spending a new POC ESBMC attempt:
+
+```sh
+python3 -m py_compile \
+  scripts/solidity_path_generalise.py \
+  scripts/test_solidity_path_generalise.py
+python3 scripts/test_solidity_path_generalise.py
+timeout 60s python3 -u scripts/solidity_path_generalise.py \
+  --enumeration-index notes/coverage/pathcov/st1inch_St1inch__poc_St1inch_setMaxLossRatio_gate/index.json \
+  --enumeration-report notes/coverage/pathcov/st1inch_St1inch__poc_St1inch_setMaxLossRatio_gate/reports/St1inch__setMaxLossRatio.json \
+  ... --esbmc-arg=--path-cov-fixture \
+  --esbmc-arg=/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setMaxLossRatio/fixture_gate.json
+```
+
+The offline Stage 2 run reused the existing Stage 1 report, printed
+`no enumeration ESBMC process was started`, imported `state._owner==1`, derived
+structural regions for all 5 witnessed paths, and wrote
+`5 certified region(s), 0 not certified, over 5 witnessed path(s)` in 0.19s.
+It printed `No ESBMC certification query is started` for each path.
+
+Expected structural regions for `setMaxLossRatio` gate now match ground truth:
+
+- enc=2: `msg.value != 0`, value-gate reject.
+- enc=12: `msg.value == 0`, `msg.sender != 1`,
+  `maxLossRatio_ > 1000000000`.
+- enc=13: `msg.value == 0`, `msg.sender != 1`,
+  `maxLossRatio_ <= 1000000000`.
+- enc=14: `msg.value == 0`, `msg.sender == 1`,
+  `maxLossRatio_ > 1000000000`.
+- enc=15: `msg.value == 0`, `msg.sender == 1`,
+  `maxLossRatio_ <= 1000000000`.
+
+Next official spend for this POC is attempt 3. Prefer running Stage 2 and
+Stage 3 only, reusing the complete attempt-2 Stage 1 report:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMaxLossRatio \
+  --stage 2 --cell gate --attempt 3
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__setMaxLossRatio \
+  --stage 3 --cell gate --attempt 3
+```
+
+Attempt-3 budget remains 600s/10GiB. Operationally use a 300s checkpoint, but
+do not split the official long proof window unless a log shows a clear driver
+or fixture error.

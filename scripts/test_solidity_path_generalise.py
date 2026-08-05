@@ -75,6 +75,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       stamp_workdir,
                                       abi_gate_class,
                                       structural_abi_gate_certificate,
+                                      _decision_relation,
+                                      literal_state_constants,
+                                      path_cov_fixture_state_pins,
                                       structural_decision_region,
                                       structural_decision_regions,
                                       extcall_inseparable_failures,
@@ -2540,6 +2543,109 @@ check("simple-decision-region-refuses-coordinate-equality",
       structural_decision_region(
           [{"branch_claim": "a == b"}], {"a": 1, "b": 2}, {},
           ["a", "b"]), None)
+check("decision-relation-inverts-ordered-claim",
+      _decision_relation("x > 5"), ("x", "<=", "5"))
+check("decision-relation-keeps-negated-ordered-claim",
+      _decision_relation("!(x > 5)"), ("x", ">", "5"))
+
+_setmax_normal_decisions = [
+    {"synthetic_abi_gate": True, "arm": "taken",
+     "branch_claim": "!(msg.value == 0)"},
+    {"arm": "taken",
+     "branch_claim":
+     "return_value$_owner$1 != return_value$__msgSender$2"},
+    {"arm": "taken", "branch_claim": "maxLossRatio_ > _ONE_E9"},
+]
+_setmax_box, _setmax_holes, _setmax_reason = structural_decision_region(
+    _setmax_normal_decisions,
+    {"msg.value": 0, "msg.sender": 1, "maxLossRatio_": 7},
+    {"state._owner": 1},
+    ["maxLossRatio_", "msg.sender", "msg.value"],
+    constants={"_ONE_E9": 1000000000})
+check("ordered-decision-region-pins-value",
+      _setmax_box["msg.value"], (0, 0))
+check("ordered-decision-region-pins-owner",
+      _setmax_box["msg.sender"], (1, 1))
+check("ordered-decision-region-cuts-upper-bound-from-constant",
+      _setmax_box["maxLossRatio_"], (0, 1000000000))
+check("ordered-decision-region-keeps-no-stale-holes",
+      _setmax_holes, {})
+check("ordered-decision-region-reason-names-comparison",
+      "comparison" in _setmax_reason, True)
+
+_setmax_overflow = structural_decision_region(
+    [{"synthetic_abi_gate": True, "arm": "taken",
+      "branch_claim": "!(msg.value == 0)"},
+     {"arm": "taken",
+      "branch_claim":
+      "return_value$_owner$1 != return_value$__msgSender$2"},
+     {"arm": "fall-through", "branch_claim": "!(maxLossRatio_ > _ONE_E9)"}],
+    {"msg.value": 0, "msg.sender": 1, "maxLossRatio_": 1000000001},
+    {"state._owner": 1},
+    ["maxLossRatio_", "msg.sender", "msg.value"],
+    constants={"_ONE_E9": 1000000000})
+check("ordered-decision-region-cuts-lower-bound-from-constant",
+      _setmax_overflow[0]["maxLossRatio_"],
+      (1000000001, (1 << 256) - 1))
+check("ordered-decision-region-refuses-unsatisfied-constant",
+      structural_decision_region(
+          [{"branch_claim": "!(1 > _ONE_E9)"}],
+          {}, {}, ["maxLossRatio_"],
+          constants={"_ONE_E9": 1000000000}), None)
+
+with tempfile.NamedTemporaryFile("w", suffix=".solast", delete=False) as _astf:
+    json.dump({
+        "nodeType": "SourceUnit",
+        "nodes": [{
+            "nodeType": "ContractDefinition",
+            "id": 1,
+            "name": "Base",
+            "linearizedBaseContracts": [1],
+            "nodes": [{
+                "nodeType": "VariableDeclaration",
+                "constant": True,
+                "name": "_ONE_E9",
+                "value": {
+                    "nodeType": "Literal",
+                    "kind": "number",
+                    "value": "1e9",
+                    "typeDescriptions": {
+                        "typeString": "int_const 1000000000_by_1"
+                    }
+                }
+            }]
+        }, {
+            "nodeType": "ContractDefinition",
+            "id": 2,
+            "name": "Child",
+            "linearizedBaseContracts": [2, 1],
+            "nodes": []
+        }]
+    }, _astf)
+    _literal_ast = _astf.name
+try:
+    check("literal-state-constants-parse-solidity-scientific-integer",
+          literal_state_constants(_literal_ast, "Child")["_ONE_E9"],
+          1000000000)
+finally:
+    os.unlink(_literal_ast)
+
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as _fxf:
+    json.dump({"contract": "St1inch", "state": {"_owner": "1",
+                                                "note": "not-int"}}, _fxf)
+    _fixture_path = _fxf.name
+try:
+    _fixture_pins, _fixture_skipped = path_cov_fixture_state_pins(
+        ["--path-cov-fixture", _fixture_path], "St1inch")
+    check("fixture-state-pins-import-scalar-state",
+          _fixture_pins, {"state._owner": 1})
+    check("fixture-state-pins-report-nonscalar-skips",
+          len(_fixture_skipped), 1)
+    check("fixture-state-pins-ignore-wrong-contract",
+          path_cov_fixture_state_pins(["--path-cov-fixture", _fixture_path],
+                                      "Other")[0], {})
+finally:
+    os.unlink(_fixture_path)
 
 _extcall_fail = extcall_inseparable_failures(
     [(26, 4, {"amount": 0, "msg.value": 0, "msg.sender": 0}),

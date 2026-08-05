@@ -798,7 +798,7 @@ def structural_abi_gate_certificate(decisions, box, holes, ce):
     return None
 
 
-SIMPLE_BRANCH_RE = re.compile(r"^(.+?)\s*(==|!=)\s*(.+)$")
+SIMPLE_BRANCH_RE = re.compile(r"^(.+?)\s*(==|!=|<=|>=|<|>)\s*(.+)$")
 
 
 def _unwrap_not(expr):
@@ -814,7 +814,7 @@ def _decision_relation(branch_claim):
     ESBMC's branch claim is the assertion used to witness the arm, so the path
     condition is its negation. The report prints either `x == y` or `!(x == y)`;
     this helper turns both spellings back into the condition the path actually
-    follows. Only equality/inequality is admitted here.
+    follows. Only simple binary comparisons are admitted here.
     """
     inner, was_not = _unwrap_not(branch_claim)
     m = SIMPLE_BRANCH_RE.match(inner)
@@ -822,11 +822,33 @@ def _decision_relation(branch_claim):
         return None
     lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
     if not was_not:
-        op = "!=" if op == "==" else "=="
+        op = {"==": "!=", "!=": "==", "<": ">=", "<=": ">",
+              ">": "<=", ">=": "<"}[op]
     return lhs, op, rhs
 
 
-def _decision_term(term, ce, pins):
+def _flip_relation(op):
+    return {"==": "==", "!=": "!=", "<": ">", "<=": ">=",
+            ">": "<", ">=": "<="}[op]
+
+
+def _compare_values(lhs, op, rhs):
+    if op == "==":
+        return lhs == rhs
+    if op == "!=":
+        return lhs != rhs
+    if op == "<":
+        return lhs < rhs
+    if op == "<=":
+        return lhs <= rhs
+    if op == ">":
+        return lhs > rhs
+    if op == ">=":
+        return lhs >= rhs
+    raise ValueError(f"unsupported comparison operator: {op}")
+
+
+def _decision_term(term, ce, pins, constants=None):
     """Resolve a simple branch term to either a coordinate or a constant."""
     term = term.strip()
     if term in ce:
@@ -841,6 +863,8 @@ def _decision_term(term, ce, pins):
             return "const", pins[state_name]
     if term in pins:
         return "const", pins[term]
+    if term in (constants or {}):
+        return "const", constants[term]
     try:
         return "const", parse_int(term)
     except ValueError:
@@ -895,8 +919,33 @@ def _box_intersect_neq(box, holes, name, value, coord_types=None,
     return True
 
 
+def _box_intersect_order(box, holes, name, op, value, coord_types=None,
+                         type_ranges=None):
+    lo, hi = box.get(name, _coord_range(name, coord_types, type_ranges))
+    value = int(value)
+    if op == "<":
+        hi = min(hi, value - 1)
+    elif op == "<=":
+        hi = min(hi, value)
+    elif op == ">":
+        lo = max(lo, value + 1)
+    elif op == ">=":
+        lo = max(lo, value)
+    else:
+        raise ValueError(f"unsupported order operator: {op}")
+    if lo > hi:
+        return False
+    box[name] = (lo, hi)
+    kept = {h for h in holes.get(name, set()) if lo <= h <= hi}
+    if kept:
+        holes[name] = kept
+    else:
+        holes.pop(name, None)
+    return True
+
+
 def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
-                               type_ranges=None):
+                               type_ranges=None, constants=None):
     """Derive a product region directly from simple complete-path decisions.
 
     This is a fast path for source shapes such as:
@@ -904,9 +953,10 @@ def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
       nonpayable ABI gate; onlyOwner; if (arg == 0) revert; state = arg
 
     It is intentionally not a prover for arbitrary Solidity. Every decision
-    must be a simple equality/inequality whose terms resolve to one coordinate
-    and one constant/pin. If any decision is outside that grammar the caller
-    falls back to the measured ladder and ESBMC certification.
+    must be a simple comparison whose terms resolve to one coordinate and one
+    constant/pin/literal Solidity constant. If any decision is outside that
+    grammar the caller falls back to the measured ladder and ESBMC
+    certification.
     """
     decisions = decisions or []
     if not decisions:
@@ -920,12 +970,13 @@ def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
         if rel is None:
             return None
         lhs, op, rhs = rel
-        lt = _decision_term(lhs, ce, pins)
-        rt = _decision_term(rhs, ce, pins)
+        lt = _decision_term(lhs, ce, pins, constants)
+        rt = _decision_term(rhs, ce, pins, constants)
         if lt is None or rt is None:
             return None
         if lt[0] == "const" and rt[0] == "coord":
             lt, rt = rt, lt
+            op = _flip_relation(op)
         if lt[0] == "coord" and rt[0] == "const":
             name, value = lt[1], rt[1]
             if name not in coord_set:
@@ -933,8 +984,7 @@ def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
                 # by the slice. It contributes no rendered box coordinate.
                 if name not in pins:
                     return None
-                ok = (pins[name] == value) if op == "==" else \
-                     (pins[name] != value)
+                ok = _compare_values(pins[name], op, value)
                 if not ok:
                     return None
                 clauses.append(f"{name} {op} {value} (pinned)")
@@ -942,15 +992,18 @@ def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
             if op == "==":
                 ok = _box_intersect_eq(
                     box, holes, name, value, coord_types, type_ranges)
-            else:
+            elif op == "!=":
                 ok = _box_intersect_neq(
                     box, holes, name, value, coord_types, type_ranges)
+            else:
+                ok = _box_intersect_order(
+                    box, holes, name, op, value, coord_types, type_ranges)
             if not ok:
                 return None
             clauses.append(f"{name} {op} {value}")
             continue
         if lt[0] == "const" and rt[0] == "const":
-            ok = (lt[1] == rt[1]) if op == "==" else (lt[1] != rt[1])
+            ok = _compare_values(lt[1], op, rt[1])
             if not ok:
                 return None
             clauses.append(f"{lt[1]} {op} {rt[1]} (constant)")
@@ -958,19 +1011,21 @@ def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
         # Coordinate-to-coordinate constraints are not product regions.
         return None
     reason = ("STRUCTURAL simple decision region: every complete-path decision "
-              "is an equality/inequality over a rendered coordinate and a "
-              "constant or pinned state value; clauses: "
+              "is a comparison over a rendered coordinate and a constant, "
+              "literal Solidity constant, or pinned state value; clauses: "
               + "; ".join(clauses))
     return box, holes, reason
 
 
 def structural_decision_regions(paths, path_decisions, pins, coords,
-                                coord_types=None, type_ranges=None):
+                                coord_types=None, type_ranges=None,
+                                constants=None):
     out, holes, reasons = {}, {}, {}
     for enc, _depth, ce in paths:
         got = structural_decision_region(
             path_decisions.get(enc), ce, pins, coords,
-            coord_types=coord_types, type_ranges=type_ranges)
+            coord_types=coord_types, type_ranges=type_ranges,
+            constants=constants)
         if got is None:
             return None, None, None
         box, h, reason = got
@@ -1412,6 +1467,96 @@ def _chain_nodes(ast, contract):
 
 def _type_string(n):
     return ((n or {}).get("typeDescriptions") or {}).get("typeString") or ""
+
+
+def literal_state_constants(ast_path, contract=None):
+    """Literal integer Solidity constants visible from the target contract."""
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return {}
+    nodes = _chain_nodes(ast, contract) if contract else None
+    if nodes is None:
+        nodes = [ast]
+    out = {}
+
+    def numeric_literal(n):
+        if not isinstance(n, dict) or n.get("nodeType") != "Literal":
+            return None
+        if n.get("subdenomination"):
+            return None
+        if n.get("kind") != "number":
+            return None
+        value = str(n.get("value") or "")
+        try:
+            return parse_int(value)
+        except ValueError:
+            pass
+        m = re.fullmatch(r"([0-9]+)[eE]([0-9]+)", value)
+        if m:
+            return int(m.group(1)) * (10 ** int(m.group(2)))
+        ty = ((n.get("typeDescriptions") or {}).get("typeString") or "")
+        m = re.fullmatch(r"int_const ([0-9]+)_by_1", ty)
+        if m:
+            return int(m.group(1))
+        return None
+
+    def walk(n):
+        if isinstance(n, dict):
+            if (n.get("nodeType") == "VariableDeclaration"
+                    and n.get("constant") and n.get("name")):
+                value = numeric_literal(n.get("value"))
+                if value is not None:
+                    out[n["name"]] = value
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    for node in nodes:
+        walk(node)
+    return out
+
+
+def path_cov_fixture_state_pins(esbmc_args, contract=None):
+    """Scalar state pins implied by a --path-cov-fixture JSON file."""
+    paths = []
+    i = 0
+    while i < len(esbmc_args or []):
+        arg = esbmc_args[i]
+        if arg == "--path-cov-fixture" and i + 1 < len(esbmc_args):
+            paths.append(esbmc_args[i + 1])
+            i += 2
+            continue
+        prefix = "--path-cov-fixture="
+        if arg.startswith(prefix):
+            paths.append(arg[len(prefix):])
+        i += 1
+    pins, skipped = {}, []
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as stream:
+                fixture = json.load(stream)
+        except (OSError, ValueError) as exc:
+            skipped.append(f"{path}: unreadable fixture ({exc})")
+            continue
+        fx_contract = fixture.get("contract")
+        if contract and fx_contract and fx_contract != contract:
+            skipped.append(f"{path}: fixture contract {fx_contract!r} does "
+                           f"not match {contract!r}")
+            continue
+        state = fixture.get("state") or {}
+        if not isinstance(state, dict):
+            skipped.append(f"{path}: fixture state is not an object")
+            continue
+        for name, raw in state.items():
+            if not name:
+                continue
+            try:
+                pins[f"state.{name}"] = parse_int(str(raw))
+            except ValueError:
+                skipped.append(f"{path}: state.{name} is not a scalar integer")
+    return pins, skipped
 
 
 def mapping_state_vars(ast_path, contract=None):
@@ -5114,6 +5259,24 @@ def main():
     for p in args.pin:
         n, _, v = p.partition("=")
         pins[n] = parse_int(v)
+    fixture_pins, fixture_pin_skipped = path_cov_fixture_state_pins(
+        args.esbmc_arg, args.contract)
+    for n, v in sorted(fixture_pins.items()):
+        if n in pins and pins[n] != v:
+            raise SystemExit(
+                f"[fixture] {n}={v} from --path-cov-fixture conflicts with "
+                f"explicit --pin {n}={pins[n]}")
+        pins.setdefault(n, v)
+    if fixture_pins:
+        print("[fixture] scalar state pin(s) imported from "
+              "--path-cov-fixture: "
+              + ", ".join(f"{n}=={v}"
+                          for n, v in sorted(fixture_pins.items()))
+              + ". These are part of the reused path-coverage run's entry "
+                "state, so source decisions that read getters can use them")
+    if fixture_pin_skipped:
+        print("[fixture] state pin(s) not imported: "
+              + "; ".join(fixture_pin_skipped))
 
     cwd = args.workdir or tempfile.mkdtemp(prefix="pathgen-")
     os.makedirs(cwd, exist_ok=True)
@@ -5605,6 +5768,7 @@ def main():
         if args.path_function else None
     coord_types = dict(unit_params(args.ast, args.contract, args.unit,
                                    declaration_id=declaration_id))
+    constants = literal_state_constants(args.ast, args.contract)
 
     def query_pins():
         return {n: v for n, v in pins.items() if n not in nonquery_pins}
@@ -5661,7 +5825,8 @@ def main():
         for enc, _depth, ce in paths:
             got = structural_decision_region(
                 path_decisions.get(enc), ce, pins, coords,
-                coord_types=coord_types, type_ranges={})
+                coord_types=coord_types, type_ranges={},
+                constants=constants)
             if got is None:
                 continue
             box, h, reason = got
@@ -5683,7 +5848,7 @@ def main():
     if paths:
         early_structural_regions, _, _ = structural_decision_regions(
             paths, path_decisions, pins, coords, coord_types=coord_types,
-            type_ranges={})
+            type_ranges={}, constants=constants)
         if early_structural_regions is not None:
             if args.level0 or args.probe_witnesses or args.probe_ladder:
                 print("[structural] every witnessed path is already "
@@ -6084,7 +6249,7 @@ def main():
         structural_regions, structural_holes, structural_reasons = \
             structural_decision_regions(
                 paths, path_decisions, pins, coords, coord_types=coord_types,
-                type_ranges=type_ranges)
+                type_ranges=type_ranges, constants=constants)
     if paths and structural_regions is not None:
         brackets, regions, warned, round_failure = {}, structural_regions, \
             set(), None
