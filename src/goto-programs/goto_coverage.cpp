@@ -9481,7 +9481,8 @@ void goto_coveraget::solidity_path_coverage()
                                      const expr2tc &pre_v,
                                      const std::string &subject,
                                      bool allow_pre_terms,
-                                     bool allow_deltas) {
+                                     bool allow_deltas,
+                                     const expr2tc &vacuous_guard = expr2tc()) {
         if (
           spec == nullptr ||
           (spec->equals.empty() && spec->abs.empty() && spec->deltas.empty()))
@@ -9702,11 +9703,15 @@ void goto_coveraget::solidity_path_coverage()
         for (const auto &candidate : spec->equals)
         {
           const built_assert_termt term = build(candidate.term);
+          expr2tc assertion =
+            and2tc(term.defined, equality2tc(live, term.value));
+          if (!is_nil_expr(vacuous_guard))
+            assertion = or2tc(vacuous_guard, assertion);
           emit_rung(
             owner,
             "r2e" + candidate.id,
             subject + " == " + term.text,
-            and2tc(term.defined, equality2tc(live, term.value)));
+            assertion);
         }
         for (const auto &candidate : spec->abs)
         {
@@ -9715,15 +9720,18 @@ void goto_coveraget::solidity_path_coverage()
           const expr2tc defined = and2tc(
             and2tc(lo.defined, hi.defined),
             lessthanequal2tc(lo.value, hi.value));
+          expr2tc assertion = and2tc(
+            defined,
+            and2tc(
+              greaterthanequal2tc(live, lo.value),
+              lessthanequal2tc(live, hi.value)));
+          if (!is_nil_expr(vacuous_guard))
+            assertion = or2tc(vacuous_guard, assertion);
           emit_rung(
             owner,
             "r2a" + candidate.id,
             subject + " in [" + lo.text + ", " + hi.text + "]",
-            and2tc(
-              defined,
-              and2tc(
-                greaterthanequal2tc(live, lo.value),
-                lessthanequal2tc(live, hi.value))));
+            assertion);
         }
         for (const auto &candidate : spec->deltas)
         {
@@ -9738,6 +9746,15 @@ void goto_coveraget::solidity_path_coverage()
           const expr2tc defined = and2tc(
             and2tc(lo.defined, hi.defined),
             lessthanequal2tc(lo.value, hi.value));
+          expr2tc assertion = and2tc(
+            defined,
+            and2tc(
+              direction,
+              and2tc(
+                greaterthanequal2tc(delta, lo.value),
+                lessthanequal2tc(delta, hi.value))));
+          if (!is_nil_expr(vacuous_guard))
+            assertion = or2tc(vacuous_guard, assertion);
           emit_rung(
             owner,
             "r2d" + candidate.id,
@@ -9745,13 +9762,7 @@ void goto_coveraget::solidity_path_coverage()
                                     : std::string("pre - post in [")) +
               lo.text + ", " + hi.text + "] with " +
               (candidate.dir == "inc" ? "post >= pre" : "pre >= post"),
-            and2tc(
-              defined,
-              and2tc(
-                direction,
-                and2tc(
-                  greaterthanequal2tc(delta, lo.value),
-                  lessthanequal2tc(delta, hi.value)))));
+            assertion);
         }
       };
 
@@ -10614,6 +10625,16 @@ void goto_coveraget::solidity_path_coverage()
                 "retne0",
                 "return == true",
                 or2tc(no_ret, equality2tc(g, gen_true_expr())));
+              emit_structured_rungs(
+                sp,
+                g->type,
+                vname,
+                g,
+                gen_false_expr(),
+                "return",
+                false,
+                false,
+                no_ret);
               return;
             }
             // The zero pair is emitted with NO spec and is the rung that
@@ -10671,7 +10692,7 @@ void goto_coveraget::solidity_path_coverage()
                       g, constant_int2tc(rt, string2integer(sp->abs_hi))))));
             }
             emit_structured_rungs(
-              sp, rt, vname, g, gen_zero(rt), "return", false, false);
+              sp, rt, vname, g, gen_zero(rt), "return", false, false, no_ret);
           };
 
           if (has_ret_ghost)

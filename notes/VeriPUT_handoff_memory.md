@@ -8,6 +8,52 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 ESBMC return structured-R2 retset guard
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, POC attempt, or benchmark certification run was
+  started.
+
+Finding:
+
+- Python could now propose source R2 rows such as `return == ok`, but ESBMC's
+  bool-return path emitted only the built-in `return == false` /
+  `return == true` rungs and returned before processing structured R2 equality
+  candidates.
+- More importantly, structured return R2 rungs for numeric returns reused the
+  shared post-state emitter without the `!retset` vacuity guard. The legacy
+  return rungs already guard every candidate as `!retset || claim`; structured
+  return R2 must obey the same contract, otherwise an exit that reaches the
+  path but does not execute a RETURN can make the ghost's default value look
+  like a real returned value.
+
+Code change:
+
+- `emit_structured_rungs` in `src/goto-programs/goto_coverage.cpp` now accepts
+  an optional `vacuous_guard`.
+- State and mapping structured R2 calls keep the default empty guard, so their
+  formulas are unchanged.
+- Return structured R2 calls pass `no_ret`; their emitted candidates are now
+  `!retset || defined(term) && relation`.
+- Bool returns now emit their built-in true/false rungs and then also process
+  structured bool equality candidates, enabling internally certified rows such
+  as `return == ok`.
+
+Verification:
+
+- `cmake --build build --target esbmc -j2` passed. The build printed existing
+  Solidity address model array-bounds warnings while regenerating `sol64.goto`;
+  it then linked and reported `Built target esbmc`.
+- `clang-format --dry-run --Werror src/goto-programs/goto_coverage.cpp`
+  passed.
+- `git diff --check -- src/goto-programs/goto_coverage.cpp
+  notes/VeriPUT_handoff_memory.md` passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 bool-coordinate return oracle rendering
 
 Scope and constraint:
