@@ -274,12 +274,13 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
                          f"base unit schedule derives an isolated workdir: {certify_argv}")
             next_unit_schedule = json.loads(Path(doc["outputs"]["next_unit_schedule"]).read_text())
             next_argv = next_unit_schedule["jobs"][0]["certify_argv"]
-            bad += check(argv_value(next_argv, "--timeout") == "60"
+            bad += check(argv_value(next_argv, "--timeout") == "70"
                          and argv_value(next_argv, "--run-timeout") == "60"
                          and argv_value(next_argv, "--memlimit-gib") == "8",
-                         f"campaign next schedule carries inner attempt budget: {next_argv}")
+                         f"campaign next schedule keeps ESBMC at 60s with wrapper grace: "
+                         f"{next_argv}")
             bad += check(argv_value(next_argv, "--workdir")
-                         == str(out_dir / "certify-work-a1_t60_r60_m8"),
+                         == str(out_dir / "certify-work-a1_t70_r60_m8"),
                          f"campaign next schedule derives an attempt workdir: {next_argv}")
             return bad
 

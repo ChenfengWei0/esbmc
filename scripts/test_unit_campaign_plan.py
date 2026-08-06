@@ -164,12 +164,12 @@ def test_campaign_partitions_attempts_and_auto_selects_earliest():
     bad += check([job["job_id"] for job in doc["next_schedule"]["jobs"]] == ["peer182__new__f"],
                  f"next schedule keeps only attempt-1 jobs: {doc['next_schedule']['jobs']}")
     next_argv = doc["next_schedule"]["jobs"][0]["certify_argv"]
-    bad += check(argv_value(next_argv, "--timeout") == "60"
+    bad += check(argv_value(next_argv, "--timeout") == "70"
                  and argv_value(next_argv, "--run-timeout") == "60"
                  and argv_value(next_argv, "--memlimit-gib") == "8",
-                 f"attempt-1 schedule embeds the inner certify budget: {next_argv}")
+                 f"attempt-1 schedule keeps ESBMC at 60s with wrapper grace: {next_argv}")
     bad += check(argv_value(next_argv, "--workdir")
-                 == f"/tmp/certify_all/{DEFAULT_RECIPE_DIR}/a1_t60_r60_m8",
+                 == f"/tmp/certify_all/{DEFAULT_RECIPE_DIR}/a1_t70_r60_m8",
                  f"attempt-1 schedule uses an attempt-specific workdir: {next_argv}")
     return bad
 
@@ -201,9 +201,9 @@ def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
     bad += check(doc["next_run"]["timeout_s"] == 600.0 and doc["next_run"]["memlimit_gb"] == 10.0,
                  f"attempt 3 uses the agreed long budget: {doc['next_run']}")
     bad += check(
-        "--timeout" in runner and "600.0" in runner and "--memlimit-gb" in runner
+        "--timeout" in runner and "615.0" in runner and "--memlimit-gb" in runner
         and "10.0" in runner and "--jobs" in runner and "2" in runner,
-        f"runner argv carries budget and jobs: {runner}")
+        f"runner argv carries outer grace budget and jobs: {runner}")
     bad += check("--dry-run" in doc["next_run"]["dry_run_argv"]
                  and "--dry-run" not in runner,
                  f"dry-run argv is explicit and separate: {doc['next_run']}")
@@ -214,13 +214,13 @@ def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
         out_doc["summary"]["campaign_attempt"] == 3
         and [job["job_id"] for job in out_doc["jobs"]] == ["stress243__retry3__h"],
         f"attempt schedule is written: {out_doc['summary']}")
-    bad += check(argv_value(certify_argv, "--timeout") == "600"
+    bad += check(argv_value(certify_argv, "--timeout") == "610"
                  and argv_value(certify_argv, "--run-timeout") == "600"
                  and argv_value(certify_argv, "--memlimit-gib") == "10"
                  and certify_argv.count("--timeout") == 1,
-                 f"attempt-3 schedule rewrites inner certify budget: {certify_argv}")
+                 f"attempt-3 schedule keeps ESBMC at 600s with wrapper grace: {certify_argv}")
     bad += check(argv_value(certify_argv, "--workdir")
-                 == f"/tmp/certify_all/{DEFAULT_RECIPE_DIR}/a3_t600_r600_m10",
+                 == f"/tmp/certify_all/{DEFAULT_RECIPE_DIR}/a3_t610_r600_m10",
                  f"attempt-3 schedule rewrites scratch root: {certify_argv}")
     return bad
 

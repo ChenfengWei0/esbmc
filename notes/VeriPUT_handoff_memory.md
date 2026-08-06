@@ -82,6 +82,73 @@ Verification:
   scheduler, campaign, runner, summary, pipeline, and tests passed.
 - `git diff --check` passed.
 
+## 2026-08-06 benchmark speed sample and timeout layering
+
+Sampled cached benchmark subjects from peer182, bugfix124, and stress243 with
+attempt-1 budget semantics: ESBMC run timeout 60s, memory 8GiB, serial jobs.
+The AST cache used for sampling was external to the datasets:
+`/tmp/veriput_bench_ast_cache_20260806`.
+
+Observed:
+
+- `bugfix124__acfix_fixlink_DepositLog.approvedToLog` certified quickly:
+  `1 certified / 1 not / 2 witnessed`, about 3s.
+- `bugfix124__acfix_fixlink_DepositLog.setApprovedLogger` certified quickly:
+  `2 certified / 1 not / 3 witnessed`, about 12s.
+- `peer182__peer_ccsolbmc__AIRBets.initialize2` was `NO-PATH` quickly.
+- `peer182__peer_ccsolbmc__AIRBets.transfer` stayed
+  `NO-WITNESS-UNDECIDED`; the recursive-helper preflight avoided wasting a
+  full ESBMC run.
+- `stress243__ERC-3643__ERC-3643__ClaimTopicsRegistry.init` and
+  `addClaimTopic` hit the outer runner timeout at 60s.
+- `addClaimTopic` still produced useful partial artifacts:
+  `cov-ce-journal.json` had `claims_decided=6`, `claims_total=277`,
+  `partial=true`, one path witness (`path:31`) and 8 concrete witness inputs.
+  This is a solver/enumeration/probe-volume bottleneck, not the earlier
+  frontend abort class.
+
+Important diagnosis:
+
+- Before this fix, `unit_schedule_run.py --timeout`, `certify_all.py
+  --timeout`, and `certify_all.py --run-timeout` were all set to the same
+  attempt budget (60/120/600).  The outer runner could kill `certify_all.py`
+  exactly when the internal ESBMC run timed out, losing status rows and partial
+  journals.
+- Keep the agreed ESBMC budgets unchanged: 60s/8GiB, 120s/8GiB,
+  600s/10GiB.  Add only wrapper grace:
+  `certify_all.py --timeout = ESBMC run timeout + 10s`, and
+  `unit_schedule_run.py --timeout = certify timeout + 5s`.
+- Attempt-1 generated schedules therefore show `--timeout 70
+  --run-timeout 60`, and the outer runner shows `--timeout 75.0`.  Attempt-3
+  shows `--timeout 610 --run-timeout 600`, outer `615.0`.
+- `benchmark_pipeline_plan.py` now forwards `runner_timeout_s` into
+  `next_action`, so copyable commands expose the distinction.
+
+Current go/no-go for broad benchmark testing:
+
+- Ready for a small stratified benchmark sample across peer/bugfix/stress using
+  the corrected wrapper timeouts.
+- Not ready for full broad benchmark yet.  Stress contracts can produce partial
+  witness data but may spend the first 60s solving hundreds of path-cov claims;
+  use the corrected logging first, then decide whether to reduce probe volume
+  or add a partial-journal salvage path before running many units.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  notes/coverage/scripts/unit_campaign_plan.py
+  notes/coverage/scripts/benchmark_pipeline_plan.py
+  scripts/test_unit_campaign_plan.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/unit_campaign_plan.py
+  notes/coverage/scripts/benchmark_pipeline_plan.py
+  scripts/test_unit_campaign_plan.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+
 ## 2026-08-06 recursive-helper preflight for witness discovery stalls
 
 Context:

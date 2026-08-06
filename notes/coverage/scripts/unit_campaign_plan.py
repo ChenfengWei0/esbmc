@@ -42,6 +42,8 @@ DEFAULT_POLICY = (
         "memlimit_gb": 10.0,
     },
 )
+CERTIFY_TIMEOUT_GRACE_S = 10.0
+RUNNER_TIMEOUT_GRACE_S = 5.0
 
 
 class CampaignError(ValueError):
@@ -175,6 +177,9 @@ def _runner_argv(schedule_path: str,
                  jobs: int = 1,
                  stop_on_failure: bool = False,
                  dry_run: bool = False) -> list[str]:
+    runner_timeout_s = (
+        float(attempt_cfg["timeout_s"]) + CERTIFY_TIMEOUT_GRACE_S +
+        RUNNER_TIMEOUT_GRACE_S)
     argv = [
         sys.executable,
         str(UNIT_SCHEDULE_RUN),
@@ -182,7 +187,7 @@ def _runner_argv(schedule_path: str,
         "--journal",
         journal_path,
         "--timeout",
-        str(attempt_cfg["timeout_s"]),
+        str(runner_timeout_s),
         "--memlimit-gb",
         str(attempt_cfg["memlimit_gb"]),
         "--jobs",
@@ -213,36 +218,37 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
     if not attempt_cfg:
         return [copy.deepcopy(job) for job in jobs]
     attempt = int(attempt_cfg["attempt"])
-    timeout_s = int(attempt_cfg["timeout_s"])
+    run_timeout_s = int(attempt_cfg["timeout_s"])
+    certify_timeout_s = int(run_timeout_s + CERTIFY_TIMEOUT_GRACE_S)
     memlimit_gib = int(attempt_cfg["memlimit_gb"])
     budgeted = []
     for job in jobs:
         item = copy.deepcopy(job)
         out_path = _argv_value([str(arg) for arg in item.get("certify_argv") or []], "--out")
         workdir = unit_schedule.default_workdir_root(out_path,
-                                                     timeout_s=timeout_s,
-                                                     run_timeout_s=timeout_s,
+                                                     timeout_s=certify_timeout_s,
+                                                     run_timeout_s=run_timeout_s,
                                                      memlimit_gib=memlimit_gib,
                                                      attempt=attempt)
         item["certify_argv"] = unit_schedule.budgeted_certify_argv(
             [str(arg) for arg in item.get("certify_argv") or []],
-            timeout_s=timeout_s,
-            run_timeout_s=timeout_s,
+            timeout_s=certify_timeout_s,
+            run_timeout_s=run_timeout_s,
             memlimit_gib=memlimit_gib,
             workdir=workdir)
         if "dry_run_argv" in item:
             dry = unit_schedule.budgeted_certify_argv(
                 [str(arg) for arg in item.get("dry_run_argv") or []],
-                timeout_s=timeout_s,
-                run_timeout_s=timeout_s,
+                timeout_s=certify_timeout_s,
+                run_timeout_s=run_timeout_s,
                 memlimit_gib=memlimit_gib,
                 workdir=workdir)
             if "--dry-run" not in dry:
                 dry.append("--dry-run")
             item["dry_run_argv"] = dry
         item["certification_budget"] = {
-            "timeout_s": timeout_s,
-            "run_timeout_s": timeout_s,
+            "timeout_s": certify_timeout_s,
+            "run_timeout_s": run_timeout_s,
             "memlimit_gib": memlimit_gib,
             "workdir": workdir,
         }
@@ -253,7 +259,9 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
 def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attempt_cfg: dict | None,
                           source_journals: list[str]) -> dict:
     attempt = (attempt_cfg or {}).get("attempt")
-    timeout_s = (attempt_cfg or {}).get("timeout_s")
+    run_timeout_s = (attempt_cfg or {}).get("timeout_s")
+    certify_timeout_s = (
+        int(run_timeout_s + CERTIFY_TIMEOUT_GRACE_S) if run_timeout_s else None)
     memlimit_gb = (attempt_cfg or {}).get("memlimit_gb")
     budgeted_jobs = _attempt_budgeted_jobs(selected_jobs, attempt_cfg)
     by_benchmark = Counter(job.get("benchmark") for job in budgeted_jobs)
@@ -279,10 +287,11 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
             "jobs": len(budgeted_jobs),
             "jobs_before_campaign_filter": len(base_schedule.get("jobs") or []),
             "campaign_attempt": attempt,
-            "timeout_s": timeout_s,
+            "timeout_s": certify_timeout_s,
+            "run_timeout_s": run_timeout_s,
             "memlimit_gb": memlimit_gb,
-            "certify_timeout_s": int(timeout_s) if timeout_s else None,
-            "certify_run_timeout_s": int(timeout_s) if timeout_s else None,
+            "certify_timeout_s": certify_timeout_s,
+            "certify_run_timeout_s": int(run_timeout_s) if run_timeout_s else None,
             "certify_memlimit_gib": int(memlimit_gb) if memlimit_gb else None,
             "certify_workdir": (budgeted_jobs[0].get("certification_budget")
                                 or {}).get("workdir") if budgeted_jobs else None,
@@ -400,6 +409,11 @@ def plan_campaign_for_schedule(schedule: dict,
             attempt_cfg["attempt"],
             "timeout_s":
             attempt_cfg["timeout_s"],
+            "certify_timeout_s":
+            float(attempt_cfg["timeout_s"]) + CERTIFY_TIMEOUT_GRACE_S,
+            "runner_timeout_s":
+            (float(attempt_cfg["timeout_s"]) + CERTIFY_TIMEOUT_GRACE_S +
+             RUNNER_TIMEOUT_GRACE_S),
             "memlimit_gb":
             attempt_cfg["memlimit_gb"],
             "jobs":
