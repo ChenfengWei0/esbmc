@@ -165,10 +165,16 @@ def test_subject_record_preserves_inferred_solc_bin():
     bad = 0
     bad += check(record["solc"] == "0.8.17",
                  f"solc version is retained: {record}")
+    bad += check(record["solc_bin_source"] == "inferred",
+                 f"solc source is retained: {record}")
     bad += check(record["inferred_solc_bin"] == solc,
                  f"compile command solc is inferred: {record}")
-    bad += check(subject.with_inferred_solc_bin().solc_bin == solc,
+    promoted = subject.with_inferred_solc_bin().to_record()
+    bad += check(promoted["solc_bin"] == solc,
                  "inferred solc can be promoted explicitly")
+    bad += check(promoted["solc_bin_source"] == "inferred"
+                 and promoted["inferred_solc_bin"] == solc,
+                 f"promoted inferred solc keeps provenance: {promoted}")
     bad += check(restored.to_record() == record,
                  "inferred solc survives manifest round-trip")
     return bad
@@ -340,6 +346,9 @@ def test_unit_manifest_cli_generates_ast_with_inferred_solc():
                  f"inferred solc generated an AST: {row}")
     bad += check(row["subject"]["solc_bin"] == script,
                  f"inferred solc was promoted for this run: {row['subject']}")
+    bad += check(row["subject"]["solc_bin_source"] == "inferred"
+                 and row["subject"]["inferred_solc_bin"] == script,
+                 f"promoted solc provenance is explicit: {row['subject']}")
     return bad
 
 

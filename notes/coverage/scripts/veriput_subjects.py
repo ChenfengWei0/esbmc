@@ -80,15 +80,32 @@ class PreparedSubject:
 
     @property
     def inferred_solc_bin(self) -> str | None:
+        inferred = _infer_solc_bin(self.metadata)
+        if self.solc_bin and self.solc_bin_source == "inferred":
+            return inferred or self.solc_bin
         if self.solc_bin:
             return None
-        return _infer_solc_bin(self.metadata)
+        return inferred
+
+    @property
+    def solc_bin_source(self) -> str:
+        source = self.metadata.get("solc_bin_source")
+        if source in ("explicit", "inferred", "missing"):
+            return source
+        if self.solc_bin:
+            return "explicit"
+        if _infer_solc_bin(self.metadata):
+            return "inferred"
+        return "missing"
 
     def with_inferred_solc_bin(self) -> "PreparedSubject":
         inferred = self.inferred_solc_bin
         if not inferred:
             return self
-        return replace(self, solc_bin=inferred)
+        metadata = dict(self.metadata)
+        metadata["inferred_solc_bin"] = inferred
+        metadata["solc_bin_source"] = "inferred"
+        return replace(self, solc_bin=inferred, metadata=metadata)
 
     def to_record(self) -> dict:
         return {
@@ -102,6 +119,7 @@ class PreparedSubject:
             "contract": self.contract,
             "unit": self.unit,
             "solc_bin": self.solc_bin,
+            "solc_bin_source": self.solc_bin_source,
             "solc": self.metadata.get("solc"),
             "inferred_solc_bin": self.inferred_solc_bin,
             "solc_extra": list(self.solc_extra),
@@ -228,6 +246,7 @@ def subject_from_record(record: dict) -> PreparedSubject | None:
             "status": data.get("meta_status"),
             "solc": data.get("solc"),
             "inferred_solc_bin": data.get("inferred_solc_bin"),
+            "solc_bin_source": data.get("solc_bin_source"),
         },
     )
 

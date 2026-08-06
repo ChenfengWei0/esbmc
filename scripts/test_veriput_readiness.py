@@ -30,7 +30,8 @@ def fixture_manifest():
                     "benchmark": "bugfix124",
                     "subject_id": "case_a",
                     "contract": "C",
-                    "solc_bin": "/opt/solc-0.8.29",
+                    "solc_bin": "/bin/sh",
+                    "solc_bin_source": "explicit",
                     "solc_extra": ["--via-ir"],
                 },
                 "unit_hints": {
@@ -46,7 +47,8 @@ def fixture_manifest():
                     "subject_id": "stress_missing_ast",
                     "contract": "S",
                     "solc": "0.8.17",
-                    "inferred_solc_bin": "/opt/solc-0.8.17",
+                    "inferred_solc_bin": "/bin/sh",
+                    "solc_bin_source": "inferred",
                     "solc_extra": [],
                 },
                 "unit_hints": {
@@ -102,16 +104,21 @@ def test_readiness_groups_status_errors_and_hints():
                  f"pending hint is counted: {s['hints']}")
     bad += check(s["hints"]["peer182"]["missing_unit_hints"] == 1,
                  f"missing hint is counted after enumeration: {s['hints']}")
-    bad += check(s["missing_ast_by_solc"]["bugfix124"]
-                 ["solc-0.8.29 --via-ir"] == 1,
+    bad += check(s["missing_ast_by_solc"]["bugfix124"]["sh --via-ir"] == 1,
                  f"AST preheat solc bucket is recorded: {s['missing_ast_by_solc']}")
     bad += check(s["missing_ast_by_solc"]["stress243"]
-                 ["inferred:solc-0.8.17(0.8.17)"] == 1,
+                 ["inferred:sh(0.8.17)"] == 1,
                  f"inferred solc bucket is recorded: {s['missing_ast_by_solc']}")
     bad += check(s["preheat"]["bugfix124"]["preheatable_missing_ast"] == 1,
                  f"preheatable missing AST is counted: {s['preheat']}")
     bad += check(s["preheat"]["stress243"]["inferable_solc_bin"] == 1,
                  f"inferable solc is counted separately: {s['preheat']}")
+    bad += check(s["solc_availability"]["bugfix124"]
+                 ["explicit_executable"] == 1,
+                 f"explicit solc availability is counted: {s['solc_availability']}")
+    bad += check(s["solc_availability"]["stress243"]
+                 ["inferred_executable"] == 1,
+                 f"inferred solc availability is counted: {s['solc_availability']}")
     return bad
 
 

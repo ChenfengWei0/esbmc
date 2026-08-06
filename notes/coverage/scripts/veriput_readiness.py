@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -70,6 +71,45 @@ def _solc_key(row: dict) -> str:
     return f"{Path(solc).name}{suffix}".strip()
 
 
+def _solc_source(subject: dict) -> str:
+    source = subject.get("solc_bin_source")
+    if source in ("explicit", "inferred", "missing"):
+        return source
+    if subject.get("solc_bin"):
+        return "explicit"
+    if subject.get("inferred_solc_bin"):
+        return "inferred"
+    return "missing"
+
+
+def _solc_path_status(path: str | None) -> str:
+    if not path:
+        return "missing"
+    if not os.path.exists(path):
+        return "absent"
+    if not os.access(path, os.X_OK):
+        return "not_executable"
+    return "executable"
+
+
+def _solc_availability_key(subject: dict) -> str:
+    source = _solc_source(subject)
+    if source == "missing":
+        return "missing"
+    path = subject.get("solc_bin") or subject.get("inferred_solc_bin")
+    return f"{source}_{_solc_path_status(path)}"
+
+
+def _solc_sample(subject: dict) -> dict:
+    path = subject.get("solc_bin") or subject.get("inferred_solc_bin")
+    return {
+        "source": _solc_source(subject),
+        "path": path,
+        "path_status": _solc_path_status(path),
+        "version": subject.get("solc"),
+    }
+
+
 def _sample(row: dict) -> dict:
     subject = _subject(row)
     target = _target(row)
@@ -91,6 +131,7 @@ def build_readiness(unit_manifest: dict, *, sample_limit: int = 10) -> dict:
     error_by_benchmark = defaultdict(Counter)
     ast_by_solc = defaultdict(Counter)
     preheat_by_benchmark = defaultdict(Counter)
+    availability_by_benchmark = defaultdict(Counter)
     samples = {
         "missing_ast": [],
         "prepared_errors": [],
@@ -111,6 +152,8 @@ def build_readiness(unit_manifest: dict, *, sample_limit: int = 10) -> dict:
         if status == "missing-ast":
             ast_by_solc[bench][_solc_key(row)] += 1
             subject = _subject(row)
+            availability_by_benchmark[bench][
+                _solc_availability_key(subject)] += 1
             if subject.get("solc_bin"):
                 preheat_by_benchmark[bench]["preheatable_missing_ast"] += 1
             elif subject.get("inferred_solc_bin"):
@@ -118,7 +161,9 @@ def build_readiness(unit_manifest: dict, *, sample_limit: int = 10) -> dict:
             else:
                 preheat_by_benchmark[bench]["missing_solc_bin"] += 1
             if len(samples["missing_ast"]) < sample_limit:
-                samples["missing_ast"].append(_sample(row))
+                item = _sample(row)
+                item["solc"] = _solc_sample(subject)
+                samples["missing_ast"].append(item)
         elif status == "error":
             bucket = _reason_bucket(row.get("reason") or "")
             error_by_benchmark[bench][bucket] += 1
@@ -172,6 +217,11 @@ def build_readiness(unit_manifest: dict, *, sample_limit: int = 10) -> dict:
             "preheat": {
                 bench: dict(sorted(counter.items()))
                 for bench, counter in sorted(preheat_by_benchmark.items())
+            },
+            "solc_availability": {
+                bench: dict(sorted(counter.items()))
+                for bench, counter
+                in sorted(availability_by_benchmark.items())
             },
         },
         "next_actions": [

@@ -673,6 +673,11 @@ As of the latest read-only census on 2026-08-06:
   - `peer182`: 182 `preheatable_missing_ast`;
   - `stress243`: 51 `preheatable_missing_ast`, 152
     `inferable_solc_bin`, 0 true `missing_solc_bin`.
+- Solc path availability for those 509 missing-AST rows:
+  - `bugfix124`: 124 `explicit_executable`;
+  - `peer182`: 182 `explicit_executable`;
+  - `stress243`: 51 `explicit_executable`, 152
+    `inferred_executable`.
 - Stress inferred solc buckets from historical `meta.compile.cmd`:
   - `solc-0.8.35`: 96 inferred, 46 explicit;
   - `solc-0.8.15`: 35 inferred, 5 explicit;
@@ -691,6 +696,10 @@ Interpretation:
   loss. The successful flatten/compile record contains the exact solc path in
   `meta.compile.cmd`, so the tool now reports this as `inferable_solc_bin` and
   can use it only when explicitly requested.
+- A read-only `stat/access` check confirms every explicit and inferred solc
+  path needed for those 509 missing-AST rows currently exists and is
+  executable. The remaining write-sensitive step is generating the `.solast`
+  files themselves.
 - Do not run the preheat pass while the user's other experiment depends on
   Dataset/Results immutability. When authorized, preheat in shards with journals
   and no ESBMC.
