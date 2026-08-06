@@ -4359,6 +4359,7 @@ def contract_state_types(ast_path, contract):
     """{state_name: solidity_type} visible in `contract`, base-first."""
     ast = _load_ast(ast_path)
     by_id, target = {}, None
+    struct_by_id = {}
 
     def index(n):
         nonlocal target
@@ -4368,6 +4369,9 @@ def contract_state_types(ast_path, contract):
                     by_id[n["id"]] = n
                 if n.get("name") == contract:
                     target = n
+            if (n.get("nodeType") == "StructDefinition"
+                    and n.get("id") is not None):
+                struct_by_id[n["id"]] = n
             for v in n.values():
                 index(v)
         elif isinstance(n, list):
@@ -4382,6 +4386,29 @@ def contract_state_types(ast_path, contract):
     if not scopes:
         scopes = [ast]
     out = {}
+
+    def type_ref(declaration):
+        type_name = declaration.get("typeName") or {}
+        ref = type_name.get("referencedDeclaration")
+        return ref if isinstance(ref, int) else None
+
+    def expand_struct_members(prefix, declaration, seen=None):
+        ref = type_ref(declaration)
+        if ref is None or ref not in struct_by_id:
+            return
+        seen = set() if seen is None else set(seen)
+        if ref in seen:
+            return
+        seen.add(ref)
+        for member in struct_by_id[ref].get("members") or []:
+            if not isinstance(member, dict) or not member.get("name"):
+                continue
+            name = prefix + "." + member["name"]
+            out[name] = (
+                (member.get("typeDescriptions") or {}).get("typeString")
+                or "")
+            expand_struct_members(name, member, seen)
+
     for sc in scopes:
         for n in sc.get("nodes", []) or []:
             if (isinstance(n, dict) and
@@ -4389,6 +4416,7 @@ def contract_state_types(ast_path, contract):
                     n.get("stateVariable") and n.get("name")):
                 out[n["name"]] = (
                     (n.get("typeDescriptions") or {}).get("typeString") or "")
+                expand_struct_members(n["name"], n)
     return out
 
 

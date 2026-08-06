@@ -7759,3 +7759,38 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-06 Struct-member state keys for source slots
+
+Scope:
+
+- This is a narrow follow-up to source-resolved mapping slot priority.
+  `unit_mapping_slot_accesses` can now name keys such as `state.cfg.owner`;
+  this change makes production PUT rendering know the type of `cfg.owner`.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `contract_state_types` now expands top-level state struct members using the
+  solc AST `StructDefinition` referenced by each state variable's `typeName`.
+  Example output includes both `cfg: struct C.Config` and
+  `cfg.owner: address`.
+- Because `build_put` already registers every `(state_types ∩ layout)` entry
+  into `key_expr_of`, a source access like `balances[cfg.owner]` can now be
+  rendered as `balances[state.cfg.owner]` when solc storage layout also exposes
+  `cfg.owner`.
+- The existing conservative key filter still applies. Struct members with
+  unsafe key types such as bytesN/signed/enums are not opened merely because
+  their parent struct was expanded.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 200/200 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.

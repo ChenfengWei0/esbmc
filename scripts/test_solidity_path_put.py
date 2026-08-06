@@ -6509,6 +6509,70 @@ def test_source_access_slots_preserve_state_keys_before_fallback():
     return bad
 
 
+def test_source_access_slots_render_state_struct_member_keys():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import (contract_state_types,  # noqa: E402
+                                   source_access_slot_vars)
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "StructDefinition", "id": 30, "name": "Config",
+             "members": [
+                 {"nodeType": "VariableDeclaration", "id": 31,
+                  "name": "owner",
+                  "typeDescriptions": {"typeString": "address"}},
+                 {"nodeType": "VariableDeclaration", "id": 32,
+                  "name": "digest",
+                  "typeDescriptions": {"typeString": "bytes32"}}]},
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "bal",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "cfg",
+             "stateVariable": True,
+             "typeName": {"nodeType": "UserDefinedTypeName",
+                          "referencedDeclaration": 30},
+             "typeDescriptions": {"typeString": "struct C.Config"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "IndexAccess", "src": "100:5:0",
+                     "baseExpression": {"nodeType": "Identifier",
+                                        "name": "bal",
+                                        "referencedDeclaration": 10},
+                     "indexExpression": {
+                         "nodeType": "MemberAccess", "memberName": "owner",
+                         "expression": {"nodeType": "Identifier",
+                                        "name": "cfg",
+                                        "referencedDeclaration": 11}}}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        state_types = contract_state_types(path, "C")
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "touch", declaration_id=20)
+    finally:
+        os.unlink(path)
+    slots, used, skipped = source_access_slot_vars(
+        accesses, {"bal": (2, "address", 32, 0, "bal", None)},
+        state_types=state_types,
+        layout={"cfg.owner": (1, 0, 20), "cfg.digest": (2, 0, 32)})
+    bad = 0
+    bad += check(state_types.get("cfg.owner") == "address",
+                 f"struct member state type is exported: {state_types}")
+    bad += check(accesses == [("bal", ("state.cfg.owner",))],
+                 f"AST source access names the struct member key: {accesses}")
+    bad += check(any("state.bal[state.cfg.owner]" in line
+                     for line in evidence),
+                 f"evidence preserves the struct member key: {evidence}")
+    bad += check(slots == ["bal[state.cfg.owner]"],
+                 f"struct member key source slot is renderable: {slots}")
+    bad += check(used == {"bal"} and skipped == [],
+                 f"accepted without fallback or skip noise: {used}, {skipped}")
+    return bad
+
+
 def test_the_CANDIDATE_BUDGET_says_what_it_dropped():
     """⛔ NO SILENT CAP. Four levels against three address parameters PLUS the
     caller is 4^4 = 256 names; the cap keeps 24 and must SAY so, or a truncated
@@ -8693,6 +8757,7 @@ def main():
               test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter,
               test_mapping_proposer_includes_safe_entry_state_keys_after_params,
               test_source_access_slots_preserve_state_keys_before_fallback,
+              test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
               test_assert_query_drops_semantic_pins_ESBMC_cannot_resolve,
