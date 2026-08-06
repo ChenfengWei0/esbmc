@@ -6590,6 +6590,106 @@ def test_source_access_slots_keep_safe_literal_keys():
     return bad
 
 
+def test_source_access_slots_fold_safe_constant_keys():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "name": name,
+                "referencedDeclaration": ref}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def boolean(value):
+        return {"nodeType": "Literal", "kind": "bool", "value": value}
+
+    def hex_lit(value):
+        return {"nodeType": "Literal", "kind": "hexString",
+                "hexValue": value, "value": value}
+
+    def address_cast(arg):
+        return {"nodeType": "FunctionCall", "kind": "typeConversion",
+                "expression": {
+                    "nodeType": "ElementaryTypeNameExpression",
+                    "typeName": {"nodeType": "ElementaryTypeName",
+                                 "name": "address"}},
+                "arguments": [arg]}
+
+    def binop():
+        return {"nodeType": "BinaryOperation", "operator": "+",
+                "leftExpression": num(1), "rightExpression": num(2)}
+
+    def const_decl(ref, name, ty, value):
+        return {"nodeType": "VariableDeclaration", "id": ref, "name": name,
+                "stateVariable": True, "constant": True, "value": value,
+                "typeDescriptions": {"typeString": ty}}
+
+    def state_decl(ref, name):
+        return {"nodeType": "VariableDeclaration", "id": ref, "name": name,
+                "stateVariable": True}
+
+    def access(base_ref, base_name, key_ref, key_name, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "IndexAccess", "src": src,
+            "baseExpression": ident(base_ref, base_name),
+            "indexExpression": ident(key_ref, key_name)}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            const_decl(30, "K", "uint256", num(9)),
+            const_decl(31, "ON", "bool", boolean(True)),
+            const_decl(32, "A", "address", address_cast(num(2))),
+            const_decl(33, "B", "bytes4", hex_lit("beef")),
+            const_decl(34, "BAD", "uint256", binop()),
+            state_decl(10, "count"),
+            state_decl(11, "flagged"),
+            state_decl(12, "owners"),
+            state_decl(13, "bytesMap"),
+            state_decl(14, "badMap"),
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 access(10, "count", 30, "K", "100:5:0"),
+                 access(11, "flagged", 31, "ON", "120:5:0"),
+                 access(12, "owners", 32, "A", "140:5:0"),
+                 access(13, "bytesMap", 33, "B", "160:5:0"),
+                 access(14, "badMap", 34, "BAD", "180:5:0")]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "touch", declaration_id=20)
+    finally:
+        os.unlink(path)
+    maps = {"count": (0, "uint256", 32, 0, "count", None),
+            "flagged": (1, "bool", 32, 0, "flagged", None),
+            "owners": (2, "address", 32, 0, "owners", None),
+            "bytesMap": (3, "bytes4", 32, 0, "bytesMap", None),
+            "badMap": (4, "uint256", 32, 0, "badMap", None)}
+    slots, used, skipped = source_access_slot_vars(accesses, maps)
+    bad = 0
+    bad += check(accesses == [
+        ("bytesMap", ("0xbeef",)),
+        ("count", ("9",)),
+        ("flagged", ("1",)),
+        ("owners", ("2",)),
+    ], f"safe constant keys fold to source slot literals: {accesses}")
+    bad += check(not any("BAD" in line for line in evidence),
+                 f"complex constants are not guessed as slot keys: {evidence}")
+    bad += check(slots == ["count[9]", "flagged[1]", "owners[2]"],
+                 f"safe constant-key source slots are accepted: {slots}")
+    bad += check(used == {"count", "flagged", "owners"},
+                 f"accepted constant slots suppress fallback: {used}")
+    bad += check(any("state.bytesMap[0xbeef]" in s
+                     and "not safely renderable" in s for s in skipped),
+                 f"bytesN constant key is still refused: {skipped}")
+    return bad
+
+
 def test_source_access_slots_render_state_struct_member_keys():
     from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
     from solidity_path_put import (contract_state_types,  # noqa: E402
@@ -8839,6 +8939,7 @@ def main():
               test_mapping_proposer_includes_safe_entry_state_keys_after_params,
               test_source_access_slots_preserve_state_keys_before_fallback,
               test_source_access_slots_keep_safe_literal_keys,
+              test_source_access_slots_fold_safe_constant_keys,
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,

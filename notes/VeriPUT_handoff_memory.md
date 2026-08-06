@@ -7760,6 +7760,39 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 Constant mapping keys in source slot priority
+
+Scope:
+
+- This extends source-resolved mapping slot priority from raw literals to
+  constant identifiers used as mapping keys.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `unit_mapping_slot_accesses` now records state constant declarations and,
+  when an index key is an identifier referring to a constant, tries to fold its
+  literal `value` before treating it as a state variable. Safe examples:
+  `m[K]` where `K = 9`, `flags[ON]` where `ON = true`, and
+  `owners[A]` where `A = address(2)`.
+- Complex constants such as binary expressions are not interpreted; the source
+  access is omitted rather than guessed, leaving fallback candidate generation
+  to the existing policy.
+- bytesN constants still pass through the same conservative source slot filter
+  as raw bytesN literals: they are not rendered as uint/address keys.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 202/202 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 Literal mapping keys in source slot priority
 
 Scope:

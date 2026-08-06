@@ -164,7 +164,7 @@ def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id
     return ordered, evidence
 
 
-def _expr_coord_name(expr, state_by_id=None):
+def _expr_coord_name(expr, state_by_id=None, constant_by_id=None):
     if not isinstance(expr, dict):
         return None
     if expr.get("nodeType") == "Literal":
@@ -188,9 +188,12 @@ def _expr_coord_name(expr, state_by_id=None):
         cast_expr = expr.get("expression") or {}
         type_name = cast_expr.get("typeName") or {}
         if len(args) == 1 and type_name.get("name") == "address":
-            return _expr_coord_name(args[0], state_by_id)
+            return _expr_coord_name(args[0], state_by_id, constant_by_id)
     if expr.get("nodeType") == "Identifier" and expr.get("name"):
         ref = expr.get("referencedDeclaration")
+        if constant_by_id and ref in constant_by_id:
+            return _expr_coord_name(
+                constant_by_id[ref], state_by_id, constant_by_id)
         if state_by_id and ref in state_by_id:
             return "state." + state_by_id[ref]
         return expr["name"]
@@ -204,11 +207,12 @@ def _expr_coord_name(expr, state_by_id=None):
     return None
 
 
-def _index_access_chain(node, state_by_id=None):
+def _index_access_chain(node, state_by_id=None, constant_by_id=None):
     keys = []
     cur = node
     while isinstance(cur, dict) and cur.get("nodeType") == "IndexAccess":
-        key = _expr_coord_name(cur.get("indexExpression"), state_by_id)
+        key = _expr_coord_name(
+            cur.get("indexExpression"), state_by_id, constant_by_id)
         if key is None:
             return None
         keys.append(key)
@@ -253,6 +257,7 @@ def unit_mapping_slot_accesses(
 
     index(ast)
     state_by_id = {}
+    constant_by_id = {}
     targets = []
     for owner in nodes:
         for declaration in owner.get("nodes", []) or []:
@@ -260,6 +265,8 @@ def unit_mapping_slot_accesses(
                     and declaration.get("stateVariable")
                     and declaration.get("name")):
                 state_by_id[declaration["id"]] = declaration["name"]
+                if declaration.get("constant"):
+                    constant_by_id[declaration["id"]] = declaration.get("value")
             if (declaration.get("nodeType") == "FunctionDefinition"
                     and declaration.get("name") == unit
                     and declaration.get("body") is not None):
@@ -302,7 +309,8 @@ def unit_mapping_slot_accesses(
         def scan(value):
             if isinstance(value, dict):
                 if value.get("nodeType") == "IndexAccess":
-                    chain_got = _index_access_chain(value, state_by_id)
+                    chain_got = _index_access_chain(
+                        value, state_by_id, constant_by_id)
                     if chain_got:
                         ref, keys = chain_got
                         if ref in state_by_id:
