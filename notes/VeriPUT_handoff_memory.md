@@ -195,6 +195,96 @@ Checks:
   `scripts/test_certify_all_partial_journal.py`, and `git diff --check`
   commands passed again.
 
+## 2026-08-07 balanced cached-stress smoke
+
+Ran a second, more balanced stress-only sample across the three cached stress
+subjects.  All outputs stayed under `/tmp`; no Dataset or Results contract was
+modified.
+
+Plan:
+
+- Pipeline out dir:
+  `/tmp/veriput_stress_balanced_20260807_002507`
+- Source cache:
+  `/tmp/veriput_bench_ast_cache_20260806`
+- Full cached stress schedule had 31 unit jobs across:
+  - `ERC-3643__ERC-3643__ClaimTopicsRegistry`
+  - `ERC-3643__ERC-3643__IdentityRegistryStorage`
+  - `balancer__balancer-v3-monorepo__OwnableAuthentication`
+- Manual `/tmp`-only filtered schedule:
+  `/tmp/veriput_stress_balanced_20260807_002507/next-unit-schedule-balanced6.json`
+  with 6 units:
+  `IdentityRegistryStorage.addIdentityToStorage`,
+  `IdentityRegistryStorage.bindIdentityRegistry`,
+  `IdentityRegistryStorage.storedIdentity`,
+  `OwnableAuthentication.forceTransferOwnership`,
+  `OwnableAuthentication.transferOwnership`,
+  `OwnableAuthentication.getActionId`.
+
+Execution:
+
+- `unit_schedule_run.py`, serial `--jobs 1`.
+- Runner outer timeout 75s, certify wrapper timeout 70s, ESBMC
+  `--run-timeout 60`, memory 8GiB.
+
+Results:
+
+- 6/6 runner-ok.
+- Buckets: `CERTIFIED=2`, `KILLED=3`, `NO-COORDINATE=1`.
+- Certified:
+  - `OwnableAuthentication.transferOwnership`: `2 certified / 1 not /
+    3 witnessed`, 63.3s.
+  - `IdentityRegistryStorage.storedIdentity`: `1 certified / 1 not /
+    2 witnessed`, 8.0s.
+- Killed after useful work:
+  - `IdentityRegistryStorage.addIdentityToStorage`: `KILLED`, 5 witnessed,
+    4 free coords, level-0 decided all 5 paths in 3.4s, partial CE journal
+    salvage sidecar says `89/116` claims decided and 40 witnesses.
+  - `IdentityRegistryStorage.bindIdentityRegistry`: `KILLED`, 1 witnessed,
+    1 free coord, level-0 in 1.3s, salvage sidecar `2/214` claims decided and
+    8 witnesses.  Refine reached a full address-space region before timeout.
+  - `OwnableAuthentication.forceTransferOwnership`: `KILLED`, 1 witnessed,
+    1 free coord, level-0 in 2.3s, salvage sidecar `1/303` claims decided and
+    8 witnesses.  Refine reached a full address-space region before timeout.
+- Coordinate-kind:
+  - `OwnableAuthentication.getActionId`: `NO-COORDINATE`, 2 witnessed.
+    Driver correctly says unsupported coordinate kinds: `selector`,
+    `selector.length`, and `state._actionIdDisambiguator`; more ladder/refine
+    budget will not turn this into a parameterized test.
+
+Diagnosis:
+
+- The large current stress bottleneck is now after witness discovery: many
+  units have usable partial witnesses and quick level-0/refine, but the wrapper
+  kills before certification can finish/write `generalise-result.json`.
+- This supports running attempt-2 on the KILLED-with-salvage rows, rather than
+  blindly expanding the attempt-1 sample.
+- `NO-COORDINATE` rows should be separated from failures in summaries; they are
+  real coordinate-kind limits for PUT generation, not timeout failures.
+
+Code follow-up retained:
+
+- `certify_all.py::result_enumeration_salvage()` now falls back to
+  `enumeration-salvage.json` when `generalise-result.json` was not written
+  because the driver timed out.  This keeps the salvage evidence on KILLED rows.
+- `certify_all.py` no longer parses `[coords] STATE PINNED ...` prose as a
+  legacy coordinate line.  This was exposed by `getActionId`, where the driver
+  correctly printed `NO GENERALISABLE COORDINATE` but the parser reported fake
+  free coordinates from the state-pin sentence.
+- Offline validation on the balanced6 artefacts confirmed the sidecar fallback
+  reads the three KILLED rows' salvage metadata, and `getActionId` parses with
+  `coords=[]`, `coords_line=None`.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  notes/coverage/scripts/certify_all.py
+  scripts/test_certify_all_partial_journal.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_partial_journal.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/certify_all.py
+  scripts/test_certify_all_partial_journal.py` passed.
+
 ## 2026-08-06 partial CE journal salvage in generalise
 
 Current answer to "can we start broad benchmark testing?":

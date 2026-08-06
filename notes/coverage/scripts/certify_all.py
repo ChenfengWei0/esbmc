@@ -567,6 +567,7 @@ def parse_driver(out):
                  # a driver without the FREE marker still have to parse.
                  "[coords] MAPPING SLOT", "[coords] mapping(s)",
                  "[coords] mapping dependency policy",
+                 "[coords] STATE PINNED",
                  "[coords] slot candidate", "[coords] NO mapping slot",
                  "[coords] the outer-box rounds refused")):
             rec["coords"] = [c.strip() for c in m.group(1).split(",")
@@ -629,6 +630,7 @@ def result_not_certified_details(workdir, since_mtime=None):
 
 
 def result_enumeration_salvage(workdir, since_mtime=None):
+    sidecar = os.path.join(workdir, "enumeration-salvage.json")
     path = os.path.join(workdir, "generalise-result.json")
     try:
         if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
@@ -636,8 +638,15 @@ def result_enumeration_salvage(workdir, since_mtime=None):
         with open(path) as stream:
             source = (json.load(stream).get("enumeration_source") or {})
     except (OSError, ValueError):
-        return None
-    salvage = source.get("salvage")
+        try:
+            if since_mtime is not None and os.stat(sidecar).st_mtime < since_mtime:
+                return None
+            with open(sidecar) as stream:
+                salvage = json.load(stream)
+        except (OSError, ValueError):
+            return None
+    else:
+        salvage = source.get("salvage")
     return salvage if isinstance(salvage, dict) and salvage else None
 
 

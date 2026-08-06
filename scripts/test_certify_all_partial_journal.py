@@ -92,8 +92,25 @@ def main():
         bad += check(certify_all.result_enumeration_salvage(str(workdir),
                                                             stale_since) is None,
                      "stale enumeration salvage metadata is ignored")
+        result.unlink()
+        sidecar = workdir / "enumeration-salvage.json"
+        sidecar.write_text(json.dumps({
+            "from": "cov-ce-journal.json",
+            "claims_decided": 89,
+            "claims_total": 116,
+            "path_count": 5,
+            "witness_count": 40,
+        }))
+        sidecar_salvage = certify_all.result_enumeration_salvage(str(workdir),
+                                                                 since)
+        bad += check(sidecar_salvage["path_count"] == 5
+                     and sidecar_salvage["witness_count"] == 40,
+                     f"sidecar salvage metadata is preserved after timeout: "
+                     f"{sidecar_salvage}")
 
         parsed = certify_all.parse_driver(
+            "[coords] STATE PINNED (all 2 paths' counterexamples agree): "
+            "state._owner==1\n"
             "[coords] mapping dependency policy solc-reference-closure/3: "
             "state._owner dependency distance 3\n"
             "[coords] NO mapping slot was added. This is a statement about "
