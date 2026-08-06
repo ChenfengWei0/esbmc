@@ -1714,6 +1714,17 @@ def _ast_root(ast_path):
         return None
 
 
+def _walk_ast(n):
+    """Yield every dict node in an AST subtree."""
+    if isinstance(n, dict):
+        yield n
+        for v in n.values():
+            yield from _walk_ast(v)
+    elif isinstance(n, list):
+        for v in n:
+            yield from _walk_ast(v)
+
+
 def _chain_nodes(ast, contract):
     """The ContractDefinition nodes of `contract` and its bases, base-first.
 
@@ -1749,6 +1760,153 @@ def _chain_nodes(ast, contract):
         return None
     chain = target.get("linearizedBaseContracts") or [target.get("id")]
     return [by_id[c] for c in reversed(chain) if c in by_id]
+
+
+def _function_arity(fn):
+    ps = ((fn.get("parameters") or {}).get("parameters") or [])
+    return len(ps)
+
+
+def _function_key(fn):
+    name = fn.get("name")
+    if not name:
+        return None
+    return (name, _function_arity(fn))
+
+
+def _call_referenced_id(call):
+    if not isinstance(call, dict) or call.get("nodeType") != "FunctionCall":
+        return None
+    expr = call.get("expression") or {}
+    ref = expr.get("referencedDeclaration")
+    return ref if isinstance(ref, int) else None
+
+
+def _call_fallback_key_candidates(call):
+    if not isinstance(call, dict) or call.get("nodeType") != "FunctionCall":
+        return []
+    expr = call.get("expression") or {}
+    if isinstance(expr.get("referencedDeclaration"), int):
+        return []
+    args = call.get("arguments") or []
+    nargs = len(args)
+    if expr.get("nodeType") == "Identifier" and expr.get("name"):
+        return [(expr["name"], nargs)]
+    if expr.get("nodeType") == "MemberAccess":
+        name = expr.get("memberName")
+        if name:
+            # Solidity library extension calls such as `x.sub(y)` resolve to
+            # `sub(x, y)`, while ordinary member calls keep the explicit arity.
+            return [(name, nargs), (name, nargs + 1)]
+    return []
+
+
+def _body_call_refs(fn):
+    refs = set()
+    for node in _walk_ast(fn.get("body")):
+        ref = _call_referenced_id(node)
+        if ref is not None:
+            refs.add(ref)
+    return refs
+
+
+def _is_direct_self_recursive_wrapper(fn):
+    """True for wrappers shaped exactly as `return f(args...);`.
+
+    This is intentionally narrower than "recursive": bounded recursive code can
+    be a real target for ESBMC. The benchmark timeout that motivated this check
+    was a flattened helper whose whole body is an unconditional same-arity call
+    to itself, so no finite path-coverage query gets a useful body witness from
+    expanding it.
+    """
+    key = _function_key(fn)
+    if key is None:
+        return False
+    body = fn.get("body") or {}
+    statements = body.get("statements") or []
+    if len(statements) != 1:
+        return False
+    stmt = statements[0]
+    if not isinstance(stmt, dict) or stmt.get("nodeType") != "Return":
+        return False
+    expr = stmt.get("expression") or {}
+    self_id = fn.get("id")
+    if isinstance(self_id, int) and _call_referenced_id(expr) == self_id:
+        return True
+    return key in _call_fallback_key_candidates(expr)
+
+
+def direct_recursive_helpers_in_unit_closure(
+        ast_path, contract, unit, declaration_id=None):
+    """Direct self-recursive helper wrappers reachable from a target unit.
+
+    This is a cheap refutation-side guard for path discovery. It does not prove
+    that the unit has no path; it only says the first ESBMC enumeration would
+    spend its budget expanding a helper whose source body has no base case.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return []
+    functions = []
+    owner = {}
+
+    for cn in _walk_ast(ast):
+        if cn.get("nodeType") != "ContractDefinition":
+            continue
+        cname = cn.get("name") or "<anonymous>"
+        for node in _walk_ast(cn):
+            if node.get("nodeType") == "FunctionDefinition" and node.get("name"):
+                functions.append(node)
+                owner[id(node)] = cname
+
+    by_id = {id(fn): fn for fn in functions}
+    by_decl = {fn["id"]: fn for fn in functions
+               if isinstance(fn.get("id"), int)}
+    chain = _chain_nodes(ast, contract) if contract else None
+    if chain is None:
+        chain = [ast]
+    start_ids = set()
+    for cn in chain:
+        for node in _walk_ast(cn):
+            if (node.get("nodeType") == "FunctionDefinition"
+                    and node.get("name") == unit
+                    and (declaration_id is None
+                         or node.get("id") == declaration_id)):
+                start_ids.add(id(node))
+    if declaration_id is None and len(start_ids) > 1:
+        return []
+    if not start_ids:
+        return []
+
+    graph = {id(fn): _body_call_refs(fn) for fn in functions}
+    wrappers = {id(fn) for fn in functions
+                if _is_direct_self_recursive_wrapper(fn)}
+    seen = set()
+    stack = list(start_ids)
+    found = []
+    while stack:
+        fid = stack.pop()
+        if fid in seen:
+            continue
+        seen.add(fid)
+        fn = by_id.get(fid)
+        if fn is None:
+            continue
+        if fid in wrappers:
+            found.append(fn)
+            continue
+        for ref in graph.get(fid, ()):
+            callee = by_decl.get(ref)
+            if callee is None:
+                continue
+            cid = id(callee)
+            if cid not in seen:
+                stack.append(cid)
+
+    def label(fn):
+        return f"{owner.get(id(fn), '<unknown>')}.{fn.get('name')}/{_function_arity(fn)}"
+
+    return sorted(set(label(fn) for fn in found))
 
 
 def _type_string(n):
@@ -4978,6 +5136,8 @@ def run_config(args, scope_label):
             arg_value(args, "enumeration_index")),
         "enumeration_report": file_identity(
             arg_value(args, "enumeration_report")),
+        "allow_recursive_helper_enumeration": bool(
+            arg_value(args, "allow_recursive_helper_enumeration", False)),
     }
 
 
@@ -5612,6 +5772,14 @@ def main():
                          "versioned --enumeration-index is the authority for "
                          "source, AST, binary, unit, scope, max-tx, memory, "
                          "witness and solver-option compatibility.")
+    ap.add_argument("--allow-recursive-helper-enumeration",
+                    action="store_true",
+                    help="do not apply the AST preflight that refuses a target "
+                         "unit whose call closure reaches a direct "
+                         "self-recursive function/helper wrapper. The default "
+                         "refusal is a budget guard, not a proof: it exists to "
+                         "avoid spending a whole path-discovery timeout on "
+                         "flattened wrappers shaped as `return f(args...)`.")
     ap.add_argument("--workdir", default=None)
     args = ap.parse_args()
 
@@ -5668,6 +5836,30 @@ def main():
             f"the call sequence and max-tx is its LENGTH; both are recorded in "
             f"run-config.json and in the result, because a run of one "
             f"configuration may not be quoted into another's table")
+
+    if not args.allow_recursive_helper_enumeration:
+        declaration_id = path_function_declaration_id(args.path_function)
+        if args.path_function and declaration_id is None:
+            raise SystemExit(
+                f"[enumerate] malformed path_function {args.path_function!r}: "
+                "expected a trailing #<solc-node-id>")
+        recursive_helpers = direct_recursive_helpers_in_unit_closure(
+            args.ast, args.contract, args.unit,
+            declaration_id=declaration_id)
+        if recursive_helpers:
+            print(
+                "[enumerate] no witnessed path for this unit, ⛔ and it is "
+                "NOT a result: target call closure reaches direct "
+                "self-recursive function/helper wrapper(s): "
+                + ", ".join(recursive_helpers)
+                + ". This preflight starts no ESBMC process and proves "
+                  "nothing about reachability; it refuses only the flattened "
+                  "`return f(args...)` shape that otherwise consumes the "
+                  "enumeration budget before any witness is published. Fix the "
+                  "flattened helper or pass --allow-recursive-helper-enumeration "
+                  "to measure it anyway.")
+            return 1
+
     (paths, refused, caveats, members, path_extras,
      path_decisions, resolved_path_function) = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,

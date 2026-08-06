@@ -82,6 +82,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       structural_decision_region,
                                       structural_decision_regions,
                                       structural_decision_regions_with_retreat,
+                                      direct_recursive_helpers_in_unit_closure,
                                       enumeration_has_arith_conditions,
                                       witness_values,
                                       extcall_inseparable_failures,
@@ -2029,6 +2030,239 @@ _setdist_deps, _ = unit_state_dependencies(
 check("setDistributor-dependencies-cross-onlyOwner-but-not-erc20-mappings",
       _setdist_deps, ["_distributor", "_owner"])
 
+_rec_ast = {
+    "nodeType": "SourceUnit",
+    "nodes": [
+        {
+            "nodeType": "ContractDefinition",
+            "id": 1,
+            "name": "SafeMath",
+            "contractKind": "library",
+            "linearizedBaseContracts": [1],
+            "nodes": [
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 2,
+                    "name": "sub",
+                    "parameters": {"parameters": [{}, {}]},
+                    "body": {
+                        "nodeType": "Block",
+                        "statements": [{
+                            "nodeType": "Return",
+                            "expression": {
+                                "nodeType": "FunctionCall",
+                                "expression": {
+                                    "nodeType": "Identifier",
+                                    "name": "sub",
+                                    "referencedDeclaration": 2,
+                                },
+                                "arguments": [{}, {}],
+                            },
+                        }],
+                    },
+                },
+            ],
+        },
+        {
+            "nodeType": "ContractDefinition",
+            "id": 3,
+            "name": "Token",
+            "linearizedBaseContracts": [3],
+            "nodes": [
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 4,
+                    "name": "transfer",
+                    "parameters": {"parameters": [{}, {}]},
+                    "body": {
+                        "nodeType": "Block",
+                        "statements": [{
+                            "nodeType": "ExpressionStatement",
+                            "expression": {
+                                "nodeType": "FunctionCall",
+                                "expression": {
+                                    "nodeType": "Identifier",
+                                    "name": "_transfer",
+                                    "referencedDeclaration": 5,
+                                },
+                                "arguments": [{}, {}],
+                            },
+                        }],
+                    },
+                },
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 5,
+                    "name": "_transfer",
+                    "parameters": {"parameters": [{}, {}]},
+                    "body": {
+                        "nodeType": "Block",
+                        "statements": [{
+                            "nodeType": "ExpressionStatement",
+                            "expression": {
+                                "nodeType": "FunctionCall",
+                                "expression": {
+                                    "nodeType": "MemberAccess",
+                                    "memberName": "sub",
+                                    "referencedDeclaration": 2,
+                                },
+                                "arguments": [{}],
+                            },
+                        }],
+                    },
+                },
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 6,
+                    "name": "boundedRecur",
+                    "parameters": {"parameters": [{}]},
+                    "body": {
+                        "nodeType": "Block",
+                        "statements": [
+                            {"nodeType": "IfStatement", "condition": {}},
+                            {
+                                "nodeType": "Return",
+                                "expression": {
+                                    "nodeType": "FunctionCall",
+                                    "expression": {
+                                        "nodeType": "Identifier",
+                                        "name": "boundedRecur",
+                                        "referencedDeclaration": 6,
+                                    },
+                                    "arguments": [{}],
+                                },
+                            },
+                        ],
+                    },
+                },
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 7,
+                    "name": "callBounded",
+                    "parameters": {"parameters": []},
+                    "body": {
+                        "nodeType": "Block",
+                        "statements": [{
+                            "nodeType": "ExpressionStatement",
+                            "expression": {
+                                "nodeType": "FunctionCall",
+                                "expression": {
+                                    "nodeType": "Identifier",
+                                    "name": "boundedRecur",
+                                    "referencedDeclaration": 6,
+                                },
+                                "arguments": [{}],
+                            },
+                        }],
+                    },
+                },
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 8,
+                    "name": "loopForever",
+                    "parameters": {"parameters": []},
+                    "body": {
+                        "nodeType": "Block",
+                        "statements": [{
+                            "nodeType": "Return",
+                            "expression": {
+                                "nodeType": "FunctionCall",
+                                "expression": {
+                                    "nodeType": "Identifier",
+                                    "name": "loopForever",
+                                    "referencedDeclaration": 8,
+                                },
+                                "arguments": [],
+                            },
+                        }],
+                    },
+                },
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 9,
+                    "name": "normalTarget",
+                    "parameters": {"parameters": []},
+                    "body": {
+                        "nodeType": "Block",
+                        "statements": [{
+                            "nodeType": "ExpressionStatement",
+                            "expression": {
+                                "nodeType": "FunctionCall",
+                                "expression": {
+                                    "nodeType": "Identifier",
+                                    "name": "foo",
+                                    "referencedDeclaration": 10,
+                                },
+                                "arguments": [{}],
+                            },
+                        }],
+                    },
+                },
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 10,
+                    "name": "foo",
+                    "parameters": {"parameters": [{}]},
+                    "body": {"nodeType": "Block", "statements": []},
+                },
+            ],
+        },
+        {
+            "nodeType": "ContractDefinition",
+            "id": 11,
+            "name": "Unrelated",
+            "linearizedBaseContracts": [11],
+            "nodes": [
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 12,
+                    "name": "foo",
+                    "parameters": {"parameters": [{}]},
+                    "body": {
+                        "nodeType": "Block",
+                        "statements": [{
+                            "nodeType": "Return",
+                            "expression": {
+                                "nodeType": "FunctionCall",
+                                "expression": {
+                                    "nodeType": "Identifier",
+                                    "name": "foo",
+                                    "referencedDeclaration": 12,
+                                },
+                                "arguments": [{}],
+                            },
+                        }],
+                    },
+                },
+            ],
+        },
+    ],
+}
+_rec_ast_file = tempfile.NamedTemporaryFile(
+    mode="w", suffix=".solast", delete=False)
+try:
+    json.dump(_rec_ast, _rec_ast_file)
+    _rec_ast_file.close()
+    check("recursive-helper-preflight-sees-extension-wrapper",
+          direct_recursive_helpers_in_unit_closure(
+              _rec_ast_file.name, "Token", "transfer"),
+          ["SafeMath.sub/2"])
+    check("recursive-helper-preflight-does-not-refuse-base-case-recursion",
+          direct_recursive_helpers_in_unit_closure(
+              _rec_ast_file.name, "Token", "callBounded"), [])
+    check("recursive-helper-preflight-refuses-target-wrapper-too",
+          direct_recursive_helpers_in_unit_closure(
+              _rec_ast_file.name, "Token", "loopForever"),
+          ["Token.loopForever/0"])
+    check("recursive-helper-preflight-ignores-unrelated-same-signature-wrapper",
+          direct_recursive_helpers_in_unit_closure(
+              _rec_ast_file.name, "Token", "normalTarget"), [])
+finally:
+    try:
+        os.unlink(_rec_ast_file.name)
+    except OSError:
+        pass
+
 # ---- AN EMPTY WITNESS SET IS NOT AUTOMATICALLY A RESULT ---------------------
 #
 # The driver used to print, whenever nothing was witnessed:
@@ -2499,6 +2733,14 @@ with tempfile.TemporaryDirectory() as _stamp_dir:
           (_cfg_off["pin_agreed_establishable_env"],
            _cfg_agreed_env["pin_agreed_establishable_env"]),
           (False, True))
+    _cfg_allow_rec = run_config(
+        SimpleNamespace(**dict(vars(_base),
+                               allow_recursive_helper_enumeration=True)),
+        "focus")
+    check("run-config-records-recursive-helper-policy",
+          (_cfg_off["allow_recursive_helper_enumeration"],
+           _cfg_allow_rec["allow_recursive_helper_enumeration"]),
+          (False, True))
     stamp_workdir(_stamp_dir, _cfg_off)
     try:
         stamp_workdir(_stamp_dir, _cfg_on)
@@ -2510,10 +2752,17 @@ with tempfile.TemporaryDirectory() as _stamp_dir:
         _stamp_agreed_refused = False
     except SystemExit:
         _stamp_agreed_refused = True
+    try:
+        stamp_workdir(_stamp_dir, _cfg_allow_rec)
+        _stamp_allow_rec_refused = False
+    except SystemExit:
+        _stamp_allow_rec_refused = True
 check("workdir-refuses-a-policy-change-the-old-field-list-missed",
       _stamp_refused, True)
 check("workdir-refuses-agreed-establishable-env-policy-change",
       _stamp_agreed_refused, True)
+check("workdir-refuses-recursive-helper-policy-change",
+      _stamp_allow_rec_refused, True)
 
 _env_promoted, _env_kept = derive_env_coord_disagreed(
     [(2, 1, {

@@ -82,6 +82,58 @@ Verification:
   scheduler, campaign, runner, summary, pipeline, and tests passed.
 - `git diff --check` passed.
 
+## 2026-08-06 recursive-helper preflight for witness discovery stalls
+
+Context:
+
+- `AIRBets.transfer` in the Peer sample was killed at the first 60s/8GiB
+  attempt before any `cov-report.json` or `generalise-result.json` was written.
+  That is not a region/R1/R2 failure: the run never reached witnessed-path
+  enumeration.
+- Static source/AST ground truth: the target's call closure reaches flattened
+  SafeMath helpers shaped as unconditional direct self-recursive wrappers:
+  `SafeMath.sub/2` and `SafeMath.div/2` are literally `return sub(a, b);` /
+  `return div(a, b);` in that flattened input. `AIRBets.approve` does not hit
+  this preflight.
+
+Change retained:
+
+- `scripts/solidity_path_generalise.py` now has
+  `direct_recursive_helpers_in_unit_closure(ast, contract, unit)`.
+- Before starting ESBMC enumeration, the driver refuses only this narrow shape:
+  a function/helper whose whole body is `return f(args...)` with the same
+  name/arity, and only when it is reachable from the target unit's AST call
+  closure.
+- The call closure follows solc `referencedDeclaration` IDs. Calls without a
+  reference ID are ignored by the closure rather than guessed by global
+  name/arity, because false negatives only lose this speed guard while false
+  positives would pollute benchmark rows.
+- The refusal prints the existing machine-readable empty-witness line:
+  `[enumerate] no witnessed path for this unit, ⛔ and it is NOT a result: ...`
+  so `notes/coverage/scripts/certify_all.py` classifies it as
+  `NO-WITNESS-UNDECIDED`, not `KILLED` or `CRASHED`.
+- Escape hatch: `--allow-recursive-helper-enumeration`. The flag is recorded in
+  `run-config.json`, so runs with and without the preflight cannot reuse a
+  workdir silently.
+
+Semantics:
+
+- This is refutation/triage only. It does not prove unreachable paths and does
+  not certify a PUT. It merely avoids spending an ESBMC path-discovery timeout
+  on a flattened helper with no source-level base case.
+- Ordinary recursive functions with a base-case shape are not refused by this
+  check.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py notes/coverage/scripts/certify_all.py`
+  passed.
+- `git diff --check` passed.
+- Pure AST check on the real AIRBets AST:
+  `transfer -> ['SafeMath.div/2', 'SafeMath.sub/2']`, `approve -> []`.
+
 Next:
 
 - It is now reasonable to start a small, budget-clean benchmark sample. Use
