@@ -211,11 +211,10 @@ def _expr_coord_name(expr, state_by_id=None, constant_by_id=None,
         return expr["name"]
     if expr.get("nodeType") == "MemberAccess" and expr.get("memberName"):
         base = expr.get("expression") or {}
-        if base.get("nodeType") == "Identifier" and base.get("name"):
-            ref = base.get("referencedDeclaration")
-            if state_by_id and ref in state_by_id:
-                return f"state.{state_by_id[ref]}.{expr['memberName']}"
-            return f"{base['name']}.{expr['memberName']}"
+        base_name = _expr_coord_name(
+            base, state_by_id, constant_by_id, alias_by_id, seen)
+        if base_name:
+            return f"{base_name}.{expr['memberName']}"
     return None
 
 

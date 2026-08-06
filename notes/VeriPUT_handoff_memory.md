@@ -7442,6 +7442,43 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 struct-local member source slot aliases
+
+Scope:
+
+- This is a source-resolved mapping slot improvement in the external VeriPUT
+  generator. It is not POC-specific and does not alter ESBMC internals.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `_expr_coord_name` now resolves `MemberAccess` bases recursively instead of
+  only accepting a direct identifier. A local alias such as
+  `Config storage c = cfg; bal[c.owner]` therefore names the same source slot
+  key as `bal[cfg.owner]`: `state.cfg.owner`.
+- Direct state-member keys (`state.cfg.owner`) and environment members
+  (`msg.sender`, `block.timestamp`, etc.) continue to use the same spelling as
+  before; they are just routed through the common recursive path.
+
+Why it matters:
+
+- Solidity units often alias a storage struct or config object into a local
+  variable before indexing mappings with one of its members. Without recursive
+  member resolution, the source slot pass sees `c.owner`, cannot render it as a
+  layout-backed entry-state key, and falls back to weaker guessed slots.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 207/207 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 assignment-updated source slot aliases
 
 Scope:

@@ -7035,9 +7035,21 @@ def test_source_access_slots_render_state_struct_member_keys():
              "typeName": {"nodeType": "UserDefinedTypeName",
                           "referencedDeclaration": 30},
              "typeDescriptions": {"typeString": "struct C.Config"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "balAlias",
+             "stateVariable": True},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
              "parameters": {"parameters": []},
-             "body": {"nodeType": "Block", "statements": [{
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "VariableDeclarationStatement",
+                  "declarations": [{
+                      "nodeType": "VariableDeclaration", "id": 40,
+                      "name": "c", "storageLocation": "storage",
+                      "typeDescriptions": {
+                          "typeString": "struct C.Config"}}],
+                  "initialValue": {"nodeType": "Identifier",
+                                   "name": "cfg",
+                                   "referencedDeclaration": 11}},
+                 {
                  "nodeType": "ExpressionStatement", "expression": {
                      "nodeType": "IndexAccess", "src": "100:5:0",
                      "baseExpression": {"nodeType": "Identifier",
@@ -7047,7 +7059,17 @@ def test_source_access_slots_render_state_struct_member_keys():
                          "nodeType": "MemberAccess", "memberName": "owner",
                          "expression": {"nodeType": "Identifier",
                                         "name": "cfg",
-                                        "referencedDeclaration": 11}}}}]}}
+                                        "referencedDeclaration": 11}}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "IndexAccess", "src": "120:5:0",
+                     "baseExpression": {"nodeType": "Identifier",
+                                        "name": "balAlias",
+                                        "referencedDeclaration": 12},
+                     "indexExpression": {
+                         "nodeType": "MemberAccess", "memberName": "owner",
+                         "expression": {"nodeType": "Identifier",
+                                        "name": "c",
+                                        "referencedDeclaration": 40}}}}]}}
         ]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
@@ -7059,20 +7081,27 @@ def test_source_access_slots_render_state_struct_member_keys():
     finally:
         os.unlink(path)
     slots, used, skipped = source_access_slot_vars(
-        accesses, {"bal": (2, "address", 32, 0, "bal", None)},
+        accesses, {"bal": (2, "address", 32, 0, "bal", None),
+                   "balAlias": (3, "address", 32, 0, "balAlias", None)},
         state_types=state_types,
         layout={"cfg.owner": (1, 0, 20), "cfg.digest": (2, 0, 32)})
     bad = 0
     bad += check(state_types.get("cfg.owner") == "address",
                  f"struct member state type is exported: {state_types}")
-    bad += check(accesses == [("bal", ("state.cfg.owner",))],
+    bad += check(accesses == [("bal", ("state.cfg.owner",)),
+                              ("balAlias", ("state.cfg.owner",))],
                  f"AST source access names the struct member key: {accesses}")
     bad += check(any("state.bal[state.cfg.owner]" in line
                      for line in evidence),
                  f"evidence preserves the struct member key: {evidence}")
-    bad += check(slots == ["bal[state.cfg.owner]"],
+    bad += check(any("state.balAlias[state.cfg.owner]" in line
+                     and "AST src 120:5:0" in line for line in evidence),
+                 f"local struct alias member access reaches evidence: "
+                 f"{evidence}")
+    bad += check(slots == ["bal[state.cfg.owner]",
+                           "balAlias[state.cfg.owner]"],
                  f"struct member key source slot is renderable: {slots}")
-    bad += check(used == {"bal"} and skipped == [],
+    bad += check(used == {"bal", "balAlias"} and skipped == [],
                  f"accepted without fallback or skip noise: {used}, {skipped}")
     return bad
 
