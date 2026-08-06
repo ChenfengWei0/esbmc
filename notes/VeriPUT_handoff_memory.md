@@ -8584,3 +8584,51 @@ Next recommended action:
   strong recipe argv.
 - Only then spend 60s/8GiB certification attempts, one unit at a time, writing
   journals and generated PUT artifacts under `/tmp/veriput_sample_*`.
+
+## 2026-08-06 benchmark unit scheduling priority
+
+Scope:
+
+- This is an external VeriPUT benchmark-pipeline scheduling fix prompted by the
+  sampling preflight above.
+- No ESBMC/Forge/fuzz certification or PUT roundtrip attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Finding:
+
+- After AST preheat, the unit scheduler's default order selected
+  AIRBets `initialize2`, `name`, `symbol`, `decimals` for the first peer sample.
+  Several of those are zero-argument getter-like units, so the first real
+  certification attempts would measure weak PUT surfaces instead of useful
+  state-changing or parameterized paths.
+
+Code change:
+
+- `veriput_subjects.py` now preserves per-unit AST metadata in the unit
+  manifest: owner contract, visibility, state mutability, parameter count,
+  return count, and implementation flag.
+- `unit_schedule.py` still keeps target hints first, but otherwise prioritizes:
+  1. state-changing functions;
+  2. pure/view functions with parameters or return values;
+  3. zero-argument pure/view functions.
+- Old manifests without `unit_info` remain accepted and get the prior
+  `enumerated` scheduling reason.
+
+Measured effect:
+
+- Replanning the same two-subject peer cache now selects AIRBets
+  `initialize2`, `transfer`, `approve`, `transferFrom`, `setMaxTxPercent`,
+  `openTrading`, `receive`, `manualswap` as the first 8 jobs, all
+  `state-changing`, instead of `name/symbol/decimals`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_veriput_subjects.py`
+  passed: 20 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/veriput_subjects.py notes/coverage/scripts/unit_schedule.py scripts/test_veriput_subjects.py scripts/test_unit_schedule.py`
+  passed.
+- `git diff --check` passed.

@@ -138,12 +138,14 @@ class UnitEnumeration:
     contract: str
     units: tuple[str, ...]
     skipped: tuple[dict, ...]
+    unit_info: tuple[dict, ...] = ()
 
     def to_record(self) -> dict:
         return {
             "schema": "veriput-subject-units/v1",
             "contract": self.contract,
             "units": list(self.units),
+            "unit_info": list(self.unit_info),
             "skipped": list(self.skipped),
         }
 
@@ -285,6 +287,11 @@ def _walk_contracts(node, out):
             _walk_contracts(value, out)
 
 
+def _param_count(node: dict, field: str) -> int:
+    params = (node.get(field) or {}).get("parameters") or []
+    return len(params) if isinstance(params, list) else 0
+
+
 def _function_units(contract_node: dict, owner_name: str):
     for node in contract_node.get("nodes") or []:
         if node.get("nodeType") != "FunctionDefinition":
@@ -298,7 +305,7 @@ def _function_units(contract_node: dict, owner_name: str):
                     "contract": owner_name,
                     "kind": kind,
                     "reason": "fallback/receive has no named focus-function",
-                }
+                }, None
             continue
         if visibility not in ("public", "external"):
             continue
@@ -307,9 +314,17 @@ def _function_units(contract_node: dict, owner_name: str):
                 "contract": owner_name,
                 "kind": kind,
                 "reason": "public/external function has no name",
-            }
+            }, None
             continue
-        yield name, None
+        yield name, None, {
+            "name": name,
+            "contract": owner_name,
+            "visibility": visibility,
+            "state_mutability": node.get("stateMutability") or "",
+            "parameter_count": _param_count(node, "parameters"),
+            "return_count": _param_count(node, "returnParameters"),
+            "implemented": bool(node.get("implemented", True)),
+        }
 
 
 def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
@@ -337,6 +352,7 @@ def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
 
     ordered_ids = target.get("linearizedBaseContracts") or [target.get("id")]
     units = []
+    unit_info = []
     seen = set()
     skipped = []
     for cid in ordered_ids:
@@ -344,13 +360,14 @@ def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
         if not node:
             continue
         owner = node.get("name") or f"<contract {cid}>"
-        for name, skip in _function_units(node, owner):
+        for name, skip, info in _function_units(node, owner):
             if skip:
                 skipped.append(skip)
                 continue
             if name not in seen:
                 seen.add(name)
                 units.append(name)
+                unit_info.append(info)
         for child in node.get("nodes") or []:
             if child.get("nodeType") == "VariableDeclaration" and \
                     child.get("visibility") == "public":
@@ -363,6 +380,7 @@ def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
     return UnitEnumeration(
         contract=subject.contract,
         units=tuple(units),
+        unit_info=tuple(unit_info),
         skipped=tuple(skipped),
     )
 

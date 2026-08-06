@@ -82,13 +82,27 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
     return argv
 
 
+def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None) -> tuple[int, str]:
+    if unit in hinted:
+        return 0, "target-hint"
+    if not unit_info:
+        return 2, "enumerated"
+    mutability = unit_info.get("state_mutability") or ""
+    params = int(unit_info.get("parameter_count") or 0)
+    returns = int(unit_info.get("return_count") or 0)
+    if mutability not in ("view", "pure"):
+        return 1, "state-changing"
+    if params or returns:
+        return 2, "pure/view-with-interface"
+    return 3, "zero-arg-view"
+
+
 def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None,
-                  out_path: str | None) -> dict:
+                  out_path: str | None, unit_info: dict | None) -> dict:
     subject = dict(row["subject"])
     subject["unit"] = unit
     hinted = set((row.get("unit_hints") or {}).get("hinted_units") or [])
-    priority = 0 if unit in hinted else 1
-    reason = "target-hint" if priority == 0 else "enumerated"
+    priority, reason = _unit_priority(unit, hinted, unit_info)
     return {
         "schema": "veriput-unit-job/v1",
         "job_id": (f"{subject.get('benchmark_key') or subject['subject_id']}__"
@@ -103,6 +117,7 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
         "subject": subject,
         "target": row.get("target"),
         "unit_hints": row.get("unit_hints"),
+        "unit_info": unit_info,
         "certify_argv": _certify_argv(subject, unit, ast_cache_root, out_path, dry_run=False),
         "dry_run_argv": _certify_argv(subject, unit, ast_cache_root, out_path, dry_run=True),
     }
@@ -136,6 +151,11 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
             continue
         subject = row.get("subject") or {}
         units = (row.get("units") or {}).get("units") or []
+        infos = {
+            item.get("name"): item
+            for item in (row.get("units") or {}).get("unit_info") or []
+            if isinstance(item, dict) and item.get("name")
+        }
         missing = [
             name for name in ("root", "benchmark", "subject_id", "contract")
             if not subject.get(name)
@@ -154,7 +174,8 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
                 })
                 continue
             seen_jobs.add(key)
-            jobs.append(_job_for_unit(row, unit, len(jobs), ast_cache_root, cert_out or None))
+            jobs.append(_job_for_unit(row, unit, len(jobs), ast_cache_root,
+                                      cert_out or None, infos.get(unit)))
 
     shard_spec = _parse_shard(shard)
     total_jobs = len(jobs)

@@ -56,6 +56,11 @@ def compact_ast():
                         "kind": "function",
                         "name": "baseOnly",
                         "visibility": "public",
+                        "stateMutability": "view",
+                        "parameters": {"parameters": []},
+                        "returnParameters": {"parameters": [
+                            {"nodeType": "VariableDeclaration"},
+                        ]},
                     },
                     {
                         "nodeType": "FunctionDefinition",
@@ -82,12 +87,22 @@ def compact_ast():
                         "kind": "function",
                         "name": "own",
                         "visibility": "external",
+                        "stateMutability": "nonpayable",
+                        "parameters": {"parameters": [
+                            {"nodeType": "VariableDeclaration"},
+                        ]},
+                        "returnParameters": {"parameters": []},
                     },
                     {
                         "nodeType": "FunctionDefinition",
                         "kind": "function",
                         "name": "baseOnly",
                         "visibility": "public",
+                        "stateMutability": "pure",
+                        "parameters": {"parameters": []},
+                        "returnParameters": {"parameters": [
+                            {"nodeType": "VariableDeclaration"},
+                        ]},
                     },
                     {
                         "nodeType": "FunctionDefinition",
@@ -208,6 +223,14 @@ def test_ast_unit_enumeration_is_target_contract_scoped():
                  "internal inherited function is excluded")
     bad += check(sum(1 for u in enum.units if u == "baseOnly") == 1,
                  "override/base duplicate unit name is emitted once")
+    info = {row["name"]: row for row in enum.unit_info}
+    bad += check(info["own"]["state_mutability"] == "nonpayable"
+                 and info["own"]["parameter_count"] == 1
+                 and info["own"]["return_count"] == 0,
+                 f"target unit metadata is retained: {info}")
+    bad += check(info["baseOnly"]["state_mutability"] == "pure"
+                 and info["baseOnly"]["return_count"] == 1,
+                 f"inherited override metadata is retained: {info}")
     reasons = {row["kind"]: row["reason"] for row in enum.skipped}
     bad += check(reasons.get("receive") ==
                  "fallback/receive has no named focus-function",

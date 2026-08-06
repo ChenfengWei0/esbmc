@@ -126,6 +126,49 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
     return bad
 
 
+def test_schedule_prioritizes_semantic_units_before_getter_like_units():
+    data = manifest()
+    row = data["subjects"][0]
+    row["unit_hints"] = {
+        "hinted_units": [],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    row["target"]["units_hint"] = []
+    row["units"]["units"] = ["name", "setX", "quote"]
+    row["units"]["unit_info"] = [
+        {
+            "name": "name",
+            "state_mutability": "view",
+            "parameter_count": 0,
+            "return_count": 0,
+        },
+        {
+            "name": "setX",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+        },
+        {
+            "name": "quote",
+            "state_mutability": "pure",
+            "parameter_count": 1,
+            "return_count": 1,
+        },
+    ]
+    doc = unit_schedule.build_schedule(data)
+    got = [(job["unit"], job["priority"], job["priority_reason"])
+           for job in doc["jobs"]]
+    bad = 0
+    bad += check(got == [("setX", 1, "state-changing"),
+                         ("quote", 2, "pure/view-with-interface"),
+                         ("name", 3, "zero-arg-view")],
+                 f"semantic units are sampled before getter-like rows: {got}")
+    bad += check(doc["jobs"][0]["unit_info"]["parameter_count"] == 1,
+                 f"job keeps unit metadata for later audit: {doc['jobs'][0]}")
+    return bad
+
+
 def test_schedule_cli_reads_stdin_and_applies_limit():
     with tempfile.TemporaryDirectory() as td:
         cp = subprocess.run([
@@ -212,6 +255,7 @@ def test_schedule_refuses_protected_write_paths():
 
 TESTS = [
     test_schedule_prioritizes_hinted_units_and_preserves_argv,
+    test_schedule_prioritizes_semantic_units_before_getter_like_units,
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,
     test_schedule_refuses_protected_write_paths,
