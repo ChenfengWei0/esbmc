@@ -101,6 +101,12 @@ def write_journal(path, rows):
     return p
 
 
+def write_clean_jsonl(path, rows):
+    p = Path(path)
+    p.write_text("\n".join(json.dumps(item) for item in rows) + "\n")
+    return p
+
+
 def test_campaign_partitions_attempts_and_auto_selects_earliest():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(Path(td) / "schedule.json", schedule_doc())
@@ -293,6 +299,112 @@ def test_campaign_uses_explicit_attempt_metadata_for_budget_state():
     return bad
 
 
+def test_campaign_retries_runner_ok_when_certification_is_weak():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema":
+                "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 3,
+                },
+                "jobs": [
+                    job("peer182__strong__f"),
+                    job("peer182__weak__g", unit="g"),
+                    job("peer182__missing__h", unit="h"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__strong__f", "ok", campaign_attempt=1),
+                row("peer182__weak__g", "ok", campaign_attempt=1),
+                row("peer182__missing__h", "ok", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "peer182",
+                    "unit": "f",
+                    "bucket": "CERTIFIED",
+                    "witnessed": 2,
+                    "certified": {
+                        "1": "x in [0, 9]",
+                        "2": "x == 1",
+                    },
+                    "not_certified": {},
+                },
+                {
+                    "benchmark": "peer182",
+                    "unit": "g",
+                    "bucket": "CERTIFIED",
+                    "witnessed": 4,
+                    "certified": {
+                        "1": "x in [0, 9]",
+                    },
+                    "not_certified": {
+                        "2": "refuted",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    next_ids = [job["job_id"] for job in doc["next_schedule"]["jobs"]]
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 1,
+                 f"only strong certification completes a runner-ok job: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 2},
+                 f"weak or missing certification is retryable: {doc['summary']}")
+    bad += check(
+        doc["summary"]["cert_weak"] == {
+            "certified path rate below threshold": 1,
+            "no certification row": 1,
+        }, f"weak certification reasons are counted: {doc['summary']}")
+    bad += check(next_ids == ["peer182__weak__g", "peer182__missing__h"],
+                 f"next schedule keeps weak runner-ok jobs: {next_ids}")
+    return bad
+
+
+def test_campaign_accepts_strong_certification_without_runner_journal():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__historical__f"),
+                ],
+            })
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "peer182",
+                    "unit": "f",
+                    "bucket": "CERTIFIED",
+                    "witnessed": 1,
+                    "certified": {
+                        "1": "x in [0, 9]",
+                    },
+                    "not_certified": {},
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched), cert_jsonl_paths=[str(cert)])
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 1,
+                 f"strong historical cert row completes the unit: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {},
+                 f"strong cert row prevents attempt1 rerun: {doc['summary']}")
+    bad += check(doc["by_benchmark_state"] == {
+        "peer182": {
+            "completed-certified": 1,
+        },
+    }, f"state records completion source: {doc['by_benchmark_state']}")
+    return bad
+
+
 TESTS = [
     test_campaign_partitions_attempts_and_auto_selects_earliest,
     test_campaign_can_emit_attempt_three_schedule_and_runner_argv,
@@ -300,6 +412,8 @@ TESTS = [
     test_campaign_writes_empty_schedule_when_no_jobs_are_pending,
     test_campaign_counts_distinct_attempts_not_duplicate_rows,
     test_campaign_uses_explicit_attempt_metadata_for_budget_state,
+    test_campaign_retries_runner_ok_when_certification_is_weak,
+    test_campaign_accepts_strong_certification_without_runner_journal,
 ]
 
 if __name__ == "__main__":

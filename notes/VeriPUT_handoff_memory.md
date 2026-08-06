@@ -727,7 +727,12 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   `campaign_attempt` for a job; old rows without that field fall back to the
   order of `--journal` arguments. Repeated non-`ok` rows in the same journal
   remain visible in `status_attempts`, but count as one spent attempt for
-  budget progression.
+  budget progression. When `--cert-jsonl <certify_all-out.jsonl>` is passed,
+  runner `ok` is not enough: the job is completed only if its latest Stage-2
+  certification rows contain at least one certified region and meet the
+  certified-path-rate threshold (default 0.70). Runner-ok jobs with missing or
+  weak cert rows are scheduled for the next attempt, and strong historical cert
+  rows can complete a job even without a runner journal.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -829,6 +834,11 @@ Interpretation:
   `next_attempt=null`, `distinct_attempts_max=0`; it wrote only an empty
   next-attempt schedule under `/tmp` and did not create the external cache
   path.
+- Read-only unit campaign smoke with both an empty runner journal and an empty
+  `certify_all.py --out` JSONL produced: `schedule_jobs=0`,
+  `skipped_rows=548`, `cert_quality_enabled=true`,
+  `selected_attempt=null`, `selected_jobs=0`, `next_jobs=0`; it did not create
+  the external cache path.
 - Read-only certification-result summary smoke with an empty `certify_all.py
   --out` JSONL and the current no-AST unit schedule produced:
   `schedule_jobs=0`, `skipped_rows=548`, `gate=blocked`,
@@ -4663,7 +4673,11 @@ Implication for next work:
    `certify_result_summary.py <cert-out.jsonl> --schedule <attempt-schedule.json>`.
    Use that gate, not runner exit codes alone, to decide whether certified
    path coverage and region strength are sufficient for PUT emission and later
-   mutation/vulnerability-regression experiments.
+   mutation/vulnerability-regression experiments. Also pass the same result
+   JSONL into the next campaign decision via
+   `unit_campaign_plan.py <base-schedule.json> --journal <a1.jsonl> --cert-jsonl <cert-out.jsonl>`;
+   otherwise runner-ok units with weak or missing certified regions would be
+   incorrectly treated as done.
 6. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.

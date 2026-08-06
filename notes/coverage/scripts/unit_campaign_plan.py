@@ -70,6 +70,10 @@ def _read_journal(path: str) -> tuple[list[dict], int]:
     return rows, bad_lines
 
 
+def _read_jsonl(path: str) -> tuple[list[dict], int]:
+    return _read_journal(path)
+
+
 def _row_attempt(row: dict, fallback_attempt: int, policy: dict[int, dict]) -> int:
     raw = row.get("campaign_attempt")
     try:
@@ -86,6 +90,63 @@ def _load_schedule(path: str) -> dict:
     if doc.get("schema") != "veriput-unit-schedule/v1":
         raise CampaignError(f"unsupported schedule schema {doc.get('schema')!r}")
     return doc
+
+
+def _cert_subject(row: dict) -> str:
+    return row.get("benchmark") or row.get("poc") or "<unknown>"
+
+
+def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> tuple[dict, int]:
+    latest = {}
+    bad_lines = 0
+    for path in paths:
+        rows, bad = _read_jsonl(path)
+        bad_lines += bad
+        for row in rows:
+            key = (_cert_subject(row), row.get("unit") or "<none>", row.get("path_function"))
+            latest[key] = row
+
+    by_unit = defaultdict(list)
+    for (subject, unit, _path_function), row in latest.items():
+        by_unit[(subject, unit)].append(row)
+
+    quality = {}
+    for key, rows in by_unit.items():
+        witnessed = 0
+        certified = 0
+        not_certified = 0
+        regions = 0
+        buckets = Counter()
+        for row in rows:
+            buckets[row.get("bucket") or "<missing-bucket>"] += 1
+            c = row.get("certified") or {}
+            n = row.get("not_certified") or {}
+            c_count = len(c) if isinstance(c, dict) else 0
+            n_count = len(n) if isinstance(n, dict) else 0
+            regions += c_count
+            if isinstance(row.get("witnessed"), int):
+                witnessed += max(0, row["witnessed"])
+                certified += c_count
+                not_certified += n_count
+        rate = (certified / witnessed) if witnessed else (1.0 if regions else 0.0)
+        strong = regions > 0 and rate >= min_certified_path_rate
+        reason = ""
+        if not regions:
+            reason = "no certified regions"
+        elif rate < min_certified_path_rate:
+            reason = "certified path rate below threshold"
+        quality[key] = {
+            "strong": strong,
+            "reason": reason,
+            "rows": len(rows),
+            "witnessed_paths": witnessed,
+            "certified_paths": certified,
+            "not_certified_paths": not_certified,
+            "certified_regions": regions,
+            "certified_path_rate": rate,
+            "bucket_rows": dict(sorted(buckets.items())),
+        }
+    return quality, bad_lines
 
 
 def _policy_by_attempt() -> dict[int, dict]:
@@ -167,6 +228,8 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
 def plan_campaign(schedule_path: str,
                   *,
                   journal_paths: list[str] | None = None,
+                  cert_jsonl_paths: list[str] | None = None,
+                  min_certified_path_rate: float = 0.70,
                   attempt: int = 0,
                   next_schedule_out: str = "",
                   next_journal: str = "",
@@ -174,6 +237,8 @@ def plan_campaign(schedule_path: str,
                   stop_on_failure: bool = False) -> dict:
     schedule = _load_schedule(schedule_path)
     journals = journal_paths or []
+    cert_jsonls = cert_jsonl_paths or []
+    cert_quality, bad_cert_lines = _cert_quality_by_unit(cert_jsonls, min_certified_path_rate)
     policy = _policy_by_attempt()
     jobs_by_id = {job.get("job_id"): job for job in schedule.get("jobs") or [] if job.get("job_id")}
     latest = {}
@@ -181,6 +246,7 @@ def plan_campaign(schedule_path: str,
     status_attempts = Counter()
     bad_lines = 0
     orphan_rows = 0
+    cert_weak = Counter()
 
     for fallback_attempt, journal in enumerate(journals, start=1):
         rows, bad = _read_journal(journal)
@@ -207,10 +273,16 @@ def plan_campaign(schedule_path: str,
     for job_id, job in jobs_by_id.items():
         latest_row = latest.get(job_id)
         attempts = max(attempts_by_job[job_id], default=0)
-        if latest_row and latest_row.get("status") == "ok":
-            state = "completed-ok"
+        cert_key = (job.get("benchmark") or job.get("poc") or "<unknown>", job.get("unit")
+                    or "<none>")
+        quality = cert_quality.get(cert_key)
+        cert_strong = (not cert_jsonls) or (quality and quality.get("strong"))
+        has_completion_source = ((latest_row and latest_row.get("status") == "ok")
+                                 or (cert_jsonls and not latest_row and cert_strong))
+        if has_completion_source and cert_strong:
+            state = "completed-ok" if latest_row else "completed-certified"
             completed.append(job)
-            latest_status["ok"] += 1
+            latest_status["ok" if latest_row else "certified-without-runner-journal"] += 1
         elif attempts >= max_attempt:
             state = "exhausted"
             exhausted.append(job)
@@ -218,6 +290,9 @@ def plan_campaign(schedule_path: str,
         else:
             next_attempt = attempts + 1
             state = f"pending-attempt-{next_attempt}"
+            if latest_row and latest_row.get("status") == "ok" and cert_jsonls:
+                reason = (quality or {}).get("reason") or "no certification row"
+                cert_weak[reason] += 1
             pending_by_attempt[next_attempt].append(job)
             latest_status[(latest_row or {}).get("status") or "never"] += 1
         by_benchmark_state[job.get("benchmark") or "<unknown>"][state] += 1
@@ -258,6 +333,7 @@ def plan_campaign(schedule_path: str,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "schedule": schedule_path,
         "journals": journals,
+        "cert_jsonls": cert_jsonls,
         "policy": {
             "schema": "veriput-unit-campaign-policy/v1",
             "attempts": list(DEFAULT_POLICY),
@@ -267,7 +343,10 @@ def plan_campaign(schedule_path: str,
             "completed_ok": len(completed),
             "exhausted": len(exhausted),
             "bad_journal_lines": bad_lines,
+            "bad_cert_jsonl_lines": bad_cert_lines,
             "orphan_journal_rows": orphan_rows,
+            "cert_quality_enabled": bool(cert_jsonls),
+            "cert_weak": dict(sorted(cert_weak.items())),
             "status_attempts": dict(sorted(status_attempts.items())),
             "distinct_attempts_max": max((len(value) for value in attempts_by_job.values()),
                                          default=0),
@@ -299,6 +378,15 @@ def main() -> int:
                     action="append",
                     default=[],
                     help="unit_schedule_run.py JSONL journal; repeat in attempt order")
+    ap.add_argument("--cert-jsonl",
+                    action="append",
+                    default=[],
+                    help="certify_all.py --out JSONL; when present, runner-ok jobs "
+                    "must also meet the certification quality threshold")
+    ap.add_argument("--min-certified-path-rate",
+                    type=float,
+                    default=0.70,
+                    help="quality threshold used with --cert-jsonl")
     ap.add_argument("--attempt",
                     type=int,
                     default=0,
@@ -321,6 +409,8 @@ def main() -> int:
     try:
         doc = plan_campaign(args.schedule,
                             journal_paths=args.journal,
+                            cert_jsonl_paths=args.cert_jsonl,
+                            min_certified_path_rate=args.min_certified_path_rate,
                             attempt=args.attempt,
                             next_schedule_out=args.next_schedule_out,
                             next_journal=args.next_journal,
