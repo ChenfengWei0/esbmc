@@ -1202,6 +1202,13 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return unitless_number_term(n)
         return None
 
+    def zero_term(state_ty):
+        if state_ty == "bool":
+            return {"kind": "literal", "value": "0"}, "false"
+        if unsigned_ty(state_ty):
+            return {"kind": "literal", "value": "0"}, "0"
+        return None
+
     def source_id():
         value = next_id[0]
         next_id[0] += 1
@@ -1470,6 +1477,22 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if slot is not None and unsigned_ty(slot[1]):
                     add_delta_candidate(slot[0], direction, one, "1",
                                         n.get("src"))
+            elif n.get("nodeType") == "UnaryOperation" and n.get(
+                    "operator") == "delete":
+                sub = n.get("subExpression")
+                sub_ref = identifier_ref(sub)
+                state = state_ids.get(sub_ref)
+                if state is not None:
+                    zero = zero_term(_norm_ty(state[1]))
+                    if zero is not None:
+                        add_equals_candidate(state[0], zero[0], zero[1],
+                                             n.get("src"))
+                slot = slot_lhs(sub)
+                if slot is not None:
+                    zero = zero_term(slot[1])
+                    if zero is not None:
+                        add_equals_candidate(slot[0], zero[0], zero[1],
+                                             n.get("src"))
             elif n.get("nodeType") == "Return" and return_target is not None:
                 term = return_term(n.get("expression"), return_target[1])
                 if term is not None:

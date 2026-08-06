@@ -5298,6 +5298,49 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 delete-zero source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- `delete` is a common reset idiom in Solidity. For unsigned integers and bools,
+  it gives a strong endpoint candidate: post-state equals zero/false.
+- The rule is deliberately conservative:
+  - unsigned scalar state: `delete count` -> `post == 0`;
+  - bool scalar state: `delete ready` -> `post == false` encoded as verifier
+    literal `0`;
+  - readable unsigned/bool mapping slot:
+    `delete balances[msg.sender]` -> `post == 0`;
+  - address clears are skipped for now until address literal endpoint semantics
+    are pinned by a separate verifier/emitter test.
+- As with other source R2 mining, this only prioritizes the query. ESBMC still
+  proves or rejects the candidate, and fuzz only refutes.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has a `zero_term()` helper for bool and
+  unsigned zero endpoints.
+- `source_assignment_r2_specs()` recognizes `UnaryOperation` with operator
+  `delete` and emits source-prioritized equals candidates for readable scalar
+  state or mapping slots.
+- Mapping delete candidates reuse the same `slot_lhs()` and solc `maps` gating
+  added for assignment-shaped mapping slot R2.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `153 test(s) ran, 153 declared in this module`.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:
