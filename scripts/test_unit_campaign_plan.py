@@ -489,7 +489,7 @@ def test_campaign_names_partial_journal_only_as_weak_certification():
     return bad
 
 
-def test_campaign_prefers_level0_certification_for_refinement_timeouts():
+def test_campaign_prefers_single_refine_for_refinement_timeouts():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
             Path(td) / "schedule.json", {
@@ -538,11 +538,11 @@ def test_campaign_prefers_level0_certification_for_refinement_timeouts():
     bad += check(doc["summary"]["cert_weak"] == {
         "refinement-stage no verdict": 1,
     }, f"refinement timeout has a precise weak reason: {doc['summary']}")
-    bad += check(quality.get("retry_strategy") == "level0-certification-first"
-                 and quality.get("retry_refine_rounds") == 0,
-                 f"refinement timeout gets level0 certification-first metadata: {quality}")
-    bad += check(argv_value(next_job["certify_argv"], "--refine-rounds") == "0",
-                 f"refinement timeout retry skips refine rounds: {next_job['certify_argv']}")
+    bad += check(quality.get("retry_strategy") == "single-refine-certification-first"
+                 and quality.get("retry_refine_rounds") == 1,
+                 f"refinement timeout gets single-refine retry metadata: {quality}")
+    bad += check(argv_value(next_job["certify_argv"], "--refine-rounds") == "1",
+                 f"refinement timeout retry uses one refine round: {next_job['certify_argv']}")
     return bad
 
 
@@ -877,7 +877,7 @@ TESTS = [
     test_campaign_uses_explicit_attempt_metadata_for_budget_state,
     test_campaign_retries_runner_ok_when_certification_is_weak,
     test_campaign_names_partial_journal_only_as_weak_certification,
-    test_campaign_prefers_level0_certification_for_refinement_timeouts,
+    test_campaign_prefers_single_refine_for_refinement_timeouts,
     test_campaign_deepens_tx_for_bounded_holds_no_witness,
     test_campaign_restores_default_refine_rounds_after_strategy_attempt,
     test_campaign_treats_slice_excluded_paths_as_body_slice_ready,

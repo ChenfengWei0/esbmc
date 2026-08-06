@@ -387,11 +387,13 @@ def _apply_retry_strategy(item: dict) -> None:
             "prior witnessed paths reached certification without a final verdict; "
             "spend the retry budget on certification before another refinement round")
     elif reason == "refinement-stage no verdict":
-        refine_rounds = "0"
-        strategy = "level0-certification-first"
+        refine_rounds = "1"
+        strategy = "single-refine-certification-first"
         retry_reason = (
-            "prior witnessed paths timed out during refinement; certify the "
-            "coarse level-0 regions before spending retry budget on refinement")
+            "prior witnessed paths timed out during refinement; run only one "
+            "linear refinement round before certification so the retry can "
+            "produce fully bounded regions without spending the whole budget "
+            "on refinement")
     elif reason == BOUNDED_HOLDS_NO_WITNESS_REASON:
         item["certify_argv"] = _with_argv_value(
             [str(arg) for arg in item.get("certify_argv") or []],

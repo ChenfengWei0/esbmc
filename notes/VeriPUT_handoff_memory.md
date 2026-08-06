@@ -10485,8 +10485,9 @@ Smoke result:
   IdentityRegistryStorage.modifyStoredInvestorCountry`:
   `KILLED`, 3 witnessed, 0 certified / 0 not, 70.0s.
   Partial journal: 67 / 116 claims decided, 3 paths, 24 witnesses. Failure
-  bucket is refinement-stage no verdict; campaign planner marks it retryable
-  with `retry_strategy=level0-certification-first` and `retry_refine_rounds=0`.
+  bucket is refinement-stage no verdict.  An initial planner version marked it
+  for level0-only retry; a later real attempt showed that was too weak, so the
+  current planner uses one refinement round before certification.
 
 Current interpretation:
 
@@ -10495,12 +10496,10 @@ Current interpretation:
 - We are ready for targeted benchmark sampling, not full corpus普测 yet.
 - Before broad runs, fix or tune two buckets:
   - no-witness/bounded-holds units such as `AIRBets.approve`, likely by using a
-    deeper or broader cheap witness strategy before spending certification
-    budget;
+    deeper cheap witness strategy before spending certification budget;
   - refinement-stage timeouts such as
-    `IdentityRegistryStorage.modifyStoredInvestorCountry`, likely by making
-    level0-first/zero-refine the first retry for witnessed timeout cases instead
-    of waiting for attempt 2.
+    `IdentityRegistryStorage.modifyStoredInvestorCountry`, likely by reducing
+    refinement rather than skipping it entirely.
 
 ## 2026-08-07 bounded-holds no-witness retry strategy
 
@@ -10515,7 +10514,7 @@ Code change:
 - The strategy deliberately does NOT set `--scope whole`.
 - Existing retry policies are unchanged:
   - `certification-stage no verdict` -> `--refine-rounds 1`;
-  - `refinement-stage no verdict` -> `--refine-rounds 0`;
+  - `refinement-stage no verdict` -> `--refine-rounds 1`;
   - ordinary weak/missing certification -> default `--refine-rounds 2`.
 
 Why not `--scope whole`:
@@ -10542,17 +10541,39 @@ Why not `--scope whole`:
 Current planned retry for the earlier 3-job smoke sample:
 
 - Replanned with:
-  `/tmp/veriput_stratified_20260807_03/unit-campaign-readwrite-sample-a2-deepen-nowitness.json`.
+  `/tmp/veriput_stratified_20260807_03/unit-campaign-readwrite-sample-a2-single-refine.json`.
 - Next schedule:
-  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-readwrite-sample-a2-deepen-nowitness.json`.
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-readwrite-sample-a2-single-refine.json`.
 - `AIRBets.approve`:
   `reason=bounded-holds no witness`,
   `retry_strategy=deepen-witness-search`,
   `--max-tx 2`, no explicit `--scope`, `--refine-rounds 2`.
 - `IdentityRegistryStorage.modifyStoredInvestorCountry`:
   `reason=refinement-stage no verdict`,
-  `retry_strategy=level0-certification-first`,
-  `--refine-rounds 0`.
+  `retry_strategy=single-refine-certification-first`,
+  `--refine-rounds 1`.
+
+Refine0 counterexample:
+
+- I tested `IdentityRegistryStorage.modifyStoredInvestorCountry` attempt 2 once
+  with `--refine-rounds 0`:
+  - schedule:
+    `/tmp/veriput_stratified_20260807_03/next-unit-schedule-identity-modifyCountry-a2-refine0.json`;
+  - results:
+    `/tmp/veriput_stratified_20260807_03/certify-results-identity-modifyCountry-a2-refine0.jsonl`;
+  - journal:
+    `/tmp/veriput_stratified_20260807_03/unit-run-identity-modifyCountry-a2-refine0.jsonl`;
+  - workdir:
+    `/tmp/veriput_stratified_20260807_03/certify-work-identity-modifyCountry-a2_refine0_t130_r120_m8`.
+- It avoided the timeout but produced `NOT-CERTIFIED`, 0 certified / 5 not /
+  5 witnessed, 96s.
+- The useful finding: with the strong recipe's `--skip-bracket`, refine0 leaves
+  no full product region for the body paths.  Level0 only identified point
+  projections, while enc 12/14/26/55 all ended with
+  `no fully bounded region was measured`.
+- Therefore refine0 is a diagnostic arm, not a good automatic second attempt.
+  The current planner uses exactly one linear refine round for refinement-stage
+  timeout retries.
 
 Validation:
 
@@ -10675,9 +10696,9 @@ Code change:
   and their no-verdict gap is at an outer/refine progress stage.
 - Such attempt-2 retry jobs get:
   - `certification_quality.retry_strategy =
-    level0-certification-first`;
-  - `certification_quality.retry_refine_rounds = 0`;
-  - `--refine-rounds 0`.
+    single-refine-certification-first`;
+  - `certification_quality.retry_refine_rounds = 1`;
+  - `--refine-rounds 1`.
 - This is still only a scheduling strategy.  Regions count only if ESBMC later
   certifies them.
 
@@ -10693,13 +10714,14 @@ Attempt-2 validation:
   `/tmp/veriput_stratified_20260807_03/certify-work-balanced6b-a2_refinefirst_t130_r120_m8`.
 - Policy:
   attempt 2, `jobs=1`, 120s ESBMC budget, 130s driver timeout, 135s runner
-  timeout, 8GiB, `--refine-rounds 0`.
+  timeout, 8GiB, `--refine-rounds 0` from the earlier experimental strategy.
 - Result:
   `NOT-CERTIFIED`, 0 certified / 5 not / 5 witnessed, 101s.
 - Interpretation:
-  the strategy succeeded at converting the prior timeout into a verdict, but
-  level0-only produced no fully bounded region for the four body paths.  The
-  result is useful diagnostically but not a strong PUT.
+  the level0-only strategy succeeded at converting the prior timeout into a
+  verdict, but produced no fully bounded region for the four body paths.  The
+  result is useful diagnostically but not a strong PUT, and this is why the
+  automatic strategy was changed to one refine round instead of zero.
 
 Follow-up planner fix:
 
