@@ -34,6 +34,7 @@ def args(tmp, out_dir=""):
                               ast_preheat_batch_size=32,
                               ast_preheat_max_attempts=3,
                               ast_preheat_outer_timeout=90.0,
+                              ast_preheat_memlimit_gb=8.0,
                               next_ast_preheat_journal="",
                               ast_preheat_jobs=1,
                               ast_preheat_stop_on_failure=False,
@@ -149,6 +150,9 @@ def test_missing_ast_pipeline_recommends_preheat_without_writes():
             bad += check(doc["outputs"] == {}, f"no out-dir means no child JSONs: {doc['outputs']}")
             bad += check("--dry-run" in doc["next_runs"]["ast_preheat"]["dry_run_argv"],
                          f"missing-AST path exposes AST dry-run argv: {doc['next_runs']}")
+            bad += check(doc["next_runs"]["ast_preheat"]["memlimit_gb"] == 8.0
+                         and "--memlimit-gb" in doc["next_runs"]["ast_preheat"]["runner_argv"],
+                         f"missing-AST path carries AST memlimit: {doc['next_runs']}")
             bad += check(not cache_root.exists(),
                          f"planning does not create the AST cache: {cache_root}")
             return bad

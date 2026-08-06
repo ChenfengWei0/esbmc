@@ -108,9 +108,12 @@ def test_runner_executes_and_resumes_from_journal():
     with tempfile.TemporaryDirectory() as td:
         ok_cmd = fake_preheat_script(Path(td) / "ok.py")
         journal = Path(td) / "run.jsonl"
-        first = ast_preheat_run.run_schedule(schedule(ok_cmd), journal=str(journal), timeout_s=5)
+        first = ast_preheat_run.run_schedule(schedule(ok_cmd),
+                                             journal=str(journal),
+                                             timeout_s=5,
+                                             memlimit_gb=1.0)
         second = ast_preheat_run.run_schedule(schedule(ok_cmd), journal=str(journal), timeout_s=5)
-        lines = journal.read_text().splitlines()
+        lines = [json.loads(line) for line in journal.read_text().splitlines()]
     bad = 0
     bad += check(first["summary"]["attempted"] == 1,
                  f"first run executes one job: {first['summary']}")
@@ -119,6 +122,8 @@ def test_runner_executes_and_resumes_from_journal():
     bad += check(second["summary"]["already_done"] == 1 and second["summary"]["attempted"] == 0,
                  f"resume skips journaled ok job: {second['summary']}")
     bad += check(len(lines) == 1, f"resume does not append another row: {lines}")
+    bad += check(first["summary"]["memlimit_gb"] == 1.0 and lines[0]["memlimit_gb"] == 1.0,
+                 f"memlimit is recorded in summary and journal row: {first['summary']}")
     return bad
 
 
@@ -160,10 +165,21 @@ def test_runner_dry_run_and_fail_closed_modes():
             refused = str(exc)
         else:
             refused = ""
+        try:
+            ast_preheat_run.run_schedule(sched,
+                                         journal=str(Path(td) / "neg.jsonl"),
+                                         timeout_s=5,
+                                         memlimit_gb=-1)
+        except ast_preheat_run.PreheatRunError as exc:
+            refused_mem = str(exc)
+        else:
+            refused_mem = ""
     bad = 0
     bad += check(dry["summary"]["already_done"] == 1 and dry["summary"]["pending"] == 0,
                  f"dry-run honors journal resume: {dry['summary']}")
     bad += check("pass --journal" in refused, f"real execution requires a journal: {refused}")
+    bad += check("--memlimit-gb" in refused_mem,
+                 f"negative memlimit is refused: {refused_mem}")
     return bad
 
 

@@ -118,11 +118,27 @@ def _status_from_stdout(stdout: str) -> tuple[str, dict | None]:
     return subjects[0].get("status") or "missing-status", doc
 
 
-def _run_one(job: dict, timeout_s: float) -> dict:
+def _preexec_memlimit(memlimit_gb: float):
+    if not memlimit_gb:
+        return None
+
+    def set_limits():
+        import resource
+        limit = int(memlimit_gb * 1024 * 1024 * 1024)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+    return set_limits
+
+
+def _run_one(job: dict, timeout_s: float, memlimit_gb: float) -> dict:
     start = time.monotonic()
     argv = [str(arg) for arg in job["preheat_argv"]]
     try:
-        cp = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+        cp = subprocess.run(argv,
+                            capture_output=True,
+                            text=True,
+                            timeout=timeout_s,
+                            preexec_fn=_preexec_memlimit(memlimit_gb))
         row_status, doc = _status_from_stdout(cp.stdout)
         status = "ok" if cp.returncode == 0 and row_status == "ok" else \
             "error"
@@ -150,6 +166,7 @@ def _run_one(job: dict, timeout_s: float) -> dict:
         "reason": reason,
         "wall_s": wall_s,
         "timeout_s": timeout_s,
+        "memlimit_gb": memlimit_gb or None,
         "returncode": getattr(cp, "returncode", None),
         "result_summary": result_summary,
         "stdout_tail": _tail(getattr(cp, "stdout", "") or ""),
@@ -196,11 +213,14 @@ def run_schedule(schedule: dict,
                  limit: int = 0,
                  jobs: int = 1,
                  timeout_s: float = 90.0,
+                 memlimit_gb: float = 0.0,
                  stop_on_failure: bool = False) -> dict:
     if not journal:
         raise PreheatRunError("pass --journal for real preheat execution")
     if jobs <= 0:
         raise PreheatRunError("--jobs must be positive")
+    if memlimit_gb < 0:
+        raise PreheatRunError("--memlimit-gb must be non-negative")
     if stop_on_failure and jobs != 1:
         raise PreheatRunError("--stop-on-failure requires --jobs 1")
     selected = _selected_jobs(schedule, shard=shard, limit=limit)
@@ -211,7 +231,7 @@ def run_schedule(schedule: dict,
 
     if jobs <= 1:
         for job in pending:
-            row = _run_one(job, timeout_s)
+            row = _run_one(job, timeout_s, memlimit_gb)
             _write_journal(journal, row)
             rows.append(row)
             counts[row["status"]] += 1
@@ -219,7 +239,10 @@ def run_schedule(schedule: dict,
                 break
     else:
         with ThreadPoolExecutor(max_workers=jobs) as executor:
-            futures = {executor.submit(_run_one, job, timeout_s): job for job in pending}
+            futures = {
+                executor.submit(_run_one, job, timeout_s, memlimit_gb): job
+                for job in pending
+            }
             for future in as_completed(futures):
                 row = future.result()
                 _write_journal(journal, row)
@@ -237,6 +260,7 @@ def run_schedule(schedule: dict,
             "already_done": len(selected) - len(pending),
             "attempted": len(rows),
             "status": dict(sorted(counts.items())),
+            "memlimit_gb": memlimit_gb or None,
             "not_attempted": max(0,
                                  len(pending) - len(rows)),
         },
@@ -258,6 +282,10 @@ def main() -> int:
                     type=float,
                     default=90.0,
                     help="outer timeout for one preheat_argv process")
+    ap.add_argument("--memlimit-gb",
+                    type=float,
+                    default=0.0,
+                    help="address-space cap inherited by preheat child processes")
     ap.add_argument("--stop-on-failure",
                     action="store_true",
                     help="stop after the first non-ok row")
@@ -273,6 +301,7 @@ def main() -> int:
                                limit=args.limit,
                                jobs=args.jobs,
                                timeout_s=args.timeout,
+                               memlimit_gb=args.memlimit_gb,
                                stop_on_failure=args.stop_on_failure)
     except (OSError, PreheatRunError) as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)

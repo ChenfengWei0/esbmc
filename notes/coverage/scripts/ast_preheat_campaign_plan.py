@@ -19,6 +19,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 AST_PREHEAT_RUN = SCRIPT_DIR / "ast_preheat_run.py"
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_MEMLIMIT_GB = 8.0
 
 
 class PreheatCampaignError(ValueError):
@@ -60,6 +61,7 @@ def _runner_argv(schedule_arg: str,
                  journal_arg: str,
                  *,
                  timeout_s: float,
+                 memlimit_gb: float,
                  jobs: int,
                  stop_on_failure: bool,
                  dry_run: bool = False) -> list[str]:
@@ -71,6 +73,8 @@ def _runner_argv(schedule_arg: str,
         journal_arg,
         "--timeout",
         str(timeout_s),
+        "--memlimit-gb",
+        str(memlimit_gb),
         "--jobs",
         str(jobs),
     ]
@@ -85,6 +89,7 @@ def _schedule_for_batch(base_schedule: dict,
                         selected_jobs: list[dict],
                         *,
                         timeout_s: float,
+                        memlimit_gb: float,
                         batch_size: int,
                         max_attempts: int) -> dict:
     by_benchmark = Counter(job.get("benchmark") or "<unknown>" for job in selected_jobs)
@@ -106,6 +111,7 @@ def _schedule_for_batch(base_schedule: dict,
             "batch_size": batch_size,
             "max_attempts": max_attempts,
             "outer_timeout_s": timeout_s,
+            "outer_memlimit_gb": memlimit_gb or None,
             "by_benchmark": dict(sorted(by_benchmark.items())),
             "by_solc_source": dict(sorted(by_solc_source.items())),
         },
@@ -120,6 +126,7 @@ def plan_preheat_for_schedule(schedule: dict,
                               batch_size: int = DEFAULT_BATCH_SIZE,
                               max_attempts: int = DEFAULT_MAX_ATTEMPTS,
                               timeout_s: float = 90.0,
+                              memlimit_gb: float = DEFAULT_MEMLIMIT_GB,
                               next_schedule_out: str = "",
                               next_journal: str = "",
                               jobs: int = 1,
@@ -132,6 +139,8 @@ def plan_preheat_for_schedule(schedule: dict,
         raise PreheatCampaignError("--max-attempts must be positive")
     if jobs <= 0:
         raise PreheatCampaignError("--jobs must be positive")
+    if memlimit_gb < 0:
+        raise PreheatCampaignError("--memlimit-gb must be non-negative")
     if stop_on_failure and jobs != 1:
         raise PreheatCampaignError("--stop-on-failure requires --jobs 1")
 
@@ -193,6 +202,7 @@ def plan_preheat_for_schedule(schedule: dict,
     next_schedule = _schedule_for_batch(schedule,
                                         selected_jobs,
                                         timeout_s=timeout_s,
+                                        memlimit_gb=memlimit_gb,
                                         batch_size=batch_size,
                                         max_attempts=max_attempts)
     if next_schedule_out:
@@ -206,17 +216,20 @@ def plan_preheat_for_schedule(schedule: dict,
         journal_arg = next_journal or "<ast-preheat-journal.jsonl>"
         next_run = {
             "timeout_s": timeout_s,
+            "memlimit_gb": memlimit_gb or None,
             "jobs": len(selected_jobs),
             "runner_workers": jobs,
             "dry_run_argv": _runner_argv(schedule_arg,
                                         journal_arg,
                                         timeout_s=timeout_s,
+                                        memlimit_gb=memlimit_gb,
                                         jobs=jobs,
                                         stop_on_failure=stop_on_failure,
                                         dry_run=True),
             "runner_argv": _runner_argv(schedule_arg,
                                         journal_arg,
                                         timeout_s=timeout_s,
+                                        memlimit_gb=memlimit_gb,
                                         jobs=jobs,
                                         stop_on_failure=stop_on_failure,
                                         dry_run=False),
@@ -264,6 +277,7 @@ def plan_preheat(schedule_path: str,
                  batch_size: int = DEFAULT_BATCH_SIZE,
                  max_attempts: int = DEFAULT_MAX_ATTEMPTS,
                  timeout_s: float = 90.0,
+                 memlimit_gb: float = DEFAULT_MEMLIMIT_GB,
                  next_schedule_out: str = "",
                  next_journal: str = "",
                  jobs: int = 1,
@@ -275,6 +289,7 @@ def plan_preheat(schedule_path: str,
                                      batch_size=batch_size,
                                      max_attempts=max_attempts,
                                      timeout_s=timeout_s,
+                                     memlimit_gb=memlimit_gb,
                                      next_schedule_out=next_schedule_out,
                                      next_journal=next_journal,
                                      jobs=jobs,
@@ -300,6 +315,10 @@ def main() -> int:
                     type=float,
                     default=90.0,
                     help="outer timeout to include in the suggested runner argv")
+    ap.add_argument("--memlimit-gb",
+                    type=float,
+                    default=DEFAULT_MEMLIMIT_GB,
+                    help="address-space cap to include in the suggested runner argv")
     ap.add_argument("--next-schedule-out",
                     default="",
                     help="write the selected next batch schedule here")
@@ -321,6 +340,7 @@ def main() -> int:
                            batch_size=args.batch_size,
                            max_attempts=args.max_attempts,
                            timeout_s=args.timeout,
+                           memlimit_gb=args.memlimit_gb,
                            next_schedule_out=args.next_schedule_out,
                            next_journal=args.next_journal,
                            jobs=args.jobs,

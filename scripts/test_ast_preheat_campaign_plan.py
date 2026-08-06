@@ -102,6 +102,7 @@ def test_preheat_campaign_partitions_and_batches_pending_jobs():
                                                      batch_size=2,
                                                      max_attempts=2,
                                                      timeout_s=75.0,
+                                                     memlimit_gb=4.0,
                                                      jobs=3)
     selected = [job["job_id"] for job in doc["next_schedule"]["jobs"]]
     bad = 0
@@ -120,11 +121,16 @@ def test_preheat_campaign_partitions_and_batches_pending_jobs():
                  f"journal quality is reported: {doc['summary']}")
     bad += check(doc["next_run"]["runner_workers"] == 3
                  and "--timeout" in doc["next_run"]["runner_argv"]
-                 and "75.0" in doc["next_run"]["runner_argv"],
+                 and "75.0" in doc["next_run"]["runner_argv"]
+                 and "--memlimit-gb" in doc["next_run"]["runner_argv"]
+                 and "4.0" in doc["next_run"]["runner_argv"],
                  f"runner argv carries budget: {doc['next_run']}")
     bad += check("--dry-run" in doc["next_run"]["dry_run_argv"]
                  and "--dry-run" not in doc["next_run"]["runner_argv"],
                  f"dry-run argv is explicit and separate: {doc['next_run']}")
+    bad += check(doc["next_run"]["memlimit_gb"] == 4.0
+                 and doc["next_schedule"]["summary"]["outer_memlimit_gb"] == 4.0,
+                 f"memlimit is recorded in plan and next schedule: {doc['next_run']}")
     return bad
 
 
@@ -158,6 +164,7 @@ def test_preheat_campaign_writes_next_schedule_and_cli_plan():
     bad += check(plan["summary"]["selected_jobs"] == 1,
                  f"CLI writes plan: {plan['summary']}")
     bad += check(next_doc["summary"]["jobs"] == 1
+                 and next_doc["summary"]["outer_memlimit_gb"] == 8.0
                  and next_doc["jobs"][0]["job_id"] == "peer182__new",
                  f"CLI writes bounded next schedule: {next_doc['summary']}")
     bad += check(str(next_sched) in plan["next_run"]["runner_argv"],

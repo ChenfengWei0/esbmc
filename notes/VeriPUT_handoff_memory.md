@@ -678,7 +678,10 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   skips only journal rows whose status is `ok`, so failed/missing rows remain
   retryable. Each job is validated to contain both `--generate-ast` and
   `--ast-cache-root`; start failures and non-ok subject rows are journaled as
-  retryable failures instead of aborting the whole batch.
+  retryable failures instead of aborting the whole batch. Optional
+  `--memlimit-gb` applies an inherited address-space cap to each solc-backed
+  preheat child process and is recorded in both the run summary and journal
+  rows.
 - `ast_preheat_journal.py`: summarizes an `ast_preheat_run.py` JSONL journal
   and, when given the original schedule, emits a retry schedule containing jobs
   whose latest journal row is not `ok` plus jobs never attempted. This is
@@ -689,10 +692,12 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   completed, stops rescheduling jobs after `--max-attempts` non-ok attempts,
   and writes the next filtered preheat schedule only when
   `--next-schedule-out` is passed. The default batch size is 32 and the
-  emitted `next_run` contains both `dry_run_argv` and `runner_argv`. Copy
-  `dry_run_argv` first to audit the filtered schedule and journal resume set;
-  only `runner_argv` intentionally runs solc-backed preheat jobs. The planner
-  itself never invokes solc, Forge, fuzzing, ESBMC, or preheat jobs.
+  default preheat child memlimit is 8GiB. The emitted `next_run` contains both
+  `dry_run_argv` and `runner_argv`; both include `--memlimit-gb`, but only
+  `runner_argv` intentionally runs solc-backed preheat jobs. Copy
+  `dry_run_argv` first to audit the filtered schedule and journal resume set.
+  The planner itself never invokes solc, Forge, fuzzing, ESBMC, or preheat
+  jobs.
 - `unit_manifest_gate.py`: post-preheat gate for a
   `veriput-unit-manifest/v1`. It reports `blocked`, `degraded`, or `ready`,
   counts unique unit certification jobs, duplicate prepared-subject/unit jobs,
@@ -882,12 +887,14 @@ Interpretation:
   `jobs=508,pending=508,selected_jobs=32,completed_ok=0,exhausted=0`, wrote a
   bounded `next-ast-preheat-schedule.json` with 32 jobs
   (`by_benchmark={"peer182":32}`), and emitted a concrete runner argv pointing
-  at `<tmp-out>/ast-preheat-run.jsonl` with outer timeout 90s and one worker.
-  The paired dry-run argv is identical except for a final `--dry-run`, and
-  should be copied first before running the solc-backed command. The external
-  AST cache directory and both runner journal files were not created; only the
-  requested child JSON docs under `/tmp/<out>` were written, including the
-  empty `next-unit-schedule.json` artifact. This is now the preferred single
+  at `<tmp-out>/ast-preheat-run.jsonl` with outer timeout 90s, `--memlimit-gb
+  8.0`, and one worker. The paired dry-run argv is identical except for a final
+  `--dry-run`, and should be copied first before running the solc-backed
+  command. The generated `next-ast-preheat-schedule.json` records
+  `outer_memlimit_gb=8.0` in its summary. The external AST cache directory and
+  both runner journal files were not created; only the requested child JSON
+  docs under `/tmp/<out>` were written, including the empty
+  `next-unit-schedule.json` artifact. This is now the preferred single
   read-only command for restoring the full benchmark denominator state and the
   next bounded action after a context compact.
 

@@ -146,6 +146,7 @@ def build_pipeline(args) -> dict:
         batch_size=args.ast_preheat_batch_size,
         max_attempts=args.ast_preheat_max_attempts,
         timeout_s=args.ast_preheat_outer_timeout,
+        memlimit_gb=args.ast_preheat_memlimit_gb,
         next_schedule_out=next_ast_schedule_out,
         next_journal=next_ast_journal,
         jobs=args.ast_preheat_jobs,
@@ -275,6 +276,9 @@ def main(argv=None) -> int:
                     type=int,
                     default=ast_preheat_campaign_plan.DEFAULT_MAX_ATTEMPTS)
     ap.add_argument("--ast-preheat-outer-timeout", type=float, default=90.0)
+    ap.add_argument("--ast-preheat-memlimit-gb",
+                    type=float,
+                    default=ast_preheat_campaign_plan.DEFAULT_MEMLIMIT_GB)
     ap.add_argument("--next-ast-preheat-journal", default="")
     ap.add_argument("--ast-preheat-jobs", type=int, default=1)
     ap.add_argument("--ast-preheat-stop-on-failure", action="store_true")
