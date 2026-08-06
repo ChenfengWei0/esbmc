@@ -112,6 +112,8 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
     ast_cache_root = manifest.get("ast_cache_root") or None
     jobs = []
     skipped_rows = []
+    duplicate_jobs = []
+    seen_jobs = set()
     for row_pos, row in enumerate(manifest.get("subjects") or []):
         status = row.get("status")
         if status != "ok":
@@ -132,6 +134,17 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
         if missing:
             raise ScheduleError(f"ok row {row_pos} subject is missing: {', '.join(missing)}")
         for unit in units:
+            key = (subject.get("benchmark"), subject.get("subject_id"), unit)
+            if key in seen_jobs:
+                duplicate_jobs.append({
+                    "row": row_pos,
+                    "unit": unit,
+                    "reason": "duplicate prepared subject unit",
+                    "subject": subject,
+                    "target": row.get("target"),
+                })
+                continue
+            seen_jobs.add(key)
             jobs.append(_job_for_unit(row, unit, len(jobs), ast_cache_root, cert_out or None))
 
     shard_spec = _parse_shard(shard)
@@ -167,8 +180,10 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
             "by_priority": dict(sorted(by_priority.items())),
             "skipped_rows": len(skipped_rows),
             "skipped_by_status": dict(sorted(skipped_by_status.items())),
+            "duplicate_jobs": len(duplicate_jobs),
         },
         "skipped_rows": skipped_rows,
+        "duplicate_jobs": duplicate_jobs,
         "jobs": jobs,
     }
 

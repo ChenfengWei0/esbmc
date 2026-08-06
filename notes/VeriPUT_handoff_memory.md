@@ -683,12 +683,17 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   and, when given the original schedule, emits a retry schedule containing jobs
   whose latest journal row is not `ok` plus jobs never attempted. This is
   read-only unless `--out` or `--retry-out` is passed.
+- `unit_manifest_gate.py`: post-preheat gate for a
+  `veriput-unit-manifest/v1`. It reports `blocked`, `degraded`, or `ready`,
+  counts unique unit certification jobs, duplicate prepared-subject/unit jobs,
+  prepared errors, pending hints, and missing changed-function hints. It never
+  invokes solc/Forge/fuzzing/ESBMC.
 - `unit_schedule.py`: expands a `veriput-unit-manifest/v1` into concrete
   per-unit `certify_all.py --subject-* --unit ...` jobs. It is also read-only:
   it never invokes solc, Forge, fuzzing, or ESBMC. Target-hinted units are
-  priority 0, other enumerated public/external units are priority 1. Apply
-  `--limit` after priority sorting so small dry schedules keep changed-function
-  hints first.
+  priority 0, other enumerated public/external units are priority 1. Duplicate
+  prepared-subject/unit jobs are deduplicated. Apply `--limit` after priority
+  sorting so small dry schedules keep changed-function hints first.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -769,6 +774,13 @@ Interpretation:
   preheat schedule produced: `attempt_rows=0`, `never_attempted=508`,
   `retry_jobs=508`, proving the retry schedule preserves all pending unique
   subject jobs.
+- Read-only unit-manifest gate smoke on the current no-AST manifest produced:
+  `gate_status=blocked`, blockers `missing compact AST rows remain`,
+  `changed-function hints are still pending AST enumeration`, and
+  `no ok subject rows with enumerated units`; summary `rows=548`,
+  `status={"error":39,"missing-ast":509}`, `unique_unit_jobs=0`,
+  `duplicate_subject_rows=1`, `ready_for_unit_schedule=false`. The matching
+  `unit_schedule.py` smoke still emits 0 jobs and reports 548 skipped rows.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4578,8 +4590,9 @@ Implication for next work:
    Use `ast_preheat_journal.py --schedule <schedule.json> --retry-out <retry.json>`
    after any interrupted run to summarize failures and rebuild the retry set.
 5. After preheat, rerun `subject_unit_manifest.py` against the same
-   `--ast-cache-root`, then run `unit_schedule.py` to produce priority-ordered
-   per-unit `certify_all.py --subject-* --unit ...` jobs.
+   `--ast-cache-root`, then run `unit_manifest_gate.py`. Only when the gate is
+   not `blocked` should `unit_schedule.py` produce priority-ordered per-unit
+   `certify_all.py --subject-* --unit ...` jobs.
 6. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.

@@ -151,9 +151,25 @@ def test_schedule_cli_reads_stdin_and_applies_limit():
     return bad
 
 
+def test_schedule_deduplicates_prepared_subject_units():
+    data = manifest()
+    data["subjects"].append(json.loads(json.dumps(data["subjects"][0])))
+    doc = unit_schedule.build_schedule(data)
+    ids = [job["job_id"] for job in doc["jobs"]]
+    bad = 0
+    bad += check(ids == ["stress243__repo__C__setX", "stress243__repo__C__getX"],
+                 f"duplicate subject units are scheduled once: {ids}")
+    bad += check(doc["summary"]["duplicate_jobs"] == 2,
+                 f"duplicate unit jobs are reported: {doc['summary']}")
+    bad += check(doc["duplicate_jobs"][0]["unit"] in ("getX", "setX"),
+                 f"duplicate sample names the unit: {doc['duplicate_jobs']}")
+    return bad
+
+
 TESTS = [
     test_schedule_prioritizes_hinted_units_and_preserves_argv,
     test_schedule_cli_reads_stdin_and_applies_limit,
+    test_schedule_deduplicates_prepared_subject_units,
 ]
 
 if __name__ == "__main__":
