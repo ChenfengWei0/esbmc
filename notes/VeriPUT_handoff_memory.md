@@ -7760,6 +7760,40 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 Local alias mapping keys in source slot priority
+
+Scope:
+
+- This extends source-resolved mapping slot priority to local key aliases such
+  as `address sender = msg.sender; balances[sender]` and
+  `address who = owner; balances[who]`.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `unit_mapping_slot_accesses` now tracks simple local aliases declared by a
+  single-variable `VariableDeclarationStatement` with an initializer. Alias
+  resolution reuses the same safe expression resolver as direct keys, so it can
+  produce `msg.sender`, `state.owner`, literal, and constant-derived keys.
+- The scan is Block-order aware: aliases become visible only after their
+  declaration statement and are restored when leaving a block.
+- Assignment to the local identifier invalidates the alias instead of treating
+  later reads as the stale initializer. The walker does not try to interpret
+  arbitrary reassignment expressions; skipped aliases fall back to the existing
+  candidate policy.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 203/203 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 Constant mapping keys in source slot priority
 
 Scope:

@@ -6690,6 +6690,79 @@ def test_source_access_slots_fold_safe_constant_keys():
     return bad
 
 
+def test_source_access_slots_resolve_local_key_aliases_in_order():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "name": name,
+                "referencedDeclaration": ref}
+
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"}}
+
+    def local_decl(ref, name, init):
+        return {"nodeType": "VariableDeclarationStatement",
+                "declarations": [{"nodeType": "VariableDeclaration",
+                                  "id": ref, "name": name}],
+                "initialValue": init}
+
+    def access(key, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "IndexAccess", "src": src,
+            "baseExpression": ident(10, "bal"),
+            "indexExpression": key}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "bal",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "owner",
+             "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 local_decl(30, "sender", msg_sender),
+                 access(ident(30, "sender"), "100:5:0"),
+                 local_decl(31, "who", ident(11, "owner")),
+                 access(ident(31, "who"), "120:5:0"),
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "leftHandSide": ident(31, "who"),
+                     "rightHandSide": msg_sender}},
+                 access(ident(31, "who"), "140:5:0")]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "touch", declaration_id=20)
+    finally:
+        os.unlink(path)
+    slots, used, skipped = source_access_slot_vars(
+        accesses, {"bal": (2, "address", 32, 0, "bal", None)},
+        state_types={"owner": "address"}, layout={"owner": (0, 0, 20)})
+    bad = 0
+    bad += check(accesses == [
+        ("bal", ("msg.sender",)),
+        ("bal", ("state.owner",)),
+        ("bal", ("who",)),
+    ], f"local aliases resolve in statement order and stale alias is dropped: "
+        f"{accesses}")
+    bad += check(any("state.bal[msg.sender]" in line for line in evidence)
+                 and any("state.bal[state.owner]" in line for line in evidence),
+                 f"evidence records the resolved alias keys: {evidence}")
+    bad += check(slots == ["bal[msg.sender]", "bal[state.owner]"],
+                 f"only live renderable aliases become source slots: {slots}")
+    bad += check(used == {"bal"},
+                 f"accepted alias slots suppress fallback: {used}")
+    bad += check(any("source key `who`" in s for s in skipped),
+                 f"the reassigned alias is not used stale: {skipped}")
+    return bad
+
+
 def test_source_access_slots_render_state_struct_member_keys():
     from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
     from solidity_path_put import (contract_state_types,  # noqa: E402
@@ -8940,6 +9013,7 @@ def main():
               test_source_access_slots_preserve_state_keys_before_fallback,
               test_source_access_slots_keep_safe_literal_keys,
               test_source_access_slots_fold_safe_constant_keys,
+              test_source_access_slots_resolve_local_key_aliases_in_order,
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,

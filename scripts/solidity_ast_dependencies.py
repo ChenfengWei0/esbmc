@@ -164,9 +164,11 @@ def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id
     return ordered, evidence
 
 
-def _expr_coord_name(expr, state_by_id=None, constant_by_id=None):
+def _expr_coord_name(expr, state_by_id=None, constant_by_id=None,
+                     alias_by_id=None, seen=None):
     if not isinstance(expr, dict):
         return None
+    seen = set() if seen is None else set(seen)
     if expr.get("nodeType") == "Literal":
         if expr.get("kind") == "number":
             value = str(expr.get("value") or "")
@@ -188,12 +190,20 @@ def _expr_coord_name(expr, state_by_id=None, constant_by_id=None):
         cast_expr = expr.get("expression") or {}
         type_name = cast_expr.get("typeName") or {}
         if len(args) == 1 and type_name.get("name") == "address":
-            return _expr_coord_name(args[0], state_by_id, constant_by_id)
+            return _expr_coord_name(args[0], state_by_id, constant_by_id,
+                                    alias_by_id, seen)
     if expr.get("nodeType") == "Identifier" and expr.get("name"):
         ref = expr.get("referencedDeclaration")
+        if alias_by_id and ref in alias_by_id:
+            if ref in seen:
+                return None
+            seen.add(ref)
+            return _expr_coord_name(alias_by_id[ref], state_by_id,
+                                    constant_by_id, alias_by_id, seen)
         if constant_by_id and ref in constant_by_id:
             return _expr_coord_name(
-                constant_by_id[ref], state_by_id, constant_by_id)
+                constant_by_id[ref], state_by_id, constant_by_id,
+                alias_by_id, seen)
         if state_by_id and ref in state_by_id:
             return "state." + state_by_id[ref]
         return expr["name"]
@@ -207,12 +217,14 @@ def _expr_coord_name(expr, state_by_id=None, constant_by_id=None):
     return None
 
 
-def _index_access_chain(node, state_by_id=None, constant_by_id=None):
+def _index_access_chain(node, state_by_id=None, constant_by_id=None,
+                        alias_by_id=None):
     keys = []
     cur = node
     while isinstance(cur, dict) and cur.get("nodeType") == "IndexAccess":
         key = _expr_coord_name(
-            cur.get("indexExpression"), state_by_id, constant_by_id)
+            cur.get("indexExpression"), state_by_id, constant_by_id,
+            alias_by_id)
         if key is None:
             return None
         keys.append(key)
@@ -305,12 +317,42 @@ def unit_mapping_slot_accesses(
             return
         best_callable_depth[node_id] = depth
         next_calls = []
+        alias_by_id = {}
+
+        def declaration_ref(declaration):
+            if not isinstance(declaration, dict):
+                return None
+            ref = declaration.get("id")
+            return ref if isinstance(ref, int) else None
+
+        def identifier_ref(expr):
+            if not isinstance(expr, dict) or expr.get("nodeType") != "Identifier":
+                return None
+            ref = expr.get("referencedDeclaration")
+            return ref if isinstance(ref, int) else None
 
         def scan(value):
             if isinstance(value, dict):
+                if value.get("nodeType") == "Block":
+                    old_aliases = dict(alias_by_id)
+                    for stmt in value.get("statements") or []:
+                        scan(stmt)
+                    alias_by_id.clear()
+                    alias_by_id.update(old_aliases)
+                    return
+                if value.get("nodeType") == "VariableDeclarationStatement":
+                    scan(value.get("initialValue"))
+                    decls = [d for d in (value.get("declarations") or [])
+                             if isinstance(d, dict)]
+                    init = value.get("initialValue")
+                    if len(decls) == 1 and init is not None:
+                        ref = declaration_ref(decls[0])
+                        if ref is not None:
+                            alias_by_id[ref] = init
+                    return
                 if value.get("nodeType") == "IndexAccess":
                     chain_got = _index_access_chain(
-                        value, state_by_id, constant_by_id)
+                        value, state_by_id, constant_by_id, alias_by_id)
                     if chain_got:
                         ref, keys = chain_got
                         if ref in state_by_id:
@@ -322,6 +364,13 @@ def unit_mapping_slot_accesses(
                     # Do not recurse through baseExpression here; otherwise a
                     # four-level slot also emits its three partial sub-stores.
                     scan(value.get("indexExpression"))
+                    return
+                if value.get("nodeType") == "Assignment":
+                    for child in value.values():
+                        scan(child)
+                    ref = identifier_ref(value.get("leftHandSide"))
+                    if ref in alias_by_id:
+                        del alias_by_id[ref]
                     return
                 ref = value.get("referencedDeclaration")
                 if ref in callables and ref != node_id:
