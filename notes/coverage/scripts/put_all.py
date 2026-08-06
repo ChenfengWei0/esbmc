@@ -36,6 +36,7 @@ from veriput_recipe import (STRONG_RECIPE_VERSION, STRONG_PUT_AUTO_UNWIND,  # no
                             STRONG_PUT_AUTO_PARTIAL_LOOPS,
                             STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET,
                             STRONG_PUT_FUZZ_RUNS,
+                            STRONG_PUT_LIFT_UNCONSTRAINED_CALLDATA,
                             STRONG_PUT_R2_CANDIDATE_BUDGET,
                             STRONG_PUT_R2_DEPTH,
                             STRONG_PUT_R2_TERM_BUDGET)
@@ -308,6 +309,7 @@ def apply_strong_put_recipe(args):
         return None
     args.auto_unwind = STRONG_PUT_AUTO_UNWIND
     args.auto_partial_loops = STRONG_PUT_AUTO_PARTIAL_LOOPS
+    args.lift_unconstrained_calldata = STRONG_PUT_LIFT_UNCONSTRAINED_CALLDATA
     args.propose_r2 = True
     args.r2_depth = STRONG_PUT_R2_DEPTH
     args.r2_term_budget = STRONG_PUT_R2_TERM_BUDGET
@@ -483,6 +485,10 @@ def main():
                     help="passed to the driver: after --auto-unwind is spent, "
                          "try the ladder once with --partial-loops, the third "
                          "repair named by ESBMC's UNDECIDED-TRUNCATED message")
+    ap.add_argument("--lift-unconstrained-calldata", action="store_true",
+                    help="passed to the driver: lift declared calldata "
+                         "parameters absent from the certified region as "
+                         "full-domain fuzz inputs when their type is supported")
     ap.add_argument("--timeout", type=int, default=600,
                     help="per ESBMC invocation in the PUT driver")
     ap.add_argument("--forge-timeout", type=int, default=300,
@@ -786,6 +792,8 @@ def main():
                "--derived-by", json.dumps(deriv)]
         if args.auto_partial_loops:
             cmd += ["--auto-partial-loops"]
+        if args.lift_unconstrained_calldata:
+            cmd += ["--lift-unconstrained-calldata"]
         if path_function:
             cmd += ["--path-function", path_function]
         if exit_kind:
@@ -1091,11 +1099,14 @@ def b_report(results, forge_timeout):
         guarded = st.get("guarded_asserts", 0)
         uncond = ar - guarded
         # Gate 1 counts the parameters the emitter actually wrote. Gate 2 asks
-        # whether ANY certified interval is wider than a point -- a PUT whose
-        # every bound is [v, v] explores one input however many `runs:` forge
-        # reports.
+        # whether ANY coordinate the emitted test RENDERS is wider than a
+        # point. Reading this from `stats` rather than from the raw region is
+        # essential in both directions: state-only region width is not rendered
+        # as fuzz input, while a calldata parameter absent from the certified
+        # region can be lifted over its full type domain because Stage 2 proved
+        # the path with that input unconstrained.
         g1 = rc == 0 and fz > 0
-        g2 = any(hi > lo for lo, hi in region.values())
+        g2 = any(width > 1 for width in (st.get("rendered_width") or {}).values())
         g3 = uncond > 0
         # The PUT's own test function, named by the emitter as
         # `test_put_<CONTRACT>_<unit>_path<enc>`; the concrete `test_cov_*` cases

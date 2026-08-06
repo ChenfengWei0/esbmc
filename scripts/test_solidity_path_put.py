@@ -9533,6 +9533,71 @@ def test_missing_replay_args_become_full_domain_fuzz_inputs():
     return bad
 
 
+def test_unconstrained_replay_args_become_full_domain_fuzz_inputs():
+    """A concrete replay argument can still be unconstrained by the proof.
+
+    This is the same certification shape as a missing-argument replay, except
+    Stage 1 happened to print a literal. Since Stage 2 proved the path under a
+    region that does not mention the calldata parameters, the PUT can soundly
+    replace those literals with full-domain fuzz inputs.
+    """
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {St1inch} from "./st1inch__St1inch.flat.sol";
+
+contract St1inchCovTest is Test {
+  St1inch c1;
+  function setUp() public {
+    c1 = new St1inch();
+  }
+  // claim: sol:@C@St1inch@F@approve#9171:path:3
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c1.approve(address(uint160(1)), 2) {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@St1inch@F@approve#9171", 3)
+    notes = []
+    put, stats = build_put(
+        "St1inch", "approve", 3, 1, "sol:@C@St1inch@F@approve#9171",
+        region={"msg.value": (0, 0)}, holes={}, pins={},
+        params=ST1_PARAMS, emitted=em, case=case, layout={},
+        ladder_rows=[], notes=notes, exit_kind="revert",
+        lift_unconstrained_calldata=True)
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    if put is None:
+        return bad + 5
+    txt = "\n".join(put)
+    bad += check("function test_put_St1inch_approve_path3(address arg0, "
+                 "uint256 arg1)" in txt,
+                 "the present-but-unconstrained calldata becomes fuzz params")
+    bad += check("try c1.approve(arg0, arg1) {} catch { _put_ok = false; }" in txt,
+                 "the concrete replay literals are replaced at the unit call")
+    bad += check("declared parameter `arg0` is absent from the certified region"
+                 in "\n".join(notes),
+                 "the note records why arg0 was lifted")
+    bad += check("declared parameter `arg1` is absent from the certified region"
+                 in "\n".join(notes),
+                 "the note records why arg1 was lifted")
+    bad += check(stats["rendered_width"] == {
+                     "arg0": 1 << 160,
+                     "arg1": 1 << 256,
+                 },
+                 f"the rendered widths are the full calldata domains: {stats}")
+    return bad
+
+
 def test_missing_address_payable_replay_arg_casts_at_the_unit_call():
     emitted = """\
 // SPDX-License-Identifier: MIT
@@ -9946,6 +10011,7 @@ def main():
               test_a_single_line_call_still_reports_its_own_statement,
               test_the_low_level_value_gate_emits_a_PUT,
               test_missing_replay_args_become_full_domain_fuzz_inputs,
+              test_unconstrained_replay_args_become_full_domain_fuzz_inputs,
               test_missing_address_payable_replay_arg_casts_at_the_unit_call,
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
               test_missing_low_level_value_gate_args_update_abi_signature,

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Versioned VeriPUT recipe fragments shared by POC and benchmark runners."""
 
-STRONG_RECIPE_VERSION = "veriput-strong/13"
+STRONG_RECIPE_VERSION = "veriput-strong/14"
 STRONG_PROBE_WITNESSES = 8
 STRONG_PUT_AUTO_UNWIND = 1
 STRONG_PUT_AUTO_PARTIAL_LOOPS = True
+STRONG_PUT_LIFT_UNCONSTRAINED_CALLDATA = True
 STRONG_PUT_R2_DEPTH = 1
 STRONG_PUT_R2_TERM_BUDGET = 96
 STRONG_PUT_R2_CANDIDATE_BUDGET = 128
@@ -65,6 +66,7 @@ def strong_put_args():
     return [
         "--auto-unwind", str(STRONG_PUT_AUTO_UNWIND),
         "--auto-partial-loops",
+        "--lift-unconstrained-calldata",
         "--propose-r2",
         "--r2-depth", str(STRONG_PUT_R2_DEPTH),
         "--r2-term-budget", str(STRONG_PUT_R2_TERM_BUDGET),

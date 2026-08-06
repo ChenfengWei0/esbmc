@@ -5917,7 +5917,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
               unwind=None, rettypes=None, maps=None, piece_label="",
               derived_by=None, rollback_exit=False, r2_terms=None,
-              oracle_label_prefix="", exit_kind=None, state_types=None):
+              oracle_label_prefix="", exit_kind=None, state_types=None,
+              lift_unconstrained_calldata=False):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -6117,6 +6118,21 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         elif idx in implicit_full:
             lo, hi = full_lift_bounds(ptype)
             param_holes = []
+        elif lift_unconstrained_calldata:
+            bounds = full_lift_bounds(ptype)
+            if bounds is None:
+                notes.append(
+                    f"declared parameter `{pname}` is absent from the "
+                    f"certified region, but type `{ptype}` cannot be "
+                    f"synthesized as a full-domain fuzz input; kept PINNED at "
+                    f"the emitter's literal")
+                continue
+            lo, hi = bounds
+            param_holes = []
+            notes.append(
+                f"declared parameter `{pname}` is absent from the certified "
+                f"region; lifting it as a full-domain calldata fuzz input "
+                f"because the certification proof leaves it unconstrained")
         else:
             continue                       # pinned: keep the emitter's literal
         lk = lift_kind(ptype)
@@ -7852,6 +7868,15 @@ def main():
                          "is the verifier's third named repair for truncation; "
                          "it is recorded separately because it applies only to "
                          "the ladder run, not to concrete test emission.")
+    ap.add_argument("--lift-unconstrained-calldata", action="store_true",
+                    help="lift declared calldata parameters that are absent "
+                         "from the certified region as full-domain fuzz inputs "
+                         "when their Solidity type is supported. This is a "
+                         "sound strengthening under the Stage-2 certification "
+                         "query: if the region proof leaves a calldata input "
+                         "unconstrained, the path obligation was checked for "
+                         "the whole domain of that input. Fuzz still only "
+                         "refutes generated tests; it does not prove them.")
     ap.add_argument("--scope", default="focus",
                     help="focus passes --focus-function <unit> (the GATE "
                          "cell); whole drops it; a comma-separated list passes "
@@ -8538,7 +8563,9 @@ def main():
                            rollback_exit=rollback_here,
                            r2_terms=r2_term_lookup,
                            exit_kind=a.exit_kind,
-                           state_types=state_types)
+                           state_types=state_types,
+                           lift_unconstrained_calldata=(
+                               a.lift_unconstrained_calldata))
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
