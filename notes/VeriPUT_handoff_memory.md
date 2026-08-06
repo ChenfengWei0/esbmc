@@ -8,6 +8,52 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 mapping-slot getter return R2
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- ESBMC's `resolve_coord` already supports `state.<mapping>[<key>]` and nested
+  mapping/member coordinates in `--path-cov-assert`.
+- The external source miner did not propose `return == state.bal[k]` for getter
+  bodies such as `return bal[k]` or `return bal[msg.sender]`.
+- The PUT renderer also skipped mapping-slot state coordinates when rendering
+  return rungs, so even a certified `return == state.bal[k]` could not become a
+  Foundry assertion.
+
+Code change:
+
+- `source_assignment_r2_specs()` now recognizes RHS mapping slot reads as
+  structured entry-state coordinates, e.g. `state.bal[who]` and
+  `state.bal[msg.sender]`.
+- Numeric slot reads are available through `delta_term`, so they feed return
+  equality, direct equality, and one-level arithmetic R2 terms.
+- Return-oracle pre-read planning now supports mapping slots by using the same
+  `parse_slot_name`, `slot_key_expr`, `map_slot_expr`, and
+  `slot_read_expr_at` machinery as post-state mapping oracles.
+- If the return type is bool, pre-read slot words are exposed to the renderer
+  as `(_ret_pre_slot != 0)` so bool return assertions remain well typed.
+- Existing mapping self-subtract tests now expect the stronger additional
+  equality `post == (state.allowance[msg.sender][spender] - amount)`, alongside
+  the delta rung.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  166/166 tests.
+- `git diff --check -- scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md` passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 source-R2 local alias expansion
 
 Scope and constraint:

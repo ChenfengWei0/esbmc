@@ -1385,6 +1385,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return coord_term(arg, expected_kind)
         if expected_kind is None:
             return None
+        slot = slot_lhs(n)
+        if slot is not None and type_coord_kind(slot[1]) == expected_kind:
+            return {"kind": "coord", "name": "state." + slot[0]}, (
+                "state." + slot[0])
         ref = identifier_ref(n)
         name = param_ids.get(ref)
         if name and name in rendered_by_kind.get(expected_kind, set()):
@@ -1456,6 +1460,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             arg = type_conversion_arg(n, target_ty)
             if arg is not None:
                 return delta_term(arg)
+        slot = slot_lhs(n)
+        if slot is not None and type_coord_kind(slot[1]) == "num":
+            return {"kind": "coord", "name": "state." + slot[0]}, (
+                "state." + slot[0])
         ref = identifier_ref(n)
         param_name = param_ids.get(ref)
         if (param_name and param_name in param_names
@@ -5441,7 +5449,50 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                 svar = cname[len("state."):]
                                 if cname in ret_coord_ident_abs:
                                     continue
-                                if parse_slot_name(svar)[0] is not None:
+                                mname, slot_keys, slot_tail = parse_slot_name(
+                                    svar)
+                                if mname is not None:
+                                    mkey = mname + slot_tail
+                                    if not maps or mkey not in maps:
+                                        ret_skipped.append(
+                                            f"{cname} (`{mname}` is not a "
+                                            "mapping solc's layout reports "
+                                            "with a scalar value, so this "
+                                            "return coordinate cannot be "
+                                            "read before the call)")
+                                        continue
+                                    mslot, _ktype, vnb, voff, _mb, _mm = maps[mkey]
+                                    nlev = (1 if isinstance(_ktype, str)
+                                            else len(_ktype))
+                                    if len(slot_keys) != nlev:
+                                        ret_skipped.append(
+                                            f"{cname} (`{mname}` is a "
+                                            f"{nlev}-level store but the name "
+                                            f"gives {len(slot_keys)} key(s))")
+                                        continue
+                                    kexprs, kerr = [], None
+                                    for kn in slot_keys:
+                                        ke, err = slot_key_expr(kn, key_expr_of)
+                                        if err is not None:
+                                            kerr = err
+                                            break
+                                        kexprs.append(ke)
+                                    if kerr is not None:
+                                        ret_skipped.append(f"{cname} ({kerr})")
+                                        continue
+                                    ident = "_ret_pre_" + _slot_ident(svar)
+                                    if ident in planned_ret_pre_names:
+                                        continue
+                                    planned_ret_pre_names.add(ident)
+                                    rd = slot_read_expr_at(
+                                        target_addr,
+                                        map_slot_expr(kexprs, mslot),
+                                        voff, vnb)
+                                    planned_ret_pre_reads.append(
+                                        f"    uint256 {ident} = {rd};")
+                                    ret_coord_ident_abs[cname] = (
+                                        f"({ident} != 0)"
+                                        if _rk[0] == "bool" else ident)
                                     continue
                                 if svar not in layout:
                                     continue
@@ -5453,7 +5504,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                 rd = slot_read_expr(target_addr, slot, off, nb)
                                 planned_ret_pre_reads.append(
                                     f"    uint256 {ident} = {rd};")
-                                ret_coord_ident_abs[cname] = ident
+                                ret_coord_ident_abs[cname] = (
+                                    f"({ident} != 0)"
+                                    if _rk[0] == "bool" else ident)
                 planned_ret_asserts = []
                 for idx, rk, vn in plan:
                     label_var = (RETURN_VAR if idx is None

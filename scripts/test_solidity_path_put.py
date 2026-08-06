@@ -706,7 +706,7 @@ def test_region_coordinate_ladder_refusal_is_read():
 RETLIVE = "a value IS returned on this path (REFUTED == yes)"
 
 
-def _ret_put(ladder_rows, rettypes, layout=None, r2_terms=None):
+def _ret_put(ladder_rows, rettypes, layout=None, maps=None, r2_terms=None):
     em, case = make_case()
     notes = []
     put, stats = build_put(
@@ -715,7 +715,7 @@ def _ret_put(ladder_rows, rettypes, layout=None, r2_terms=None):
         holes={}, pins={}, params=PARAMS, emitted=em, case=case,
         layout=LAYOUT if layout is None else layout,
         ladder_rows=ladder_rows, notes=notes, rettypes=rettypes,
-        r2_terms=r2_terms)
+        maps=maps, r2_terms=r2_terms)
     return "\n".join(put or []), stats, notes
 
 
@@ -769,6 +769,35 @@ def test_return_rung_can_assert_a_scalar_entry_state_coord():
     bad += check(not any("state._distributor" in s
                          for s in stats["oracle_skipped"]),
                  f"the structured state coord was not dropped: "
+                 f"{stats['oracle_skipped']}")
+    bad += check(stats["return_asserts"] == 1,
+                 f"one return assertion: {stats['return_asserts']}")
+    return bad
+
+
+def test_return_rung_can_assert_a_mapping_entry_state_coord():
+    """Getter ground truth for `return == state.bal[u]` style slots."""
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return", "return == state.bal[u]", "HOLDS")],
+        [("", "uint256")],
+        maps={"bal": (7, "address", 32, 0, "bal", None)},
+        r2_terms={
+            "state.bal[u]": {
+                "kind": "coord",
+                "name": "state.bal[u]",
+            },
+        })
+    bad = 0
+    bad += check("uint256 _ret_pre_bal_u = uint256(vm.load("
+                 in text,
+                 "the mapping slot is read before the call")
+    bad += check("keccak256(abi.encode(u, uint256(7)))" in text,
+                 "the pre-read uses the same mapping hash as state oracles")
+    bad += check("assertEq(uint256(_put_ret), _ret_pre_bal_u" in text,
+                 "the return is compared with the pre-read slot value")
+    bad += check(not stats["oracle_skipped"],
+                 f"the mapping return coordinate is not skipped: "
                  f"{stats['oracle_skipped']}")
     bad += check(stats["return_asserts"] == 1,
                  f"one return assertion: {stats['return_asserts']}")
@@ -2370,7 +2399,7 @@ def test_source_R2_self_updates_prioritize_delta_queries():
 
 
 def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
-    from solidity_path_put import (r2_candidates,  # noqa: E402
+    from solidity_path_put import (r2_candidates, r2_term_text,  # noqa: E402
                                    source_assignment_r2_specs)
     msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
                   "expression": {"nodeType": "Identifier", "name": "msg"},
@@ -2471,13 +2500,15 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                  {"kind": "coord", "name": "amount"},
                  f"nested mapping dec delta uses the rendered amount: "
                  f"{allow_deltas}")
-    bad += check(len(allow_equals) == 1 and allow_equals[0]["term"] ==
-                 {"kind": "coord", "name": "amount"},
-                 f"nested mapping direct set is mined: {allow_equals}")
+    allow_equal_terms = [r2_term_text(item["term"]) for item in allow_equals]
+    bad += check(allow_equal_terms == [
+        "(state.allowance[msg.sender][spender] - amount)", "amount"
+    ], f"nested mapping direct and self-subtract equalities are mined: "
+        f"{allow_equals}")
     bad += check("badKeyed[spender]" not in entries,
                  f"key type mismatches are skipped rather than guessed: "
                  f"{entries}")
-    bad += check(specs[0].get("candidate_count") == 3 if specs else False,
+    bad += check(specs[0].get("candidate_count") == 4 if specs else False,
                  f"candidate_count includes mapping slot candidates: {specs}")
     bad += check(any("balances[msg.sender]: post - pre == amount" in line
                      for line in evidence),
@@ -2486,6 +2517,11 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                      and item["text"] == "post == amount"
                      for item in candidates),
                  f"mapping direct-set R2 candidate is renderable: {candidates}")
+    bad += check(any(item["var"] == "allowance[msg.sender][spender]"
+                     and item["text"] ==
+                     "post == (state.allowance[msg.sender][spender] - amount)"
+                     for item in candidates),
+                 f"mapping self-subtract equality is renderable: {candidates}")
     return bad
 
 
@@ -4008,6 +4044,89 @@ def test_source_R2_local_aliases_feed_return_state_and_mapping_terms():
                      for line in evidence),
                  f"local alias provenance records the expanded term: "
                  f"{evidence}")
+    return bad
+
+
+def test_source_R2_mapping_getter_returns_named_entry_slot_coord():
+    from solidity_path_put import RETURN_VAR, r2_candidates, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def msg_sender():
+        return {"nodeType": "MemberAccess", "memberName": "sender",
+                "expression": {"nodeType": "Identifier", "name": "msg"},
+                "typeDescriptions": {"typeString": "address"}}
+
+    def index(base_ref, base_name, key, ty="uint256"):
+        return {"nodeType": "IndexAccess",
+                "baseExpression": ident(base_ref, base_name),
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "bal",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "get",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "who",
+                  "typeDescriptions": {"typeString": "address"}}]},
+             "returnParameters": {"parameters": [{
+                 "id": 22, "name": "",
+                 "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "Return", "src": "100:10:0",
+                 "expression": index(10, "bal",
+                                     ident(21, "who", "address"))}]}},
+            {"nodeType": "FunctionDefinition", "id": 30, "name": "mine",
+             "parameters": {"parameters": []},
+             "returnParameters": {"parameters": [{
+                 "id": 32, "name": "",
+                 "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "Return", "src": "200:10:0",
+                 "expression": index(10, "bal", msg_sender())}]}}
+        ]}]}
+    maps = {"bal": (7, "address", 32, 0, "bal", None)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out_file:
+        json.dump(ast, out_file)
+    try:
+        get_specs, get_evidence = source_assignment_r2_specs(
+            path, "C", "get", [("who", "address")], {},
+            [("who", "id", 20)], arity=1, maps=maps,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
+        mine_specs, _mine_evidence = source_assignment_r2_specs(
+            path, "C", "mine", [], {}, [("msg.sender", "id", 20)],
+            arity=0, maps=maps, rettypes=[("", "uint256")],
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    def return_terms(specs):
+        entry = next((item for item in specs[0]["vars"]
+                      if item["name"] == RETURN_VAR), {}) if specs else {}
+        return [r2_term_text(item["term"])
+                for item in entry.get("equals", [])]
+
+    bad = 0
+    bad += check(return_terms(get_specs) == ["state.bal[who]"],
+                 f"getter return names the parameterized entry slot: "
+                 f"{get_specs}")
+    bad += check([item["text"] for item in r2_candidates(get_specs)] ==
+                 ["return == state.bal[who]"],
+                 f"getter return candidate renders for ESBMC: "
+                 f"{r2_candidates(get_specs)}")
+    bad += check(any("return: return == state.bal[who]" in line
+                     for line in get_evidence),
+                 f"getter return provenance is recorded: {get_evidence}")
+    bad += check(return_terms(mine_specs) == ["state.bal[msg.sender]"],
+                 f"msg.sender-keyed getter return is mined: {mine_specs}")
     return bad
 
 
@@ -6328,6 +6447,7 @@ def main():
               test_uncomparable_env_quantity_refuses_emission,
               test_return_rung_is_bound_and_asserted,
               test_return_rung_can_assert_a_scalar_entry_state_coord,
+              test_return_rung_can_assert_a_mapping_entry_state_coord,
               test_a_retlive_that_HOLDS_kills_every_return_rung,
               test_a_bool_return_uses_assertTrue_not_a_cast,
               test_a_bool_return_can_assert_a_structured_bool_coord,
@@ -6402,6 +6522,7 @@ def main():
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_source_R2_return_type_conversion_wrappers_are_unwrapped,
               test_source_R2_local_aliases_feed_return_state_and_mapping_terms,
+              test_source_R2_mapping_getter_returns_named_entry_slot_coord,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
               test_source_R2_merge_preserves_the_candidate_budget,
