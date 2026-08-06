@@ -1434,5 +1434,15 @@ const nlohmann::json &solidity_convertert::find_decl_ref(int ref_id)
       return search_scoped(id_it->second);
   }
 
+  // Solidity also uses ordinary contracts as namespaces for shared type
+  // declarations, e.g. `CometConfiguration.AssetConfig`.  A member access in a
+  // different contract can reference the struct field declaration by its unique
+  // AST id even though the declaring contract is neither a base, library nor
+  // interface.  If the scoped lookup failed, the id itself is still precise, so
+  // use it as a final fallback instead of rejecting well-typed source.
+  const auto &global_result = find_node_by_id(src_ast_json, ref_id);
+  if (!global_result.empty())
+    return global_result;
+
   return empty_json;
 }

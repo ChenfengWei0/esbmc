@@ -8879,3 +8879,93 @@ Next work:
   arithmetic guards. The current fallback is intentionally weaker but useful:
   it trades one dimension for a certified wide region on the remaining semantic
   dimension(s).
+
+## 2026-08-06 benchmark sampling status after strong/8
+
+Sampling is still read-only with respect to
+`/home/samson/workspace/VeriPUT/Datasets` and
+`/home/samson/workspace/VeriPUT/Results`; all AST caches and outputs went under
+`/tmp`.
+
+Peer sample:
+
+- Subject:
+  `peer182 / peer_syntest__MetaCoin / MetaCoin.sendCoin(address receiver,uint amount)`.
+- Ground truth:
+  `sendCoin` has an insufficient-balance return-false path and a sufficient
+  return-true path. The loop adjusts `amount` for large values and then raises
+  small amounts to at least 5; the function does not write storage.
+- Run:
+  `/tmp/veriput_sample_peer_metacoin_20260806_205249`, recipe
+  `veriput-strong/8`, 60s timeout, 8GiB memlimit.
+- Result:
+  `CERTIFIED`, `2 certified / 0 not / 2 witnessed`, 6 free coordinates, 22s.
+
+BugFix sample:
+
+- Subject:
+  `bugfix124 / rc_time_manipulation__ether_lotto__SolGPT__ether_lotto_1round /
+  EtherLotto.play()`.
+- Ground truth:
+  `msg.value != 10` reverts; at `msg.value == 10`, hash-derived randomness
+  splits into winner and non-winner paths. Winner path transfers fee and
+  `pot - fee`, then resets `pot`; non-winner path keeps the incremented pot.
+- Run:
+  `/tmp/veriput_sample_bugfix_etherlotto_20260806_205324`, recipe
+  `veriput-strong/8`, 60s timeout, 8GiB memlimit.
+- Result:
+  `KILLED`, `0 certified / 0 not / 3 witnessed`.
+- Diagnosis:
+  Level0 found the three witnesses quickly, but refinement spent the budget on
+  438 probes and still reported `UNSEPARATED=[12,13]`. Those two normal paths
+  share the visible product coordinates and appear to split on the
+  hash/randomness expression, which is not currently represented as a useful
+  coordinate. This is a region/coordinate strategy problem, not a frontend
+  insertion crash.
+
+Stress sample:
+
+- Subject:
+  `stress243 / compound-finance__comet__AssetListFactory /
+  AssetListFactory.createAssetList(CometConfiguration.AssetConfig[] memory
+  assetConfigs)`.
+- Ground truth:
+  `createAssetList` constructs `AssetList`; the constructor stores
+  `numAssets = uint8(assetConfigs.length)` and repeatedly calls
+  `getPackedAssetInternal`. That helper uses inline assembly `mload` to load an
+  `AssetConfig` element, then reads namespaced struct fields such as
+  `assetConfig.asset` and `assetConfig.priceFeed`.
+- First run:
+  `/tmp/veriput_sample_stress_assetlist_20260806_205501` failed immediately
+  with `cannot find struct member reference` after unsupported Yul `mload`
+  over-approximation.
+- ESBMC frontend fix:
+  `find_decl_ref()` now falls back to a global AST-id lookup after scoped
+  contract/base/library/interface lookup fails. This covers ordinary contracts
+  used as namespaces for shared struct declarations, e.g.
+  `CometConfiguration.AssetConfig`, while keeping scoped lookup priority.
+- Post-fix run:
+  `/tmp/veriput_sample_stress_assetlist_reflookup_20260806_210039`, recipe
+  `veriput-strong/8`, 60s timeout, 8GiB memlimit.
+- Post-fix result:
+  `KILLED`, `0 certified / 0 not / witnessed UNKNOWN`, no coordinates emitted.
+  The previous conversion error is gone; this sample is now in the heavy
+  initial generation/conversion/symex bucket rather than the immediate
+  field-lookup failure bucket.
+
+Checks after the ESBMC frontend fix:
+
+- `cmake --build build -j2 --target esbmc` passed.
+- `cppcheck --enable=style,warning ... src/solidity-frontend/solidity_convert_util.cpp`
+  passed with no output.
+- `git diff --check` passed.
+
+Current decision:
+
+- It is reasonable to start small, stratified benchmark sampling now:
+  a batch from `peer`, then `bugfix124`, then `stress203/243`, all first-pass
+  60s/8GiB.
+- It is not yet a good point for an expensive full benchmark run. The Peer
+  sample is healthy, BugFix exposed a hash/randomness coordinate gap, and Stress
+  exposed that some large inline-assembly/dynamic-array subjects can burn the
+  whole first pass before coordinates are available.
