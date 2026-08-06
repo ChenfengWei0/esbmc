@@ -645,6 +645,25 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
     }
 
 
+def _ordered_selected_jobs(jobs: list[dict], selection_strategy: str,
+                           limit: int) -> tuple[list[dict], int]:
+    if selection_strategy not in unit_schedule.SELECTION_STRATEGIES:
+        raise CampaignError("--selection-strategy must be one of: " +
+                            ", ".join(unit_schedule.SELECTION_STRATEGIES))
+    if limit < 0:
+        raise CampaignError("--limit must be non-negative")
+    ordered = unit_schedule._select_jobs(list(jobs), selection_strategy)
+    before_limit = len(ordered)
+    if limit:
+        ordered = ordered[:limit]
+    out = []
+    for ordinal, job in enumerate(ordered):
+        item = copy.deepcopy(job)
+        item["ordinal"] = ordinal
+        out.append(item)
+    return out, before_limit
+
+
 def plan_campaign_for_schedule(schedule: dict,
                                schedule_label: str,
                                *,
@@ -652,6 +671,8 @@ def plan_campaign_for_schedule(schedule: dict,
                                cert_jsonl_paths: list[str] | None = None,
                                min_certified_path_rate: float = 0.70,
                                attempt: int = 0,
+                               selection_strategy: str = "priority",
+                               limit: int = 0,
                                next_schedule_out: str = "",
                                next_journal: str = "",
                                jobs: int = 1,
@@ -738,7 +759,9 @@ def plan_campaign_for_schedule(schedule: dict,
         by_priority_state[str(job.get("priority", "<missing>"))][state] += 1
 
     selected = _selected_attempt(pending_by_attempt, attempt)
-    selected_jobs = list(pending_by_attempt.get(selected, [])) if selected else []
+    selected_jobs_all = list(pending_by_attempt.get(selected, [])) if selected else []
+    selected_jobs, selected_jobs_before_limit = _ordered_selected_jobs(
+        selected_jobs_all, selection_strategy, limit)
     attempt_cfg = policy.get(selected) if selected else None
     next_schedule = _schedule_for_attempt(schedule, selected_jobs, attempt_cfg, journals)
     if next_schedule_out and next_schedule:
@@ -817,6 +840,9 @@ def plan_campaign_for_schedule(schedule: dict,
             },
             "selected_attempt": selected,
             "selected_jobs": len(selected_jobs),
+            "selected_jobs_before_limit": selected_jobs_before_limit,
+            "selection_strategy": selection_strategy,
+            "selection_limit": limit or None,
         },
         "by_benchmark_state": {
             bench: dict(sorted(counter.items()))
@@ -837,6 +863,8 @@ def plan_campaign(schedule_path: str,
                   cert_jsonl_paths: list[str] | None = None,
                   min_certified_path_rate: float = 0.70,
                   attempt: int = 0,
+                  selection_strategy: str = "priority",
+                  limit: int = 0,
                   next_schedule_out: str = "",
                   next_journal: str = "",
                   jobs: int = 1,
@@ -848,6 +876,8 @@ def plan_campaign(schedule_path: str,
                                       cert_jsonl_paths=cert_jsonl_paths,
                                       min_certified_path_rate=min_certified_path_rate,
                                       attempt=attempt,
+                                      selection_strategy=selection_strategy,
+                                      limit=limit,
                                       next_schedule_out=next_schedule_out,
                                       next_journal=next_journal,
                                       jobs=jobs,
@@ -874,6 +904,14 @@ def main() -> int:
                     type=int,
                     default=0,
                     help="plan this exact attempt, or auto-select the earliest pending attempt")
+    ap.add_argument("--selection-strategy",
+                    choices=unit_schedule.SELECTION_STRATEGIES,
+                    default="priority",
+                    help="ordering policy for the selected pending attempt")
+    ap.add_argument("--limit",
+                    type=int,
+                    default=0,
+                    help="keep only the first N selected jobs after ordering")
     ap.add_argument("--next-schedule-out",
                     default="",
                     help="write the selected next-attempt schedule here")
@@ -895,6 +933,8 @@ def main() -> int:
                             cert_jsonl_paths=args.cert_jsonl,
                             min_certified_path_rate=args.min_certified_path_rate,
                             attempt=args.attempt,
+                            selection_strategy=args.selection_strategy,
+                            limit=args.limit,
                             next_schedule_out=args.next_schedule_out,
                             next_journal=args.next_journal,
                             jobs=args.jobs,

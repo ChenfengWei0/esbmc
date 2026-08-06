@@ -10492,6 +10492,112 @@ Next recommended action:
   benchmark sweep yet; use the next sample to estimate whether current PUT
   validity and PUT-vs-replay ratios are stable outside the easy peer slice.
 
+## 2026-08-07 balanced campaign sampling and new bottlenecks
+
+Campaign-speed code change:
+
+- `notes/coverage/scripts/unit_campaign_plan.py` now accepts
+  `--selection-strategy` and `--limit` for the selected next-attempt set.
+- `--selection-strategy round-robin-benchmark --limit N` is meant for quick
+  small-wave sampling: it avoids spending the first N jobs on one benchmark or
+  one subject cluster.
+- The planner rewrites each selected job's `ordinal` after ordering.  This is
+  necessary because `unit_schedule_run.py` sorts by `(priority, ordinal)`;
+  without ordinal normalization the runner would undo the planner's balanced
+  order.
+- Validation:
+  - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+    passed.
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+    passed.
+  - `git diff --check -- notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+    passed.
+
+Balanced6 attempt-1 sample:
+
+- New output root:
+  `/tmp/veriput_stratified_20260807_04`.
+- Rebuilt a base schedule from the cached manifest, writing only under `/tmp`:
+  `/tmp/veriput_stratified_20260807_04/unit-schedule-base.json`.
+- Planned pending attempt-1 jobs with:
+  `--selection-strategy round-robin-benchmark --limit 6`.
+- Next schedule:
+  `/tmp/veriput_stratified_20260807_04/next-unit-schedule-balanced6-a1.json`.
+- Runner journal:
+  `/tmp/veriput_stratified_20260807_04/unit-run-balanced6-a1.jsonl`.
+- Certification JSONL:
+  `/tmp/veriput_stratified_20260807_04/certify-results-balanced6-a1.jsonl`.
+- Policy:
+  attempt 1, serial, outer runner timeout 75s, certify timeout 70s,
+  ESBMC run-timeout 60s, 8GiB.
+- Job balance:
+  2 peer / 2 bugfix / 2 stress.
+
+Balanced6 certification result:
+
+- Runner status:
+  6 / 6 `ok`.
+- Certification buckets:
+  - `CERTIFIED`: 1 unit (`ClaimTopicsRegistry.renounceOwnership`);
+  - `NOT-CERTIFIED`: 2 units (`DepositLog.logRedemptionRequested`,
+    `DepositLog.logGotRedemptionSignature`);
+  - `KILLED`: 1 unit (`ClaimTopicsRegistry.init`, 60s);
+  - `NO-PATH`: 1 unit (`AIRBets.initialize2`);
+  - `NO-WITNESS-UNDECIDED`: 1 unit (`AIRBets.transferFrom`, recursive
+    SafeMath helper preflight; no ESBMC process started for the witness).
+- Certification summary:
+  `/tmp/veriput_stratified_20260807_04/certify-summary-balanced6-a1.json`.
+- Raw certified unit rate:
+  1 / 6.
+- Raw certified path rate:
+  2 / 7.
+- Slice-adjusted and retry-adjusted certified path rate:
+  2 / 4 = 0.5.
+
+Balanced6 Stage-4 PUT result:
+
+- Command:
+  `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_stratified_20260807_04/certify-results-balanced6-a1.jsonl --strong-recipe --timeout 600 --memlimit-gib 8 --forge-timeout 300 --out-root /tmp/veriput_put_balanced6_a1_20260807_04`.
+- Certified regions:
+  2, both from `ClaimTopicsRegistry.renounceOwnership`.
+- PUT result:
+  - enc=6: B, fuzz=1 (`msg.sender`), oracle asserts=1, Forge green.
+  - enc=7: refused as not parameterized.
+- Stage-4 B:
+  1 / 2 certified region rows.
+- Forge-visible PUTs:
+  1 green / 1 total.
+- Concrete replay-only:
+  0 / 0.
+
+New bottlenecks exposed by this sample:
+
+- `DepositLog.logRedemptionRequested` and
+  `DepositLog.logGotRedemptionSignature` are not Stage-4 insertion failures.
+  Their body paths use dynamic bytes length coordinates such as
+  `_digest.length == 32` and `_r.length == 32`; certification returns UNKNOWN
+  for the single-point body path without naming timeout or unsupported
+  coordinate.  This is a bytes/dynamic-aggregate modeling or certification
+  explainability issue.
+- `ClaimTopicsRegistry.renounceOwnership` enc=7 is not safe to generalize in
+  Stage 4.  The current Stage-2 certificate proves only the point
+  `msg.sender == 0` and `state._owner == 0`.  Turning it into a useful PUT
+  would require a new Stage-2 relation region such as
+  `state._owner == msg.sender`, with the test rendering it as fuzzed sender
+  plus `vm.store(owner, sender)`.  Stage 4 must not invent that proof.
+- The branch report for the owner guard is currently lowered as
+  `return_value$_owner$1 == return_value$__msgSender$2`, so the existing
+  structural relation-retreat machinery does not see the source-level
+  `state._owner == msg.sender` relation.  A useful next optimization is to
+  recover these owner/sender relations before or during region generation.
+
+Dataset safety:
+
+- `/home/samson/workspace/VeriPUT/Datasets` was not modified.
+- `/home/samson/workspace/VeriPUT/Results` was read as prepared-subject input
+  only; all schedules, cert outputs, PUT outputs, and summaries were written
+  under `/tmp`.
+
 ## 2026-08-07 small Stage-4 benchmark wave
 
 Goal:

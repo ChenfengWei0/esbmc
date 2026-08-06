@@ -1121,6 +1121,57 @@ def test_campaign_can_plan_from_in_memory_schedule():
     return bad
 
 
+def test_campaign_can_emit_limited_round_robin_next_schedule():
+    with tempfile.TemporaryDirectory() as td:
+        sched_doc = {
+            "schema":
+            "veriput-unit-schedule/v1",
+            "summary": {
+                "jobs": 5,
+            },
+            "jobs": [
+                job("peer182__p1__f", "peer182", "f"),
+                job("peer182__p2__g", "peer182", "g"),
+                job("bugfix124__b1__h", "bugfix124", "h"),
+                job("bugfix124__b2__i", "bugfix124", "i"),
+                job("stress243__s1__j", "stress243", "j"),
+            ],
+        }
+        for pos, item in enumerate(sched_doc["jobs"]):
+            item["priority"] = 1
+            item["ordinal"] = pos
+        sched = write_json(Path(td) / "schedule.json", sched_doc)
+        out = Path(td) / "next.json"
+        doc = unit_campaign_plan.plan_campaign(
+            str(sched),
+            selection_strategy="round-robin-benchmark",
+            limit=3,
+            next_schedule_out=str(out))
+        out_doc = json.loads(out.read_text())
+    ids = [item["job_id"] for item in out_doc["jobs"]]
+    ordinals = [item["ordinal"] for item in out_doc["jobs"]]
+    bad = 0
+    bad += check(ids == [
+        "peer182__p1__f",
+        "bugfix124__b1__h",
+        "stress243__s1__j",
+    ], f"limited next schedule is balanced across benchmarks: {ids}")
+    bad += check(ordinals == [0, 1, 2],
+                 f"ordinals are rewritten so the runner preserves balance: {ordinals}")
+    bad += check(doc["summary"]["selected_jobs"] == 3
+                 and doc["summary"]["selected_jobs_before_limit"] == 5,
+                 f"limit affects selected jobs but records the denominator: {doc['summary']}")
+    bad += check(doc["summary"]["selection_strategy"] == "round-robin-benchmark"
+                 and doc["summary"]["selection_limit"] == 3,
+                 f"selection policy is recorded: {doc['summary']}")
+    bad += check(out_doc["summary"]["by_benchmark"] == {
+        "bugfix124": 1,
+        "peer182": 1,
+        "stress243": 1,
+    }, f"written schedule summary is balanced: {out_doc['summary']}")
+    return bad
+
+
 TESTS = [
     test_campaign_partitions_attempts_and_auto_selects_earliest,
     test_campaign_can_emit_attempt_three_schedule_and_runner_argv,
@@ -1143,6 +1194,7 @@ TESTS = [
     test_campaign_does_not_retry_legacy_pre_enumeration_stop,
     test_campaign_accepts_strong_certification_without_runner_journal,
     test_campaign_can_plan_from_in_memory_schedule,
+    test_campaign_can_emit_limited_round_robin_next_schedule,
 ]
 
 if __name__ == "__main__":
