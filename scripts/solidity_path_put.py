@@ -4540,6 +4540,8 @@ ESTABLISHABLE_ENV_COORDS = frozenset(
 
 _PRANK_RE = re.compile(r"vm\.(?:start)?[Pp]rank\(")
 _VALUE_RE = re.compile(r"\{\s*value\s*:\s*([^},]+?)\s*\}")
+_WARP_RE = re.compile(r"vm\.warp\(")
+_ROLL_RE = re.compile(r"vm\.roll\(")
 
 
 def _lit_int(expr):
@@ -4705,6 +4707,20 @@ def observable_value_expr_for_r2(body, call_i):
     if got is None:
         return None
     return str(got)
+
+
+def observable_block_expr_for_r2(body, call_i, pattern):
+    """The last literal block cheatcode before this call, or None."""
+    if not (0 <= call_i < len(body)):
+        return None
+    stmt_i = statement_start(body, call_i)
+    value = None
+    for ln in body[:stmt_i]:
+        m = pattern.search(ln)
+        if not m:
+            continue
+        value = _lit_int(_arg0(ln, m.end() - 1))
+    return None if value is None else str(value)
 
 
 def low_level_value_gate_asserts_exit(body, call_i, call_line):
@@ -5622,6 +5638,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             coord_ident["block.timestamp"] = str(timestamp_value)
             coord_ident_abs["block.timestamp"] = coord_ident[
                 "block.timestamp"]
+    elif "block.timestamp" not in coord_ident:
+        timestamp_value = observable_block_expr_for_r2(body, call_i, _WARP_RE)
+        if timestamp_value is not None:
+            coord_ident["block.timestamp"] = timestamp_value
+            coord_ident_abs["block.timestamp"] = timestamp_value
 
     (body, call_i, block_num_est, block_num_sig, block_num_pre,
      block_num_note) = establish_env_block_number(
@@ -5645,6 +5666,12 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                   else pins["block.number"])
             coord_ident["block.number"] = str(block_number_value)
             coord_ident_abs["block.number"] = coord_ident["block.number"]
+    elif "block.number" not in coord_ident:
+        block_number_value = observable_block_expr_for_r2(
+            body, call_i, _ROLL_RE)
+        if block_number_value is not None:
+            coord_ident["block.number"] = block_number_value
+            coord_ident_abs["block.number"] = block_number_value
 
     call_line = body[call_i]
 

@@ -7432,3 +7432,44 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 192/192 tests.
 - `git diff --check` passed.
+
+## 2026-08-06 Observable block env numeric R2 endpoint
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. Validation was Python-only.
+
+Finding:
+
+- Existing generated Foundry tests often contain literal `vm.warp(...)`
+  preambles, especially on farming/time-gated paths.
+- The renderer already made `block.timestamp` / `block.number` nameable when
+  the PUT established them from a certified region or pin, but not when the
+  emitted replay itself already had a literal `vm.warp` / `vm.roll`.
+- Those literal cheatcodes are one-point observations, like concrete
+  `msg.value`: weaker than fuzzing a coordinate, but still strong enough to
+  render certified rows that name the emitted execution's block environment.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has `_WARP_RE`, `_ROLL_RE`, and
+  `observable_block_expr_for_r2()`.
+- The helper reads the last literal `vm.warp(<n>)` or `vm.roll(<n>)` before the
+  target call statement and returns `<n>`.
+- If the PUT did not establish `block.timestamp` / `block.number` as a
+  region/pin coordinate, those observed literals are inserted into
+  `coord_ident` and `coord_ident_abs`.
+- No default block value is invented when there is no cheatcode, and complex
+  cheatcode arguments remain fail-closed.
+- The msg.value test coverage was extended to show the same observed literal
+  unlocks structured expressions such as `post == (pre + msg.value)`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 193/193 tests.
+- `git diff --check` passed.

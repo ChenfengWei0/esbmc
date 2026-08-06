@@ -6362,9 +6362,20 @@ R2_LAYOUT = {"owner": (0, 0, 20), "feeReceiver": (1, 0, 20),
              "totalFees": (2, 0, 32)}
 
 
-def _r2_put(ladder, region=None, r2_terms=None):
+def _r2_put(ladder, region=None, r2_terms=None, emitted_text=None):
     """A PUT over a caller-chosen ladder, for the named-R2-bound tests."""
-    em, case = make_case()
+    if emitted_text is None:
+        em, case = make_case()
+    else:
+        fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+        with os.fdopen(fd, "w") as out:
+            out.write(emitted_text)
+        try:
+            em = EmittedFile(path)
+        finally:
+            os.unlink(path)
+        case = em.case_for("sol:@C@FeeVault@F@setDiscount#61", 7)
+        assert case is not None, "fixture: the emitted case was not found"
     notes = []
     put, stats = build_put(
         "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
@@ -6578,9 +6589,73 @@ def test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints():
     bad += check(delta_stats.get("asserts") == 3,
                  f"the delta value oracle has all three assertions: "
                  f"{delta_stats}")
+    expr_term = {
+        "kind": "op",
+        "op": "add",
+        "lhs": {"kind": "pre"},
+        "rhs": {"kind": "coord", "name": "msg.value"},
+    }
+    expr, expr_stats, expr_notes = _r2_put(
+        [("totalFees", "post == (pre + msg.value)", "HOLDS")],
+        r2_terms={"(pre + msg.value)": expr_term})
+    expr_body = "\n".join(expr or [])
+    bad += check(expr is not None,
+                 f"the structured value PUT is emitted (notes: {expr_notes})")
+    bad += check("assertEq(_post_totalFees, (_pre_totalFees + 0),"
+                 in expr_body,
+                 "the observed value feeds structured R2 expressions too")
+    bad += check(expr_stats.get("asserts") == 1,
+                 f"the structured value equality is counted: {expr_stats}")
     if bad:
         print(abs_body)
         print(delta_body)
+        print(expr_body)
+    return bad
+
+
+def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
+    """Literal `vm.warp` / `vm.roll` preambles are observable one-point envs."""
+    with_block = EMITTED.replace(
+        "    vm.prank(address(uint160(0)));\n",
+        "    vm.warp(42);\n"
+        "    vm.roll(7);\n"
+        "    vm.prank(address(uint160(0)));\n")
+    terms = {
+        "block.timestamp": {"kind": "coord", "name": "block.timestamp"},
+        "block.number": {"kind": "coord", "name": "block.number"},
+    }
+    stamp, stamp_stats, stamp_notes = _r2_put(
+        [("totalFees", "post == block.timestamp", "HOLDS")],
+        r2_terms=terms, emitted_text=with_block)
+    height, height_stats, height_notes = _r2_put(
+        [("totalFees", "post - pre in [block.number, block.number] "
+          "with post >= pre", "HOLDS")],
+        r2_terms=terms, emitted_text=with_block)
+    stamp_body = "\n".join(stamp or [])
+    height_body = "\n".join(height or [])
+    bad = 0
+    bad += check(stamp is not None,
+                 f"the timestamp endpoint PUT is emitted: {stamp_notes}")
+    bad += check("assertEq(_post_totalFees, 42," in stamp_body,
+                 "the observed warp literal becomes the timestamp endpoint")
+    bad += check("p_block_timestamp" not in stamp_body
+                 and "block.timestamp" not in stamp_stats.get("lifted", []),
+                 f"observing a literal warp does not add a fuzz parameter: "
+                 f"{stamp_stats}")
+    bad += check(height is not None,
+                 f"the block-number endpoint PUT is emitted: {height_notes}")
+    bad += check("assertGe(_post_totalFees - _pre_totalFees, 7,"
+                 in height_body
+                 and "assertLe(_post_totalFees - _pre_totalFees, 7,"
+                 in height_body,
+                 "the observed roll literal becomes the block-number delta")
+    bad += check("p_block_number" not in height_body
+                 and "block.number" not in height_stats.get("lifted", []),
+                 f"observing a literal roll does not add a fuzz parameter: "
+                 f"{height_stats}")
+    if bad:
+        print(stamp_body)
+        print(height_body)
     return bad
 
 
@@ -8378,6 +8453,7 @@ def main():
               test_an_R2_bound_naming_an_UNLIFTED_COORDINATE_is_DROPPED,
               test_an_OBSERVED_sender_renders_for_an_ABSOLUTE_R2_endpoint,
               test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints,
+              test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints,
               test_a_numeric_R2_bound_is_UNCHANGED,
               test_a_RENAMED_coordinate_is_spelled_with_its_TEST_name,
               test_a_hole_OUTSIDE_the_interval_costs_no_width,
