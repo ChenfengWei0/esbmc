@@ -6509,6 +6509,87 @@ def test_source_access_slots_preserve_state_keys_before_fallback():
     return bad
 
 
+def test_source_access_slots_keep_safe_literal_keys():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "name": name,
+                "referencedDeclaration": ref}
+
+    def literal(kind, value):
+        return {"nodeType": "Literal", "kind": kind, "value": value}
+
+    def hex_lit(value):
+        return {"nodeType": "Literal", "kind": "hexString",
+                "hexValue": value, "value": value}
+
+    def address_cast(arg):
+        return {"nodeType": "FunctionCall", "kind": "typeConversion",
+                "expression": {
+                    "nodeType": "ElementaryTypeNameExpression",
+                    "typeName": {"nodeType": "ElementaryTypeName",
+                                 "name": "address"}},
+                "arguments": [arg]}
+
+    def access(base_ref, base_name, key, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "IndexAccess", "src": src,
+            "baseExpression": ident(base_ref, base_name),
+            "indexExpression": key}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "count",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "flagged",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "owners",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "bytesMap",
+             "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 access(10, "count", literal("number", "7"), "100:5:0"),
+                 access(11, "flagged", literal("bool", True), "120:5:0"),
+                 access(12, "owners",
+                        address_cast(literal("number", "1")), "140:5:0"),
+                 access(13, "bytesMap", hex_lit("12ab"), "160:5:0")]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "touch", declaration_id=20)
+    finally:
+        os.unlink(path)
+    maps = {"count": (0, "uint256", 32, 0, "count", None),
+            "flagged": (1, "bool", 32, 0, "flagged", None),
+            "owners": (2, "address", 32, 0, "owners", None),
+            "bytesMap": (3, "bytes4", 32, 0, "bytesMap", None)}
+    slots, used, skipped = source_access_slot_vars(accesses, maps)
+    bad = 0
+    bad += check(accesses == [
+        ("bytesMap", ("0x12ab",)),
+        ("count", ("7",)),
+        ("flagged", ("1",)),
+        ("owners", ("1",)),
+    ], f"AST source access preserves safe literal key spellings: {accesses}")
+    bad += check(any("state.flagged[1]" in line for line in evidence),
+                 f"bool literal source key is printed as 1: {evidence}")
+    bad += check(slots == ["count[7]", "flagged[1]", "owners[1]"],
+                 f"safe literal-key source slots are accepted: {slots}")
+    bad += check(used == {"count", "flagged", "owners"},
+                 f"accepted literal slots suppress fallback: {used}")
+    bad += check(any("state.bytesMap[0x12ab]" in s
+                     and "not safely renderable" in s for s in skipped),
+                 f"bytesN literal key is refused, not guessed: {skipped}")
+    return bad
+
+
 def test_source_access_slots_render_state_struct_member_keys():
     from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
     from solidity_path_put import (contract_state_types,  # noqa: E402
@@ -8757,6 +8838,7 @@ def main():
               test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter,
               test_mapping_proposer_includes_safe_entry_state_keys_after_params,
               test_source_access_slots_preserve_state_keys_before_fallback,
+              test_source_access_slots_keep_safe_literal_keys,
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,

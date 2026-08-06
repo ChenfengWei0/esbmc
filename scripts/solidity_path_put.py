@@ -3652,8 +3652,19 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
                       if spec[4] == base)
 
     def render_key(key, key_type):
+        key_type = _norm_ty(key_type)
         if key == "msg.sender" and _norm_ty(key_type) == "address":
             return "msg.sender", None
+        if _KEY_LIT_RE.match(key or ""):
+            if re.match(r"^uint(\d+)?$", key_type):
+                return key, None
+            if key_type == "address":
+                return key, None
+            if key_type == "bool" and key in ("0", "1"):
+                return key, None
+            return None, (
+                f"literal key `{key}` is not safely renderable as "
+                f"`{key_type}`")
         if key.startswith("state."):
             state_name = key[len("state."):]
             if (state_name in (state_types or {})

@@ -7760,6 +7760,39 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 Literal mapping keys in source slot priority
+
+Scope:
+
+- This extends source-resolved mapping slot priority to source literal keys.
+  It does not broaden PUT rendering for ambiguous key encodings.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `unit_mapping_slot_accesses` now preserves simple literal mapping keys:
+  unitless numeric literals, bool literals lowered to `0`/`1`, hex-string
+  literals, and `address(<literal>)` type conversions.
+- `source_access_slot_vars` accepts those literal keys only when the mapping
+  key type is unambiguous for the existing slot renderer: unsigned integers,
+  address, and bool. This lets first-ladder candidates include source slots
+  such as `count[7]`, `flagged[1]`, and `owners[1]`.
+- bytesN literal keys remain refused in this path. A hex-looking bytesN key
+  must not be encoded as a uint256/address literal because that can hash a
+  different storage word and create fake-green assertions.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 201/201 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 Struct-member state keys for source slots
 
 Scope:

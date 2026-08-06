@@ -167,6 +167,28 @@ def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id
 def _expr_coord_name(expr, state_by_id=None):
     if not isinstance(expr, dict):
         return None
+    if expr.get("nodeType") == "Literal":
+        if expr.get("kind") == "number":
+            value = str(expr.get("value") or "")
+            return value if value.isdigit() else None
+        if expr.get("kind") == "bool":
+            value = expr.get("value")
+            if value is True or str(value).lower() == "true":
+                return "1"
+            if value is False or str(value).lower() == "false":
+                return "0"
+        if expr.get("kind") == "hexString":
+            value = str(expr.get("hexValue") or expr.get("value") or "")
+            if re.fullmatch(r"[0-9a-fA-F]+", value):
+                return "0x" + value
+        return None
+    if (expr.get("nodeType") == "FunctionCall"
+            and expr.get("kind") == "typeConversion"):
+        args = expr.get("arguments") or []
+        cast_expr = expr.get("expression") or {}
+        type_name = cast_expr.get("typeName") or {}
+        if len(args) == 1 and type_name.get("name") == "address":
+            return _expr_coord_name(args[0], state_by_id)
     if expr.get("nodeType") == "Identifier" and expr.get("name"):
         ref = expr.get("referencedDeclaration")
         if state_by_id and ref in state_by_id:
