@@ -217,6 +217,45 @@ def test_summary_gate_ready_when_threshold_and_schedule_are_clean():
     return bad
 
 
+def test_summary_gate_uses_slice_adjusted_path_rate():
+    with tempfile.TemporaryDirectory() as td:
+        cert = write_jsonl(Path(td) / "cert.jsonl", [
+            {
+                "benchmark": "peer182",
+                "unit": "f",
+                "bucket": "CERTIFIED",
+                "witnessed": 2,
+                "certified": {
+                    "3": "x in [0, 9]",
+                },
+                "not_certified": {
+                    "2": "EXCLUDED FROM THE SLICE by the pins "
+                         "(msg.value: CE 1 outside [0, 0]), which is why its "
+                         "region came back EMPTY on x. This is NOT a failure to certify",
+                },
+            },
+        ],
+                           bad_line=False)
+        sched = Path(td) / "schedule.json"
+        doc = schedule_doc()
+        doc["jobs"] = doc["jobs"][:1]
+        sched.write_text(json.dumps(doc) + "\n")
+        summary = certify_result_summary.summarize(str(cert), schedule_path=str(sched))
+    s = summary["summary"]
+    bad = 0
+    bad += check(summary["gate"]["status"] == "ready",
+                 f"slice-excluded path does not degrade the body-slice gate: {summary['gate']}")
+    bad += check(s["certified_path_rate"] == 0.5
+                 and s["slice_adjusted_certified_path_rate"] == 1.0,
+                 f"raw and slice-adjusted rates are both reported: {s}")
+    bad += check(s["slice_excluded_paths"] == 1 and s["eligible_witnessed_paths"] == 1,
+                 f"slice-excluded paths are separated from eligible witnesses: {s}")
+    bad += check(s["not_certified_reason_buckets"] == {
+        "slice-excluded-by-pins": 1,
+    }, f"slice exclusions have a distinct reason bucket: {s}")
+    return bad
+
+
 def test_summary_matches_prepared_subject_benchmark_key_alias():
     with tempfile.TemporaryDirectory() as td:
         cert = write_jsonl(Path(td) / "cert.jsonl", [
@@ -294,6 +333,7 @@ def test_summary_cli_writes_json():
 TESTS = [
     test_summary_counts_paths_shapes_and_schedule_gaps,
     test_summary_gate_ready_when_threshold_and_schedule_are_clean,
+    test_summary_gate_uses_slice_adjusted_path_rate,
     test_summary_matches_prepared_subject_benchmark_key_alias,
     test_summary_cli_writes_json,
 ]

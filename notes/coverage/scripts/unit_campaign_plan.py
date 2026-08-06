@@ -129,6 +129,10 @@ def _progress_bucket(row: dict) -> str:
     return str(stage)
 
 
+def _is_slice_excluded_reason(reason: str) -> bool:
+    return "EXCLUDED FROM THE SLICE by the pins" in str(reason or "")
+
+
 def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> tuple[dict, int]:
     latest = {}
     bad_lines = 0
@@ -146,8 +150,10 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
     quality = {}
     for key, rows in by_unit.items():
         witnessed = 0
+        eligible_witnessed = 0
         certified = 0
         not_certified = 0
+        slice_excluded = 0
         regions = 0
         partial_journal_paths = 0
         partial_journal_witnesses = 0
@@ -165,12 +171,18 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             n = row.get("not_certified") or {}
             c_count = len(c) if isinstance(c, dict) else 0
             n_count = len(n) if isinstance(n, dict) else 0
+            slice_excluded_count = 0
+            if isinstance(n, dict):
+                slice_excluded_count = sum(
+                    1 for reason in n.values() if _is_slice_excluded_reason(reason))
             regions += c_count
             if isinstance(row.get("witnessed"), int):
                 witnessed_row = max(0, row["witnessed"])
                 witnessed += witnessed_row
+                eligible_witnessed += max(0, witnessed_row - slice_excluded_count)
                 certified += c_count
                 not_certified += n_count
+                slice_excluded += slice_excluded_count
                 gap = max(0, witnessed_row - c_count - n_count)
                 no_verdict_paths += gap
                 if gap:
@@ -181,7 +193,10 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
                 partial_journal_witnesses += int(journal.get("witness_count") or 0)
                 partial_claims_decided += int(journal.get("claims_decided") or 0)
                 partial_claims_total += int(journal.get("claims_total") or 0)
-        rate = (certified / witnessed) if witnessed else (1.0 if regions else 0.0)
+        raw_rate = (certified / witnessed) if witnessed else (1.0 if regions else 0.0)
+        rate = (
+            certified / eligible_witnessed if eligible_witnessed else
+            (1.0 if regions else 0.0))
         strong = regions > 0 and rate >= min_certified_path_rate
         reason = ""
         certification_gap = any(
@@ -199,10 +214,13 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             "reason": reason,
             "rows": len(rows),
             "witnessed_paths": witnessed,
+            "eligible_witnessed_paths": eligible_witnessed,
             "certified_paths": certified,
             "not_certified_paths": not_certified,
+            "slice_excluded_paths": slice_excluded,
             "no_verdict_paths": no_verdict_paths,
             "certified_regions": regions,
+            "raw_certified_path_rate": raw_rate,
             "certified_path_rate": rate,
             "progress_buckets": dict(sorted(progress_buckets.items())),
             "no_verdict_progress_paths": dict(sorted(no_verdict_progress.items())),

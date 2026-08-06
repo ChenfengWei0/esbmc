@@ -489,6 +489,53 @@ def test_campaign_names_partial_journal_only_as_weak_certification():
     return bad
 
 
+def test_campaign_treats_slice_excluded_paths_as_body_slice_ready():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__slice__f"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__slice__f", "ok", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "peer182",
+                    "unit": "f",
+                    "bucket": "CERTIFIED",
+                    "witnessed": 2,
+                    "certified": {
+                        "3": "x in [0, 9]",
+                    },
+                    "not_certified": {
+                        "2": "EXCLUDED FROM THE SLICE by the pins "
+                             "(msg.value: CE 1 outside [0, 0]), which is why its "
+                             "region came back EMPTY on x. This is NOT a failure to certify",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 1,
+                 f"slice-excluded value-gate path does not force a retry: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {},
+                 f"body-slice-ready unit has no pending retry: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {},
+                 f"slice exclusions are not counted as weak certification: {doc['summary']}")
+    return bad
+
+
 def test_campaign_accepts_strong_certification_without_runner_journal():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
@@ -557,6 +604,7 @@ TESTS = [
     test_campaign_uses_explicit_attempt_metadata_for_budget_state,
     test_campaign_retries_runner_ok_when_certification_is_weak,
     test_campaign_names_partial_journal_only_as_weak_certification,
+    test_campaign_treats_slice_excluded_paths_as_body_slice_ready,
     test_campaign_accepts_strong_certification_without_runner_journal,
     test_campaign_can_plan_from_in_memory_schedule,
 ]

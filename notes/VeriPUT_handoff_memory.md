@@ -10509,3 +10509,94 @@ Checks:
   passed.
 - `git diff --check -- notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
   passed.
+
+## 2026-08-07 slice-adjusted certification quality
+
+Attempt-2 benchmark sample:
+
+- Took the balanced7 attempt-2 retry schedule and filtered out the already-run
+  `IdentityRegistryStorage.bindIdentityRegistry` job to avoid spending a
+  duplicate second attempt on the same unit.
+- Filtered schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-balanced7-a2-remaining4.json`.
+- Result JSONL:
+  `/tmp/veriput_stratified_20260807_03/certify-results-balanced7-a2-remaining4.jsonl`.
+- Runner journal:
+  `/tmp/veriput_stratified_20260807_03/unit-run-balanced7-a2-remaining4.jsonl`.
+- Workdir:
+  `/tmp/veriput_stratified_20260807_03/certify-work-balanced7-a2_remaining4_t130_r120_m8`.
+- Policy:
+  attempt 2, `jobs=1`, 120s ESBMC budget, 130s unit timeout, 135s runner
+  timeout, 8GiB.
+
+Raw results:
+
+- Runner status: 4 / 4 `ok`.
+- `DepositLog.approvedToLog`:
+  `CERTIFIED`, 1 certified / 1 not / 2 witnessed, 3.6s.
+- `EtherLotto.play`:
+  `CERTIFIED`, 1 certified / 2 not / 3 witnessed, 32s.
+- `AIRBets.transfer`:
+  `NO-WITNESS-UNDECIDED`, witnessed unknown, 0.1s.
+- `IdentityRegistryStorage.storedIdentity`:
+  `CERTIFIED`, 1 certified / 1 not / 2 witnessed, 11.6s.
+
+Important diagnosis:
+
+- The not-certified rows for `DepositLog.approvedToLog` and
+  `IdentityRegistryStorage.storedIdentity` were both:
+  `EXCLUDED FROM THE SLICE by the pins`.
+- In both cases the excluded path is the nonpayable ABI value-gate path where
+  the path's counterexample has `msg.value != 0`, while the body-first recipe
+  intentionally pins `msg.value == 0`.
+- The result text already says this is not a certification failure.  Counting
+  it against the >=70% certification-quality threshold caused needless
+  attempt-3 scheduling.
+
+Code change:
+
+- `certify_result_summary.py` now reports both:
+  - raw `certified_path_rate` over all witnessed paths;
+  - `slice_adjusted_certified_path_rate`, whose denominator excludes
+    `EXCLUDED FROM THE SLICE by the pins` paths.
+- The summary also reports:
+  - `eligible_witnessed_paths`;
+  - `slice_excluded_paths`;
+  - not-certified reason bucket `slice-excluded-by-pins`.
+- The summary gate uses the slice-adjusted rate when present, while still
+  exposing the raw rate for accounting.
+- `unit_campaign_plan.py` uses the same slice-adjusted denominator for retry
+  quality, so body-slice-ready units do not get requeued just because their ABI
+  value-gate path was intentionally outside the slice.
+
+Validation on the attempt-2 sample:
+
+- Slice-adjusted summary:
+  `/tmp/veriput_stratified_20260807_03/certify-summary-balanced7-a2-remaining4-sliceadjusted.json`.
+- Overall raw certified path rate:
+  `3 / 7 = 0.4286`.
+- Slice-adjusted certified path rate:
+  `3 / 5 = 0.6`.
+- Reason buckets:
+  2 `slice-excluded-by-pins`, 2 `method-unsupported:static-uncontrolled`.
+- Replan path:
+  `/tmp/veriput_stratified_20260807_03/unit-campaign-balanced7-a2-remaining4-sliceadjusted.json`.
+- Before this fix, the 4-job attempt-2 sample planned 4 attempt-3 jobs.
+- After this fix, it plans only 2 attempt-3 jobs:
+  - `EtherLotto.play`, still weak because two paths are statically
+    inseparable on an ESBMC random/uncontrolled decision;
+  - `AIRBets.transfer`, still `no certified regions` because it has no
+    witnessed path.
+- `DepositLog.approvedToLog` and `IdentityRegistryStorage.storedIdentity` now
+  count as completed body-slice units instead of 600s retry candidates.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_result_summary.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
+  passed.
