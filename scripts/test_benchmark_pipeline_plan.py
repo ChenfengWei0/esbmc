@@ -50,6 +50,10 @@ def args(tmp, out_dir=""):
                               jobs=2,
                               stop_on_failure=False,
                               sample_limit=5,
+                              put_timeout=600.0,
+                              put_memlimit_gib=8,
+                              put_forge_timeout=300,
+                              put_out_root="",
                               out_dir=out_dir)
 
 
@@ -270,9 +274,69 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
         return with_patches(patches, run)
 
 
+def test_cert_ready_pipeline_selects_strong_stage4_command():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        out_dir = tmp / "out"
+        cert = tmp / "certify.jsonl"
+        cert.write_text("")
+
+        def run():
+            a = args(tmp, out_dir=str(out_dir))
+            a.cert_jsonl = [str(cert)]
+            doc = benchmark_pipeline_plan.build_pipeline(a)
+            next_action = doc["summary"]["next_action"]
+            stage4 = doc["next_runs"]["stage4_put"]
+            bad = 0
+            bad += check(next_action["action"] == "certification-ready-for-put"
+                         and next_action["command_kind"] == "stage4_put",
+                         f"cert-ready path selects Stage 4: {next_action}")
+            bad += check("--strong-recipe" in stage4["runner_argv"]
+                         and "--cert" in stage4["runner_argv"]
+                         and str(cert) in stage4["runner_argv"],
+                         f"Stage 4 command uses the strong PUT recipe: {stage4}")
+            bad += check(stage4["out_root"] == str(out_dir / "put-roundtrip")
+                         and stage4["timeout_s"] == 600.0
+                         and stage4["memlimit_gb"] == 8
+                         and stage4["forge_timeout_s"] == 300,
+                         f"Stage 4 command carries explicit budget/output: {stage4}")
+            bad += check(next_action["runner_cmd"] == stage4["runner_cmd"]
+                         and " --strong-recipe " in f" {next_action['runner_cmd']} ",
+                         f"next_action exposes the copyable Stage 4 command: "
+                         f"{next_action}")
+            return bad
+
+        patches = [
+            (benchmark_pipeline_plan.target_manifest, "build_manifest",
+             lambda *_args, **_kwargs: target_doc()),
+            (benchmark_pipeline_plan.subject_unit_manifest, "build_manifest",
+             lambda call_args: ok_manifest(call_args.ast_cache_root, tmp)),
+            (benchmark_pipeline_plan.ast_preheat_schedule, "build_schedule",
+             lambda *_args, **_kwargs: {
+                 "schema": "veriput-ast-preheat-schedule/v1",
+                 "summary": {
+                     "jobs": 0,
+                 },
+                 "jobs": [],
+             }),
+            (benchmark_pipeline_plan.certify_result_summary, "summarize",
+             lambda *_args, **_kwargs: {
+                 "schema": "veriput-certify-result-summary/v1",
+                 "gate": {
+                     "status": "ready",
+                 },
+                 "summary": {
+                     "certified_path_rate": 1.0,
+                 },
+             }),
+        ]
+        return with_patches(patches, run)
+
+
 TESTS = [
     test_missing_ast_pipeline_recommends_preheat_without_writes,
     test_ready_pipeline_writes_requested_docs_and_selects_campaign,
+    test_cert_ready_pipeline_selects_strong_stage4_command,
 ]
 
 

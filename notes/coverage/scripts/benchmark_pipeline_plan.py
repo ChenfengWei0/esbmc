@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,9 @@ import target_manifest  # noqa: E402
 import unit_campaign_plan  # noqa: E402
 import unit_manifest_gate  # noqa: E402
 import unit_schedule  # noqa: E402
+from veriput_recipe import STRONG_RECIPE_VERSION  # noqa: E402
+
+PUT_ALL = HERE / "put_all.py"
 
 
 class PipelineError(ValueError):
@@ -40,6 +44,10 @@ def _write_json(out_dir: str, name: str, doc: dict) -> str | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
     return str(path)
+
+
+def _cmd(argv: list[str]) -> str:
+    return shlex.join(str(arg) for arg in argv)
 
 
 def _unit_manifest_args(args, target_doc: dict):
@@ -108,7 +116,7 @@ def choose_next_action(gate_doc: dict, preheat_doc: dict, unit_sched_doc: dict,
 
 
 def attach_next_action_command(next_action: dict, preheat_campaign_doc: dict,
-                               campaign_doc: dict) -> dict:
+                               campaign_doc: dict, stage4_put_run: dict | None = None) -> dict:
     """Copy the currently actionable runner command into summary.next_action."""
 
     if next_action.get("action") == "preheat-ast":
@@ -117,6 +125,9 @@ def attach_next_action_command(next_action: dict, preheat_campaign_doc: dict,
     elif next_action.get("action") == "run-unit-campaign":
         command_kind = "unit_campaign"
         next_run = campaign_doc.get("next_run")
+    elif next_action.get("action") == "certification-ready-for-put":
+        command_kind = "stage4_put"
+        next_run = stage4_put_run
     else:
         return next_action
 
@@ -136,6 +147,10 @@ def attach_next_action_command(next_action: dict, preheat_campaign_doc: dict,
         "runner_cmd",
         "runner_workers",
         "selected_jobs",
+        "cert_jsonl",
+        "forge_timeout_s",
+        "out_root",
+        "recipe",
         "timeout_s",
     ):
         if key in next_run:
@@ -143,9 +158,50 @@ def attach_next_action_command(next_action: dict, preheat_campaign_doc: dict,
     return enriched
 
 
+def stage4_put_next_run(args, cert_doc: dict | None) -> dict | None:
+    if not args.cert_jsonl:
+        return None
+    if ((cert_doc or {}).get("gate") or {}).get("status") != "ready":
+        return None
+    out_root = args.put_out_root
+    if not out_root:
+        out_root = str(Path(args.out_dir) / "put-roundtrip") if args.out_dir else "<put-out-root>"
+    argv = [
+        sys.executable,
+        str(PUT_ALL),
+        "--cert",
+        args.cert_jsonl[0],
+        "--strong-recipe",
+        "--timeout",
+        str(args.put_timeout),
+        "--memlimit-gib",
+        str(args.put_memlimit_gib),
+        "--forge-timeout",
+        str(args.put_forge_timeout),
+        "--out-root",
+        out_root,
+    ]
+    return {
+        "timeout_s": args.put_timeout,
+        "memlimit_gb": args.put_memlimit_gib,
+        "forge_timeout_s": args.put_forge_timeout,
+        "cert_jsonl": args.cert_jsonl[0],
+        "out_root": out_root,
+        "recipe": STRONG_RECIPE_VERSION,
+        "runner_argv": argv,
+        "runner_cmd": _cmd(argv),
+    }
+
+
 def build_pipeline(args) -> dict:
     if not args.ast_cache_root:
         raise PipelineError("pass --ast-cache-root; refusing to plan prepared-subject AST writes")
+    if args.put_timeout <= 0:
+        raise PipelineError("--put-timeout must be positive")
+    if args.put_memlimit_gib <= 0:
+        raise PipelineError("--put-memlimit-gib must be positive")
+    if args.put_forge_timeout <= 0:
+        raise PipelineError("--put-forge-timeout must be positive")
 
     benchmarks = args.benchmark or list(target_manifest.BENCHMARKS)
     target_doc = target_manifest.build_manifest(Path(args.veriput_root),
@@ -228,8 +284,10 @@ def build_pipeline(args) -> dict:
                                                       "certify-result-summary.json",
                                                       cert_doc)
 
+    stage4_put_run = stage4_put_next_run(args, cert_doc)
     next_action = choose_next_action(gate_doc, preheat_doc, unit_sched_doc, campaign_doc, cert_doc)
-    next_action = attach_next_action_command(next_action, preheat_campaign_doc, campaign_doc)
+    next_action = attach_next_action_command(next_action, preheat_campaign_doc, campaign_doc,
+                                             stage4_put_run)
     return {
         "schema": "veriput-benchmark-pipeline-plan/v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -275,6 +333,7 @@ def build_pipeline(args) -> dict:
         "next_runs": {
             "ast_preheat": preheat_campaign_doc.get("next_run"),
             "unit_campaign": campaign_doc.get("next_run"),
+            "stage4_put": stage4_put_run,
         },
     }
 
@@ -300,7 +359,9 @@ def main(argv=None) -> int:
                     help="label stored in child docs for the in-memory target manifest")
     ap.add_argument("--subject-limit", type=int, default=0)
     ap.add_argument("--subject-shard", default="")
-    ap.add_argument("--ast-timeout", type=float, default=subject_unit_manifest.DEFAULT_AST_TIMEOUT_S)
+    ap.add_argument("--ast-timeout",
+                    type=float,
+                    default=subject_unit_manifest.DEFAULT_AST_TIMEOUT_S)
     ap.add_argument("--preheat-shard", default="")
     ap.add_argument("--preheat-limit", type=int, default=0)
     ap.add_argument("--ast-preheat-journal",
@@ -340,6 +401,16 @@ def main(argv=None) -> int:
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--stop-on-failure", action="store_true")
     ap.add_argument("--sample-limit", type=int, default=10)
+    ap.add_argument("--put-timeout", type=float, default=600.0,
+                    help="per ESBMC invocation for the planned Stage-4 PUT run")
+    ap.add_argument("--put-memlimit-gib", type=int, default=8,
+                    help="per ESBMC process for the planned Stage-4 PUT run")
+    ap.add_argument("--put-forge-timeout", type=int, default=300,
+                    help="per Forge invocation for the planned Stage-4 PUT run")
+    ap.add_argument("--put-out-root", default="",
+                    help="planned put_all.py --out-root. Defaults to "
+                         "<out-dir>/put-roundtrip when --out-dir is set, or a "
+                         "placeholder otherwise")
     ap.add_argument("--out-dir",
                     default="",
                     help="optional directory for child JSON docs. Without it, write only stdout")

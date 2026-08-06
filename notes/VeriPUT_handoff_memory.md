@@ -5057,10 +5057,57 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/poc_one.py aqua_Aqua__Aqua__push --stage 3 --attempt 1 --dry-run | rg -- '--strong-recipe|--propose-r2|fuzz-r2|put_all.py'`
   showed the Stage-3 command now invokes `put_all.py ... --strong-recipe`.
 
-Remaining wiring note:
+Follow-up status:
 
-- `benchmark_pipeline_plan.py` still stops at
-  `certification-ready-for-put` without emitting a Stage-4 runner command. The
-  next orchestration repair should make that next action print a copyable
-  `put_all.py --cert <cert-jsonl> --strong-recipe ...` command with an explicit
-  output root and benchmark Stage-4 timeout/memory policy.
+- Closed by the next section: `benchmark_pipeline_plan.py` now emits a copyable
+  Stage-4 `put_all.py --strong-recipe` command when certification is ready.
+
+## 2026-08-06 benchmark Stage-4 PUT command planning
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No POC ESBMC attempt was consumed. This is read-only orchestration wiring and
+  Python unit coverage only.
+
+Finding:
+
+- The benchmark pipeline could already identify `certification-ready-for-put`,
+  but that next action did not provide the actual Stage-4 command. After context
+  compaction, that would force rereading the runner contract or invite another
+  weak/manual flag bundle.
+
+Code shape:
+
+- `notes/coverage/scripts/benchmark_pipeline_plan.py` now builds
+  `next_runs.stage4_put` when a certification summary gate is `ready`.
+- The planned command is:
+  `put_all.py --cert <cert-jsonl> --strong-recipe --timeout <s> --memlimit-gib <gib> --forge-timeout <s> --out-root <root>`.
+- Defaults are benchmark-safe planning defaults: ESBMC timeout 600s, ESBMC
+  memory 8 GiB, Forge timeout 300s, and output root `<out-dir>/put-roundtrip`
+  when `--out-dir` is set. These are planner defaults, not a POC retry-policy
+  override.
+- `summary.next_action` copies the same `runner_cmd`, `runner_argv`, output
+  root, recipe version, and budget fields, so the JSON summary has a single
+  copyable next command.
+- The recipe string comes from `veriput_recipe.STRONG_RECIPE_VERSION` rather
+  than a local hardcode.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed and now checks the certification-ready path selects
+  `command_kind == "stage4_put"` with `--strong-recipe`.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed, confirming the planned Stage-4 switch still expands to the shared
+  strong PUT recipe.
+- `git diff --check -- notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_benchmark_pipeline_plan.py notes/VeriPUT_handoff_memory.md`
+  passed.
+- `python3 -m pylint notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_benchmark_pipeline_plan.py`
+  was run. It still exits 28 on existing style debt such as import-position
+  after `sys.path` setup, missing docstrings, one broad exception in the local
+  test runner, and existing encoding warnings; the one actionable line-length
+  warning was fixed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
