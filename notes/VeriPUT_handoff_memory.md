@@ -8514,3 +8514,73 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-06 benchmark sampling preflight
+
+Scope:
+
+- This is a read-only / external-cache preflight for sampling the real
+  benchmark populations after the POC-level emitter fixes.
+- No ESBMC/Forge/fuzz certification or PUT roundtrip attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Operational finding:
+
+- Prepared benchmark subjects under
+  `/home/samson/workspace/VeriPUT/Results/{Peer182,BugFix124,Stress243}/subjects`
+  currently have no `flat.sol.solast` in-place. The benchmark planner therefore
+  blocks unit enumeration until compact ASTs exist.
+- The safe path is to preheat compact ASTs into an external cache, e.g.
+  `/tmp/veriput_ast_cache_sample_<stamp>`, never under VeriPUT `Datasets/` or
+  `Results/`. This runs solc only, not ESBMC, Forge, or fuzzing.
+- A dry-run peer sample plan with `--subject-limit 2 --unit-limit 2` correctly
+  reported `next_action=preheat-ast`, `ast_preheat_jobs=2`, `unit_jobs=0`.
+- Running that AST preheat for the two selected peer subjects wrote only under
+  `/tmp/veriput_ast_cache_sample_20260806_193711` and succeeded:
+  - `peer_ccsolbmc__AIRBets`: 18 units.
+  - `peer_ccsolbmc__Address`: 28 units, plus 10 skipped public state getters.
+- Replanning against that cache produced `next_action=run-unit-campaign`,
+  `unit_jobs=4`, first attempt `timeout_s=60`, `memlimit_gb=8`.
+
+Sampling caveat:
+
+- The default unit scheduler is order-driven after priority sorting. For peer it
+  selected AIRBets `initialize2`, `name`, `symbol`, `decimals` first. That is a
+  poor signal for PUT strength because several are getter-like return units.
+- Do not spend certification budget on the scheduler's first rows blindly. Pick
+  semantically useful units manually or add a scheduler priority that prefers
+  hinted/writing/nontrivial units.
+
+Good first benchmark samples to inspect before running:
+
+- `peer182 / peer_soltg__simple_if / Csi1.simple_if(uint256)`:
+  source is tiny; expected path split is `a < 5 -> return 0` and
+  `a >= 5 -> return 1`. Good for literal return region/oracle strength.
+- `peer182 / peer_soltg__return_1 / Cr1.add(uint,uint)`:
+  expected paths are `y == 0 -> return x`, `y == 1 -> return x+1`,
+  `y == 2 -> return x+2`, otherwise `return x+y`. Good for source-R2 return
+  terms and return antichain.
+- `peer182 / peer_syntest__MetaCoin / MetaCoin.sendCoin(address,uint)`:
+  expected false path when `balances[msg.sender] < amount`, true path after
+  loop-normalizing small `amount` and clipping amounts above 9000. Good for
+  mapping/sender region quality, but harder than the SolTG micro programs.
+- `bugfix124 / rc_time_manipulation__ether_lotto__SolGPT__ether_lotto_1round /
+  EtherLotto.play()`:
+  expected requires `msg.value == 10`; then timestamp/difficulty-derived branch
+  either pays out and resets `pot` or just accumulates. Good env-region sample,
+  with `block.difficulty` likely unsupported by the current safe setter policy.
+- `stress203 / compound-finance__comet__AssetListFactory /
+  AssetListFactory.createAssetList(...)`:
+  small stress subject but uses dynamic array-of-struct input and creates a new
+  contract; useful for checking how quickly the pipeline hits frontend/model
+  limits on realistic flattened code.
+
+Next recommended action:
+
+- Preheat ASTs for a small curated set of 3-5 subjects into a fresh `/tmp`
+  cache.
+- Run dry-run `certify_all.py` for the chosen units and inspect the exact
+  strong recipe argv.
+- Only then spend 60s/8GiB certification attempts, one unit at a time, writing
+  journals and generated PUT artifacts under `/tmp/veriput_sample_*`.
