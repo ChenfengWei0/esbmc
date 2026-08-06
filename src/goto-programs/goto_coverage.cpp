@@ -4080,6 +4080,10 @@ void goto_coveraget::solidity_path_coverage()
     std::string name, lo, hi;
     std::vector<std::string> holes;
   };
+  struct certify_establisht
+  {
+    std::string target, source;
+  };
   // ---- Stage-2 outer-box batch spec (--path-cov-outer-box) ----
   struct outer_coordt
   {
@@ -4280,6 +4284,7 @@ void goto_coveraget::solidity_path_coverage()
   std::string certify_unit;
   uint64_t certify_enc = 0, certify_depth = 0;
   std::vector<certify_boundt> certify_box;
+  std::vector<certify_establisht> certify_establish;
   if (!path_cov_certify_path.empty())
   {
     std::ifstream cin_f(path_cov_certify_path);
@@ -4305,6 +4310,13 @@ void goto_coveraget::solidity_path_coverage()
           cb.holes.push_back(h.get<std::string>());
         certify_box.push_back(cb);
       }
+      for (const auto &e : j.value("establish", nlohmann::json::array()))
+      {
+        certify_establisht ce;
+        ce.target = e.at("target").get<std::string>();
+        ce.source = e.at("source").get<std::string>();
+        certify_establish.push_back(ce);
+      }
       const nlohmann::json cce = j.value("ce", nlohmann::json::object());
       for (auto it = cce.begin(); it != cce.end(); ++it)
         path_cov_certify_ce[it.key()] = it.value().get<std::string>();
@@ -4317,7 +4329,8 @@ void goto_coveraget::solidity_path_coverage()
       log_error(
         "--path-cov-certify: cannot parse '{}' ({}). Expected "
         "{{\"unit\":..., \"enc\":N, \"depth\":D, \"box\":[{{\"name\":..., "
-        "\"lo\":\"..\", \"hi\":\"..\"}}]}}",
+        "\"lo\":\"..\", \"hi\":\"..\"}}], \"establish\":[{{\"target\":..., "
+        "\"source\":...}}]}}",
         path_cov_certify_path,
         ex.what());
       abort();
@@ -4350,7 +4363,9 @@ void goto_coveraget::solidity_path_coverage()
         path_cov_certify_holes.size());
     log_status(
       "--path-cov-certify: CERTIFICATION QUERY for unit '{}' path enc={} "
-      "depth={} over {} bounded input(s). The per-path identity asserts are "
+      "depth={} over {} bounded input(s) and {} entry relation(s). The "
+      "per-path "
+      "identity asserts are "
       "NOT "
       "emitted in this mode and NO [Coverage] block is printed — a certified "
       "box makes these claims HOLD, which the coverage counters would report "
@@ -4374,7 +4389,8 @@ void goto_coveraget::solidity_path_coverage()
       certify_unit,
       certify_enc,
       certify_depth,
-      certify_box.size());
+      certify_box.size(),
+      certify_establish.size());
   }
 
   // ---- STAGE 3: post-state assertion synthesis spec (--path-cov-assert) ----
@@ -4421,6 +4437,7 @@ void goto_coveraget::solidity_path_coverage()
   std::string assert_unit;
   uint64_t assert_enc = 0, assert_depth = 0;
   std::vector<path_cov_boundt> assert_region;
+  std::vector<certify_establisht> assert_establish;
   std::vector<assert_vart> assert_vars;
   // "vars was written down" is NOT "vars named something". Two entry conditions
   // into one symptom (an empty ladder); they need two messages.
@@ -4447,6 +4464,13 @@ void goto_coveraget::solidity_path_coverage()
       assert_enc = j.at("enc").get<uint64_t>();
       assert_depth = j.at("depth").get<uint64_t>();
       parse_bounds(j, "region", assert_region);
+      for (const auto &e : j.value("establish", nlohmann::json::array()))
+      {
+        certify_establisht ae;
+        ae.target = e.at("target").get<std::string>();
+        ae.source = e.at("source").get<std::string>();
+        assert_establish.push_back(ae);
+      }
       assert_vars_present = j.contains("vars");
       if (j.contains("vars_policy"))
       {
@@ -4549,6 +4573,7 @@ void goto_coveraget::solidity_path_coverage()
         "--path-cov-assert: cannot parse '{}' ({}). Expected "
         "{{\"unit\":..., \"enc\":N, \"depth\":D, "
         "\"region\":[{{\"name\":...,\"lo\":\"..\",\"hi\":\"..\"}}], "
+        "\"establish\":[{{\"target\":...,\"source\":...}}], "
         "\"vars\":[{{\"name\":...,\"abs_lo\":\"..\",\"abs_hi\":\"..\","
         "\"delta_dir\":\"inc|dec\",\"delta_lo\":\"..\",\"delta_hi\":\"..\","
         "\"equals\":[{{\"id\":...,\"term\":...}}],"
@@ -4581,9 +4606,9 @@ void goto_coveraget::solidity_path_coverage()
     path_cov_assert_mode = true;
     log_status(
       "--path-cov-assert: POST-STATE ASSERTION LADDER for unit '{}' path "
-      "enc={} depth={} over {} region bound(s) and {} explicit variable "
-      "spec(s). The region is ASSUMED at entry -- it is exactly the `require` "
-      "a "
+      "enc={} depth={} over {} region bound(s), {} entry relation(s) and {} "
+      "explicit variable spec(s). The region is ASSUMED at entry -- it is "
+      "exactly the `require` a "
       "generated test would carry -- and each candidate is asserted at THIS "
       "path's own exit under `tr != enc || cnt != depth`, so it is vacuous on "
       "every other path. One fixed assumption, a whole ladder of assertions, "
@@ -4595,6 +4620,7 @@ void goto_coveraget::solidity_path_coverage()
       assert_enc,
       assert_depth,
       assert_region.size(),
+      assert_establish.size(),
       assert_vars.size());
   }
 
@@ -8356,12 +8382,67 @@ void goto_coveraget::solidity_path_coverage()
       //    silently dropping a bound would widen the box being certified beyond
       //    what was asked for, and the run would still say SUCCESSFUL.
       const symbolt *fsym = ns.lookup(f_it->first);
+      size_t establish_emitted = 0;
       size_t bounds_emitted = 0;
       // Counted at the EMISSION, not at the parse. A hole that was read out of
       // the spec and then never reached the assumption would leave the query
       // certifying a WIDER region than the one reported — and the parse-time
       // line would still say the holes were there.
       size_t holes_emitted = 0;
+
+      for (const auto &e : certify_establish)
+      {
+        if (e.target.rfind("state.", 0) != 0)
+        {
+          log_error(
+            "--path-cov-certify: unit '{}' — REFUSING THE QUERY because "
+            "establish target '{}' is not an entry-state coordinate. Relation "
+            "establishment is an assignment to the contract state before the "
+            "unit executes; allowing a parameter or environment target would "
+            "change the caller's input rather than the entry slice",
+            uid,
+            e.target);
+          exit(1);
+        }
+        expr2tc lhs, rhs;
+        std::string why;
+        if (!resolve_coord(fsym, e.target, lhs))
+          why = "the target does not resolve to a state coordinate";
+        else
+          coord_expressible(lhs->type, why);
+        if (why.empty() && !resolve_coord(fsym, e.source, rhs))
+          why =
+            "the source does not resolve to a parameter, environment value, "
+            "state coordinate or supported mapping slot";
+        if (why.empty())
+          coord_expressible(rhs->type, why);
+        if (why.empty() && lhs->type != rhs->type)
+          why = "the target and source resolve to different internal types";
+        if (!why.empty())
+        {
+          log_error(
+            "--path-cov-certify: unit '{}' — REFUSING THE QUERY because "
+            "entry relation '{} := {}' cannot be established: {}. "
+            "Certification is not attempted: dropping this assignment would "
+            "prove a different entry slice than the one the PUT preamble will "
+            "construct",
+            uid,
+            e.target,
+            e.source,
+            why);
+          exit(1);
+        }
+
+        auto entry = goto_program.instructions.begin();
+        goto_programt::instructiont asg;
+        asg.type = ASSIGN;
+        asg.code = code_assign2tc(lhs, rhs);
+        asg.location = entry->location;
+        asg.location.property("skipped");
+        asg.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, asg);
+        ++establish_emitted;
+      }
 
       // ---- AN EMPTY BOX IS NOT A CERTIFICATE ----
       //
@@ -8926,14 +9007,16 @@ void goto_coveraget::solidity_path_coverage()
 
       ++certify_units_matched;
       log_status(
-        "--path-cov-certify: unit '{}' — assumed {} input bound(s) ({} hole(s) "
-        "punched) at entry "
+        "--path-cov-certify: unit '{}' — established {} relation-backed entry "
+        "assignment(s), assumed {} input bound(s) ({} hole(s) punched) at "
+        "entry "
         "and asserted `tr == {} && cnt == {}` at ALL {} exit(s) of the unit. "
         "Asserting at every exit is what makes the query non-vacuous: an input "
         "inside the box that walks a DIFFERENT path leaves through a different "
         "exit, and would never be checked if the assert sat only on this "
         "path's own exit",
         uid,
+        establish_emitted,
         bounds_emitted,
         holes_emitted,
         certify_enc,
@@ -9008,11 +9091,63 @@ void goto_coveraget::solidity_path_coverage()
 
       // ---- Resolve, type-check and ASSUME the region at unit entry ----
       const symbolt *fsym = ns.lookup(f_it->first);
+      size_t establish_emitted = 0;
       size_t bounds_emitted = 0;
       // Counted at the EMISSION, inside the conjunction, never from
       // `b.holes.size()`: a counter that reads the SPEC cannot witness whether
       // the spec reached the formula.
       size_t holes_emitted = 0;
+      for (const auto &e : assert_establish)
+      {
+        if (e.target.rfind("state.", 0) != 0)
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER because "
+            "establish target '{}' is not an entry-state coordinate. Relation "
+            "establishment is an assignment to the contract state before the "
+            "unit executes; allowing a parameter or environment target would "
+            "change the caller's input rather than the entry slice",
+            uid,
+            e.target);
+          exit(1);
+        }
+        expr2tc lhs, rhs;
+        std::string why;
+        if (!resolve_coord(fsym, e.target, lhs))
+          why = "the target does not resolve to a state coordinate";
+        else
+          coord_expressible(lhs->type, why);
+        if (why.empty() && !resolve_coord(fsym, e.source, rhs))
+          why =
+            "the source does not resolve to a parameter, environment value, "
+            "state coordinate or supported mapping slot";
+        if (why.empty())
+          coord_expressible(rhs->type, why);
+        if (why.empty() && lhs->type != rhs->type)
+          why = "the target and source resolve to different internal types";
+        if (!why.empty())
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER because "
+            "entry relation '{} := {}' cannot be established: {}. Dropping "
+            "this assignment would prove post-state assertions over a "
+            "different entry slice than the PUT preamble will construct",
+            uid,
+            e.target,
+            e.source,
+            why);
+          exit(1);
+        }
+
+        goto_programt::instructiont asg;
+        asg.type = ASSIGN;
+        asg.code = code_assign2tc(lhs, rhs);
+        asg.location = entry->location;
+        asg.location.property("skipped");
+        asg.function = entry->location.get_function();
+        goto_program.instructions.insert(entry, asg);
+        ++establish_emitted;
+      }
       for (const auto &b : assert_region)
       {
         expr2tc bs;
@@ -10777,15 +10912,16 @@ void goto_coveraget::solidity_path_coverage()
         }
 
       log_status(
-        "--path-cov-assert: unit '{}' -- assumed {} region bound(s) ({} "
-        "hole(s) "
-        "punched) at entry and emitted {} candidate assertion(s), {} of them "
-        "over the unit's own RETURN VALUE and the rest over {} state "
-        "variable(s), at path enc={} depth={}'s OWN exit. Every candidate "
-        "carries the antecedent `tr != {} || cnt != {}`, so at any other exit "
-        "and on any other execution it is vacuous -- which is what lets the "
-        "whole ladder be judged in ONE run instead of one query per candidate",
+        "--path-cov-assert: unit '{}' -- established {} relation-backed entry "
+        "assignment(s), assumed {} region bound(s) ({} hole(s) punched) at "
+        "entry and emitted {} candidate assertion(s), {} of them over the "
+        "unit's own RETURN VALUE and the rest over {} state variable(s), at "
+        "path enc={} depth={}'s OWN exit. Every candidate carries the "
+        "antecedent `tr != {} || cnt != {}`, so at any other exit and on any "
+        "other execution it is vacuous -- which is what lets the whole ladder "
+        "be judged in ONE run instead of one query per candidate",
         uid,
+        establish_emitted,
         bounds_emitted,
         holes_emitted,
         emitted,

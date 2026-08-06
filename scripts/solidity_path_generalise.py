@@ -1302,9 +1302,42 @@ def _relation_retreat_coord(lhs, rhs, ce, coord_set):
     return None
 
 
+def _relation_establish_pair(lhs, rhs, coord_set):
+    """Return (state-target, source-coordinate) for an establishable equality."""
+    if lhs not in coord_set or rhs not in coord_set:
+        return None
+    if lhs.startswith("state.") and not rhs.startswith("state."):
+        return lhs, rhs
+    if rhs.startswith("state.") and not lhs.startswith("state."):
+        return rhs, lhs
+    return None
+
+
+def _merge_established_target_into_source(box, holes, target, source,
+                                          coord_types=None, type_ranges=None):
+    tlo, thi = box.get(target, _coord_range(target, coord_types, type_ranges))
+    slo, shi = box.get(source, _coord_range(source, coord_types, type_ranges))
+    lo, hi = max(tlo, slo), min(thi, shi)
+    if lo > hi:
+        return False
+    merged_holes = {
+        h for h in set(holes.get(target, set())) | set(holes.get(source, set()))
+        if lo <= h <= hi
+    }
+    box[source] = (lo, hi)
+    box.pop(target, None)
+    if merged_holes:
+        holes[source] = merged_holes
+    else:
+        holes.pop(source, None)
+    holes.pop(target, None)
+    return True
+
+
 def _structural_decision_region(decisions, ce, pins, coords, coord_types=None,
                                 type_ranges=None, constants=None,
-                                allow_relation_retreat=False):
+                                allow_relation_retreat=False,
+                                allow_relation_establish=False):
     """Derive a product region directly from simple complete-path decisions.
 
     This is a fast path for source shapes such as:
@@ -1324,6 +1357,8 @@ def _structural_decision_region(decisions, ce, pins, coords, coord_types=None,
     box = {n: _coord_range(n, coord_types, type_ranges) for n in coord_set}
     holes = {}
     retreated = {}
+    established = {}
+    alias = {}
     clauses = []
     for d in decisions:
         rel = _decision_relation(d.get("branch_claim"))
@@ -1334,6 +1369,10 @@ def _structural_decision_region(decisions, ce, pins, coords, coord_types=None,
         rt = _decision_term(rhs, ce, pins, constants)
         if lt is None or rt is None:
             return None
+        if lt[0] == "coord" and lt[1] in alias:
+            lt = ("coord", alias[lt[1]])
+        if rt[0] == "coord" and rt[1] in alias:
+            rt = ("coord", alias[rt[1]])
         if lt[0] == "const" and rt[0] == "coord":
             lt, rt = rt, lt
             op = _flip_relation(op)
@@ -1370,6 +1409,21 @@ def _structural_decision_region(decisions, ce, pins, coords, coord_types=None,
             continue
         if (allow_relation_retreat and lt[0] == "coord" and
                 rt[0] == "coord" and op in ("==", "!=")):
+            if op == "==" and allow_relation_establish:
+                pair = _relation_establish_pair(lt[1], rt[1], coord_set)
+                if pair is not None:
+                    target, source = pair
+                    if established.get(target, source) != source:
+                        return None
+                    if not _merge_established_target_into_source(
+                            box, holes, target, source, coord_types,
+                            type_ranges):
+                        return None
+                    established[target] = source
+                    alias[target] = source
+                    clauses.append(
+                        f"{target} := {source} at entry (establish relation)")
+                    continue
             pin_name = _relation_retreat_coord(lt[1], rt[1], ce, coord_set)
             if pin_name is None:
                 return None
@@ -1396,9 +1450,10 @@ def _structural_decision_region(decisions, ce, pins, coords, coord_types=None,
     reason = ("STRUCTURAL simple decision region: every complete-path decision "
               "is a comparison over a rendered coordinate and a constant, "
               "literal Solidity constant, pinned state value, or a retreated "
-              "entry-state relation; clauses: "
+              "entry-state relation; equality relations over entry state may be "
+              "established explicitly before the unit call; clauses: "
               + "; ".join(clauses))
-    return box, holes, reason, retreated
+    return box, holes, reason, retreated, established
 
 
 def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
@@ -1409,7 +1464,7 @@ def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
         allow_relation_retreat=False)
     if got is None:
         return None
-    box, holes, reason, _retreated = got
+    box, holes, reason, _retreated, _established = got
     return box, holes, reason
 
 
@@ -1443,12 +1498,59 @@ def structural_decision_regions_with_retreat(paths, path_decisions, pins,
             constants=constants, allow_relation_retreat=True)
         if got is None:
             return None, None, None, None
-        box, h, reason, retreated = got
+        box, h, reason, retreated, _established = got
         out[enc] = box
         holes[enc] = h
         reasons[enc] = reason
         retreats[enc] = retreated
     return out, holes, reasons, retreats
+
+
+def structural_decision_regions_with_relations(paths, path_decisions, pins,
+                                               coords, coord_types=None,
+                                               type_ranges=None,
+                                               constants=None):
+    out, holes, reasons, retreats, establishes = {}, {}, {}, {}, {}
+    for enc, _depth, ce in paths:
+        got = _structural_decision_region(
+            path_decisions.get(enc), ce, pins, coords,
+            coord_types=coord_types, type_ranges=type_ranges,
+            constants=constants, allow_relation_retreat=True,
+            allow_relation_establish=True)
+        if got is None:
+            return None, None, None, None, None
+        box, h, reason, retreated, established = got
+        out[enc] = box
+        holes[enc] = h
+        reasons[enc] = reason
+        retreats[enc] = retreated
+        establishes[enc] = established
+    return out, holes, reasons, retreats, establishes
+
+
+def relation_establishable_state_targets(paths, path_decisions, pins, coords,
+                                         constants=None):
+    """State coordinates worth keeping free for an entry relation assignment."""
+    coord_set = set(coords or [])
+    out = set()
+    for enc, _depth, ce in paths:
+        for d in path_decisions.get(enc) or []:
+            rel = _decision_relation(d.get("branch_claim"))
+            if rel is None:
+                continue
+            lhs, op, rhs = rel
+            if op != "==":
+                continue
+            lt = _decision_term(lhs, ce, pins, constants)
+            rt = _decision_term(rhs, ce, pins, constants)
+            if lt is None or rt is None:
+                continue
+            if lt[0] != "coord" or rt[0] != "coord":
+                continue
+            pair = _relation_establish_pair(lt[1], rt[1], coord_set)
+            if pair is not None:
+                out.add(pair[0])
+    return out
 
 
 def enumeration_has_arith_conditions(cwd):
@@ -3924,7 +4026,53 @@ def boxes_intersect(a, b, a_holes=None, b_holes=None):
     return True
 
 
-def certified_overlap(ok, holes=None):
+def relation_constrained_boxes_intersect(a, b, a_holes=None, b_holes=None,
+                                         a_established=None,
+                                         b_established=None):
+    a_established = a_established or {}
+    b_established = b_established or {}
+    if not a_established and not b_established:
+        return boxes_intersect(a, b, a_holes, b_holes)
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[ry] = rx
+
+    for box in (a, b):
+        for n in box:
+            find(n)
+    for rels in (a_established, b_established):
+        for target, source in rels.items():
+            union(target, source)
+
+    intervals = {}
+    holes_by_root = {}
+    for box, hs in ((a, a_holes or {}), (b, b_holes or {})):
+        for n, (lo, hi) in box.items():
+            r = find(n)
+            if r in intervals:
+                lo, hi = max(lo, intervals[r][0]), min(hi, intervals[r][1])
+            if lo > hi:
+                return False
+            intervals[r] = (lo, hi)
+            holes_by_root.setdefault(r, set()).update(hs.get(n, ()))
+    for r, (lo, hi) in intervals.items():
+        punched = {v for v in holes_by_root.get(r, set()) if lo <= v <= hi}
+        if len(punched) >= hi - lo + 1:
+            return False
+    return True
+
+
+def certified_overlap(ok, holes=None, established=None):
     """Pairs of CERTIFIED regions that intersect. Must always be empty.
 
     Path domains partition the input space, so two distinct paths cannot both
@@ -3946,11 +4094,13 @@ def certified_overlap(ok, holes=None):
     """
     bad = []
     holes = holes or {}
+    established = established or {}
     encs = sorted(ok)
     for i, e1 in enumerate(encs):
         for e2 in encs[i + 1:]:
-            if boxes_intersect(ok[e1], ok[e2],
-                               holes.get(e1), holes.get(e2)):
+            if relation_constrained_boxes_intersect(
+                    ok[e1], ok[e2], holes.get(e1), holes.get(e2),
+                    established.get(e1), established.get(e2)):
                 bad.append((e1, e2))
     return bad
 
@@ -4975,7 +5125,7 @@ def violated_properties(log):
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g",
             holes=None, esbmc_args=(), state_structs=False,
-            want_property=False):
+            want_property=False, establish=None):
     """Step 5. Returns (verdict, suggested_box_or_None, witness).
 
     `holes` is Definition 5's punched set, and it must reach the query or the
@@ -5000,6 +5150,11 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             "box": [bound(n, lo, hi) for n, (lo, hi) in box.items()] +
                    [{"name": n, "lo": str(v), "hi": str(v)}
                     for n, v in pins.items()]}
+    if establish:
+        spec["establish"] = [
+            {"target": target, "source": source}
+            for target, source in sorted(establish.items())
+        ]
     path = os.path.join(cwd, "cert.json")
     with open(path, "w") as f:
         json.dump(spec, f)
@@ -5017,6 +5172,7 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
         enc=enc,
         depth=depth,
         box=spec["box"],
+        establish=spec.get("establish", []),
         timeout_s=timeout,
         want_property=want_property,
     )
@@ -6519,8 +6675,14 @@ def main():
     # saying so.
     if args.pin_agreed_state:
         agreed_state, varying = {}, []
+        relation_state = relation_establishable_state_targets(
+            paths, path_decisions, pins, coords)
+        relation_kept = []
         for c in list(coords):
             if not c.startswith("state."):
+                continue
+            if c in relation_state:
+                relation_kept.append(c)
                 continue
             vals = {ce.get(c) for _, _, ce in paths}
             if len(vals) == 1 and None not in vals:
@@ -6543,14 +6705,31 @@ def main():
                     "entry-state slice"
                   + (f". STILL FREE, the paths disagree on: "
                      + ", ".join(sorted(varying)) if varying else ""))
+            if relation_kept:
+                print("[coords] STATE NOT PINNED because a complete-path "
+                      "decision can establish it from another coordinate: "
+                      + ", ".join(sorted(relation_kept))
+                      + ". These stay free until the structural relation pass, "
+                        "which will certify an explicit entry assignment such "
+                        "as `state.owner := msg.sender` instead of collapsing "
+                        "the caller coordinate to a point")
         else:
             # ⛔ The same must-say rule as the environment side above.
-            print("[coords] --pin-agreed-state derived NOTHING"
-                  + (": no state coordinate survived to this point"
-                     if not varying else
-                     f": the {len(paths)} paths disagree on every state "
-                     f"coordinate -- " + ", ".join(sorted(varying)))
+            if relation_kept and not varying:
+                why_state = (": every agreed state coordinate is relation-"
+                             "establishable")
+            elif not varying:
+                why_state = ": no state coordinate survived to this point"
+            else:
+                why_state = (f": the {len(paths)} paths disagree on every state "
+                             f"coordinate -- " + ", ".join(sorted(varying)))
+            print("[coords] --pin-agreed-state derived NOTHING" + why_state
                   + ". No pin was added")
+            if relation_kept:
+                print("[coords] STATE NOT PINNED because a complete-path "
+                      "decision can establish it from another coordinate: "
+                      + ", ".join(sorted(relation_kept))
+                      + ". No agreed-state pin was added for these coordinate(s)")
 
     # ---- MAPPING SLOTS: PROPOSED from the source, never harvested ----
     #
@@ -6747,7 +6926,7 @@ def main():
                                    declaration_id=declaration_id))
     constants = literal_state_constants(args.ast, args.contract)
     structural_seed_regions, structural_seed_holes, structural_seed_source, \
-        structural_seed_retreats = {}, {}, {}, {}
+        structural_seed_retreats, structural_seed_establishes = {}, {}, {}, {}, {}
 
     def query_pins():
         return {n: v for n, v in pins.items() if n not in nonquery_pins}
@@ -6803,23 +6982,26 @@ def main():
         structural_regions = None
         structural_region_source = {}
     structural_region_retreats = {}
+    structural_region_establishes = {}
 
     for enc, _depth, ce in paths:
         got = _structural_decision_region(
             path_decisions.get(enc), ce, pins, coords,
             coord_types=coord_types, type_ranges={},
-            constants=constants, allow_relation_retreat=True)
+            constants=constants, allow_relation_retreat=True,
+            allow_relation_establish=True)
         if got is None:
             continue
-        box, h, reason, retreated = got
-        if not retreated:
+        box, h, reason, retreated, established = got
+        if not retreated and not established:
             continue
         structural_seed_regions[enc] = box
         structural_seed_holes[enc] = h
         structural_seed_source[enc] = reason
         structural_seed_retreats[enc] = retreated
+        structural_seed_establishes[enc] = established
     if structural_seed_regions:
-        print("[structural] relation-retreated seed region(s) available for "
+        print("[structural] relation-aware seed region(s) available for "
               + ", ".join(f"enc={enc}" for enc in sorted(
                   structural_seed_regions))
               + ". These do NOT skip ESBMC certification; they replace the "
@@ -6834,7 +7016,7 @@ def main():
                 for enc, _depth, _ce in paths)):
         if args.level0 or args.probe_witnesses or args.probe_ladder:
             print("[structural] every path not excluded by pins has a "
-                  "relation-retreated seed; skipping level0, witness pool "
+                  "relation-aware seed; skipping level0, witness pool "
                   "probes and per-path ladders")
         args.level0 = False
         args.probe_witnesses = 0
@@ -7291,19 +7473,23 @@ def main():
         structural_holes = dict(structural_seed_holes)
         structural_reasons = {}
         structural_region_retreats = dict(structural_seed_retreats)
+        structural_region_establishes = dict(structural_seed_establishes)
     elif arith_conditions_seen:
         structural_regions, structural_holes, structural_reasons, \
-            structural_region_retreats = \
-            structural_decision_regions_with_retreat(
+            structural_region_retreats, structural_region_establishes = \
+            structural_decision_regions_with_relations(
                 paths, path_decisions, pins, coords, coord_types=coord_types,
                 type_ranges=type_ranges, constants=constants)
         structural_region_retreats = structural_region_retreats or {}
+        structural_region_establishes = structural_region_establishes or {}
         if structural_regions is not None and not any(
-                structural_region_retreats.values()):
+                list(structural_region_retreats.values()) +
+                list(structural_region_establishes.values())):
             structural_regions = None
             structural_holes = {}
             structural_reasons = {}
             structural_region_retreats = {}
+            structural_region_establishes = {}
     else:
         structural_regions, structural_holes, structural_reasons = \
             structural_decision_regions(
@@ -7311,30 +7497,32 @@ def main():
                 type_ranges=type_ranges, constants=constants)
         if structural_regions is None:
             structural_regions, structural_holes, structural_reasons, \
-                structural_region_retreats = \
-                structural_decision_regions_with_retreat(
+                structural_region_retreats, structural_region_establishes = \
+                structural_decision_regions_with_relations(
                     paths, path_decisions, pins, coords,
                     coord_types=coord_types, type_ranges=type_ranges,
                     constants=constants)
             structural_region_retreats = structural_region_retreats or {}
+            structural_region_establishes = structural_region_establishes or {}
             if structural_regions is not None and not any(
-                    structural_region_retreats.values()):
+                    list(structural_region_retreats.values()) +
+                    list(structural_region_establishes.values())):
                 structural_regions = None
                 structural_holes = {}
                 structural_reasons = {}
                 structural_region_retreats = {}
+                structural_region_establishes = {}
     if paths and structural_regions is not None:
         brackets, regions, warned, round_failure = {}, structural_regions, \
             set(), None
         region_holes = structural_holes
-        if structural_region_retreats:
+        if structural_region_retreats or structural_region_establishes:
             structural_region_source = {}
-            print("[structural] relation-retreated simple decision regions "
+            print("[structural] relation-aware simple decision regions "
                   f"derived for every witnessed path; skipping geometric "
                   f"bracket and refine. {len(regions)} region(s) now go to "
                   f"ESBMC certification, not structural certification, because "
-                  f"the product box relies on a per-path retreated entry-state "
-                  f"coordinate"
+                  f"the product box relies on a per-path entry-state relation"
                   + (" and checked-arithmetic conditions were seen elsewhere "
                      "in the enumeration" if arith_conditions_seen else ""))
         else:
@@ -7355,6 +7543,10 @@ def main():
                 print(f"[structural] enc={enc}: relation retreat "
                       + ", ".join(f"{n}=={v}" for n, v in sorted(
                           structural_region_retreats[enc].items())))
+            if structural_region_establishes.get(enc):
+                print(f"[structural] enc={enc}: relation establish "
+                      + ", ".join(f"{target}:={source}" for target, source in
+                                  sorted(structural_region_establishes[enc].items())))
     elif paths:
         # Round 1: geometric bracket.
         if args.skip_bracket:
@@ -7444,7 +7636,8 @@ def main():
                  " and every region below holds for ALL their values"))
 
     # Certify every candidate, shrinking on the witness when refuted.
-    ok, failed, ok_holes, ok_retreated, ok_source = {}, dict(pre_failed), {}, {}, {}
+    ok, failed, ok_holes, ok_retreated, ok_established, ok_source = \
+        {}, dict(pre_failed), {}, {}, {}, {}
     # Per (enc, piece), like ok_retreated and for the same reason: a region
     # reported without naming the harness-chosen values it was certified under
     # reads as an unconditional statement, and the emitter's rendering decision
@@ -7471,7 +7664,7 @@ def main():
         box = regions.get(enc)
         if enc in structural_seed_regions:
             box = structural_seed_regions[enc]
-            print(f"[certify enc={enc}] using relation-retreated structural "
+            print(f"[certify enc={enc}] using relation-aware structural "
                   f"seed: {structural_seed_source[enc]}. ESBMC certification "
                   f"is still required for this path.")
         if box is None:
@@ -7650,6 +7843,8 @@ def main():
             # sets and may retreat on different coordinates.
             retreated = dict(structural_seed_retreats.get(enc) or
                              structural_region_retreats.get(enc) or {})
+            established = dict(structural_seed_establishes.get(enc) or
+                               structural_region_establishes.get(enc) or {})
             tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
             for _ in range(args.shrink_rounds):
                 v, nb, wit, punches, unexp, unknown_why = certify(
@@ -7658,7 +7853,8 @@ def main():
                     args.timeout, cwd, ast=args.ast, focus=focus,
                     memlimit=args.memlimit, holes=holes,
                     esbmc_args=args.esbmc_arg,
-                    state_structs=args.state_struct_fields)
+                    state_structs=args.state_struct_fields,
+                    establish=established)
                 # ---- A COORDINATE THE QUERY CANNOT EXPRESS: DROP AND RETRY ----
                 #
                 # Not a shrink round. The tool declined to ATTEMPT the query, so
@@ -7742,7 +7938,8 @@ def main():
                         # sites; fixed here rather than left in a line this
                         # commit already touches.
                         esbmc_args=args.esbmc_arg,
-                        state_structs=args.state_struct_fields)
+                        state_structs=args.state_struct_fields,
+                        establish=established)
                 if reason is not None:
                     # Set only by the un-droppable-refusal branch above. Leaving
                     # the for-loop here is what keeps a refused query out of the
@@ -7831,6 +8028,7 @@ def main():
                     # parameterized/concrete decision depends on the
                     # difference.
                     ok_retreated[(enc, piece_no)] = dict(retreated)
+                    ok_established[(enc, piece_no)] = dict(established)
                     ok_extcall[(enc, piece_no)] = dict(xpins)
                     if retreated:
                         print(f"[certify {tag}] certified with "
@@ -8238,7 +8436,9 @@ def main():
                         enc, depth, point, ce, dict(query_pins(), **xpins), args.max_tx,
                         args.timeout, cwd, ast=args.ast, focus=focus,
                         memlimit=args.memlimit, holes={},
-                        esbmc_args=args.esbmc_arg, want_property=True)
+                        esbmc_args=args.esbmc_arg, want_property=True,
+                        establish=dict(structural_seed_establishes.get(enc) or
+                                       structural_region_establishes.get(enc) or {}))
                     witness_check[enc] = wv
                     if wv == "SUCCESSFUL":
                         print(f"[witness enc={enc}] the single point survives "
@@ -8311,7 +8511,7 @@ def main():
     # splitting, exactly the kind this function exists to catch, and skipping
     # them would leave the new code as the only part of the loop with no
     # partition check on it.
-    overlap = certified_overlap(ok, ok_holes)
+    overlap = certified_overlap(ok, ok_holes, ok_established)
     if overlap:
         print("\n=== INVARIANT VIOLATED: certified regions intersect ===")
 
@@ -8473,6 +8673,11 @@ def main():
                 # numbers plus which coordinates were pinned by the retreat.
                 "retreated": {n: str(v) for n, v in
                               sorted((ok_retreated.get(key) or {}).items())},
+                "established": [
+                    {"target": target, "source": source}
+                    for target, source in sorted(
+                        (ok_established.get(key) or {}).items())
+                ],
                 # THE HARNESS-CHOSEN VALUES THIS REGION WAS CERTIFIED UNDER.
                 # Empty unless --pin-extcall was passed. A consumer that
                 # renders the region as a test and ignores this field emits a

@@ -10428,6 +10428,121 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 relation-establish PUT alignment
+
+Problem fixed:
+
+- Stage 2 could now certify a wide region by establishing an entry relation,
+  e.g. `state._owner := msg.sender`, instead of pinning `state._owner` to one
+  concrete value.
+- The first implementation propagated that relation into the generated Foundry
+  PUT, but not into `--path-cov-assert`.
+- Result: the assertion ladder proved post-state rungs over constructor entry
+  state while the emitted PUT replayed a relation-established entry state.  On
+  `ClaimTopicsRegistry.renounceOwnership` enc=7 this produced a RED PUT:
+  ladder said `_owner: post == pre HOLDS`; the PUT stored
+  `state._owner := msg.sender`, so the real post-state was zero and the fuzzed
+  nonzero sender refuted the assertion.
+
+Code changes in this slice:
+
+- `src/goto-programs/goto_coverage.cpp`
+  - `--path-cov-assert` parses an optional `establish` array with the same
+    `{"target":"state.<x>","source":"<coord>"}` shape as certification.
+  - The assert ladder inserts relation-backed entry `ASSIGN` instructions
+    before region assumptions and before pre/post snapshots.
+  - It refuses unresolvable, non-state-target, non-expressible, or type-mismatched
+    relations rather than silently proving a different entry slice.
+- `scripts/solidity_path_put.py`
+  - The base ladder spec now includes `establish` when present; R2 specs inherit
+    it because they derive from the base spec.
+- `notes/coverage/scripts/certify_all.py`
+  - Stage 2 rows record machine-readable `certified_details` from
+    `generalise-result.json`.
+- `notes/coverage/scripts/put_all.py`
+  - Stage 4 reads `certified_details[*].established` and passes it to PUT
+    emission.
+  - Strong recipe v15+ refuses rows whose machine-readable `certified_details`
+    entry is missing, because relation establishment is not recoverable from
+    the prose region string.
+- `scripts/solidity_path_generalise.py`
+  - Relation-aware structural regions can keep the source coordinate wide and
+    drop the state target from the product box.
+  - Certified-region overlap checks account for relation equalities.
+  - `--pin-agreed-state` skips state coordinates that a complete-path equality
+    can establish from a rendered non-state coordinate.
+- `notes/coverage/scripts/veriput_recipe.py`
+  - Strong recipe version bumped to `veriput-strong/15-relation-establish`.
+
+Validation:
+
+- Python:
+  - `python3 -m py_compile scripts/solidity_path_generalise.py scripts/solidity_path_put.py notes/coverage/scripts/certify_all.py notes/coverage/scripts/put_all.py notes/coverage/scripts/veriput_recipe.py scripts/test_solidity_path_generalise.py scripts/test_solidity_path_put.py`
+    passed.
+  - `python3 scripts/test_solidity_path_generalise.py` passed.
+  - `python3 scripts/test_solidity_path_put.py` passed, 233 tests.
+- C++:
+  - `clang-format -i src/goto-programs/goto_coverage.cpp`.
+  - `cmake --build build --target esbmc -j2` passed.
+  - Existing Solidity model array-bounds warnings still appear while generating
+    `sol64.goto`; no new compile error.
+- Whitespace:
+  - `git diff --check` passed.
+
+Targeted relation smoke:
+
+- Stage-2 cert input:
+  `/tmp/veriput_relation_smoke3_20260807_051708/certify-renounce.jsonl`.
+- Stage-4 rerun after this fix:
+  `/tmp/veriput_relation_put4_20260807_052300/put_all.log`.
+- `ClaimTopicsRegistry.renounceOwnership`:
+  - Stage 2: 3 witnessed paths, 2 certified, 1 not-certified slice-excluded.
+  - enc=6 remains rollback/exit-kind PUT, fuzzes `msg.sender`, GREEN.
+  - enc=7 now carries `established=[{"target":"state._owner","source":"msg.sender"}]`.
+  - The fixed ladder changed from `_owner: post == pre HOLDS` to
+    `_owner: post <= pre HOLDS`; Forge gate is GREEN.
+  - B changed from 1/2 in the stale stage4 run to 2/2 with the fixed binary.
+
+Peer source_080 micro-sample:
+
+- Stage-2 output root:
+  `/tmp/veriput_peer_sample_cert_20260807_052523`.
+- Stage-4 output root:
+  `/tmp/veriput_peer_sample_put_20260807_052658`.
+- Settings:
+  `--timeout 600 --run-timeout 600 --memlimit-gib 8`, strong recipe v15,
+  `--scope focus --max-tx 1`, no writes to `Datasets` or `Results`.
+- Sampled units:
+  - `peer_ccsolbmc__MayoOcho.transfer`: CERTIFIED in 83s,
+    5 witnessed paths, 4 certified, 1 not-certified.  Stage 4 emitted 4 PUTs;
+    all 4 carry fuzz parameters and oracles; all 4 are Forge-green B rows.
+    enc=63 is the strongest: 3 fuzz params and 17 oracle asserts, including
+    R2/source-assignment-shaped state assertions.
+  - `peer_syntest__Straight_Fire_Finance.transfer`: NO-PATH in 0s.
+  - `peer_ccsolbmc__PORCUPINE.renounceOwnership`: NO-PATH in 1s.
+
+Current small-wave interpretation:
+
+- Over certified regions actually passed to Stage 4 in this slice:
+  - relation smoke: 2/2 valid PUTs, 0 concrete replay tests.
+  - peer source_080 sample: 4/4 valid PUTs, 0 concrete replay tests.
+  - combined Stage-4 measured certified-region rows: 6/6 valid PUTs, all PUT,
+    no concrete replay-only successes.
+- Over the three peer units sampled, only one unit produced witnessed paths; do
+  not quote this as a corpus success rate.  It is a sanity sample showing that
+  when Stage 2 certifies a benchmark transfer unit, Stage 4 can now emit strong
+  fuzzed PUTs rather than only point/concrete replay tests.
+
+Next likely bottlenecks:
+
+- Units with NO-PATH need stage-1/coverage-entry diagnosis, not PUT synthesis.
+- Transfer-style paths still often become rollback/exit-kind PUTs; strong
+  semantic post-state oracles appear on normal exits such as MayoOcho enc=63.
+- More benchmark sampling should stratify by dataset difficulty:
+  peer/source_080 first, then BugFix124, then Stress243.  Keep outputs under
+  `/tmp`; do not modify `/home/samson/workspace/VeriPUT/Datasets` or the
+  shared Results contracts.
+
 ## 2026-08-07 Stage-4 normal-exit arithmetic retreat
 
 User policy update:

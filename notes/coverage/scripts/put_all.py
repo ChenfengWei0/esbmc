@@ -303,6 +303,20 @@ def stage2_path_accounting(cert_path, only=""):
     return out
 
 
+def recipe_requires_certified_details(version):
+    """Whether Stage 4 needs machine-readable certified-region metadata."""
+    if not isinstance(version, str):
+        return False
+    prefix = "veriput-strong/"
+    if not version.startswith(prefix):
+        return False
+    head = version[len(prefix):].split("-", 1)[0]
+    try:
+        return int(head) >= 15
+    except ValueError:
+        return version >= "veriput-strong/15-relation-establish"
+
+
 def apply_strong_put_recipe(args):
     """Apply the shared versioned Stage-4 recipe after argparse defaults."""
     if not getattr(args, "strong_recipe", False):
@@ -551,6 +565,7 @@ def main():
         except SubjectError as exc:
             print(f"  SKIP {key}.{r.get('unit')} cert row: {exc}")
             continue
+        certified_details = r.get("certified_details") or {}
         for enc, text in (r.get("certified") or {}).items():
             # ---- `<enc>` OR `<enc>#<piece>` --------------------------------
             #
@@ -579,6 +594,20 @@ def main():
                       f"is neither `<enc>` nor `<enc>#<piece>`, so this row "
                       f"cannot be resolved to a path")
                 continue
+            details = certified_details.get(enc_s) or certified_details.get(base) or {}
+            if recipe_requires_certified_details(r.get("recipe_version")) and not details:
+                print(
+                    f"REFUSED: {key}.{r['unit']} enc={enc_s} was recorded "
+                    f"under recipe {r.get('recipe_version')}, which may "
+                    "certify entry relations that are NOT recoverable from "
+                    "the prose `certified` region string. This row has no "
+                    "matching `certified_details` entry, so Stage 4 cannot "
+                    "know whether it must materialize an entry relation such "
+                    "as `state._owner := msg.sender`. Re-run Stage 2 with the "
+                    "current certify_all.py instead of silently emitting a PUT "
+                    "for a different entry slice.")
+                return 2
+            establish = details.get("established") or []
             # THE ARM'S OWN FLAG TRAVELS WITH THE REGION. Absent means the
             # row predates --pin-extcall, i.e. false -- never "unknown", because
             # every sweep that could set it writes it.
@@ -607,7 +636,7 @@ def main():
                 r.get("enumeration_report"), r.get("path_function"), enc_i)
             rows.append((key, is_poc, r["unit"], r.get("path_function"),
                          enc_i, piece or None, text,
-                         bool(r.get("pin_extcall")), deriv, exit_kind,
+                         establish, bool(r.get("pin_extcall")), deriv, exit_kind,
                          row_subject))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
@@ -662,13 +691,13 @@ def main():
         return {"normal": 0, "undetermined": 1, None: 2, "revert": 3}.get(
             kind, 2)
     ordered_rows = [r for _i, r in sorted(
-        enumerate(rows), key=lambda ir: (_exit_priority(ir[1][9]), ir[0]))]
+        enumerate(rows), key=lambda ir: (_exit_priority(ir[1][10]), ir[0]))]
     if ordered_rows != rows:
         print("[order] normal-exit certified region(s) are emitted first, using "
               "the Stage-1 report's exit_kind. This changes scheduling only; "
               "regions and certification are unchanged")
-    for (bench, is_poc, unit, path_function, enc, piece, text, pin_extcall,
-         deriv, exit_kind, row_subject) in ordered_rows:
+    for (bench, is_poc, unit, path_function, enc, piece, text, establish,
+         pin_extcall, deriv, exit_kind, row_subject) in ordered_rows:
         # The label every downstream name is built from, derived ONCE and in
         # the same shape the emitter builds it (`p<K>`). Two derivations is how
         # the gate below comes to look up a function the emitted file does not
@@ -780,6 +809,7 @@ def main():
                "--ast", ast, "--contract", contract, "--unit", unit,
                "--enc", str(enc), "--region", json.dumps(region),
                "--holes", json.dumps(holes),
+               "--establish", json.dumps(establish),
                "--forge-project", proj, "--workdir", wd,
                "--timeout", str(args.timeout),
                "--memlimit", f"{args.memlimit_gib}g",

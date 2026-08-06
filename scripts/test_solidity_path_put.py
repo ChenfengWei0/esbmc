@@ -219,6 +219,36 @@ def test_pin_with_a_slot_is_established():
     return bad
 
 
+def test_relation_establishes_state_from_fuzzed_sender():
+    """`state.owner := msg.sender` must share the PUT's pranked sender."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250),
+                "u": (0, (1 << 160) - 1),
+                "msg.sender": (1, (1 << 160) - 1)},
+        holes={}, pins={"msg.value": 0},
+        params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes,
+        establish=[{"target": "state.owner", "source": "msg.sender"}])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    text = "\n".join(put or [])
+    bad += check("address p_msg_sender" in text,
+                 "msg.sender is a fuzzed address parameter")
+    bad += check("vm.prank(p_msg_sender);" in text,
+                 "the unit call is pranked with the same parameter")
+    bad += check("uint256(uint160(p_msg_sender))" in text,
+                 "the storage write casts the address source to uint256")
+    bad += check(stats["state_stored"] == ["state.owner := msg.sender"],
+                 f"the relation is reported as stored: {stats['state_stored']}")
+    bad += check(stats["established_relations"] == [
+        {"target": "state.owner", "source": "msg.sender"}],
+        f"the relation travels in stats: {stats['established_relations']}")
+    return bad
+
+
 def test_storage_oracles_read_the_actual_target_instance_not_c0():
     """Mocks can occupy c0; storage oracles must follow the unit call receiver."""
     em, case = make_case_target_after_mock()
@@ -10169,6 +10199,7 @@ def main():
               test_the_retlive_witness_is_not_counted_as_a_rung_that_held,
               test_a_revert_tolerant_body_is_NOT_called_an_assertion,
               test_an_asserted_body_still_counts_as_an_assertion,
+              test_relation_establishes_state_from_fuzzed_sender,
               test_both_truncation_shapes_are_read,
               test_the_ladder_widens_every_named_loop,
               test_a_retry_that_produced_no_ladder_is_not_adopted,

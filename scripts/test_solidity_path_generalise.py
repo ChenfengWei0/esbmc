@@ -82,6 +82,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       structural_decision_region,
                                       structural_decision_regions,
                                       structural_decision_regions_with_retreat,
+                                      structural_decision_regions_with_relations,
+                                      relation_establishable_state_targets,
                                       direct_recursive_helpers_in_unit_closure,
                                       enumeration_has_arith_conditions,
                                       witness_values,
@@ -396,6 +398,17 @@ REAL_PARTITION = {
     3: {"a": (0, 5), "state.s": (0, BIG)},
 }
 check("a-real-partition-does-not-fire", certified_overlap(REAL_PARTITION), [])
+check("relation-established-partition-does-not-fire",
+      certified_overlap({
+          (6, 1): {"state.owner": (0, 0), "msg.sender": (1, 10)},
+          (7, 1): {"msg.sender": (0, 10)},
+      }, established={(7, 1): {"state.owner": "msg.sender"}}), [])
+check("relation-established-overlap-still-fires-when-satisfiable",
+      certified_overlap({
+          (6, 1): {"state.owner": (0, 0), "msg.sender": (0, 10)},
+          (7, 1): {"msg.sender": (0, 10)},
+      }, established={(7, 1): {"state.owner": "msg.sender"}}),
+      [((6, 1), (7, 1))])
 
 # One disjoint coordinate separates two boxes even when every other overlaps --
 # a box is a conjunction.
@@ -3362,6 +3375,24 @@ check("owner-sender-relation-retreat-pins-owner-path-sender",
       _rel_boxes[15]["msg.sender"], (7, 7))
 check("owner-sender-relation-retreat-keeps-success-argument-wide",
       _rel_boxes[15]["newOwner"], (1, (1 << 160) - 1))
+_rel2_boxes, _rel2_holes, _rel2_reasons, _rel2_retreats, _rel2_establishes = \
+    structural_decision_regions_with_relations(
+        _owner_rel_paths, _owner_rel_decisions, {"msg.value": 0},
+        ["msg.sender", "newOwner", "state._owner"],
+        coord_types={"newOwner": "address"})
+check("owner-sender-relation-establishes-success-owner",
+      _rel2_establishes[15], {"state._owner": "msg.sender"})
+check("owner-sender-relation-establish-keeps-success-sender-wide",
+      _rel2_boxes[15]["msg.sender"], (0, (1 << 160) - 1))
+check("owner-sender-relation-establish-drops-owner-from-box",
+      "state._owner" in _rel2_boxes[15], False)
+check("owner-sender-relation-establish-keeps-neq-retreat",
+      _rel2_retreats[12], {"state._owner": 1})
+check("owner-sender-relation-state-target-is-pin-exempt",
+      relation_establishable_state_targets(
+          _owner_rel_paths, _owner_rel_decisions, {"msg.value": 0},
+          ["msg.sender", "newOwner", "state._owner"]),
+      {"state._owner"})
 check("decision-term-public-getter-state-coord",
       _decision_term("return_value$admin$1", {"state.admin": 7}, {}),
       ("coord", "state.admin"))

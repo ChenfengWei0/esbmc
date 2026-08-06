@@ -629,6 +629,28 @@ def result_not_certified_details(workdir, since_mtime=None):
     return details
 
 
+def result_certified_details(workdir, since_mtime=None):
+    """Machine-readable CERTIFIED rows written by the stage-2 driver."""
+    path = os.path.join(workdir, "generalise-result.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return {}
+        with open(path) as stream:
+            rows = json.load(stream).get("certified") or []
+    except (OSError, ValueError):
+        return {}
+    details = {}
+    for row in rows:
+        if not isinstance(row, dict) or "enc" not in row:
+            continue
+        key = str(row["enc"])
+        piece = row.get("piece")
+        if piece not in (None, "", 1, "1"):
+            key += "#" + str(piece)
+        details[key] = row
+    return details
+
+
 def result_enumeration_salvage(workdir, since_mtime=None):
     sidecar = os.path.join(workdir, "enumeration-salvage.json")
     path = os.path.join(workdir, "generalise-result.json")
@@ -1975,6 +1997,8 @@ def main():
             generalise_progress = result_generalise_progress(uwd, t1)
             rec.update({"benchmark": bench, "unit": unit,
                         "path_function": result_path_function(uwd),
+                        "certified_details":
+                            result_certified_details(uwd, t1),
                         "not_certified_details":
                             result_not_certified_details(uwd, t1),
                         "enumeration_salvage":

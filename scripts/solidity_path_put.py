@@ -6455,7 +6455,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               unwind=None, rettypes=None, maps=None, piece_label="",
               derived_by=None, rollback_exit=False, r2_terms=None,
               oracle_label_prefix="", exit_kind=None, state_types=None,
-              lift_unconstrained_calldata=False, path_decisions=None):
+              lift_unconstrained_calldata=False, path_decisions=None,
+              establish=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -6886,10 +6887,53 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # same one: the emitted test is not known to be inside the certified slice,
     # and that has to be visible on the test rather than inferred from silence.
     store_lines, stored, state_skipped = [], [], []
+    established_relations = []
+    established_state_targets = set()
+    for rel in establish or []:
+        if not isinstance(rel, dict):
+            notes.append(f"REFUSED: malformed establish entry {rel!r}")
+            return None, None
+        target = rel.get("target")
+        source = rel.get("source")
+        if not target or not source:
+            notes.append(f"REFUSED: malformed establish entry {rel!r}")
+            return None, None
+        if not target.startswith("state."):
+            notes.append(
+                f"REFUSED: establish target `{target}` is not an entry-state "
+                "coordinate")
+            return None, None
+        source_expr = coord_ident_abs.get(source)
+        if source_expr is None:
+            notes.append(
+                f"REFUSED: establish source `{source}` was not rendered as a "
+                "PUT coordinate, so the test cannot construct the entry slice "
+                "that ESBMC certified")
+            return None, None
+        v = target[6:]
+        if parse_slot_name(v)[0] is not None:
+            notes.append(
+                f"REFUSED: relation establishment for mapping slot `{target}` "
+                "is not rendered yet")
+            return None, None
+        if v not in layout:
+            notes.append(
+                f"REFUSED: establish target `{target}` has no scalar storage "
+                "slot in solc's layout")
+            return None, None
+        slot, off, nb = layout[v]
+        store_lines += slot_write_lines(target_addr, slot, off, nb, source_expr)
+        store_lines += slot_landing_check(target_addr, slot, off, nb,
+                                          source_expr, target)
+        stored.append(f"{target} := {source}")
+        established_relations.append({"target": target, "source": source})
+        established_state_targets.add(target)
     state_items = [(n, b) for n, b in region.items()]
     state_items += [(n, (v, v)) for n, v in pins.items() if n not in region]
     for name, (lo, hi) in sorted(state_items):
         if not name.startswith("state."):
+            continue
+        if name in established_state_targets:
             continue
         v = name[6:]
         # ---- A MAPPING SLOT PIN, `state.<m>[<key>]` -------------------------
@@ -7876,6 +7920,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              # other does not.
              "oracle_implied": oracle_implied,
              "state_stored": stored, "state_skipped": state_skipped,
+             "established_relations": established_relations,
              "env_unchecked": env_unchecked,
              "path_guard_assumes": len(path_guard_lines),
              "path_guard_skipped": path_guard_skipped}
@@ -8130,7 +8175,7 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                            enc, depth_, path_function, region, holes, pins,
                            params, layout, maps, specs, r2_terms, cell,
                            derived_by, timeout, fuzz_runs, candidate_budget,
-                           fixture=None, log=print):
+                           fixture=None, establish=None, log=print):
     """Refute R2 candidates with one Forge run; never produce proof verdicts."""
     candidates = r2_candidates(specs)
     verdicts = {candidate["key"]: "NOT-RUN" for candidate in candidates}
@@ -8164,7 +8209,7 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
             [(candidate["var"], candidate["text"], "HOLDS")], [],
             cell=cell, rettypes=None, maps=maps, piece_label=piece,
             derived_by=derived_by, rollback_exit=False, r2_terms=r2_terms,
-            oracle_label_prefix=marker + " ")
+            oracle_label_prefix=marker + " ", establish=establish)
         if probe is None or not stats or stats.get("state_asserts", 0) == 0:
             continue
         if marker not in "\n".join(probe):
@@ -8341,6 +8386,11 @@ def main():
                          "region, decimal strings or ints")
     ap.add_argument("--holes", default="{}",
                     help="JSON: {\"<coord>\": [v, ...]} -- Definition 5")
+    ap.add_argument("--establish", default="[]",
+                    help="JSON: [{\"target\":\"state.<v>\", "
+                         "\"source\":\"<coord>\"}, ...] -- entry-state "
+                         "relations certified by stage 2 and materialized with "
+                         "vm.store before the unit call")
     ap.add_argument("--pin", action="append", default=[],
                     help="coord=value, recorded on the PUT as the slice it is "
                          "a statement about")
@@ -8734,6 +8784,9 @@ def main():
             "region": query_region
                       + [{"name": n, "lo": str(v), "hi": str(v)}
                          for n, v in query_pins.items()]}
+    establish_spec = json.loads(a.establish or "[]")
+    if establish_spec:
+        spec["establish"] = establish_spec
     # Exact means exact even when the closure is empty or names only mappings.
     # Omitting vars requests the legacy all-state scan, which would turn "this
     # unit has no state dependency" into unrelated frame conditions. Return
@@ -8973,7 +9026,8 @@ def main():
                 layout, maps, _r2, r2_term_lookup,
                 (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
                 a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
-                a.fuzz_r2_candidate_budget, foundry_fixture)
+                a.fuzz_r2_candidate_budget, foundry_fixture,
+                json.loads(a.establish or "[]"))
             r2_fuzz_prefilter["enabled"] = True
             _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
             survivors = len(r2_candidates(_r2))
@@ -9129,7 +9183,8 @@ def main():
                            state_types=state_types,
                            lift_unconstrained_calldata=(
                                a.lift_unconstrained_calldata),
-                           path_decisions=claim.get("decisions") or [])
+                           path_decisions=claim.get("decisions") or [],
+                           establish=json.loads(a.establish or "[]"))
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
@@ -9181,6 +9236,7 @@ def main():
                    "region": {k: [str(v[0]), str(v[1])]
                               for k, v in region.items()},
                    "holes": {k: [str(x) for x in v] for k, v in holes.items()},
+                   "establish": json.loads(a.establish or "[]"),
                    "pins": {k: str(v) for k, v in pins.items()},
                    "ladder": [{"var": v, "text": t, "verdict": d}
                               for v, t, d in rows],
