@@ -7442,6 +7442,58 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 Modeled environment cheatcode PUT establishment
+
+Scope:
+
+- This is an external VeriPUT generator improvement. It generalizes the
+  previous `block.timestamp` / `block.number` / `block.chainid` handling to the
+  rest of the Foundry environment setters that ESBMC's Solidity frontend
+  already models.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Rationale:
+
+- Read-only ESBMC inspection showed modeled cheatcodes for `vm.warp`,
+  `vm.roll`, `vm.chainId`, `vm.fee`, `vm.prevrandao`, `vm.txGasPrice`, and
+  `vm.coinbase`.
+- The PUT generator may therefore establish/fuzz these coordinates because the
+  emitted test and ESBMC agree on their semantics before the target call.
+- This deliberately does NOT open `tx.origin`, `block.difficulty`, or
+  `block.gaslimit`: there is no equivalent reliable PUT-side setter in the
+  currently used model, and ESBMC explicitly leaves `vm.difficulty` unmodeled
+  after Paris/prevrandao semantics.
+
+Code change:
+
+- Added shared metadata tables for numeric modeled environment setters:
+  `block.timestamp`, `block.number`, `block.chainid`, `block.basefee`,
+  `block.prevrandao`, and `tx.gasprice`.
+- Added address environment support for `block.coinbase` via `vm.coinbase`.
+  Wide regions become an `address p_block_coinbase` fuzz parameter; holes are
+  excluded with `vm.assume(uint256(uint160(...)) != hole)`.
+- Source-R2 mining now recognizes assignments and deltas involving
+  `block.basefee`, `block.prevrandao`, `tx.gasprice`, and `block.coinbase`
+  when those coordinates are rendered by the PUT.
+- Source-resolved mapping slots accept modeled numeric environment keys for
+  unsigned integer mapping levels and accept `block.coinbase` for address
+  mapping levels. Incompatible key types remain refused before fallback guesses.
+- Observed replay preambles using literal modeled cheatcodes can name those
+  environment values in R2 endpoints and mapping-slot keys without adding a new
+  fuzz parameter.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/solidity_path_generalise.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 211/211 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 struct-local member source slot aliases
 
 Scope:

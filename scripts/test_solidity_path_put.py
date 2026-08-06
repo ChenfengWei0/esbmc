@@ -594,6 +594,94 @@ def test_block_chainid_range_is_fuzzed_with_chainId():
     return bad
 
 
+def test_extra_numeric_env_ranges_use_modeled_cheatcodes():
+    """Modeled uint256 env setters become bounded PUT fuzz parameters."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "block.basefee": (1, 3),
+                "block.prevrandao": (4, 6),
+                "tx.gasprice": (7, 9)},
+        holes={"block.prevrandao": [5]}, pins={}, params=PARAMS,
+        emitted=em, case=case, layout=LAYOUT, ladder_rows=[
+            ("byFee[block.basefee]", "post == pre", "HOLDS"),
+            ("byRand[block.prevrandao]", "post == pre", "HOLDS"),
+            ("byGas[tx.gasprice]", "post == pre", "HOLDS"),
+        ], notes=notes,
+        maps={"byFee": (7, "uint256", 32, 0, "byFee", None),
+              "byRand": (8, "uint256", 32, 0, "byRand", None),
+              "byGas": (9, "uint256", 32, 0, "byGas", None)})
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"modeled numeric env ranges emit: {notes}")
+    bad += check("uint256 p_block_basefee" in text
+                 and "p_block_basefee = bound(p_block_basefee, 1, 3);" in text
+                 and "    vm.fee(p_block_basefee);" in text,
+                 "block.basefee is established by vm.fee")
+    bad += check("uint256 p_block_prevrandao" in text
+                 and "p_block_prevrandao = bound(p_block_prevrandao, 4, 6);"
+                 in text
+                 and "vm.assume(p_block_prevrandao != 5);" in text
+                 and "    vm.prevrandao(p_block_prevrandao);" in text,
+                 "block.prevrandao is established with holes")
+    bad += check("uint256 p_tx_gasprice" in text
+                 and "p_tx_gasprice = bound(p_tx_gasprice, 7, 9);" in text
+                 and "    vm.txGasPrice(p_tx_gasprice);" in text,
+                 "tx.gasprice is established by vm.txGasPrice")
+    bad += check(stats["fuzz_params"] == 5
+                 and {"block.basefee", "block.prevrandao",
+                      "tx.gasprice"} <= set(stats["lifted"]),
+                 f"numeric env ranges are counted as fuzzed: {stats}")
+    bad += check("keccak256(abi.encode(p_block_basefee, uint256(7)))" in text
+                 and "keccak256(abi.encode(p_block_prevrandao, uint256(8)))"
+                 in text
+                 and "keccak256(abi.encode(p_tx_gasprice, uint256(9)))"
+                 in text,
+                 "modeled numeric env coordinates key storage oracles")
+    return bad
+
+
+def test_block_coinbase_range_is_fuzzed_with_coinbase():
+    """The address-typed coinbase env setter uses an address fuzz parameter."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "block.coinbase": (10, 20)},
+        holes={"block.coinbase": [13]}, pins={}, params=PARAMS,
+        emitted=em, case=case, layout=LAYOUT, ladder_rows=[
+            ("byMiner[block.coinbase]", "post == pre", "HOLDS"),
+        ], notes=notes,
+        maps={"byMiner": (9, "address", 32, 0, "byMiner", None)})
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"coinbase range emits instead of refusing: {notes}")
+    bad += check("address p_block_coinbase" in text,
+                 "wide block.coinbase is an address PUT parameter")
+    bad += check(
+        "p_block_coinbase = address(uint160(bound(uint256(uint160("
+        "p_block_coinbase)), 10, 20)));" in text,
+        "wide block.coinbase is bounded over the address domain")
+    bad += check("vm.assume(uint256(uint160(p_block_coinbase)) != 13);" in text,
+                 "block.coinbase holes are preserved")
+    bad += check("    vm.coinbase(p_block_coinbase);" in text,
+                 "wide block.coinbase drives vm.coinbase")
+    bad += check(stats["fuzz_params"] == 3
+                 and "block.coinbase" in stats["lifted"],
+                 f"block.coinbase range is counted as fuzzed: {stats}")
+    bad += check("keccak256(abi.encode(p_block_coinbase, uint256(9)))"
+                 in text,
+        "block.coinbase keys storage oracles with the established address")
+    if bad:
+        print(text)
+    return bad
+
+
 def test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies():
     """`--unwindset` through, every strategy flag stopped.
 
@@ -3073,6 +3161,17 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                      "expression": {"nodeType": "Identifier",
                                     "name": "block"},
                      "typeDescriptions": {"typeString": "uint256"}}
+    block_basefee = {"nodeType": "MemberAccess", "memberName": "basefee",
+                     "expression": {"nodeType": "Identifier",
+                                    "name": "block"},
+                     "typeDescriptions": {"typeString": "uint256"}}
+    tx_gasprice = {"nodeType": "MemberAccess", "memberName": "gasprice",
+                   "expression": {"nodeType": "Identifier", "name": "tx"},
+                   "typeDescriptions": {"typeString": "uint256"}}
+    block_coinbase = {"nodeType": "MemberAccess", "memberName": "coinbase",
+                      "expression": {"nodeType": "Identifier",
+                                     "name": "block"},
+                      "typeDescriptions": {"typeString": "address"}}
     bal_sender = {
         "nodeType": "IndexAccess",
         "baseExpression": {"nodeType": "Identifier",
@@ -3104,6 +3203,12 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
             {"nodeType": "VariableDeclaration", "id": 16, "name": "chain",
              "stateVariable": True,
              "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 17, "name": "fee",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 18, "name": "miner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "pay",
              "parameters": {"parameters": []},
              "body": {"nodeType": "Block", "statements": [
@@ -3174,7 +3279,28 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                      "leftHandSide": {"nodeType": "Identifier",
                                       "referencedDeclaration": 12,
                                       "name": "total"},
-                     "rightHandSide": block_chainid}}]}}
+                     "rightHandSide": block_chainid}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "300:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 17,
+                                      "name": "fee"},
+                     "rightHandSide": block_basefee}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "320:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 12,
+                                      "name": "total"},
+                     "rightHandSide": tx_gasprice}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "340:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 18,
+                                      "name": "miner"},
+                     "rightHandSide": block_coinbase}}]}}
         ]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
@@ -3186,11 +3312,16 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                                    "total": (2, 0, 32),
                                    "stamp": (4, 0, 32),
                                    "height": (5, 0, 32),
-                                   "chain": (6, 0, 32)},
+                                   "chain": (6, 0, 32),
+                                   "fee": (7, 0, 32),
+                                   "miner": (8, 0, 20)},
             [("msg.sender", "id", 20), ("msg.value", "num", None),
              ("block.timestamp", "num", None),
              ("block.number", "num", None),
-             ("block.chainid", "num", None)],
+             ("block.chainid", "num", None),
+             ("block.basefee", "num", None),
+             ("tx.gasprice", "num", None),
+             ("block.coinbase", "id", 20)],
             arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
             log=lambda _msg: None)
         none, _none_evidence = source_assignment_r2_specs(
@@ -3199,7 +3330,9 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                                    "total": (2, 0, 32),
                                    "stamp": (4, 0, 32),
                                    "height": (5, 0, 32),
-                                   "chain": (6, 0, 32)},
+                                   "chain": (6, 0, 32),
+                                   "fee": (7, 0, 32),
+                                   "miner": (8, 0, 20)},
             [], arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
             log=lambda _msg: None)
     finally:
@@ -3214,6 +3347,10 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     height_terms = [item["term"] for item in entries.get("height", {}).get(
         "equals", [])]
     chain_terms = [item["term"] for item in entries.get("chain", {}).get(
+        "equals", [])]
+    fee_terms = [item["term"] for item in entries.get("fee", {}).get(
+        "equals", [])]
+    miner_terms = [item["term"] for item in entries.get("miner", {}).get(
         "equals", [])]
     total_deltas = entries.get("total", {}).get("deltas", [])
     bal_deltas = entries.get("bal[msg.sender]", {}).get("deltas", [])
@@ -3234,6 +3371,14 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                                   "name": "block.chainid"}],
                  f"chain = block.chainid is mined as a numeric endpoint: "
                  f"{entries}")
+    bad += check(fee_terms == [{"kind": "coord",
+                                "name": "block.basefee"}],
+                 f"fee = block.basefee is mined as a numeric endpoint: "
+                 f"{entries}")
+    bad += check(miner_terms == [{"kind": "coord",
+                                  "name": "block.coinbase"}],
+                 f"miner = block.coinbase is mined as an id endpoint: "
+                 f"{entries}")
     total_delta_terms = [item["lo"] for item in total_deltas]
     bad += check({"kind": "coord", "name": "msg.value"} in total_delta_terms,
                  f"total += msg.value is mined as a delta: {total_deltas}")
@@ -3248,6 +3393,10 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     bad += check({"kind": "coord", "name": "block.chainid"}
                  in total_delta_terms,
                  f"total += block.chainid is mined as a delta: "
+                 f"{total_deltas}")
+    bad += check({"kind": "coord", "name": "tx.gasprice"}
+                 in total_delta_terms,
+                 f"total += tx.gasprice is mined as a delta: "
                  f"{total_deltas}")
     bad += check(len(bal_deltas) == 1 and bal_deltas[0]["lo"] ==
                  {"kind": "coord", "name": "msg.value"},
@@ -3267,6 +3416,12 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     bad += check(any("chain: post == block.chainid" in line
                      for line in evidence),
                  f"chain-id provenance is recorded: {evidence}")
+    bad += check(any("fee: post == block.basefee" in line
+                     for line in evidence),
+                 f"basefee provenance is recorded: {evidence}")
+    bad += check(any("miner: post == block.coinbase" in line
+                     for line in evidence),
+                 f"coinbase provenance is recorded: {evidence}")
     bad += check(none == [], f"unrendered environment coords are not mined: {none}")
     return bad
 
@@ -6607,7 +6762,13 @@ def test_source_access_slots_keep_numeric_environment_keys():
              "stateVariable": True},
             {"nodeType": "VariableDeclaration", "id": 13, "name": "byChain",
              "stateVariable": True},
-            {"nodeType": "VariableDeclaration", "id": 14, "name": "byAddr",
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "byFee",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 15, "name": "byGas",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 16, "name": "byMiner",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 17, "name": "byAddr",
              "stateVariable": True},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
              "parameters": {"parameters": []},
@@ -6619,8 +6780,14 @@ def test_source_access_slots_keep_numeric_environment_keys():
                         "140:5:0"),
                  access(13, "byChain", member("block", "chainid"),
                         "160:5:0"),
-                 access(14, "byAddr", member("block", "chainid"),
-                        "160:5:0")]}}
+                 access(14, "byFee", member("block", "basefee"),
+                        "180:5:0"),
+                 access(15, "byGas", member("tx", "gasprice"),
+                        "200:5:0"),
+                 access(16, "byMiner", member("block", "coinbase"),
+                        "220:5:0"),
+                 access(17, "byAddr", member("block", "chainid"),
+                        "240:5:0")]}}
         ]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
@@ -6634,25 +6801,35 @@ def test_source_access_slots_keep_numeric_environment_keys():
             "byTime": (3, "uint256", 32, 0, "byTime", None),
             "byHeight": (4, "uint256", 32, 0, "byHeight", None),
             "byChain": (5, "uint256", 32, 0, "byChain", None),
-            "byAddr": (6, "address", 32, 0, "byAddr", None)}
+            "byFee": (6, "uint256", 32, 0, "byFee", None),
+            "byGas": (7, "uint256", 32, 0, "byGas", None),
+            "byMiner": (8, "address", 32, 0, "byMiner", None),
+            "byAddr": (9, "address", 32, 0, "byAddr", None)}
     slots, used, skipped = source_access_slot_vars(
         accesses, maps, params=[], state_types={}, layout={})
     bad = 0
     bad += check(accesses == [
         ("byAddr", ("block.chainid",)),
         ("byChain", ("block.chainid",)),
+        ("byFee", ("block.basefee",)),
+        ("byGas", ("tx.gasprice",)),
         ("byHeight", ("block.number",)),
+        ("byMiner", ("block.coinbase",)),
         ("byTime", ("block.timestamp",)),
         ("paid", ("msg.value",)),
     ], f"environment keys are preserved from source: {accesses}")
     bad += check(any("state.paid[msg.value]" in line for line in evidence),
                  f"environment key evidence is recorded: {evidence}")
     bad += check(slots == ["byChain[block.chainid]",
+                           "byFee[block.basefee]",
+                           "byGas[tx.gasprice]",
                            "byHeight[block.number]",
+                           "byMiner[block.coinbase]",
                            "byTime[block.timestamp]",
                            "paid[msg.value]"],
-                 f"numeric environment keys become source slots: {slots}")
-    bad += check(used == {"byChain", "byHeight", "byTime", "paid"},
+                 f"environment keys become source slots: {slots}")
+    bad += check(used == {"byChain", "byFee", "byGas", "byHeight",
+                          "byMiner", "byTime", "paid"},
                  f"accepted env slots suppress fallback maps: {used}")
     bad += check(any("byAddr[block.chainid]" in s
                      and "not safely renderable as `address`" in s
@@ -7561,12 +7738,16 @@ def test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints():
 
 
 def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
-    """Literal block cheatcode preambles are observable one-point envs."""
+    """Literal numeric environment cheatcodes are observable one-point envs."""
     with_block = EMITTED.replace(
         "    vm.prank(address(uint160(0)));\n",
         "    vm.warp(42);\n"
         "    vm.roll(7);\n"
         "    vm.chainId(31337);\n"
+        "    vm.fee(101);\n"
+        "    vm.prevrandao(202);\n"
+        "    vm.txGasPrice(303);\n"
+        "    vm.coinbase(address(uint160(404)));\n"
         "    vm.prank(address(uint160(0)));\n")
     terms = {
         "block.timestamp": {"kind": "coord", "name": "block.timestamp"},
@@ -7622,17 +7803,21 @@ def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
 
 
 def test_OBSERVED_block_env_slot_keys_are_nameable():
-    """Observed block cheatcodes can key mapping-slot pre/post reads.
+    """Observed numeric environment cheatcodes can key mapping pre/post reads.
 
-    `resolve_coord` in ESBMC accepts `block.*` environment names; the PUT side
+    `resolve_coord` in ESBMC accepts modeled environment names; the PUT side
     must still wait until this emitter has an expression for the current test.
-    Literal block cheatcode preambles provide exactly that expression.
+    Literal environment cheatcode preambles provide exactly that expression.
     """
     with_block = EMITTED.replace(
         "    vm.prank(address(uint160(0)));\n",
         "    vm.warp(42);\n"
         "    vm.roll(7);\n"
         "    vm.chainId(31337);\n"
+        "    vm.fee(101);\n"
+        "    vm.prevrandao(202);\n"
+        "    vm.txGasPrice(303);\n"
+        "    vm.coinbase(address(uint160(404)));\n"
         "    vm.prank(address(uint160(0)));\n")
     fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
     with os.fdopen(fd, "w") as out:
@@ -7686,6 +7871,10 @@ def test_R2_proposal_env_coords_include_observable_replay_values():
         "    vm.warp(42);\n"
         "    vm.roll(7);\n"
         "    vm.chainId(31337);\n"
+        "    vm.fee(101);\n"
+        "    vm.prevrandao(202);\n"
+        "    vm.txGasPrice(303);\n"
+        "    vm.coinbase(address(uint160(404)));\n"
         "    vm.prank(address(uint160(0)));\n")
     fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
     with os.fdopen(fd, "w") as out:
@@ -7707,8 +7896,12 @@ def test_R2_proposal_env_coords_include_observable_replay_values():
                                ("msg.value", "num", None),
                                ("block.timestamp", "num", None),
                                ("block.number", "num", None),
-                               ("block.chainid", "num", None)],
-                 f"literal block cheatcodes expose block env too: {got_block}")
+                               ("block.chainid", "num", None),
+                               ("block.basefee", "num", None),
+                               ("block.prevrandao", "num", None),
+                               ("tx.gasprice", "num", None),
+                               ("block.coinbase", "id", 20)],
+                 f"literal environment cheatcodes expose env coords: {got_block}")
     return bad
 
 
@@ -9406,6 +9599,8 @@ def main():
               test_block_env_pins_are_established_with_cheatcodes,
               test_block_number_range_is_fuzzed_with_roll,
               test_block_chainid_range_is_fuzzed_with_chainId,
+              test_extra_numeric_env_ranges_use_modeled_cheatcodes,
+              test_block_coinbase_range_is_fuzzed_with_coinbase,
               test_return_rung_is_bound_and_asserted,
               test_return_rung_can_assert_a_scalar_entry_state_coord,
               test_return_rung_can_assert_a_mapping_entry_state_coord,

@@ -1480,8 +1480,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         member = n.get("memberName")
         if member in ("sender", "value"):
             base_name = "msg"
-        elif member in ("timestamp", "number", "chainid"):
+        elif member in ("timestamp", "number", "chainid", "basefee",
+                        "prevrandao", "coinbase"):
             base_name = "block"
+        elif member == "gasprice":
+            base_name = "tx"
         else:
             return None
         base = n.get("expression")
@@ -1636,8 +1639,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if constant is not None and constant[0].get("kind") == "literal":
             return constant
         env_name = env_coord_name(n)
-        if env_name in ("msg.value", "block.timestamp", "block.number",
-                        "block.chainid") \
+        if env_name in ({"msg.value"} | set(NUMERIC_ENV_SETTERS)) \
                 and env_name in rendered_numeric:
             return {"kind": "coord", "name": env_name}, env_name
         return unitless_number_term(n)
@@ -3657,9 +3659,14 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
         key_type = _norm_ty(key_type)
         if key == "msg.sender" and _norm_ty(key_type) == "address":
             return "msg.sender", None
-        if key in ("msg.value", "block.timestamp", "block.number",
-                   "block.chainid"):
+        if key in ({"msg.value"} | set(NUMERIC_ENV_SETTERS)):
             if re.match(r"^uint(\d+)?$", key_type):
+                return key, None
+            return None, (
+                f"environment key `{key}` is not safely renderable as "
+                f"`{key_type}`")
+        if key in ADDRESS_ENV_SETTERS:
+            if key_type == "address":
                 return key, None
             return None, (
                 f"environment key `{key}` is not safely renderable as "
@@ -4740,26 +4747,40 @@ class EmittedFile:
 # target path, including its exit kind. Therefore an EXISTING low-level
 # `.call{value: ...}` may also take a bound fuzz parameter. The rewrite is kept
 # narrow: this driver does not invent a value option or change another call
-# shape. `block.timestamp` and `block.number` are similarly establishable with
-# Foundry cheatcodes; the remaining `tx.` and `block.` quantities stay checked
-# or refused because this driver has no sound way to set them.
+# shape. Several `block.` / `tx.` coordinates are similarly establishable with
+# Foundry cheatcodes that ESBMC's Solidity frontend already models; the
+# remaining environment quantities stay checked or refused because this driver
+# has no sound way to set them.
 ENV_PREFIXES = ("msg.", "tx.", "block.")
 # Auto-derived environment coordinates must be realizable by the emitted test.
 # msg.value remains conditional on an existing value-bearing call; the final
-# `block.timestamp`, `block.number`, and `block.chainid` are also
-# test-controlled: Foundry's `vm.warp`, `vm.roll`, and `vm.chainId` set them
-# before the next call frame. They must be inserted before the governing
-# `vm.prank`, because the prank is intentionally kept as the last cheatcode
-# before the target call.
+# block/tx coordinates below are also test-controlled by Foundry cheatcodes
+# that ESBMC models before the next call frame. They must be inserted before
+# the governing `vm.prank`, because the prank is intentionally kept as the last
+# cheatcode before the target call.
+NUMERIC_ENV_SETTERS = {
+    "block.timestamp": ("vm.warp", "p_block_timestamp", "warp"),
+    "block.number": ("vm.roll", "p_block_number", "roll"),
+    "block.chainid": ("vm.chainId", "p_block_chainid", "chainId"),
+    "block.basefee": ("vm.fee", "p_block_basefee", "fee"),
+    "block.prevrandao": ("vm.prevrandao", "p_block_prevrandao", "prevrandao"),
+    "tx.gasprice": ("vm.txGasPrice", "p_tx_gasprice", "txGasPrice"),
+}
+ADDRESS_ENV_SETTERS = {
+    "block.coinbase": ("vm.coinbase", "p_block_coinbase", "coinbase"),
+}
 ESTABLISHABLE_ENV_COORDS = frozenset(
-    ("msg.sender", "msg.value", "block.timestamp", "block.number",
-     "block.chainid"))
+    ("msg.sender", "msg.value", *NUMERIC_ENV_SETTERS.keys(),
+     *ADDRESS_ENV_SETTERS.keys()))
 
 _PRANK_RE = re.compile(r"vm\.(?:start)?[Pp]rank\(")
 _VALUE_RE = re.compile(r"\{\s*value\s*:\s*([^},]+?)\s*\}")
-_WARP_RE = re.compile(r"vm\.warp\(")
-_ROLL_RE = re.compile(r"vm\.roll\(")
-_CHAINID_RE = re.compile(r"vm\.chainId\(")
+ENV_CHEATCODE_RE = {
+    coord: re.compile(r"vm\." + re.escape(method) + r"\(")
+    for coord, (_cheat, _var, method) in {
+        **NUMERIC_ENV_SETTERS, **ADDRESS_ENV_SETTERS
+    }.items()
+}
 
 
 def _lit_int(expr):
@@ -4928,7 +4949,7 @@ def observable_value_expr_for_r2(body, call_i):
 
 
 def observable_block_expr_for_r2(body, call_i, pattern):
-    """The last literal block cheatcode before this call, or None."""
+    """The last literal numeric environment cheatcode before this call."""
     if not (0 <= call_i < len(body)):
         return None
     stmt_i = statement_start(body, call_i)
@@ -4941,6 +4962,28 @@ def observable_block_expr_for_r2(body, call_i, pattern):
     return None if value is None else str(value)
 
 
+def observable_address_env_expr_for_r2(body, call_i, pattern):
+    """The last literal address cheatcode argument before this call, or None."""
+    if not (0 <= call_i < len(body)):
+        return None
+    stmt_i = statement_start(body, call_i)
+    value, text = None, None
+    for ln in body[:stmt_i]:
+        m = pattern.search(ln)
+        if not m:
+            continue
+        text = _arg0(ln, m.end() - 1)
+        value = _lit_int(text)
+    if value is not None:
+        return f"address(uint160({value}))"
+    if text is None:
+        return None
+    text = text.strip()
+    if text == "address(this)":
+        return text
+    return None
+
+
 def rendered_env_coords_for_r2(body, call_i, region):
     """Environment coordinates the R2 proposer may name for this emitted call."""
     out = []
@@ -4950,18 +4993,14 @@ def rendered_env_coords_for_r2(body, call_i, region):
     if ("msg.value" in region
             or observable_value_expr_for_r2(body, call_i) is not None):
         out.append(("msg.value", "num", None))
-    if ("block.timestamp" in region
-            or observable_block_expr_for_r2(body, call_i, _WARP_RE)
-            is not None):
-        out.append(("block.timestamp", "num", None))
-    if ("block.number" in region
-            or observable_block_expr_for_r2(body, call_i, _ROLL_RE)
-            is not None):
-        out.append(("block.number", "num", None))
-    if ("block.chainid" in region
-            or observable_block_expr_for_r2(body, call_i, _CHAINID_RE)
-            is not None):
-        out.append(("block.chainid", "num", None))
+    for coord in NUMERIC_ENV_SETTERS:
+        if (coord in region or observable_block_expr_for_r2(
+                body, call_i, ENV_CHEATCODE_RE[coord]) is not None):
+            out.append((coord, "num", None))
+    for coord in ADDRESS_ENV_SETTERS:
+        if (coord in region or observable_address_env_expr_for_r2(
+                body, call_i, ENV_CHEATCODE_RE[coord]) is not None):
+            out.append((coord, "id", 20))
     return out
 
 
@@ -5224,7 +5263,7 @@ def establish_env_value(body, call_i, region, holes, value_var,
 
 def establish_block_env(body, call_i, region, holes, pins, used, coord,
                         cheatcode, var_base):
-    """Insert a block cheatcode so the call matches the certified slice."""
+    """Insert a numeric environment cheatcode for the certified slice."""
     if coord in region:
         lo, hi = region[coord]
         coord_holes = sorted(holes.get(coord, ()))
@@ -5232,7 +5271,7 @@ def establish_block_env(body, call_i, region, holes, pins, used, coord,
         lo = hi = pins[coord]
         coord_holes = []
     else:
-        return body, call_i, None, None, [], None
+        return body, call_i, None, None, [], None, None
 
     sig_add, pre_add = None, []
     if hi > lo:
@@ -5263,28 +5302,81 @@ def establish_block_env(body, call_i, region, holes, pins, used, coord,
             insert_at = i
     new_body.insert(insert_at, f"    {cheatcode}({coord_expr});")
     call_i += 1
-    return (new_body, call_i, coord, sig_add, pre_add, note)
+    return (new_body, call_i, coord, sig_add, pre_add, note, coord_expr)
+
+
+def establish_address_env(body, call_i, region, holes, pins, used, coord,
+                          cheatcode, var_base):
+    """Insert an address environment cheatcode for a certified slice."""
+    if coord in region:
+        lo, hi = region[coord]
+        coord_holes = sorted(holes.get(coord, ()))
+    elif coord in pins:
+        lo = hi = pins[coord]
+        coord_holes = []
+    else:
+        return body, call_i, None, None, [], None, None
+
+    sig_add, pre_add = None, []
+    if hi > lo:
+        var = var_base
+        while var in used:
+            var += "_"
+        sig_add = ("address", var)
+        pre_add = bound_lines(var, "address", 160, lo, hi, coord_holes)
+        coord_expr = var
+        note = (f"{coord} in [{lo}, {hi}]"
+                + ("  \\ {" + ", ".join(str(h) for h in coord_holes)
+                   + "}" if coord_holes else "")
+                + f" is ESTABLISHED and FUZZED: {cheatcode} now takes the "
+                  f"bound() fuzz parameter `{var}`"
+                + (f", and the {len(coord_holes)} punched value(s) are "
+                   f"excluded by vm.assume" if coord_holes else ""))
+    else:
+        coord_expr = f"address(uint160({lo}))"
+        note = (f"{coord} == {lo} is ESTABLISHED with "
+                f"`{cheatcode}({coord_expr})` before the target call")
+
+    new_body = list(body)
+    stmt_i = (statement_start(new_body, call_i)
+              if 0 <= call_i < len(new_body) else call_i)
+    insert_at = stmt_i
+    for i in range(min(stmt_i, len(new_body))):
+        if _PRANK_RE.search(new_body[i]):
+            insert_at = i
+    new_body.insert(insert_at, f"    {cheatcode}({coord_expr});")
+    call_i += 1
+    return (new_body, call_i, coord, sig_add, pre_add, note, coord_expr)
+
+
+def establish_numeric_env(body, call_i, region, holes, pins, used, coord):
+    cheatcode, var_base, _method = NUMERIC_ENV_SETTERS[coord]
+    return establish_block_env(
+        body, call_i, region, holes, pins, used, coord, cheatcode, var_base)
+
+
+def establish_addr_env(body, call_i, region, holes, pins, used, coord):
+    cheatcode, var_base, _method = ADDRESS_ENV_SETTERS[coord]
+    return establish_address_env(
+        body, call_i, region, holes, pins, used, coord, cheatcode, var_base)
 
 
 def establish_env_timestamp(body, call_i, region, holes, pins, used):
     """Insert `vm.warp` so block.timestamp matches the certified slice."""
-    return establish_block_env(
-        body, call_i, region, holes, pins, used,
-        "block.timestamp", "vm.warp", "p_block_timestamp")
+    return establish_numeric_env(
+        body, call_i, region, holes, pins, used, "block.timestamp")
 
 
 def establish_env_block_number(body, call_i, region, holes, pins, used):
     """Insert `vm.roll` so block.number matches the certified slice."""
-    return establish_block_env(
-        body, call_i, region, holes, pins, used,
-        "block.number", "vm.roll", "p_block_number")
+    return establish_numeric_env(
+        body, call_i, region, holes, pins, used, "block.number")
 
 
 def establish_env_chainid(body, call_i, region, holes, pins, used):
     """Insert `vm.chainId` so block.chainid matches the certified slice."""
-    return establish_block_env(
-        body, call_i, region, holes, pins, used,
-        "block.chainid", "vm.chainId", "p_block_chainid")
+    return establish_numeric_env(
+        body, call_i, region, holes, pins, used, "block.chainid")
 
 
 def env_disagreements(body, call_i, call_line, region, pins, established=()):
@@ -5864,99 +5956,63 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             coord_ident["msg.value"] = value_abs
             coord_ident_abs["msg.value"] = value_abs
 
-    (body, call_i, time_est, time_sig, time_pre,
-     time_note) = establish_env_timestamp(
-        body, call_i, region, holes, pins, used)
-    if time_est is not None:
-        env_established.append(time_note)
-        if time_sig is not None:
-            sig.append(time_sig)
-            pre_lines += time_pre
-            lifted.append("block.timestamp")
-            used.add(time_sig[1])
-            _tlo, _thi = region["block.timestamp"]
-            rendered_width["block.timestamp"] = (_thi - _tlo + 1) - len(
-                {h for h in holes.get("block.timestamp", ())
-                 if _tlo <= h <= _thi})
-            coord_ident["block.timestamp"] = time_sig[1]
-            coord_ident_abs["block.timestamp"] = time_sig[1]
-        else:
-            timestamp_value = (region["block.timestamp"][0]
-                               if "block.timestamp" in region
-                               else pins["block.timestamp"])
-            coord_ident["block.timestamp"] = str(timestamp_value)
-            coord_ident_abs["block.timestamp"] = coord_ident[
-                "block.timestamp"]
-    elif "block.timestamp" not in coord_ident:
-        timestamp_value = observable_block_expr_for_r2(body, call_i, _WARP_RE)
-        if timestamp_value is not None:
-            coord_ident["block.timestamp"] = timestamp_value
-            coord_ident_abs["block.timestamp"] = timestamp_value
+    other_env_established = []
+    for env_coord in NUMERIC_ENV_SETTERS:
+        (body, call_i, coord_est, coord_sig, coord_pre, coord_note,
+         coord_expr) = establish_numeric_env(
+            body, call_i, region, holes, pins, used, env_coord)
+        if coord_est is not None:
+            other_env_established.append(coord_est)
+            env_established.append(coord_note)
+            if coord_sig is not None:
+                sig.append(coord_sig)
+                pre_lines += coord_pre
+                lifted.append(env_coord)
+                used.add(coord_sig[1])
+                _lo, _hi = region[env_coord]
+                rendered_width[env_coord] = (_hi - _lo + 1) - len(
+                    {h for h in holes.get(env_coord, ()) if _lo <= h <= _hi})
+            coord_ident[env_coord] = coord_expr
+            coord_ident_abs[env_coord] = coord_expr
+        elif env_coord not in coord_ident:
+            coord_expr = observable_block_expr_for_r2(
+                body, call_i, ENV_CHEATCODE_RE[env_coord])
+            if coord_expr is not None:
+                coord_ident[env_coord] = coord_expr
+                coord_ident_abs[env_coord] = coord_expr
 
-    (body, call_i, block_num_est, block_num_sig, block_num_pre,
-     block_num_note) = establish_env_block_number(
-        body, call_i, region, holes, pins, used)
-    if block_num_est is not None:
-        env_established.append(block_num_note)
-        if block_num_sig is not None:
-            sig.append(block_num_sig)
-            pre_lines += block_num_pre
-            lifted.append("block.number")
-            used.add(block_num_sig[1])
-            _blo, _bhi = region["block.number"]
-            rendered_width["block.number"] = (_bhi - _blo + 1) - len(
-                {h for h in holes.get("block.number", ())
-                 if _blo <= h <= _bhi})
-            coord_ident["block.number"] = block_num_sig[1]
-            coord_ident_abs["block.number"] = block_num_sig[1]
+    for env_coord in ADDRESS_ENV_SETTERS:
+        (body, call_i, coord_est, coord_sig, coord_pre, coord_note,
+         coord_expr) = establish_addr_env(
+            body, call_i, region, holes, pins, used, env_coord)
+        if coord_est is not None:
+            other_env_established.append(coord_est)
+            env_established.append(coord_note)
+            if coord_sig is not None:
+                sig.append(coord_sig)
+                pre_lines += coord_pre
+                lifted.append(env_coord)
+                used.add(coord_sig[1])
+                _lo, _hi = region[env_coord]
+                rendered_width[env_coord] = (_hi - _lo + 1) - len(
+                    {h for h in holes.get(env_coord, ()) if _lo <= h <= _hi})
+            key_expr_of_candidate = coord_expr
+        elif env_coord not in coord_ident_abs:
+            key_expr_of_candidate = observable_address_env_expr_for_r2(
+                body, call_i, ENV_CHEATCODE_RE[env_coord])
         else:
-            block_number_value = (region["block.number"][0]
-                                  if "block.number" in region
-                                  else pins["block.number"])
-            coord_ident["block.number"] = str(block_number_value)
-            coord_ident_abs["block.number"] = coord_ident["block.number"]
-    elif "block.number" not in coord_ident:
-        block_number_value = observable_block_expr_for_r2(
-            body, call_i, _ROLL_RE)
-        if block_number_value is not None:
-            coord_ident["block.number"] = block_number_value
-            coord_ident_abs["block.number"] = block_number_value
-
-    (body, call_i, chainid_est, chainid_sig, chainid_pre,
-     chainid_note) = establish_env_chainid(
-        body, call_i, region, holes, pins, used)
-    if chainid_est is not None:
-        env_established.append(chainid_note)
-        if chainid_sig is not None:
-            sig.append(chainid_sig)
-            pre_lines += chainid_pre
-            lifted.append("block.chainid")
-            used.add(chainid_sig[1])
-            _clo, _chi = region["block.chainid"]
-            rendered_width["block.chainid"] = (_chi - _clo + 1) - len(
-                {h for h in holes.get("block.chainid", ())
-                 if _clo <= h <= _chi})
-            coord_ident["block.chainid"] = chainid_sig[1]
-            coord_ident_abs["block.chainid"] = chainid_sig[1]
-        else:
-            chainid_value = (region["block.chainid"][0]
-                             if "block.chainid" in region
-                             else pins["block.chainid"])
-            coord_ident["block.chainid"] = str(chainid_value)
-            coord_ident_abs["block.chainid"] = coord_ident["block.chainid"]
-    elif "block.chainid" not in coord_ident:
-        chainid_value = observable_block_expr_for_r2(
-            body, call_i, _CHAINID_RE)
-        if chainid_value is not None:
-            coord_ident["block.chainid"] = chainid_value
-            coord_ident_abs["block.chainid"] = chainid_value
+            key_expr_of_candidate = None
+        if key_expr_of_candidate is not None:
+            coord_ident_abs[env_coord] = (
+                f"uint256(uint160({key_expr_of_candidate}))")
+            coord_ident[env_coord] = key_expr_of_candidate
 
     call_line = body[call_i]
 
     env_refusals, env_unchecked = env_disagreements(
         body, call_i, call_line, region, pins,
-        established={e for e in (env_est, value_est, time_est, block_num_est,
-                                 chainid_est) if e})
+        established={e for e in ([env_est, value_est] + other_env_established)
+                     if e})
     if env_refusals:
         notes.append("the emitted case does not run in the certified "
                      "environment slice: " + "; ".join(env_refusals))
@@ -6152,8 +6208,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # from the raw draw.
     if env_sender_expr is not None:
         key_expr_of["msg.sender"] = env_sender_expr
-    for env_key in ("msg.value", "block.timestamp", "block.number",
-                    "block.chainid"):
+    for env_key in (["msg.value"] + list(NUMERIC_ENV_SETTERS) +
+                    list(ADDRESS_ENV_SETTERS)):
         if env_key in coord_ident:
             key_expr_of[env_key] = coord_ident[env_key]
 
