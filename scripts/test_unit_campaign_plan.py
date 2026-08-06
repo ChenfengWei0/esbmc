@@ -405,6 +405,21 @@ def test_campaign_accepts_strong_certification_without_runner_journal():
     return bad
 
 
+def test_campaign_can_plan_from_in_memory_schedule():
+    doc = unit_campaign_plan.plan_campaign_for_schedule(schedule_doc(), "<unit-schedule>",
+                                                        jobs=3)
+    bad = 0
+    bad += check(doc["schedule"] == "<unit-schedule>",
+                 f"in-memory schedule label is preserved: {doc['schedule']}")
+    bad += check(doc["summary"]["selected_attempt"] == 1
+                 and doc["summary"]["selected_jobs"] == 5,
+                 f"in-memory schedule is partitioned without a temp file: {doc['summary']}")
+    bad += check("--jobs" in doc["next_run"]["runner_argv"]
+                 and "3" in doc["next_run"]["runner_argv"],
+                 f"runner argv still carries worker count: {doc['next_run']}")
+    return bad
+
+
 TESTS = [
     test_campaign_partitions_attempts_and_auto_selects_earliest,
     test_campaign_can_emit_attempt_three_schedule_and_runner_argv,
@@ -414,6 +429,7 @@ TESTS = [
     test_campaign_uses_explicit_attempt_metadata_for_budget_state,
     test_campaign_retries_runner_ok_when_certification_is_weak,
     test_campaign_accepts_strong_certification_without_runner_journal,
+    test_campaign_can_plan_from_in_memory_schedule,
 ]
 
 if __name__ == "__main__":

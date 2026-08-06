@@ -733,6 +733,17 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   certified-path-rate threshold (default 0.70). Runner-ok jobs with missing or
   weak cert rows are scheduled for the next attempt, and strong historical cert
   rows can complete a job even without a runner journal.
+- `benchmark_pipeline_plan.py`: read-only top-level planner that stitches the
+  target manifest, unit manifest, unit-manifest gate, AST-preheat schedule,
+  unit schedule, campaign plan, and optional certification-result summary into
+  one auditable `veriput-benchmark-pipeline-plan/v1`. It never invokes solc,
+  Forge, fuzzing, ESBMC, or certification jobs. It requires an external
+  `--ast-cache-root` so prepared-subject AST writes are never implied, and it
+  writes child JSON documents only when `--out-dir` is explicitly supplied.
+  Without `--out-dir`, it keeps child docs in memory instead of writing
+  temporary files. Its `summary.next_action` is the intended first triage point:
+  `preheat-ast`, `run-unit-campaign`, `certification-ready-for-put`, or a
+  blocker-inspection action.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -845,6 +856,18 @@ Interpretation:
   blockers `no certification rows` and `no certified regions`,
   `certified_regions=0`, `missing_scheduled_units=0`; it did not create the
   external cache path.
+- Read-only benchmark pipeline smoke on 2026-08-06 used an empty external cache
+  path under `/tmp` and `--out-dir` under `/tmp`:
+  `benchmark_pipeline_plan.py --benchmark peer182 --benchmark bugfix124
+  --benchmark stress243 --ast-cache-root <tmp-cache> --out-dir <tmp-out>`.
+  It produced `targets=548`, unit manifest `missing_ast=509`, `error=39`,
+  `ok=0`, `pending_unit_hints=381`, `ast_preheat_jobs=508`, `unit_jobs=0`,
+  `campaign.selected_jobs=0`, and `summary.next_action.action=preheat-ast`.
+  The external AST cache directory was not created; only the requested child
+  JSON docs under `/tmp/<out>` were written, including the empty
+  `next-unit-schedule.json` campaign artifact. This is now the preferred single
+  read-only command for restoring the full benchmark denominator state after a
+  context compact.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 

@@ -50,16 +50,22 @@ def _apply_shard(items, shard):
 
 
 def _target_manifest_subjects(args):
-    if not args.target_manifest:
+    target_doc = getattr(args, "target_manifest_doc", None)
+    if target_doc is None and not args.target_manifest:
         return None
-    p = Path(args.target_manifest)
-    try:
-        doc = json.loads(p.read_text())
-    except json.JSONDecodeError as exc:
-        raise SubjectError(f"{p} is not valid JSON: {exc}") from exc
+    if target_doc is None:
+        p = Path(args.target_manifest)
+        try:
+            doc = json.loads(p.read_text())
+        except json.JSONDecodeError as exc:
+            raise SubjectError(f"{p} is not valid JSON: {exc}") from exc
+        source = str(p)
+    else:
+        doc = target_doc
+        source = getattr(args, "target_manifest", "") or "<in-memory target manifest>"
     if doc.get("schema") != "veriput-eval/target/v1":
         raise SubjectError(
-            f"{p} has unsupported schema {doc.get('schema')!r}")
+            f"{source} has unsupported schema {doc.get('schema')!r}")
     items = []
     for target in doc.get("targets") or []:
         if target.get("status") != "ok":
@@ -68,7 +74,7 @@ def _target_manifest_subjects(args):
         subject_id = target.get("subject_id")
         if not benchmark or not subject_id:
             raise SubjectError(
-                f"{p} has an ok target row without benchmark/subject_id")
+                f"{source} has an ok target row without benchmark/subject_id")
         try:
             subject = resolve_subject(
                 subject_id,

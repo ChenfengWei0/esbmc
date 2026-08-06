@@ -225,17 +225,19 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
     }
 
 
-def plan_campaign(schedule_path: str,
-                  *,
-                  journal_paths: list[str] | None = None,
-                  cert_jsonl_paths: list[str] | None = None,
-                  min_certified_path_rate: float = 0.70,
-                  attempt: int = 0,
-                  next_schedule_out: str = "",
-                  next_journal: str = "",
-                  jobs: int = 1,
-                  stop_on_failure: bool = False) -> dict:
-    schedule = _load_schedule(schedule_path)
+def plan_campaign_for_schedule(schedule: dict,
+                               schedule_label: str,
+                               *,
+                               journal_paths: list[str] | None = None,
+                               cert_jsonl_paths: list[str] | None = None,
+                               min_certified_path_rate: float = 0.70,
+                               attempt: int = 0,
+                               next_schedule_out: str = "",
+                               next_journal: str = "",
+                               jobs: int = 1,
+                               stop_on_failure: bool = False) -> dict:
+    if schedule.get("schema") != "veriput-unit-schedule/v1":
+        raise CampaignError(f"unsupported schedule schema {schedule.get('schema')!r}")
     journals = journal_paths or []
     cert_jsonls = cert_jsonl_paths or []
     cert_quality, bad_cert_lines = _cert_quality_by_unit(cert_jsonls, min_certified_path_rate)
@@ -331,7 +333,7 @@ def plan_campaign(schedule_path: str,
     return {
         "schema": "veriput-unit-campaign-plan/v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "schedule": schedule_path,
+        "schedule": schedule_label,
         "journals": journals,
         "cert_jsonls": cert_jsonls,
         "policy": {
@@ -369,6 +371,29 @@ def plan_campaign(schedule_path: str,
         "next_run": next_run,
         "next_schedule": next_schedule,
     }
+
+
+def plan_campaign(schedule_path: str,
+                  *,
+                  journal_paths: list[str] | None = None,
+                  cert_jsonl_paths: list[str] | None = None,
+                  min_certified_path_rate: float = 0.70,
+                  attempt: int = 0,
+                  next_schedule_out: str = "",
+                  next_journal: str = "",
+                  jobs: int = 1,
+                  stop_on_failure: bool = False) -> dict:
+    schedule = _load_schedule(schedule_path)
+    return plan_campaign_for_schedule(schedule,
+                                      schedule_path,
+                                      journal_paths=journal_paths,
+                                      cert_jsonl_paths=cert_jsonl_paths,
+                                      min_certified_path_rate=min_certified_path_rate,
+                                      attempt=attempt,
+                                      next_schedule_out=next_schedule_out,
+                                      next_journal=next_journal,
+                                      jobs=jobs,
+                                      stop_on_failure=stop_on_failure)
 
 
 def main() -> int:
