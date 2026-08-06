@@ -4528,12 +4528,14 @@ class EmittedFile:
 # target path, including its exit kind. Therefore an EXISTING low-level
 # `.call{value: ...}` may also take a bound fuzz parameter. The rewrite is kept
 # narrow: this driver does not invent a value option or change another call
-# shape. `tx.`/`block.` stay CHECKED because a test cannot set them at all.
+# shape. `block.timestamp` and `block.number` are similarly establishable with
+# Foundry cheatcodes; the remaining `tx.` and `block.` quantities stay checked
+# or refused because this driver has no sound way to set them.
 ENV_PREFIXES = ("msg.", "tx.", "block.")
 # Auto-derived environment coordinates must be realizable by the emitted test.
-# msg.value remains conditional on an existing value-bearing call; that final
+# msg.value remains conditional on an existing value-bearing call; the final
 # `block.timestamp` and `block.number` are also test-controlled: Foundry's
-# `vm.warp` and `vm.roll` set them for the next call frame. They must be
+# `vm.warp` and `vm.roll` set them before the next call frame. They must be
 # inserted before the governing `vm.prank`, because the prank is intentionally
 # kept as the last cheatcode before the target call.
 ESTABLISHABLE_ENV_COORDS = frozenset(

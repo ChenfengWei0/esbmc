@@ -7549,3 +7549,38 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 195/195 tests.
 - `git diff --check` passed.
+
+## 2026-08-06 Block env pins are established, not unchecked
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. Validation was Python-only.
+
+Finding:
+
+- Old roundtrip cache rows still showed `block.timestamp` / `block.number`
+  pins under `env_unchecked`, with a stale diagnostic that the driver could
+  compare only `msg.sender` and `msg.value`.
+- Current code already establishes timestamp/number with Foundry's
+  `vm.warp` / `vm.roll`; the missing piece was a regression test for the pin
+  path and an updated comment that no longer groups those two with unsupported
+  `tx.*` / other `block.*` quantities.
+
+Code shape:
+
+- Added a unit test showing pinned `block.timestamp` and `block.number` emit
+  `vm.warp(<pin>)` / `vm.roll(<pin>)`.
+- The same test checks that these pins do not add fuzz parameters and do not
+  remain in `env_unchecked`.
+- Updated the environment-establishment comment so future debugging does not
+  reason from the obsolete "all block env is unsettable" premise.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 196/196 tests.
+- `git diff --check` passed.

@@ -508,6 +508,31 @@ def test_block_number_point_is_established_with_roll():
     return bad
 
 
+def test_block_env_pins_are_established_with_cheatcodes():
+    """Pinned timestamp/number slices are established, not left unchecked."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={"block.timestamp": 42, "block.number": 7},
+        params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"block env pins emit instead of refusing: {notes}")
+    bad += check("    vm.warp(42);" in text,
+                 "pinned block.timestamp is established by vm.warp")
+    bad += check("    vm.roll(7);" in text,
+                 "pinned block.number is established by vm.roll")
+    bad += check(stats.get("env_unchecked") == [],
+                 f"established block pins do not remain unchecked: {stats}")
+    bad += check(stats["fuzz_params"] == 2,
+                 f"point block pins do not add fuzz params: {stats}")
+    return bad
+
+
 def test_block_number_range_is_fuzzed_with_roll():
     """A wide block-number region is a bounded fuzz parameter for vm.roll."""
     em, case = make_case()
@@ -8383,6 +8408,7 @@ def main():
               test_block_timestamp_point_is_established_with_warp,
               test_block_timestamp_range_is_fuzzed_with_warp,
               test_block_number_point_is_established_with_roll,
+              test_block_env_pins_are_established_with_cheatcodes,
               test_block_number_range_is_fuzzed_with_roll,
               test_return_rung_is_bound_and_asserted,
               test_return_rung_can_assert_a_scalar_entry_state_coord,
