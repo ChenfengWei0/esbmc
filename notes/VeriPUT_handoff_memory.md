@@ -5383,6 +5383,53 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 environment-coordinate source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- Environment-driven units often have their strongest postcondition in
+  `msg.sender` or `msg.value`, for example `owner = msg.sender`,
+  `paid = msg.value`, `total += msg.value`, and
+  `balances[msg.sender] += msg.value`.
+- These are source-priority candidates only when the environment coordinate is
+  already rendered in the certified region. The miner does not introduce hidden
+  `msg.*` assumptions; it only reuses region inputs that the harness already
+  exposes.
+- `msg.sender` is treated as an id endpoint. `msg.value` is treated as a
+  numeric endpoint or numeric delta. Mapping slots remain gated by the solc
+  storage-layout-derived `maps` table and the earlier exact slot-name recovery.
+- Fuzz is still only a cheap refutation layer. ESBMC remains the only
+  certification step for any source R2 candidate.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now recognizes `msg.sender` and `msg.value`
+  AST member accesses as coordinate terms when their kind matches the target
+  storage or return type and the coordinate appears in `rendered_coords`.
+- Direct scalar and exact mapping-slot assignments now mine:
+  `post == msg.sender`, `post == msg.value`, and
+  `post - pre == msg.value` for `+=`/`-=` style updates.
+- The same coordinate helper is shared by return-expression mining, so a
+  rendered `return msg.sender` or `return msg.value` can also be prioritized
+  when its declared return kind matches.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `155 test(s) ran, 155 declared in this module`.
+- `git diff --check` on the touched files passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:

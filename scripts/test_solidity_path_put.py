@@ -2703,6 +2703,113 @@ def test_source_R2_address_zero_assignments_prioritize_zero_endpoints():
     return bad
 
 
+def test_source_R2_environment_value_assignments_use_rendered_env_coords():
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+    msg_value = {"nodeType": "MemberAccess", "memberName": "value",
+                 "expression": {"nodeType": "Identifier", "name": "msg"},
+                 "typeDescriptions": {"typeString": "uint256"}}
+    bal_sender = {
+        "nodeType": "IndexAccess",
+        "baseExpression": {"nodeType": "Identifier",
+                           "referencedDeclaration": 13,
+                           "name": "bal"},
+        "indexExpression": msg_sender,
+        "typeDescriptions": {"typeString": "uint256"}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "owner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "paid",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "total",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "bal",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "pay",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "100:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 10,
+                                      "name": "owner"},
+                     "rightHandSide": msg_sender}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "120:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 11,
+                                      "name": "paid"},
+                     "rightHandSide": msg_value}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "140:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 12,
+                                      "name": "total"},
+                     "rightHandSide": msg_value}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "160:12:0",
+                     "leftHandSide": bal_sender,
+                     "rightHandSide": msg_value}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "pay", [], {"owner": (0, 0, 20),
+                                   "paid": (1, 0, 32),
+                                   "total": (2, 0, 32)},
+            [("msg.sender", "id", 20), ("msg.value", "num", None)],
+            arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
+            log=lambda _msg: None)
+        none, _none_evidence = source_assignment_r2_specs(
+            path, "C", "pay", [], {"owner": (0, 0, 20),
+                                   "paid": (1, 0, 32),
+                                   "total": (2, 0, 32)},
+            [], arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    owner_terms = [item["term"] for item in entries.get("owner", {}).get(
+        "equals", [])]
+    paid_terms = [item["term"] for item in entries.get("paid", {}).get(
+        "equals", [])]
+    total_deltas = entries.get("total", {}).get("deltas", [])
+    bal_deltas = entries.get("bal[msg.sender]", {}).get("deltas", [])
+    bad = 0
+    bad += check(owner_terms == [{"kind": "coord", "name": "msg.sender"}],
+                 f"owner = msg.sender is mined as an id endpoint: {entries}")
+    bad += check(paid_terms == [{"kind": "coord", "name": "msg.value"}],
+                 f"paid = msg.value is mined as a numeric endpoint: {entries}")
+    bad += check(len(total_deltas) == 1 and total_deltas[0]["lo"] ==
+                 {"kind": "coord", "name": "msg.value"},
+                 f"total += msg.value is mined as a delta: {total_deltas}")
+    bad += check(len(bal_deltas) == 1 and bal_deltas[0]["lo"] ==
+                 {"kind": "coord", "name": "msg.value"},
+                 f"bal[msg.sender] += msg.value is mined as a mapping delta: "
+                 f"{bal_deltas}")
+    bad += check(any("owner: post == msg.sender" in line for line in evidence),
+                 f"sender provenance is recorded: {evidence}")
+    bad += check(any("bal[msg.sender]: post - pre == msg.value" in line
+                     for line in evidence),
+                 f"mapping value provenance is recorded: {evidence}")
+    bad += check(none == [], f"unrendered environment coords are not mined: {none}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -5225,6 +5332,7 @@ def main():
               test_source_R2_unary_updates_prioritize_one_step_deltas,
               test_source_R2_delete_updates_prioritize_zero_endpoints,
               test_source_R2_address_zero_assignments_prioritize_zero_endpoints,
+              test_source_R2_environment_value_assignments_use_rendered_env_coords,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,

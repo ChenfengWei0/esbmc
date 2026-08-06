@@ -1234,6 +1234,40 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return {"kind": "literal", "value": "0"}, "address(0)"
         return None
 
+    def env_coord_name(n):
+        if not isinstance(n, dict) or n.get("nodeType") != "MemberAccess":
+            return None
+        member = n.get("memberName")
+        if member not in ("sender", "value"):
+            return None
+        base = n.get("expression")
+        if (isinstance(base, dict) and base.get("nodeType") == "Identifier"
+                and base.get("name") == "msg"):
+            return f"msg.{member}"
+        return None
+
+    def type_coord_kind(t):
+        t = _norm_ty(t)
+        if t == "bool":
+            return "bool"
+        if unsigned_ty(t):
+            return "num"
+        if t == "address" or t.startswith(("contract ", "interface ")):
+            return "id"
+        return None
+
+    def coord_term(n, expected_kind):
+        if expected_kind is None:
+            return None
+        ref = identifier_ref(n)
+        name = param_ids.get(ref)
+        if name and name in rendered_by_kind.get(expected_kind, set()):
+            return {"kind": "coord", "name": name}, name
+        env_name = env_coord_name(n)
+        if env_name and env_name in rendered_by_kind.get(expected_kind, set()):
+            return {"kind": "coord", "name": env_name}, env_name
+        return None
+
     def source_id():
         value = next_id[0]
         next_id[0] += 1
@@ -1290,6 +1324,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 and param_name in rendered_numeric
                 and unsigned_ty(param_tys.get(ref, ""))):
             return {"kind": "coord", "name": param_name}, param_name
+        env_name = env_coord_name(n)
+        if env_name == "msg.value" and env_name in rendered_numeric:
+            return {"kind": "coord", "name": env_name}, env_name
         return unitless_number_term(n)
 
     def self_ref(n, state_id):
@@ -1376,13 +1413,6 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if isinstance(ref, int):
                     return_ids.add(ref)
 
-    def coord_term(n, expected_kind):
-        ref = identifier_ref(n)
-        name = param_ids.get(ref)
-        if name and name in rendered_by_kind.get(expected_kind, set()):
-            return {"kind": "coord", "name": name}, name
-        return None
-
     def return_term(n, expected_kind):
         if expected_kind == "bool":
             literal = literal_term(n, "bool")
@@ -1456,6 +1486,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     add_equals_candidate(
                         slot_name, {"kind": "coord", "name": param_name},
                         param_name, n.get("src"))
+                coord = coord_term(rhs, type_coord_kind(slot_ty))
+                if slot_name and coord is not None:
+                    add_equals_candidate(slot_name, coord[0], coord[1],
+                                         n.get("src"))
                 literal = literal_term(rhs, slot_ty)
                 if slot_name and literal is not None:
                     add_equals_candidate(slot_name, literal[0], literal[1],
@@ -1477,6 +1511,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     add_equals_candidate(
                         state_name, {"kind": "coord", "name": param_name},
                         param_name, n.get("src"))
+                coord = coord_term(rhs, type_coord_kind(state_ty))
+                if state_name and coord is not None:
+                    add_equals_candidate(state_name, coord[0], coord[1],
+                                         n.get("src"))
                 literal = literal_term(rhs, state_ty)
                 if state_name and literal is not None:
                     add_equals_candidate(state_name, literal[0], literal[1],
