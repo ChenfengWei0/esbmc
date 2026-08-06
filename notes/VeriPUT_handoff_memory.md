@@ -23,6 +23,12 @@ Context:
   prepared subjects because schedule jobs used population names such as
   `bugfix124`, while `certify_all.py` rows use the prepared `benchmark_key`,
   e.g. `bugfix124__acfix_fixlink_DepositLog`.
+- A follow-up budget-clean smoke attempt under
+  `/tmp/veriput_budgetclean_v10_20260806_214230` showed one more
+  infrastructure issue: `certify_all.py --workdir` defaulted to
+  `/tmp/certify_all`, so the same unit under a new budget/recipe refused to
+  reuse stale scratch artefacts from an older configuration. Those
+  `DRIVER-REFUSED [workdir]` rows are not method results.
 
 Code change:
 
@@ -34,6 +40,10 @@ Code change:
   attempt 1 = `60s/8GiB`, attempt 2 = `120s/8GiB`,
   attempt 3 = `600s/10GiB`. The runner still carries the same outer timeout and
   memory cap as a process-level guard.
+- Schedules now also embed `--workdir`. With `--cert-out`, the scratch root is
+  derived from the result file's parent and the budget; campaign retry schedules
+  add the attempt number. This keeps different budgets from colliding in
+  `/tmp/certify_all`.
 - `unit_schedule_run.py` now decodes timeout stdout/stderr tails before writing
   the JSONL journal, so a timed-out job remains resumable and auditable.
 - `certify_result_summary.py` now matches schedule jobs through prepared

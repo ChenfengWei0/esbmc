@@ -239,6 +239,15 @@ def test_runner_refuses_protected_write_paths_and_negative_memlimit():
                     ast_cache_root="/home/samson/workspace/VeriPUT/Results/ast-cache")
             ],
         }
+        bad_workdir_job = job("peer182__repo__C__f", ok)
+        bad_workdir_job["certify_argv"] += [
+            "--workdir",
+            "/home/samson/workspace/VeriPUT/Results/work",
+        ]
+        bad_workdir_sched = {
+            "schema": "veriput-unit-schedule/v1",
+            "jobs": [bad_workdir_job],
+        }
         try:
             unit_schedule_run.dry_run_doc(bad_sched)
         except unit_schedule_run.UnitRunError as exc:
@@ -251,6 +260,12 @@ def test_runner_refuses_protected_write_paths_and_negative_memlimit():
             refused_cache = str(exc)
         else:
             refused_cache = ""
+        try:
+            unit_schedule_run.dry_run_doc(bad_workdir_sched)
+        except unit_schedule_run.UnitRunError as exc:
+            refused_workdir = str(exc)
+        else:
+            refused_workdir = ""
         try:
             unit_schedule_run.run_schedule(schedule(ok),
                                            journal=protected,
@@ -273,6 +288,8 @@ def test_runner_refuses_protected_write_paths_and_negative_memlimit():
                  f"protected certify output is refused: {refused_out}")
     bad += check("--ast-cache-root must not be under" in refused_cache,
                  f"protected AST cache is refused: {refused_cache}")
+    bad += check("--workdir must not be under" in refused_workdir,
+                 f"protected workdir is refused: {refused_workdir}")
     bad += check("--journal must not be under" in refused_journal,
                  f"protected unit journal is refused: {refused_journal}")
     bad += check("--memlimit-gb" in refused_mem,

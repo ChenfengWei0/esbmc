@@ -95,6 +95,7 @@ def _validate_job(job: dict):
     try:
         ensure_path_not_protected("--ast-cache-root", argv_value(argv, "--ast-cache-root"))
         ensure_path_not_protected("--out", argv_value(argv, "--out"))
+        ensure_path_not_protected("--workdir", argv_value(argv, "--workdir"))
     except ValueError as exc:
         raise UnitRunError(f"job {job.get('job_id')!r}: {exc}") from exc
     for flag in ("--subject-dir", "--unit"):

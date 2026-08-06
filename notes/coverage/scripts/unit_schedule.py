@@ -30,6 +30,7 @@ BUDGET_VALUE_FLAGS = {
     "--run-timeout",
     "--memlimit-gib",
 }
+REPLACEABLE_VALUE_FLAGS = BUDGET_VALUE_FLAGS | {"--workdir"}
 
 
 class ScheduleError(ValueError):
@@ -81,11 +82,28 @@ def _append_budget(argv: list[str], flag: str, value: int) -> None:
         argv.extend([flag, str(value)])
 
 
+def default_workdir_root(cert_out: str,
+                         *,
+                         timeout_s: int = DEFAULT_TIMEOUT_S,
+                         run_timeout_s: int = DEFAULT_RUN_TIMEOUT_S,
+                         memlimit_gib: int = DEFAULT_MEMLIMIT_GIB,
+                         attempt: int = 0) -> str:
+    suffix = f"t{timeout_s}_r{run_timeout_s}_m{memlimit_gib}"
+    if attempt:
+        suffix = f"a{attempt}_{suffix}"
+    if cert_out:
+        return str(Path(cert_out).expanduser().resolve().parent /
+                   f"certify-work-{suffix}")
+    recipe = STRONG_RECIPE_VERSION.replace("/", "_")
+    return f"/tmp/certify_all/{recipe}/{suffix}"
+
+
 def budgeted_certify_argv(argv: list[str],
                           *,
                           timeout_s: int = 0,
                           run_timeout_s: int = 0,
-                          memlimit_gib: int = 0) -> list[str]:
+                          memlimit_gib: int = 0,
+                          workdir: str | None = None) -> list[str]:
     """Return argv with a single authoritative certify_all budget."""
 
     filtered = []
@@ -94,19 +112,21 @@ def budgeted_certify_argv(argv: list[str],
         if skip_next:
             skip_next = False
             continue
-        if item in BUDGET_VALUE_FLAGS:
+        if item in REPLACEABLE_VALUE_FLAGS and (item != "--workdir" or workdir is not None):
             skip_next = True
             continue
         filtered.append(item)
     _append_budget(filtered, "--timeout", timeout_s)
     _append_budget(filtered, "--run-timeout", run_timeout_s)
     _append_budget(filtered, "--memlimit-gib", memlimit_gib)
+    if workdir:
+        filtered.extend(["--workdir", workdir])
     return filtered
 
 
 def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path: str | None,
                   dry_run: bool, *, timeout_s: int, run_timeout_s: int,
-                  memlimit_gib: int) -> list[str]:
+                  memlimit_gib: int, workdir: str) -> list[str]:
     argv = [
         sys.executable,
         str(CERTIFY_ALL),
@@ -125,7 +145,8 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
     argv = budgeted_certify_argv(argv,
                                  timeout_s=timeout_s,
                                  run_timeout_s=run_timeout_s,
-                                 memlimit_gib=memlimit_gib)
+                                 memlimit_gib=memlimit_gib,
+                                 workdir=workdir)
     if dry_run:
         argv.append("--dry-run")
     return argv
@@ -148,7 +169,8 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None) -> tuple
 
 def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None,
                   out_path: str | None, unit_info: dict | None, *,
-                  timeout_s: int, run_timeout_s: int, memlimit_gib: int) -> dict:
+                  timeout_s: int, run_timeout_s: int, memlimit_gib: int,
+                  workdir: str) -> dict:
     subject = dict(row["subject"])
     subject["unit"] = unit
     hinted = set((row.get("unit_hints") or {}).get("hinted_units") or [])
@@ -172,6 +194,7 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
             "timeout_s": timeout_s or None,
             "run_timeout_s": run_timeout_s or None,
             "memlimit_gib": memlimit_gib or None,
+            "workdir": workdir or None,
         },
         "certify_argv": _certify_argv(subject,
                                       unit,
@@ -180,7 +203,8 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                                       dry_run=False,
                                       timeout_s=timeout_s,
                                       run_timeout_s=run_timeout_s,
-                                      memlimit_gib=memlimit_gib),
+                                      memlimit_gib=memlimit_gib,
+                                      workdir=workdir),
         "dry_run_argv": _certify_argv(subject,
                                       unit,
                                       ast_cache_root,
@@ -188,7 +212,8 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                                       dry_run=True,
                                       timeout_s=timeout_s,
                                       run_timeout_s=run_timeout_s,
-                                      memlimit_gib=memlimit_gib),
+                                      memlimit_gib=memlimit_gib,
+                                      workdir=workdir),
     }
 
 
@@ -199,18 +224,24 @@ def build_schedule(manifest: dict,
                    cert_out: str = "",
                    timeout_s: int = DEFAULT_TIMEOUT_S,
                    run_timeout_s: int = DEFAULT_RUN_TIMEOUT_S,
-                   memlimit_gib: int = DEFAULT_MEMLIMIT_GIB) -> dict:
+                   memlimit_gib: int = DEFAULT_MEMLIMIT_GIB,
+                   workdir: str = "") -> dict:
     if manifest.get("schema") != "veriput-unit-manifest/v1":
         raise ScheduleError(f"unsupported schema {manifest.get('schema')!r}; expected "
                             "veriput-unit-manifest/v1")
     timeout_s = _validate_budget("--timeout", timeout_s)
     run_timeout_s = _validate_budget("--run-timeout", run_timeout_s)
     memlimit_gib = _validate_budget("--memlimit-gib", memlimit_gib)
+    workdir = workdir or default_workdir_root(cert_out,
+                                              timeout_s=timeout_s,
+                                              run_timeout_s=run_timeout_s,
+                                              memlimit_gib=memlimit_gib)
 
     ast_cache_root = manifest.get("ast_cache_root") or None
     try:
         ensure_path_not_protected("--ast-cache-root", ast_cache_root)
         ensure_path_not_protected("--cert-out", cert_out)
+        ensure_path_not_protected("--workdir", workdir)
     except ValueError as exc:
         raise ScheduleError(str(exc)) from exc
     jobs = []
@@ -257,7 +288,8 @@ def build_schedule(manifest: dict,
                                       cert_out or None, infos.get(unit),
                                       timeout_s=timeout_s,
                                       run_timeout_s=run_timeout_s,
-                                      memlimit_gib=memlimit_gib))
+                                      memlimit_gib=memlimit_gib,
+                                      workdir=workdir))
 
     shard_spec = _parse_shard(shard)
     total_jobs = len(jobs)
@@ -283,11 +315,13 @@ def build_schedule(manifest: dict,
         "shard": shard or None,
         "limit": limit or None,
         "cert_out": cert_out or None,
+        "workdir": workdir or None,
         "recipe_version": STRONG_RECIPE_VERSION,
         "certification_budget": {
             "timeout_s": timeout_s or None,
             "run_timeout_s": run_timeout_s or None,
             "memlimit_gib": memlimit_gib or None,
+            "workdir": workdir or None,
         },
         "summary": {
             "jobs": len(jobs),
@@ -329,6 +363,10 @@ def main() -> int:
                     type=int,
                     default=DEFAULT_MEMLIMIT_GIB,
                     help="certify_all.py per-ESBMC memory budget to embed in every job")
+    ap.add_argument("--workdir",
+                    default="",
+                    help="certify_all.py scratch root to embed. Default derives from --cert-out "
+                    "and the budget.")
     ap.add_argument("--out", default="", help="write JSON schedule here. Without it, print stdout")
     args = ap.parse_args()
     try:
@@ -339,7 +377,8 @@ def main() -> int:
                              cert_out=args.cert_out,
                              timeout_s=args.timeout,
                              run_timeout_s=args.run_timeout,
-                             memlimit_gib=args.memlimit_gib)
+                             memlimit_gib=args.memlimit_gib,
+                             workdir=args.workdir)
     except ScheduleError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 1

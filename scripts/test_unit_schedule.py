@@ -135,10 +135,13 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
                  and argv_value(argv, "--run-timeout") == "60"
                  and argv_value(argv, "--memlimit-gib") == "8",
                  f"schedule embeds the first-attempt certify budget: {argv}")
+    bad += check(argv_value(argv, "--workdir") == "/tmp/certify_all/veriput-strong_10/t60_r60_m8",
+                 f"schedule embeds a recipe/budget-specific scratch root: {argv}")
     bad += check(hinted["certification_budget"] == {
         "timeout_s": 60,
         "run_timeout_s": 60,
         "memlimit_gib": 8,
+        "workdir": "/tmp/certify_all/veriput-strong_10/t60_r60_m8",
     }, f"job records the embedded certify budget: {hinted['certification_budget']}")
     bad += check("--dry-run" not in argv and "--dry-run" in hinted["dry_run_argv"],
                  f"normal and dry-run argv are separate: {hinted}")
@@ -150,6 +153,7 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
         "timeout_s": 60,
         "run_timeout_s": 60,
         "memlimit_gib": 8,
+        "workdir": "/tmp/certify_all/veriput-strong_10/t60_r60_m8",
     }, f"schedule records the default certification budget: {doc['certification_budget']}")
     return bad
 
@@ -237,6 +241,9 @@ def test_schedule_cli_reads_stdin_and_applies_limit():
                  and argv_value(job["certify_argv"], "--run-timeout") == "30"
                  and argv_value(job["certify_argv"], "--memlimit-gib") == "10",
                  f"CLI budget flags are threaded into certify argv: {job['certify_argv']}")
+    bad += check(argv_value(job["certify_argv"], "--workdir")
+                 == str(Path(td) / "certify-work-t120_r30_m10"),
+                 f"CLI cert-out derives an isolated workdir: {job['certify_argv']}")
     return bad
 
 
@@ -271,6 +278,13 @@ def test_schedule_refuses_protected_write_paths():
         refused_cache = str(exc)
     else:
         refused_cache = ""
+    try:
+        unit_schedule.build_schedule(
+            manifest(), workdir="/home/samson/workspace/VeriPUT/Results/work")
+    except unit_schedule.ScheduleError as exc:
+        refused_work = str(exc)
+    else:
+        refused_work = ""
     cp = subprocess.run([
         sys.executable,
         str(ROOT / "notes" / "coverage" / "scripts" / "unit_schedule.py"),
@@ -286,6 +300,8 @@ def test_schedule_refuses_protected_write_paths():
                  f"protected cert output is refused: {refused_cert}")
     bad += check("--ast-cache-root must not be under" in refused_cache,
                  f"protected AST cache is refused: {refused_cache}")
+    bad += check("--workdir must not be under" in refused_work,
+                 f"protected workdir is refused: {refused_work}")
     bad += check(cp.returncode != 0 and "--out must not be under" in cp.stderr,
                  f"protected unit schedule output is refused: {cp.stderr.strip()}")
     return bad

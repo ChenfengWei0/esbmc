@@ -199,25 +199,44 @@ def _cmd(argv: list[str]) -> str:
     return shlex.join(str(arg) for arg in argv)
 
 
+def _argv_value(argv: list[str], flag: str) -> str:
+    try:
+        idx = argv.index(flag)
+    except ValueError:
+        return ""
+    if idx + 1 >= len(argv):
+        return ""
+    return argv[idx + 1]
+
+
 def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[dict]:
     if not attempt_cfg:
         return [copy.deepcopy(job) for job in jobs]
+    attempt = int(attempt_cfg["attempt"])
     timeout_s = int(attempt_cfg["timeout_s"])
     memlimit_gib = int(attempt_cfg["memlimit_gb"])
     budgeted = []
     for job in jobs:
         item = copy.deepcopy(job)
+        out_path = _argv_value([str(arg) for arg in item.get("certify_argv") or []], "--out")
+        workdir = unit_schedule.default_workdir_root(out_path,
+                                                     timeout_s=timeout_s,
+                                                     run_timeout_s=timeout_s,
+                                                     memlimit_gib=memlimit_gib,
+                                                     attempt=attempt)
         item["certify_argv"] = unit_schedule.budgeted_certify_argv(
             [str(arg) for arg in item.get("certify_argv") or []],
             timeout_s=timeout_s,
             run_timeout_s=timeout_s,
-            memlimit_gib=memlimit_gib)
+            memlimit_gib=memlimit_gib,
+            workdir=workdir)
         if "dry_run_argv" in item:
             dry = unit_schedule.budgeted_certify_argv(
                 [str(arg) for arg in item.get("dry_run_argv") or []],
                 timeout_s=timeout_s,
                 run_timeout_s=timeout_s,
-                memlimit_gib=memlimit_gib)
+                memlimit_gib=memlimit_gib,
+                workdir=workdir)
             if "--dry-run" not in dry:
                 dry.append("--dry-run")
             item["dry_run_argv"] = dry
@@ -225,6 +244,7 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
             "timeout_s": timeout_s,
             "run_timeout_s": timeout_s,
             "memlimit_gib": memlimit_gib,
+            "workdir": workdir,
         }
         budgeted.append(item)
     return budgeted
@@ -253,6 +273,8 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
         "shard": base_schedule.get("shard"),
         "limit": base_schedule.get("limit"),
         "cert_out": base_schedule.get("cert_out"),
+        "workdir": (budgeted_jobs[0].get("certification_budget") or {}).get("workdir")
+        if budgeted_jobs else None,
         "summary": {
             "jobs": len(budgeted_jobs),
             "jobs_before_campaign_filter": len(base_schedule.get("jobs") or []),
@@ -262,6 +284,8 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
             "certify_timeout_s": int(timeout_s) if timeout_s else None,
             "certify_run_timeout_s": int(timeout_s) if timeout_s else None,
             "certify_memlimit_gib": int(memlimit_gb) if memlimit_gb else None,
+            "certify_workdir": (budgeted_jobs[0].get("certification_budget")
+                                or {}).get("workdir") if budgeted_jobs else None,
             "by_benchmark": dict(sorted(by_benchmark.items())),
             "by_priority": dict(sorted(by_priority.items())),
         },
