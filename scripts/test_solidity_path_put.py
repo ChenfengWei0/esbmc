@@ -3656,6 +3656,87 @@ def test_source_R2_mapping_constant_keys_fold_to_safe_slot_literals():
     return bad
 
 
+def test_source_R2_enum_mapping_keys_use_same_typed_params():
+    from solidity_path_put import (RETURN_VAR, map_key_type_ok,  # noqa: E402
+                                   propose_slot_vars, r2_term_text,
+                                   source_assignment_r2_specs)
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def index(base_ref, base_name, key, ty="uint256"):
+        return {"nodeType": "IndexAccess",
+                "baseExpression": ident(base_ref, base_name),
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    by_status = index(10, "byStatus", ident(21, "s", "enum C.Status"))
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "EnumDefinition", "id": 2, "name": "Status",
+             "members": [{"nodeType": "EnumValue", "id": 3, "name": "Open"},
+                         {"nodeType": "EnumValue", "id": 4, "name": "Closed"}]},
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "byStatus",
+             "stateVariable": True,
+             "typeDescriptions": {
+                 "typeString": "mapping(enum C.Status => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "s",
+                  "typeDescriptions": {"typeString": "enum C.Status"}},
+                 {"id": 22, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "returnParameters": {"parameters": [
+                 {"id": 23, "name": "",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=", "src": "100:8:0",
+                     "leftHandSide": by_status,
+                     "rightHandSide": ident(22, "amount")}},
+                 {"nodeType": "Return", "src": "120:8:0",
+                  "expression": by_status}]}}
+        ]}]}
+    maps = {"byStatus": (5, "enum C.Status", 32, 0, "byStatus", None)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "touch",
+            [("s", "enum C.Status"), ("amount", "uint256")], {},
+            [("s", "id", None), ("amount", "num", None)], arity=2,
+            rettypes=[("", "uint256")], maps=maps, log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    def equals(name):
+        return [r2_term_text(item["term"])
+                for item in entries.get(name, {}).get("equals", [])]
+
+    bad = 0
+    bad += check(map_key_type_ok("enum C.Status"),
+                 "enum mapping keys are storage-layout-safe value keys")
+    bad += check(not map_key_type_ok("bytes"),
+                 "dynamic bytes mapping keys remain refused")
+    bad += check(propose_slot_vars(
+        maps, [("s", "enum C.Status"), ("other", "enum C.Other")],
+        log=lambda _msg: None) == ["byStatus[s]"],
+        "slot proposer uses only same-typed enum parameters")
+    bad += check(equals("byStatus[s]") == ["amount"],
+                 f"enum-key mapping assignment is mined: {entries}")
+    bad += check(equals(RETURN_VAR) == ["state.byStatus[s]"],
+                 f"enum-key mapping return is mined: {entries}")
+    bad += check(any("byStatus[s]: post == amount" in line
+                     for line in evidence),
+                 f"enum-key mapping provenance is recorded: {evidence}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -7046,6 +7127,7 @@ def main():
               test_source_R2_constant_identifiers_prioritize_literal_endpoints,
               test_source_R2_mapping_literal_keys_are_named_when_slot_safe,
               test_source_R2_mapping_constant_keys_fold_to_safe_slot_literals,
+              test_source_R2_enum_mapping_keys_use_same_typed_params,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_source_R2_return_type_conversion_wrappers_are_unwrapped,
               test_source_R2_local_aliases_feed_return_state_and_mapping_terms,

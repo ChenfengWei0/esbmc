@@ -3171,7 +3171,13 @@ def bind_return(call_line, unit, decl_type, var):
 # Using the wrong one produces a perfectly well-formed read of a slot nothing
 # wrote, i.e. a green assertion about an unrelated quantity. Rather than encode
 # both rules, the dynamic-key case is refused by name.
-MAP_KEY_OK = re.compile(r"^(?:u?int(?:\d+)?|address|bool|bytes(?:[12]?\d|3[0-2])?)$")
+MAP_KEY_OK = re.compile(
+    r"^(?:u?int(?:\d+)?|address|bool|bytes(?:[1-9]|[12]\d|3[0-2])|"
+    r"enum\s+.+)$")
+
+
+def map_key_type_ok(label):
+    return MAP_KEY_OK.match((label or "").strip()) is not None
 
 # ---- ONE SLOT-NAME PARSER, USED BY BOTH SITES -----------------------------
 #
@@ -3466,7 +3472,7 @@ def storage_layout(project, contract):
             # dynamic key anywhere in the chain makes the whole address
             # uncomputable by `abi.encode`, and computing it anyway would name
             # a word nothing wrote.
-            if not all(MAP_KEY_OK.match((k or "").strip()) for k in kts):
+            if not all(map_key_type_ok(k) for k in kts):
                 continue
             try:
                 # One level keeps the plain string, so every reader that has

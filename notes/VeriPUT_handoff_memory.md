@@ -8,6 +8,52 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 enum mapping-key source-R2
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- R2 endpoint typing already treats enums as identity coordinates, so enum
+  parameters can be lifted and carried through PUT signatures.
+- The storage-layout mapping key whitelist still rejected solc labels such as
+  `enum C.Status`, so `mapping(Status => uint256)` slots never reached
+  `maps`, slot proposals, source-R2 candidates, or the PUT renderer.
+- The same whitelist also accidentally accepted dynamic `bytes`, despite the
+  adjacent comment explaining why dynamic mapping keys must not be addressed
+  with `abi.encode`.
+
+Code change:
+
+- Added `map_key_type_ok()` and allowed solc enum key labels in the value-type
+  mapping-key whitelist.
+- Tightened the `bytes` branch to admit only fixed `bytes1` through `bytes32`;
+  dynamic `bytes` remains refused because its storage-key hashing rule is not
+  the value-type `abi.encode(key, slot)` rule used by the PUT slot oracle.
+- No special renderer path was needed: existing `slot_key_expr()` accepts a
+  declared parameter and `map_slot_expr()` emits `abi.encode(param, slot)`,
+  which is the correct value-type key rule for enum parameters.
+- The synthetic AST ground truth now checks that
+  `mapping(enum C.Status => uint256) byStatus; byStatus[s] = amount; return
+  byStatus[s];` yields `byStatus[s]: post == amount` and
+  `return == state.byStatus[s]`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 173/173 tests.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed before this note update.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 nested mapping storage alias source-R2
 
 Scope and constraint:
