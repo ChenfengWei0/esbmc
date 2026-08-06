@@ -323,6 +323,39 @@ Current attempt status:
 - Only the 600s/10GiB tier remains for this POC, and there is no need to spend
   it unless the fixture/model strategy changes.
 
+## P19 ReturnShapes
+
+Source: `notes/coverage/poc/P19_ReturnShapes.sol`
+
+Ground truth:
+
+- These are pure functions with no storage dependencies. A strong PUT cannot
+  rely on state R1; it needs a return-value oracle.
+- `tern_lit(x,y)` has two path regions, `x > y` and `x <= y`, with expected
+  return leaves `10` and `20`.
+- `sc_lit(x,y)` has boolean return regions over the short-circuit decision.
+  Expected source candidates are `return == false` and `return == true`; only
+  the path-compatible one should survive fuzz/ESBMC.
+- `tern_call(x,y)` has four return leaves from the inlined helpers:
+  `1`, `2`, `3`, and `4`.
+- `tern_nested(x,y)` has three return leaves: `1`, `2`, and `3`.
+- `cond_call(x)` compares the two inlined helper returns and should use a bool
+  return oracle, not state R1.
+
+Current static status:
+
+- Existing P19 `put.json` rows under `notes/coverage/put_roundtrip/_wd` are
+  stale no-oracle artifacts from before strong/source return R2 was wired in.
+- Read-only current-code source-R2 smoke over `P19_ReturnShapes.solast` now
+  proposes:
+  `tern_lit -> return == 10/20`,
+  `sc_lit -> return == 0/1`,
+  `tern_call -> return == 3/4/1/2`,
+  `tern_nested -> return == 1/2/3`, and
+  `cond_call -> return == 0/1`.
+- This is candidate generation only. Fuzz can refute wrong leaves quickly, but
+  ESBMC must certify the surviving return assertion before the PUT counts.
+
 ## St1inch
 
 Source: `notes/coverage/poc_units/st1inch_St1inch__St1inch__setFeeReceiver/inputs/st1inch__St1inch.flat.sol`

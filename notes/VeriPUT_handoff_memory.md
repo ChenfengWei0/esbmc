@@ -7081,3 +7081,50 @@ Verification:
   passed.
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
+## 2026-08-06 conditional return source-R2 leaves
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Ground truth:
+
+- Existing `P19_ReturnShapes.*` weak PUT artefacts are stale but diagnostic:
+  they are fuzzed pure-function paths with no state dependencies and no oracle,
+  because the assertion ladder reported no state-variable candidate.
+- The expected strong oracle is a return-value assertion. For path-specific
+  regions, candidates such as `return == 10`, `return == 20`, or boolean
+  `return == true/false` are cheap hypotheses; fuzz may refute the wrong side
+  and ESBMC must certify any survivor.
+
+Code shape:
+
+- `source_assignment_r2_specs()` now unwraps single-component
+  `TupleExpression` return nodes, which matches solc's parenthesized nested
+  conditional AST shape.
+- Numeric `Conditional` return expressions enumerate candidate terms from both
+  branches, recursively, rather than failing the whole return expression.
+- Nontrivial bool return expressions with boolean AST type, such as
+  short-circuit `&&` and comparisons over helper calls, propose both literal
+  endpoints `false` and `true`.
+- This does not make the proposer path-aware and does not count either literal
+  as proof. It only makes the candidate set expressive enough for the existing
+  Forge refuter and ESBMC certification pass.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 184/184 tests.
+- Read-only real-AST smoke over `notes/coverage/poc/P19_ReturnShapes.solast`
+  now reports source-R2 candidates:
+  `tern_lit -> return == 10/20`,
+  `sc_lit -> return == 0/1`,
+  `tern_call -> return == 3/4/1/2`,
+  `tern_nested -> return == 1/2/3`, and
+  `cond_call -> return == 0/1`.

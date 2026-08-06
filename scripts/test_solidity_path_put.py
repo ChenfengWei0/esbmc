@@ -4495,6 +4495,117 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
     return bad
 
 
+def test_source_R2_return_conditionals_expose_leaf_candidates():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value),
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def bool_expr(op, lhs, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "bool"}}
+
+    def cond(t_expr, f_expr):
+        return {"nodeType": "Conditional",
+                "condition": bool_expr(">", ident(21, "x"), ident(22, "y")),
+                "trueExpression": t_expr, "falseExpression": f_expr,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def ret(expr):
+        return {"nodeType": "Return", "src": "100:10:0",
+                "expression": expr}
+
+    def function(fid, name, returns, body_expr):
+        return {"nodeType": "FunctionDefinition", "id": fid, "name": name,
+                "parameters": {"parameters": [
+                    {"id": 21, "name": "x",
+                     "typeDescriptions": {"typeString": "uint256"}},
+                    {"id": 22, "name": "y",
+                     "typeDescriptions": {"typeString": "uint256"}}]},
+                "returnParameters": {"parameters": [{
+                    "id": fid + 1, "name": "",
+                    "typeDescriptions": {"typeString": returns}}]},
+                "body": {"nodeType": "Block", "statements": [
+                    ret(body_expr)]}}
+
+    nested = cond({
+        "nodeType": "TupleExpression",
+        "components": [cond(num(1), num(2))],
+        "typeDescriptions": {"typeString": "uint256"},
+    }, num(3))
+    logic = bool_expr(
+        "&&",
+        bool_expr(">", ident(21, "x"), num(10)),
+        bool_expr("<", ident(22, "y"), num(5)))
+    compare = bool_expr(">", ident(21, "x"), ident(22, "y"))
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            function(30, "tern", "uint256", cond(num(10), num(20))),
+            function(40, "nested", "uint256", nested),
+            function(50, "logic", "bool", logic),
+            function(60, "compare", "bool", compare),
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        tern, tern_evidence = source_assignment_r2_specs(
+            path, "C", "tern", [("x", "uint256"), ("y", "uint256")], {},
+            [("x", "num", None), ("y", "num", None)], arity=2,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
+        nested_specs, nested_evidence = source_assignment_r2_specs(
+            path, "C", "nested", [("x", "uint256"), ("y", "uint256")],
+            {}, [("x", "num", None), ("y", "num", None)], arity=2,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
+        logic_specs, _logic_evidence = source_assignment_r2_specs(
+            path, "C", "logic", [("x", "uint256"), ("y", "uint256")],
+            {}, [("x", "num", None), ("y", "num", None)], arity=2,
+            rettypes=[("", "bool")], log=lambda _msg: None)
+        compare_specs, _compare_evidence = source_assignment_r2_specs(
+            path, "C", "compare", [("x", "uint256"), ("y", "uint256")],
+            {}, [("x", "num", None), ("y", "num", None)], arity=2,
+            rettypes=[("", "bool")], log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    def return_equals(specs):
+        entry = next((entry for entry in specs[0]["vars"]
+                      if entry["name"] == RETURN_VAR), {}) if specs else {}
+        return [r2_term_text(item["term"])
+                for item in entry.get("equals", [])]
+
+    bad = 0
+    bad += check(return_equals(tern) == ["10", "20"],
+                 f"plain ternary return leaves are candidates: {tern}")
+    bad += check(return_equals(nested_specs) == ["1", "2", "3"],
+                 f"nested ternary return leaves are candidates: "
+                 f"{nested_specs}")
+    bad += check(return_equals(logic_specs) == ["0", "1"],
+                 f"bool short-circuit return gets true/false candidates: "
+                 f"{logic_specs}")
+    bad += check(return_equals(compare_specs) == ["0", "1"],
+                 f"bool comparison return gets true/false candidates: "
+                 f"{compare_specs}")
+    bad += check(any("return: return == 10" in line
+                     for line in tern_evidence),
+                 f"ternary provenance records a source return: "
+                 f"{tern_evidence}")
+    bad += check(any("return: return == 3" in line
+                     for line in nested_evidence),
+                 f"nested ternary provenance records the false leaf: "
+                 f"{nested_evidence}")
+    return bad
+
+
 def test_source_R2_return_type_conversion_wrappers_are_unwrapped():
     from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
     from solidity_path_put import source_assignment_r2_specs  # noqa: E402
@@ -7917,6 +8028,7 @@ def main():
               test_source_R2_enum_mapping_keys_use_same_typed_params,
               test_source_R2_enum_state_literals_fold_to_ordinals,
               test_source_R2_return_candidates_prioritize_return_expressions,
+              test_source_R2_return_conditionals_expose_leaf_candidates,
               test_source_R2_return_type_conversion_wrappers_are_unwrapped,
               test_source_R2_local_aliases_feed_return_state_and_mapping_terms,
               test_source_R2_local_aliases_are_invalidated_after_mutation,

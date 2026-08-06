@@ -1885,6 +1885,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         alias = local_alias_expr(n)
         if alias is not None:
             return return_term(alias, expected_kind, target_ty)
+        if isinstance(n, dict) and n.get("nodeType") == "TupleExpression":
+            components = n.get("components") or []
+            if len(components) == 1:
+                return return_term(components[0], expected_kind, target_ty)
         if expected_kind == "bool":
             literal = literal_term(n, "bool")
             if literal is not None:
@@ -1927,6 +1931,31 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return None
         term = {"kind": "op", "op": op, "lhs": lhs[0], "rhs": rhs[0]}
         return term, r2_term_text(term)
+
+    def return_terms(n, expected_kind, target_ty=None):
+        direct = return_term(n, expected_kind, target_ty)
+        if direct is not None:
+            return [direct]
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return return_terms(alias, expected_kind, target_ty)
+        if not isinstance(n, dict):
+            return []
+        if n.get("nodeType") == "TupleExpression":
+            components = n.get("components") or []
+            if len(components) == 1:
+                return return_terms(components[0], expected_kind, target_ty)
+        if n.get("nodeType") == "Conditional":
+            return (return_terms(n.get("trueExpression"), expected_kind,
+                                 target_ty) +
+                    return_terms(n.get("falseExpression"), expected_kind,
+                                 target_ty))
+        node_ty = _norm_ty((n.get("typeDescriptions") or {}).get(
+            "typeString") or "")
+        if expected_kind == "bool" and node_ty == "bool":
+            return [({"kind": "literal", "value": "0"}, "false"),
+                    ({"kind": "literal", "value": "1"}, "true")]
+        return []
 
     inline_depth = [0]
 
@@ -2173,8 +2202,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                         add_delta_candidate(state_name, delta[0], delta[1],
                                             delta[2], n.get("src"))
                 if lhs_ref in return_ids and return_target is not None:
-                    term = return_term(rhs, return_target[1], return_ty)
-                    if term is not None:
+                    for term in return_terms(rhs, return_target[1],
+                                             return_ty):
                         add_equals_candidate(RETURN_VAR, term[0], term[1],
                                              n.get("src"))
             elif n.get("nodeType") == "UnaryOperation" and n.get(
@@ -2224,9 +2253,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                         add_equals_candidate(slot[0], zero[0], zero[1],
                                              n.get("src"))
             elif n.get("nodeType") == "Return" and return_target is not None:
-                term = return_term(n.get("expression"), return_target[1],
-                                   return_ty)
-                if term is not None:
+                for term in return_terms(n.get("expression"),
+                                         return_target[1], return_ty):
                     add_equals_candidate(RETURN_VAR, term[0], term[1],
                                          n.get("src"))
             for child in n.values():
