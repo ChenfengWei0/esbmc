@@ -90,6 +90,46 @@ Next:
   schedules for official measurements because their job argv did not carry the
   first-attempt inner budget.
 
+## 2026-08-06 budget-clean benchmark smoke
+
+Run root:
+
+- `/tmp/veriput_budgetclean_v10_20260806_214820`
+- Reused only `/tmp` unit manifests and AST cache from the earlier diagnostic
+  sample; no Dataset/Results file was modified.
+- Every certification row records `unit_timeout_s=60`, `run_timeout_s=60`,
+  `memlimit_gib=8`.
+- Runner was serial with outer `--timeout 75 --memlimit-gb 8`.
+
+Results:
+
+- BugFix / `DepositLog.approvedToLog`:
+  `CERTIFIED`, `2 certified / 0 not / 2 witnessed`, 3.2s.
+- BugFix / `DepositLog.setApprovedLogger`:
+  `CERTIFIED`, `3 certified / 0 not / 3 witnessed`, 15.6s.
+- Stress / `AgentRole.addAgent`:
+  `KILLED`, `0 certified / 0 not / 5 witnessed`, 60.0s. The log says Level0
+  had decided all 5 paths at 1.4s, so this is not a path-discovery problem; it
+  is certification/refinement work exceeding the first-pass budget.
+- Peer / `AIRBets.initialize2`:
+  `NO-PATH`, 0.9s.
+- Peer / `AIRBets.transfer`:
+  `KILLED`, witnessed unknown, 60.0s. This unit does not even reach the
+  witnessed-path accounting within the first-pass budget.
+
+Interpretation:
+
+- The campaign plumbing is now reliable enough for small-scale benchmark
+  sampling.
+- Full benchmark is still premature. The first-pass sample already separates
+  three bottlenecks:
+  easy strong cases (`DepositLog`), certification-after-Level0 budget failures
+  (`AgentRole.addAgent`), and pre-witness heavy units (`AIRBets.transfer`).
+- Next optimization target should be the `AgentRole.addAgent` shape first,
+  because it has witnesses and Level0 decisions early. That makes it a better
+  debugging target than `AIRBets.transfer`, where the failure is earlier in
+  generation/enumeration/symex.
+
 ## 2026-08-06 benchmark population handoff
 
 Scope and constraint:
