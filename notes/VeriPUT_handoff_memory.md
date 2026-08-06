@@ -8476,3 +8476,41 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-06 return antichain pruning
+
+Scope:
+
+- This is an external VeriPUT PUT-emitter oracle-strength accounting fix.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Finding:
+
+- After literal return equality/inequality rendering was added, a pure/view
+  path can keep several return rows that are the same oracle in weaker forms,
+  for example `return == 20`, `return in [20, 20]`, and `return != 0`.
+- Leaving all of them in the PUT inflates assertion counts without increasing
+  mutation-detection strength. This is the same measurement problem the
+  existing post-state antichain solved for `post > pre` versus `post >= pre`.
+
+Code change:
+
+- `antichain()` now recognizes return literal equalities and singleton literal
+  intervals as exact values.
+- On the same return variable only, an exact value drops:
+  - the matching singleton interval, e.g. `return in [20, 20]`;
+  - a weaker literal inequality when the exact value differs, e.g.
+    `return == 20` entails `return != 0`.
+- Bool spellings `return == true/false` are mapped to `1/0` for this pruning.
+- REFUTED return rows still imply nothing, and tuple members (`return.0`,
+  `return.1`, etc.) do not cross-imply each other.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 216/216 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check` passed.

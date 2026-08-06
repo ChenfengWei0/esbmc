@@ -3168,6 +3168,28 @@ IMPLIED_BY = {
 }
 
 
+def _return_literal(text):
+    if text == "return == true":
+        return 1
+    if text == "return == false":
+        return 0
+    m = re.match(r"^return == (\d+)$", text)
+    return int(m.group(1)) if m else None
+
+
+def _return_exact_interval(text):
+    m = re.match(r"^return in \[(\d+), (\d+)\]$", text)
+    if not m:
+        return None
+    lo, hi = int(m.group(1)), int(m.group(2))
+    return lo if lo == hi else None
+
+
+def _return_neq_literal(text):
+    m = re.match(r"^return != (\d+)$", text)
+    return int(m.group(1)) if m else None
+
+
 def antichain(rows, revert_tolerant=False):
     """(kept, implied) -- drop every HOLDS rung another HOLDS rung entails.
 
@@ -3233,6 +3255,22 @@ def antichain(rows, revert_tolerant=False):
                 exact = f"post in [{term}, {term}]"
                 if exact in texts:
                     d.add(exact)
+            ret_lit = _return_literal(text)
+            if ret_lit is not None:
+                exact = f"return in [{ret_lit}, {ret_lit}]"
+                if exact in texts:
+                    d.add(exact)
+        return_exact_values = {
+            value for value in (
+                [_return_literal(t) for t in texts] +
+                [_return_exact_interval(t) for t in texts])
+            if value is not None
+        }
+        if return_exact_values:
+            for text in texts:
+                neq = _return_neq_literal(text)
+                if neq is not None and any(v != neq for v in return_exact_values):
+                    d.add(text)
         for t in texts:
             for weaker in IMPLIED_BY.get(t, ()):
                 if weaker not in texts:

@@ -9055,6 +9055,44 @@ def test_the_ANTICHAIN_lets_a_DELTA_rung_dominate_NOTHING():
     return bad
 
 
+def test_the_ANTICHAIN_drops_return_rungs_implied_by_a_literal_value():
+    """A certified return equality is the oracle; its singleton interval and
+    non-equal-to-a-different-literal companions report no extra strength."""
+    from solidity_path_put import antichain  # noqa: E402
+    rows = [("return", "return == 20", "HOLDS"),
+            ("return", "return in [20, 20]", "HOLDS"),
+            ("return", "return != 0", "HOLDS"),
+            ("return.0", "return == 0", "HOLDS"),
+            ("return.0", "return != 1", "HOLDS"),
+            ("return.1", "return != 0", "HOLDS")]
+    kept, implied = antichain(rows)
+    bad = 0
+    bad += check([t for v, t, _d in kept if v == "return"]
+                 == ["return == 20"],
+                 f"bare return keeps only the exact literal: {kept}")
+    bad += check(sorted(t for v, t, _d in implied if v == "return")
+                 == ["return != 0", "return in [20, 20]"],
+                 f"the redundant return rows are implied: {implied}")
+    bad += check(("return.0", "return == 0", "HOLDS") in kept,
+                 f"tuple member equality survives: {kept}")
+    bad += check(("return.0", "return != 1", "HOLDS") in implied,
+                 f"tuple member weak inequality is implied: {implied}")
+    bad += check(("return.1", "return != 0", "HOLDS") in kept,
+                 f"another tuple member is not touched: {kept}")
+    return bad
+
+
+def test_the_ANTICHAIN_does_not_use_REFUTED_return_rows_as_evidence():
+    from solidity_path_put import antichain  # noqa: E402
+    rows = [("return", "return == 20", "REFUTED"),
+            ("return", "return != 0", "HOLDS")]
+    kept, implied = antichain(rows)
+    bad = 0
+    bad += check(implied == [], f"nothing is implied by REFUTED rows: {implied}")
+    bad += check(kept == rows, f"both original rows survive: {kept}")
+    return bad
+
+
 def test_a_ladder_where_nothing_held_still_says_so():
     """THE NEGATIVE CONTROL. If the headline were hard-wired to the dropped
     wording it would pass the case above and be wrong on every genuinely empty
@@ -9648,6 +9686,8 @@ def main():
               test_the_ANTICHAIN_never_uses_a_REFUTED_rung_to_drop_a_HOLDING_one,
               test_the_ANTICHAIN_does_not_reach_ACROSS_VARIABLES,
               test_the_ANTICHAIN_lets_a_DELTA_rung_dominate_NOTHING,
+              test_the_ANTICHAIN_drops_return_rungs_implied_by_a_literal_value,
+              test_the_ANTICHAIN_does_not_use_REFUTED_return_rows_as_evidence,
               test_a_ladder_where_nothing_held_still_says_so,
               test_the_retlive_witness_is_not_counted_as_a_rung_that_held,
               test_a_revert_tolerant_body_is_NOT_called_an_assertion,
