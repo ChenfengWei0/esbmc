@@ -134,6 +134,22 @@ Replan after the stress sample:
   `pending_by_attempt={"2": 1}`, `selected_attempt=2`.
 - The only attempt-2 job is `ClaimTopicsRegistry.init`, with ESBMC
   `--run-timeout 120`, wrapper timeout 130, runner timeout 135, 8GiB.
+- A first attempt-2 runner invocation immediately refused before starting
+  ESBMC because `certify_all.py` correctly detected that the existing
+  `certify-results.jsonl` rows were produced under HEAD `ad52c97e6b` while the
+  tree was now at `e61e0cbfca`.  This was an identity guard, not an ESBMC
+  attempt.  The actual attempt-2 run used a separate cert JSONL/workdir:
+  `/tmp/veriput_bench_salvage_stress_20260806_235923/certify-results-a2-actual.jsonl`
+  and
+  `/tmp/veriput_bench_salvage_stress_20260806_235923/certify-work-a2_actual_t130_r120_m8`.
+- Actual `ClaimTopicsRegistry.init` attempt 2 finished in 89.1s with
+  `NO-COORDINATE`: 2 witnessed paths, 0 certified, 0 not, complete
+  `cov-report.json`/`cov-ce-journal.json`, and no `generalise-result.json`
+  because the driver exits at the coordinate-kind gate.  The two paths are the
+  ABI reject/body split (`enc=2` reject, `enc=52` body) plus initializer-state
+  decisions; there are no function inputs, and every establishable environment
+  and entry-state quantity agreed and was pinned.  This is not a salvage
+  failure and not fixed by more ladder/refine budget.
 
 Current go/no-go:
 
@@ -156,6 +172,10 @@ Code follow-up retained after the smoke:
   `enumeration_salvage`.  This fixes observability: successful salvage no longer
   has to be inferred by grepping `driver.log`, and the later certification
   `cov-ce-journal.json` cannot overwrite the evidence trail.
+- `certify_all.py` also no longer parses `[coords] mapping dependency policy
+  ...` prose as a legacy coordinate line.  This was exposed by the `init`
+  attempt-2 row, where the runner summary said "1 free coordinate" even though
+  the driver correctly printed `NO GENERALISABLE COORDINATE`.
 
 Checks:
 
@@ -170,6 +190,10 @@ Checks:
 - `git diff --check -- scripts/solidity_path_generalise.py
   scripts/test_solidity_path_generalise.py notes/coverage/scripts/certify_all.py
   scripts/test_certify_all_partial_journal.py` passed.
+- After the parser follow-up, the same py_compile,
+  `scripts/test_solidity_path_generalise.py`,
+  `scripts/test_certify_all_partial_journal.py`, and `git diff --check`
+  commands passed again.
 
 ## 2026-08-06 partial CE journal salvage in generalise
 

@@ -92,6 +92,16 @@ def main():
         bad += check(certify_all.result_enumeration_salvage(str(workdir),
                                                             stale_since) is None,
                      "stale enumeration salvage metadata is ignored")
+
+        parsed = certify_all.parse_driver(
+            "[coords] mapping dependency policy solc-reference-closure/3: "
+            "state._owner dependency distance 3\n"
+            "[coords] NO mapping slot was added. This is a statement about "
+            "the source and the budget, not about the tool\n"
+            "[coords] NO GENERALISABLE COORDINATE — every coordinate was "
+            "pinned by request\n")
+        bad += check(parsed["coords"] == [] and parsed["coords_line"] is None,
+                     f"mapping dependency prose is not parsed as coords: {parsed}")
     return bad
 
 

@@ -566,6 +566,7 @@ def parse_driver(out):
                  # Added when the whitelist failed. Kept because logs written by
                  # a driver without the FREE marker still have to parse.
                  "[coords] MAPPING SLOT", "[coords] mapping(s)",
+                 "[coords] mapping dependency policy",
                  "[coords] slot candidate", "[coords] NO mapping slot",
                  "[coords] the outer-box rounds refused")):
             rec["coords"] = [c.strip() for c in m.group(1).split(",")
