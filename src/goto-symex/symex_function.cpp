@@ -5,6 +5,7 @@
 #include <langapi/language_util.h>
 #include <util/arith_tools.h>
 #include <util/base_type.h>
+#include <util/c_typecast.h>
 #include <util/c_types.h>
 #include <util/cprover_prefix.h>
 #include <util/expr_util.h>
@@ -74,8 +75,7 @@ bool goto_symext::get_unwind_recursion(
         });
       if (stack_it != cur_state->call_stack.rend())
       {
-        for (auto cur = cur_state->call_stack.rbegin(); cur != stack_it;
-             ++cur)
+        for (auto cur = cur_state->call_stack.rbegin(); cur != stack_it; ++cur)
         {
           if (matches_harness_helper(id2string(cur->function_identifier)))
           {
@@ -185,7 +185,22 @@ unsigned goto_symext::argument_assignments(
         const type2tc &f_rhs_type = rhs->type;
 
         // we are willing to do some limited conversion
-        if (
+        if (is_pointer_type(f_arg_type) && is_array_type(f_rhs_type))
+        {
+          expr2tc converted = rhs;
+          if (c_implicit_typecast(converted, arg_type, ns))
+          {
+            log_error(
+              "function call: argument \"{}\" type mismatch: got {}, expected "
+              "{}",
+              id2string(identifier),
+              get_type_id((*it1)->type),
+              get_type_id(arg_type));
+            abort();
+          }
+          rhs = converted;
+        }
+        else if (
           (is_number_type(f_arg_type) || is_pointer_type(f_arg_type)) &&
           (is_number_type(f_rhs_type) || is_pointer_type(f_rhs_type)))
         {

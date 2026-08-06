@@ -10847,6 +10847,80 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 ESBMC array-decay and Solidity string OM fix
+
+Problem:
+
+- Fresh BugFix hinted runs for `Owned.owned` crashed before producing
+  `cov-report.json`.
+- Representative old log:
+  `/tmp/veriput_fresh_wave_plan_20260807_061251/certify-work-t600_r600_m8/bugfix-cert-hinted/bugfix124__acfix_026_CVE_2019_15080/owned/driver.log`.
+- ESBMC aborted in `goto_symext::argument_assignments` with:
+  `function call: argument "c:string.c@4751@F@memset@s" type mismatch: got array, expected pointer`.
+- Root cause:
+  symex-time parameter binding allowed number/pointer casts, but did not apply
+  C array-to-pointer decay when the formal was a pointer and the actual was an
+  array.  The C typecast layer already knew how to lower this to `&arr[0]`.
+
+Code changes:
+
+- `src/goto-symex/symex_function.cpp`
+  - Include `util/c_typecast.h`.
+  - In parameter binding, handle the narrow case
+    `formal pointer && actual array` with `c_implicit_typecast`.
+  - Other incompatible argument shapes still abort as before.
+- `regression/cstd/function_array_decay_to_void_ptr/`
+  - New regression for passing a stack array to a `void *` parameter.
+- `regression/esbmc-solidity/solidity_path_cov_nondet_string_no_prefill_loop/`
+  - New regression requiring string-argument path claims to reach the solver
+    without the old pre-dispatch `__memset_impl` loop blocker.
+- `src/c2goto/library/solidity/solidity_string.c`
+  - Removed the pre-dispatch `memset(_ESBMC_rand_str, 0, 33)` from
+    `nondet_string`.
+  - The model now fills the first `len` bytes with non-NUL nondet chars and
+    writes `_ESBMC_rand_str[len] = '\0'`.
+  - This preserves bounded `strlen` termination for the current call and avoids
+    an avoidable `__memset_impl` loop that can be truncated before path
+    coverage claims reach the solver.
+
+Validation:
+
+- Build:
+  `cmake --build build --target esbmc -j2` passed after both patches.
+- Formatting/check:
+  `git diff --check -- src/goto-symex/symex_function.cpp src/c2goto/library/solidity/solidity_string.c regression/cstd/function_array_decay_to_void_ptr/main.c regression/cstd/function_array_decay_to_void_ptr/test.desc`
+  passed.
+- Regression:
+  `cd build && ctest -R function_array_decay_to_void_ptr --output-on-failure`
+  passed.
+- Solidity regression:
+  `cd build && ctest -R solidity_path_cov_nondet_string_no_prefill_loop --output-on-failure`
+  passed.
+- Direct ESBMC regression:
+  `build/src/esbmc/esbmc regression/cstd/function_array_decay_to_void_ptr/main.c --unwind 2 --memlimit 8g --result-only`
+  produced `VERIFICATION SUCCESSFUL`.
+- Target BugFix re-check with final binary:
+  `/tmp/veriput_memset_fix_check_20260807c/acfix026-cert.jsonl`.
+  Result changed from crash/unknown to a normal bounded no-witness result:
+  `NO-PATH`, with `cov-report.json` present.
+- New target workdir:
+  `/tmp/veriput_memset_fix_check_20260807c/work/acfix026-cert/bugfix124__acfix_026_CVE_2019_15080/owned`.
+- New driver outcome:
+  3 path claims for `Owned.owned`, all `bounded-holds`; no
+  `ESBMC produced no cov-report.json`, no type mismatch, and no
+  path-coverage 0-claim internal defect.
+
+Interpretation:
+
+- This does not make `Owned.owned` produce a PUT.  It removes an ESBMC/OM
+  blocker that made the result unusable.
+- The remaining `NO-PATH` is a bounded result under
+  `--solidity-max-tx 1` / default path-coverage unwind.  It should be handled
+  by scheduling/region strategy rather than by treating it as a crash.
+- The next separate bottleneck is Peer recursive-helper/no-witness preflight,
+  especially `SafeMath.div/2` and `SafeMath.sub/2` in AIRBets/Arcadia transfer
+  runs.
+
 ## 2026-08-07 wave600 quick benchmark smoke
 
 Purpose:
