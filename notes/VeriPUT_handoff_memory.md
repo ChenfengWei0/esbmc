@@ -10847,6 +10847,107 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 wave600 quick benchmark smoke
+
+Purpose:
+
+- User set the final per-case ESBMC timeout to 600s.
+- Need a fast intuition for current success rate:
+  - unit-level end-to-end: scheduled unit reaches certified regions and then
+    produces reference-valid tests;
+  - region-level generator: certified region becomes a reference-valid test;
+  - split generated tests into strict PUT versus concrete replay fallback.
+- Datasets were not modified.  All outputs are under `/tmp`.
+
+Inputs and budgets:
+
+- Root:
+  `/tmp/veriput_wave600_20260807`.
+- Schedules:
+  - `/tmp/veriput_wave600_20260807/peer-schedule.json`
+  - `/tmp/veriput_wave600_20260807/bugfix-schedule.json`
+  - `/tmp/veriput_wave600_20260807/stress-schedule.json`
+- Stage 2 budget embedded in every job:
+  `--timeout 600 --run-timeout 600 --memlimit-gib 8`.
+- Runner used `--timeout 700 --memlimit-gb 8` only to leave wrapper cleanup
+  time around the 600s ESBMC budget.
+- Jobs were serial (`--jobs 1`).
+
+Sampling caveat:
+
+- This was a speed smoke, not a statistically clean corpus estimate.
+- The schedules were priority ordered, so Peer and BugFix each sampled several
+  units from the same first subject:
+  - Peer: `peer182__peer_ccsolbmc__AIRBets`.
+  - BugFix: `bugfix124__acfix_002_Templedao`.
+- Stress sampled mostly `ERC-3643` role contracts.
+- A better next smoke should use `--selection-strategy round-robin-subject`
+  for breadth.
+
+Stage 2 results:
+
+- Total units: 12.
+- Buckets:
+  - `CERTIFIED`: 4.
+  - `NO-WITNESS-UNDECIDED`: 3.
+  - `NO-WITNESS-UNKNOWN`: 4.
+  - `NO-PATH`: 1.
+- Certified unit-level rate in this smoke: `4 / 12 = 33.3%`.
+- Certified regions: 16.
+- Witnessed paths: 20.
+- Not-certified paths: 4, all from the Stress certified units.
+
+Per-suite detail:
+
+- Peer:
+  - Cert file: `/tmp/veriput_wave600_20260807/peer-cert.jsonl`.
+  - 0 / 4 certified units.
+  - `AIRBets.transfer`, `transferFrom`, `setMaxTxPercent`:
+    `NO-WITNESS-UNDECIDED`.
+  - `AIRBets.approve`: `NO-PATH`.
+- BugFix:
+  - Cert file: `/tmp/veriput_wave600_20260807/bugfix-cert.jsonl`.
+  - 0 / 4 certified units.
+  - `StaxLPStaking.setRewardDistributor`, `addReward`, `stake`,
+    `stakeFor`: all `NO-WITNESS-UNKNOWN`.
+- Stress:
+  - Cert file: `/tmp/veriput_wave600_20260807/stress-cert.jsonl`.
+  - 4 / 4 certified units.
+  - `AgentRole.addAgent`, `AgentRole.removeAgent`,
+    `AgentRole.transferOwnership`, `AgentRoleUpgradeable.addAgent`:
+    each 4 certified regions / 1 not-certified path / 5 witnessed paths.
+
+Stage 4 results on the 16 Stress certified regions:
+
+- Command:
+  `python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_wave600_20260807/stress-cert.jsonl --out-root /tmp/veriput_wave600_20260807/stress-put --scope focus --max-tx 1 --timeout 600 --memlimit-gib 8 --strong-recipe`
+- Summary:
+  `/tmp/veriput_wave600_20260807/stress-put/put-summary.json`.
+- Reference-valid generated tests:
+  `16 / 16` certified regions.
+- Split:
+  - 12 strict PUT (`B = 12 / 16 = 75%`).
+  - 4 concrete replay fallback.
+- Forge:
+  - PUTs: 12 green / 12 total.
+  - Concrete replays: 18 green / 18 total.
+- Valid generated-test split:
+  `12 PUT / 4 concrete`, all reference-valid on the unmodified contract.
+
+Interpretation:
+
+- Once Stage 2 produces certified regions, the current Stage 4 emitter is
+  strong on this smoke: 100% reference-valid, 75% strict PUT.
+- The current bottleneck is still earlier:
+  - Peer has recursive/helper or undecided witness-entry issues.
+  - BugFix has NO-WITNESS-UNKNOWN and separately observed `memset` array /
+    pointer mismatch crashes on hinted `Owned.owned` targets.
+- Therefore the next high-leverage work is Stage2 entry/instrumentation and
+  ESBMC internal modeling, not overfitting the PUT emitter to Stress.
+- Fuzz remains refutation-only: the Stage4 R2 Foundry prefilter dropped
+  candidate assertions by concrete failures, but every survivor counted as PUT
+  still went through ESBMC proof before being emitted.
+
 ## 2026-08-07 relation-establish PUT alignment
 
 Problem fixed:
