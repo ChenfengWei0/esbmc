@@ -2417,6 +2417,14 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                 "indexExpression": key,
                 "typeDescriptions": {"typeString": ty}}
 
+    def method(base, name, arg):
+        return {"nodeType": "FunctionCall", "kind": "functionCall",
+                "expression": {"nodeType": "MemberAccess",
+                               "memberName": name,
+                               "expression": base},
+                "arguments": [arg],
+                "typeDescriptions": {"typeString": "uint256"}}
+
     balances_sender = index(ident(10, "balances"), msg_sender)
     allowance_sender = index(ident(11, "allowance"), msg_sender,
                              "mapping(address => uint256)")
@@ -2451,10 +2459,9 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                      "nodeType": "Assignment", "operator": "=",
                      "src": "120:10:0",
                      "leftHandSide": allowance_sender_spender,
-                     "rightHandSide": {
-                         "nodeType": "BinaryOperation", "operator": "-",
-                         "leftExpression": allowance_sender_spender,
-                         "rightExpression": ident(21, "amount")}}},
+                     "rightHandSide": method(
+                         allowance_sender_spender, "sub",
+                         ident(21, "amount"))}},
                  {"nodeType": "ExpressionStatement", "expression": {
                      "nodeType": "Assignment", "operator": "=",
                      "src": "140:10:0",
@@ -4056,6 +4063,14 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
                                    source_assignment_r2_specs)
+    def method(base, name, arg):
+        return {"nodeType": "FunctionCall", "kind": "functionCall",
+                "expression": {"nodeType": "MemberAccess",
+                               "memberName": name,
+                               "expression": base},
+                "arguments": [arg],
+                "typeDescriptions": {"typeString": "uint256"}}
+
     quote = {
         "nodeType": "FunctionDefinition", "id": 20, "name": "quote",
         "parameters": {"parameters": [
@@ -4073,6 +4088,26 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
                            "rightExpression": {"nodeType": "Literal",
                                                "kind": "number",
                                                "value": "7"}}}]}}
+    safe_quote = {
+        "nodeType": "FunctionDefinition", "id": 25, "name": "safeQuote",
+        "parameters": {"parameters": [
+            {"id": 26, "name": "amount",
+             "typeDescriptions": {"typeString": "uint256"}}]},
+        "returnParameters": {"parameters": [
+            {"id": 27, "name": "", "typeDescriptions": {
+                "typeString": "uint256"}}]},
+        "body": {"nodeType": "Block", "statements": [{
+            "nodeType": "Return", "src": "150:10:0",
+            "expression": method(
+                method({"nodeType": "Identifier",
+                        "referencedDeclaration": 26,
+                        "name": "amount"},
+                       "mul",
+                       {"nodeType": "Literal", "kind": "number",
+                        "value": "3"}),
+                "div",
+                {"nodeType": "Literal", "kind": "number",
+                 "value": "2"})}]}}
     flag = {
         "nodeType": "FunctionDefinition", "id": 30, "name": "flag",
         "parameters": {"parameters": [
@@ -4128,7 +4163,7 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
     ast = {"nodeType": "SourceUnit", "nodes": [{
         "nodeType": "ContractDefinition", "name": "C", "id": 1,
         "linearizedBaseContracts": [1],
-        "nodes": [quote, flag, pair, named]}]}
+        "nodes": [quote, safe_quote, flag, pair, named]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
         json.dump(ast, out)
@@ -4141,6 +4176,10 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
             path, "C", "flag", [("ok", "bool")], {},
             [("ok", "bool", 1)], arity=1,
             rettypes=[("", "bool")], log=lambda _msg: None)
+        safe_specs, safe_evidence = source_assignment_r2_specs(
+            path, "C", "safeQuote", [("amount", "uint256")], {},
+            [("amount", "num", None)], arity=1,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
         pair_specs, _pair_evidence = source_assignment_r2_specs(
             path, "C", "pair", [("amount", "uint256")], {},
             [("amount", "num", None)], arity=1,
@@ -4160,6 +4199,10 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
                        if entry["name"] == RETURN_VAR), {}) if flag_specs else {}
     flag_terms = [r2_term_text(item["term"])
                   for item in flag_entry.get("equals", [])]
+    safe_entry = next((entry for entry in safe_specs[0]["vars"]
+                       if entry["name"] == RETURN_VAR), {}) if safe_specs else {}
+    safe_terms = [r2_term_text(item["term"])
+                  for item in safe_entry.get("equals", [])]
     named_entry = next((entry for entry in named_specs[0]["vars"]
                         if entry["name"] == RETURN_VAR), {}) if named_specs else {}
     named_terms = [r2_term_text(item["term"])
@@ -4175,6 +4218,13 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
     bad += check(any("return: return == (amount + 7)" in line
                      for line in quote_evidence),
                  f"the return provenance is recorded: {quote_evidence}")
+    bad += check(safe_terms == ["((amount * 3) / 2)"],
+                 f"SafeMath-style chained return expression is prioritized: "
+                 f"{safe_specs}")
+    bad += check(any("return: return == ((amount * 3) / 2)" in line
+                     for line in safe_evidence),
+                 f"SafeMath-style return provenance is recorded: "
+                 f"{safe_evidence}")
     bad += check(flag_terms == ["ok"],
                  f"bool return coordinates are preserved as bool terms: "
                  f"{flag_specs}, {flag_evidence}")

@@ -1621,6 +1621,26 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return {"kind": "coord", "name": env_name}, env_name
         return unitless_number_term(n)
 
+    def method_op_parts(n):
+        if not isinstance(n, dict) or n.get("nodeType") != "FunctionCall":
+            return None
+        if n.get("kind") not in (None, "functionCall"):
+            return None
+        args = n.get("arguments") or []
+        if len(args) != 1:
+            return None
+        expr = n.get("expression")
+        if not isinstance(expr, dict) or expr.get("nodeType") != "MemberAccess":
+            return None
+        op = {"add": "add", "sub": "sub", "mul": "mul", "div": "div"}.get(
+            expr.get("memberName"))
+        if op is None:
+            return None
+        base = expr.get("expression")
+        if base is None:
+            return None
+        return op, base, args[0]
+
     def numeric_endpoint_term(n, target_ty):
         alias = local_alias_expr(n)
         if alias is not None:
@@ -1628,6 +1648,18 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         direct = delta_term(n, target_ty)
         if direct is not None:
             return direct
+        method = method_op_parts(n)
+        if method is not None:
+            op, left_expr, right_expr = method
+            lhs = numeric_endpoint_term(left_expr, target_ty)
+            rhs = numeric_endpoint_term(right_expr, target_ty)
+            if lhs is None or rhs is None:
+                return None
+            if op == "div" and not (rhs[0].get("kind") == "literal"
+                                    and int(rhs[0].get("value", "0")) != 0):
+                return None
+            term = {"kind": "op", "op": op, "lhs": lhs[0], "rhs": rhs[0]}
+            return term, r2_term_text(term)
         if not isinstance(n, dict) or n.get("nodeType") != "BinaryOperation":
             return None
         op = {"+": "add", "-": "sub", "*": "mul", "/": "div"}.get(
@@ -1651,6 +1683,16 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         alias = local_alias_expr(rhs)
         if alias is not None:
             return self_update_delta(alias, self_predicate, target_ty)
+        method = method_op_parts(rhs)
+        if method is not None:
+            op, left, right = method
+            if op == "add" and self_predicate(left):
+                term = numeric_endpoint_term(right, target_ty)
+                return ("inc",) + term if term is not None else None
+            if op == "sub" and self_predicate(left):
+                term = numeric_endpoint_term(right, target_ty)
+                return ("dec",) + term if term is not None else None
+            return None
         if not isinstance(rhs, dict) or rhs.get("nodeType") != "BinaryOperation":
             return None
         op = rhs.get("operator")
@@ -1844,6 +1886,18 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         direct = delta_term(n, target_ty)
         if direct is not None:
             return direct
+        method = method_op_parts(n)
+        if method is not None:
+            op, left_expr, right_expr = method
+            lhs = return_term(left_expr, "num", target_ty)
+            rhs = return_term(right_expr, "num", target_ty)
+            if lhs is None or rhs is None:
+                return None
+            if op == "div" and not (rhs[0].get("kind") == "literal"
+                                    and int(rhs[0].get("value", "0")) != 0):
+                return None
+            term = {"kind": "op", "op": op, "lhs": lhs[0], "rhs": rhs[0]}
+            return term, r2_term_text(term)
         if not isinstance(n, dict) or n.get("nodeType") != "BinaryOperation":
             return None
         op = {"+": "add", "-": "sub", "*": "mul", "/": "div"}.get(

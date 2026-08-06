@@ -203,6 +203,57 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 178/178 tests.
 
+## 2026-08-06 SafeMath-style source-R2 expressions
+
+Scope and constraint:
+
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` stayed read-only.
+- No POC ESBMC attempt, benchmark certification run, Forge, fuzz, or solc run
+  was started.
+
+Ground truth:
+
+- Peer `contracts_080` still contains many SafeMath-style calls even under
+  Solidity 0.8, especially ERC20-like paths:
+  `_allowances[sender][_msgSender()].sub(amount)`,
+  `_balances[recipient].add(amount)`,
+  `_tTotal.mul(maxTxPercent).div(...)`, and return helpers such as
+  `rAmount.div(currentRate)`.
+- Without recognizing method-call arithmetic, source-R2 sees `FunctionCall`
+  and misses strong rows such as:
+  - `allowance[msg.sender][spender]: pre - post == amount`;
+  - `balances[to]: post - pre == amount`;
+  - `return == ((amount * 3) / 2)` for chained quote-style helpers.
+- These are still only prioritized candidates. ESBMC certifies them; fuzz can
+  only refute.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has `method_op_parts()` inside
+  `source_assignment_r2_specs()` for one-argument member calls named
+  `add`, `sub`, `mul`, or `div`.
+- `numeric_endpoint_term()` translates those calls into the existing
+  structured R2 `op` term. Chained calls are supported by recursion, with
+  division accepted only when the divisor term is a nonzero literal.
+- `self_update_delta()` recognizes `slot.add(x)` and `slot.sub(x)` when the
+  method receiver is the same scalar/mapping slot being assigned, so the miner
+  emits exact inc/dec deltas in addition to endpoint equalities.
+- `return_term()` recognizes the same method-call arithmetic for single-value
+  returns.
+- No SafeMath `require` semantics are modeled in Python; this is syntax-driven
+  candidate prioritization only.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 178/178 tests.
+- `git diff --check` passed before this note update.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 Important caveat found immediately afterward:
 
 - This change proves the external tool can name, propose, and render Foundry
