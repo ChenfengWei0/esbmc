@@ -1627,8 +1627,6 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if n.get("kind") not in (None, "functionCall"):
             return None
         args = n.get("arguments") or []
-        if len(args) != 1:
-            return None
         expr = n.get("expression")
         if not isinstance(expr, dict) or expr.get("nodeType") != "MemberAccess":
             return None
@@ -1636,6 +1634,12 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             expr.get("memberName"))
         if op is None:
             return None
+        if len(args) != 1:
+            if (len(args) != 2 or op not in ("sub", "div") or
+                    not isinstance(args[1], dict) or
+                    args[1].get("nodeType") != "Literal" or
+                    args[1].get("kind") != "string"):
+                return None
         base = expr.get("expression")
         if base is None:
             return None

@@ -2417,12 +2417,12 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                 "indexExpression": key,
                 "typeDescriptions": {"typeString": ty}}
 
-    def method(base, name, arg):
+    def method(base, name, arg, extra_args=None):
         return {"nodeType": "FunctionCall", "kind": "functionCall",
                 "expression": {"nodeType": "MemberAccess",
                                "memberName": name,
                                "expression": base},
-                "arguments": [arg],
+                "arguments": [arg] + list(extra_args or []),
                 "typeDescriptions": {"typeString": "uint256"}}
 
     balances_sender = index(ident(10, "balances"), msg_sender)
@@ -2461,7 +2461,9 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                      "leftHandSide": allowance_sender_spender,
                      "rightHandSide": method(
                          allowance_sender_spender, "sub",
-                         ident(21, "amount"))}},
+                         ident(21, "amount"),
+                         [{"nodeType": "Literal", "kind": "string",
+                           "value": "ERC20: transfer amount exceeds allowance"}])}},
                  {"nodeType": "ExpressionStatement", "expression": {
                      "nodeType": "Assignment", "operator": "=",
                      "src": "140:10:0",

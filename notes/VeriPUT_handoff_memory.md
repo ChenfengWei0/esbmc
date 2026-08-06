@@ -236,6 +236,9 @@ Code shape:
 - `numeric_endpoint_term()` translates those calls into the existing
   structured R2 `op` term. Chained calls are supported by recursion, with
   division accepted only when the divisor term is a nonzero literal.
+- `sub(x, "error")` and `div(x, "error")` are accepted as SafeMath overloads
+  by ignoring the second argument only when it is a source string literal.
+  `add`/`mul` still require one argument.
 - `self_update_delta()` recognizes `slot.add(x)` and `slot.sub(x)` when the
   method receiver is the same scalar/mapping slot being assigned, so the miner
   emits exact inc/dec deltas in addition to endpoint equalities.
