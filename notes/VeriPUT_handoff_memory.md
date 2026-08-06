@@ -672,6 +672,13 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   the generated commands do not write `.solast` files back into prepared
   `Results` subjects. Inferred-solc jobs include
   `--use-inferred-solc-bin`; explicit-solc jobs do not.
+- `ast_preheat_run.py`: consumes a `veriput-ast-preheat-schedule/v1` and runs
+  each job's `preheat_argv` with a JSONL journal. Real execution requires
+  `--journal`; `--dry-run` prints pending jobs without executing them. Resume
+  skips only journal rows whose status is `ok`, so failed/missing rows remain
+  retryable. Each job is validated to contain both `--generate-ast` and
+  `--ast-cache-root`; start failures and non-ok subject rows are journaled as
+  retryable failures instead of aborting the whole batch.
 - `unit_schedule.py`: expands a `veriput-unit-manifest/v1` into concrete
   per-unit `certify_all.py --subject-* --unit ...` jobs. It is also read-only:
   it never invokes solc, Forge, fuzzing, or ESBMC. Target-hinted units are
@@ -744,6 +751,11 @@ Interpretation:
   `unschedulable=0`, `skipped_by_status={"error":39}` and did not create the
   cache directory. These jobs are only a plan; running their `preheat_argv`
   would intentionally invoke solc and write external cache files.
+- Read-only preheat runner dry-run smoke on
+  `/tmp/veriput-ast-preheat-run-dry-20260806-codex` selected 509 jobs:
+  `selected=509`, `pending=509`, `already_done=0`, and did not create the
+  cache directory. This exercises the complete scheduling pipeline through
+  `ast_preheat_run.py --dry-run`, still without invoking solc.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4545,9 +4557,13 @@ Implication for next work:
 3. Use `ast_preheat_schedule.py` first to audit the exact per-subject preheat
    commands; it should show 509 schedulable jobs and 0 unschedulable rows on
    the current real target set when an external cache root is supplied.
-4. After preheat, rerun `subject_unit_manifest.py` against the same
+4. Use `ast_preheat_run.py --dry-run --journal <external.jsonl>` to audit the
+   pending/resume set before executing. Real preheat execution must pass an
+   external journal path and can be sharded/resumed without rerunning rows that
+   already reached `ok`.
+5. After preheat, rerun `subject_unit_manifest.py` against the same
    `--ast-cache-root`, then run `unit_schedule.py` to produce priority-ordered
    per-unit `certify_all.py --subject-* --unit ...` jobs.
-5. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
+6. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.
