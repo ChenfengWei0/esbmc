@@ -85,6 +85,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       direct_recursive_helpers_in_unit_closure,
                                       enumeration_has_arith_conditions,
                                       witness_values,
+                                      report_from_ce_journal,
+                                      partial_journal_report,
+                                      payload_extras,
                                       extcall_inseparable_failures,
                                       file_identity,
                                       save_failed_round,
@@ -2440,6 +2443,85 @@ def _claim(pid, reason, unit="balanceOf"):
     return {"condition": f"{unit}:path:{pid}", "status": "U",
             "path_id": pid, "path_depth": 1, "u_reason": reason,
             "function": "", "bounded_holds": reason == "bounded-holds"}
+
+
+_journal_claim = {
+    "claim": "sol:@C@ClaimTopicsRegistry@F@addClaimTopic#420:path:31",
+    "condition": "addClaimTopic:path:31",
+    "entry_storage": [
+        {"name": "_owner", "value": "0x2"},
+    ],
+    "env": [
+        {"name": "msg_value", "value": "0"},
+        {"name": "block_timestamp", "value": "0x10"},
+    ],
+    "extcall_returns": [
+        {"name": "return_value$__msgSender$2", "value": "0x2"},
+    ],
+    "inputs": [
+        {"name": "_claimTopic", "value": "0x7"},
+    ],
+    "path_depth": 4,
+    "path_function": "sol:@C@ClaimTopicsRegistry@F@addClaimTopic#420",
+    "path_id": "31",
+    "witness_count": 2,
+    "witnesses": [{
+        "entry_storage": [
+            {"name": "_owner", "value": "0x2"},
+        ],
+        "env": [
+            {"name": "msg_value", "value": "0"},
+        ],
+        "inputs": [
+            {"name": "_claimTopic", "value": "0x9"},
+        ],
+    }],
+}
+
+_ce_from_journal, _ref_from_journal = coord_values(_journal_claim)
+check("coord_values accepts journal list payloads", _ce_from_journal, {
+    "_claimTopic": 7,
+    "block.timestamp": 16,
+    "msg.value": 0,
+    "state._owner": 2,
+})
+check("coord_values journal payloads do not refuse scalars",
+      _ref_from_journal, [])
+check("payload_extras accepts journal name field",
+      payload_extras(_journal_claim),
+      {"extcall.return_value$__msgSender$2": 2})
+
+_journal_report = report_from_ce_journal({
+    "claims_decided": 6,
+    "claims_total": 277,
+    "kind": "solidity-complete-path-ce-journal",
+    "partial": True,
+    "witnesses": {
+        "sol:@C@ClaimTopicsRegistry@F@addClaimTopic#420:path:31\t":
+        _journal_claim,
+    },
+})
+check("journal report is partial", _journal_report["partial"], True)
+check("journal report keeps witnessed claim",
+      _journal_report["claims"][0]["condition"], "addClaimTopic:path:31")
+check("journal report normalizes env names",
+      _journal_report["claims"][0]["env"]["msg.value"], "0")
+check("journal report keeps extra witnesses",
+      _journal_report["claims"][0]["witnesses"][0]["inputs"]["_claimTopic"],
+      "0x9")
+check("journal report records salvage source",
+      _journal_report["veriput_salvage"]["from"], "cov-ce-journal.json")
+
+_journal_dir = tempfile.mkdtemp(prefix="journal-report-")
+with open(os.path.join(_journal_dir, "cov-ce-journal.json"), "w") as f:
+    json.dump({
+        "kind": "solidity-complete-path-ce-journal",
+        "witnesses": {"k": _journal_claim},
+    }, f)
+check("partial_journal_report reads cwd journal",
+      partial_journal_report(_journal_dir)["claims"][0]["path_id"], "31")
+os.unlink(os.path.join(_journal_dir, "cov-ce-journal.json"))
+os.rmdir(_journal_dir)
 
 
 _d = tempfile.mkdtemp(prefix="emptyenum-")

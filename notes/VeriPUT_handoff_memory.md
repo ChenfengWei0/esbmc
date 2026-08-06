@@ -82,6 +82,51 @@ Verification:
   scheduler, campaign, runner, summary, pipeline, and tests passed.
 - `git diff --check` passed.
 
+## 2026-08-06 partial CE journal salvage in generalise
+
+Current answer to "can we start broad benchmark testing?":
+
+- `bugfix124` is ready for broader sampling.
+- `stress203/243` is still not ready for a full sweep.  It is ready for a small
+  stratified sample after this patch, because killed 60s enumeration runs can
+  now reuse their already-refuted path witnesses instead of throwing them away.
+- Keep ESBMC attempt budgets at the agreed ladder:
+  attempt 1 = 60s/8GiB, attempt 2 = 120s/8GiB, attempt 3 = 600s/10GiB.
+  Wrapper grace remains separate and does not change ESBMC's `--run-timeout`.
+
+Change retained:
+
+- `scripts/solidity_path_generalise.py` now removes stale
+  `cov-ce-journal.json` before enumeration, matching the existing stale
+  `cov-report.json` guard.
+- If ESBMC exits without `cov-report.json`, `enumerate_paths()` tries to build
+  a partial enumeration report from a fresh `cov-ce-journal.json`.
+- The synthetic report is explicitly `partial=true` and records
+  `veriput_salvage.from = cov-ce-journal.json`.  It is refutation-only evidence
+  for candidate generation; every region still goes through the normal ESBMC
+  certification query before it can count as proved.
+- The payload reader now accepts both complete-report dicts and CE-journal
+  list-shaped `[{name,value}]` payloads.  Journal env names such as
+  `msg_value` and `block_timestamp` are normalized back to `msg.value` and
+  `block.timestamp`.  `extcall_returns` accepts either `symbol` or `name`.
+
+Offline confirmation:
+
+- Parsed the real stress sample journal at
+  `/tmp/veriput_bench_grace_stress_20260806_233417/certify-work-a1_t70_r60_m8/certify-results/stress243__ERC-3643__ERC-3643__ClaimTopicsRegistry/addClaimTopic/cov-ce-journal.json`.
+- It produced one partial witnessed claim for `addClaimTopic:path:31`,
+  `claims_decided=6`, `claims_total=277`, 19 scalar coordinates, 8 additional
+  witnesses, and no scalar-coordinate refusals.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py`
+  passed.
+
 ## 2026-08-06 benchmark speed sample and timeout layering
 
 Sampled cached benchmark subjects from peer182, bugfix124, and stress243 with

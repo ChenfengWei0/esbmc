@@ -216,7 +216,9 @@ def save_failed_round(cwd, kind, spec, log, failure, wall_seconds):
 
 
 def parse_int(s):
-    s = s.strip()
+    if isinstance(s, int):
+        return s
+    s = str(s).strip()
     if s.lower().startswith("0x"):
         return int(s, 16)
     return int(s)
@@ -236,6 +238,32 @@ def claim_unit(c):
     """
     cond = c.get("condition") or ""
     return cond.split(":", 1)[0] if ":" in cond else ""
+
+
+def _journal_env_name(name):
+    for prefix in ("msg_", "tx_", "block_"):
+        if name.startswith(prefix):
+            return prefix[:-1] + "." + name[len(prefix):]
+    return name
+
+
+def named_value_items(values, *, env=False):
+    """Return (name, value) pairs from report dicts or CE-journal lists."""
+    if isinstance(values, dict):
+        items = values.items()
+    else:
+        items = ((v.get("name"), v.get("value")) for v in values or []
+                 if isinstance(v, dict))
+    out = []
+    for name, value in items:
+        if not name:
+            continue
+        out.append((_journal_env_name(name) if env else name, value))
+    return out
+
+
+def named_values_dict(values, *, env=False):
+    return {name: value for name, value in named_value_items(values, env=env)}
 
 
 ENV_PREFIXES = ("msg.", "tx.", "block.")
@@ -414,7 +442,7 @@ def coord_values(c, state_structs=False):
     into one that reads as a statement about the whole input space.
     """
     ce, refused = {}, []
-    for n, v in (c.get("env") or {}).items():
+    for n, v in named_value_items(c.get("env"), env=True):
         # EVM environment (msg.*/tx.*/block.*). The tool resolves these names as
         # coordinates already -- what was missing is that the driver never read
         # them out of the report, and that omission is a systematic yield
@@ -435,7 +463,7 @@ def coord_values(c, state_structs=False):
             ce[n] = parse_int(v)
         except ValueError:
             refused.append(n)
-    for n, v in (c.get("inputs") or {}).items():
+    for n, v in named_value_items(c.get("inputs")):
         try:
             ce[n] = parse_int(v)
         except ValueError:
@@ -454,7 +482,7 @@ def coord_values(c, state_structs=False):
                     f"instead: " + ", ".join(sorted(fields)) + ")")
             else:
                 refused.append(n)
-    for n, v in (c.get("entry_storage") or {}).items():
+    for n, v in named_value_items(c.get("entry_storage")):
         try:
             ce["state." + n] = parse_int(v)
         except ValueError:
@@ -610,6 +638,167 @@ def agreed_bytes_mapping_key_literals(raw_inputs, params):
     return literals, skipped
 
 
+def _journal_claim_parts(entry):
+    claim = entry.get("claim") or ""
+    m = re.match(r"(?P<pf>.+):path:(?P<pid>\d+)$", claim)
+    path_function = entry.get("path_function")
+    path_id = entry.get("path_id")
+    if m:
+        path_function = path_function or m.group("pf")
+        path_id = path_id or m.group("pid")
+    condition = entry.get("condition") or ""
+    cm = re.match(r"(?P<unit>[^:]+):path:(?P<pid>\d+)$", condition)
+    unit = cm.group("unit") if cm else ""
+    path_id = path_id or (cm.group("pid") if cm else None)
+    if not unit and path_function:
+        fm = re.search(r"@F@([^#]+)#", path_function)
+        unit = fm.group(1) if fm else ""
+    return path_function, unit, path_id
+
+
+def _journal_witness_count(entry):
+    try:
+        return int(entry.get("witness_count"))
+    except (TypeError, ValueError):
+        return 1 + len(entry.get("witnesses") or [])
+
+
+def report_from_ce_journal(journal):
+    """Convert a partial CE journal into a partial path enumeration report.
+
+    A journal row exists only after ESBMC has refuted a path claim, so this is
+    refutation evidence for candidate generation only. The returned report is
+    stamped partial and is still fed into the normal certification stage before
+    any region can be counted as proved.
+    """
+    if journal.get("kind") != "solidity-complete-path-ce-journal":
+        return None
+    witnessed = journal.get("witnesses") or {}
+    if not isinstance(witnessed, dict) or not witnessed:
+        return None
+    claims = []
+    for entry in witnessed.values():
+        if not isinstance(entry, dict):
+            continue
+        path_function, unit, path_id = _journal_claim_parts(entry)
+        if not path_function or not unit or path_id is None:
+            continue
+        depth = entry.get("path_depth") or entry.get("decision_depth")
+        if depth is None:
+            try:
+                depth = int(path_id).bit_length() - 1
+            except (TypeError, ValueError):
+                continue
+        try:
+            path_id_int = int(path_id)
+            depth_int = int(depth)
+        except (TypeError, ValueError):
+            continue
+        claim = {
+            "bound": {"kind": "bounded"},
+            "ce_extraction": {
+                "compact_trace": bool(entry.get("compact_trace")),
+                "harness_nondets_dropped": entry.get("dropped_internal"),
+                "payload_symbols_exempt_from_slicing":
+                bool(entry.get("payload_symbols_protected")),
+                "scoped_to_claim": bool(entry.get("scoped_to_claim")),
+                "sliced": bool(entry.get("sliced")),
+                "witness_count": _journal_witness_count(entry),
+            },
+            "condition": f"{unit}:path:{path_id_int}",
+            "decisions": entry.get("decisions") or [],
+            "entry_storage": named_values_dict(entry.get("entry_storage")),
+            "env": named_values_dict(entry.get("env"), env=True),
+            "events": entry.get("events") or [],
+            "exit_kind": "revert" if entry.get("revert_pre_rollback")
+            else "normal",
+            "extcall_returns": [{
+                "symbol": name,
+                "value": value,
+            } for name, value in named_value_items(entry.get("extcall_returns"))],
+            "final_state": named_values_dict(entry.get("final_state")),
+            "function": "",
+            "inputs": named_values_dict(entry.get("inputs")),
+            "line": 0,
+            "path_depth": depth_int,
+            "path_function": path_function,
+            "path_id": str(path_id_int),
+            "return_value": entry.get("return_value"),
+            "return_value_known": bool(entry.get("return_value_known")),
+            "state_written_value_unavailable":
+            entry.get("state_written_unrendered") or [],
+            "status": "F",
+            "witnessed_in_earlier_round": False,
+        }
+        extra_witnesses = []
+        for witness in entry.get("witnesses") or []:
+            if not isinstance(witness, dict):
+                continue
+            extra_witnesses.append({
+                "entry_storage": named_values_dict(witness.get("entry_storage")),
+                "env": named_values_dict(witness.get("env"), env=True),
+                "extcall_returns": [{
+                    "symbol": name,
+                    "value": value,
+                } for name, value in
+                                    named_value_items(witness.get("extcall_returns"))],
+                "final_state": named_values_dict(witness.get("final_state")),
+                "inputs": named_values_dict(witness.get("inputs")),
+                "return_value": witness.get("return_value"),
+                "return_value_known": bool(witness.get("return_value_known")),
+            })
+        if extra_witnesses:
+            claim["witnesses"] = extra_witnesses
+        claims.append(claim)
+    if not claims:
+        return None
+    total = journal.get("claims_total") or len(claims)
+    decided = journal.get("claims_decided")
+    try:
+        total_int = int(total)
+    except (TypeError, ValueError):
+        total_int = len(claims)
+    try:
+        decided_int = int(decided)
+    except (TypeError, ValueError):
+        decided_int = len(claims)
+    return {
+        "claims": claims,
+        "coverage_type": "solidity-complete-path",
+        "partial": True,
+        "summary": {
+            "F_feasible_with_ce": len(claims),
+            "F_with_multiple_witnesses":
+            sum(1 for c in claims
+                if (c.get("ce_extraction") or {}).get("witness_count", 1) > 1),
+            "U_undecided": max(0, total_int - len(claims)),
+            "covered": len(claims),
+            "partial": True,
+            "paths_total": total_int,
+            "total": total_int,
+            "uncovered": max(0, total_int - len(claims)),
+            "witnesses_total":
+            sum((c.get("ce_extraction") or {}).get("witness_count", 1)
+                for c in claims),
+        },
+        "veriput_salvage": {
+            "from": "cov-ce-journal.json",
+            "claims_decided": decided_int,
+            "claims_total": total_int,
+            "reason": "outer-timeout-with-feasible-path-witnesses",
+        },
+    }
+
+
+def partial_journal_report(cwd):
+    path = os.path.join(cwd, "cov-ce-journal.json")
+    try:
+        with open(path, encoding="utf-8") as stream:
+            return report_from_ce_journal(json.load(stream))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     ast=None, focus=None, memlimit="8g", path_function=None,
                     esbmc_args=(), state_structs=False, probe_witnesses=0,
@@ -682,6 +871,9 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     else:
         if os.path.exists(report):
             os.remove(report)
+        journal = os.path.join(cwd, "cov-ce-journal.json")
+        if os.path.exists(journal):
+            os.remove(journal)
         enum_args = ["--cov-report-json"]
         if probe_witnesses:
             enum_args += ["--branch-function-coverage", "--path-cov-probe",
@@ -691,10 +883,22 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                   ast=ast, focus=focus, memlimit=memlimit,
                   esbmc_args=esbmc_args)
         if not os.path.exists(report):
-            # Preserve ESBMC's actionable frontend/configuration diagnostic.
-            raise SystemExit(
-                "[enumerate] ESBMC produced no cov-report.json. Its output was:\n"
-                + log)
+            salvaged = partial_journal_report(cwd)
+            if salvaged:
+                with open(report, "w", encoding="utf-8") as stream:
+                    json.dump(salvaged, stream, indent=2, sort_keys=True)
+                meta = salvaged.get("veriput_salvage") or {}
+                print(
+                    f"[enumerate] salvaged {len(salvaged.get('claims', []))} "
+                    "witnessed path(s) from partial cov-ce-journal.json "
+                    f"({meta.get('claims_decided')}/"
+                    f"{meta.get('claims_total')} claims decided); regions "
+                    "still require independent certification")
+            else:
+                # Preserve ESBMC's actionable frontend/configuration diagnostic.
+                raise SystemExit(
+                    "[enumerate] ESBMC produced no cov-report.json. "
+                    "Its output was:\n" + log)
     with open(report) as f:
         rep = json.load(f)
 
@@ -3996,7 +4200,8 @@ def payload_extras(c):
     """
     out = {}
     for e in (c.get("extcall_returns") or []):
-        name = e.get("symbol") if isinstance(e, dict) else None
+        name = (e.get("symbol") or e.get("name")) if isinstance(e, dict) \
+            else None
         if not name:
             continue
         try:
