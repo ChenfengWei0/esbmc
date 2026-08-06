@@ -3737,6 +3737,99 @@ def test_source_R2_enum_mapping_keys_use_same_typed_params():
     return bad
 
 
+def test_source_R2_enum_state_literals_fold_to_ordinals():
+    from solidity_path_put import r2_term_text, source_assignment_r2_specs  # noqa: E402
+
+    enum_ty = "enum C.Status"
+
+    def ident(ref, name, ty=enum_ty):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def enum_member(ref, name):
+        return {"nodeType": "MemberAccess", "referencedDeclaration": ref,
+                "memberName": name,
+                "expression": ident(2, "Status",
+                                    "type(enum C.Status)"),
+                "typeDescriptions": {"typeString": enum_ty}}
+
+    def assign(rhs, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=", "src": src,
+            "leftHandSide": ident(10, "status"),
+            "rightHandSide": rhs}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "EnumDefinition", "id": 2, "name": "Status",
+             "canonicalName": "C.Status",
+             "members": [{"nodeType": "EnumValue", "id": 3, "name": "Open"},
+                         {"nodeType": "EnumValue", "id": 4, "name": "Paused"},
+                         {"nodeType": "EnumValue", "id": 5, "name": "Closed"}]},
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "status",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": enum_ty}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "close",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 assign(enum_member(5, "Closed"), "100:8:0")]}},
+            {"nodeType": "FunctionDefinition", "id": 30, "name": "reset",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "UnaryOperation", "operator": "delete",
+                 "src": "140:6:0",
+                 "subExpression": ident(10, "status")}]}},
+            {"nodeType": "FunctionDefinition", "id": 40, "name": "bad",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 assign({"nodeType": "MemberAccess",
+                         "referencedDeclaration": 99,
+                         "memberName": "Foreign",
+                         "expression": ident(98, "Other",
+                                             "type(enum C.Other)"),
+                         "typeDescriptions": {"typeString": enum_ty}},
+                        "180:8:0")]}}
+        ]}]}
+    layout = {"status": (0, 0, 32)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        close_specs, close_evidence = source_assignment_r2_specs(
+            path, "C", "close", [], layout, [], arity=0,
+            log=lambda _msg: None)
+        reset_specs, _reset_evidence = source_assignment_r2_specs(
+            path, "C", "reset", [], layout, [], arity=0,
+            log=lambda _msg: None)
+        bad_specs, _bad_evidence = source_assignment_r2_specs(
+            path, "C", "bad", [], layout, [], arity=0,
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    def equals(specs):
+        entries = {entry["name"]: entry
+                   for entry in specs[0]["vars"]} if specs else {}
+        return [r2_term_text(item["term"])
+                for item in entries.get("status", {}).get("equals", [])]
+
+    bad = 0
+    bad += check(equals(close_specs) == ["2"],
+                 f"enum assignment folds to its declaration ordinal: "
+                 f"{close_specs}")
+    bad += check(any("status: post == Status.Closed" in line
+                     for line in close_evidence),
+                 f"enum provenance preserves the source member: "
+                 f"{close_evidence}")
+    bad += check(equals(reset_specs) == ["0"],
+                 f"delete on enum state resets to ordinal zero: "
+                 f"{reset_specs}")
+    bad += check(bad_specs == [],
+                 f"unknown enum member id is refused closed: {bad_specs}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -7292,6 +7385,7 @@ def main():
               test_source_R2_mapping_literal_keys_are_named_when_slot_safe,
               test_source_R2_mapping_constant_keys_fold_to_safe_slot_literals,
               test_source_R2_enum_mapping_keys_use_same_typed_params,
+              test_source_R2_enum_state_literals_fold_to_ordinals,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_source_R2_return_type_conversion_wrappers_are_unwrapped,
               test_source_R2_local_aliases_feed_return_state_and_mapping_terms,

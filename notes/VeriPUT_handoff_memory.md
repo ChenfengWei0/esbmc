@@ -57,6 +57,58 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 enum state-machine source-R2
+
+Scope and constraint:
+
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` stayed read-only. The peer/stress
+  contracts were only scanned as ground truth, and any solc AST inspection used
+  `/tmp`.
+- No POC ESBMC attempt was consumed. This change was verified with pure Python
+  tests only.
+
+Ground truth:
+
+- The peer dataset contains many enum state machines such as
+  `BasicProvenance.StateType` and `RefrigeratedTransportation.StateType`.
+- A source assignment like `State = StateType.Completed` should seed an exact
+  R2 query `State: post == 2`, where `2` is the enum member ordinal in the
+  declaration. This is stronger than merely proving the path is reachable and
+  is useful for mutation/vulnerability regression because state-transition
+  bugs usually change the final enum state.
+- `delete State` should seed `State: post == 0`, matching Solidity's default
+  enum value.
+- This enhancement deliberately does not make enum calldata parameters fuzz
+  parameters. `lift_kind()` still only emits bounded Foundry parameters for
+  bool/address/uint. Enum parameter support needs a separate renderer decision
+  because the PUT signature and `bound()` cast rules are different.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now indexes
+  enum member ids for the selected contract/base scopes and records each
+  member's declaration ordinal.
+- `literal_term()` recognizes enum `MemberAccess`/`Identifier` nodes whose
+  `referencedDeclaration` matches an indexed enum member and whose
+  `typeString`/state type agree, then emits a literal ordinal term.
+- `zero_term()` now treats enum state/storage slots as reset-to-zero values.
+- `type_coord_kind()` treats enum types as identity-like (`id`) for source-R2
+  equality. This is only for source/query typing; it does not lift enum
+  calldata in the final Foundry PUT.
+- Return terms of enum type can use enum literal RHSs as identity literals, but
+  the high-value path for this change is state-slot assignment.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 176/176 tests.
+- Read-only smoke on `/tmp/BasicProvenance.solast` generated from the peer
+  dataset contract produced `['2']` for `BasicProvenance.Complete` with
+  evidence `State: post == StateType.Completed`.
+
 Important caveat found immediately afterward:
 
 - This change proves the external tool can name, propose, and render Foundry

@@ -1165,6 +1165,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         scopes = [ast]
     state_ids = {}
     constant_ids = {}
+    enum_member_ids = {}
     for scope in scopes:
         for n in (scope.get("nodes") or []):
             if (isinstance(n, dict) and
@@ -1179,6 +1180,26 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     n.get("id") is not None):
                 ty = (n.get("typeDescriptions") or {}).get("typeString") or ""
                 constant_ids[n["id"]] = (n["name"], ty, n.get("value"))
+            if (isinstance(n, dict) and
+                    n.get("nodeType") == "EnumDefinition"):
+                enum_name = n.get("name") or ""
+                enum_types = set()
+                canonical = n.get("canonicalName") or ""
+                if canonical:
+                    enum_types.add("enum " + canonical)
+                scope_name = scope.get("name") or ""
+                if scope_name and enum_name:
+                    enum_types.add(f"enum {scope_name}.{enum_name}")
+                if enum_name:
+                    enum_types.add("enum " + enum_name)
+                for ordinal, member in enumerate(n.get("members") or []):
+                    if (isinstance(member, dict) and
+                            member.get("id") is not None):
+                        label = (f"{enum_name}.{member.get('name')}"
+                                 if enum_name and member.get("name")
+                                 else str(ordinal))
+                        enum_member_ids[member["id"]] = (
+                            enum_types, ordinal, label)
 
     entries, evidence, seen, by_name = [], [], set(), {}
     next_id = [0]
@@ -1239,10 +1260,36 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return {"kind": "literal", "value": value}, value
         return None
 
+    def enum_member_term(n, state_ty):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return enum_member_term(alias, state_ty)
+        state_ty = _norm_ty(state_ty)
+        if not state_ty.startswith("enum "):
+            return None
+        if not isinstance(n, dict) or n.get("nodeType") not in (
+                "MemberAccess", "Identifier"):
+            return None
+        ref = n.get("referencedDeclaration")
+        info = enum_member_ids.get(ref)
+        if info is None:
+            return None
+        enum_types, ordinal, label = info
+        node_ty = _norm_ty((n.get("typeDescriptions") or {}).get(
+            "typeString") or "")
+        if node_ty and node_ty != state_ty:
+            return None
+        if not node_ty and state_ty not in enum_types:
+            return None
+        return {"kind": "literal", "value": str(ordinal)}, label
+
     def literal_term(n, state_ty):
         alias = local_alias_expr(n)
         if alias is not None:
             return literal_term(alias, state_ty)
+        enum_literal = enum_member_term(n, state_ty)
+        if enum_literal is not None:
+            return enum_literal
         if not isinstance(n, dict) or n.get("nodeType") != "Literal":
             return None
         if n.get("kind") == "bool" and state_ty == "bool":
@@ -1263,6 +1310,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return {"kind": "literal", "value": "0"}, "0"
         if state_ty == "address" or state_ty.startswith(("contract ",
                                                           "interface ")):
+            return {"kind": "literal", "value": "0"}, "0"
+        if state_ty.startswith("enum "):
             return {"kind": "literal", "value": "0"}, "0"
         return None
 
@@ -1375,7 +1424,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return "bool"
         if unsigned_ty(t):
             return "num"
-        if t == "address" or t.startswith(("contract ", "interface ")):
+        if t == "address" or t.startswith(("contract ", "interface ",
+                                            "enum ")):
             return "id"
         return None
 
@@ -1737,6 +1787,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return literal
             return coord_term(n, "bool", target_ty)
         if expected_kind == "id":
+            literal = literal_term(n, _norm_ty(target_ty or ""))
+            if literal is not None:
+                return literal
             return coord_term(n, "id", target_ty)
         if expected_kind != "num":
             return None
