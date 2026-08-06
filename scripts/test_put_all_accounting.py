@@ -160,11 +160,23 @@ def main():
                         "guarded_asserts": 0,
                         "rendered_width": {"x": 2},
                     },
-                }, "/tmp/forge-project", {"x": [0, 2]}, True, "C")
+                }, "/tmp/forge-project", {"x": [0, 2]}, True, "C"),
+                ("bench", "target", 2, None, 0, {
+                    "kind": "concrete",
+                    "test": "test_cov_0",
+                    "file": "/tmp/concrete.t.sol",
+                    "binary": {"binaryMtime": 123},
+                    "stats": {
+                        "fuzz_params": 0,
+                        "asserts": 0,
+                        "guarded_asserts": 0,
+                        "rendered_width": {},
+                    },
+                }, "/tmp/forge-project", {}, True, "C"),
             ], 10)
             bad += check("stage4-b-summary-counts-b",
                          (summary["b"], summary["certified_region_rows"]),
-                         (1, 1))
+                         (1, 2))
             bad += check("stage4-b-summary-forge-seen",
                          (summary["forge_seen"]["put"]["Success"],
                           summary["forge_seen"]["concrete"]["Success"]),
@@ -173,6 +185,14 @@ def main():
                          summary["rows"][0]["gates"],
                          {"fuzz": True, "width": True, "assert": True,
                           "green": True, "corpus": True})
+            bad += check("stage4-concrete-row-is-not-b",
+                         (summary["rows"][1]["kind"],
+                          summary["rows"][1]["b"],
+                          summary["rows"][1]["valid_reference_test"]),
+                         ("concrete", False, True))
+            bad += check("stage4-valid-reference-test-split",
+                         summary["valid_reference_tests"],
+                         {"total": 2, "put": 1, "concrete": 1})
         finally:
             put_all.run_forge = old_run_forge
             put_all.current_binary_identity = old_binary

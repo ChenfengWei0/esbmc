@@ -891,11 +891,12 @@ def main():
     print("=" * 84)
     print(f"{'benchmark':<28}{'unit':<16}{'enc':>7}{'rc':>4}"
           f"{'fuzz':>6}{'asserts':>9}  outcome")
-    n_put = n_fuzz = n_oracle = n_both = 0
+    n_put = n_fuzz = n_oracle = n_both = n_concrete = 0
     for bench, unit, enc, piece, rc, rec, _proj, _region, _is_corpus, \
             _contract in results:
         encs = f"{enc}#{piece}" if piece else str(enc)
         st = rec.get("stats") or {}
+        kind = rec.get("kind") or "put"
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
         # PRINTED APART, for the same reason gate 3 counts them apart: a rung
         # under `if (_put_ok)` runs only when the call did not revert, and on
@@ -904,7 +905,10 @@ def main():
         # 10 assertions and 2 pieces of decoration.
         gd = st.get("guarded_asserts", 0)
         ar_txt = f"{ar - gd}+{gd}c" if gd else str(ar)
-        if rc == 0:
+        if rc == 0 and kind == "concrete":
+            n_concrete += 1
+            outcome = "CONCRETE " + os.path.basename(rec.get("file", ""))
+        elif rc == 0:
             n_put += 1
             n_fuzz += 1 if fz else 0
             n_oracle += 1 if (ar - gd) else 0
@@ -928,6 +932,7 @@ def main():
     print()
     print(f"  PUTs emitted                     : {n_put} of {len(results)} "
           f"certified region(s)")
+    print(f"  Concrete replays emitted         : {n_concrete}")
     print(f"  ... of which carry FUZZ parameters: {n_fuzz}")
     print(f"  ... of which carry an ORACLE      : {n_oracle}")
     print(f"  ... of which carry BOTH           : {n_both}")
@@ -962,6 +967,7 @@ def main():
             "emission": {
                 "certified_region_rows": len(results),
                 "puts_emitted": n_put,
+                "concrete_replays_emitted": n_concrete,
                 "with_fuzz_parameters": n_fuzz,
                 "with_oracle": n_oracle,
                 "with_both": n_both,
@@ -1128,6 +1134,7 @@ def b_report(results, forge_timeout):
     print(f"  this tree: head={_now_binary['head']} "
           f"srcDirty={_now_binary['srcDirty']} "
           f"binaryMtime={_now_binary['binaryMtime']}")
+    valid_reference_tests = {"total": 0, "put": 0, "concrete": 0}
     for bench, unit, enc, piece, rc, rec, proj, region, is_corpus, \
             contract_name in results:
         # SAME shape the emitter builds, and the reason it is here rather than
@@ -1138,6 +1145,7 @@ def b_report(results, forge_timeout):
         plabel = f"p{piece}" if piece else ""
         encs = f"{enc}#{piece}" if piece else str(enc)
         st = rec.get("stats") or {}
+        kind = rec.get("kind") or "put"
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
         # ---- GATE 3 COUNTS UNCONDITIONAL ASSERTIONS ONLY ------------------
         #
@@ -1164,6 +1172,57 @@ def b_report(results, forge_timeout):
         # as fuzz input, while a calldata parameter absent from the certified
         # region can be lifted over its full type domain because Stage 2 proved
         # the path with that input unconstrained.
+        refused = rc != 0
+        stale = stale_reason(rec, _now_binary) if rc == 0 else None
+        if kind == "concrete":
+            want = rec.get("test")
+            status = verdicts.get(want)
+            g4 = status == "Success"
+            g5 = is_corpus
+            generated_ok = g4 and g5 and not stale and not refused
+            if generated_ok:
+                valid_reference_tests["total"] += 1
+                valid_reference_tests["concrete"] += 1
+            row_summaries.append({
+                "kind": "concrete",
+                "benchmark": bench,
+                "unit": unit,
+                "enc": enc,
+                "piece": piece,
+                "rc": rc,
+                "test": want,
+                "forge_status": status,
+                "gates": {
+                    "fuzz": False,
+                    "width": None if not refused else None,
+                    "assert": None if not refused else None,
+                    "green": g4 if not (refused or status is None) else None,
+                    "corpus": g5 if not refused else None,
+                },
+                "b": False,
+                "valid_reference_test": generated_ok,
+                "refused": refused,
+                "stale": stale,
+                "fuzz_params": fz,
+                "asserts": ar,
+                "guarded_asserts": guarded,
+                "unconditional_asserts": uncond,
+                "rendered_width": st.get("rendered_width") or {},
+                "file": rec.get("file"),
+            })
+            def m_concrete(x, unknown=False):
+                return "?" if unknown else ("yes" if x else "NO")
+            print(f"{bench:<24}{unit:<16}{encs:>7}  "
+                  f"{'n/a':>7}{'n/a':>8}{'n/a':>9}"
+                  f"{m_concrete(g4, refused or status is None):>8}"
+                  f"{m_concrete(g5, refused):>9}  CONCRETE")
+            if stale:
+                print(f"      ⛔ NOT COUNTED: {stale}")
+                n_stale += 1
+            if refused:
+                n_refused += 1
+            continue
+
         g1 = rc == 0 and fz > 0
         g2 = any(width > 1 for width in (st.get("rendered_width") or {}).values())
         g3 = uncond > 0
@@ -1217,11 +1276,13 @@ def b_report(results, forge_timeout):
         # UNKNOWN, not NO: the gates were not evaluated against anything this
         # tree produced, so reporting them as failures would be as wrong as
         # reporting them as passes. Either way they are not B.
-        refused = rc != 0
-        stale = stale_reason(rec, _now_binary) if rc == 0 else None
         ok = g1 and g2 and g3 and g4 and g5 and not stale and not refused
         b += 1 if ok else 0
+        if ok:
+            valid_reference_tests["total"] += 1
+            valid_reference_tests["put"] += 1
         row_summaries.append({
+            "kind": "put",
             "benchmark": bench,
             "unit": unit,
             "enc": enc,
@@ -1237,6 +1298,7 @@ def b_report(results, forge_timeout):
                 "corpus": g5 if not refused else None,
             },
             "b": ok,
+            "valid_reference_test": ok,
             "refused": refused,
             "stale": stale,
             "fuzz_params": fz,
@@ -1271,6 +1333,10 @@ def b_report(results, forge_timeout):
     print(f"  Forge-visible concrete replays  : "
           f"{forge_seen['concrete']['Success']} green / "
           f"{sum(forge_seen['concrete'].values())} total")
+    print(f"  Reference-valid generated tests : "
+          f"{valid_reference_tests['total']} total "
+          f"({valid_reference_tests['put']} PUT, "
+          f"{valid_reference_tests['concrete']} concrete)")
     print(f"  {n_refused} row(s) were EXCLUDED as REFUSED -- the emitter "
           f"produced no PUT for them in this tree, so nothing in their row was "
           f"measured here. They are UNKNOWN, not failures.")
@@ -1285,6 +1351,7 @@ def b_report(results, forge_timeout):
         "forge_seen": forge_seen,
         "refused": n_refused,
         "stale": n_stale,
+        "valid_reference_tests": valid_reference_tests,
         "rows": row_summaries,
     }
 

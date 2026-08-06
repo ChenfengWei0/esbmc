@@ -58,7 +58,8 @@ import tempfile
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
-                               assemble_put_source, assert_query_pins,
+                               assemble_concrete_source, assemble_put_source,
+                               assert_query_pins,
                                assert_query_region_entries, build_put,
                                check_esbmc_args, cell_of,
                                exit_kind_asserted, find_unit_call,
@@ -10133,6 +10134,26 @@ def test_assembled_put_source_drops_stale_concrete_replays():
     return bad
 
 
+def test_assembled_concrete_source_keeps_only_the_selected_replay():
+    """Point regions are concrete deliverables, not parameterized PUTs."""
+    em, case = _st1inch_missing_case(3)
+    text = assemble_concrete_source(
+        em, case, "St1inchCovTest_St1inch_approve_concrete3")
+    bad = 0
+    bad += check("contract St1inchCovTest_St1inch_approve_concrete3 is Test"
+                 in text,
+                 "the concrete fallback gets a unique test contract")
+    bad += check("function test_cov_1()" not in text,
+                 "unrelated concrete replays are removed")
+    bad += check("function test_cov_0()" in text,
+                 "the selected concrete replay remains")
+    bad += check("function test_put_" not in text,
+                 "the concrete fallback does not pretend to be a PUT")
+    bad += check("from \"../src/" in text,
+                 "imports are still rewritten for the forge project layout")
+    return bad
+
+
 def test_the_funding_line_precedes_the_prank():
     """`vm.prank` binds to the NEXT call; a deal placed after it would consume
     nothing but must not be the last cheatcode standing between it and the
@@ -10414,6 +10435,7 @@ def main():
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,
+              test_assembled_concrete_source_keeps_only_the_selected_replay,
               test_the_funding_line_precedes_the_prank,
               test_a_value_gate_certified_at_ZERO_still_REFUSES):
         print(f"--- {t.__name__}")

@@ -8,6 +8,78 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-07 point-region concrete fallback
+
+Why this was changed:
+
+- The 600s mini-batch found one Stage4 loss:
+  `peer182 / peer_ccsolbmc__BasicProvenance.Complete` enc=7 was a certified
+  point region (`msg.sender == 0`) with no rendered coordinate wider than one
+  value.
+- Old behavior refused the row as `NOT PARAMETERIZED`.  That was correct for
+  PUT accounting, but it lost a reference-valid generated test: the emitter's
+  own concrete replay existed and was green.
+- User asked for two numbers: valid tests on the reference contract, and the
+  split between concrete replay tests and PUTs.  Refusing the point row made
+  that second number inaccurate.
+
+Code change:
+
+- `scripts/solidity_path_put.py`
+  - Adds `ConcreteFallback` for regions that certify but render no wide
+    coordinate.
+  - Adds `assemble_concrete_source()`, which keeps exactly the selected
+    `test_cov_*` replay, removes the other concrete replays from the emitted
+    file, rewrites imports for the Forge project layout, and gives the test
+    contract a unique name.
+  - Main Stage4 emission catches `ConcreteFallback`, writes a concrete replay
+    artefact, and writes `put.json` with `kind: "concrete"`.
+  - The R2 Forge prefilter also catches `ConcreteFallback`; a non-parameterized
+    candidate probe is treated as unrenderable for fuzz refutation, not as a
+    Stage4 crash.  Fuzz remains refute-only.
+- `notes/coverage/scripts/put_all.py`
+  - `kind == "concrete"` rows no longer increment `PUTs emitted`.
+  - `put-summary.json` now includes `emission.concrete_replays_emitted`.
+  - `deliverable_b.rows[*].kind` distinguishes `put` from `concrete`.
+  - `deliverable_b.valid_reference_tests` records total/PUT/concrete green
+    generated tests.
+  - B remains strict PUT B: concrete rows are not counted as B.
+
+Validation:
+
+- `python3 -m py_compile scripts/solidity_path_put.py notes/coverage/scripts/put_all.py scripts/test_solidity_path_put.py scripts/test_put_all_accounting.py`
+  passed.
+- `python3 scripts/test_solidity_path_put.py` passed:
+  234 / 234 registered tests.
+- `python3 scripts/test_put_all_accounting.py` passed.
+- `git diff --check -- scripts/solidity_path_put.py notes/coverage/scripts/put_all.py scripts/test_solidity_path_put.py scripts/test_put_all_accounting.py`
+  passed.
+
+Real single-case Stage4 validation:
+
+- Command used existing Stage2 cert only; Stage2 was not rerun:
+  `python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_minibatch_20260807_054341/peer182__peer_ccsolbmc__BasicProvenance__Complete.jsonl --only peer182__peer_ccsolbmc__BasicProvenance.Complete --out-root /tmp/veriput_basicprovenance_concretefix2_20260807_055952 --scope focus --max-tx 1 --timeout 600 --memlimit-gib 8 --strong-recipe`
+- Summary:
+  `/tmp/veriput_basicprovenance_concretefix2_20260807_055952/put-summary.json`
+- Result:
+  - `emission.certified_region_rows = 2`
+  - `emission.puts_emitted = 1`
+  - `emission.concrete_replays_emitted = 1`
+  - `deliverable_b.b = 1`
+  - `deliverable_b.refused = 0`
+  - `deliverable_b.forge_seen.put.Success = 1`
+  - `deliverable_b.forge_seen.concrete.Success = 1`
+  - `deliverable_b.valid_reference_tests = {"total": 2, "put": 1, "concrete": 1}`
+
+Effect on the earlier mini-batch if re-emitted under this code:
+
+- Strict PUT B over the 9 certified regions remains 8 / 9: the point row is
+  intentionally not a PUT.
+- Reference-valid generated tests over those certified regions becomes 9 / 9:
+  8 PUT + 1 concrete replay.
+- Case-level all sampled units remains 4 / 6 because the two BugFix units still
+  stop at Stage2 `NO-WITNESS-UNKNOWN`.
+
 ## 2026-08-07 600s mini-batch PUT success snapshot
 
 User policy update:

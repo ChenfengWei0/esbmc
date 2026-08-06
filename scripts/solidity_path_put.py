@@ -112,6 +112,14 @@ from solidity_ast_dependencies import (SLOT_DEPENDENCY_POLICY,
 UINT256_MAX = (1 << 256) - 1
 
 
+class ConcreteFallback(Exception):
+    """The certified region is valid but renders only one concrete replay."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
 # ---------------------------------------------------------------------------
 # Running ESBMC
 # ---------------------------------------------------------------------------
@@ -6794,7 +6802,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         return None, None
     if not any(w > 1 for w in rendered_width.values()):
         widths = ", ".join(f"{n}={w}" for n, w in sorted(rendered_width.items()))
-        notes.append(
+        reason = (
             "NOT PARAMETERIZED, per §From a Region to a Test: no coordinate "
             "this test RENDERS is left more than one value to take"
             + (f" (rendered widths: {widths})" if widths
@@ -6805,7 +6813,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               "is the concrete replay test the emitter already wrote into this "
               "file; a PUT here would be that same replay with bound() syntax "
               "over it, counted as a parameterized test")
-        return None, None
+        notes.append(reason)
+        raise ConcreteFallback(reason)
 
     new_call, _ = rewrite_call_args(call_line, unit, repl)
     target_addr = target_address_expr_for_call(body, call_i, unit)
@@ -8171,6 +8180,38 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
     return source
 
 
+def assemble_concrete_source(emitted, case, new_contract, fixture=None,
+                             layout=None, contract=None, unit=None):
+    """Keep exactly one concrete replay case and rename its test contract.
+
+    This is the point-region fallback for a certified region that renders no
+    coordinate wider than one value. It is intentionally not a PUT: the replay
+    remains a `test_cov_*` function so Stage 4 can count it as concrete and not
+    as a parameterized unit test.
+    """
+    cname, _cstart, _cend = emitted.blocks[case[0]]
+    lines = list(emitted.lines)
+    keep_start, keep_end = case[3]
+    for _ci, _name, _claims, (fs, fe) in sorted(
+            emitted.cases, key=lambda item: item[3][0], reverse=True):
+        if (fs, fe) == (keep_start, keep_end):
+            continue
+        del lines[fs:fe + 1]
+    if fixture is not None and contract is not None and unit is not None:
+        lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
+                                      fixture, layout)
+    source = "\n".join(lines) + "\n"
+    source = source.replace(
+        f"contract {cname} is Test", f"contract {new_contract} is Test")
+    source = re.sub(r'from "\./', 'from "../src/', source)
+    for mock in sorted(set(re.findall(r"ESBMCMock_(\w+)", source)),
+                       key=len, reverse=True):
+        source = re.sub(
+            r"ESBMCMock_" + re.escape(mock) + r"\b",
+            f"ESBMCMock_{mock}_{new_contract}", source)
+    return source
+
+
 def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                            enc, depth_, path_function, region, holes, pins,
                            params, layout, maps, specs, r2_terms, cell,
@@ -8203,13 +8244,18 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
     for index, candidate in enumerate(selected):
         marker = f"VERIPUT_CANDIDATE_{marker_namespace}_{index}"
         piece = f"fz{index}"
-        probe, stats = build_put(
-            contract, unit, enc, depth_, path_function, region, holes, pins,
-            params, emitted, case, layout,
-            [(candidate["var"], candidate["text"], "HOLDS")], [],
-            cell=cell, rettypes=None, maps=maps, piece_label=piece,
-            derived_by=derived_by, rollback_exit=False, r2_terms=r2_terms,
-            oracle_label_prefix=marker + " ", establish=establish)
+        try:
+            probe, stats = build_put(
+                contract, unit, enc, depth_, path_function, region, holes, pins,
+                params, emitted, case, layout,
+                [(candidate["var"], candidate["text"], "HOLDS")], [],
+                cell=cell, rettypes=None, maps=maps, piece_label=piece,
+                derived_by=derived_by, rollback_exit=False, r2_terms=r2_terms,
+                oracle_label_prefix=marker + " ", establish=establish)
+        except ConcreteFallback as exc:
+            evidence[candidate["key"]]["reason"] = (
+                "candidate probe was not parameterized: " + exc.reason)
+            continue
         if probe is None or not stats or stats.get("state_asserts", 0) == 0:
             continue
         if marker not in "\n".join(probe):
@@ -9170,21 +9216,83 @@ def main():
     overload_label = overload_artifact_label(
         a.ast, a.contract, a.unit, declaration_id)
     plabel = overload_label + (f"p{a.piece}" if a.piece else "")
-    put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
-                           region, holes, pins, params, emitted, case,
-                           layout, rows, notes,
-                           cell=(cell_name, cell_rule),
-                           unwind=unwind_applied, rettypes=rettypes,
-                           maps=maps, piece_label=plabel,
-                           derived_by=json.loads(a.derived_by or "{}"),
-                           rollback_exit=rollback_here,
-                           r2_terms=r2_term_lookup,
-                           exit_kind=a.exit_kind,
-                           state_types=state_types,
-                           lift_unconstrained_calldata=(
-                               a.lift_unconstrained_calldata),
-                           path_decisions=claim.get("decisions") or [],
-                           establish=json.loads(a.establish or "[]"))
+    try:
+        put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
+                               region, holes, pins, params, emitted, case,
+                               layout, rows, notes,
+                               cell=(cell_name, cell_rule),
+                               unwind=unwind_applied, rettypes=rettypes,
+                               maps=maps, piece_label=plabel,
+                               derived_by=json.loads(a.derived_by or "{}"),
+                               rollback_exit=rollback_here,
+                               r2_terms=r2_term_lookup,
+                               exit_kind=a.exit_kind,
+                               state_types=state_types,
+                               lift_unconstrained_calldata=(
+                                   a.lift_unconstrained_calldata),
+                               path_decisions=claim.get("decisions") or [],
+                               establish=json.loads(a.establish or "[]"))
+    except ConcreteFallback as fallback:
+        cname, _cstart, _cend = emitted.blocks[case[0]]
+        newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
+                f"{plabel}{a.test_suffix}")
+        txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
+                                       layout, a.contract, a.unit)
+        dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
+        with open(dest, "w") as f:
+            f.write(txt)
+        print(f"[put] WROTE concrete replay {dest}")
+        print("[put]   concrete replay : " + case[1])
+        print(f"[put]   note: {fallback.reason}")
+        with open(os.path.join(a.workdir, "put.json"), "w") as f:
+            json.dump({"kind": "concrete",
+                       "contract": a.contract, "unit": a.unit, "enc": a.enc,
+                       "depth": a.depth, "path_function": pf,
+                       "artifact_identity": overload_label,
+                       "file": dest, "test": case[1], "piece": a.piece,
+                       "region": {k: [str(v[0]), str(v[1])]
+                                  for k, v in region.items()},
+                       "holes": {k: [str(x) for x in v]
+                                 for k, v in holes.items()},
+                       "establish": json.loads(a.establish or "[]"),
+                       "pins": {k: str(v) for k, v in pins.items()},
+                       "ladder": [{"var": v, "text": t, "verdict": d}
+                                  for v, t, d in rows],
+                       "ladder_summary": summary, "ladder_refusal": refusal,
+                       "r2_requested": r2_requested,
+                       "r2_depth": a.r2_depth if r2_requested else None,
+                       "r2_term_budget": (a.r2_term_budget
+                                          if r2_requested else None),
+                       "r2_candidate_budget": (a.r2_candidate_budget
+                                                if r2_requested else None),
+                       "r2_fuzz_prefilter": r2_fuzz_prefilter,
+                       "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
+                       "oracle_dependency_state": list(slot_dependencies or ()),
+                       "oracle_vars": list(oracle_vars),
+                       "slot_candidates": {
+                           "asked": list(slot_vars),
+                           "unanswered": unanswered,
+                           "rows_for_unasked_names": unasked},
+                       "esbmc_extra_args": a.esbmc_arg,
+                       "unwind_applied_to_ladder_only": unwind_applied,
+                       "unwind_attempts": unwind_attempts,
+                       "cell": {"name": cell_name, "scope": a.scope,
+                                "max_tx": a.max_tx, "rule": cell_rule},
+                       "binary": binary_identity(a.esbmc),
+                       "concrete_reason": fallback.reason,
+                       "stats": {
+                           "fuzz_params": 0,
+                           "lifted": [],
+                           "rendered_width": {},
+                           "wide_fuzz_coords": [],
+                           "asserts": 0,
+                           "state_asserts": 0,
+                           "return_asserts": 0,
+                           "exit_kind_asserts": 0,
+                           "guarded_asserts": 0,
+                       },
+                       "notes": notes}, f, indent=2)
+        return 0
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
