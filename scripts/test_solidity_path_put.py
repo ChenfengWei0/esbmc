@@ -3907,6 +3907,110 @@ def test_source_R2_return_type_conversion_wrappers_are_unwrapped():
     return bad
 
 
+def test_source_R2_local_aliases_feed_return_state_and_mapping_terms():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def msg_sender():
+        return {"nodeType": "MemberAccess", "memberName": "sender",
+                "expression": {"nodeType": "Identifier", "name": "msg"},
+                "typeDescriptions": {"typeString": "address"}}
+
+    def binop(op, lhs, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def local_decl(ref, name, ty, value):
+        return {"nodeType": "VariableDeclarationStatement",
+                "declarations": [{
+                    "nodeType": "VariableDeclaration", "id": ref,
+                    "name": name,
+                    "typeDescriptions": {"typeString": ty}}],
+                "initialValue": value}
+
+    def assign(lhs, rhs, src, op="="):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": op, "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    def index(base_ref, base_name, key, ty="uint256"):
+        return {"nodeType": "IndexAccess",
+                "baseExpression": ident(base_ref, base_name),
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "total",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "bal",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "returnParameters": {"parameters": [{
+                 "id": 22, "name": "",
+                 "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 local_decl(30, "fee", "uint256",
+                            binop("*", ident(21, "amount"), num(3))),
+                 local_decl(31, "caller", "address", msg_sender()),
+                 assign(ident(10, "total"), ident(30, "fee"), "100:10:0",
+                        "+="),
+                 assign(index(11, "bal", ident(31, "caller", "address")),
+                        ident(21, "amount"), "120:10:0", "+="),
+                 {"nodeType": "Return", "src": "140:10:0",
+                  "expression": ident(30, "fee")}
+             ]}}
+        ]}]}
+    maps = {"bal": (1, "address", 32, 0, "bal", None)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out_file:
+        json.dump(ast, out_file)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "touch", [("amount", "uint256")],
+            {"total": (0, 0, 32)}, [("amount", "num", None),
+                                    ("msg.sender", "id", 20)],
+            arity=1, maps=maps, rettypes=[("", "uint256")],
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    total_deltas = entries.get("total", {}).get("deltas", [])
+    bal_deltas = entries.get("bal[msg.sender]", {}).get("deltas", [])
+    ret_entry = entries.get(RETURN_VAR, {})
+    return_terms = [r2_term_text(item["term"])
+                    for item in ret_entry.get("equals", [])]
+    bad = 0
+    bad += check(len(total_deltas) == 1 and
+                 r2_term_text(total_deltas[0]["lo"]) == "(amount * 3)",
+                 f"local fee alias feeds a state delta: {total_deltas}")
+    bad += check(len(bal_deltas) == 1 and
+                 r2_term_text(bal_deltas[0]["lo"]) == "amount",
+                 f"local caller alias names the msg.sender slot: {entries}")
+    bad += check(return_terms == ["(amount * 3)"],
+                 f"local fee alias feeds the return R2 term: {ret_entry}")
+    bad += check(any("total: post - pre == (amount * 3)" in line
+                     for line in evidence),
+                 f"local alias provenance records the expanded term: "
+                 f"{evidence}")
+    return bad
+
+
 def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     from solidity_path_put import r2_terms_from_specs, rung_assertions  # noqa: E402
     specs = [{"vars": [{"name": "ready", "equals": [{
@@ -6297,6 +6401,7 @@ def main():
               test_source_R2_mapping_constant_keys_fold_to_safe_slot_literals,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_source_R2_return_type_conversion_wrappers_are_unwrapped,
+              test_source_R2_local_aliases_feed_return_state_and_mapping_terms,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
               test_source_R2_merge_preserves_the_candidate_budget,

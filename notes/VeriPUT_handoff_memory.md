@@ -8,6 +8,51 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 source-R2 local alias expansion
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this source-miner change.
+
+Finding:
+
+- Many real Solidity units compute a local temporary and then return it or use
+  it as a state/mapping delta, e.g. `uint fee = amount * 3; total += fee;`
+  or `return fee`.
+- Before this change, source-R2 mining only understood parameters, state entry
+  coordinates, environment coordinates, constants, literals, and direct AST
+  arithmetic. A local identifier hid the useful expression, so strong candidates
+  were not even sent to ESBMC.
+
+Code change:
+
+- `source_assignment_r2_specs()` now records simple function-local aliases from
+  `VariableDeclarationStatement` initializers and straight-line assignments to
+  known locals.
+- The existing term builders expand those aliases before mining literals,
+  constants, coordinates, mapping keys, return terms, and numeric endpoints.
+- Compound updates and self-updates now use the numeric endpoint miner, so
+  `x += fee` and `x = x + fee` can produce one-level arithmetic delta terms
+  such as `(amount * 3)`.
+- Mapping keys can also use aliases, e.g. `address caller = msg.sender;
+  bal[caller] += amount` names the certified slot as `bal[msg.sender]`.
+- This is still a proposal-stage enhancement only: ESBMC must certify any
+  emitted R2 row before the PUT renderer may turn it into an oracle.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  164/164 tests.
+- `git diff --check -- scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md` passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 ESBMC return structured-R2 retset guard
 
 Scope and constraint:

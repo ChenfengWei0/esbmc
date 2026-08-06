@@ -1135,6 +1135,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             param_tys[p["id"]] = _norm_ty(
                 (p.get("typeDescriptions") or {}).get("typeString") or "")
 
+    local_ids = set()
+    local_aliases = {}
+
     by_id, owner = {}, None
 
     def index(n):
@@ -1184,10 +1187,25 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         ref = n.get("referencedDeclaration")
         return ref if isinstance(ref, int) else None
 
+    def local_alias_expr(n, seen=None):
+        ref = identifier_ref(n)
+        if ref is None or ref not in local_aliases:
+            return None
+        seen = set() if seen is None else set(seen)
+        if ref in seen:
+            return None
+        seen.add(ref)
+        expr = local_aliases[ref]
+        nested = local_alias_expr(expr, seen)
+        return nested if nested is not None else expr
+
     def unsigned_ty(t):
         return re.match(r"^uint(\d+)?$", t or "") is not None
 
     def unitless_number_term(n):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return unitless_number_term(alias)
         if not isinstance(n, dict) or n.get("nodeType") != "Literal":
             return None
         if (n.get("kind") == "number" and not n.get("subdenomination")):
@@ -1197,6 +1215,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     def literal_term(n, state_ty):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return literal_term(alias, state_ty)
         if not isinstance(n, dict) or n.get("nodeType") != "Literal":
             return None
         if n.get("kind") == "bool" and state_ty == "bool":
@@ -1221,6 +1242,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     def address_zero_term(n, state_ty):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return address_zero_term(alias, state_ty)
         if not (_norm_ty(state_ty) == "address"
                 or _norm_ty(state_ty).startswith(("contract ", "interface "))):
             return None
@@ -1242,6 +1266,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     def constant_term(n, state_ty):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return constant_term(alias, state_ty)
         ref = identifier_ref(n)
         const = constant_ids.get(ref)
         if const is None:
@@ -1258,6 +1285,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     def address_literal_key(n):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return address_literal_key(alias)
         literal = unitless_number_term(n)
         if literal is not None:
             return literal[1]
@@ -1277,6 +1307,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     def constant_key_name(n, expected_ty):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return constant_key_name(alias, expected_ty)
         ref = identifier_ref(n)
         const = constant_ids.get(ref)
         if const is None:
@@ -1343,6 +1376,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     def coord_term(n, expected_kind, target_ty=None):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return coord_term(alias, expected_kind, target_ty)
         if target_ty is not None:
             arg = type_conversion_arg(n, target_ty)
             if arg is not None:
@@ -1413,6 +1449,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 f"== {reason} from AST src {src or '?'}")
 
     def delta_term(n, target_ty=None):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return delta_term(alias, target_ty)
         if target_ty is not None:
             arg = type_conversion_arg(n, target_ty)
             if arg is not None:
@@ -1438,6 +1477,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return unitless_number_term(n)
 
     def numeric_endpoint_term(n, target_ty):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return numeric_endpoint_term(alias, target_ty)
         direct = delta_term(n, target_ty)
         if direct is not None:
             return direct
@@ -1461,6 +1503,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return identifier_ref(n) == state_id
 
     def self_update_delta(rhs, self_predicate, target_ty):
+        alias = local_alias_expr(rhs)
+        if alias is not None:
+            return self_update_delta(alias, self_predicate, target_ty)
         if not isinstance(rhs, dict) or rhs.get("nodeType") != "BinaryOperation":
             return None
         op = rhs.get("operator")
@@ -1468,17 +1513,20 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         right = rhs.get("rightExpression")
         if op == "+":
             if self_predicate(left):
-                term = delta_term(right, target_ty)
+                term = numeric_endpoint_term(right, target_ty)
                 return ("inc",) + term if term is not None else None
             if self_predicate(right):
-                term = delta_term(left, target_ty)
+                term = numeric_endpoint_term(left, target_ty)
                 return ("inc",) + term if term is not None else None
         if op == "-" and self_predicate(left):
-            term = delta_term(right, target_ty)
+            term = numeric_endpoint_term(right, target_ty)
             return ("dec",) + term if term is not None else None
         return None
 
     def key_name(n, expected_ty):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return key_name(alias, expected_ty)
         ref = identifier_ref(n)
         param_name = param_ids.get(ref)
         if (param_name and param_name in param_names and
@@ -1569,6 +1617,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     return_ids.add(ref)
 
     def return_term(n, expected_kind, target_ty=None):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return return_term(alias, expected_kind, target_ty)
         if expected_kind == "bool":
             literal = literal_term(n, "bool")
             if literal is not None:
@@ -1599,10 +1650,28 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
 
     def walk(n):
         if isinstance(n, dict):
+            if n.get("nodeType") == "VariableDeclarationStatement":
+                decls = [d for d in (n.get("declarations") or [])
+                         if isinstance(d, dict)]
+                init = n.get("initialValue")
+                if len(decls) == 1:
+                    ref = decls[0].get("id")
+                    if isinstance(ref, int):
+                        local_ids.add(ref)
+                        if init is not None:
+                            local_aliases[ref] = init
+                for child in n.values():
+                    walk(child)
+                return
             if n.get("nodeType") == "Assignment":
                 operator = n.get("operator")
                 lhs = n.get("leftHandSide")
                 lhs_ref = identifier_ref(lhs)
+                if operator == "=" and lhs_ref in local_ids:
+                    local_aliases[lhs_ref] = n.get("rightHandSide")
+                    for child in n.values():
+                        walk(child)
+                    return
                 state = state_ids.get(lhs_ref)
                 state_name = state[0] if state else None
                 state_ty = _norm_ty(state[1]) if state else ""
@@ -1612,7 +1681,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 rhs = n.get("rightHandSide")
                 if slot_name and unsigned_ty(slot_ty) and operator in (
                         "+=", "-="):
-                    delta = delta_term(rhs, slot_ty)
+                    delta = numeric_endpoint_term(rhs, slot_ty)
                     if delta is not None:
                         add_delta_candidate(
                             slot_name, "inc" if operator == "+=" else "dec",
@@ -1622,7 +1691,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     return
                 if state_name and unsigned_ty(state_ty) and operator in (
                         "+=", "-="):
-                    delta = delta_term(rhs, state_ty)
+                    delta = numeric_endpoint_term(rhs, state_ty)
                     if delta is not None:
                         add_delta_candidate(
                             state_name, "inc" if operator == "+=" else "dec",
