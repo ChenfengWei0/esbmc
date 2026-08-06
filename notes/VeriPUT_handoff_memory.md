@@ -7442,6 +7442,47 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 block env source mapping-slot keys
+
+Scope:
+
+- This extends the numeric-environment source slot work from `msg.value` to
+  `block.timestamp` and `block.number` in the external VeriPUT generator.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `source_access_slot_vars` now accepts `block.timestamp` and `block.number`
+  as source mapping keys for unsigned-integer mapping key types. Address-keyed
+  or otherwise incompatible stores remain refused.
+- `build_put` adds block environment keys to `key_expr_of` only when
+  `coord_ident` already has a concrete expression. That expression can come
+  from an established certified block range/point or from an observable literal
+  `vm.warp` / `vm.roll` preamble in the emitted replay.
+- This is not a Python-only guess: ESBMC's `resolve_coord` already accepts
+  `msg.*`, `tx.*`, and `block.*` environment names and `resolve_slot_key`
+  routes non-literal mapping keys through that same resolver.
+
+Why it matters:
+
+- Real contracts sometimes bucket or rate-limit state by block timestamp or
+  block number. If source-resolved slots such as `byTime[block.timestamp]`
+  are dropped, the ladder can miss the only useful frame/update oracle for
+  that path even though the emitted PUT can establish or observe the exact
+  block environment it runs under.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 207/207 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 `msg.value` source mapping-slot keys
 
 Scope:

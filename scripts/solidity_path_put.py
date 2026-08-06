@@ -3641,8 +3641,9 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
 
     `unit_mapping_slot_accesses` preserves the key chain the callable closure
     actually used. Keep that precision for the assertion ladder, while
-    accepting only keys this PUT can later render: msg.sender, msg.value,
-    same-typed unit parameters, and safe entry-state variables.
+    accepting only keys this PUT can later render: msg.sender, numeric
+    environment coordinates, same-typed unit parameters, and safe entry-state
+    variables.
     """
     out, used_mkeys, skipped = [], set(), []
     param_types = {pn: pt for pn, pt in (params or []) if pn}
@@ -3655,7 +3656,7 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
         key_type = _norm_ty(key_type)
         if key == "msg.sender" and _norm_ty(key_type) == "address":
             return "msg.sender", None
-        if key == "msg.value":
+        if key in ("msg.value", "block.timestamp", "block.number"):
             if re.match(r"^uint(\d+)?$", key_type):
                 return key, None
             return None, (
@@ -3685,8 +3686,9 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
             return key, None
         return None, (
             f"source key `{key}` cannot be rendered as `{_norm_ty(key_type)}` "
-            "by the PUT; accepted keys are msg.sender, msg.value, same-typed "
-            "unit parameters, or safe layout-backed entry-state variables")
+            "by the PUT; accepted keys are msg.sender, numeric environment "
+            "coordinates, same-typed unit parameters, or safe layout-backed "
+            "entry-state variables")
 
     for base, keys in accesses or []:
         entries = entries_for_base(base)
@@ -6105,8 +6107,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # from the raw draw.
     if env_sender_expr is not None:
         key_expr_of["msg.sender"] = env_sender_expr
-    if "msg.value" in coord_ident:
-        key_expr_of["msg.value"] = coord_ident["msg.value"]
+    for env_key in ("msg.value", "block.timestamp", "block.number"):
+        if env_key in coord_ident:
+            key_expr_of[env_key] = coord_ident[env_key]
 
     # --- entry-state coordinates: ESTABLISHED with vm.store -----------------
     #

@@ -6509,7 +6509,7 @@ def test_source_access_slots_preserve_state_keys_before_fallback():
     return bad
 
 
-def test_source_access_slots_keep_msg_value_environment_key():
+def test_source_access_slots_keep_numeric_environment_keys():
     from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
     from solidity_path_put import source_access_slot_vars  # noqa: E402
 
@@ -6572,19 +6572,16 @@ def test_source_access_slots_keep_msg_value_environment_key():
     ], f"environment keys are preserved from source: {accesses}")
     bad += check(any("state.paid[msg.value]" in line for line in evidence),
                  f"environment key evidence is recorded: {evidence}")
-    bad += check(slots == ["paid[msg.value]"],
-                 f"msg.value becomes a source slot: {slots}")
-    bad += check(used == {"paid"},
-                 f"accepted msg.value slot suppresses fallback map: {used}")
+    bad += check(slots == ["byHeight[block.number]",
+                           "byTime[block.timestamp]",
+                           "paid[msg.value]"],
+                 f"numeric environment keys become source slots: {slots}")
+    bad += check(used == {"byHeight", "byTime", "paid"},
+                 f"accepted env slots suppress fallback maps: {used}")
     bad += check(any("byAddr[block.timestamp]" in s
-                     and "cannot be rendered as `address`" in s
+                     and "not safely renderable as `address`" in s
                      for s in skipped),
-                 f"block env key remains refused in this path: {skipped}")
-    bad += check(any("byHeight[block.number]" in s
-                     and "cannot be rendered as `uint256`" in s
-                     for s in skipped),
-                 f"block.number env key waits for ESBMC resolver support: "
-                 f"{skipped}")
+                 f"incompatible env key remains refused: {skipped}")
     return bad
 
 
@@ -7406,6 +7403,55 @@ def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
     if bad:
         print(stamp_body)
         print(height_body)
+    return bad
+
+
+def test_OBSERVED_block_env_slot_keys_are_nameable():
+    """Observed block cheatcodes can key mapping-slot pre/post reads.
+
+    `resolve_coord` in ESBMC accepts `block.*` environment names; the PUT side
+    must still wait until this emitter has an expression for the current test.
+    Literal `vm.warp` / `vm.roll` preambles provide exactly that expression.
+    """
+    with_block = EMITTED.replace(
+        "    vm.prank(address(uint160(0)));\n",
+        "    vm.warp(42);\n"
+        "    vm.roll(7);\n"
+        "    vm.prank(address(uint160(0)));\n")
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as out:
+        out.write(with_block)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@FeeVault@F@setDiscount#61", 7)
+    assert case is not None, "fixture: the emitted case was not found"
+    notes = []
+    maps = {"byTime": (7, "uint256", 32, 0, "byTime", None),
+            "byHeight": (8, "uint256", 32, 0, "byHeight", None)}
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 100), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=R2_LAYOUT, ladder_rows=[
+            ("byTime[block.timestamp]", "post == pre", "HOLDS"),
+            ("byHeight[block.number]", "post == pre", "HOLDS"),
+        ], notes=notes, maps=maps)
+    body = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"block-keyed slot PUT is emitted: {notes}")
+    bad += check("keccak256(abi.encode(uint256(42), uint256(7)))" in body,
+                 "timestamp-keyed slot uses the observed warp literal")
+    bad += check("keccak256(abi.encode(uint256(7), uint256(8)))" in body,
+                 "block-number-keyed slot uses the observed roll literal")
+    bad += check(stats.get("state_asserts") == 2
+                 and not stats.get("oracle_skipped"),
+                 f"both block-keyed frame rungs are emitted: {stats}")
+    if bad:
+        print(body)
     return bad
 
 
@@ -9259,7 +9305,7 @@ def main():
               test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter,
               test_mapping_proposer_includes_safe_entry_state_keys_after_params,
               test_source_access_slots_preserve_state_keys_before_fallback,
-              test_source_access_slots_keep_msg_value_environment_key,
+              test_source_access_slots_keep_numeric_environment_keys,
               test_source_access_slots_keep_safe_literal_keys,
               test_source_access_slots_fold_safe_constant_keys,
               test_source_access_slots_resolve_local_key_aliases_in_order,
@@ -9277,6 +9323,7 @@ def main():
               test_an_OBSERVED_sender_renders_for_an_ABSOLUTE_R2_endpoint,
               test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints,
               test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints,
+              test_OBSERVED_block_env_slot_keys_are_nameable,
               test_R2_proposal_env_coords_include_observable_replay_values,
               test_a_numeric_R2_bound_is_UNCHANGED,
               test_a_RENAMED_coordinate_is_spelled_with_its_TEST_name,
