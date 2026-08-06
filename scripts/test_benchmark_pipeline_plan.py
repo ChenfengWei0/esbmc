@@ -360,6 +360,74 @@ def test_cert_ready_pipeline_selects_strong_stage4_command():
         return with_patches(patches, run)
 
 
+def test_pipeline_auto_uses_existing_default_cert_out_for_quality():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        out_dir = tmp / "out"
+        out_dir.mkdir()
+        cert = out_dir / "certify-results.jsonl"
+        cert.write_text(json.dumps({
+            "benchmark": "peer182__S",
+            "unit": "f",
+            "subject": {
+                "benchmark": "peer182",
+                "subject_id": "S",
+                "benchmark_key": "peer182__S",
+            },
+            "bucket": "KILLED",
+            "witnessed": None,
+            "certified": {},
+            "not_certified": {},
+            "partial_witness_journal": {
+                "path_count": 1,
+                "witness_count": 8,
+            },
+        }) + "\n")
+        journal = tmp / "unit-run.jsonl"
+        journal.write_text(json.dumps({
+            "schema": "veriput-unit-run-row/v1",
+            "job_id": "peer182__S__f",
+            "benchmark": "peer182",
+            "subject_id": "S",
+            "contract": "C",
+            "unit": "f",
+            "status": "ok",
+            "campaign_attempt": 1,
+        }) + "\n")
+
+        def run():
+            a = args(tmp, out_dir=str(out_dir))
+            a.journal = [str(journal)]
+            doc = benchmark_pipeline_plan.build_pipeline(a)
+            bad = 0
+            bad += check(doc["summary"]["campaign"]["cert_quality_enabled"] is True,
+                         f"default cert-out enables quality gate: {doc['summary']}")
+            bad += check(doc["summary"]["campaign"]["pending_by_attempt"] == {"2": 1},
+                         f"weak runner-ok row is retried: {doc['summary']['campaign']}")
+            bad += check(doc["summary"]["campaign"]["cert_weak"] == {
+                "partial witness journal only": 1,
+            }, f"partial-only reason survives pipeline: {doc['summary']['campaign']}")
+            bad += check(doc["next_run"]["attempt"] == 2,
+                         f"next run advances to attempt 2: {doc['next_run']}")
+            return bad
+
+        patches = [
+            (benchmark_pipeline_plan.target_manifest, "build_manifest",
+             lambda *_args, **_kwargs: target_doc()),
+            (benchmark_pipeline_plan.subject_unit_manifest, "build_manifest",
+             lambda call_args: ok_manifest(call_args.ast_cache_root, tmp)),
+            (benchmark_pipeline_plan.ast_preheat_schedule, "build_schedule",
+             lambda *_args, **_kwargs: {
+                 "schema": "veriput-ast-preheat-schedule/v1",
+                 "summary": {
+                     "jobs": 0,
+                 },
+                 "jobs": [],
+             }),
+        ]
+        return with_patches(patches, run)
+
+
 def test_pipeline_refuses_dataset_or_results_write_paths():
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -396,6 +464,7 @@ TESTS = [
     test_missing_ast_pipeline_recommends_preheat_without_writes,
     test_ready_pipeline_writes_requested_docs_and_selects_campaign,
     test_cert_ready_pipeline_selects_strong_stage4_command,
+    test_pipeline_auto_uses_existing_default_cert_out_for_quality,
     test_pipeline_refuses_dataset_or_results_write_paths,
 ]
 

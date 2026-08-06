@@ -120,15 +120,15 @@ def choose_next_action(gate_doc: dict, preheat_doc: dict, unit_sched_doc: dict,
     if cert_gate.get("status") == "ready":
         action = "certification-ready-for-put"
         reason = "certification summary meets the configured strength gate"
+    elif unit_jobs and selected_jobs:
+        action = "run-unit-campaign"
+        reason = "unit jobs are schedulable under the next campaign attempt"
     elif gate_status == "blocked" and preheat_jobs:
         action = "preheat-ast"
         reason = "compact AST rows block unit enumeration"
     elif gate_status == "blocked":
         action = "inspect-unit-manifest-blockers"
         reason = "; ".join(gate_doc.get("blockers") or []) or "unit manifest is blocked"
-    elif unit_jobs and selected_jobs:
-        action = "run-unit-campaign"
-        reason = "unit jobs are schedulable under the next campaign attempt"
     elif unit_jobs:
         action = "inspect-campaign-state"
         reason = "unit schedule exists but no next campaign attempt is selected"
@@ -259,6 +259,8 @@ def build_pipeline(args) -> dict:
 
     if args.out_dir and not cert_out:
         cert_out = str(Path(args.out_dir) / "certify-results.jsonl")
+    if not args.cert_jsonl and cert_out and Path(cert_out).exists():
+        args.cert_jsonl = [cert_out]
     next_ast_schedule_out = ""
     if args.out_dir:
         next_ast_schedule_out = str(Path(args.out_dir) / "next-ast-preheat-schedule.json")

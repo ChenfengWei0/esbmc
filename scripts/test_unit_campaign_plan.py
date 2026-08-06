@@ -410,6 +410,59 @@ def test_campaign_retries_runner_ok_when_certification_is_weak():
     return bad
 
 
+def test_campaign_names_partial_journal_only_as_weak_certification():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__partial__f"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__partial__f", "ok", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "peer182__partial",
+                    "unit": "f",
+                    "subject": {
+                        "benchmark": "peer182",
+                        "subject_id": "partial",
+                        "benchmark_key": "peer182__partial",
+                    },
+                    "bucket": "KILLED",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "partial_witness_journal": {
+                        "path_count": 1,
+                        "witness_count": 8,
+                        "claims_decided": 6,
+                        "claims_total": 277,
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 0,
+                 f"partial-only row does not complete certification: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"partial-only row is retryable: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {
+        "partial witness journal only": 1,
+    }, f"partial-only reason is visible: {doc['summary']}")
+    return bad
+
+
 def test_campaign_accepts_strong_certification_without_runner_journal():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
@@ -477,6 +530,7 @@ TESTS = [
     test_campaign_counts_distinct_attempts_not_duplicate_rows,
     test_campaign_uses_explicit_attempt_metadata_for_budget_state,
     test_campaign_retries_runner_ok_when_certification_is_weak,
+    test_campaign_names_partial_journal_only_as_weak_certification,
     test_campaign_accepts_strong_certification_without_runner_journal,
     test_campaign_can_plan_from_in_memory_schedule,
 ]

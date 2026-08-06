@@ -149,6 +149,103 @@ Checks:
   scripts/test_unit_campaign_plan.py scripts/test_benchmark_pipeline_plan.py`
   passed.
 
+## 2026-08-06 benchmark grace sample and partial-journal tracking
+
+After the timeout-layering fix, ran a small cached benchmark sample.  All
+outputs were under `/tmp`; datasets/contracts were not modified.
+
+Plans:
+
+- Combined peer/bugfix plan:
+  `/tmp/veriput_bench_grace_sample_20260806_233358`.
+- Stress-only plan:
+  `/tmp/veriput_bench_grace_stress_20260806_233417`.
+
+Executed with attempt-1 semantics: ESBMC `--run-timeout 60`, certify wrapper
+`--timeout 70`, outer runner `--timeout 75`, memory 8GiB, jobs 1.
+
+Results:
+
+- bugfix sample, first 3 jobs: 3/3 runner-ok and 3/3 certified.
+  - `DepositLog.approvedToLog`: `CERTIFIED`, `1 certified / 1 not /
+    2 witnessed`, about 3s.
+  - `DepositLog.setApprovedLogger`: `CERTIFIED`, `2 certified / 1 not /
+    3 witnessed`, about 12s.
+  - `EtherLotto.play`: `CERTIFIED`, `1 certified / 2 not / 3 witnessed`,
+    about 23s.
+- stress sample, first 3 jobs on `ClaimTopicsRegistry`: 3/3 runner-ok, but all
+  three driver verdicts were `KILLED` at 60s with no certified regions:
+  `init`, `addClaimTopic`, `removeClaimTopic`.
+- For stress, wrapper grace worked: `unit-run-stress3.jsonl` has complete rows
+  instead of outer-runner timeouts.
+- `addClaimTopic` and `removeClaimTopic` left `cov-ce-journal.json` partial
+  artifacts.  `addClaimTopic`: `claims_decided=6`, `claims_total=277`, 1 path
+  witness with 8 concrete witnesses.  `removeClaimTopic`: `claims_decided=13`,
+  `claims_total=227`, 1 path witness with 8 concrete witnesses.  `init` had no
+  surviving journal.
+
+Code retained:
+
+- `certify_all.py` now reads a fresh `cov-ce-journal.json` from the unit
+  workdir and writes a compact `partial_witness_journal` summary into the JSONL
+  row.  This is refutation-only evidence; it does not change `bucket`, does not
+  add certified regions, and does not promote KILLED to CERTIFIED.
+- `unit_campaign_plan.py` treats rows with only partial witnesses as weak with
+  reason `partial witness journal only`, so they are retryable under the
+  60/120/600 campaign policy.
+- Quality matching now accepts the real prepared-subject shape where
+  `certify_all.py` writes `benchmark=<benchmark_key>` but the schedule job uses
+  `benchmark=<population>` plus `subject_id=<subject>`.
+- `benchmark_pipeline_plan.py` auto-enables the quality gate from an existing
+  default `certify-results.jsonl` under `--out-dir`, and prioritises runnable
+  unit campaigns over AST preheat when some cached units are already schedulable.
+  Full denominator can still be preheated later; speed/debug iterations no
+  longer get forced into AST preheat first.
+
+Measured planner check:
+
+- Replanning the old stress sample with
+  `--journal unit-run-stress3.jsonl --cert-jsonl certify-results.jsonl` now
+  reports `cert_quality_enabled=true`, `cert_weak={"no certified regions": 3}`,
+  `pending_by_attempt={"2": 3}`, and `next_action=run-unit-campaign` with
+  attempt 2 budget (`timeout_s=120`, runner `135.0`).
+- Future stress runs made after this commit should report
+  `partial witness journal only` instead of only `no certified regions` when
+  the partial journal survives.
+
+Current speed diagnosis:
+
+- bugfix is ready for broader sampling.
+- stress should not be full-swept yet.  The bottleneck is not a frontend crash;
+  it is stage-1 path/probe enumeration volume.  Each solver claim is usually
+  cheap, but hundreds of claims plus setup consume the 60s window before a
+  complete report appears.
+- Next useful work is either:
+  1. one 120s/8GiB second-attempt sample on these 3 stress jobs, now that
+     campaign requeues them correctly; or
+  2. implement true journal-to-witness salvage in `solidity_path_generalise.py`
+     so partial `cov-ce-journal.json` can seed candidate regions without waiting
+     for a complete `cov-report.json`.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_partial_journal.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_guards.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  notes/coverage/scripts/certify_all.py
+  notes/coverage/scripts/unit_campaign_plan.py
+  notes/coverage/scripts/benchmark_pipeline_plan.py
+  scripts/test_certify_all_partial_journal.py
+  scripts/test_unit_campaign_plan.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `git diff --check` on the changed scripts/tests passed.
+
 ## 2026-08-06 recursive-helper preflight for witness discovery stalls
 
 Context:

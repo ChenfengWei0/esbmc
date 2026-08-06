@@ -102,6 +102,21 @@ def _cert_subject(row: dict) -> str:
     return row.get("benchmark") or row.get("poc") or "<unknown>"
 
 
+def _cert_quality_keys(row: dict) -> set[tuple]:
+    unit = row.get("unit") or "<none>"
+    keys = {(_cert_subject(row), unit)}
+    subject = row.get("subject") or {}
+    if isinstance(subject, dict):
+        pop = subject.get("benchmark")
+        subject_id = subject.get("subject_id")
+        benchmark_key = subject.get("benchmark_key")
+        if pop and subject_id:
+            keys.add((pop, subject_id, unit))
+        if benchmark_key:
+            keys.add((benchmark_key, unit))
+    return keys
+
+
 def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> tuple[dict, int]:
     latest = {}
     bad_lines = 0
@@ -109,12 +124,12 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         rows, bad = _read_jsonl(path)
         bad_lines += bad
         for row in rows:
-            key = (_cert_subject(row), row.get("unit") or "<none>", row.get("path_function"))
-            latest[key] = row
+            for key in _cert_quality_keys(row):
+                latest[(key, row.get("path_function"))] = row
 
     by_unit = defaultdict(list)
-    for (subject, unit, _path_function), row in latest.items():
-        by_unit[(subject, unit)].append(row)
+    for (key, _path_function), row in latest.items():
+        by_unit[key].append(row)
 
     quality = {}
     for key, rows in by_unit.items():
@@ -122,6 +137,10 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         certified = 0
         not_certified = 0
         regions = 0
+        partial_journal_paths = 0
+        partial_journal_witnesses = 0
+        partial_claims_decided = 0
+        partial_claims_total = 0
         buckets = Counter()
         for row in rows:
             buckets[row.get("bucket") or "<missing-bucket>"] += 1
@@ -134,10 +153,18 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
                 witnessed += max(0, row["witnessed"])
                 certified += c_count
                 not_certified += n_count
+            journal = row.get("partial_witness_journal") or {}
+            if isinstance(journal, dict):
+                partial_journal_paths += int(journal.get("path_count") or 0)
+                partial_journal_witnesses += int(journal.get("witness_count") or 0)
+                partial_claims_decided += int(journal.get("claims_decided") or 0)
+                partial_claims_total += int(journal.get("claims_total") or 0)
         rate = (certified / witnessed) if witnessed else (1.0 if regions else 0.0)
         strong = regions > 0 and rate >= min_certified_path_rate
         reason = ""
-        if not regions:
+        if not regions and partial_journal_paths:
+            reason = "partial witness journal only"
+        elif not regions:
             reason = "no certified regions"
         elif rate < min_certified_path_rate:
             reason = "certified path rate below threshold"
@@ -150,6 +177,10 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             "not_certified_paths": not_certified,
             "certified_regions": regions,
             "certified_path_rate": rate,
+            "partial_journal_paths": partial_journal_paths,
+            "partial_journal_witnesses": partial_journal_witnesses,
+            "partial_claims_decided": partial_claims_decided,
+            "partial_claims_total": partial_claims_total,
             "bucket_rows": dict(sorted(buckets.items())),
         }
     return quality, bad_lines
@@ -354,9 +385,12 @@ def plan_campaign_for_schedule(schedule: dict,
     for job_id, job in jobs_by_id.items():
         latest_row = latest.get(job_id)
         attempts = max(attempts_by_job[job_id], default=0)
-        cert_key = (job.get("benchmark") or job.get("poc") or "<unknown>", job.get("unit")
-                    or "<none>")
-        quality = cert_quality.get(cert_key)
+        cert_key = (job.get("benchmark") or job.get("poc") or "<unknown>",
+                    job.get("subject_id") or "<unknown>",
+                    job.get("unit") or "<none>")
+        legacy_cert_key = (job.get("benchmark") or job.get("poc") or "<unknown>",
+                           job.get("unit") or "<none>")
+        quality = cert_quality.get(cert_key) or cert_quality.get(legacy_cert_key)
         cert_strong = (not cert_jsonls) or (quality and quality.get("strong"))
         has_completion_source = ((latest_row and latest_row.get("status") == "ok")
                                  or (cert_jsonls and not latest_row and cert_strong))

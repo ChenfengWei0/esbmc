@@ -627,6 +627,67 @@ def result_not_certified_details(workdir, since_mtime=None):
     return details
 
 
+def result_partial_witness_journal(workdir, since_mtime=None):
+    """Summarise the refutation-only witness journal left by a partial run.
+
+    `cov-ce-journal.json` is not a certificate and must not promote a killed
+    unit into CERTIFIED.  It is still useful scheduler evidence: ESBMC may have
+    already found concrete path witnesses before the complete `cov-report.json`
+    was unavailable.  Keep only a compact summary in the sweep row; the full
+    payload stays in the unit workdir.
+    """
+    path = os.path.join(workdir, "cov-ce-journal.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return None
+        with open(path) as stream:
+            data = json.load(stream)
+    except (OSError, ValueError):
+        return None
+    witnesses = data.get("witnesses")
+    if not isinstance(witnesses, dict) or not witnesses:
+        return None
+    paths = []
+    witness_count_total = 0
+    for claim, row in sorted(witnesses.items()):
+        if not isinstance(row, dict):
+            continue
+        path_id = row.get("path_id")
+        if path_id is None:
+            condition = str(row.get("condition", ""))
+            m = re.search(r":path:([^:\\s]+)$", condition)
+            path_id = m.group(1) if m else claim
+        many = row.get("witnesses")
+        if isinstance(many, list):
+            witness_count = len(many)
+        else:
+            try:
+                witness_count = int(row.get("witness_count", 1))
+            except (TypeError, ValueError):
+                witness_count = 1
+        witness_count_total += witness_count
+        paths.append({
+            "claim": claim.strip(),
+            "path_id": str(path_id),
+            "path_depth": row.get("path_depth"),
+            "path_function": row.get("path_function"),
+            "witness_count": witness_count,
+        })
+    if not paths:
+        return None
+    return {
+        "kind": data.get("kind"),
+        "version": data.get("version"),
+        "partial": bool(data.get("partial")),
+        "complete": bool(data.get("complete")),
+        "claims_decided": data.get("claims_decided"),
+        "claims_total": data.get("claims_total"),
+        "path_count": len(paths),
+        "witness_count": witness_count_total,
+        "paths": paths,
+    }
+
+
 def certification_key(owner, unit, row_path_function, requested_path_function):
     """Resume identity; explicit overloads are independent measurements."""
     return (owner, unit,
@@ -1842,6 +1903,8 @@ def main():
                         "path_function": result_path_function(uwd),
                         "not_certified_details":
                             result_not_certified_details(uwd, t1),
+                        "partial_witness_journal":
+                            result_partial_witness_journal(uwd, t1),
                         "bucket": bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
                         "memlimit_gib": memlimit, "jobs": args.jobs,
@@ -2033,6 +2096,13 @@ def main():
                 nc, nn = len(rec["certified"]), len(rec["not_certified"])
                 if nw is None:
                     tally = f"{nc} certified / {nn} not / witnessed UNKNOWN"
+                    journal = rec.get("partial_witness_journal") or {}
+                    if journal:
+                        tally += (
+                            f" [partial journal: {journal.get('path_count')} "
+                            f"path(s), {journal.get('witness_count')} witness(es), "
+                            f"{journal.get('claims_decided')}/"
+                            f"{journal.get('claims_total')} claims decided]")
                 else:
                     gap = nw - nc - nn
                     tally = (f"{nc} certified / {nn} not / {nw} witnessed"
