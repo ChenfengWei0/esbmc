@@ -5209,6 +5209,60 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 source self-update delta R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, benchmark AST preheat, or
+  benchmark certification run was started.
+
+Finding:
+
+- The typed Stage-4 R2 grammar can mechanically ask strong accumulator claims
+  such as `post == pre + amount` and `post - pre == amount`.
+- But the source-prioritized path only handled direct endpoint setters. For
+  source shapes like `balance += amount`, `limit -= x`, or
+  `state = state + 7`, the strongest delta oracle depended on mechanical term
+  ordering and candidate budget instead of being placed first by the unit's own
+  syntax.
+- This is a general corpus pattern, not a POC-specific one: update/withdraw/
+  accounting functions often expose their semantic oracle as a self-update
+  rather than a plain setter.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now recognizes
+  simple unsigned self-updates:
+  - `state += renderedUintParam` and `state += unitlessLiteral` as an `inc`
+    delta candidate.
+  - `state -= renderedUintParam` and `state -= unitlessLiteral` as a `dec`
+    delta candidate.
+  - `state = state + term`, `state = term + state`, and `state = state - term`
+    for the same restricted term forms.
+- Source delta candidates are structured `deltas` entries with `lo == hi`, so
+  they still go through `--path-cov-assert` and are not treated as proof by the
+  Python side.
+- The rule is deliberately conservative: the target state must be a visible
+  `uint*` storage variable, parameter terms must be rendered unsigned numeric
+  coordinates, and subdenominated literals such as `2 seconds` are skipped.
+- Source candidates are now grouped by variable and `candidate_count` counts
+  equals/abs/deltas rather than variables.
+- `merge_source_r2_specs()` now handles source `equals`, `abs`, and `deltas`,
+  de-duplicates them against the typed batch, and still keeps them in the same
+  single R2 verifier query.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  149 tests ran, 149 declared.
+- `git diff --check` on the touched files: passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 numeric-literal source R2 candidates
 
 Scope and constraint:

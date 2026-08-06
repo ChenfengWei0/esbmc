@@ -2211,6 +2211,143 @@ def test_source_R2_assignment_candidates_are_small_setter_queries():
     return bad
 
 
+def test_source_R2_self_updates_prioritize_delta_queries():
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "bal",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "limit",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint16"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "timed",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "signedSink",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "bump",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}},
+                 {"id": 22, "name": "signedAmount",
+                  "typeDescriptions": {"typeString": "int256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "100:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 10,
+                                      "name": "bal"},
+                     "rightHandSide": {"nodeType": "Identifier",
+                                       "referencedDeclaration": 21,
+                                       "name": "amount"}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "120:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 10,
+                                      "name": "bal"},
+                     "rightHandSide": {"nodeType": "BinaryOperation",
+                                       "operator": "+",
+                                       "leftExpression": {
+                                           "nodeType": "Identifier",
+                                           "referencedDeclaration": 21,
+                                           "name": "amount"},
+                                       "rightExpression": {
+                                           "nodeType": "Identifier",
+                                           "referencedDeclaration": 10,
+                                           "name": "bal"}}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "140:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 11,
+                                      "name": "limit"},
+                     "rightHandSide": {"nodeType": "BinaryOperation",
+                                       "operator": "-",
+                                       "leftExpression": {
+                                           "nodeType": "Identifier",
+                                           "referencedDeclaration": 11,
+                                           "name": "limit"},
+                                       "rightExpression": {
+                                           "nodeType": "Literal",
+                                           "kind": "number",
+                                           "value": "7"}}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "160:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 12,
+                                      "name": "timed"},
+                     "rightHandSide": {"nodeType": "Literal",
+                                       "kind": "number",
+                                       "value": "2",
+                                       "subdenomination": "seconds"}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "180:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 13,
+                                      "name": "signedSink"},
+                     "rightHandSide": {"nodeType": "Identifier",
+                                       "referencedDeclaration": 22,
+                                       "name": "signedAmount"}}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "bump", [("amount", "uint256"),
+                                ("signedAmount", "int256")],
+            {"bal": (0, 0, 32), "limit": (1, 0, 2),
+             "timed": (2, 0, 32), "signedSink": (3, 0, 32)},
+            [("amount", "num", None), ("signedAmount", "num", None)],
+            arity=2, log=lambda _msg: None)
+        none, none_evidence = source_assignment_r2_specs(
+            path, "C", "bump", [("amount", "uint256"),
+                                ("signedAmount", "int256")],
+            {"bal": (0, 0, 32), "limit": (1, 0, 2),
+             "timed": (2, 0, 32), "signedSink": (3, 0, 32)},
+            [], arity=2, log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    bal_deltas = entries.get("bal", {}).get("deltas", [])
+    limit_deltas = entries.get("limit", {}).get("deltas", [])
+    bad = 0
+    bad += check(len(specs) == 1, f"one source spec: {specs}")
+    bad += check(len(bal_deltas) == 1 and bal_deltas[0]["dir"] == "inc",
+                 f"compound and binary self-add deduplicate: {bal_deltas}")
+    bad += check(bal_deltas and bal_deltas[0]["lo"] ==
+                 {"kind": "coord", "name": "amount"},
+                 f"the inc delta is the rendered unsigned parameter: "
+                 f"{bal_deltas}")
+    bad += check(len(limit_deltas) == 1 and limit_deltas[0]["dir"] == "dec",
+                 f"self-subtract literal becomes a dec delta: {limit_deltas}")
+    bad += check(limit_deltas and limit_deltas[0]["lo"] ==
+                 {"kind": "literal", "value": "7"},
+                 f"the dec delta uses the unitless literal: {limit_deltas}")
+    bad += check("timed" not in entries and "signedSink" not in entries,
+                 f"subdenominated literals and signed params are skipped: "
+                 f"{entries}")
+    bad += check(specs[0].get("candidate_count") == 2 if specs else False,
+                 f"candidate_count counts delta candidates: {specs}")
+    bad += check(any("bal: post - pre == amount" in line
+                     for line in evidence),
+                 f"the inc provenance is recorded: {evidence}")
+    bad += check(any("limit: pre - post == 7" in line
+                     for line in evidence),
+                 f"the dec provenance is recorded: {evidence}")
+    bad += check(len(none) == 1 and none[0].get("candidate_count") == 1,
+                 f"literal self-updates remain without rendered params: "
+                 f"{none}, {none_evidence}")
+    return bad
+
+
 def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     from solidity_path_put import r2_terms_from_specs, rung_assertions  # noqa: E402
     specs = [{"vars": [{"name": "ready", "equals": [{
@@ -2231,7 +2368,12 @@ def test_source_R2_candidates_merge_into_the_typed_batch():
     source = [{"param": "source_assign", "kind": "source-assign",
                "vars": [{"name": "ready", "equals": [{
                    "id": "src0", "term": {"kind": "literal", "value": "1"}}],
-                          "abs": [], "deltas": []}]}]
+                          "abs": [], "deltas": []},
+                         {"name": "bal", "equals": [], "abs": [],
+                          "deltas": [{
+                              "id": "src1", "dir": "inc",
+                              "lo": {"kind": "coord", "name": "amount"},
+                              "hi": {"kind": "coord", "name": "amount"}}]}]}]
     typed = [{"param": "batch", "stage": 1, "kind": "typed",
               "candidate_count": 2, "vars": [
                   {"name": "bal", "equals": [{
@@ -2251,12 +2393,15 @@ def test_source_R2_candidates_merge_into_the_typed_batch():
                  f"source and typed candidates share one R2 query: {got}")
     bad += check(got[0].get("kind") == "typed+source-assign",
                  f"the merged provenance is visible: {got[0]}")
-    bad += check(got[0].get("candidate_count") == 3,
+    bad += check(got[0].get("candidate_count") == 4,
                  f"no typed candidate was lost: {got}")
     bad += check([c["text"] for c in candidates] ==
-                 ["post == amount", "post == 1", "post == flag_"],
+                 ["post == amount", "post == 1",
+                  "post - pre in [amount, amount] with post >= pre",
+                  "post == flag_"],
                  f"the source bool candidate is inserted before the "
-                 f"mechanical bool endpoint: {candidates}")
+                 f"mechanical bool endpoint, and source deltas survive: "
+                 f"{candidates}")
     bad += check(any("same verifier query" in line for line in said),
                  f"the log says this is not an extra ESBMC pass: {said}")
     return bad
@@ -4578,6 +4723,7 @@ def main():
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
               test_source_R2_assignment_candidates_are_small_setter_queries,
+              test_source_R2_self_updates_prioritize_delta_queries,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
               test_source_R2_merge_preserves_the_candidate_budget,

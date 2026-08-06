@@ -1096,14 +1096,15 @@ def source_r2_literals(ast_path, contract, unit, arity=None,
 def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                                rendered_coords, arity=None,
                                declaration_id=None, log=print):
-    """R2 specs for literal source assignments.
+    """R2 specs for simple source assignments.
 
     This is deliberately narrower than general expression mining.  It only
     proposes a candidate when the target function body assigns one visible state
     variable directly from either one of the unit's rendered parameters, a
-    source-level bool literal, or a source-level integer literal.  The
-    candidate is still proved by
-    --path-cov-assert; the source only decides which small query to ask first.
+    source-level bool literal, or a source-level integer literal, or when it
+    performs a simple unsigned self-update such as `x += p` or `x = x + p`.
+    The candidate is still proved by --path-cov-assert; the source only decides
+    which small query to ask first.
     """
     try:
         target = _select_def(_function_defs(ast_path, contract, unit), arity,
@@ -1116,12 +1117,17 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return [], ["R2 source assignments unavailable: target declaration "
                     "missing"]
     rendered = {name for name, _kind, _width in (rendered_coords or [])}
+    rendered_numeric = {name for name, kind, _width in (rendered_coords or [])
+                        if kind == "num"}
     param_ids = {}
+    param_tys = {}
     param_names = {name for name, _ty in (params or [])}
     for p in ((target.get("parameters") or {}).get("parameters") or []):
         name = p.get("name")
         if name and p.get("id") is not None:
             param_ids[p["id"]] = name
+            param_tys[p["id"]] = _norm_ty(
+                (p.get("typeDescriptions") or {}).get("typeString") or "")
 
     by_id, owner = {}, None
 
@@ -1156,13 +1162,26 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 ty = (n.get("typeDescriptions") or {}).get("typeString") or ""
                 state_ids[n["id"]] = (n["name"], ty)
 
-    entries, evidence, seen = [], [], set()
+    entries, evidence, seen, by_name = [], [], set(), {}
+    next_id = [0]
 
     def identifier_ref(n):
         if not isinstance(n, dict) or n.get("nodeType") != "Identifier":
             return None
         ref = n.get("referencedDeclaration")
         return ref if isinstance(ref, int) else None
+
+    def unsigned_ty(t):
+        return re.match(r"^uint(\d+)?$", t or "") is not None
+
+    def unitless_number_term(n):
+        if not isinstance(n, dict) or n.get("nodeType") != "Literal":
+            return None
+        if (n.get("kind") == "number" and not n.get("subdenomination")):
+            value = str(n.get("value") or "")
+            if value.isdigit():
+                return {"kind": "literal", "value": value}, value
+        return None
 
     def literal_term(n, state_ty):
         if not isinstance(n, dict) or n.get("nodeType") != "Literal":
@@ -1173,49 +1192,121 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return {"kind": "literal", "value": "1"}, "true"
             if value is False or str(value).lower() == "false":
                 return {"kind": "literal", "value": "0"}, "false"
-        if (n.get("kind") == "number" and re.match(r"^uint(\d+)?$", state_ty)
-                and not n.get("subdenomination")):
-            value = str(n.get("value") or "")
-            if value.isdigit():
-                return {"kind": "literal", "value": value}, value
+        if unsigned_ty(state_ty):
+            return unitless_number_term(n)
         return None
 
-    def add_candidate(state_name, term, reason, src):
-        key = (state_name, r2_term_text(term))
+    def source_id():
+        value = next_id[0]
+        next_id[0] += 1
+        return f"src{value}"
+
+    def entry_for(state_name):
+        entry = by_name.get(state_name)
+        if entry is None:
+            entry = {"name": state_name, "equals": [], "abs": [],
+                     "deltas": []}
+            by_name[state_name] = entry
+            entries.append(entry)
+        return entry
+
+    def add_equals_candidate(state_name, term, reason, src):
+        key = (state_name, "equals", r2_term_text(term))
         if state_name in (layout or {}) and key not in seen:
             seen.add(key)
-            entries.append({
-                "name": state_name,
-                "equals": [{
-                    "id": f"src{len(entries)}",
-                    "term": term,
-                }],
-                "abs": [],
-                "deltas": [],
+            entry_for(state_name)["equals"].append({
+                "id": source_id(),
+                "term": term,
             })
             evidence.append(
                 f"R2 source assignment candidate {state_name}: post == "
                 f"{reason} from AST src {src or '?'}")
 
+    def add_delta_candidate(state_name, direction, term, reason, src):
+        key = (state_name, "deltas", direction, r2_term_text(term))
+        if state_name in (layout or {}) and key not in seen:
+            seen.add(key)
+            entry_for(state_name)["deltas"].append({
+                "id": source_id(),
+                "dir": direction,
+                "lo": term,
+                "hi": term,
+            })
+            lhs, rhs = ("post", "pre") if direction == "inc" else ("pre",
+                                                                    "post")
+            evidence.append(
+                f"R2 source assignment candidate {state_name}: {lhs} - {rhs} "
+                f"== {reason} from AST src {src or '?'}")
+
+    def delta_term(n):
+        ref = identifier_ref(n)
+        param_name = param_ids.get(ref)
+        if (param_name and param_name in param_names
+                and param_name in rendered_numeric
+                and unsigned_ty(param_tys.get(ref, ""))):
+            return {"kind": "coord", "name": param_name}, param_name
+        return unitless_number_term(n)
+
+    def self_ref(n, state_id):
+        return identifier_ref(n) == state_id
+
+    def self_update_delta(rhs, state_id):
+        if not isinstance(rhs, dict) or rhs.get("nodeType") != "BinaryOperation":
+            return None
+        op = rhs.get("operator")
+        left = rhs.get("leftExpression")
+        right = rhs.get("rightExpression")
+        if op == "+":
+            if self_ref(left, state_id):
+                term = delta_term(right)
+                return ("inc",) + term if term is not None else None
+            if self_ref(right, state_id):
+                term = delta_term(left)
+                return ("inc",) + term if term is not None else None
+        if op == "-" and self_ref(left, state_id):
+            term = delta_term(right)
+            return ("dec",) + term if term is not None else None
+        return None
+
     def walk(n):
         if isinstance(n, dict):
-            if n.get("nodeType") == "Assignment" and n.get("operator") == "=":
+            if n.get("nodeType") == "Assignment":
+                operator = n.get("operator")
                 lhs_ref = identifier_ref(n.get("leftHandSide"))
                 state = state_ids.get(lhs_ref)
                 state_name = state[0] if state else None
                 state_ty = _norm_ty(state[1]) if state else ""
                 rhs = n.get("rightHandSide")
+                if state_name and unsigned_ty(state_ty) and operator in (
+                        "+=", "-="):
+                    delta = delta_term(rhs)
+                    if delta is not None:
+                        add_delta_candidate(
+                            state_name, "inc" if operator == "+=" else "dec",
+                            delta[0], delta[1], n.get("src"))
+                    for child in n.values():
+                        walk(child)
+                    return
+                if operator != "=":
+                    for child in n.values():
+                        walk(child)
+                    return
                 rhs_ref = identifier_ref(rhs)
                 param_name = param_ids.get(rhs_ref)
                 if (state_name and param_name and
                         param_name in param_names and param_name in rendered):
-                    add_candidate(
+                    add_equals_candidate(
                         state_name, {"kind": "coord", "name": param_name},
                         param_name, n.get("src"))
                 literal = literal_term(rhs, state_ty)
                 if state_name and literal is not None:
-                    add_candidate(state_name, literal[0], literal[1],
-                                  n.get("src"))
+                    add_equals_candidate(state_name, literal[0], literal[1],
+                                         n.get("src"))
+                if state_name and unsigned_ty(state_ty):
+                    delta = self_update_delta(rhs, lhs_ref)
+                    if delta is not None:
+                        add_delta_candidate(state_name, delta[0], delta[1],
+                                            delta[2], n.get("src"))
             for child in n.values():
                 walk(child)
         elif isinstance(n, list):
@@ -1232,7 +1323,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         "stage": 1,
         "kind": "source-assign",
         "depth": 0,
-        "candidate_count": len(entries),
+        "candidate_count": sum(len(entry[kind]) for entry in entries
+                               for kind in ("equals", "abs", "deltas")),
         "vars": entries,
     }], evidence
 
@@ -1535,19 +1627,54 @@ def merge_source_r2_specs(source_specs, typed_specs, candidate_budget=None,
                 dest = {"name": name, "equals": [], "abs": [], "deltas": []}
                 by_name[name] = dest
                 new_entries.append(dest)
-            dest.setdefault("equals", [])
-            existing = {r2_term_text(item["term"])
-                        for item in dest.get("equals", [])}
-            prepend = []
+            for kind in ("equals", "abs", "deltas"):
+                dest.setdefault(kind, [])
+
+            existing_equals = {r2_term_text(item["term"])
+                               for item in dest.get("equals", [])}
+            prepend_equals = []
             for candidate in entry.get("equals", []):
                 text = r2_term_text(candidate["term"])
-                if text in existing:
+                if text in existing_equals:
                     continue
-                existing.add(text)
-                prepend.append(candidate)
+                existing_equals.add(text)
+                prepend_equals.append(candidate)
                 inserted += 1
-            if prepend:
-                dest["equals"] = prepend + dest.get("equals", [])
+            if prepend_equals:
+                dest["equals"] = prepend_equals + dest.get("equals", [])
+
+            existing_abs = {
+                (r2_term_text(item["lo"]), r2_term_text(item["hi"]))
+                for item in dest.get("abs", [])
+            }
+            prepend_abs = []
+            for candidate in entry.get("abs", []):
+                key = (r2_term_text(candidate["lo"]),
+                       r2_term_text(candidate["hi"]))
+                if key in existing_abs:
+                    continue
+                existing_abs.add(key)
+                prepend_abs.append(candidate)
+                inserted += 1
+            if prepend_abs:
+                dest["abs"] = prepend_abs + dest.get("abs", [])
+
+            existing_deltas = {
+                (item.get("dir"), r2_term_text(item["lo"]),
+                 r2_term_text(item["hi"]))
+                for item in dest.get("deltas", [])
+            }
+            prepend_deltas = []
+            for candidate in entry.get("deltas", []):
+                key = (candidate.get("dir"), r2_term_text(candidate["lo"]),
+                       r2_term_text(candidate["hi"]))
+                if key in existing_deltas:
+                    continue
+                existing_deltas.add(key)
+                prepend_deltas.append(candidate)
+                inserted += 1
+            if prepend_deltas:
+                dest["deltas"] = prepend_deltas + dest.get("deltas", [])
 
     if new_entries:
         target["vars"] = new_entries + entries
