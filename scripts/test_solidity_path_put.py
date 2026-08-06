@@ -1857,6 +1857,29 @@ def test_typed_R2_proposes_return_equals_entry_state_coord_for_getters():
     return bad
 
 
+def test_typed_R2_return_candidates_never_name_pre_snapshot():
+    from solidity_path_put import propose_r2_batch, r2_candidates  # noqa: E402
+    got = propose_r2_batch(
+        [("return", RETLIVE, "REFUTED"),
+         ("return", "return != 0", "HOLDS")],
+        [("amount", "uint256")], source_literals=("10", "20"),
+        rettypes=[("", "uint256")],
+        rendered_coords=[("amount", "num", None)],
+        term_budget=32, candidate_budget=64, log=lambda _line: None)
+    candidates = r2_candidates(got)
+    texts = {c["text"] for c in candidates if c["var"] == "return"}
+    bad = 0
+    bad += check("return == 10" in texts and "return == 20" in texts,
+                 f"literal return candidates are asked: {sorted(texts)}")
+    bad += check(not any("pre" in text for text in texts),
+                 f"return has no entry snapshot, so no candidate names pre: "
+                 f"{sorted(texts)}")
+    bad += check(not any(c["var"] == "return" and "delta" in c["key"]
+                         for c in candidates),
+                 f"return still has no delta candidates: {candidates}")
+    return bad
+
+
 def test_typed_R2_term_budget_is_VISIBLE_not_a_second_query():
     from solidity_path_put import propose_r2_batch  # noqa: E402
     said = []
@@ -2334,7 +2357,27 @@ def test_an_ABSOLUTE_row_is_MERGED_and_not_silently_dropped():
         return bad + 1
     bad += check(new[0] == ("bal", "post in [amount, amount]", "HOLDS"),
                  f"verbatim, verdict included: {new[0]}")
-    bad += check(not any("NO DELTA ROW" in s for s in said),
+    bad += check(not any("NO R2 ROW" in s for s in said),
+                 f"and the pass is NOT announced as empty: {said}")
+    return bad
+
+
+def test_a_RETURN_R2_row_is_MERGED_and_not_reported_empty():
+    """Pure/view units buy their oracle through `return == literal`.
+
+    The R2 reader used to accept state-shaped rows only, so ESBMC could report
+    `return == 20 HOLDS` and the driver would still print an oracle whose only
+    return assertion was `return != 0`.
+    """
+    new, said, _w = _r2_harness(
+        [("return", "return == 20", "HOLDS"),
+         ("return", "return in [20, 20]", "HOLDS")])
+    bad = 0
+    bad += check(("return", "return == 20", "HOLDS") in new,
+                 f"return equality row is merged: {new}")
+    bad += check(("return", "return in [20, 20]", "HOLDS") in new,
+                 f"return absolute row is merged: {new}")
+    bad += check(not any("NO R2 ROW" in s for s in said),
                  f"and the pass is NOT announced as empty: {said}")
     return bad
 
@@ -2420,14 +2463,14 @@ def test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT():
 
 
 def test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed():
-    """⛔ THE FAILING BRANCH. A pass that produced no delta row means the
+    """⛔ THE FAILING BRANCH. A pass that produced no R2 row means the
     request never reached the ladder. Absorbed silently, the PUT is
     indistinguishable from one where R2 was never asked for -- which is
     exactly how R2 went unrequested for this long without anyone noticing."""
     new, said, _w = _r2_harness([])
     bad = 0
     bad += check(new == [], f"nothing merged: {new}")
-    bad += check(any("NO DELTA ROW" in s for s in said),
+    bad += check(any("NO R2 ROW" in s for s in said),
                  f"and the empty pass is announced: {said}")
     return bad
 
@@ -4384,6 +4427,7 @@ def main():
               test_R2_fuzz_filter_removes_only_concretely_refuted_candidates,
               test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate,
               test_typed_R2_proposes_return_equals_entry_state_coord_for_getters,
+              test_typed_R2_return_candidates_never_name_pre_snapshot,
               test_typed_R2_term_budget_is_VISIBLE_not_a_second_query,
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,
               test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,
@@ -4400,6 +4444,7 @@ def main():
               test_oracle_mapping_candidates_share_the_dependency_filter,
               test_an_R2_PASS_actually_runs_and_carries_the_proposed_vars,
               test_an_ABSOLUTE_row_is_MERGED_and_not_silently_dropped,
+              test_a_RETURN_R2_row_is_MERGED_and_not_reported_empty,
               test_the_CAP_pass_RUNS_when_stage_1_REFUTED_the_exact_delta,
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_ALREADY_HOLDS,
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT,
@@ -4441,14 +4486,14 @@ def main():
               test_a_width_one_env_coordinate_emits_at_the_certified_value,
               test_a_piece_label_distinguishes_two_boxes_of_one_path,
               test_the_value_gate_statement_is_read_as_ONE_statement,
-	              test_only_the_low_level_value_gate_assertion_counts_as_exit_kind,
-	              test_a_single_line_call_still_reports_its_own_statement,
-	              test_the_low_level_value_gate_emits_a_PUT,
-	              test_missing_replay_args_become_full_domain_fuzz_inputs,
-	              test_missing_low_level_value_gate_args_update_abi_signature,
-	              test_assembled_put_source_drops_stale_concrete_replays,
-	              test_the_funding_line_precedes_the_prank,
-	              test_a_value_gate_certified_at_ZERO_still_REFUSES):
+              test_only_the_low_level_value_gate_assertion_counts_as_exit_kind,
+              test_a_single_line_call_still_reports_its_own_statement,
+              test_the_low_level_value_gate_emits_a_PUT,
+              test_missing_replay_args_become_full_domain_fuzz_inputs,
+              test_missing_low_level_value_gate_args_update_abi_signature,
+              test_assembled_put_source_drops_stale_concrete_replays,
+              test_the_funding_line_precedes_the_prank,
+              test_a_value_gate_certified_at_ZERO_still_REFUSES):
         print(f"--- {t.__name__}")
         registered.add(t.__name__)
         bad += t()

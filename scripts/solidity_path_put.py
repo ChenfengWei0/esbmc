@@ -999,6 +999,19 @@ def r2_term_text(term):
     raise ValueError(f"unknown R2 term kind: {kind!r}")
 
 
+def r2_term_mentions_pre(term):
+    """Whether a structured R2 term depends on the target's entry snapshot."""
+    kind = term.get("kind")
+    if kind == "pre":
+        return True
+    if kind in ("coord", "literal"):
+        return False
+    if kind == "op":
+        return (r2_term_mentions_pre(term["lhs"]) or
+                r2_term_mentions_pre(term["rhs"]))
+    raise ValueError(f"unknown R2 term kind: {kind!r}")
+
+
 def source_r2_literals(ast_path, contract, unit, arity=None,
                        declaration_id=None):
     """Integer atoms from the target body and literal-valued constants."""
@@ -1320,6 +1333,14 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
     entries = []
     for var in allvars:
         width = target_bytes.get(var)
+        var_numeric_atoms = numeric_atoms
+        var_terms = terms
+        if var == RETURN_VAR:
+            var_numeric_atoms = [
+                term for term in numeric_atoms
+                if not r2_term_mentions_pre(term)]
+            var_terms = [
+                term for term in terms if not r2_term_mentions_pre(term)]
         identity = [term for _name, kind, nbytes, term in coords
                     if kind == "id" and (width is None or nbytes is None
                                          or width == nbytes)]
@@ -1330,16 +1351,16 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
             abs_ranges = []
             deltas = []
         else:
-            equals = dedup(identity + [term for term in terms
+            equals = dedup(identity + [term for term in var_terms
                                        if r2_term_text(term) != "pre"])
             abs_ranges = [{"id": f"a{i}", "lo": term, "hi": term}
-                          for i, term in enumerate(numeric_atoms)
+                          for i, term in enumerate(var_numeric_atoms)
                           if r2_term_text(term) != "pre"]
             if zero is not None:
                 type_max = None if width is None else (1 << (8 * width)) - 1
                 abs_ranges += [
                     {"id": f"ac{i}", "lo": zero, "hi": term}
-                    for i, term in enumerate(terms)
+                    for i, term in enumerate(var_terms)
                     if r2_term_text(term) != "0"]
                 if type_max is not None:
                     abs_ranges = [
@@ -1639,11 +1660,11 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
     goes into the spec, and -- the part that matters -- how a pass that comes
     back empty is treated.
 
-    ⛔ AN EMPTY PASS IS REPORTED, NEVER ABSORBED. A query that produced no
-    delta row means the request did not reach the ladder (a name the ladder
-    does not carry, a refusal, a dead run). Merging silently would leave the
-    PUT looking exactly like one where R2 was never asked for -- the whole
-    reason R2 went unnoticed for this long.
+    ⛔ AN EMPTY PASS IS REPORTED, NEVER ABSORBED. A query that produced no R2
+    row means the request did not reach the ladder (a name the ladder does not
+    carry, a refusal, a dead run). Merging silently would leave the PUT looking
+    exactly like one where R2 was never asked for -- the whole reason R2 went
+    unnoticed for this long.
 
     ⛔ AND IT NEVER OVERWRITES A ROW THE FIRST PASS ALREADY DECIDED. Only rows
     whose (var, text) is new are returned; a second pass disagreeing with the
@@ -1683,17 +1704,25 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
         # asking for one -- was parsed, matched nothing, and was dropped as
         # though the pass had come back empty. A request whose answer no reader
         # accepts is indistinguishable from a request never sent.
+        def is_r2_row(text):
+            if text.startswith(("post in [", "post - pre in [",
+                                "pre - post in [", "return in [")):
+                return True
+            if text.startswith("post == ") and text != "post == pre":
+                return True
+            if text.startswith("return == "):
+                return text not in ("return == 0", "return == false",
+                                    "return == true")
+            return False
+
         fresh = [(v, t, d) for v, t, d in rows
-                 if (t.startswith(("post in [", "post - pre in [",
-                                   "pre - post in ["))
-                     or (t.startswith("post == ") and t != "post == pre"))
-                 and (v, t) not in seen]
+                 if is_r2_row(t) and (v, t) not in seen]
         for v, t, d in fresh:
             seen.add((v, t))
             if stage == 1 and t.startswith(("post - pre in [", "pre - post in [")):
                 exact_delta[v] = d
         if not fresh:
-            log(f"[put]     NO DELTA ROW came back from this pass"
+            log(f"[put]     NO R2 ROW came back from this pass"
                 + (f" (ladder refusal: {refusal})" if refusal else
                    " and the ladder reported no refusal, so the request "
                    "reached it and produced nothing -- that is a defect, not "

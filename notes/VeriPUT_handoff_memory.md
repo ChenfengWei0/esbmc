@@ -4900,3 +4900,62 @@ Verification:
   `poke(bytes4(0x12345678))` and `poke(bytes4(0xffffffff))`.
   The constructor argument rendered as `bytes4(0x00000000)` in that run; it is
   semantically irrelevant to the covered branch and still exact-width.
+
+## 2026-08-06 return-value R2 repair for pure/view PUT strength
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No POC ESBMC attempt was consumed. The ESBMC validation used a `/tmp`
+  synthetic copy shaped like `P19_ReturnShapes.tern_lit`.
+
+Finding:
+
+- The old P19 `put.json` files are stale artifacts: their coverage reports do
+  not carry `return_value_known`, and their assertion specs predate the current
+  `vars_policy: state-exact` writer.
+- Current ESBMC already materializes scalar return ghosts. A `/tmp` synthetic
+  `return x > y ? 10 : 20` run produced `return_value_known=true`, and
+  `--path-cov-assert` emitted `retlive`, `return == 0`, and `return != 0`.
+- With `--propose-r2`, ESBMC also proved the strong R2 rows
+  `return == 20 HOLDS` and `return in [20, 20] HOLDS`.
+
+Bug fixed:
+
+- `propose_r2_batch` generated structured terms containing `pre` for the
+  synthetic `return` target. ESBMC correctly refused those candidates because
+  a return value has no entry snapshot.
+- `run_r2_passes` only merged state-shaped R2 rows (`post ...`). It ignored
+  return-shaped rows (`return == ...`, `return in [...]`), then logged the pass
+  as empty. The final PUT kept only the weak R1 assertion `return != 0` even
+  though ESBMC had proved `return == 20`.
+
+Final code shape:
+
+- `scripts/solidity_path_put.py` now has `r2_term_mentions_pre(term)`.
+- For `RETURN_VAR`, typed R2 candidates filter out any structured term that
+  directly or indirectly mentions `pre`; state variables still keep the full
+  grammar including `pre + amount` and delta terms.
+- `run_r2_passes` now recognizes return R2 rows:
+  `return == <non-baseline>` and `return in [lo, hi]`.
+- Empty R2 pass diagnostics now say `NO R2 ROW`, not `NO DELTA ROW`, because
+  R2 now includes return equality/absolute rows as well as state delta rows.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 145/145 tests.
+- `/tmp/veriput-return-smoke-*` synthetic Stage-4 run with
+  `--propose-r2 --timeout 60 --memlimit 8g` generated a PUT with 2 fuzz
+  parameters and 4 return assertions, including:
+  `assertEq(uint256(_put_ret), 20, "return: return == 20");`.
+
+Expected impact:
+
+- P19-style no-state/pure-return units should no longer fall into
+  `no-oracle:ladder-refusal` after a fresh Stage-4 rerun with current ESBMC and
+  `--propose-r2`.
+- This is not POC overfitting: the repair applies to every scalar-return unit
+  whose strong oracle is a returned value rather than a storage slot.
