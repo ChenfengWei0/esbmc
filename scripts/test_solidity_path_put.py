@@ -7932,6 +7932,56 @@ def test_missing_replay_args_become_full_domain_fuzz_inputs():
     return bad
 
 
+def test_missing_address_payable_replay_arg_casts_at_the_unit_call():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "./Vault.sol";
+contract VaultCovTest is Test {
+  Vault c1;
+  function setUp() public {
+    c1 = new Vault();
+  }
+  // claim: sol:@C@Vault@F@pay#41:path:6
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c1.pay() {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Vault@F@pay#41", 6)
+    notes = []
+    put, stats = build_put(
+        "Vault", "pay", 6, 1, "sol:@C@Vault@F@pay#41",
+        region={}, holes={}, pins={},
+        params=[("", "address payable")], emitted=em, case=case,
+        layout={}, ladder_rows=[], notes=notes, exit_kind="revert")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check("function test_put_Vault_pay_path6(address arg0) public"
+                 in text,
+                 "address payable is fuzzed as an ordinary boundable address")
+    bad += check("arg0 = address(uint160(bound(uint256(uint160(arg0)), 0, "
+                 f"{(1 << 160) - 1})))" in text,
+                 "the payable address argument is still bounded as address")
+    bad += check("try c1.pay(payable(arg0)) {} catch { _put_ok = false; }"
+                 in text,
+                 "the high-level unit call casts the fuzz address to payable")
+    bad += check(stats["fuzz_params"] == 1
+                 and stats["wide_fuzz_coords"] == ["arg0"],
+                 f"the B ledger sees the payable address fuzz input: {stats}")
+    return bad
+
+
 def test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input():
     emitted = """\
 // SPDX-License-Identifier: MIT
@@ -8267,6 +8317,7 @@ def main():
               test_a_single_line_call_still_reports_its_own_statement,
               test_the_low_level_value_gate_emits_a_PUT,
               test_missing_replay_args_become_full_domain_fuzz_inputs,
+              test_missing_address_payable_replay_arg_casts_at_the_unit_call,
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,

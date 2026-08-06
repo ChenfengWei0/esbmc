@@ -4328,6 +4328,15 @@ def signature_type(sol_type):
     return None
 
 
+def call_arg_expr(sol_type, kind, width, var):
+    """Expression passed to the target unit for one lifted PUT coordinate."""
+    if kind == "bytes":
+        return f"bytes{width // 8}({var})"
+    if kind == "address" and (sol_type or "").strip() == "address payable":
+        return f"payable({var})"
+    return var
+
+
 def named_params(params):
     """Stable names for anonymous or duplicate Solidity parameters."""
     out, used = [], set()
@@ -5619,8 +5628,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         sig.append((sig_ty, var))
         pre_lines += bound_lines(var, "uint" if kind == "bytes" else kind,
                                  width, lo, hi, param_holes)
-        repl[idx] = (f"bytes{width // 8}({var})"
-                     if kind == "bytes" else var)
+        repl[idx] = call_arg_expr(ptype, kind, width, var)
         lifted.append(pname)
         # ---- AN ADDRESS BOUNDS AN ABSOLUTE VALUE, NEVER A DELTA ------------
         #

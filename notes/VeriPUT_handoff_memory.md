@@ -7316,3 +7316,38 @@ Verification:
   - `mapping(bytes32 => ...)` slot proposal from a same-typed parameter;
   - fixed-bytes R2 identity endpoint width filtering;
   - fixed-bytes return assertions using same-width integer casts.
+
+## 2026-08-06 Address payable PUT call boundary
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. Validation was Python-only.
+
+Finding:
+
+- `address payable` parameters were already treated as fuzzable address-width
+  coordinates, which is right for `bound()` and the PUT function signature.
+- The target high-level call still received the raw `address` fuzz variable.
+  Solidity can reject passing an ordinary `address` expression to an
+  `address payable` parameter, so these PUTs may fail at compile time despite
+  having a valid certified region.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now routes lifted call arguments through
+  `call_arg_expr()`.
+- Ordinary address parameters still call with `arg`.
+- `address payable` parameters keep the PUT signature as `address arg`, keep
+  address-domain `bound()` lines, and call the unit as `payable(arg)`.
+- Low-level ABI signatures remain `address`, which is Solidity ABI-correct.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 190/190 tests.
+- Added coverage for omitted high-level `address payable` calldata repaired as
+  full-domain address fuzz input and cast to `payable(arg0)` at the unit call.
