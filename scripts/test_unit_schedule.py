@@ -114,8 +114,15 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
     bad += check("--unit" in argv and "setX" in argv, f"certifier argv selects the unit: {argv}")
     bad += check("--ast-cache-root" in argv and "/tmp/cache" in argv,
                  f"certifier argv preserves AST cache root: {argv}")
+    bad += check("--recipe-version" in argv and "veriput-strong/7" in argv,
+                 f"certifier argv uses the shared strong recipe: {argv}")
+    bad += check("--skip-bracket" in argv and "--probe-ladder" in argv
+                 and "--pin-agreed-state" in argv and "--slot-coords" in argv,
+                 f"strong region controls are scheduled for benchmarks: {argv}")
     bad += check("--dry-run" not in argv and "--dry-run" in hinted["dry_run_argv"],
                  f"normal and dry-run argv are separate: {hinted}")
+    bad += check(doc["recipe_version"] == "veriput-strong/7",
+                 f"schedule records the recipe version: {doc.get('recipe_version')}")
     return bad
 
 
@@ -145,8 +152,9 @@ def test_schedule_cli_reads_stdin_and_applies_limit():
                  f"pre-limit denominator is retained: {doc['summary']}")
     bad += check(job["unit"] == "setX" and job["priority"] == 0,
                  f"limit is applied after priority sorting: {job}")
+    out_idx = job["certify_argv"].index("--out") if "--out" in job["certify_argv"] else -1
     bad += check(
-        "--out" in job["certify_argv"] and job["certify_argv"][-1].endswith("results.jsonl"),
+        out_idx >= 0 and job["certify_argv"][out_idx + 1].endswith("results.jsonl"),
         f"cert output path is threaded into argv: {job['certify_argv']}")
     return bad
 

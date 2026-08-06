@@ -245,6 +245,12 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
             bad += check(unit_schedule["summary"]["jobs"] == 1
                          and unit_schedule["cert_out"] == str(out_dir / "certify-results.jsonl"),
                          f"unit schedule is usable by certify_all: {unit_schedule['summary']}")
+            certify_argv = unit_schedule["jobs"][0]["certify_argv"]
+            bad += check("--recipe-version" in certify_argv
+                         and "veriput-strong/7" in certify_argv
+                         and "--skip-bracket" in certify_argv
+                         and "--pin-agreed-state" in certify_argv,
+                         f"benchmark pipeline schedules the strong recipe: {certify_argv}")
             return bad
 
         patches = [

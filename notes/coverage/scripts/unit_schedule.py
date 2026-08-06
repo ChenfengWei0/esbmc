@@ -17,6 +17,8 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CERTIFY_ALL = SCRIPT_DIR / "certify_all.py"
+sys.path.insert(0, str(SCRIPT_DIR))
+from veriput_recipe import STRONG_RECIPE_VERSION, strong_certify_args  # noqa: E402
 
 
 class ScheduleError(ValueError):
@@ -73,6 +75,7 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
         argv.extend(["--ast-cache-root", ast_cache_root])
     if out_path:
         argv.extend(["--out", out_path])
+    argv.extend(strong_certify_args())
     if dry_run:
         argv.append("--dry-run")
     return argv
@@ -171,6 +174,7 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
         "shard": shard or None,
         "limit": limit or None,
         "cert_out": cert_out or None,
+        "recipe_version": STRONG_RECIPE_VERSION,
         "summary": {
             "jobs": len(jobs),
             "jobs_before_shard": total_jobs,

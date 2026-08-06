@@ -4959,3 +4959,55 @@ Expected impact:
   `--propose-r2`.
 - This is not POC overfitting: the repair applies to every scalar-return unit
   whose strong oracle is a returned value rather than a storage slot.
+
+## 2026-08-06 shared strong recipe for benchmark unit scheduling
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No POC ESBMC attempt was consumed. Validation was Python compile/unit tests
+  and read-only command construction.
+
+Finding:
+
+- `poc_one.py` already ran Stage 2 under `veriput-strong/7` and Stage 3 with
+  `--propose-r2 --fuzz-r2-prefilter`.
+- The prepared-subject benchmark path did not: `unit_schedule.py` generated
+  `certify_argv` with only `--subject-dir`, `--subject-benchmark`, `--unit`,
+  optional AST cache, and `--out`. A Dataset/Results campaign would therefore
+  run the weaker `certify_all.py` defaults even though the POC path had the
+  stronger recipe.
+- This is a general orchestration bug, not a POC-region issue. It affects
+  Stress/Peer/BugFix scheduling before any ESBMC query is spent.
+
+Code shape:
+
+- Added `notes/coverage/scripts/veriput_recipe.py` as the single home for:
+  `STRONG_RECIPE_VERSION = "veriput-strong/7"`,
+  `strong_certify_args(...)`, and `strong_put_args()`.
+- `poc_one.py` now imports the shared recipe instead of carrying its own copy;
+  its public `strong_certify_args` name still exists through the import, so the
+  existing POC driver tests keep working.
+- `unit_schedule.py` now appends the shared Stage-2 strong recipe to every
+  prepared-subject `certify_argv` and records `recipe_version` in the schedule.
+  The generated benchmark jobs now carry the same important switches as the POC
+  recipe: `--skip-bracket`, level0 perturbation, witness probes/ladders,
+  agreed-state pinning, env-disagreed coordinates, state struct fields, and
+  `--slot-coords 8`.
+- Stage 4 is still controlled by `put_all.py`; POC Stage 3 imports the shared
+  `strong_put_args()` for `--propose-r2` and fuzz-refute prefilter. A future
+  benchmark Stage-4 runner should reuse that same helper rather than spelling
+  the R2/fuzz switches again.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/veriput_recipe.py notes/coverage/scripts/poc_one.py notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed and now asserts that the written unit schedule includes
+  `veriput-strong/7`, `--skip-bracket`, and `--pin-agreed-state`.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_poc_stage_drivers.py`
+  passed, including the `probe_witnesses=0` no-ladder case.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py` and
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule_run.py` passed.
