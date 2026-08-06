@@ -8798,3 +8798,84 @@ Next work:
 - Add a relational R1/R2 or split strategy for arithmetic regions like
   `x + y <= UINT_MAX`. The current product interval can certify constant-y
   arithmetic guards but cannot express the `y>=3` branch strongly.
+
+## 2026-08-06 product-region fallback for repeated safety cuts
+
+Problem found after the checked-arithmetic certification fix:
+
+- `peer182 / peer_soltg__return_1 / Cr1.add(uint256 x, uint256 y)` enc=31
+  reaches `return x + y` under `y >= 3`.
+- The true normal-exit domain is relational: `x + y <= UINT_MAX`.
+- Stage 2 regions are product boxes. They cannot spell that relation, so ESBMC
+  kept producing `RESULT: UNSAFE` witnesses at the current `x` upper boundary.
+  The old loop responded soundly but poorly: cut `x` by one value, query again,
+  cut one more value, and finally report `shrink round budget exhausted`.
+- This is not a solver timeout and not an insertion bug anymore. It is a region
+  language limitation exposed by cheap refutation.
+
+Code changes:
+
+- Added `tiny_safety_cut_retreat()` in `scripts/solidity_path_generalise.py`.
+  It pins one coordinate to the path witness only when all of these hold:
+  repeated `RESULT: UNSAFE` refutations, same coordinate, one-value cuts,
+  threshold reached, and at least one other non-environment coordinate remains
+  wide.
+- Added driver flag `--safety-retreat-after-tiny-cuts` (default 2; 0 disables).
+  The value is written into `run-config.json`.
+- `certify()` now returns `"UNSAFE"` as the refutation cause through the existing
+  sixth tuple slot, so the shrink loop can distinguish safety refutations from
+  ordinary path assertion refutations.
+- `notes/coverage/scripts/certify_all.py` now exposes, forwards and records the
+  new flag.
+- Bumped strong recipe to `veriput-strong/8` and included
+  `--safety-retreat-after-tiny-cuts 2`.
+- Updated `scripts/test_unit_schedule.py` to read the recipe version constant
+  instead of hard-coding `/7`.
+
+Guardrails:
+
+- This does not prove a relation. It deliberately returns a partial
+  generalization, e.g. pin `x` and keep `y` wide.
+- It does not fire for single-coordinate boundary checks such as `x + 2`, where
+  two one-value cuts are the right answer.
+- It ignores width left only in environment coordinates (`msg.*`, `tx.*`,
+  `block.*`), because that would look parameterized without giving the target
+  function a meaningful input/state dimension.
+
+Measured benchmark sample:
+
+- Command family: `certify_all.py` on prepared subject
+  `peer182__peer_soltg__return_1`, unit `add`, 60s driver timeout,
+  60s per-ESBMC timeout, 8GiB memlimit, output under
+  `/tmp/veriput_peer_return1_tinyretreat_20260806_204549`.
+- Result: `5 certified / 0 not / 5 witnessed` in 23s.
+- Important region:
+  - enc=31 certified as `msg.value == 0`, `x == 0`,
+    `y in [3, UINT_MAX]`.
+  - `generalise-result.json` records `retreated: {"x": "0"}` for enc=31.
+  - Driver log shows one ordinary one-value cut, then
+    `[retreat enc=31] PINNED x==0 ... after repeated one-value safety cuts`.
+- The row was labelled `veriput-strong/7` because the recipe bump happened after
+  this sample; the command did pass and record
+  `--safety-retreat-after-tiny-cuts 2`. Future scheduled runs use
+  `veriput-strong/8`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_guards.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py scripts/test_unit_schedule.py notes/coverage/scripts/certify_all.py notes/coverage/scripts/veriput_recipe.py`
+  passed.
+- `git diff --check` passed.
+
+Next work:
+
+- Start broader benchmark sampling under recipe `veriput-strong/8`, first with
+  a few `peer182` units, then `bugfix124`, then `stress243`.
+- Still needed for maximal strength: a real relational region/R2 strategy for
+  arithmetic guards. The current fallback is intentionally weaker but useful:
+  it trades one dimension for a certified wide region on the remaining semantic
+  dimension(s).

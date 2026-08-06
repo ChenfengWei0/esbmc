@@ -779,6 +779,14 @@ def main():
                          "driver's own default of 4, and the value is UNARGUED "
                          "-- see the comment above this flag for what it costs "
                          "and the three-arm run that would settle it.")
+    ap.add_argument("--safety-retreat-after-tiny-cuts", type=int, default=2,
+                    help="passed to the driver: for RESULT: UNSAFE "
+                         "certification refutations, pin a coordinate at x_pi "
+                         "after this many consecutive one-value cuts on that "
+                         "same coordinate, while preserving another wide "
+                         "non-environment coordinate. 0 disables the fallback. "
+                         "Recorded on every row because it changes the "
+                         "certified region shape.")
     ap.add_argument("--refine-rounds", type=int, default=2,
                     help="BELOW the driver's own default of 3, and unargued. "
                          "Fewer refine rounds means the span handed to "
@@ -1663,6 +1671,8 @@ def main():
                    "--claim-budget", str(args.claim_budget),
                    "--refine-rounds", str(args.refine_rounds),
                    "--shrink-rounds", str(args.shrink_rounds),
+                   "--safety-retreat-after-tiny-cuts",
+                   str(args.safety_retreat_after_tiny_cuts),
                    # ---- THE PER-ESBMC-RUN BUDGET, NOW `--run-timeout` ----
                    #
                    # It was the literal 180 the comment below argues about. The
@@ -1938,6 +1948,8 @@ def main():
                         "claim_budget": args.claim_budget,
                         "refine_rounds": args.refine_rounds,
                         "shrink_rounds": args.shrink_rounds,
+                        "safety_retreat_after_tiny_cuts":
+                            args.safety_retreat_after_tiny_cuts,
                         "unit_timeout_s": args.timeout,
                         "subject": subject_record,
                         # The per-ESBMC-RUN budget, which is NOT `unit_timeout_s`

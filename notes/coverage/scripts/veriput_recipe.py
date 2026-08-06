@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Versioned VeriPUT recipe fragments shared by POC and benchmark runners."""
 
-STRONG_RECIPE_VERSION = "veriput-strong/7"
+STRONG_RECIPE_VERSION = "veriput-strong/8"
 STRONG_PROBE_WITNESSES = 8
 STRONG_PUT_AUTO_UNWIND = 1
 STRONG_PUT_R2_DEPTH = 1
@@ -16,6 +16,7 @@ STRONG_CERTIFY_ARGS = [
     "--probes", "8",
     "--refine-rounds", "2",
     "--shrink-rounds", "4",
+    "--safety-retreat-after-tiny-cuts", "2",
     "--claim-budget", "0",
     "--level0",
     "--level0-perturb",

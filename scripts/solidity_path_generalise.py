@@ -3921,6 +3921,37 @@ def coord_kept(lo, hi, holes=()):
     return (hi - lo + 1) - len([v for v in holes if lo <= v <= hi])
 
 
+def tiny_safety_cut_retreat(box, coord, removed, ce, streak, threshold):
+    """Pin one coordinate when safety cuts are clearly chasing a relation.
+
+    Solidity 0.8 arithmetic checks can refute a product region whose real safe
+    domain is relational, e.g. `x + y <= UINT_MAX`. A product box cannot spell
+    that. The normal cut rule then keeps removing one boundary value from `x`
+    forever: sound, but useless under a finite shrink budget.
+
+    This fallback is deliberately narrower than "a tiny cut happened":
+      * it is called only for `RESULT: UNSAFE` refutations;
+      * the same coordinate must have been cut by one value repeatedly;
+      * pinning it must still leave a non-environment coordinate wide.
+
+    That keeps single-coordinate checks such as `x + 2` on the normal path: two
+    one-value cuts are exactly the right answer there, not a reason to give up
+    the whole `x` range.
+    """
+    if removed != 1 or streak < threshold:
+        return None
+    if coord not in box or coord not in ce:
+        return None
+    lo, hi = box[coord]
+    pv = ce[coord]
+    if lo == hi or not (lo <= pv <= hi):
+        return None
+    if not any(n != coord and not is_env(n) and bhi > blo
+               for n, (blo, bhi) in box.items()):
+        return None
+    return {coord: pv}
+
+
 def refutation_response(box, holes, ce, wit, pins, ranges=None,
                         assumed_hs=None):
     """What §Certification prescribes for THIS refutation. (kind, payload).
@@ -4299,6 +4330,7 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit,
               esbmc_args=esbmc_args, result_only=not want_property)
     v = verdict(log)
+    why = "UNSAFE" if "RESULT: UNSAFE" in log else None
     # REFUSED IS NOT UNKNOWN. A query the tool declined to attempt because one
     # coordinate cannot be expressed is a fact about the SPEC, and it is fixable
     # by the caller -- unlike a crash or a timeout, which are facts about the
@@ -4320,7 +4352,6 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
         # because that is the whole difference between it and UNKNOWN: it names
         # the repair. "No verdict" is not actionable; "loop 62 at f:11 was cut
         # at the unwind bound" is a --unwindset away from one.
-        why = None
         if v == "UNKNOWN":
             why = round_failure_reason(log)
         elif v == "UNDECIDED_TRUNCATED":
@@ -4331,7 +4362,6 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
                    "normally does -- read the run log rather than trusting "
                    "this line")
         return v, None, {}, [], unexp, why
-    why = None
     if want_property:
         # ---- THE WHOLE LOG, ON DISK, NAMED BY THE PATH IT BELONGS TO ----
         #
@@ -4712,6 +4742,8 @@ def run_config(args, scope_label):
         "probes": arg_value(args, "probes", 16),
         "refine_rounds": arg_value(args, "refine_rounds", 3),
         "shrink_rounds": arg_value(args, "shrink_rounds", 4),
+        "safety_retreat_after_tiny_cuts": arg_value(
+            args, "safety_retreat_after_tiny_cuts", 2),
         "witness_check": bool(arg_value(args, "witness_check", True)),
         "cut_policy": arg_value(args, "cut_policy", "spec"),
         "max_region_pieces": arg_value(args, "max_region_pieces", 1),
@@ -4799,6 +4831,14 @@ def main():
                          "is given up. Per piece, not per path: with "
                          "--max-region-pieces above 1 the first piece would "
                          "otherwise spend the whole path's budget.")
+    ap.add_argument("--safety-retreat-after-tiny-cuts", type=int, default=2,
+                    help="for `RESULT: UNSAFE` certification refutations, pin "
+                         "a coordinate at x_pi after this many consecutive "
+                         "one-value cuts on that same coordinate, but only if "
+                         "another non-environment coordinate remains wide. "
+                         "This is the product-region fallback for relational "
+                         "checked-arithmetic domains such as x + y <= UINT_MAX; "
+                         "set 0 to disable it.")
     ap.add_argument("--no-witness-check", dest="witness_check",
                     action="store_false", default=True,
                     help="do NOT put §Certification's single-point query on a "
@@ -6673,6 +6713,7 @@ def main():
             # Per piece and not per path: two pieces of one path are different
             # sets and may retreat on different coordinates.
             retreated = {}
+            tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
             for _ in range(args.shrink_rounds):
                 v, nb, wit, punches, unexp, unknown_why = certify(
                     args.esbmc, args.sol, args.contract, query_unit,
@@ -6956,6 +6997,7 @@ def main():
                 usable = [(c, val) for c, val in punches
                           if len(holes.get(c, ())) < args.max_holes]
                 if usable:
+                    tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
                     for c, val in usable:
                         holes.setdefault(c, [])
                         if val not in holes[c]:
@@ -7043,6 +7085,7 @@ def main():
                                               caveats, _rng, _ahs))
                         break
                     if kind == "pin":
+                        tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
                         # PARTIAL GENERALISATION. The method: "A region with
                         # some coordinates pinned and others left to range says
                         # less than one in which all of them range, more than a
@@ -7075,6 +7118,39 @@ def main():
                                               caveats, _rng, _ahs))
                         break
                     _c, _clo, _chi, _removed = payload
+                    if (unknown_why == "UNSAFE" and _removed == 1 and
+                            args.safety_retreat_after_tiny_cuts > 0):
+                        if tiny_safety_cut_coord == _c:
+                            tiny_safety_cut_streak += 1
+                        else:
+                            tiny_safety_cut_coord = _c
+                            tiny_safety_cut_streak = 1
+                        retreat = tiny_safety_cut_retreat(
+                            box, _c, _removed, ce, tiny_safety_cut_streak,
+                            args.safety_retreat_after_tiny_cuts)
+                        if retreat:
+                            applied = {n: v for n, v in retreat.items()
+                                       if box.get(n) != (v, v)}
+                            if applied:
+                                for n, v in applied.items():
+                                    box[n] = (v, v)
+                                retreated.update(applied)
+                                prev_size = region_size(box, holes)
+                                tiny_safety_cut_coord = None
+                                tiny_safety_cut_streak = 0
+                                print(f"[retreat {tag}] PINNED "
+                                      + ", ".join(
+                                          f"{n}=={v}" for n, v in
+                                          sorted(applied.items()))
+                                      + " at its x_pi value after repeated "
+                                        "one-value safety cuts; the product "
+                                        "region cannot spell the relational "
+                                        "checked-arithmetic guard, so carrying "
+                                        "on with the remaining wide "
+                                        f"coordinate(s)  |R| {prev_size}")
+                                continue
+                    else:
+                        tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
                     nb = dict(box)
                     nb[_c] = (_clo, _chi)
                     print(f"[cut {tag}] {_c} -> [{_clo}, {_chi}], removing "

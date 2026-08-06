@@ -88,6 +88,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       save_failed_round,
                                       validate_enumeration_import,
                                       derive_env_coord_disagreed,
+                                      tiny_safety_cut_retreat,
                                       _coord_range)
 
 FAILURES = []
@@ -2353,6 +2354,30 @@ check("retreat-when-the-cut-would-leave-one-value",
 check("retreat-does-not-fire-where-two-values-survive",
       refutation_response({"a": (0, 2)}, {}, {"a": 0}, {"a": 2}, {}),
       ("cut", ("a", 0, 1, 1)))
+
+# 3b. Repeated one-value `RESULT: UNSAFE` cuts are a product-region symptom
+#     only when some OTHER non-environment coordinate can still be generalized.
+#     This keeps `x + 2` on the normal two-cut path, while `x + y` can retreat
+#     one side and preserve the other.
+check("tiny-safety-retreat-keeps-a-remaining-input-wide",
+      tiny_safety_cut_retreat({"x": (0, 99), "y": (3, 99)}, "x", 1,
+                              {"x": 0, "y": 99}, 2, 2),
+      {"x": 0})
+check("tiny-safety-retreat-waits-for-the-throttle",
+      tiny_safety_cut_retreat({"x": (0, 99), "y": (3, 99)}, "x", 1,
+                              {"x": 0, "y": 99}, 1, 2),
+      None)
+check("tiny-safety-retreat-does-not-weaken-single-input-boundary",
+      tiny_safety_cut_retreat({"x": (0, 99)}, "x", 1, {"x": 0}, 2, 2),
+      None)
+check("tiny-safety-retreat-ignores-env-only-width",
+      tiny_safety_cut_retreat({"x": (0, 99), "msg.sender": (0, 99)}, "x", 1,
+                              {"x": 0, "msg.sender": 7}, 2, 2),
+      None)
+check("tiny-safety-retreat-requires-a-one-value-cut",
+      tiny_safety_cut_retreat({"x": (0, 99), "y": (3, 99)}, "x", 2,
+                              {"x": 0, "y": 99}, 2, 2),
+      None)
 
 # 4. THE RETREAT, trigger one: the coordinate cannot be cut at all because it
 #    is PINNED. The old `shrink_target` returned None here and the path died;

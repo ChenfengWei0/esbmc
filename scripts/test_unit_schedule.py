@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
 import unit_schedule  # noqa: E402
+import veriput_recipe  # noqa: E402
 
 
 def check(cond, msg):
@@ -114,14 +115,15 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
     bad += check("--unit" in argv and "setX" in argv, f"certifier argv selects the unit: {argv}")
     bad += check("--ast-cache-root" in argv and "/tmp/cache" in argv,
                  f"certifier argv preserves AST cache root: {argv}")
-    bad += check("--recipe-version" in argv and "veriput-strong/7" in argv,
+    bad += check("--recipe-version" in argv
+                 and veriput_recipe.STRONG_RECIPE_VERSION in argv,
                  f"certifier argv uses the shared strong recipe: {argv}")
     bad += check("--skip-bracket" in argv and "--probe-ladder" in argv
                  and "--pin-agreed-state" in argv and "--slot-coords" in argv,
                  f"strong region controls are scheduled for benchmarks: {argv}")
     bad += check("--dry-run" not in argv and "--dry-run" in hinted["dry_run_argv"],
                  f"normal and dry-run argv are separate: {hinted}")
-    bad += check(doc["recipe_version"] == "veriput-strong/7",
+    bad += check(doc["recipe_version"] == veriput_recipe.STRONG_RECIPE_VERSION,
                  f"schedule records the recipe version: {doc.get('recipe_version')}")
     return bad
 
