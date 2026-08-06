@@ -7034,3 +7034,50 @@ Verification:
   fixed afterward.
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
+## 2026-08-06 modifier suffix source-R2
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Ground truth:
+
+- Prepared benchmark sources frequently use modifiers whose post-body suffix
+  writes meaningful state, especially OpenZeppelin-style `nonReentrant` shapes:
+  `_status = _ENTERED; _; _status = _NOT_ENTERED;`.
+- The final observable post-state after a successful unit call is determined by
+  statements after the modifier placeholder, not by setup writes before `_`.
+  Mining pre-placeholder writes as ordinary final-state candidates would create
+  likely false source-R2 guesses such as `post == _ENTERED`.
+- Fuzz remains only a cheap refutation pass. These source-R2 candidates are
+  still hypotheses; ESBMC certification is the proving step.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now indexes `ModifierDefinition` nodes in the
+  same contract/base scope used for target function discovery.
+- After walking the target function body, source-R2 walks each target modifier's
+  top-level suffix after `PlaceholderStatement` and mines assignments from
+  that suffix.
+- If a modifier has parameters, invocation actuals are bound through the same
+  local-alias mechanism used by one-level internal helper inlining.
+- Alias/local/storage alias snapshots are restored after each modifier walk, so
+  modifier parameters and locals do not pollute the function body or following
+  modifiers.
+- Modifier references accept both `Identifier` references and direct
+  `referencedDeclaration` fields, covering minor solc AST shape variation.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 183/183 tests.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md`
+  passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.

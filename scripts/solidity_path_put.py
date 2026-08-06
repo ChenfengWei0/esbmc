@@ -1168,6 +1168,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
     enum_member_ids = {}
     function_nodes = []
     function_by_id = {}
+    modifier_by_id = {}
     for scope in scopes:
         for n in (scope.get("nodes") or []):
             if (isinstance(n, dict) and
@@ -1207,6 +1208,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 function_nodes.append(n)
                 if n.get("id") is not None:
                     function_by_id[n["id"]] = n
+            if (isinstance(n, dict) and
+                    n.get("nodeType") == "ModifierDefinition" and
+                    n.get("id") is not None):
+                modifier_by_id[n["id"]] = n
 
     entries, evidence, seen, by_name = [], [], set(), {}
     next_id = [0]
@@ -1964,6 +1969,61 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             local_storage_ids.clear()
             local_storage_ids.update(old_storage_ids)
 
+    def modifier_effect_statements(modifier):
+        body = (modifier or {}).get("body") or {}
+        statements = body.get("statements") or []
+        if not isinstance(statements, list):
+            return []
+        for pos, stmt in enumerate(statements):
+            if (isinstance(stmt, dict) and
+                    stmt.get("nodeType") == "PlaceholderStatement"):
+                return statements[pos + 1:]
+        return statements
+
+    def modifier_invocation_ref(invocation):
+        if not isinstance(invocation, dict):
+            return None
+        for key in ("modifierName", "modifierNamePath"):
+            node = invocation.get(key)
+            ref = identifier_ref(node)
+            if ref is not None:
+                return ref
+            if isinstance(node, dict):
+                raw = node.get("referencedDeclaration")
+                if isinstance(raw, int):
+                    return raw
+        return None
+
+    def walk_modifier_effects(invocation):
+        ref = modifier_invocation_ref(invocation)
+        modifier = modifier_by_id.get(ref)
+        if modifier is None:
+            return
+        formals = (modifier.get("parameters") or {}).get("parameters") or []
+        actuals = invocation.get("arguments") or []
+        if len(formals) != len(actuals):
+            return
+        old_aliases = dict(local_aliases)
+        old_storage_aliases = dict(local_storage_aliases)
+        old_local_ids = set(local_ids)
+        old_storage_ids = set(local_storage_ids)
+        try:
+            for formal, actual in zip(formals, actuals):
+                formal_ref = formal.get("id") if isinstance(formal, dict) \
+                    else None
+                if isinstance(formal_ref, int):
+                    local_aliases[formal_ref] = actual
+            walk(modifier_effect_statements(modifier))
+        finally:
+            local_aliases.clear()
+            local_aliases.update(old_aliases)
+            local_storage_aliases.clear()
+            local_storage_aliases.update(old_storage_aliases)
+            local_ids.clear()
+            local_ids.update(old_local_ids)
+            local_storage_ids.clear()
+            local_storage_ids.update(old_storage_ids)
+
     def walk(n):
         if isinstance(n, dict):
             if n.get("nodeType") == "FunctionCall":
@@ -2176,6 +2236,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 walk(child)
 
     walk(target.get("body"))
+    for invocation in target.get("modifiers") or []:
+        walk_modifier_effects(invocation)
     if not entries:
         return [], evidence
     for line in evidence:

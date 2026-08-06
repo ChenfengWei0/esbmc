@@ -3272,6 +3272,81 @@ def test_source_R2_inlines_one_internal_helper_call():
     return bad
 
 
+def test_source_R2_mines_modifier_suffix_effects_only():
+    from solidity_path_put import r2_term_text, source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value),
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def assign(rhs_ref, rhs_name, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=", "src": src,
+            "leftHandSide": ident(10, "_status", "uint256"),
+            "rightHandSide": ident(rhs_ref, rhs_name, "uint256")}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10,
+             "name": "_status", "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 11,
+             "name": "_ENTERED", "stateVariable": True, "constant": True,
+             "typeDescriptions": {"typeString": "uint256"},
+             "value": num(2)},
+            {"nodeType": "VariableDeclaration", "id": 12,
+             "name": "_NOT_ENTERED", "stateVariable": True, "constant": True,
+             "typeDescriptions": {"typeString": "uint256"},
+             "value": num(1)},
+            {"nodeType": "ModifierDefinition", "id": 30,
+             "name": "nonReentrant",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 assign(11, "_ENTERED", "100:12:0"),
+                 {"nodeType": "PlaceholderStatement"},
+                 assign(12, "_NOT_ENTERED", "130:16:0")]}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": []},
+             "modifiers": [{
+                 "nodeType": "ModifierInvocation",
+                 "modifierName": {
+                     "nodeType": "Identifier",
+                     "referencedDeclaration": 30,
+                     "name": "nonReentrant"},
+                 "arguments": []}],
+             "body": {"nodeType": "Block", "statements": []}},
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "touch", [], {"_status": (0, 0, 32)}, [],
+            arity=0, maps={}, log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} \
+        if specs else {}
+    equals = [r2_term_text(item["term"])
+              for item in entries.get("_status", {}).get("equals", [])]
+    bad = 0
+    bad += check(equals == ["1"],
+                 f"modifier suffix, not prefix, is mined: {entries}")
+    bad += check(any("_status: post == _NOT_ENTERED" in line
+                     for line in evidence),
+                 f"modifier suffix provenance is recorded: {evidence}")
+    bad += check(not any("_status: post == _ENTERED" in line
+                         for line in evidence),
+                 f"modifier prefix is not treated as final state: {evidence}")
+    return bad
+
+
 def test_source_R2_arithmetic_assignments_prioritize_expression_endpoints():
     from solidity_path_put import (r2_term_text,  # noqa: E402
                                    source_assignment_r2_specs)
@@ -7832,6 +7907,7 @@ def main():
               test_source_R2_environment_value_assignments_use_rendered_env_coords,
               test_source_R2_msg_sender_helper_calls_use_rendered_env_coord,
               test_source_R2_inlines_one_internal_helper_call,
+              test_source_R2_mines_modifier_suffix_effects_only,
               test_source_R2_arithmetic_assignments_prioritize_expression_endpoints,
               test_source_R2_state_entry_coords_are_used_only_when_rendered,
               test_source_R2_type_conversion_wrappers_are_unwrapped_conservatively,
