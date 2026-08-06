@@ -61,7 +61,8 @@ def _runner_argv(schedule_arg: str,
                  *,
                  timeout_s: float,
                  jobs: int,
-                 stop_on_failure: bool) -> list[str]:
+                 stop_on_failure: bool,
+                 dry_run: bool = False) -> list[str]:
     argv = [
         sys.executable,
         str(AST_PREHEAT_RUN),
@@ -75,6 +76,8 @@ def _runner_argv(schedule_arg: str,
     ]
     if stop_on_failure:
         argv.append("--stop-on-failure")
+    if dry_run:
+        argv.append("--dry-run")
     return argv
 
 
@@ -205,11 +208,18 @@ def plan_preheat_for_schedule(schedule: dict,
             "timeout_s": timeout_s,
             "jobs": len(selected_jobs),
             "runner_workers": jobs,
+            "dry_run_argv": _runner_argv(schedule_arg,
+                                        journal_arg,
+                                        timeout_s=timeout_s,
+                                        jobs=jobs,
+                                        stop_on_failure=stop_on_failure,
+                                        dry_run=True),
             "runner_argv": _runner_argv(schedule_arg,
                                         journal_arg,
                                         timeout_s=timeout_s,
                                         jobs=jobs,
-                                        stop_on_failure=stop_on_failure),
+                                        stop_on_failure=stop_on_failure,
+                                        dry_run=False),
         }
 
     return {

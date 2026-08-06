@@ -182,6 +182,9 @@ def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
         "--timeout" in runner and "600.0" in runner and "--memlimit-gb" in runner
         and "10.0" in runner and "--jobs" in runner and "2" in runner,
         f"runner argv carries budget and jobs: {runner}")
+    bad += check("--dry-run" in doc["next_run"]["dry_run_argv"]
+                 and "--dry-run" not in runner,
+                 f"dry-run argv is explicit and separate: {doc['next_run']}")
     bad += check(
         out_doc["summary"]["campaign_attempt"] == 3
         and [job["job_id"] for job in out_doc["jobs"]] == ["stress243__retry3__h"],
@@ -218,6 +221,10 @@ def test_campaign_cli_writes_plan_and_schedule():
     bad += check(
         str(out_sched) in doc["next_run"]["runner_argv"],
         f"runner argv points to written schedule: {doc['next_run']['runner_argv']}")
+    bad += check(
+        str(out_sched) in doc["next_run"]["dry_run_argv"]
+        and "--dry-run" in doc["next_run"]["dry_run_argv"],
+        f"dry-run argv points to written schedule: {doc['next_run']['dry_run_argv']}")
     return bad
 
 
@@ -417,6 +424,8 @@ def test_campaign_can_plan_from_in_memory_schedule():
     bad += check("--jobs" in doc["next_run"]["runner_argv"]
                  and "3" in doc["next_run"]["runner_argv"],
                  f"runner argv still carries worker count: {doc['next_run']}")
+    bad += check("--dry-run" in doc["next_run"]["dry_run_argv"],
+                 f"in-memory campaign exposes a dry-run command: {doc['next_run']}")
     return bad
 
 

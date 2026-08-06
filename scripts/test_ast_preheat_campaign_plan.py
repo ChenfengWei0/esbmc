@@ -122,6 +122,9 @@ def test_preheat_campaign_partitions_and_batches_pending_jobs():
                  and "--timeout" in doc["next_run"]["runner_argv"]
                  and "75.0" in doc["next_run"]["runner_argv"],
                  f"runner argv carries budget: {doc['next_run']}")
+    bad += check("--dry-run" in doc["next_run"]["dry_run_argv"]
+                 and "--dry-run" not in doc["next_run"]["runner_argv"],
+                 f"dry-run argv is explicit and separate: {doc['next_run']}")
     return bad
 
 
@@ -159,6 +162,9 @@ def test_preheat_campaign_writes_next_schedule_and_cli_plan():
                  f"CLI writes bounded next schedule: {next_doc['summary']}")
     bad += check(str(next_sched) in plan["next_run"]["runner_argv"],
                  f"runner argv points to next schedule: {plan['next_run']}")
+    bad += check(str(next_sched) in plan["next_run"]["dry_run_argv"]
+                 and "--dry-run" in plan["next_run"]["dry_run_argv"],
+                 f"dry-run argv points to next schedule: {plan['next_run']}")
     return bad
 
 

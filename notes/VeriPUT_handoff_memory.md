@@ -689,9 +689,10 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   completed, stops rescheduling jobs after `--max-attempts` non-ok attempts,
   and writes the next filtered preheat schedule only when
   `--next-schedule-out` is passed. The default batch size is 32 and the
-  emitted `next_run.runner_argv` is only an auditable
-  `ast_preheat_run.py ... --journal ... --timeout ... --jobs ...` suggestion;
-  it never invokes solc, Forge, fuzzing, ESBMC, or preheat jobs.
+  emitted `next_run` contains both `dry_run_argv` and `runner_argv`. Copy
+  `dry_run_argv` first to audit the filtered schedule and journal resume set;
+  only `runner_argv` intentionally runs solc-backed preheat jobs. The planner
+  itself never invokes solc, Forge, fuzzing, ESBMC, or preheat jobs.
 - `unit_manifest_gate.py`: post-preheat gate for a
   `veriput-unit-manifest/v1`. It reports `blocked`, `degraded`, or `ready`,
   counts unique unit certification jobs, duplicate prepared-subject/unit jobs,
@@ -732,7 +733,9 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   counts completed/exhausted jobs, and can write the next attempt's filtered
   `veriput-unit-schedule/v1`. It never invokes solc, Forge, fuzzing, ESBMC, or
   certification jobs; the emitted `next_run.runner_argv` is only an auditable
-  command suggestion. Attempt accounting is by highest observed
+  command suggestion, and `next_run.dry_run_argv` is the corresponding
+  `unit_schedule_run.py --dry-run` audit command. Attempt accounting is by
+  highest observed
   `campaign_attempt` for a job; old rows without that field fall back to the
   order of `--journal` arguments. Repeated non-`ok` rows in the same journal
   remain visible in `status_attempts`, but count as one spent attempt for
@@ -880,11 +883,13 @@ Interpretation:
   bounded `next-ast-preheat-schedule.json` with 32 jobs
   (`by_benchmark={"peer182":32}`), and emitted a concrete runner argv pointing
   at `<tmp-out>/ast-preheat-run.jsonl` with outer timeout 90s and one worker.
-  The external AST cache directory and both runner journal files were not
-  created; only the requested child JSON docs under `/tmp/<out>` were written,
-  including the empty `next-unit-schedule.json` artifact. This is now the
-  preferred single read-only command for restoring the full benchmark
-  denominator state and the next bounded action after a context compact.
+  The paired dry-run argv is identical except for a final `--dry-run`, and
+  should be copied first before running the solc-backed command. The external
+  AST cache directory and both runner journal files were not created; only the
+  requested child JSON docs under `/tmp/<out>` were written, including the
+  empty `next-unit-schedule.json` artifact. This is now the preferred single
+  read-only command for restoring the full benchmark denominator state and the
+  next bounded action after a context compact.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 

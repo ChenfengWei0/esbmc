@@ -147,6 +147,8 @@ def test_missing_ast_pipeline_recommends_preheat_without_writes():
                          and doc["summary"]["unit_jobs"] == 0,
                          f"preheat is before unit campaign: {doc['summary']}")
             bad += check(doc["outputs"] == {}, f"no out-dir means no child JSONs: {doc['outputs']}")
+            bad += check("--dry-run" in doc["next_runs"]["ast_preheat"]["dry_run_argv"],
+                         f"missing-AST path exposes AST dry-run argv: {doc['next_runs']}")
             bad += check(not cache_root.exists(),
                          f"planning does not create the AST cache: {cache_root}")
             return bad
@@ -215,6 +217,8 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
             bad += check(doc["next_runs"]["ast_preheat"] is None
                          and doc["next_runs"]["unit_campaign"]["timeout_s"] == 60.0,
                          f"ready path has no AST preheat runner: {doc['next_runs']}")
+            bad += check("--dry-run" in doc["next_runs"]["unit_campaign"]["dry_run_argv"],
+                         f"pipeline exposes unit dry-run argv: {doc['next_runs']}")
             bad += check(unit_schedule["summary"]["jobs"] == 1
                          and unit_schedule["cert_out"] == str(out_dir / "certify-results.jsonl"),
                          f"unit schedule is usable by certify_all: {unit_schedule['summary']}")

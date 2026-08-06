@@ -169,7 +169,8 @@ def _runner_argv(schedule_path: str,
                  attempt_cfg: dict,
                  *,
                  jobs: int = 1,
-                 stop_on_failure: bool = False) -> list[str]:
+                 stop_on_failure: bool = False,
+                 dry_run: bool = False) -> list[str]:
     argv = [
         sys.executable,
         str(UNIT_SCHEDULE_RUN),
@@ -185,6 +186,8 @@ def _runner_argv(schedule_path: str,
     ]
     if stop_on_failure:
         argv.append("--stop-on-failure")
+    if dry_run:
+        argv.append("--dry-run")
     return argv
 
 
@@ -322,12 +325,20 @@ def plan_campaign_for_schedule(schedule: dict,
             attempt_cfg["memlimit_gb"],
             "jobs":
             len(selected_jobs),
+            "dry_run_argv":
+            _runner_argv(schedule_arg,
+                         journal_arg,
+                         attempt_cfg,
+                         jobs=jobs,
+                         stop_on_failure=stop_on_failure,
+                         dry_run=True),
             "runner_argv":
             _runner_argv(schedule_arg,
                          journal_arg,
                          attempt_cfg,
                          jobs=jobs,
-                         stop_on_failure=stop_on_failure),
+                         stop_on_failure=stop_on_failure,
+                         dry_run=False),
         }
 
     return {
