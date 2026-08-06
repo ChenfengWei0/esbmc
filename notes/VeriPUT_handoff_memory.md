@@ -11114,6 +11114,74 @@ Interpretation:
   `--partial-loops` for upgradeable stress paths; that is separate from the
   fixed `nondet_string` prefill blocker.
 
+## 2026-08-07 static-obstacle-aware unit scheduling
+
+Problem:
+
+- The breadth smoke exposed that Peer scarce attempts were being spent on
+  units the Stage2 driver would refuse before ESBMC:
+  `AIRBets.transfer` and `Arcadia_Token.transfer` both hit the recursive-helper
+  preflight for `SafeMath.div/2` and `SafeMath.sub/2`.
+- Inspecting the prepared Peer sources and compact ASTs showed this is not a
+  benign overload-resolution false positive.  The flattened source has
+  two-argument wrappers like `return sub(a, b);//...`, and the AST's
+  `referencedDeclaration` points back to the same two-argument function.
+  Allowing enumeration would likely spend the 600s budget expanding the
+  recursive wrapper.
+
+Code change:
+
+- `notes/coverage/scripts/unit_schedule.py`
+  - Imports the existing `direct_recursive_helpers_in_unit_closure` AST
+    preflight from `scripts/solidity_path_generalise.py`.
+  - While expanding a unit manifest, each job gets `static_obstacles`.
+  - Jobs whose target call closure reaches a direct self-recursive helper are
+    still scheduled, but get priority `4` with reason `static-obstacle`.
+  - The schedule summary now records `static_obstacle_jobs` and
+    `static_obstacles_by_tag`.
+- `scripts/test_unit_schedule.py`
+  - Added a compact AST fixture where `transfer` reaches `SafeMath.sub/2`,
+    while `approve` is normal.
+  - The test asserts `approve` is scheduled before `transfer`, and that the
+    recursive-helper label is retained for audit.
+
+Validation:
+
+- Python:
+  `python3 -m py_compile notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- Unit schedule tests:
+  `python3 scripts/test_unit_schedule.py` passed.
+- Formatting/check:
+  `git diff --check -- notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- Real Peer schedule smoke:
+  `python3 notes/coverage/scripts/unit_schedule.py /tmp/veriput_sample_v10_20260806_212550/unit-manifest-peer182.json --selection-strategy round-robin-subject --limit 8 --timeout 600 --run-timeout 600 --memlimit-gib 8 --cert-out /tmp/veriput_static_obstacle_check/peer-cert.jsonl --workdir /tmp/veriput_static_obstacle_check/work --out /tmp/veriput_static_obstacle_check/peer-schedule.json`
+  changed the first 8 jobs to avoid the known recursive-helper transfer units:
+  `AIRBets.approve`, `Address.approve`, `Animalia.transfer`, ...
+- Full Peer schedule over that 3-subject cached manifest:
+  - total jobs: 70;
+  - static-obstacle jobs: 12;
+  - priority distribution: 23 state-changing, 35 interface/zero-interface,
+    12 static-obstacle.
+- One verification run from the new queue head:
+  `python3 notes/coverage/scripts/unit_schedule_run.py /tmp/veriput_static_obstacle_check/peer-schedule.json --journal /tmp/veriput_static_obstacle_check/peer-run.jsonl --limit 1 --timeout 700 --memlimit-gb 8 --jobs 1`.
+  Result: `AIRBets.approve` no longer stopped at recursive-helper preflight;
+  it completed in about 1.1s as `NO-PATH`.
+
+Interpretation:
+
+- This is a speed/sampling improvement, not a proof-strength improvement by
+  itself.  It prevents scarce early campaign batches and smoke tests from
+  spending their first slots on units known to be structurally refused before
+  ESBMC.
+- The affected units remain in the schedule and denominator; they are not
+  silently dropped.
+- Peer still has a separate Stage2 entry/path issue after the recursive-helper
+  units are avoided.  `AIRBets.approve` is now measurable but came back
+  `NO-PATH`, so the next Peer work is path-entry/region diagnosis rather than
+  disabling the recursive-helper guard.
+
 ## 2026-08-07 relation-establish PUT alignment
 
 Problem fixed:

@@ -214,6 +214,125 @@ def test_schedule_prioritizes_semantic_units_before_getter_like_units():
     return bad
 
 
+def test_schedule_deprioritizes_recursive_helper_obstacles():
+    recursive_ast = {
+        "nodes": [
+            {
+                "nodeType": "ContractDefinition",
+                "id": 1,
+                "name": "SafeMath",
+                "nodes": [
+                    {
+                        "nodeType": "FunctionDefinition",
+                        "id": 10,
+                        "name": "sub",
+                        "parameters": {
+                            "parameters": [{}, {}],
+                        },
+                        "body": {
+                            "nodeType": "Block",
+                            "statements": [{
+                                "nodeType": "Return",
+                                "expression": {
+                                    "nodeType": "FunctionCall",
+                                    "expression": {
+                                        "nodeType": "Identifier",
+                                        "name": "sub",
+                                        "referencedDeclaration": 10,
+                                    },
+                                    "arguments": [{}, {}],
+                                },
+                            }],
+                        },
+                    },
+                ],
+            },
+            {
+                "nodeType": "ContractDefinition",
+                "id": 2,
+                "name": "C",
+                "linearizedBaseContracts": [2],
+                "nodes": [
+                    {
+                        "nodeType": "FunctionDefinition",
+                        "id": 20,
+                        "name": "transfer",
+                        "parameters": {
+                            "parameters": [{}, {}],
+                        },
+                        "body": {
+                            "nodeType": "Block",
+                            "statements": [{
+                                "nodeType": "ExpressionStatement",
+                                "expression": {
+                                    "nodeType": "FunctionCall",
+                                    "expression": {
+                                        "nodeType": "Identifier",
+                                        "name": "sub",
+                                        "referencedDeclaration": 10,
+                                    },
+                                    "arguments": [{}, {}],
+                                },
+                            }],
+                        },
+                    },
+                    {
+                        "nodeType": "FunctionDefinition",
+                        "id": 30,
+                        "name": "approve",
+                        "parameters": {
+                            "parameters": [{}, {}],
+                        },
+                        "body": {
+                            "nodeType": "Block",
+                            "statements": [],
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        ast = Path(td) / "flat.sol.solast"
+        ast.write_text("JSON AST (compact format):\n" + json.dumps(recursive_ast))
+        data = manifest()
+        row = data["subjects"][0]
+        row["ast"] = {"path": str(ast), "status": "generated"}
+        row["subject"]["solast"] = str(ast)
+        row["units"]["units"] = ["transfer", "approve"]
+        row["units"]["unit_info"] = [
+            {
+                "name": "transfer",
+                "state_mutability": "nonpayable",
+                "parameter_count": 2,
+                "return_count": 1,
+            },
+            {
+                "name": "approve",
+                "state_mutability": "nonpayable",
+                "parameter_count": 2,
+                "return_count": 1,
+            },
+        ]
+        doc = unit_schedule.build_schedule(data)
+    got = [(job["unit"], job["priority"], job["priority_reason"])
+           for job in doc["jobs"]]
+    transfer = next(job for job in doc["jobs"] if job["unit"] == "transfer")
+    bad = 0
+    bad += check(got == [("approve", 1, "state-changing"),
+                         ("transfer", 4, "static-obstacle")],
+                 f"recursive-helper units stay scheduled but are deprioritized: {got}")
+    bad += check(transfer["static_obstacles"][0]["tag"] == "recursive-helper-preflight",
+                 f"job records the static obstacle for audit: {transfer}")
+    bad += check(transfer["static_obstacles"][0]["helpers"] == ["SafeMath.sub/2"],
+                 f"recursive helper labels are carried into the schedule: {transfer}")
+    bad += check(doc["summary"]["static_obstacle_jobs"] == 1
+                 and doc["summary"]["static_obstacles_by_tag"] == {
+                     "recursive-helper-preflight": 1,
+                 }, f"summary counts static obstacles: {doc['summary']}")
+    return bad
+
+
 def test_schedule_cli_reads_stdin_and_applies_limit():
     with tempfile.TemporaryDirectory() as td:
         cp = subprocess.run([
@@ -448,6 +567,7 @@ def test_schedule_refuses_protected_write_paths():
 TESTS = [
     test_schedule_prioritizes_hinted_units_and_preserves_argv,
     test_schedule_prioritizes_semantic_units_before_getter_like_units,
+    test_schedule_deprioritizes_recursive_helper_obstacles,
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,
     test_schedule_can_round_robin_across_benchmarks,

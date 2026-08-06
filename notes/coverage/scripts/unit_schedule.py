@@ -16,8 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parents[2]
 CERTIFY_ALL = SCRIPT_DIR / "certify_all.py"
 sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(ROOT / "scripts"))
+from solidity_path_generalise import direct_recursive_helpers_in_unit_closure  # noqa: E402
 from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 from veriput_recipe import STRONG_RECIPE_VERSION, strong_certify_args  # noqa: E402
 
@@ -188,7 +191,10 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
     return argv
 
 
-def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None) -> tuple[int, str]:
+def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
+                   static_obstacles: list[dict] | None = None) -> tuple[int, str]:
+    if static_obstacles:
+        return 4, "static-obstacle"
     if unit in hinted:
         return 0, "target-hint"
     if not unit_info:
@@ -212,7 +218,8 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
     subject = dict(row["subject"])
     subject["unit"] = unit
     hinted = set((row.get("unit_hints") or {}).get("hinted_units") or [])
-    priority, reason = _unit_priority(unit, hinted, unit_info)
+    static_obstacles = _static_obstacles_for_unit(row, subject, unit)
+    priority, reason = _unit_priority(unit, hinted, unit_info, static_obstacles)
     return {
         "schema": "veriput-unit-job/v1",
         "job_id": (f"{subject.get('benchmark_key') or subject['subject_id']}__"
@@ -228,6 +235,7 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
         "target": row.get("target"),
         "unit_hints": row.get("unit_hints"),
         "unit_info": unit_info,
+        "static_obstacles": static_obstacles,
         "certification_budget": {
             "timeout_s": timeout_s or None,
             "run_timeout_s": run_timeout_s or None,
@@ -253,6 +261,25 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                                       memlimit_gib=memlimit_gib,
                                       workdir=workdir),
     }
+
+
+def _static_obstacles_for_unit(row: dict, subject: dict, unit: str) -> list[dict]:
+    ast_path = (
+        ((row.get("ast") or {}).get("path"))
+        or subject.get("solast")
+    )
+    if not ast_path:
+        return []
+    helpers = direct_recursive_helpers_in_unit_closure(
+        ast_path, subject.get("contract"), unit)
+    if not helpers:
+        return []
+    return [{
+        "tag": "recursive-helper-preflight",
+        "reason": (
+            "target call closure reaches direct self-recursive helper wrappers"),
+        "helpers": helpers,
+    }]
 
 
 def build_schedule(manifest: dict,
@@ -340,6 +367,10 @@ def build_schedule(manifest: dict,
 
     by_benchmark = Counter(job["benchmark"] for job in jobs)
     by_priority = Counter(str(job["priority"]) for job in jobs)
+    static_obstacles = Counter(
+        obstacle.get("tag") or "<unknown>"
+        for job in jobs
+        for obstacle in job.get("static_obstacles") or [])
     skipped_by_status = Counter(str(row.get("status") or "<missing>") for row in skipped_rows)
     return {
         "schema": "veriput-unit-schedule/v1",
@@ -371,6 +402,8 @@ def build_schedule(manifest: dict,
                              for job in jobs}),
             "by_benchmark": dict(sorted(by_benchmark.items())),
             "by_priority": dict(sorted(by_priority.items())),
+            "static_obstacle_jobs": sum(1 for job in jobs if job.get("static_obstacles")),
+            "static_obstacles_by_tag": dict(sorted(static_obstacles.items())),
             "skipped_rows": len(skipped_rows),
             "skipped_by_status": dict(sorted(skipped_by_status.items())),
             "duplicate_jobs": len(duplicate_jobs),
