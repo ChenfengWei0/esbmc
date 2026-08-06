@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -191,6 +192,10 @@ def _runner_argv(schedule_path: str,
     return argv
 
 
+def _cmd(argv: list[str]) -> str:
+    return shlex.join(str(arg) for arg in argv)
+
+
 def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attempt_cfg: dict | None,
                           source_journals: list[str]) -> dict:
     by_benchmark = Counter(job.get("benchmark") for job in selected_jobs)
@@ -316,6 +321,18 @@ def plan_campaign_for_schedule(schedule: dict,
     if attempt_cfg:
         schedule_arg = next_schedule_out or "<next-schedule.json>"
         journal_arg = next_journal or f"<attempt-{attempt_cfg['attempt']}-journal.jsonl>"
+        dry_run_argv = _runner_argv(schedule_arg,
+                                    journal_arg,
+                                    attempt_cfg,
+                                    jobs=jobs,
+                                    stop_on_failure=stop_on_failure,
+                                    dry_run=True)
+        runner_argv = _runner_argv(schedule_arg,
+                                   journal_arg,
+                                   attempt_cfg,
+                                   jobs=jobs,
+                                   stop_on_failure=stop_on_failure,
+                                   dry_run=False)
         next_run = {
             "attempt":
             attempt_cfg["attempt"],
@@ -326,19 +343,13 @@ def plan_campaign_for_schedule(schedule: dict,
             "jobs":
             len(selected_jobs),
             "dry_run_argv":
-            _runner_argv(schedule_arg,
-                         journal_arg,
-                         attempt_cfg,
-                         jobs=jobs,
-                         stop_on_failure=stop_on_failure,
-                         dry_run=True),
+            dry_run_argv,
+            "dry_run_cmd":
+            _cmd(dry_run_argv),
             "runner_argv":
-            _runner_argv(schedule_arg,
-                         journal_arg,
-                         attempt_cfg,
-                         jobs=jobs,
-                         stop_on_failure=stop_on_failure,
-                         dry_run=False),
+            runner_argv,
+            "runner_cmd":
+            _cmd(runner_argv),
         }
 
     return {

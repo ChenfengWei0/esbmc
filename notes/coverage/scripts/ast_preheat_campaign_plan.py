@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -84,6 +85,10 @@ def _runner_argv(schedule_arg: str,
     if dry_run:
         argv.append("--dry-run")
     return argv
+
+
+def _cmd(argv: list[str]) -> str:
+    return shlex.join(str(arg) for arg in argv)
 
 
 def _schedule_for_batch(base_schedule: dict,
@@ -253,25 +258,29 @@ def plan_preheat_for_schedule(schedule: dict,
     if selected_jobs:
         schedule_arg = next_schedule_out or "<next-ast-preheat-schedule.json>"
         journal_arg = next_journal or "<ast-preheat-journal.jsonl>"
+        dry_run_argv = _runner_argv(schedule_arg,
+                                    journal_arg,
+                                    timeout_s=timeout_s,
+                                    memlimit_gb=memlimit_gb,
+                                    jobs=jobs,
+                                    stop_on_failure=stop_on_failure,
+                                    dry_run=True)
+        runner_argv = _runner_argv(schedule_arg,
+                                   journal_arg,
+                                   timeout_s=timeout_s,
+                                   memlimit_gb=memlimit_gb,
+                                   jobs=jobs,
+                                   stop_on_failure=stop_on_failure,
+                                   dry_run=False)
         next_run = {
             "timeout_s": timeout_s,
             "memlimit_gb": memlimit_gb or None,
             "jobs": len(selected_jobs),
             "runner_workers": jobs,
-            "dry_run_argv": _runner_argv(schedule_arg,
-                                        journal_arg,
-                                        timeout_s=timeout_s,
-                                        memlimit_gb=memlimit_gb,
-                                        jobs=jobs,
-                                        stop_on_failure=stop_on_failure,
-                                        dry_run=True),
-            "runner_argv": _runner_argv(schedule_arg,
-                                        journal_arg,
-                                        timeout_s=timeout_s,
-                                        memlimit_gb=memlimit_gb,
-                                        jobs=jobs,
-                                        stop_on_failure=stop_on_failure,
-                                        dry_run=False),
+            "dry_run_argv": dry_run_argv,
+            "dry_run_cmd": _cmd(dry_run_argv),
+            "runner_argv": runner_argv,
+            "runner_cmd": _cmd(runner_argv),
         }
 
     return {

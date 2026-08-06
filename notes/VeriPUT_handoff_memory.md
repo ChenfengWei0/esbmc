@@ -696,11 +696,12 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   (current schedule order: Peer before BugFix before Stress), and
   `--selection-strategy round-robin-benchmark` is available when the next
   batch should sample every benchmark early to expose solc/metadata problems
-  sooner. The emitted `next_run` contains both `dry_run_argv` and
-  `runner_argv`; both include `--memlimit-gb`, but only `runner_argv`
-  intentionally runs solc-backed preheat jobs. Copy `dry_run_argv` first to
-  audit the filtered schedule and journal resume set. The planner itself never
-  invokes solc, Forge, fuzzing, ESBMC, or preheat jobs.
+  sooner. The emitted `next_run` contains both argv arrays and shell-quoted
+  commands: `dry_run_argv`/`dry_run_cmd` and `runner_argv`/`runner_cmd`. Both
+  include `--memlimit-gb`, but only `runner_argv`/`runner_cmd` intentionally
+  runs solc-backed preheat jobs. Copy `dry_run_cmd` first to audit the filtered
+  schedule and journal resume set. The planner itself never invokes solc,
+  Forge, fuzzing, ESBMC, or preheat jobs.
 - `unit_manifest_gate.py`: post-preheat gate for a
   `veriput-unit-manifest/v1`. It reports `blocked`, `degraded`, or `ready`,
   counts unique unit certification jobs, duplicate prepared-subject/unit jobs,
@@ -740,10 +741,10 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   `unit_schedule_run.py` JSONL journals, partitions jobs by next attempt,
   counts completed/exhausted jobs, and can write the next attempt's filtered
   `veriput-unit-schedule/v1`. It never invokes solc, Forge, fuzzing, ESBMC, or
-  certification jobs; the emitted `next_run.runner_argv` is only an auditable
-  command suggestion, and `next_run.dry_run_argv` is the corresponding
-  `unit_schedule_run.py --dry-run` audit command. Attempt accounting is by
-  highest observed
+  certification jobs; the emitted `next_run.runner_argv`/`runner_cmd` are only
+  auditable command suggestions, and `next_run.dry_run_argv`/`dry_run_cmd` are
+  the corresponding `unit_schedule_run.py --dry-run` audit commands. Attempt
+  accounting is by highest observed
   `campaign_attempt` for a job; old rows without that field fall back to the
   order of `--journal` arguments. Repeated non-`ok` rows in the same journal
   remain visible in `status_attempts`, but count as one spent attempt for
@@ -891,9 +892,9 @@ Interpretation:
   bounded `next-ast-preheat-schedule.json` with 32 jobs
   (`by_benchmark={"peer182":32}`), and emitted a concrete runner argv pointing
   at `<tmp-out>/ast-preheat-run.jsonl` with outer timeout 90s, `--memlimit-gb
-  8.0`, and one worker. The paired dry-run argv is identical except for a final
-  `--dry-run`, and should be copied first before running the solc-backed
-  command. The generated `next-ast-preheat-schedule.json` records
+  8.0`, and one worker. The paired `dry_run_cmd` is identical except for a
+  final `--dry-run`, and should be copied first before running the solc-backed
+  `runner_cmd`. The generated `next-ast-preheat-schedule.json` records
   `outer_memlimit_gb=8.0` in its summary. The external AST cache directory and
   both runner journal files were not created; only the requested child JSON
   docs under `/tmp/<out>` were written, including the empty
@@ -908,7 +909,10 @@ Interpretation:
   `by_solc_source={"explicit":32}`. The first jobs alternated Peer, BugFix,
   Stress. This is the faster smoke strategy when the goal is to discover
   benchmark-wide preheat breakage before spending several Peer-only batches.
-  It also did not create the external AST cache or runner journal.
+  The pipeline JSON now also exposes copyable shell strings:
+  `next_runs.ast_preheat.dry_run_cmd` and `runner_cmd`. The smoke confirmed
+  only `dry_run_cmd` contains `--dry-run`; neither command was executed, and it
+  did not create the external AST cache or runner journal.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 

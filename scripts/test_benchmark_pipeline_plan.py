@@ -151,6 +151,8 @@ def test_missing_ast_pipeline_recommends_preheat_without_writes():
             bad += check(doc["outputs"] == {}, f"no out-dir means no child JSONs: {doc['outputs']}")
             bad += check("--dry-run" in doc["next_runs"]["ast_preheat"]["dry_run_argv"],
                          f"missing-AST path exposes AST dry-run argv: {doc['next_runs']}")
+            bad += check("--dry-run" in doc["next_runs"]["ast_preheat"]["dry_run_cmd"],
+                         f"missing-AST path exposes AST dry-run command: {doc['next_runs']}")
             bad += check(doc["next_runs"]["ast_preheat"]["memlimit_gb"] == 8.0
                          and "--memlimit-gb" in doc["next_runs"]["ast_preheat"]["runner_argv"],
                          f"missing-AST path carries AST memlimit: {doc['next_runs']}")
@@ -224,6 +226,8 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
                          f"ready path has no AST preheat runner: {doc['next_runs']}")
             bad += check("--dry-run" in doc["next_runs"]["unit_campaign"]["dry_run_argv"],
                          f"pipeline exposes unit dry-run argv: {doc['next_runs']}")
+            bad += check("--dry-run" in doc["next_runs"]["unit_campaign"]["dry_run_cmd"],
+                         f"pipeline exposes unit dry-run command: {doc['next_runs']}")
             bad += check(unit_schedule["summary"]["jobs"] == 1
                          and unit_schedule["cert_out"] == str(out_dir / "certify-results.jsonl"),
                          f"unit schedule is usable by certify_all: {unit_schedule['summary']}")

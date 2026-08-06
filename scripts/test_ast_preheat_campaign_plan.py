@@ -140,6 +140,9 @@ def test_preheat_campaign_partitions_and_batches_pending_jobs():
     bad += check("--dry-run" in doc["next_run"]["dry_run_argv"]
                  and "--dry-run" not in doc["next_run"]["runner_argv"],
                  f"dry-run argv is explicit and separate: {doc['next_run']}")
+    bad += check("--dry-run" in doc["next_run"]["dry_run_cmd"]
+                 and "--dry-run" not in doc["next_run"]["runner_cmd"],
+                 f"shell commands mirror dry-run/runner argv: {doc['next_run']}")
     bad += check(doc["next_run"]["memlimit_gb"] == 4.0
                  and doc["next_schedule"]["summary"]["outer_memlimit_gb"] == 4.0,
                  f"memlimit is recorded in plan and next schedule: {doc['next_run']}")
@@ -185,6 +188,9 @@ def test_preheat_campaign_writes_next_schedule_and_cli_plan():
     bad += check(str(next_sched) in plan["next_run"]["dry_run_argv"]
                  and "--dry-run" in plan["next_run"]["dry_run_argv"],
                  f"dry-run argv points to next schedule: {plan['next_run']}")
+    bad += check(str(next_sched) in plan["next_run"]["dry_run_cmd"]
+                 and str(next_sched) in plan["next_run"]["runner_cmd"],
+                 f"copyable commands point to next schedule: {plan['next_run']}")
     return bad
 
 

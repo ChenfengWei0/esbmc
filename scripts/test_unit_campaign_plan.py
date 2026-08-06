@@ -185,6 +185,9 @@ def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
     bad += check("--dry-run" in doc["next_run"]["dry_run_argv"]
                  and "--dry-run" not in runner,
                  f"dry-run argv is explicit and separate: {doc['next_run']}")
+    bad += check("--dry-run" in doc["next_run"]["dry_run_cmd"]
+                 and "--dry-run" not in doc["next_run"]["runner_cmd"],
+                 f"shell commands mirror dry-run/runner argv: {doc['next_run']}")
     bad += check(
         out_doc["summary"]["campaign_attempt"] == 3
         and [job["job_id"] for job in out_doc["jobs"]] == ["stress243__retry3__h"],
@@ -225,6 +228,10 @@ def test_campaign_cli_writes_plan_and_schedule():
         str(out_sched) in doc["next_run"]["dry_run_argv"]
         and "--dry-run" in doc["next_run"]["dry_run_argv"],
         f"dry-run argv points to written schedule: {doc['next_run']['dry_run_argv']}")
+    bad += check(
+        str(out_sched) in doc["next_run"]["dry_run_cmd"]
+        and str(out_sched) in doc["next_run"]["runner_cmd"],
+        f"copyable commands point to written schedule: {doc['next_run']}")
     return bad
 
 
@@ -426,6 +433,9 @@ def test_campaign_can_plan_from_in_memory_schedule():
                  f"runner argv still carries worker count: {doc['next_run']}")
     bad += check("--dry-run" in doc["next_run"]["dry_run_argv"],
                  f"in-memory campaign exposes a dry-run command: {doc['next_run']}")
+    bad += check("--dry-run" in doc["next_run"]["dry_run_cmd"]
+                 and "--dry-run" not in doc["next_run"]["runner_cmd"],
+                 f"in-memory campaign exposes copyable commands: {doc['next_run']}")
     return bad
 
 
