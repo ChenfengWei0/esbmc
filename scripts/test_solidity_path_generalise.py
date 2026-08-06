@@ -88,6 +88,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       save_failed_round,
                                       validate_enumeration_import,
                                       derive_env_coord_disagreed,
+                                      derive_agreed_establishable_env_pins,
                                       tiny_safety_cut_retreat,
                                       uncontrolled_decision_splits,
                                       _coord_range)
@@ -2489,14 +2490,29 @@ with tempfile.TemporaryDirectory() as _stamp_dir:
           (_cfg_off["env_coord_disagreed"],
            _cfg_on["env_coord_disagreed"]),
           (False, True))
+    _cfg_agreed_env = run_config(
+        SimpleNamespace(**dict(vars(_base),
+                               pin_agreed_establishable_env=True)),
+        "focus")
+    check("run-config-records-agreed-establishable-env-policy",
+          (_cfg_off["pin_agreed_establishable_env"],
+           _cfg_agreed_env["pin_agreed_establishable_env"]),
+          (False, True))
     stamp_workdir(_stamp_dir, _cfg_off)
     try:
         stamp_workdir(_stamp_dir, _cfg_on)
         _stamp_refused = False
     except SystemExit:
         _stamp_refused = True
+    try:
+        stamp_workdir(_stamp_dir, _cfg_agreed_env)
+        _stamp_agreed_refused = False
+    except SystemExit:
+        _stamp_agreed_refused = True
 check("workdir-refuses-a-policy-change-the-old-field-list-missed",
-          _stamp_refused, True)
+      _stamp_refused, True)
+check("workdir-refuses-agreed-establishable-env-policy-change",
+      _stamp_agreed_refused, True)
 
 _env_promoted, _env_kept = derive_env_coord_disagreed(
     [(2, 1, {
@@ -2533,6 +2549,35 @@ check("env-disagreed-keeps-pinned-agreed-and-unestablishable-quantities",
        "environment quantity)",
        "block.gaslimit (paths disagree, but the PUT emitter cannot establish "
        "this environment quantity)"])
+_env_agreed_pins, _env_agreed_kept = derive_agreed_establishable_env_pins(
+    [(2, 1, {
+        "msg.sender": 7,
+        "block.chainid": 31337,
+        "block.timestamp": 100,
+        "tx.origin": 1,
+        "msg.data": 0,
+        "msg.value": 0,
+    }), (3, 1, {
+        "msg.sender": 7,
+        "block.chainid": 31337,
+        "block.timestamp": 101,
+        "tx.origin": 1,
+        "msg.data": 0,
+        "msg.value": 0,
+    })],
+    ["msg.sender", "block.chainid", "block.timestamp", "tx.origin",
+     "msg.data", "msg.value"],
+    {"msg.value": 0})
+check("agreed-establishable-env-pins-only-put-renderable-agreement",
+      _env_agreed_pins, {"msg.sender": 7, "block.chainid": 31337})
+check("agreed-establishable-env-keeps-pinned-disagreed-and-unsupported",
+      _env_agreed_kept,
+      ["block.timestamp (paths disagree)",
+       "tx.origin (all paths agree, but the PUT emitter cannot establish this "
+       "environment quantity)",
+       "msg.data (all paths agree, but the PUT emitter cannot establish this "
+       "environment quantity)",
+       "msg.value (already pinned at 0)"])
 check("address-like-environment-coordinates-use-address-domain",
       (_coord_range("msg.sender"), _coord_range("tx.origin"),
        _coord_range("block.coinbase")),

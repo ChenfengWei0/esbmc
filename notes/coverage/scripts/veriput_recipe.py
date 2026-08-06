@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Versioned VeriPUT recipe fragments shared by POC and benchmark runners."""
 
-STRONG_RECIPE_VERSION = "veriput-strong/10"
+STRONG_RECIPE_VERSION = "veriput-strong/12"
 STRONG_PROBE_WITNESSES = 8
 STRONG_PUT_AUTO_UNWIND = 1
 STRONG_PUT_R2_DEPTH = 1
@@ -24,8 +24,8 @@ STRONG_CERTIFY_ARGS = [
     "--probe-ladder",
     "--probe-ladder-budget", "4",
     "--skip-bracket",
-    "--no-auto-pin-value",
     "--env-coord-disagreed",
+    "--pin-agreed-establishable-env",
     "--pin-agreed-state",
     "--max-holes", "1",
     "--max-region-pieces", "1",

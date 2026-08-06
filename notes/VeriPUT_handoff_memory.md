@@ -130,6 +130,71 @@ Interpretation:
   debugging target than `AIRBets.transfer`, where the failure is earlier in
   generation/enumeration/symex.
 
+## 2026-08-06 AgentRole region-policy update
+
+Problem shape:
+
+- Stress / `AgentRole.addAgent` was the cleanest first-pass failure:
+  5 witnessed paths and Level0 decisions appeared in about 1.4s, but v10 still
+  timed out at 60s with `0 certified / 0 not / 5 witnessed`.
+- The v10 free coordinates were `_agent`, `msg.value`, and `state._owner`.
+  All witnessed paths agreed on `msg.sender == 4294967295`, but
+  `--env-coord-disagreed` only promoted environment quantities that disagreed,
+  so the owner/sender guard was certified with `msg.sender` unconstrained.
+
+Code and recipe changes:
+
+- `solidity_path_generalise.py` now supports
+  `--pin-agreed-establishable-env`. It pins only environment quantities the PUT
+  emitter can reproduce and on which every witnessed path agrees, such as
+  `msg.sender`, `block.chainid`, `block.timestamp`, `block.number`,
+  `block.basefee`, `block.prevrandao`, `block.coinbase`, and `tx.gasprice`.
+  Unsupported environment values such as `tx.origin`, `msg.data`, `msg.sig`,
+  and `block.gaslimit` stay unconstrained instead of becoming certified regions
+  that a PUT cannot establish.
+- `certify_all.py` forwards the new flag and records
+  `pin_agreed_establishable_env` on every certification row.
+- The shared recipe went through two diagnostic versions:
+  - `veriput-strong/11`: kept `--no-auto-pin-value` and added the agreed
+    establishable env pin.
+  - `veriput-strong/12`: keeps the v11 env pin but removes
+    `--no-auto-pin-value` from the main benchmark recipe, restoring the
+    default nonpayable `msg.value == 0` body slice. The value-gate arm remains
+    available by explicitly passing `--no-auto-pin-value`, but it is no longer
+    the main benchmark route.
+
+Read-only benchmark confirmation:
+
+- v11 single-unit retry:
+  `/tmp/veriput_v11_agentrole_20260806_220203`.
+  Result: `KILLED`, `0 certified / 0 not / 5 witnessed`, 60s. It correctly
+  pinned `msg.sender` and split owner/body paths:
+  - enc 12: `state._owner in [0, 4294967294]`
+  - enc 14: `state._owner == 4294967295`
+  - enc 55: `state._owner in [0, 4294967294]`
+  - enc 63: `state._owner == 4294967295`
+  but leaving `msg.value` free to cover the ABI value-gate path kept the unit
+  too expensive for first-pass certification.
+- v12 single-unit retry:
+  `/tmp/veriput_v12_agentrole_20260806_220529`.
+  Result: `CERTIFIED`, `4 certified / 1 not / 5 witnessed`, 45s under
+  `60s/8GiB`. The not-certified path is enc=2, the nonpayable ABI value-gate
+  reject path, explicitly excluded by the `msg.value == 0` slice. The four body
+  paths were certified with two free coordinates, `_agent` and `state._owner`,
+  and pins including `msg.value == 0` and `msg.sender == 4294967295`.
+
+Current interpretation:
+
+- This is not an ESBMC internal modeling bug and not an instrumentation failure.
+  The decisive gap was the certification policy: agreed, PUT-establishable
+  environment values need to be pins, and the main benchmark recipe should be
+  body-first rather than value-gate-first.
+- v12 is ready for a small stratified benchmark sample. It is still too early
+  for a full benchmark sweep: `AIRBets.transfer` remains a pre-witness heavy
+  case, and value-gate coverage should eventually be handled as a separate
+  recorded arm or structural ABI-gate path class rather than by slowing every
+  main-recipe unit.
+
 ## 2026-08-06 benchmark population handoff
 
 Scope and constraint:

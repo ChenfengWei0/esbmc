@@ -1250,6 +1250,13 @@ def main():
                          "free generated-test coordinate, as NOT_CERTIFIED. "
                          "Refutation-only; it saves refine/certify budget but "
                          "does not prove any PUT region.")
+    ap.add_argument("--pin-agreed-establishable-env", action="store_true",
+                    help="passed to the driver: pin each PUT-renderable "
+                         "environment quantity on which every witnessed path "
+                         "agrees. This is narrower than --pin-env, because "
+                         "unrenderable values such as tx.origin and msg.data "
+                         "are left unconstrained instead of producing certified "
+                         "regions that a generated PUT cannot establish.")
     ap.add_argument("--pin", action="append", default=[], metavar="COORD=VALUE",
                     help="pass one `coord=value` PIN straight to the driver "
                          "(driver --pin). Repeatable. A pinned coordinate is "
@@ -1748,6 +1755,8 @@ def main():
                 cmd.append("--skip-bracket")
             if args.env_coord_disagreed:
                 cmd.append("--env-coord-disagreed")
+            if args.pin_agreed_establishable_env:
+                cmd.append("--pin-agreed-establishable-env")
             if args.pin_agreed_state:
                 cmd.append("--pin-agreed-state")
             for ec in args.env_coord:
@@ -1859,6 +1868,8 @@ def main():
                         # human knew. `false` means the arm declined; an absent
                         # key means the row predates the flags.
                         "env_coord_disagreed": bool(args.env_coord_disagreed),
+                        "pin_agreed_establishable_env": bool(
+                            args.pin_agreed_establishable_env),
                         "pin_agreed_state": bool(args.pin_agreed_state),
                         "level0": bool(args.level0),
                         # THE ARM'S OWN FIELD. `false` means "we asked for the

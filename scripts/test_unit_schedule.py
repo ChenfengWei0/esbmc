@@ -11,6 +11,8 @@ sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 import unit_schedule  # noqa: E402
 import veriput_recipe  # noqa: E402
 
+DEFAULT_RECIPE_DIR = veriput_recipe.STRONG_RECIPE_VERSION.replace("/", "_")
+
 
 def check(cond, msg):
     if cond:
@@ -129,19 +131,23 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
                  and veriput_recipe.STRONG_RECIPE_VERSION in argv,
                  f"certifier argv uses the shared strong recipe: {argv}")
     bad += check("--skip-bracket" in argv and "--probe-ladder" in argv
+                 and "--pin-agreed-establishable-env" in argv
                  and "--pin-agreed-state" in argv and "--slot-coords" in argv,
                  f"strong region controls are scheduled for benchmarks: {argv}")
+    bad += check("--no-auto-pin-value" not in argv,
+                 f"main benchmark recipe keeps the nonpayable body slice cheap: {argv}")
     bad += check(argv_value(argv, "--timeout") == "60"
                  and argv_value(argv, "--run-timeout") == "60"
                  and argv_value(argv, "--memlimit-gib") == "8",
                  f"schedule embeds the first-attempt certify budget: {argv}")
-    bad += check(argv_value(argv, "--workdir") == "/tmp/certify_all/veriput-strong_10/t60_r60_m8",
+    default_workdir = f"/tmp/certify_all/{DEFAULT_RECIPE_DIR}/t60_r60_m8"
+    bad += check(argv_value(argv, "--workdir") == default_workdir,
                  f"schedule embeds a recipe/budget-specific scratch root: {argv}")
     bad += check(hinted["certification_budget"] == {
         "timeout_s": 60,
         "run_timeout_s": 60,
         "memlimit_gib": 8,
-        "workdir": "/tmp/certify_all/veriput-strong_10/t60_r60_m8",
+        "workdir": default_workdir,
     }, f"job records the embedded certify budget: {hinted['certification_budget']}")
     bad += check("--dry-run" not in argv and "--dry-run" in hinted["dry_run_argv"],
                  f"normal and dry-run argv are separate: {hinted}")
@@ -153,7 +159,7 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
         "timeout_s": 60,
         "run_timeout_s": 60,
         "memlimit_gib": 8,
-        "workdir": "/tmp/certify_all/veriput-strong_10/t60_r60_m8",
+        "workdir": default_workdir,
     }, f"schedule records the default certification budget: {doc['certification_budget']}")
     return bad
 

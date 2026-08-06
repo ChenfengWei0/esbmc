@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
 import unit_campaign_plan  # noqa: E402
+import veriput_recipe  # noqa: E402
+
+DEFAULT_RECIPE_DIR = veriput_recipe.STRONG_RECIPE_VERSION.replace("/", "_")
 
 
 def check(cond, msg):
@@ -166,7 +169,7 @@ def test_campaign_partitions_attempts_and_auto_selects_earliest():
                  and argv_value(next_argv, "--memlimit-gib") == "8",
                  f"attempt-1 schedule embeds the inner certify budget: {next_argv}")
     bad += check(argv_value(next_argv, "--workdir")
-                 == "/tmp/certify_all/veriput-strong_10/a1_t60_r60_m8",
+                 == f"/tmp/certify_all/{DEFAULT_RECIPE_DIR}/a1_t60_r60_m8",
                  f"attempt-1 schedule uses an attempt-specific workdir: {next_argv}")
     return bad
 
@@ -217,7 +220,7 @@ def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
                  and certify_argv.count("--timeout") == 1,
                  f"attempt-3 schedule rewrites inner certify budget: {certify_argv}")
     bad += check(argv_value(certify_argv, "--workdir")
-                 == "/tmp/certify_all/veriput-strong_10/a3_t600_r600_m10",
+                 == f"/tmp/certify_all/{DEFAULT_RECIPE_DIR}/a3_t600_r600_m10",
                  f"attempt-3 schedule rewrites scratch root: {certify_argv}")
     return bad
 

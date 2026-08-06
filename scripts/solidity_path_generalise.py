@@ -271,6 +271,26 @@ def derive_env_coord_disagreed(paths, env_names, pins):
     return promoted, kept
 
 
+def derive_agreed_establishable_env_pins(paths, env_names, pins):
+    """Environment pins that preserve PUT generation."""
+
+    agreed, kept = {}, []
+    for n in list(env_names):
+        if n in pins:
+            kept.append(f"{n} (already pinned at {pins[n]})")
+            continue
+        vals = {ce.get(n) for _, _, ce in paths}
+        if len(vals) != 1 or None in vals:
+            kept.append(f"{n} (paths disagree)")
+            continue
+        if n not in ESTABLISHABLE_ENV_COORDS:
+            kept.append(f"{n} (all paths agree, but the PUT emitter cannot "
+                        "establish this environment quantity)")
+            continue
+        agreed[n] = vals.pop()
+    return agreed, kept
+
+
 def struct_fields(text, nested=False):
     """Top-level scalar fields of a rendered struct, as {field: int}.
 
@@ -4863,6 +4883,8 @@ def run_config(args, scope_label):
         "pin_env": bool(arg_value(args, "pin_env", False)),
         "env_coord_disagreed": bool(
             arg_value(args, "env_coord_disagreed", False)),
+        "pin_agreed_establishable_env": bool(
+            arg_value(args, "pin_agreed_establishable_env", False)),
         "pin_agreed_state": bool(
             arg_value(args, "pin_agreed_state", False)),
         "slot_coords": arg_value(args, "slot_coords", 0),
@@ -5336,6 +5358,15 @@ def main():
                          "Off by default: it changes the coordinate set, and "
                          "ladder cost is multiplicative in the coordinate "
                          "count.")
+    ap.add_argument("--pin-agreed-establishable-env", action="store_true",
+                    help="pin every PUT-ESTABLISHABLE environment quantity on "
+                         "which all witnessed paths agree. This is narrower "
+                         "than --pin-env: unsupported environment quantities "
+                         "such as tx.origin or msg.data stay unconstrained, so "
+                         "a certified region remains generatable as a PUT. "
+                         "Use with --env-coord-disagreed to split the "
+                         "environment into free discriminators and reproducible "
+                         "pins.")
     ap.add_argument("--pin-agreed-state", action="store_true",
                     help="pin every STATE coordinate on which all witnessed "
                          "paths' counterexamples agree, at that value -- the "
@@ -5726,6 +5757,22 @@ def main():
                      ": every candidate was excluded -- "
                      + "; ".join(kept))
                   + ". No coordinate was added")
+    if args.pin_agreed_establishable_env:
+        agreed, kept = derive_agreed_establishable_env_pins(
+            paths, env_names, pins)
+        for n, v in agreed.items():
+            pins.setdefault(n, v)
+        if agreed:
+            print(f"[env] pinned PUT-establishable agreement "
+                  f"(all {len(paths)} paths agree): "
+                  + ", ".join(f"{n}={v}" for n, v in sorted(agreed.items())))
+        else:
+            print("[env] --pin-agreed-establishable-env derived NOTHING"
+                  + (": no environment quantity is in this unit's payload"
+                     if not env_names else
+                     ": every candidate was excluded -- "
+                     + "; ".join(kept))
+                  + ". No pin was added")
     if args.pin_env and env_names:
         agreed, disagreed = {}, []
         for n in env_names:
