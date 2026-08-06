@@ -7514,3 +7514,38 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 194/194 tests.
 - `git diff --check` passed.
+
+## 2026-08-06 Structured R2 mixed literal endpoints
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. Validation was Python-only.
+
+Finding:
+
+- A direct renderer probe showed that `post in [0, (pre + msg.value)]` failed
+  unless `r2_terms` redundantly contained an entry for literal `0`.
+- The structured high endpoint was already certified/nameable through
+  `r2_terms`; the low endpoint is a decimal literal and should be self-spellable.
+- This was visible in stale cached `put.json` rows as mixed intervals around
+  value transfers, but the fix is generic renderer behavior rather than a
+  POC-specific rewrite.
+
+Code shape:
+
+- `rung_assertions()` now lets structured interval endpoints fall back only for
+  decimal integer literals.
+- Non-literal names or expressions still require a certified structured term,
+  so the renderer remains fail-closed for uncertified symbolic endpoints.
+- The new unit test covers the accepted literal+structured interval and a
+  refused non-literal endpoint.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 195/195 tests.
+- `git diff --check` passed.

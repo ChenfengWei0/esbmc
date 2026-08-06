@@ -5885,6 +5885,30 @@ def test_structured_R2_term_renders_with_the_lifted_coordinate():
         f"structured term uses the emitted identifier: {got}")
 
 
+def test_structured_R2_interval_accepts_literal_endpoint_without_lookup():
+    """Mixed intervals should not require a redundant literal term entry."""
+    from solidity_path_put import rung_assertions  # noqa: E402
+    term = {"kind": "op", "op": "add", "lhs": {"kind": "pre"},
+            "rhs": {"kind": "coord", "name": "msg.value"}}
+    got = rung_assertions(
+        "post in [0, (pre + msg.value)]", "_pre_bal", "_post_bal",
+        "bal: abs", {"msg.value": "0"}, {"msg.value": "0"},
+        {"(pre + msg.value)": term})
+    bad = 0
+    bad += check(got == [
+        '    assertGe(_post_bal, 0, "bal: abs");',
+        '    assertLe(_post_bal, (_pre_bal + 0), "bal: abs");'],
+        f"literal low endpoint and structured high endpoint both render: {got}")
+    refused = rung_assertions(
+        "post in [floor, (pre + msg.value)]", "_pre_bal", "_post_bal",
+        "bal: abs", {"msg.value": "0"}, {"msg.value": "0"},
+        {"(pre + msg.value)": term})
+    bad += check(refused is None,
+                 f"a non-literal endpoint still needs a certified term: "
+                 f"{refused}")
+    return bad
+
+
 def test_structured_R2_term_renders_with_entry_mapping_coord():
     em, case = make_case()
     notes = []
@@ -8460,6 +8484,7 @@ def main():
               test_same_arity_overloads_use_the_exact_path_declaration,
               test_overload_persistence_keys_and_work_suffixes_are_distinct,
               test_structured_R2_term_renders_with_the_lifted_coordinate,
+              test_structured_R2_interval_accepts_literal_endpoint_without_lookup,
               test_structured_R2_term_renders_with_entry_mapping_coord,
               test_structured_R2_requires_a_successful_revert_tolerant_call,
               test_oracle_mapping_candidates_share_the_dependency_filter,

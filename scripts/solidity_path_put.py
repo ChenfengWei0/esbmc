@@ -3274,8 +3274,9 @@ def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
 
     def structured(spelling, coord_table):
         term = (r2_terms or {}).get(spelling)
-        return None if term is None else render_r2_term(
-            term, pre, coord_table)
+        if term is not None:
+            return render_r2_term(term, pre, coord_table)
+        return spelling if re.fullmatch(r"\d+", spelling or "") else None
 
     if text.startswith("post == ") and text != "post == pre":
         expr = structured(text[len("post == "):], idents_abs)
