@@ -1769,6 +1769,12 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return "0"
         if env_coord_name(n) == "msg.sender" and expected == "address":
             return "msg.sender"
+        state = state_ids.get(ref)
+        if state is not None:
+            state_name, state_ty = state
+            if (state_name in (layout or {})
+                    and state_key_type_compatible(state_ty, expected)):
+                return "state." + state_name
         return None
 
     def state_path(n):
@@ -2987,6 +2993,39 @@ def _norm_ty(t):
     for suf in (" payable", " memory", " calldata", " storage"):
         t = t.replace(suf, "")
     return {"uint": "uint256", "int": "int256"}.get(t, t)
+
+
+def state_key_expr_for_type(sol_type, read_expr):
+    """A storage-read expression usable as a mapping key, or None.
+
+    This stays deliberately narrower than all Solidity value types. The read
+    side returns a uint256 word; address, bool and unsigned integer keys have
+    unambiguous ABI encodings after the casts below. signed ints, bytesN, enums
+    and other identities are left out until their exact source-level key
+    spelling is available.
+    """
+    t = _norm_ty(sol_type)
+    if t == "address" or t.startswith(("contract ", "interface ")):
+        return f"address(uint160({read_expr}))"
+    if re.match(r"^uint(\d+)?$", t or ""):
+        return read_expr
+    if t == "bool":
+        return f"({read_expr} != 0)"
+    return None
+
+
+def state_key_type_compatible(state_ty, expected_ty):
+    """Whether a state variable may safely name a mapping key of `expected_ty`."""
+    actual = _norm_ty(state_ty)
+    expected = _norm_ty(expected_ty)
+    if actual == expected:
+        return state_key_expr_for_type(actual, "0") is not None
+    if (actual.startswith(("contract ", "interface "))
+            and expected == "address"):
+        return True
+    if actual == "address" and expected.startswith(("contract ", "interface ")):
+        return True
+    return False
 
 
 SLOT_VAR_BUDGET = 24
@@ -4227,6 +4266,43 @@ def function_returns(ast_path, contract, unit, arity=None,
     d = _select_def(_function_defs(ast_path, contract, unit), arity,
                     declaration_id)
     return None if d is None else _decl_list(d, "returnParameters")
+
+
+def contract_state_types(ast_path, contract):
+    """{state_name: solidity_type} visible in `contract`, base-first."""
+    ast = _load_ast(ast_path)
+    by_id, target = {}, None
+
+    def index(n):
+        nonlocal target
+        if isinstance(n, dict):
+            if n.get("nodeType") == "ContractDefinition":
+                if n.get("id") is not None:
+                    by_id[n["id"]] = n
+                if n.get("name") == contract:
+                    target = n
+            for v in n.values():
+                index(v)
+        elif isinstance(n, list):
+            for v in n:
+                index(v)
+
+    index(ast)
+    scopes = []
+    if target is not None:
+        chain = target.get("linearizedBaseContracts") or [target.get("id")]
+        scopes = [by_id[c] for c in reversed(chain) if c in by_id]
+    if not scopes:
+        scopes = [ast]
+    out = {}
+    for sc in scopes:
+        for n in sc.get("nodes", []) or []:
+            if (isinstance(n, dict) and
+                    n.get("nodeType") == "VariableDeclaration" and
+                    n.get("stateVariable") and n.get("name")):
+                out[n["name"]] = (
+                    (n.get("typeDescriptions") or {}).get("typeString") or "")
+    return out
 
 
 def overload_artifact_label(ast_path, contract, unit, declaration_id):
@@ -5506,7 +5582,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
               unwind=None, rettypes=None, maps=None, piece_label="",
               derived_by=None, rollback_exit=False, r2_terms=None,
-              oracle_label_prefix="", exit_kind=None):
+              oracle_label_prefix="", exit_kind=None, state_types=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -5863,6 +5939,14 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     key_expr_of = {}
     for idx, (pname, _pt) in enumerate(params):
         key_expr_of[pname] = repl.get(idx, args[idx].strip())
+    for sname, sty in (state_types or {}).items():
+        if sname not in (layout or {}):
+            continue
+        slot, off, nb = layout[sname]
+        rd = slot_read_expr(target_addr, slot, off, nb)
+        expr = state_key_expr_for_type(sty, rd)
+        if expr is not None:
+            key_expr_of["state." + sname] = expr
     # ---- msg.sender IS NAMEABLE ONLY WHERE THIS PUT DECIDED IT ---------------
     #
     # `slot_key_expr` refuses `msg.sender` as a mapping key, and its docstring
@@ -7612,7 +7696,7 @@ def main():
 
     # Both come from _select_def with the SAME arity, so an overload cannot be
     # resolved one way for the arguments and another way for the return value.
-    params, rettypes, arity = None, None, None
+    params, rettypes, arity, state_types = None, None, None, {}
     if a.ast:
         _n, args0 = rewrite_call_args(
             emitted.lines[case[3][0] + 1:case[3][1]][
@@ -7624,6 +7708,12 @@ def main():
                                  declaration_id)
         rettypes = function_returns(a.ast, a.contract, a.unit, arity,
                                     declaration_id)
+        try:
+            state_types = contract_state_types(a.ast, a.contract)
+        except (OSError, ValueError):
+            print("[put] WARNING: state variable types unavailable from the "
+                  "AST, so mapping slots keyed by entry-state variables are "
+                  "not renderable")
     if params is None:
         print("[put] WARNING: declared parameters unavailable (no --ast, or "
               "the name did not resolve); no argument can be lifted")
@@ -8054,7 +8144,8 @@ def main():
                            derived_by=json.loads(a.derived_by or "{}"),
                            rollback_exit=rollback_here,
                            r2_terms=r2_term_lookup,
-                           exit_kind=a.exit_kind)
+                           exit_kind=a.exit_kind,
+                           state_types=state_types)
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1

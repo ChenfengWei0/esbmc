@@ -7644,3 +7644,42 @@ Interpretation:
   wraparound semantics. For checked Solidity paths, path feasibility usually
   supplies definedness; for `unchecked`/wrap-return cases the right fix is
   same-query definedness or an explicitly modelled unchecked candidate class.
+
+## 2026-08-06 State-variable mapping keys
+
+Constraint and scope:
+
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained read-only; their mtimes
+  stayed unchanged.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed for this change.
+- Motivation came from read-only peer contract080 shapes such as
+  `balances[owner]`, `balances[treasury]`, `balances[teamAddress]`, and
+  `allowed[owner][spender]`. This is a benchmark-common mapping pattern, not a
+  POC-specific patch.
+
+Code change:
+
+- Source-R2 mining now names direct state-variable mapping keys as
+  `state.<field>` when the key type is safe and the field has a readable solc
+  storage-layout slot. Example: `balances[owner] += amount` proposes an R2
+  candidate for `balances[state.owner]`.
+- PUT rendering now reads safe state-variable keys from the entry snapshot and
+  uses that expression in `keccak256(abi.encode(...))`, so pins/oracles/R2 terms
+  over `bal[state.owner]` hash the same key value the contract will read.
+- The accepted key types are intentionally conservative: `address`,
+  contract/interface values rendered as addresses, unsigned integers, and bool.
+  Signed ints, bytesN, enums, and other identities remain refused rather than
+  guessed, because ABI spelling differences can otherwise create fake-green
+  tests over the wrong mapping word.
+- The production path reads state variable types from the solc AST and passes
+  them into `build_put`. If the AST is absent/unreadable, behavior degrades to
+  the old renderer instead of guessing.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 197/197 tests.
+- `git diff --check` passed.

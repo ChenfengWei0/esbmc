@@ -2658,6 +2658,7 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
     allowance_sender = index(ident(11, "allowance"), msg_sender,
                              "mapping(address => uint256)")
     allowance_sender_spender = index(allowance_sender, ident(22, "spender"))
+    balances_owner = index(ident(10, "balances"), ident(13, "owner"))
     bad_key = index(ident(12, "badKeyed"), ident(22, "spender"))
     ast = {"nodeType": "SourceUnit", "nodes": [{
         "nodeType": "ContractDefinition", "name": "C", "id": 1,
@@ -2672,6 +2673,9 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
             {"nodeType": "VariableDeclaration", "id": 12, "name": "badKeyed",
              "stateVariable": True,
              "typeDescriptions": {"typeString": "mapping(uint256 => uint256)"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "owner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "move",
              "parameters": {"parameters": [
                  {"id": 21, "name": "amount",
@@ -2700,6 +2704,11 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                      "rightHandSide": ident(21, "amount")}},
                  {"nodeType": "ExpressionStatement", "expression": {
                      "nodeType": "Assignment", "operator": "+=",
+                     "src": "150:10:0",
+                     "leftHandSide": balances_owner,
+                     "rightHandSide": ident(21, "amount")}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
                      "src": "160:10:0",
                      "leftHandSide": bad_key,
                      "rightHandSide": ident(21, "amount")}}]}}
@@ -2710,7 +2719,8 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
     try:
         specs, evidence = source_assignment_r2_specs(
             path, "C", "move", [("amount", "uint256"),
-                                ("spender", "address")], {},
+                                ("spender", "address")],
+            {"owner": (3, 0, 20)},
             [("amount", "num", None)], arity=2,
             maps={"balances": (0, "address", 32, 0, "balances", None),
                   "allowance": (1, ("address", "address"), 32, 0,
@@ -2721,6 +2731,8 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
         os.unlink(path)
     entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
     bal_deltas = entries.get("balances[msg.sender]", {}).get("deltas", [])
+    bal_owner_deltas = entries.get(
+        "balances[state.owner]", {}).get("deltas", [])
     allow = entries.get("allowance[msg.sender][spender]", {})
     allow_deltas = allow.get("deltas", [])
     allow_equals = allow.get("equals", [])
@@ -2732,6 +2744,14 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
     bad += check(bal_deltas and bal_deltas[0]["lo"] ==
                  {"kind": "coord", "name": "amount"},
                  f"mapping inc delta uses the rendered amount: {bal_deltas}")
+    bad += check(len(bal_owner_deltas) == 1
+                 and bal_owner_deltas[0]["dir"] == "inc",
+                 f"state-keyed mapping increment is mined: "
+                 f"{bal_owner_deltas}")
+    bad += check(bal_owner_deltas and bal_owner_deltas[0]["lo"] ==
+                 {"kind": "coord", "name": "amount"},
+                 f"state-keyed mapping inc delta uses the rendered amount: "
+                 f"{bal_owner_deltas}")
     bad += check(len(allow_deltas) == 1 and allow_deltas[0]["dir"] == "dec",
                  f"nested mapping self-subtract is mined: {allow_deltas}")
     bad += check(allow_deltas and allow_deltas[0]["lo"] ==
@@ -2746,11 +2766,14 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
     bad += check("badKeyed[spender]" not in entries,
                  f"key type mismatches are skipped rather than guessed: "
                  f"{entries}")
-    bad += check(specs[0].get("candidate_count") == 4 if specs else False,
+    bad += check(specs[0].get("candidate_count") == 5 if specs else False,
                  f"candidate_count includes mapping slot candidates: {specs}")
     bad += check(any("balances[msg.sender]: post - pre == amount" in line
                      for line in evidence),
                  f"mapping increment provenance is recorded: {evidence}")
+    bad += check(any("balances[state.owner]: post - pre == amount" in line
+                     for line in evidence),
+                 f"state-keyed mapping provenance is recorded: {evidence}")
     bad += check(any(item["var"] == "allowance[msg.sender][spender]"
                      and item["text"] == "post == amount"
                      for item in candidates),
@@ -6820,7 +6843,7 @@ def test_a_REPEATED_hole_is_counted_once():
     return bad
 
 
-def _slot_pin_put(pins, ladder=None):
+def _slot_pin_put(pins, ladder=None, state_types=None):
     em, case = make_case()
     notes = []
     put, stats = build_put(
@@ -6828,7 +6851,7 @@ def _slot_pin_put(pins, ladder=None):
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
         holes={}, pins=pins, params=PARAMS, emitted=em, case=case,
         layout=LAYOUT, ladder_rows=ladder if ladder is not None else LADDER,
-        notes=notes, maps=SLOT_MAPS)
+        notes=notes, maps=SLOT_MAPS, state_types=state_types)
     return "\n".join(put or []), stats
 
 
@@ -6958,6 +6981,29 @@ def test_a_slot_pin_keyed_by_a_literal_is_established():
                  f"{stats['state_stored']}")
     bad += check("keccak256(abi.encode(uint256(255), uint256(2)))" in text,
                  "the literal key is cast before abi.encode")
+    return bad
+
+
+def test_a_slot_pin_keyed_by_entry_state_is_established():
+    """`balances[owner]` is common in real ERC20-like contracts.
+
+    The key is not a function parameter, but it is still a value the PUT can
+    name: read the entry-state owner slot, cast it back to address, and use the
+    same expression for the mapping hash that the contract will use.
+    """
+    text, stats = _slot_pin_put(
+        {"state.bal[state.owner]": 7}, state_types={"owner": "address"})
+    bad = 0
+    bad += check(stats["state_stored"] == ["state.bal[state.owner] := 7"],
+                 f"the state-keyed slot pin is established: "
+                 f"{stats['state_stored']}")
+    bad += check("keccak256(abi.encode(address(uint160((uint256(vm.load("
+                 "address(c0), bytes32(uint256(0))))" in text,
+                 "the key is the entry-state owner slot read, not a guessed "
+                 "identifier")
+    bad += check(not stats["state_skipped"],
+                 f"nothing about the state-keyed slot is skipped: "
+                 f"{stats['state_skipped']}")
     return bad
 
 
@@ -8433,6 +8479,7 @@ def main():
               test_a_WHOLE_TYPE_entry_bound_emits_NO_TAUTOLOGY_and_says_so,
               test_a_slot_pin_keyed_by_a_parameter_is_established,
               test_a_slot_pin_keyed_by_a_literal_is_established,
+              test_a_slot_pin_keyed_by_entry_state_is_established,
               test_a_slot_pin_keyed_by_msg_sender_is_REFUSED,
               test_a_probe_only_width_is_FLAGGED_on_the_test,
               test_a_ladder_derived_width_is_NOT_flagged,
