@@ -333,10 +333,43 @@ def test_cert_ready_pipeline_selects_strong_stage4_command():
         return with_patches(patches, run)
 
 
+def test_pipeline_refuses_dataset_or_results_write_paths():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        root = tmp / "VeriPUT"
+        protected_cases = [
+            ("ast cache", lambda a: setattr(
+                a, "ast_cache_root", str(root / "Results" / "ast-cache"))),
+            ("planner out dir", lambda a: setattr(
+                a, "out_dir", str(root / "Datasets" / "planner"))),
+            ("cert out", lambda a: setattr(
+                a, "cert_out", str(root / "Results" / "certify.jsonl"))),
+            ("AST journal", lambda a: setattr(
+                a, "next_ast_preheat_journal", str(root / "Results" / "ast.jsonl"))),
+            ("unit journal", lambda a: setattr(
+                a, "next_journal", str(root / "Results" / "unit.jsonl"))),
+            ("PUT out root", lambda a: setattr(
+                a, "put_out_root", str(root / "Results" / "put"))),
+        ]
+        bad = 0
+        for label, mutate in protected_cases:
+            a = args(tmp)
+            mutate(a)
+            try:
+                benchmark_pipeline_plan.build_pipeline(a)
+            except benchmark_pipeline_plan.PipelineError as exc:
+                bad += check("must not be under" in str(exc),
+                             f"{label} under Dataset/Results is refused: {exc}")
+            else:
+                bad += check(False, f"{label} under Dataset/Results was accepted")
+        return bad
+
+
 TESTS = [
     test_missing_ast_pipeline_recommends_preheat_without_writes,
     test_ready_pipeline_writes_requested_docs_and_selects_campaign,
     test_cert_ready_pipeline_selects_strong_stage4_command,
+    test_pipeline_refuses_dataset_or_results_write_paths,
 ]
 
 

@@ -50,6 +50,38 @@ def _cmd(argv: list[str]) -> str:
     return shlex.join(str(arg) for arg in argv)
 
 
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.expanduser().resolve().relative_to(root.expanduser().resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_planned_write_path(label: str, path: str, protected_roots: list[Path]):
+    if not path:
+        return
+    p = Path(path)
+    for root in protected_roots:
+        if _is_under(p, root):
+            raise PipelineError(
+                f"{label} must not be under {root}; choose an external path")
+
+
+def validate_planned_write_paths(args):
+    root = Path(args.veriput_root)
+    protected_roots = [root / "Datasets", root / "Results"]
+    for label, path in (
+        ("--ast-cache-root", args.ast_cache_root),
+        ("--out-dir", args.out_dir),
+        ("--cert-out", args.cert_out),
+        ("--next-ast-preheat-journal", args.next_ast_preheat_journal),
+        ("--next-journal", args.next_journal),
+        ("--put-out-root", args.put_out_root),
+    ):
+        _validate_planned_write_path(label, path, protected_roots)
+
+
 def _unit_manifest_args(args, target_doc: dict):
     return argparse.Namespace(benchmark="",
                               target_manifest=args.target_manifest_label,
@@ -196,6 +228,7 @@ def stage4_put_next_run(args, cert_doc: dict | None) -> dict | None:
 def build_pipeline(args) -> dict:
     if not args.ast_cache_root:
         raise PipelineError("pass --ast-cache-root; refusing to plan prepared-subject AST writes")
+    validate_planned_write_paths(args)
     if args.put_timeout <= 0:
         raise PipelineError("--put-timeout must be positive")
     if args.put_memlimit_gib <= 0:

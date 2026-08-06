@@ -5111,3 +5111,48 @@ Verification:
   test runner, and existing encoding warnings; the one actionable line-length
   warning was fixed.
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+
+## 2026-08-06 protected benchmark write-path guard
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark proof run was
+  started.
+
+Finding:
+
+- `benchmark_pipeline_plan.py` is read-only with respect to executing work, but
+  its optional planning outputs and generated next-run commands can point to
+  future write paths. The user explicitly warned that another experiment
+  depends on Dataset contents, so relying only on operator discipline is too
+  brittle.
+
+Code shape:
+
+- The pipeline planner now rejects planned write paths under
+  `<veriput-root>/Datasets` or `<veriput-root>/Results` before it reads target
+  metadata or writes child docs.
+- Protected planned-write arguments are:
+  `--ast-cache-root`, `--out-dir`, `--cert-out`,
+  `--next-ast-preheat-journal`, `--next-journal`, and `--put-out-root`.
+- Existing input journals/result JSONLs remain readable inputs; this guard is
+  about paths the planner or its emitted next-run commands would write later.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed and now checks all six protected planned-write arguments fail closed
+  under Dataset/Results.
+- `git diff --check -- notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py` and
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `python3 -m pylint notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_benchmark_pipeline_plan.py`
+  was run. It still exits 28 on existing style debt such as import-position
+  after `sys.path` setup, missing docstrings, complexity/statement count, a
+  broad exception in the local test harness, and existing encoding warnings.
+  No new line-length warning remains.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
