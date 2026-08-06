@@ -1257,6 +1257,48 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return zero_addr[0], name
         return None
 
+    def address_literal_key(n):
+        literal = unitless_number_term(n)
+        if literal is not None:
+            return literal[1]
+        if isinstance(n, dict) and n.get("nodeType") == "Literal":
+            if n.get("kind") == "hexString":
+                value = str(n.get("hexValue") or n.get("value") or "")
+                if re.fullmatch(r"[0-9a-fA-F]{1,40}", value):
+                    return "0x" + value
+        if (isinstance(n, dict) and n.get("nodeType") == "FunctionCall"
+                and n.get("kind") == "typeConversion"):
+            args = n.get("arguments") or []
+            expr = n.get("expression")
+            if len(args) == 1 and isinstance(expr, dict):
+                ty = expr.get("typeName") or {}
+                if ty.get("name") == "address":
+                    return address_literal_key(args[0])
+        return None
+
+    def constant_key_name(n, expected_ty):
+        ref = identifier_ref(n)
+        const = constant_ids.get(ref)
+        if const is None:
+            return None
+        _name, const_ty, value = const
+        expected = _norm_ty(expected_ty)
+        if type_coord_kind(const_ty) != type_coord_kind(expected):
+            return None
+        literal = unitless_number_term(value)
+        if literal is not None and re.match(r"^u?int(\d+)?$", expected):
+            return literal[1]
+        if isinstance(value, dict) and value.get("nodeType") == "Literal":
+            if value.get("kind") == "bool" and expected == "bool":
+                v = value.get("value")
+                if v is True or str(v).lower() == "true":
+                    return "1"
+                if v is False or str(v).lower() == "false":
+                    return "0"
+        if expected == "address":
+            return address_literal_key(value)
+        return None
+
     def env_coord_name(n):
         if not isinstance(n, dict) or n.get("nodeType") != "MemberAccess":
             return None
@@ -1443,6 +1485,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 _norm_ty(param_tys.get(ref, "")) == _norm_ty(expected_ty)):
             return param_name
         expected = _norm_ty(expected_ty)
+        constant_key = constant_key_name(n, expected)
+        if constant_key is not None:
+            return constant_key
         literal = unitless_number_term(n)
         if literal is not None and re.match(r"^u?int(\d+)?$", expected):
             return literal[1]
@@ -1456,19 +1501,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if value is False or str(value).lower() == "false":
                     return "0"
             if n.get("kind") == "hexString" and expected == "address":
-                value = str(n.get("hexValue") or n.get("value") or "")
-                if re.fullmatch(r"[0-9a-fA-F]{1,40}", value):
-                    return "0x" + value
-        if (expected == "address" and isinstance(n, dict)
-                and n.get("nodeType") == "FunctionCall"
-                and n.get("kind") == "typeConversion"):
-            args = n.get("arguments") or []
-            expr = n.get("expression")
-            if len(args) == 1 and isinstance(expr, dict):
-                ty = expr.get("typeName") or {}
-                literal = unitless_number_term(args[0])
-                if ty.get("name") == "address" and literal is not None:
-                    return literal[1]
+                return address_literal_key(n)
+        if expected == "address":
+            key = address_literal_key(n)
+            if key is not None:
+                return key
         zero_addr = address_zero_term(n, expected)
         if zero_addr is not None:
             return "0"

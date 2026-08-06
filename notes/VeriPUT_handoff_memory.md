@@ -5658,6 +5658,52 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 mapping-constant-key source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- After literal-key slot mining, a common adjacent source shape was still
+  missed: `m[KEY] = amount`, where `KEY` is a contract constant. Real contracts
+  often use constants for sentinel buckets, default IDs, or fixed owner/flag
+  keys.
+- The source miner should not hand the constant name to the emitter because the
+  slot-name grammar is about verifier/PUT coordinate text, not Solidity lexical
+  scope. Instead, it folds simple safe constant values to the same literal key
+  text already supported by `slot_key_expr()`.
+- Supported constant keys are deliberately narrow: uint/int numeric literals,
+  bool literals as `1`/`0`, and address constants expressed as numeric or hex
+  literals, including `address(<literal>)`.
+- `bytesN` constant keys remain refused for the same reason as raw bytesN
+  literal keys: the emitter's literal-key path casts as `uint256(...)`, while
+  bytesN ABI encoding has different alignment semantics. Complex constant
+  expressions also remain uninterpreted.
+- Fuzz remains refute-only. ESBMC still certifies any resulting slot R2 row.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has `address_literal_key()` and
+  `constant_key_name()` inside `source_assignment_r2_specs()`.
+- `key_name()` checks `constant_key_name()` before direct literal matching, so
+  nested mapping keys can mix parameters, `msg.sender`, safe literal keys, and
+  safe constant-folded keys through the existing slot walker.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `161 test(s) ran, 161 declared in this module`.
+- `git diff --check` on the touched files passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:
