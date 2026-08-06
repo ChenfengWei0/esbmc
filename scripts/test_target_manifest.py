@@ -56,6 +56,22 @@ def make_stress(root):
     src.write_text("contract C {}\n")
     src2 = base / "org__repo" / "src" / "Readonly.sol"
     src2.write_text("contract Readonly {}\n")
+    src3 = base / "org__repo" / "src" / "Broken.sol"
+    src3.write_text("contract Broken {}\n")
+    subjects = root / "Results" / "Stress243" / "subjects"
+    for name, contract, status in (
+            ("org__repo__C", "C", "ok"),
+            ("org__repo__Readonly", "Readonly", "ok"),
+            ("org__repo__Broken", "Broken", "compile-failed")):
+        d = subjects / name
+        d.mkdir(parents=True)
+        if status == "ok":
+            (d / "flat.sol").write_text(f"contract {contract} {{}}\n")
+        (d / "meta.json").write_text(json.dumps({
+            "subject_id": name,
+            "status": status,
+            "contract": contract,
+        }) + "\n")
     write_csv(base / "TARGETS.csv", [
         {
             "repo": "org/repo",
@@ -92,6 +108,24 @@ def make_stress(root):
             "test_files_forge": "0",
             "test_files_hardhat": "0",
             "referenced_by_dev_tests": "no",
+        },
+        {
+            "repo": "org/repo",
+            "contract": "Broken",
+            "path": "src/Broken.sol",
+            "named_entry_points": "1",
+            "public_state_vars": "0",
+            "storage_vars": "1",
+            "immutable_vars": "0",
+            "constant_vars": "0",
+            "writing_entry_points": "1",
+            "state_class": "STATEFUL",
+            "unresolved_bases": "",
+            "include": "yes",
+            "test_frameworks": "forge",
+            "test_files_forge": "1",
+            "test_files_hardhat": "0",
+            "referenced_by_dev_tests": "yes",
         },
     ])
 
@@ -142,7 +176,7 @@ def test_manifest_from_three_target_sources():
     bad = 0
     bad += check(doc["schema"] == "veriput-eval/target/v1",
                  f"schema is stable: {doc['schema']}")
-    bad += check(doc["summary"]["ok"] == 4,
+    bad += check(doc["summary"]["ok"] == 5,
                  f"all fixture targets are ok: {doc['summary']}")
     bad += check(doc["summary"]["skipped"] == 1,
                  f"non-080 peer subject is skipped: {doc['summary']}")
@@ -161,7 +195,7 @@ def test_manifest_from_three_target_sources():
     return bad
 
 
-def test_stress_stateful_scope_and_alias():
+def test_stress203_uses_prepared_ok_population():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         make_stress(root)
@@ -169,17 +203,18 @@ def test_stress_stateful_scope_and_alias():
     bad = 0
     bad += check(doc["benchmarks"] == ["stress243"],
                  f"stress203 aliases to current prepared key: {doc['benchmarks']}")
-    bad += check(doc["summary"]["ok"] == 1,
-                 f"stateful stress scope drops config-only rows: {doc['summary']}")
-    bad += check(doc["targets"][0]["contract"] == "C",
-                 f"stateful target remains: {doc['targets']}")
+    bad += check(doc["summary"]["ok"] == 2,
+                 f"stress203 keeps prepared-ok rows only: {doc['summary']}")
+    contracts = sorted(row["contract"] for row in doc["targets"])
+    bad += check(contracts == ["C", "Readonly"],
+                 f"prepared-ok targets are selected: {contracts}")
     return bad
 
 
 def main():
     tests = [
         test_manifest_from_three_target_sources,
-        test_stress_stateful_scope_and_alias,
+        test_stress203_uses_prepared_ok_population,
     ]
     bad = 0
     for test in tests:

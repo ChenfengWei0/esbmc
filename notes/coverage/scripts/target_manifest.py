@@ -48,6 +48,21 @@ def _read_csv(path: Path) -> list[dict]:
         return list(csv.DictReader(stream))
 
 
+def _stress_prepared_subjects(root: Path) -> set[str]:
+    subjects = root / "Results" / "Stress243" / "subjects"
+    if not subjects.is_dir():
+        raise TargetManifestError(f"missing prepared stress subjects: {subjects}")
+    usable = set()
+    for meta_path in sorted(subjects.glob("*/meta.json")):
+        try:
+            meta = json.loads(meta_path.read_text())
+        except json.JSONDecodeError:
+            continue
+        if meta.get("status") == "ok" and (meta_path.parent / "flat.sol").exists():
+            usable.add(meta.get("subject_id") or meta_path.parent.name)
+    return usable
+
+
 def _row_error(targets, benchmark, subject_id, reason, **extra):
     row = {
         "schema": "veriput-eval-target/v1",
@@ -103,20 +118,23 @@ def bugfix_targets(root: Path) -> list[dict]:
     return targets
 
 
-def stress_targets(root: Path, scope: str) -> list[dict]:
+def stress_targets(root: Path, scope: str, *, prepared_ok_only=False) -> list[dict]:
     base = root / "Datasets" / "Stress-Projects"
     rows = _read_csv(base / "TARGETS.csv")
+    prepared = _stress_prepared_subjects(root) if prepared_ok_only else None
     targets = []
     for row in rows:
         include = row.get("include") == "yes"
         stateful = row.get("state_class") == "STATEFUL"
         selected = include if scope == "include" else include and stateful
-        if not selected:
-            continue
         repo = row["repo"]
         contract = row["contract"]
-        source = base / _repo_slug(repo) / row["path"]
         subject_id = f"{_repo_slug(repo)}__{contract}"
+        if prepared is not None:
+            selected = include and subject_id in prepared
+        if not selected:
+            continue
+        source = base / _repo_slug(repo) / row["path"]
         if not source.exists():
             _row_error(
                 targets,
@@ -222,8 +240,10 @@ def peer_targets(root: Path) -> list[dict]:
 
 def build_manifest(root: Path, benchmarks: list[str], stress_scope: str) -> dict:
     normalized = []
+    stress203_requested = False
     for name in benchmarks:
         if name == "stress203":
+            stress203_requested = True
             normalized.append("stress243")
         else:
             normalized.append(name)
@@ -238,7 +258,11 @@ def build_manifest(root: Path, benchmarks: list[str], stress_scope: str) -> dict
     if "bugfix124" in normalized:
         targets.extend(bugfix_targets(root))
     if "stress243" in normalized:
-        targets.extend(stress_targets(root, stress_scope))
+        scope = "include" if stress203_requested else stress_scope
+        targets.extend(stress_targets(
+            root,
+            scope,
+            prepared_ok_only=stress203_requested))
 
     counts = Counter(
         (row["benchmark"], row["status"]) for row in targets)

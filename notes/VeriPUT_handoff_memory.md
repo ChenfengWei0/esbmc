@@ -8,6 +8,63 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 benchmark population handoff
+
+Scope and constraint:
+
+- `/home/samson/workspace/VeriPUT/Datasets` contracts were not modified.
+- `/home/samson/workspace/VeriPUT/Results` files were not modified.
+- All checks here were read-only Python/CSV/JSON manifest reads. No solc,
+  Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run was
+  started.
+
+Ground truth:
+
+- `peer182` is the prepared Peer population under
+  `Results/Peer182/subjects`, and the current manifest reports 182 usable
+  `contracts_080` subjects. The old non-080 peer arm is intentionally ignored.
+- `bugfix124` is the prepared BugFix population under
+  `Results/BugFix124/subjects`, and the current manifest reports 124 usable
+  fix/bug pairs.
+- `stress203` / `real203` is not the same as "all stateful rows in
+  `Datasets/Stress-Projects/TARGETS.csv`". The CSV has 243 rows, 242
+  `include=yes` rows, and 213 `STATEFUL` rows. The RQ1 population is the
+  prepared-ok subset under `Results/Stress243/subjects`: 203 rows with
+  `meta.status == ok` and `flat.sol` present. The remaining prepared subject
+  dirs are 32 `compile-failed` and 7 `flatten-failed`.
+- The 203 usable stress subjects include 175 `STATEFUL`, 12 `CONFIG_ONLY`,
+  7 `UNDETERMINED`, 1 `MIXIN`, and 8 `LIB_LIKE` targets by TARGETS metadata.
+  This matches the existing Stress runner's `usable_subjects()` rule and the
+  VeriPUT notes that report "243 prepared -> 203 usable".
+
+Code consequence:
+
+- `notes/coverage/scripts/target_manifest.py` now keeps the old `stress243`
+  behavior for TARGETS-level auditing, but treats requested `stress203` as the
+  prepared-ok population by consulting
+  `Results/Stress243/subjects/*/meta.json`.
+- For `stress203`, `--stress-scope` no longer accidentally narrows the
+  population to the 213/175 stateful view; it selects the same 203 subjects as
+  the existing RQ1 runner.
+- `scripts/test_target_manifest.py` has a fixture that includes a STATEFUL
+  compile-failed stress target and a CONFIG_ONLY prepared-ok target, locking in
+  the distinction between `stress243` TARGETS auditing and `stress203`
+  prepared-ok evaluation.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/target_manifest.py notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_target_manifest.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_target_manifest.py`
+  passed: 2/2 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- Read-only real-tree smoke:
+  `target_manifest.build_manifest(root, ["stress203"], "stateful")` and
+  `target_manifest.build_manifest(root, ["stress203"], "include")` both report
+  203 ok stress targets, while `["stress243"], "include"` reports 242 ok
+  TARGETS rows.
+
 ## 2026-08-06 struct-contained mapping source-R2
 
 Scope and constraint:
