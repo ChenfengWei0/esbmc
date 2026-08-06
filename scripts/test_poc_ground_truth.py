@@ -136,12 +136,16 @@ def test_inventory_filters_and_reports_weak_reasons():
             "unit": "set",
             "enc": 7,
             "depth": 1,
+            "ladder_refusal": "region coordinate refused",
             "region": {
                 "x": ["5", "5"],
             },
             "stats": {
                 "fuzz_params": 0,
                 "asserts": 0,
+                "oracle_skipped": [
+                    "state.x (no storage slot)",
+                ],
             },
         }) + "\n")
         args = argparse.Namespace(poc_dir=str(poc_dir),
@@ -166,6 +170,12 @@ def test_inventory_filters_and_reports_weak_reasons():
             "no-oracle": 1,
             "no-wide-region": 1,
         }, f"weak PUT reasons are bucketed: {unit['put_summary']}")
+        bad += check(unit["put_summary"]["weak_details"] == {
+            "no-fuzz-params": 1,
+            "no-oracle:ladder-refusal:region coordinate refused": 1,
+            "no-oracle:state.x (no storage slot)": 1,
+            "no-wide-region": 1,
+        }, f"weak PUT details preserve oracle causes: {unit['put_summary']}")
         bad += check(unit["put_summary"]["strong_shape"] == 1,
                      f"strong PUTs stay counted separately: {unit['put_summary']}")
         bad += check(doc["summary"]["unit_status"] == {"ready-strong": 1}

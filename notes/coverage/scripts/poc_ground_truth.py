@@ -185,13 +185,23 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
             "wide_region": region_has_width(region),
         }
         weak_reasons = []
+        weak_details = []
         if row["fuzz_params"] <= 0:
             weak_reasons.append("no-fuzz-params")
+            weak_details.append("no-fuzz-params")
         if row["asserts"] <= 0:
             weak_reasons.append("no-oracle")
+            for reason in doc.get("oracle_skipped") or (stats.get("oracle_skipped") or []):
+                weak_details.append(f"no-oracle:{reason}")
+            if doc.get("ladder_refusal"):
+                weak_details.append(f"no-oracle:ladder-refusal:{doc.get('ladder_refusal')}")
+            if not weak_details or all(not d.startswith("no-oracle:") for d in weak_details):
+                weak_details.append("no-oracle:undifferentiated")
         if not row["wide_region"]:
             weak_reasons.append("no-wide-region")
+            weak_details.append("no-wide-region")
         row["weak_reasons"] = weak_reasons
+        row["weak_details"] = weak_details
         row["strong_shape"] = not weak_reasons
         rows.append(row)
     return rows, bad
@@ -285,8 +295,10 @@ def unit_matches_filters(row: dict, args) -> bool:
 
 def add_unit_summaries(row: dict) -> None:
     weak_reasons = Counter()
+    weak_details = Counter()
     for put in row["puts"]:
         weak_reasons.update(put.get("weak_reasons") or [])
+        weak_details.update(put.get("weak_details") or [])
     certs = row.get("certifications") or []
     certified_paths = set()
     not_certified_paths = set()
@@ -301,6 +313,7 @@ def add_unit_summaries(row: dict) -> None:
         "with_oracle": sum(1 for p in row["puts"] if p.get("asserts", 0) > 0),
         "with_fuzz_params": sum(1 for p in row["puts"] if p.get("fuzz_params", 0) > 0),
         "weak_reasons": dict(sorted(weak_reasons.items())),
+        "weak_details": dict(sorted(weak_details.items())),
     }
     row["cert_summary"] = {
         "rows": len(certs),
@@ -437,6 +450,9 @@ def print_text(doc: dict, limit: int) -> None:
         print(f"  strong-shape PUTs      {row['put_summary']['strong_shape']}")
         if row["put_summary"]["weak_reasons"]:
             print(f"  weak reasons           {row['put_summary']['weak_reasons']}")
+        if row["put_summary"]["weak_details"]:
+            shown = dict(list(row["put_summary"]["weak_details"].items())[:3])
+            print(f"  weak details           {shown}")
         if certs:
             last = certs[-1]
             print(f"  last observed bucket   {last.get('bucket')}")

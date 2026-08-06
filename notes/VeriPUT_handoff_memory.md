@@ -747,8 +747,12 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   a scarce POC run. Each unit also receives a conservative
   `ground_truth_status`: `no-certification-row`, `no-certified-paths`,
   `certified-no-put`, `no-strong-put`, `partial-strong-put`, or
-  `ready-strong`. It never invokes solc, Forge, fuzzing, ESBMC, or PUT
-  emission, and writes only when `--out` is explicitly passed.
+  `ready-strong`. Weak PUTs also carry `weak_details`, preserving concrete
+  `oracle_skipped` and `ladder_refusal` strings so `no-oracle` can be split
+  into constant/immutable tautologies, stale region-coordinate refusals,
+  candidate-formation refusals, and truly undifferentiated rows. It never
+  invokes solc, Forge, fuzzing, ESBMC, or PUT emission, and writes only when
+  `--out` is explicitly passed.
 - `unit_campaign_plan.py`: read-only controller for the agreed per-unit
   certification gradient: attempt 1 is 60s/8GiB, attempt 2 is 120s/8GiB,
   attempt 3 is 600s/10GiB. It consumes a base unit schedule plus zero or more
@@ -955,6 +959,15 @@ Interpretation:
   PUTs, all three `strong_shape`, and surfaced the source `EXPECTED` block
   about rendering `x in [lo, hi] \ {42}` with `vm.assume(x != 42)`. All smokes
   were read-only and did not invoke solc/Forge/fuzz/ESBMC.
+- Follow-up filtered `poc_ground_truth.py --only Aqua.dock --limit 1` smoke
+  with `weak_details` showed why this is not a simple emitter bug: two rows
+  dropped `_DOCKED` because solc's layout does not list it (constant/immutable
+  tautology), one stale row carried the old aggregate-key `strategyHash` ladder
+  refusal, and one old row remained undifferentiated. Filtered
+  `--only P19_ReturnShapes.tern_lit --limit 1` showed `no-oracle` caused by
+  ladder refusal before assertion formation: every state variable was refused
+  because the contract state is mapping/dynamic-array shaped rather than
+  ordinary contract-object components. Both smokes were read-only.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
