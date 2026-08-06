@@ -9118,6 +9118,41 @@ def test_the_ANTICHAIN_does_not_use_REFUTED_return_rows_as_evidence():
     return bad
 
 
+def test_the_ANTICHAIN_normalizes_R2_point_values_before_dominance():
+    """R2 may prove the same fact through several endpoint spellings after the
+    certified region pins an environment coordinate. Those spellings must not
+    inflate the oracle count."""
+    from solidity_path_put import antichain  # noqa: E402
+    rows = [("_owner", "post == 0", "HOLDS"),
+            ("_owner", "post == msg.value", "HOLDS"),
+            ("_owner", "post in [msg.value, msg.value]", "HOLDS"),
+            ("_owner", "post in [0, _claimTopic]", "HOLDS"),
+            ("_owner", "post == pre", "HOLDS")]
+    kept, implied = antichain(rows, point_values={"msg.value": 0})
+    bad = 0
+    bad += check([t for _v, t, _d in kept]
+                 == ["post == 0", "post == pre"],
+                 f"only the independent exact facts survive: {kept}")
+    bad += check(sorted(t for _v, t, _d in implied)
+                 == ["post == msg.value",
+                     "post in [0, _claimTopic]",
+                     "post in [msg.value, msg.value]"],
+                 f"the point-equivalent and weaker interval rows are implied: "
+                 f"{implied}")
+    return bad
+
+
+def test_the_ANTICHAIN_does_not_normalize_unpinned_R2_coordinates():
+    from solidity_path_put import antichain  # noqa: E402
+    rows = [("_owner", "post == 0", "HOLDS"),
+            ("_owner", "post == _claimTopic", "HOLDS")]
+    kept, implied = antichain(rows, point_values={"msg.value": 0})
+    bad = 0
+    bad += check(implied == [], f"a wide coordinate is not a point: {implied}")
+    bad += check(kept == rows, f"both exact facts survive: {kept}")
+    return bad
+
+
 def test_a_ladder_where_nothing_held_still_says_so():
     """THE NEGATIVE CONTROL. If the headline were hard-wired to the dropped
     wording it would pass the case above and be wrong on every genuinely empty
@@ -9807,6 +9842,8 @@ def main():
               test_the_ANTICHAIN_lets_a_DELTA_rung_dominate_NOTHING,
               test_the_ANTICHAIN_drops_return_rungs_implied_by_a_literal_value,
               test_the_ANTICHAIN_does_not_use_REFUTED_return_rows_as_evidence,
+              test_the_ANTICHAIN_normalizes_R2_point_values_before_dominance,
+              test_the_ANTICHAIN_does_not_normalize_unpinned_R2_coordinates,
               test_a_ladder_where_nothing_held_still_says_so,
               test_the_retlive_witness_is_not_counted_as_a_rung_that_held,
               test_a_revert_tolerant_body_is_NOT_called_an_assertion,

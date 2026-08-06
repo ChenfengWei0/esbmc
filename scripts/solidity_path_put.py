@@ -3190,7 +3190,77 @@ def _return_neq_literal(text):
     return int(m.group(1)) if m else None
 
 
-def antichain(rows, revert_tolerant=False):
+def _literal_text(value):
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    s = str(value)
+    if s in ("true", "True"):
+        return "1"
+    if s in ("false", "False"):
+        return "0"
+    return s if s.isdigit() else None
+
+
+def point_value_texts(region, pins):
+    """Coordinates known to one value in the certified replay environment."""
+    out = {}
+    for name, bounds in (region or {}).items():
+        try:
+            lo, hi = bounds
+        except (TypeError, ValueError):
+            continue
+        if lo == hi:
+            text = _literal_text(lo)
+            if text is not None:
+                out[name] = text
+    for name, value in (pins or {}).items():
+        text = _literal_text(value)
+        if text is not None:
+            out.setdefault(name, text)
+    return out
+
+
+def _normalize_r2_endpoint(term, point_values):
+    term = (term or "").strip()
+    return point_values.get(term, term)
+
+
+def _normalize_rung_text(text, point_values):
+    if not point_values:
+        return text
+    if text.startswith("post == "):
+        return "post == " + _normalize_r2_endpoint(
+            text[len("post == "):], point_values)
+    m = re.match(r"^post in \[(.+), (.+)\]$", text)
+    if m:
+        lo = _normalize_r2_endpoint(m.group(1), point_values)
+        hi = _normalize_r2_endpoint(m.group(2), point_values)
+        return f"post in [{lo}, {hi}]"
+    return text
+
+
+def _rung_keep_rank(text):
+    if text == "post == pre":
+        return 0
+    if re.match(r"^post == \d+$", text):
+        return 1
+    if text.startswith("post == "):
+        return 2
+    if re.match(r"^post in \[\d+, \d+\]$", text):
+        return 3
+    if text.startswith("post in ["):
+        return 4
+    return 5
+
+
+def _zero_lower_interval(text):
+    m = re.match(r"^post in \[0, (.+)\]$", text)
+    return m is not None
+
+
+def antichain(rows, revert_tolerant=False, point_values=None):
     """(kept, implied) -- drop every HOLDS rung another HOLDS rung entails.
 
     ⛔ THIS REMOVES NO ORACLE. `assertGe(post, pre)` beside `assertGt(post,
@@ -3242,11 +3312,28 @@ def antichain(rows, revert_tolerant=False):
     Under a BARE call every rung is unconditional and the boundary does not
     exist, so `revert_tolerant=False` keeps the full table.
     """
+    point_values = {str(k): v for k, v in (point_values or {}).items()
+                    if _literal_text(v) is not None}
+    point_values = {k: _literal_text(v) for k, v in point_values.items()}
+    normalized = []
     holds = {}
-    for var, text, verdict in rows:
+    by_norm = {}
+    for idx, (var, text, verdict) in enumerate(rows):
+        ntext = _normalize_rung_text(text, point_values)
+        normalized.append(ntext)
         if verdict == "HOLDS":
-            holds.setdefault(var, set()).add(text)
+            holds.setdefault(var, set()).add(ntext)
+            by_norm.setdefault((var, ntext), []).append((idx, text))
     dominated = {}
+    dominated_idx = set()
+    for key, indexed in by_norm.items():
+        if len(indexed) < 2:
+            continue
+        keep_idx, _keep_text = min(
+            indexed, key=lambda it: (_rung_keep_rank(normalized[it[0]]), it[0]))
+        for idx, _text in indexed:
+            if idx != keep_idx:
+                dominated_idx.add(idx)
     for var, texts in holds.items():
         d = set()
         for text in texts:
@@ -3255,6 +3342,14 @@ def antichain(rows, revert_tolerant=False):
                 exact = f"post in [{term}, {term}]"
                 if exact in texts:
                     d.add(exact)
+                if term == "0":
+                    for candidate in texts:
+                        # R2 post-state interval endpoints here are uint-like
+                        # Solidity terms. Once ESBMC has certified `post == 0`,
+                        # any `[0, hi]` absolute interval on the same slot is a
+                        # weaker oracle and only inflates the emitted PUT.
+                        if _zero_lower_interval(candidate):
+                            d.add(candidate)
             ret_lit = _return_literal(text)
             if ret_lit is not None:
                 exact = f"return in [{ret_lit}, {ret_lit}]"
@@ -3282,9 +3377,11 @@ def antichain(rows, revert_tolerant=False):
                 d.add(weaker)
         dominated[var] = d
     kept, implied = [], []
-    for row in rows:
+    for idx, row in enumerate(rows):
         var, text, verdict = row
-        if verdict == "HOLDS" and text in dominated.get(var, ()):
+        ntext = normalized[idx]
+        if (verdict == "HOLDS"
+                and (idx in dominated_idx or ntext in dominated.get(var, ()))):
             implied.append(row)
         else:
             kept.append(row)
@@ -6820,7 +6917,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # words means oracle was lost and wants fixing, the other means it is still
     # there in a sharper form, and swapping them makes a healthy pipeline read
     # as broken or a broken one as healthy.
-    ladder_rows, implied_rows = antichain(ladder_rows, call_is_revert_tolerant)
+    ladder_rows, implied_rows = antichain(
+        ladder_rows, call_is_revert_tolerant, point_value_texts(region, pins))
     oracle_implied = [f"{v}: {t} (entailed by a stronger rung that also HOLDS "
                       f"on {v}, so asserting it detects nothing the stronger "
                       f"one misses)" for v, t, _d in implied_rows]
