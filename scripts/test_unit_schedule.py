@@ -173,7 +173,7 @@ def test_schedule_prioritizes_semantic_units_before_getter_like_units():
         "pending_unit_hints": [],
     }
     row["target"]["units_hint"] = []
-    row["units"]["units"] = ["name", "setX", "quote"]
+    row["units"]["units"] = ["name", "setX", "quote", "poke"]
     row["units"]["unit_info"] = [
         {
             "name": "name",
@@ -193,6 +193,12 @@ def test_schedule_prioritizes_semantic_units_before_getter_like_units():
             "parameter_count": 1,
             "return_count": 1,
         },
+        {
+            "name": "poke",
+            "state_mutability": "nonpayable",
+            "parameter_count": 0,
+            "return_count": 0,
+        },
     ]
     doc = unit_schedule.build_schedule(data)
     got = [(job["unit"], job["priority"], job["priority_reason"])
@@ -200,6 +206,7 @@ def test_schedule_prioritizes_semantic_units_before_getter_like_units():
     bad = 0
     bad += check(got == [("setX", 1, "state-changing"),
                          ("quote", 2, "pure/view-with-interface"),
+                         ("poke", 2, "zero-interface-state-changing"),
                          ("name", 3, "zero-arg-view")],
                  f"semantic units are sampled before getter-like rows: {got}")
     bad += check(doc["jobs"][0]["unit_info"]["parameter_count"] == 1,

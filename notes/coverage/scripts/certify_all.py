@@ -690,9 +690,16 @@ RE_PATH_COV_PROBE_COUNTS = re.compile(
     r"--path-cov-probe: unit '([^']+)' added ([0-9]+) "
     r"exit-latched claim\(s\) for ([0-9]+) branch arm\(s\) at ([0-9]+) "
     r"physical exit\(s\); complete-path denominator remains ([0-9]+)")
+RE_ESBMC_ERROR_LINE = re.compile(r"^ERROR: (.*)$", re.MULTILINE)
+RE_RUN_EXIT = re.compile(r"^\[run\] EXIT (-?[0-9]+)$", re.MULTILINE)
+RE_RECURSIVE_HELPER_PREFLIGHT = re.compile(
+    r"target call closure reaches direct self-recursive "
+    r"function/helper wrapper\(s\): (.*?)\. "
+    r"This preflight starts no ESBMC process")
 
 
 def result_driver_diagnostic(out):
+    out = out or ""
     if ("INTERNAL DEFECT" in out
             and "instrumented path claim(s) reached the solver" in out
             and "The harness never entered any unit" in out):
@@ -700,7 +707,30 @@ def result_driver_diagnostic(out):
             "tag": "path-coverage-no-claims-reached-solver",
             "reason": "path coverage instrumentation emitted claims, but none reached the solver",
         }
-    m = RE_PATH_COV_PROBE_COUNTS.search(out or "")
+    m = RE_RECURSIVE_HELPER_PREFLIGHT.search(out)
+    if m:
+        helpers = [item.strip() for item in m.group(1).split(",")
+                   if item.strip()]
+        return {
+            "tag": "recursive-helper-preflight-refused",
+            "reason": (
+                "path enumeration refused before ESBMC because the target call "
+                "closure reaches direct self-recursive helper wrappers"),
+            "helpers": helpers,
+        }
+    if "ESBMC produced no cov-report.json" in out:
+        err = RE_ESBMC_ERROR_LINE.search(out)
+        exit_code = RE_RUN_EXIT.search(out)
+        diagnostic = {
+            "tag": "esbmc-no-cov-report",
+            "reason": "ESBMC exited before producing cov-report.json",
+        }
+        if err:
+            diagnostic["error"] = err.group(1).strip()
+        if exit_code:
+            diagnostic["exit"] = int(exit_code.group(1))
+        return diagnostic
+    m = RE_PATH_COV_PROBE_COUNTS.search(out)
     if m and "[run] TIMEOUT after" in out:
         return {
             "tag": "path-coverage-probe-claim-explosion",

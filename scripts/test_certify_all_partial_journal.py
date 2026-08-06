@@ -173,6 +173,30 @@ def main():
                      and diagnostic["physical_exits"] == 37
                      and diagnostic["complete_path_denominator"] == 37,
                      f"probe product dimensions are recorded: {diagnostic}")
+
+        recursive = certify_all.result_driver_diagnostic(
+            "[enumerate] no witnessed path for this unit, \u26d4 and it is NOT "
+            "a result: target call closure reaches direct self-recursive "
+            "function/helper wrapper(s): SafeMath.div/2, SafeMath.sub/2. "
+            "This preflight starts no ESBMC process and proves nothing\n")
+        bad += check(
+            recursive and recursive["tag"] ==
+            "recursive-helper-preflight-refused",
+            f"recursive helper preflight is diagnosed: {recursive}")
+        bad += check(recursive["helpers"] == ["SafeMath.div/2", "SafeMath.sub/2"],
+                     f"recursive helper names are retained: {recursive}")
+
+        no_report = certify_all.result_driver_diagnostic(
+            "[enumerate] ESBMC produced no cov-report.json. Its output was:\n"
+            "Starting Bounded Model Checking\n"
+            "ERROR: function call: argument \"c:string.c@4751@F@memset@s\" "
+            "type mismatch: got array, expected pointer\n"
+            "[run] EXIT -6\n")
+        bad += check(no_report and no_report["tag"] == "esbmc-no-cov-report",
+                     f"ESBMC no-report failure is diagnosed: {no_report}")
+        bad += check(no_report["exit"] == -6
+                     and "type mismatch" in no_report["error"],
+                     f"ESBMC no-report details are retained: {no_report}")
     return bad
 
 

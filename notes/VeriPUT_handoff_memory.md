@@ -235,6 +235,93 @@ Fresh wave plan prepared, not executed:
   `DnGmxBatchingManager.executeBatchDeposit`; the remaining slot is
   `StaxLPStaking.setRewardDistributor`.
 
+## 2026-08-07 fresh benchmark smoke and early-failure diagnosis
+
+Fresh Stage2/Stage4 smoke:
+
+- Root:
+  `/tmp/veriput_fresh_wave_plan_20260807_061251`.
+- All ESBMC attempts used the scheduled `--timeout 600 --run-timeout 600
+  --memlimit-gib 8`; runner outer timeout was 700s and `--jobs 1`.
+- Initial Stage2 jobs:
+  - Peer old schedule:
+    `AIRBets.initialize2` -> `NO-PATH`, 0 certified.
+  - Peer old schedule:
+    `Arcadia_Token.abc1` -> `NO-PATH`, 0 certified.
+  - BugFix hinted schedule:
+    `acfix_026_CVE_2019_15080 / Owned.owned` ->
+    `NO-WITNESS-UNKNOWN`, 0 certified.
+  - BugFix hinted schedule:
+    `acfix_030_CVE_2021_34272 / Owned.owned` ->
+    `NO-WITNESS-UNKNOWN`, 0 certified.
+  - Stress:
+    `ERC-3643__ERC-3643__AgentRole.addAgent` -> `CERTIFIED`,
+    5 witnessed, 4 certified, 1 not-certified, 50s.
+- Stage4 was run only for the Stress cert:
+  `/tmp/veriput_fresh_wave_plan_20260807_061251/stress-put-fresh1`.
+  Result: 4 / 4 certified region rows became reference-valid generated tests:
+  2 PUT + 2 concrete fallback. Strict PUT B = 2 / 4.
+
+Scheduling correction from this smoke:
+
+- The first Peer rows were zero-interface state-changing units
+  (`initialize2`, `abc1`) and produced no paths.
+- `unit_schedule.py` now lowers non-hinted state-changing units with
+  zero parameters and zero returns to priority 2
+  (`zero-interface-state-changing`).
+- Hinted units still stay priority 0; this avoids guessing away real changed
+  targets such as BugFix `owned`.
+- Regenerated Peer prioritized schedule:
+  `/tmp/veriput_fresh_wave_plan_20260807_061251/peer-schedule-prioritized.json`.
+  Its first 8 rows are now parameterized state-changing units such as
+  `AIRBets.transfer`, `Arcadia_Token.transfer`, and `Animalia.transfer`.
+
+Fresh prioritized Peer check:
+
+- Ran first two prioritized Peer rows:
+  - `AIRBets.transfer`
+  - `Arcadia_Token.transfer`
+- Both returned immediately as `NO-WITNESS-UNDECIDED`.
+- Their `driver.log` reveals the real reason is not a solver timeout:
+  `target call closure reaches direct self-recursive function/helper wrapper(s):
+  SafeMath.div/2, SafeMath.sub/2`. This is the existing recursive-helper
+  preflight refusal.
+
+BugFix early failure check:
+
+- The two `Owned.owned` rows are also not solver timeouts.
+- Their `driver.log` shows ESBMC started path instrumentation but exited before
+  `cov-report.json`:
+  `ERROR: function call: argument "c:string.c@4751@F@memset@s" type mismatch:
+  got array, expected pointer`, with `[run] EXIT -6`.
+- This is an ESBMC/frontend/operational-model issue, not a region or Stage4
+  issue.
+
+Diagnostic code change:
+
+- `notes/coverage/scripts/certify_all.py`
+  - `result_driver_diagnostic()` now tags recursive-helper preflight refusals
+    as `recursive-helper-preflight-refused` and records the helper names.
+  - It also tags ESBMC no-report failures as `esbmc-no-cov-report` and records
+    the `ERROR:` line plus run exit code when present.
+- This does not change Stage2 bucket semantics; it makes no-witness rows
+  machine-attributable so the next sample can report why rows failed without
+  manually opening `driver.log`.
+
+Validation:
+
+- `python3 -m py_compile notes/coverage/scripts/certify_all.py scripts/test_certify_all_partial_journal.py notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- `python3 scripts/test_certify_all_partial_journal.py` passed.
+- `python3 scripts/test_unit_schedule.py` passed.
+- `git diff --check -- notes/coverage/scripts/certify_all.py scripts/test_certify_all_partial_journal.py notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- New parser output on real logs:
+  - Peer transfer: `recursive-helper-preflight-refused`, helpers
+    `SafeMath.div/2`, `SafeMath.sub/2`.
+  - BugFix `Owned.owned`: `esbmc-no-cov-report`, error
+    `memset` array/pointer mismatch, exit `-6`.
+
 ## 2026-08-07 600s mini-batch PUT success snapshot
 
 User policy update:

@@ -197,6 +197,8 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None) -> tuple
     params = int(unit_info.get("parameter_count") or 0)
     returns = int(unit_info.get("return_count") or 0)
     if mutability not in ("view", "pure"):
+        if params == 0 and returns == 0:
+            return 2, "zero-interface-state-changing"
         return 1, "state-changing"
     if params or returns:
         return 2, "pure/view-with-interface"
