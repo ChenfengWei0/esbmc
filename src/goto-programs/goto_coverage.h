@@ -1297,7 +1297,16 @@ public:
   static std::vector<std::pair<std::string, std::string>>
     path_cov_certify_exit_keys;
 
-  // Print `--path-cov-certify: RESULT: CERTIFIED | REFUTED | VACUOUS`.
+  // Runtime-safety claims refuted under a certification box. These are not path
+  // exit assertions: they say an admitted input can hit a checked arithmetic
+  // Panic before a normal unit exit. Certification must treat them as a
+  // refutation-equivalent signal, otherwise the driver can certify a normal-exit
+  // PUT region that Foundry rejects on Solidity 0.8 checked arithmetic.
+  static std::set<std::pair<std::string, std::string>>
+    path_cov_certify_safety_refutations;
+
+  // Print `--path-cov-certify: RESULT: CERTIFIED | REFUTED | UNSAFE |
+  // VACUOUS`.
   //
   // THE RUN'S OWN VERDICT LINE IS NOT THE RESULT OF THIS MODE, and that is a
   // consequence of the witness above rather than a preference: the witness is

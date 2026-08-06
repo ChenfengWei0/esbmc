@@ -31,6 +31,9 @@ STRONG_CERTIFY_ARGS = [
     "--cut-policy", "spec",
     "--state-struct-fields",
     "--slot-coords", "8",
+    "--esbmc-arg=--overflow-check",
+    "--esbmc-arg=--div-by-zero-check",
+    "--esbmc-arg=--path-cov-arith-resolve",
 ]
 
 

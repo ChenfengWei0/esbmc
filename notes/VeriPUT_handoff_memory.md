@@ -8703,3 +8703,98 @@ Quality finding for next optimization:
   improvement is an R2/return antichain pass that treats point-width rendered
   coordinates and simple constant-foldable terms as implied by exact literal
   return equality.
+
+## 2026-08-06 checked-arithmetic certification fix
+
+Scope:
+
+- This is an ESBMC certification semantics fix plus the matching external
+  VeriPUT driver/report plumbing.
+- No dataset or VeriPUT Results files were modified. All benchmark sampling
+  artifacts were written under `/tmp/veriput_peer_checked*` and
+  `/tmp/certify_all/checked*-results`.
+
+Ground truth sample:
+
+- Benchmark unit:
+  `peer182 / peer_soltg__return_1 / Cr1.add(uint256 x, uint256 y)`.
+- Source behavior:
+  - `y == 0`: returns `x`; no arithmetic restriction on `x`.
+  - `y == 1`: returns `++x`; normal exit requires `x <= UINT_MAX - 1`.
+  - `y == 2`: returns `x + 2`; normal exit requires
+    `x <= UINT_MAX - 2`.
+  - `y >= 3`: returns `x + y`; normal exit requires the cross-coordinate
+    relation `x + y <= UINT_MAX`, which is not representable as one product
+    interval without splitting or extra relational predicates.
+
+Bug:
+
+- Strong Stage 2 passed `--overflow-check`, `--div-by-zero-check`, and
+  `--path-cov-arith-resolve`, but `--path-cov-certify` still reported wide
+  arithmetic regions as certified.
+- Root cause inside ESBMC: certification RESULT aggregation only counted its own
+  `#exitN` path assertions. A failed Solidity checked-arithmetic assertion under
+  `assume(box)` made the overall ESBMC run fail, but did not become a
+  certification refutation with a shrinkable witness.
+- A second bug hid the available witness: arithmetic claim names are not
+  `<unit>:path:<enc>`, so the CE harvester could not infer the Solidity function
+  scope and dropped `x/y` as non-unit inputs.
+
+Code changes:
+
+- `notes/coverage/scripts/veriput_recipe.py` now includes
+  `--overflow-check`, `--div-by-zero-check`, and `--path-cov-arith-resolve` in
+  the shared strong recipe.
+- `scripts/solidity_path_generalise.py` disables simple-decision structural
+  certification when enumeration saw checked arithmetic, so ESBMC certification
+  has to measure those boxes.
+- ESBMC records failed `overflow` / `division-by-zero` claims during
+  `--path-cov-certify` as `path_cov_certify_safety_refutations` and reports
+  `RESULT: UNSAFE`, which the driver treats as refuted-equivalent.
+- `cov-report.json` now carries `certify_safety_refutations` outside the path
+  `claims` array, preserving the path coverage denominator while publishing the
+  safety CE payload for shrink.
+- The CE harvester now scopes certification safety claims through the
+  certification nonvacuity key, so parameter inputs like `x/y` survive in the
+  report.
+- The driver reads `certify_safety_refutations` before ordinary path claims and
+  matches either plain `condition` unit names or exact `path_function` ids.
+- Driver policy: `RESULT: UNSAFE` does not use Definition-5 punch suggestions.
+  Arithmetic unsafe sets are usually intervals, so side shrink is the correct
+  first response.
+
+Measured effect:
+
+- Before this fix on `return_1.add`: Stage 2 certified 5/5 witnessed paths, but
+  Stage 4 Foundry rejected the `y==1`, `y==2`, and `y>=3` PUTs because their
+  regions admitted overflow inputs.
+- With recipe flags but before ESBMC safety refutations: still 5/5 certified,
+  because structural certification and later certification ignored arithmetic
+  failures.
+- After ESBMC `UNSAFE` plus payload/scoping fixes, 60s/8GiB sample result:
+  `4 certified / 1 not / 5 witnessed` in about 15s.
+  - enc=2: ABI value gate, `msg.value > 0`.
+  - enc=6: `msg.value == 0`, `y == 0`, `x` full.
+  - enc=14: `msg.value == 0`, `y == 1`, `x <= UINT_MAX - 1`.
+  - enc=30: `msg.value == 0`, `y == 2`, `x <= UINT_MAX - 2`.
+  - enc=31: not certified; the needed relation is `x + y <= UINT_MAX`, and the
+    current product-region shrink removes one `x` boundary value per round until
+    the shrink budget is exhausted.
+- Best sample output:
+  `/tmp/veriput_peer_checked8_20260806_201942/checked8-results.jsonl`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py notes/coverage/scripts/veriput_recipe.py`
+  passed.
+- `cmake --build build -j2 --target esbmc` passed.
+- `git diff --check` passed.
+
+Next work:
+
+- Add a relational R1/R2 or split strategy for arithmetic regions like
+  `x + y <= UINT_MAX`. The current product interval can certify constant-y
+  arithmetic guards but cannot express the `y>=3` branch strongly.

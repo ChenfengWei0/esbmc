@@ -81,6 +81,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       path_cov_fixture_state_pins,
                                       structural_decision_region,
                                       structural_decision_regions,
+                                      enumeration_has_arith_conditions,
+                                      witness_values,
                                       extcall_inseparable_failures,
                                       file_identity,
                                       save_failed_round,
@@ -1127,6 +1129,10 @@ check("S4-a-punch-line-yields-the-coordinate-and-value",
 # before this existed.
 check("S4-a-shrink-only-log-yields-no-punch",
       punch_targets(WARN + "\n" + _SHRINK_ONLY, {}), [])
+check("S4-unsafe-refutation-uses-shrink-not-punch",
+      punch_targets(WARN + "\n" + _PUNCH + "\n"
+                    "--path-cov-certify: RESULT: UNSAFE", {}),
+      [])
 # A PINNED coordinate is refused, the same rule shrink_target obeys: a pin is a
 # single value, so punching it would empty the coordinate outright.
 check("S4-a-pinned-coordinate-is-never-punched",
@@ -2594,6 +2600,66 @@ _setdist_all = structural_decision_regions(
     coord_types={"distributor_": "address"})
 check("simple-decision-regions-batches-all-paths",
       sorted(_setdist_all[0]), [15])
+
+_arith_dir = tempfile.mkdtemp(prefix="arith-conditions-")
+try:
+    check("missing-arith-report-does-not-disable-structural",
+          enumeration_has_arith_conditions(_arith_dir), False)
+    with open(os.path.join(_arith_dir, "cov-report.json"), "w") as _f:
+        json.dump({"summary": {"arith_resolve": {"conditions_seen": 0},
+                               "arith_revert_only_paths": 0}}, _f)
+    check("zero-arith-report-keeps-structural",
+          enumeration_has_arith_conditions(_arith_dir), False)
+    with open(os.path.join(_arith_dir, "cov-report.json"), "w") as _f:
+        json.dump({"summary": {"arith_resolve": {"conditions_seen": 3},
+                               "arith_revert_only_paths": 0}}, _f)
+    check("arith-conditions-disable-structural",
+          enumeration_has_arith_conditions(_arith_dir), True)
+    with open(os.path.join(_arith_dir, "cov-report.json"), "w") as _f:
+        json.dump({"summary": {"arith_resolve": {"conditions_seen": 0},
+                               "arith_revert_only_paths": 1}}, _f)
+    check("arith-revert-only-disables-structural",
+          enumeration_has_arith_conditions(_arith_dir), True)
+finally:
+    try:
+        os.unlink(os.path.join(_arith_dir, "cov-report.json"))
+    except OSError:
+        pass
+    os.rmdir(_arith_dir)
+
+_safety_dir = tempfile.mkdtemp(prefix="safety-witness-")
+try:
+    with open(os.path.join(_safety_dir, "cov-report.json"), "w") as _f:
+        json.dump({
+            "certify_safety_refutations": [{
+                "condition": "add:safety",
+                "path_function": "sol:@C@Cr1@F@add#36",
+                "status": "F",
+                "inputs": {"x": "7", "y": "1"},
+                "env": {"msg.value": "0"},
+                "entry_storage": {}
+            }],
+            "claims": [{
+                "condition": "add:path:14",
+                "status": "F",
+                "inputs": {},
+                "env": {},
+                "entry_storage": {}
+            }]
+        }, _f)
+    check("certify-safety-refutation-witness-is-read",
+          witness_values(_safety_dir, "add"),
+          {"msg.value": 0, "x": 7, "y": 1})
+    check("certify-safety-refutation-witness-matches-path-function",
+          witness_values(_safety_dir, "sol:@C@Cr1@F@add#36"),
+          {"msg.value": 0, "x": 7, "y": 1})
+finally:
+    try:
+        os.unlink(os.path.join(_safety_dir, "cov-report.json"))
+    except OSError:
+        pass
+    os.rmdir(_safety_dir)
+
 check("simple-decision-region-refuses-coordinate-equality",
       structural_decision_region(
           [{"branch_claim": "a == b"}], {"a": 1, "b": 2}, {},

@@ -91,6 +91,8 @@ std::pair<std::string, std::string>
   goto_coveraget::path_cov_certify_nonvacuous_key;
 std::vector<std::pair<std::string, std::string>>
   goto_coveraget::path_cov_certify_exit_keys;
+std::set<std::pair<std::string, std::string>>
+  goto_coveraget::path_cov_certify_safety_refutations;
 std::map<std::string, std::vector<std::string>>
   goto_coveraget::path_cov_certify_holes;
 bool goto_coveraget::path_cov_outer_box_mode = false;
@@ -760,10 +762,17 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
     return false;
   };
 
+  std::vector<std::pair<std::string, std::string>> certify_refutation_keys(
+    all_claims.begin(), all_claims.end());
+  certify_refutation_keys.insert(
+    certify_refutation_keys.end(),
+    path_cov_certify_safety_refutations.begin(),
+    path_cov_certify_safety_refutations.end());
+
   std::vector<std::string> witnessless;
   {
     std::lock_guard lock(claim_outcome_mutex);
-    for (const auto &key : all_claims)
+    for (const auto &key : certify_refutation_keys)
     {
       if (is_nonvacuity_claim(key))
         continue;
@@ -791,7 +800,7 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
   if (!path_cov_certify_ce.empty() && !path_cov_certify_box.empty())
   {
     std::lock_guard lock(claim_outcome_mutex);
-    for (const auto &key : all_claims)
+    for (const auto &key : certify_refutation_keys)
     {
       if (is_nonvacuity_claim(key))
         continue;
@@ -963,18 +972,21 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
         for (const auto &p : punchable)
           names += (names.empty() ? "" : "; ") + p;
         log_status(
-          "--path-cov-certify: PUNCH SUGGESTION for '{}' — instead of cutting "
+          "--path-cov-certify: PUNCH SUGGESTION for '{}' — instead of "
+          "cutting "
           "the interval, remove the witness itself: add {} to the box's "
           "`holes` "
           "(Definition 5). Legal by the same rule as a side cut (this path's "
           "own "
-          "counterexample differs there and survives), and it costs ONE value "
+          "counterexample differs there and survives), and it costs ONE "
+          "value "
           "rather than a whole side — the difference between the two was "
           "measured at 5.7e45 on an address coordinate. It is NOT strictly "
           "better: punching converges only where the excluded set is a few "
           "points, while a side cut is what makes progress when the boundary "
           "is "
-          "an interval. Which to use is the driver's policy; both are reported",
+          "an interval. Which to use is the driver's policy; both are "
+          "reported",
           key.first,
           names);
       }
@@ -983,8 +995,10 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
           "--path-cov-certify: SHRINK SUGGESTION for '{}' — the witness lies "
           "outside the path on coordinate '{}', and the path's own "
           "counterexample lies on the other side of it, so retry with {} in "
-          "[{}, {}] (everything else unchanged). The cut lands ON the witness "
-          "rather than halving the interval: the refutation already says where "
+          "[{}, {}] (everything else unchanged). The cut lands ON the "
+          "witness "
+          "rather than halving the interval: the refutation already says "
+          "where "
           "the boundary is not",
           key.first,
           best_coord,
@@ -993,7 +1007,8 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
           best_hi);
       else if (any_named && punchable.empty())
         log_status(
-          "--path-cov-certify: no single-coordinate shrink for '{}' — on every "
+          "--path-cov-certify: no single-coordinate shrink for '{}' — on "
+          "every "
           "bounded coordinate the witness agrees with the path's own "
           "counterexample, so neither a cut NOR a hole separates them while "
           "keeping a known member of the domain. The region has to be split, "
@@ -1253,7 +1268,20 @@ void goto_coveraget::report_path_cov_certify()
       break;
     }
 
-  if (refuted > 0)
+  size_t safety_refuted = 0;
+  for (const auto &k : path_cov_certify_safety_refutations)
+    if (verdict_of(k) == 'F')
+      ++safety_refuted;
+
+  if (safety_refuted > 0)
+    log_status(
+      "--path-cov-certify: RESULT: UNSAFE — {} checked arithmetic/division "
+      "assertion(s) were refuted under the certification box, so an input the "
+      "box admits can panic before a normal unit exit. This is a genuine "
+      "region refutation for normal-exit PUT generation; use the SHRINK / "
+      "PUNCH suggestion above to cut the unsafe input",
+      safety_refuted);
+  else if (refuted > 0)
     log_status(
       "--path-cov-certify: RESULT: REFUTED — {} of {} exit assert(s) were "
       "refuted, so an input the box admits leaves this path. The witness input "
@@ -4233,6 +4261,7 @@ void goto_coveraget::solidity_path_coverage()
   path_cov_certify_holes.clear();
   path_cov_certify_nonvacuous_key = {};
   path_cov_certify_exit_keys.clear();
+  path_cov_certify_safety_refutations.clear();
   std::string certify_unit;
   uint64_t certify_enc = 0, certify_depth = 0;
   std::vector<certify_boundt> certify_box;

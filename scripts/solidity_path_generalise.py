@@ -1054,6 +1054,27 @@ def structural_decision_regions(paths, path_decisions, pins, coords,
     return out, holes, reasons
 
 
+def enumeration_has_arith_conditions(cwd):
+    """Whether the enumeration saw checked-arithmetic conditions on any path."""
+    report = os.path.join(cwd, "cov-report.json")
+    try:
+        with open(report) as f:
+            rep = json.load(f)
+    except (OSError, ValueError):
+        return False
+    summary = rep.get("summary") if isinstance(rep, dict) else {}
+    ar = summary.get("arith_resolve") if isinstance(summary, dict) else {}
+    try:
+        if int((ar or {}).get("conditions_seen") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(summary.get("arith_revert_only_paths") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 _MISSING = object()
 
 
@@ -3032,6 +3053,7 @@ CERTIFY_RESULT_RE = re.compile(
 CERTIFY_RESULT_MAP = {
     "CERTIFIED": "SUCCESSFUL",
     "REFUTED": "FAILED",
+    "UNSAFE": "FAILED",
     "VACUOUS": "VACUOUS",
     "UNDECIDED": "UNKNOWN",
     "UNDECIDED-TRUNCATED": "UNDECIDED_TRUNCATED",
@@ -3579,8 +3601,15 @@ def witness_values(cwd, unit, state_structs=False):
             rep = json.load(f)
     except (OSError, ValueError):
         return {}
+    def same_unit(c):
+        return claim_unit(c) == unit or c.get("path_function") == unit
+    for c in rep.get("certify_safety_refutations", []):
+        if c.get("status") == "F" and same_unit(c):
+            ce, _ = coord_values(c, state_structs=state_structs)
+            ce.update(payload_extras(c))
+            return ce
     for c in rep.get("claims", []):
-        if c.get("status") == "F" and claim_unit(c) == unit:
+        if c.get("status") == "F" and same_unit(c):
             ce, _ = coord_values(c, state_structs=state_structs)
             ce.update(payload_extras(c))
             return ce
@@ -4080,6 +4109,8 @@ def punch_targets(log, pins, box=None):
     Returns [] when the log carries no suggestion, which is what keeps a
     SHRINK-only log behaving exactly as it did before this existed.
     """
+    if "RESULT: UNSAFE" in log:
+        return []
     m = PUNCH_LINE_RE.search(log)
     if not m:
         return []
@@ -5410,6 +5441,12 @@ def main():
                   "around. ⛔ Still not a reachability statement: it is bounded "
                   "by this run's --max-tx, --unwind and scope.")
         return 1
+    arith_conditions_seen = enumeration_has_arith_conditions(cwd)
+    if arith_conditions_seen:
+        print("[structural] checked-arithmetic conditions were seen during "
+              "enumeration; simple decision regions will still be measured by "
+              "ESBMC certification, because source branch decisions alone do "
+              "not exclude overflow/div-by-zero panic inputs")
     query_unit = args.path_function or args.unit
     print(f"[enumerate] exact query unit: {query_unit}")
     print(f"[enumerate] {len(paths)} witnessed path(s): "
@@ -5895,7 +5932,7 @@ def main():
 
     pre_structural_regions, pre_structural_holes, pre_structural_source = \
         {}, {}, {}
-    if paths:
+    if paths and not arith_conditions_seen:
         candidate_structural_regions, candidate_structural_holes, \
             candidate_structural_source = {}, {}, {}
         for enc, _depth, ce in paths:
@@ -5921,7 +5958,7 @@ def main():
                     "a certified ABI/source gate")
             paths = [p for p in paths if p[0] not in pre_structural_regions]
 
-    if paths:
+    if paths and not arith_conditions_seen:
         early_structural_regions, _, _ = structural_decision_regions(
             paths, path_decisions, pins, coords, coord_types=coord_types,
             type_ranges={}, constants=constants)
@@ -6337,6 +6374,10 @@ def main():
     structural_region_source = {}
     if not paths:
         structural_regions = {}
+    elif arith_conditions_seen:
+        structural_regions = None
+        structural_holes = {}
+        structural_reasons = {}
     else:
         structural_regions, structural_holes, structural_reasons = \
             structural_decision_regions(

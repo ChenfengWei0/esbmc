@@ -2336,6 +2336,70 @@ void report_coverage(
       claims_json.push_back(claim_entry);
     }
 
+    json certify_safety_json = json::array();
+    if (is_path_cov && goto_coveraget::path_cov_certify_mode)
+    {
+      std::string certify_path_function;
+      std::string certify_unit_name;
+      {
+        const std::string &nv =
+          goto_coveraget::path_cov_certify_nonvacuous_key.first;
+        const size_t p = nv.rfind(":path:");
+        if (p != std::string::npos)
+          certify_path_function = nv.substr(0, p);
+        const size_t f = certify_path_function.find("@F@");
+        const size_t h = certify_path_function.find('#', f);
+        if (f != std::string::npos && h != std::string::npos)
+          certify_unit_name = certify_path_function.substr(f + 3, h - f - 3);
+      }
+      std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+      for (const auto &[claim_msg, claim_loc] :
+           goto_coveraget::path_cov_certify_safety_refutations)
+      {
+        const std::string claim_sig = claim_msg + "\t" + claim_loc;
+        auto it_o = goto_coveraget::claim_outcome.find(claim_sig);
+        if (it_o == goto_coveraget::claim_outcome.end() || it_o->second != 'F')
+          continue;
+        json loc = parse_claim_location(claim_loc);
+        json entry;
+        entry["condition"] = certify_unit_name.empty()
+                               ? prettify_solidity_expr(claim_msg)
+                               : certify_unit_name + ":safety";
+        if (!certify_path_function.empty())
+          entry["path_function"] = certify_path_function;
+        entry["claim"] = prettify_solidity_expr(claim_msg);
+        entry["file"] = loc["file"];
+        entry["line"] = loc["line"];
+        entry["column"] = loc["column"];
+        entry["function"] = loc["function"];
+        entry["status"] = "F";
+        entry["safety_kind"] = "checked-arithmetic";
+        auto it_ce = goto_coveraget::path_ce.find(claim_sig);
+        if (it_ce != goto_coveraget::path_ce.end())
+        {
+          const auto &ce = it_ce->second;
+          json ins = json::object();
+          for (const auto &[n, v] : ce.inputs)
+            ins[prettify_solidity_expr(n)] = v;
+          json envj = json::object();
+          for (const auto &[n, v] : ce.env)
+            envj[prettify_solidity_expr(n)] = v;
+          json ent = json::object();
+          for (const auto &[n, v] : ce.entry_storage)
+            ent[prettify_solidity_expr(n)] = v;
+          json ext = json::array();
+          for (const auto &[n, v] : ce.extcall_returns)
+            ext.push_back(
+              {{"symbol", prettify_solidity_expr(n)}, {"value", v}});
+          entry["inputs"] = ins;
+          entry["env"] = envj;
+          entry["entry_storage"] = ent;
+          entry["extcall_returns"] = ext;
+        }
+        certify_safety_json.push_back(entry);
+      }
+    }
+
     size_t total = all_claims.size();
     size_t covered_count = 0;
     for (const auto &c : claims_json)
@@ -2385,6 +2449,7 @@ void report_coverage(
     for (const auto &f : source_files)
       report["source_files"].push_back(f);
     report["claims"] = claims_json;
+    report["certify_safety_refutations"] = certify_safety_json;
     report["summary"]["partial"] = is_partial;
     if (is_partial)
     {
@@ -4221,6 +4286,13 @@ smt_convt::resultt bmct::multi_property_check(
           path_cov_verdict_upgrades.fetch_add(1, std::memory_order_relaxed);
         it_o->second = verdict;
       }
+
+      if (
+        goto_coveraget::path_cov_certify_mode && verdict == 'F' &&
+        (claim.claim_property == "overflow" ||
+         claim.claim_property == "division-by-zero"))
+        goto_coveraget::path_cov_certify_safety_refutations.emplace(
+          claim.claim_msg, claim.claim_loc);
     }
     else if (is_probe_claim)
     {
@@ -4856,6 +4928,17 @@ smt_convt::resultt bmct::multi_property_check(
               const auto p = claim.claim_msg.rfind(":path:");
               if (p != std::string::npos)
                 fn_id = claim.claim_msg.substr(0, p);
+              else if (
+                goto_coveraget::path_cov_certify_mode &&
+                (claim.claim_property == "overflow" ||
+                 claim.claim_property == "division-by-zero"))
+              {
+                const std::string &nv =
+                  goto_coveraget::path_cov_certify_nonvacuous_key.first;
+                const size_t q = nv.rfind(":path:");
+                if (q != std::string::npos)
+                  fn_id = nv.substr(0, q);
+              }
             }
             if (!fn_id.empty())
             {
