@@ -30,6 +30,13 @@ def args(tmp, out_dir=""):
                               ast_timeout=60.0,
                               preheat_shard="",
                               preheat_limit=0,
+                              ast_preheat_journal=[],
+                              ast_preheat_batch_size=32,
+                              ast_preheat_max_attempts=3,
+                              ast_preheat_outer_timeout=90.0,
+                              next_ast_preheat_journal="",
+                              ast_preheat_jobs=1,
+                              ast_preheat_stop_on_failure=False,
                               unit_shard="",
                               unit_limit=0,
                               cert_out="",
@@ -136,6 +143,7 @@ def test_missing_ast_pipeline_recommends_preheat_without_writes():
             bad += check(doc["summary"]["next_action"]["action"] == "preheat-ast",
                          f"missing ASTs select preheat: {doc['summary']['next_action']}")
             bad += check(doc["summary"]["ast_preheat_jobs"] == 1
+                         and doc["summary"]["ast_preheat_campaign"]["selected_jobs"] == 1
                          and doc["summary"]["unit_jobs"] == 0,
                          f"preheat is before unit campaign: {doc['summary']}")
             bad += check(doc["outputs"] == {}, f"no out-dir means no child JSONs: {doc['outputs']}")
@@ -151,10 +159,28 @@ def test_missing_ast_pipeline_recommends_preheat_without_writes():
             (benchmark_pipeline_plan.ast_preheat_schedule, "build_schedule",
              lambda *_args, **_kwargs: {
                  "schema": "veriput-ast-preheat-schedule/v1",
+                 "ast_cache_root": str(cache_root),
+                 "ast_timeout_s": 60.0,
                  "summary": {
                      "jobs": 1,
                  },
-                 "jobs": [{}],
+                 "jobs": [
+                     {
+                         "schema": "veriput-ast-preheat-job/v1",
+                         "job_id": "peer182__S",
+                         "priority": 0,
+                         "ordinal": 0,
+                         "benchmark": "peer182",
+                         "subject_id": "S",
+                         "solc_source": "explicit",
+                         "preheat_argv": [
+                             "/bin/false",
+                             "--generate-ast",
+                             "--ast-cache-root",
+                             str(cache_root),
+                         ],
+                     },
+                 ],
              }),
         ]
         return with_patches(patches, run)
@@ -176,7 +202,9 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
                          and doc["next_run"]["memlimit_gb"] == 8.0,
                          f"first attempt budget is preserved: {doc['next_run']}")
             bad += check(sorted(doc["outputs"]) == [
+                "ast_preheat_campaign_plan",
                 "ast_preheat_schedule",
+                "next_ast_preheat_schedule",
                 "next_unit_schedule",
                 "target_manifest",
                 "unit_campaign_plan",
@@ -184,6 +212,9 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
                 "unit_manifest_gate",
                 "unit_schedule",
             ], f"out-dir receives the expected child docs: {doc['outputs']}")
+            bad += check(doc["next_runs"]["ast_preheat"] is None
+                         and doc["next_runs"]["unit_campaign"]["timeout_s"] == 60.0,
+                         f"ready path has no AST preheat runner: {doc['next_runs']}")
             bad += check(unit_schedule["summary"]["jobs"] == 1
                          and unit_schedule["cert_out"] == str(out_dir / "certify-results.jsonl"),
                          f"unit schedule is usable by certify_all: {unit_schedule['summary']}")

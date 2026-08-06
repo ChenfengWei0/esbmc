@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import ast_preheat_schedule  # noqa: E402
+import ast_preheat_campaign_plan  # noqa: E402
 import certify_result_summary  # noqa: E402
 import subject_unit_manifest  # noqa: E402
 import target_manifest  # noqa: E402
@@ -132,6 +133,29 @@ def build_pipeline(args) -> dict:
 
     if args.out_dir and not cert_out:
         cert_out = str(Path(args.out_dir) / "certify-results.jsonl")
+    next_ast_schedule_out = ""
+    if args.out_dir:
+        next_ast_schedule_out = str(Path(args.out_dir) / "next-ast-preheat-schedule.json")
+    next_ast_journal = args.next_ast_preheat_journal
+    if args.out_dir and not next_ast_journal:
+        next_ast_journal = str(Path(args.out_dir) / "ast-preheat-run.jsonl")
+    preheat_campaign_doc = ast_preheat_campaign_plan.plan_preheat_for_schedule(
+        preheat_doc,
+        paths["ast_preheat_schedule"] or "<in-memory ast preheat schedule>",
+        journal_paths=args.ast_preheat_journal,
+        batch_size=args.ast_preheat_batch_size,
+        max_attempts=args.ast_preheat_max_attempts,
+        timeout_s=args.ast_preheat_outer_timeout,
+        next_schedule_out=next_ast_schedule_out,
+        next_journal=next_ast_journal,
+        jobs=args.ast_preheat_jobs,
+        stop_on_failure=args.ast_preheat_stop_on_failure)
+    if next_ast_schedule_out and Path(next_ast_schedule_out).exists():
+        paths["next_ast_preheat_schedule"] = next_ast_schedule_out
+    paths["ast_preheat_campaign_plan"] = _write_json(args.out_dir,
+                                                     "ast-preheat-campaign-plan.json",
+                                                     preheat_campaign_doc)
+
     unit_sched_doc = unit_schedule.build_schedule(unit_manifest_doc,
                                                   shard=args.unit_shard,
                                                   limit=args.unit_limit,
@@ -141,6 +165,9 @@ def build_pipeline(args) -> dict:
     next_schedule_out = ""
     if args.out_dir:
         next_schedule_out = str(Path(args.out_dir) / "next-unit-schedule.json")
+    next_unit_journal = args.next_journal
+    if args.out_dir and not next_unit_journal:
+        next_unit_journal = str(Path(args.out_dir) / "unit-run.jsonl")
     campaign_doc = unit_campaign_plan.plan_campaign_for_schedule(
         unit_sched_doc,
         paths["unit_schedule"] or "<in-memory unit schedule>",
@@ -149,7 +176,7 @@ def build_pipeline(args) -> dict:
         min_certified_path_rate=args.min_certified_path_rate,
         attempt=args.attempt,
         next_schedule_out=next_schedule_out,
-        next_journal=args.next_journal,
+        next_journal=next_unit_journal,
         jobs=args.jobs,
         stop_on_failure=args.stop_on_failure)
     if next_schedule_out and Path(next_schedule_out).exists():
@@ -180,6 +207,7 @@ def build_pipeline(args) -> dict:
             "benchmarks": benchmarks,
             "stress_scope": args.stress_scope,
             "ast_cache_root": str(Path(args.ast_cache_root).expanduser().resolve()),
+            "ast_preheat_journals": args.ast_preheat_journal,
             "journals": args.journal,
             "cert_jsonls": args.cert_jsonl,
             "min_certified_path_rate": args.min_certified_path_rate,
@@ -198,12 +226,17 @@ def build_pipeline(args) -> dict:
                 "warnings": gate_doc.get("warnings"),
             },
             "ast_preheat_jobs": (preheat_doc.get("summary") or {}).get("jobs", 0),
+            "ast_preheat_campaign": preheat_campaign_doc.get("summary"),
             "unit_jobs": (unit_sched_doc.get("summary") or {}).get("jobs", 0),
             "campaign": campaign_doc.get("summary"),
             "certification_gate": (cert_doc or {}).get("gate"),
             "next_action": next_action,
         },
         "next_run": campaign_doc.get("next_run"),
+        "next_runs": {
+            "ast_preheat": preheat_campaign_doc.get("next_run"),
+            "unit_campaign": campaign_doc.get("next_run"),
+        },
     }
 
 
@@ -231,6 +264,20 @@ def main(argv=None) -> int:
     ap.add_argument("--ast-timeout", type=float, default=subject_unit_manifest.DEFAULT_AST_TIMEOUT_S)
     ap.add_argument("--preheat-shard", default="")
     ap.add_argument("--preheat-limit", type=int, default=0)
+    ap.add_argument("--ast-preheat-journal",
+                    action="append",
+                    default=[],
+                    help="ast_preheat_run.py JSONL journal; repeatable")
+    ap.add_argument("--ast-preheat-batch-size",
+                    type=int,
+                    default=ast_preheat_campaign_plan.DEFAULT_BATCH_SIZE)
+    ap.add_argument("--ast-preheat-max-attempts",
+                    type=int,
+                    default=ast_preheat_campaign_plan.DEFAULT_MAX_ATTEMPTS)
+    ap.add_argument("--ast-preheat-outer-timeout", type=float, default=90.0)
+    ap.add_argument("--next-ast-preheat-journal", default="")
+    ap.add_argument("--ast-preheat-jobs", type=int, default=1)
+    ap.add_argument("--ast-preheat-stop-on-failure", action="store_true")
     ap.add_argument("--unit-shard", default="")
     ap.add_argument("--unit-limit", type=int, default=0)
     ap.add_argument("--cert-out", default="", help="certify_all.py JSONL path for unit jobs")
@@ -259,7 +306,8 @@ def main(argv=None) -> int:
     except (OSError, PipelineError, target_manifest.TargetManifestError,
             subject_unit_manifest.SubjectError, unit_manifest_gate.GateError,
             ast_preheat_schedule.PreheatScheduleError, unit_schedule.ScheduleError,
-            unit_campaign_plan.CampaignError, certify_result_summary.SummaryError) as exc:
+            ast_preheat_campaign_plan.PreheatCampaignError, unit_campaign_plan.CampaignError,
+            certify_result_summary.SummaryError) as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 1
 

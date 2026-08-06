@@ -683,6 +683,15 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   and, when given the original schedule, emits a retry schedule containing jobs
   whose latest journal row is not `ok` plus jobs never attempted. This is
   read-only unless `--out` or `--retry-out` is passed.
+- `ast_preheat_campaign_plan.py`: read-only controller for bounded AST
+  preheat batches. It consumes a base `veriput-ast-preheat-schedule/v1` plus
+  zero or more `ast_preheat_run.py` journals, treats only latest `ok` rows as
+  completed, stops rescheduling jobs after `--max-attempts` non-ok attempts,
+  and writes the next filtered preheat schedule only when
+  `--next-schedule-out` is passed. The default batch size is 32 and the
+  emitted `next_run.runner_argv` is only an auditable
+  `ast_preheat_run.py ... --journal ... --timeout ... --jobs ...` suggestion;
+  it never invokes solc, Forge, fuzzing, ESBMC, or preheat jobs.
 - `unit_manifest_gate.py`: post-preheat gate for a
   `veriput-unit-manifest/v1`. It reports `blocked`, `degraded`, or `ready`,
   counts unique unit certification jobs, duplicate prepared-subject/unit jobs,
@@ -735,15 +744,18 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   rows can complete a job even without a runner journal.
 - `benchmark_pipeline_plan.py`: read-only top-level planner that stitches the
   target manifest, unit manifest, unit-manifest gate, AST-preheat schedule,
-  unit schedule, campaign plan, and optional certification-result summary into
-  one auditable `veriput-benchmark-pipeline-plan/v1`. It never invokes solc,
-  Forge, fuzzing, ESBMC, or certification jobs. It requires an external
-  `--ast-cache-root` so prepared-subject AST writes are never implied, and it
-  writes child JSON documents only when `--out-dir` is explicitly supplied.
-  Without `--out-dir`, it keeps child docs in memory instead of writing
-  temporary files. Its `summary.next_action` is the intended first triage point:
-  `preheat-ast`, `run-unit-campaign`, `certification-ready-for-put`, or a
-  blocker-inspection action.
+  AST-preheat campaign plan, unit schedule, unit campaign plan, and optional
+  certification-result summary into one auditable
+  `veriput-benchmark-pipeline-plan/v1`. It never invokes solc, Forge, fuzzing,
+  ESBMC, or certification jobs. It requires an external `--ast-cache-root` so
+  prepared-subject AST writes are never implied, and it writes child JSON
+  documents only when `--out-dir` is explicitly supplied. Without `--out-dir`,
+  it keeps child docs in memory instead of writing temporary files. With
+  `--out-dir`, it also gives concrete default journal paths under that
+  directory for the next AST-preheat and unit-campaign runner argv, but does
+  not create those journal files. Its `summary.next_action` is the intended
+  first triage point: `preheat-ast`, `run-unit-campaign`,
+  `certification-ready-for-put`, or a blocker-inspection action.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -863,11 +875,16 @@ Interpretation:
   It produced `targets=548`, unit manifest `missing_ast=509`, `error=39`,
   `ok=0`, `pending_unit_hints=381`, `ast_preheat_jobs=508`, `unit_jobs=0`,
   `campaign.selected_jobs=0`, and `summary.next_action.action=preheat-ast`.
-  The external AST cache directory was not created; only the requested child
-  JSON docs under `/tmp/<out>` were written, including the empty
-  `next-unit-schedule.json` campaign artifact. This is now the preferred single
-  read-only command for restoring the full benchmark denominator state after a
-  context compact.
+  It also produced an AST-preheat campaign summary
+  `jobs=508,pending=508,selected_jobs=32,completed_ok=0,exhausted=0`, wrote a
+  bounded `next-ast-preheat-schedule.json` with 32 jobs
+  (`by_benchmark={"peer182":32}`), and emitted a concrete runner argv pointing
+  at `<tmp-out>/ast-preheat-run.jsonl` with outer timeout 90s and one worker.
+  The external AST cache directory and both runner journal files were not
+  created; only the requested child JSON docs under `/tmp/<out>` were written,
+  including the empty `next-unit-schedule.json` artifact. This is now the
+  preferred single read-only command for restoring the full benchmark
+  denominator state and the next bounded action after a context compact.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
