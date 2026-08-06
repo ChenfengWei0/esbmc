@@ -10568,6 +10568,68 @@ Checks:
 - `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py notes/coverage/scripts/veriput_recipe.py scripts/test_put_all_accounting.py`
   passed.
 
+## 2026-08-07 high-level call-options lift fix
+
+Problem:
+
+- The small Stage-4 wave still refused `EtherLotto.play` enc 2 with:
+  no concrete call to `play` found in the emitted replay case.
+- Existing artifacts showed this was not an ESBMC emission failure.  The
+  emitted `test_cov_1` contained:
+  `try c0.play{value: UINT256_MAX}() {} catch {}`.
+- The PUT driver's member-call parser recognized `c0.f(...)` and low-level
+  `abi.encodeWithSignature(...)`, but not high-level Solidity call options
+  between the function name and argument list: `c0.f{value: v}(...)`.
+
+Code change:
+
+- `scripts/solidity_path_put.py` now uses `member_call_re()` for high-level
+  member calls.
+- The parser accepts optional call options `{...}` before the argument list.
+- `find_unit_call`, `call_arg_span`, `rewrite_call_args`, and
+  `target_instance_for_call` now share that shape, so `{value: ...}` is
+  preserved and only the calldata arguments are rewritten.
+- This is generic for payable/value high-level calls, not an EtherLotto
+  special case.
+
+Real benchmark measurement:
+
+- Command:
+  `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_put_smallwave_20260807_certified6.jsonl --only ether_lotto_1round.play --strong-recipe --timeout 600 --memlimit-gib 8 --forge-timeout 300 --out-root /tmp/veriput_put_etherlotto_callopts_20260807`
+- Output root:
+  `/tmp/veriput_put_etherlotto_callopts_20260807`.
+- Result:
+  - `EtherLotto.play` enc 2 emitted PUT,
+    `EtherLottoCovTest_0_EtherLotto_play_put2.t.sol`.
+  - fuzz parameters: 3 (`msg.sender`, `block.timestamp`, `block.number`).
+  - oracle assertions: 1 exit-kind oracle for rollback revert.
+  - Forge green, B = 1 / 1 for the selected row.
+- The generated test keeps `msg.value` as a single observed in-region value,
+  not a fuzz coordinate, because payable value is not a call argument that can
+  be `bound()` in the signature.  The test says this explicitly.
+- The self-check disabled one red concrete replay (`test_cov_2`); the emitted
+  PUT stayed enabled and green.
+
+Updated small-wave success picture after this and partial-loop fallback:
+
+- DepositLog B rows from the earlier wave: 3.
+- ClaimTopicsRegistry B rows after partial-loop fallback: 2.
+- EtherLotto B rows after call-options parsing: 1.
+- Combined over the same 7 certified region rows:
+  `6 / 7 = 85.7%` deliverable B.
+- Forge-visible generated PUT tests in the combined measurement: 6 green / 6
+  total.
+- Remaining non-B row:
+  `DepositLog.logCreated` enc 6, refused because it is not parameterized and
+  would only emit a concrete replay wearing bound syntax.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed, 218 / 218 tests.
+
 Important code fix found by this wave:
 
 - Before the fix, Forge could not compile the generated DepositLog PUTs because

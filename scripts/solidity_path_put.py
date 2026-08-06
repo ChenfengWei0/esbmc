@@ -5620,7 +5620,12 @@ def slot_key_expr(kname, key_expr_of):
                   f"the PUT has no expression for it")
 
 
-CALL_LINE_RE_TMPL = r"^(\s*)(try )?(\w+)\.{unit}\("
+def member_call_re(unit, anchored=False):
+    """Regex for a high-level member call, including Solidity call options."""
+    prefix = r"^\s*" if anchored else ""
+    return re.compile(prefix + r"(?:try\s+)?\w+\s*\.\s*"
+                      + re.escape(unit)
+                      + r"\s*(?:\{[^{}]*\}\s*)?\(")
 
 # ---- THE SECOND SHAPE THE EMITTER WRITES, WHICH THE LIFTER COULD NOT SEE ----
 #
@@ -5655,18 +5660,18 @@ LOWLEVEL_CALL_RE_TMPL = r'abi\.encodeWithSignature\(\s*"{unit}\('
 
 def call_arg_span(line, unit):
     """Argument-list span and ABI-signature offset for a supported unit call."""
-    key = "." + unit + "("
-    k = line.find(key)
     sig_offset = 0
-    if k < 0:
+    m_call = member_call_re(unit).search(line)
+    if m_call is not None:
+        start = m_call.end()
+    else:
         m = re.search(LOWLEVEL_CALL_RE_TMPL.format(unit=re.escape(unit)), line)
         if not m:
             return None
         # Start of `abi.encodeWithSignature(`'s argument list.
         k = line.find("(", m.start())
-        key = "("
+        start = k + 1
         sig_offset = 1
-    start = k + len(key)
     depth, i = 1, start
     while i < len(line) and depth:
         if line[i] == "(":
@@ -5693,7 +5698,7 @@ def find_unit_call(lines, unit):
     final, exit-classified call walks.  Its preceding statements are the
     sequence that establishes the entry state and are kept verbatim.
     """
-    rx = re.compile(CALL_LINE_RE_TMPL.format(unit=re.escape(unit)))
+    rx = member_call_re(unit, anchored=True)
     # The low-level shape is SEARCHED, not matched at the line start: the
     # emitter breaks that statement across two lines and the signature sits on
     # the second, indented and inside a string.
@@ -5796,8 +5801,9 @@ def target_instance_for_call(lines, call_i, unit):
                   stmt)
     if m:
         return m.group(1)
-    m = re.search(r"(?:^|[\s({;])(?:try\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*"
-                  + re.escape(unit) + r"\s*\(", stmt)
+    m = re.search(r"(?:^|[\s({;])(?:try\s+)?([A-Za-z_][A-Za-z0-9_]*)"
+                  r"\s*\.\s*" + re.escape(unit)
+                  + r"\s*(?:\{[^{}]*\}\s*)?\(", stmt)
     if m:
         return m.group(1)
     return None

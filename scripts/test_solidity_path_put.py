@@ -65,6 +65,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                no_oracle_reason, observed_env,
                                rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
+                               target_instance_for_call, rewrite_call_args,
                                truncated_loops, unwindset_args)
 
 
@@ -9337,6 +9338,35 @@ def test_the_value_gate_statement_is_read_as_ONE_statement():
     return bad
 
 
+def test_high_level_value_call_is_parsed_and_rewritten():
+    """High-level calls may carry Solidity call options before the args."""
+    body = [
+        "    vm.deal(address(this), 10);",
+        "    vm.prank(address(uint160(0)));",
+        "    // [revert-tolerant] outcome not asserted",
+        "    try c0.buy{value: 10}(address(uint160(0)), 7) {} catch {}",
+        "    try c0.play{value: 10}() {} catch {}",
+    ]
+    bad = 0
+    call_i = find_unit_call(body, "buy")
+    bad += check(call_i == 3,
+                 f"high-level value call is found: {call_i}")
+    bad += check(target_instance_for_call(body, call_i, "buy") == "c0",
+                 "the target instance is read past `{value: ...}`")
+    rewritten, args = rewrite_call_args(
+        body[call_i], "buy", {0: "p_player", 1: "p_amount"})
+    bad += check(args == ["address(uint160(0))", "7"],
+                 f"the original arguments are parsed: {args}")
+    bad += check(
+        rewritten == "    try c0.buy{value: 10}(p_player, p_amount) {} catch {}",
+        f"only the argument list is rewritten: {rewritten}")
+    play_i = find_unit_call(body, "play")
+    _rewritten_play, play_args = rewrite_call_args(body[play_i], "play", {})
+    bad += check(play_i == 4 and play_args == [],
+                 f"no-arg value call is parsed too: {play_i}, {play_args}")
+    return bad
+
+
 def test_only_the_low_level_value_gate_assertion_counts_as_exit_kind():
     from solidity_path_put import (find_unit_call,  # noqa: E402
                                    low_level_value_gate_asserts_exit)
@@ -9911,6 +9941,7 @@ def main():
               test_a_width_one_env_coordinate_emits_at_the_certified_value,
               test_a_piece_label_distinguishes_two_boxes_of_one_path,
               test_the_value_gate_statement_is_read_as_ONE_statement,
+              test_high_level_value_call_is_parsed_and_rewritten,
               test_only_the_low_level_value_gate_assertion_counts_as_exit_kind,
               test_a_single_line_call_still_reports_its_own_statement,
               test_the_low_level_value_gate_emits_a_PUT,
