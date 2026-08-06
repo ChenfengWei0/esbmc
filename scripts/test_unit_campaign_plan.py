@@ -431,7 +431,7 @@ def test_campaign_retries_runner_ok_when_certification_is_weak():
     bad += check(argv_value(weak_argv, "--refine-rounds") == "1",
                  f"certification-stage retries reduce refine rounds: {weak_argv}")
     bad += check("retry_strategy" not in missing_quality
-                 and argv_value(missing_argv, "--refine-rounds") is None,
+                 and argv_value(missing_argv, "--refine-rounds") == "2",
                  f"missing-certification retries keep the default strategy: {missing_quality}")
     return bad
 
@@ -486,6 +486,119 @@ def test_campaign_names_partial_journal_only_as_weak_certification():
     bad += check(doc["summary"]["cert_weak"] == {
         "partial witness journal only": 1,
     }, f"partial-only reason is visible: {doc['summary']}")
+    return bad
+
+
+def test_campaign_prefers_level0_certification_for_refinement_timeouts():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("stress243__refine__f", benchmark="stress243"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("stress243__refine__f", "ok", benchmark="stress243", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "stress243",
+                    "unit": "f",
+                    "bucket": "KILLED",
+                    "witnessed": 3,
+                    "certified": {},
+                    "not_certified": {},
+                    "partial_witness_journal": {
+                        "path_count": 3,
+                        "witness_count": 24,
+                        "claims_decided": 67,
+                        "claims_total": 116,
+                    },
+                    "generalise_progress": {
+                        "stage": "outer-round-started",
+                        "round_kind": "linear-refine",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    next_job = doc["next_schedule"]["jobs"][0]
+    quality = next_job.get("certification_quality") or {}
+    bad = 0
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"refinement timeout remains retryable: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {
+        "refinement-stage no verdict": 1,
+    }, f"refinement timeout has a precise weak reason: {doc['summary']}")
+    bad += check(quality.get("retry_strategy") == "level0-certification-first"
+                 and quality.get("retry_refine_rounds") == 0,
+                 f"refinement timeout gets level0 certification-first metadata: {quality}")
+    bad += check(argv_value(next_job["certify_argv"], "--refine-rounds") == "0",
+                 f"refinement timeout retry skips refine rounds: {next_job['certify_argv']}")
+    return bad
+
+
+def test_campaign_restores_default_refine_rounds_after_strategy_attempt():
+    with tempfile.TemporaryDirectory() as td:
+        sched_doc = {
+            "schema": "veriput-unit-schedule/v1",
+            "summary": {
+                "jobs": 1,
+            },
+            "jobs": [
+                job("stress243__after_strategy__f", benchmark="stress243"),
+            ],
+        }
+        sched_doc["jobs"][0]["certify_argv"].extend(["--refine-rounds", "0"])
+        sched = write_json(Path(td) / "schedule.json", sched_doc)
+        j2 = write_journal(
+            Path(td) / "a2.jsonl", [
+                row("stress243__after_strategy__f",
+                    "ok",
+                    benchmark="stress243",
+                    campaign_attempt=2),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "stress243",
+                    "unit": "f",
+                    "bucket": "NOT-CERTIFIED",
+                    "witnessed": 4,
+                    "certified": {},
+                    "not_certified": {
+                        "12": "no fully bounded region was measured",
+                        "14": "no fully bounded region was measured",
+                        "26": "no fully bounded region was measured",
+                        "54": "no fully bounded region was measured",
+                    },
+                    "partial_witness_journal": {
+                        "path_count": 4,
+                        "witness_count": 32,
+                    },
+                    "generalise_progress": {
+                        "stage": "complete",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j2)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    next_job = doc["next_schedule"]["jobs"][0]
+    bad = 0
+    bad += check(doc["summary"]["pending_by_attempt"] == {"3": 1},
+                 f"failed strategy attempt advances to attempt 3: {doc['summary']}")
+    bad += check(argv_value(next_job["certify_argv"], "--refine-rounds") == "2",
+                 f"default retry restores recipe refine rounds: {next_job['certify_argv']}")
     return bad
 
 
@@ -698,6 +811,8 @@ TESTS = [
     test_campaign_uses_explicit_attempt_metadata_for_budget_state,
     test_campaign_retries_runner_ok_when_certification_is_weak,
     test_campaign_names_partial_journal_only_as_weak_certification,
+    test_campaign_prefers_level0_certification_for_refinement_timeouts,
+    test_campaign_restores_default_refine_rounds_after_strategy_attempt,
     test_campaign_treats_slice_excluded_paths_as_body_slice_ready,
     test_campaign_treats_method_unsupported_paths_as_non_retryable,
     test_campaign_does_not_retry_witness_preflight_refusals,

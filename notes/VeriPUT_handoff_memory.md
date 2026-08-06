@@ -10428,6 +10428,114 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 balanced6b benchmark sample and refine retry
+
+New stratified sample:
+
+- Schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-balanced6b.json`.
+- Result JSONL:
+  `/tmp/veriput_stratified_20260807_03/certify-results-balanced6b.jsonl`.
+- Runner journal:
+  `/tmp/veriput_stratified_20260807_03/unit-run-balanced6b.jsonl`.
+- Workdir:
+  `/tmp/veriput_stratified_20260807_03/certify-work-balanced6b_a1_t70_r60_m8`.
+- Policy:
+  attempt 1, `jobs=1`, 60s ESBMC budget, 70s driver timeout, 75s runner
+  timeout, 8GiB.
+- Dataset and Results contracts were not modified.
+
+Sample units:
+
+- bugfix124 `DepositLog.setApprovedLogger`.
+- bugfix124 `DepositLog.logCreated`.
+- peer182 `BasicProvenance.Complete`.
+- peer182 `EtherBank.withdraw`.
+- stress243 `ClaimTopicsRegistry.removeClaimTopic`.
+- stress243 `IdentityRegistryStorage.addIdentityToStorage`.
+
+Attempt-1 results:
+
+- Runner status: 6 / 6 `ok`.
+- Buckets: 5 `CERTIFIED`, 1 `KILLED`.
+- Certified:
+  - `DepositLog.setApprovedLogger`: 2 certified / 1 not / 3 witnessed,
+    14s.
+  - `DepositLog.logCreated`: 1 / 1 / 2, 2s.
+  - `BasicProvenance.Complete`: 2 / 1 / 3, 5s.
+  - `EtherBank.withdraw`: 2 / 1 / 3, 20s.
+  - `ClaimTopicsRegistry.removeClaimTopic`: 1 / 0 / 1, 67s.
+- Killed:
+  - `IdentityRegistryStorage.addIdentityToStorage`: 0 certified / 0 not /
+    3 witnessed, level-0 had decided all 3 in 3.1s, but the run timed out
+    immediately after entering `linear-refine`.
+
+Summary:
+
+- `certify-summary-balanced6b.json` reports:
+  - raw certified path rate `8 / 15 = 0.533`;
+  - slice-adjusted / retry-adjusted certified path rate `8 / 11 = 0.727`;
+  - 4 `slice-excluded-by-pins` paths;
+  - 3 no-verdict paths, all at
+    `outer-round-started:linear-refine`.
+- The overall gate is `ready` under the retry-adjusted rate, but the campaign
+  still correctly schedules the one KILLED unit for attempt 2.
+
+Code change:
+
+- `unit_campaign_plan.py` now distinguishes `refinement-stage no verdict`
+  from the generic `partial witness journal only` when witnessed paths exist
+  and their no-verdict gap is at an outer/refine progress stage.
+- Such attempt-2 retry jobs get:
+  - `certification_quality.retry_strategy =
+    level0-certification-first`;
+  - `certification_quality.retry_refine_rounds = 0`;
+  - `--refine-rounds 0`.
+- This is still only a scheduling strategy.  Regions count only if ESBMC later
+  certifies them.
+
+Attempt-2 validation:
+
+- Isolated schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-balanced6b-a2-refinefirst-run.json`.
+- Result JSONL:
+  `/tmp/veriput_stratified_20260807_03/certify-results-balanced6b-a2-refinefirst.jsonl`.
+- Runner journal:
+  `/tmp/veriput_stratified_20260807_03/unit-run-balanced6b-a2-refinefirst.jsonl`.
+- Workdir:
+  `/tmp/veriput_stratified_20260807_03/certify-work-balanced6b-a2_refinefirst_t130_r120_m8`.
+- Policy:
+  attempt 2, `jobs=1`, 120s ESBMC budget, 130s driver timeout, 135s runner
+  timeout, 8GiB, `--refine-rounds 0`.
+- Result:
+  `NOT-CERTIFIED`, 0 certified / 5 not / 5 witnessed, 101s.
+- Interpretation:
+  the strategy succeeded at converting the prior timeout into a verdict, but
+  level0-only produced no fully bounded region for the four body paths.  The
+  result is useful diagnostically but not a strong PUT.
+
+Follow-up planner fix:
+
+- After a strategy attempt fails, a later default retry must not inherit
+  `--refine-rounds 0` from the prior schedule.
+- `unit_campaign_plan.py` now restores recipe default `--refine-rounds 2` for
+  retry jobs that do not match a stage-specific strategy.
+- Replanning the attempt-2 result into:
+  `/tmp/veriput_stratified_20260807_03/unit-campaign-balanced6b-a2-refinefirst-defaultrestore.json`
+  yields one attempt-3 job with `--run-timeout 600`, `--memlimit-gib 10`, and
+  `--refine-rounds 2`.
+- Do not run this attempt-3 casually: it is the third and final budget level
+  for this benchmark unit.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+
 ## 2026-08-07 retry-adjusted quality and non-retryable failures
 
 Further diagnosis on the same attempt-2 sample:

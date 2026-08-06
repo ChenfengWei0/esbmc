@@ -44,6 +44,7 @@ DEFAULT_POLICY = (
 )
 CERTIFY_TIMEOUT_GRACE_S = 10.0
 RUNNER_TIMEOUT_GRACE_S = 5.0
+DEFAULT_RETRY_REFINE_ROUNDS = "2"
 
 
 class CampaignError(ValueError):
@@ -230,8 +231,12 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         reason = ""
         certification_gap = any(
             key.startswith("certification:") for key in no_verdict_progress)
+        refinement_gap = any(
+            key.startswith("outer-round") for key in no_verdict_progress)
         if no_verdict_paths and certification_gap:
             reason = "certification-stage no verdict"
+        elif no_verdict_paths and refinement_gap:
+            reason = "refinement-stage no verdict"
         elif not regions and partial_journal_paths:
             reason = "partial witness journal only"
         elif not regions:
@@ -358,24 +363,44 @@ def _apply_retry_strategy(item: dict) -> None:
     quality = item.get("certification_quality")
     if not isinstance(quality, dict):
         return
-    if quality.get("reason") != "certification-stage no verdict":
+    reason = quality.get("reason")
+    if reason == "certification-stage no verdict":
+        refine_rounds = "1"
+        strategy = "certification-first"
+        retry_reason = (
+            "prior witnessed paths reached certification without a final verdict; "
+            "spend the retry budget on certification before another refinement round")
+    elif reason == "refinement-stage no verdict":
+        refine_rounds = "0"
+        strategy = "level0-certification-first"
+        retry_reason = (
+            "prior witnessed paths timed out during refinement; certify the "
+            "coarse level-0 regions before spending retry budget on refinement")
+    else:
+        item["certify_argv"] = _with_argv_value(
+            [str(arg) for arg in item.get("certify_argv") or []],
+            "--refine-rounds",
+            DEFAULT_RETRY_REFINE_ROUNDS)
+        if "dry_run_argv" in item:
+            item["dry_run_argv"] = _with_argv_value(
+                [str(arg) for arg in item.get("dry_run_argv") or []],
+                "--refine-rounds",
+                DEFAULT_RETRY_REFINE_ROUNDS)
         return
 
     item["certify_argv"] = _with_argv_value(
         [str(arg) for arg in item.get("certify_argv") or []],
         "--refine-rounds",
-        "1")
+        refine_rounds)
     if "dry_run_argv" in item:
         item["dry_run_argv"] = _with_argv_value(
             [str(arg) for arg in item.get("dry_run_argv") or []],
             "--refine-rounds",
-            "1")
+            refine_rounds)
 
-    quality["retry_strategy"] = "certification-first"
-    quality["retry_refine_rounds"] = 1
-    quality["retry_reason"] = (
-        "prior witnessed paths reached certification without a final verdict; "
-        "spend the retry budget on certification before another refinement round")
+    quality["retry_strategy"] = strategy
+    quality["retry_refine_rounds"] = int(refine_rounds)
+    quality["retry_reason"] = retry_reason
 
 
 def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[dict]:
