@@ -4349,3 +4349,75 @@ Interpretation:
 - Do not run ESBMC before this is resolved; otherwise proof attempts would be
   spent without a verified unit denominator or changed-function prioritization
   map.
+
+### Readiness report
+
+Added `notes/coverage/scripts/veriput_readiness.py`.
+
+Input: a `veriput-unit-manifest/v1` JSON document. Output:
+`veriput-readiness/v1`.
+
+It is read-only: it never invokes solc, Forge, fuzzing, ESBMC, and should not
+be run with an `--out` path under `/home/samson/workspace/VeriPUT` while other
+experiments depend on that tree.
+
+The report groups:
+
+- status by benchmark (`missing-ast`, `error`, `ok`)
+- prepared error buckets, e.g. `prepared-status:compile-failed`
+- changed-function hint state (`pending_unit_hints`, `hinted_units`,
+  `missing_unit_hints`)
+- missing AST preheat readiness by solc key
+- `preheatable_missing_ast` versus `missing_solc_bin`
+- small sample rows for missing AST, prepared errors, pending hints, and
+  missing hints
+
+Real read-only readiness smoke:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 \
+python3 notes/coverage/scripts/target_manifest.py \
+  --benchmark peer182 --benchmark bugfix124 --benchmark stress243 | \
+PYTHONDONTWRITEBYTECODE=1 \
+python3 notes/coverage/scripts/subject_unit_manifest.py \
+  --target-manifest /dev/stdin | \
+PYTHONDONTWRITEBYTECODE=1 \
+python3 notes/coverage/scripts/veriput_readiness.py - --sample-limit 3
+```
+
+Key output:
+
+- status: `error=39`, `missing-ast=509`
+- by benchmark:
+  - `bugfix124`: `missing-ast=124`
+  - `peer182`: `missing-ast=182`
+  - `stress243`: `missing-ast=203`, `error=39`
+- prepared errors:
+  - `stress243`: `prepared-status:compile-failed=32`,
+    `prepared-status:flatten-failed=7`
+- hints:
+  - `bugfix124`: `pending_unit_hints=381`
+- preheat:
+  - `bugfix124`: `preheatable_missing_ast=124`
+  - `peer182`: `preheatable_missing_ast=182`
+  - `stress243`: `preheatable_missing_ast=51`, `missing_solc_bin=152`
+- missing AST solc buckets:
+  - `bugfix124`: `solc-0.8.29=117`,
+    `solc-0.8.29 --optimize --optimize-runs 200 --via-ir=6`,
+    `solc-0.8.29 --via-ir=1`
+  - `peer182`: `solc-0.8.29=182`
+  - `stress243`: `<missing-solc-bin>=152`, `solc-0.8.35=46`,
+    `solc-0.8.15=5`
+
+Implication for next work:
+
+1. Do not run ESBMC/PUT yet.
+2. Preheat AST first for the 306 straightforward rows
+   (`bugfix124=124`, `peer182=182`), in shards/journals, after confirming no
+   write conflict with the user's other experiment.
+3. For Stress, either recover/fill solc metadata for the 152 missing-solc-bin
+   rows, or build a read-only inference report from existing compile metadata
+   before attempting preheat.
+4. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
+   flatten-failed are not unit-denominator rows until fixed or explicitly
+   excluded by benchmark policy.
