@@ -803,6 +803,48 @@ def enumeration_salvage_path(cwd):
     return os.path.join(cwd, "enumeration-salvage.json")
 
 
+def generalise_progress_path(cwd):
+    return os.path.join(cwd, "generalise-progress.json")
+
+
+def progress_jsonable(value):
+    if isinstance(value, dict):
+        return {str(k): progress_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [progress_jsonable(v) for v in value]
+    if isinstance(value, set):
+        return [progress_jsonable(v) for v in sorted(value)]
+    return value
+
+
+def write_generalise_progress(cwd, stage, **fields):
+    """Persist the last expensive stage reached before a possible timeout."""
+    path = generalise_progress_path(cwd)
+    try:
+        with open(path, encoding="utf-8") as stream:
+            data = json.load(stream)
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    data.setdefault("schema", "path-generalise-progress/1")
+    history = data.setdefault("history", [])
+    event = {
+        "stage": stage,
+        "at_s": round(time.time(), 3),
+    }
+    for key, value in fields.items():
+        event[key] = progress_jsonable(value)
+    history.append(event)
+    if len(history) > 40:
+        del history[:-40]
+    data.update(event)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as stream:
+        json.dump(data, stream, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+
+
 def write_enumeration_salvage(cwd, salvaged):
     meta = dict(salvaged.get("veriput_salvage") or {})
     meta.update({
@@ -3511,6 +3553,17 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     path = os.path.join(cwd, "outer.json")
     with open(path, "w") as f:
         json.dump(spec, f)
+    n_probe = sum(len(c.get("values", [])) or (probes + 2) for c in spec_coords)
+    kind = ("geometric-bracket" if geometric else
+            ("linear-refine" if spans else "level-0"))
+    write_generalise_progress(
+        cwd, "outer-round-started",
+        round_kind=kind,
+        coordinate_count=len(spec_coords),
+        path_count=len(paths),
+        candidate_values_per_direction=n_probe,
+        timeout_s=timeout,
+    )
     # WALL CLOCK PER ROUND, printed. The bracket round's cost is a number the
     # evaluation needs and has never had: the only figures ever collected for it
     # came from runs that were ALSO hitting the type-wrap defect, so "did not
@@ -3523,7 +3576,6 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit,
               esbmc_args=esbmc_args)
     _wall = time.time() - _t0
-    n_probe = sum(len(c.get("values", [])) or (probes + 2) for c in spec_coords)
     # ---- THE ROUND'S NAME IS DERIVED FROM WHAT THE ROUND IS, NOT FROM A
     # ---- FIELD THAT HAPPENS TO CORRELATE WITH IT ----
     #
@@ -3553,8 +3605,6 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     # `geometric` and `spans` are the round's own inputs and cannot be true of
     # another round: level 0 passes neither, the bracket passes `geometric`, and
     # the refine round passes `spans`.
-    kind = ("geometric-bracket" if geometric else
-            ("linear-refine" if spans else "level-0"))
     print(f"[round] {kind}: {_wall:.1f}s wall, {len(spec_coords)} coordinate(s),"
           f" ~{n_probe} candidate value(s) per direction, {len(paths)} path(s)")
     print("[round] " + round_accounting(log))
@@ -3571,6 +3621,12 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
     # regions and report them downstream as "no fully bounded region was
     # measured", which reads as a property of the path.
     failure = round_failure_reason(log)
+    write_generalise_progress(
+        cwd, "outer-round-finished",
+        round_kind=kind,
+        wall_s=round(_wall, 1),
+        failure=failure,
+    )
     if failure:
         meta_path = save_failed_round(cwd, kind, spec, log, failure, _wall)
         print(f"[outer-box] ROUND MEASURED NOTHING — {failure}")
@@ -4919,11 +4975,29 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     stale = os.path.join(cwd, "cov-report.json")
     if os.path.exists(stale):
         os.remove(stale)
+    write_generalise_progress(
+        cwd, "certify-query-started",
+        enc=enc,
+        depth=depth,
+        box=spec["box"],
+        timeout_s=timeout,
+        want_property=want_property,
+    )
+    _t0 = time.time()
     log = run(esbmc, sol, contract,
               ["--path-cov-certify", path, "--cov-report-json"],
               max_tx, timeout, cwd, ast=ast, focus=focus, memlimit=memlimit,
               esbmc_args=esbmc_args, result_only=not want_property)
+    _wall = time.time() - _t0
     v = verdict(log)
+    write_generalise_progress(
+        cwd, "certify-query-finished",
+        enc=enc,
+        depth=depth,
+        verdict=v,
+        wall_s=round(_wall, 1),
+        failure=round_failure_reason(log) if v == "UNKNOWN" else None,
+    )
     why = "UNSAFE" if "RESULT: UNSAFE" in log else None
     # REFUSED IS NOT UNKNOWN. A query the tool declined to attempt because one
     # coordinate cannot be expressed is a fact about the SPEC, and it is fixable
@@ -6069,6 +6143,14 @@ def main():
     # after the first query has already overwritten the previous run's report.
     scope_label, focus = resolve_scope(args.scope, args.focus, args.unit)
     stamp_workdir(cwd, run_config(args, scope_label))
+    write_generalise_progress(
+        cwd, "started",
+        contract=args.contract,
+        unit=args.unit,
+        scope=scope_label,
+        max_tx=args.max_tx,
+        timeout_s=args.timeout,
+    )
     print(f"[workdir] {cwd}")
     print(f"[scope] {scope_label}"
           + (f" — dispatcher restricted to {focus}" if focus else
@@ -6113,6 +6195,14 @@ def main():
         scope_label=scope_label)
     args.path_function = resolved_path_function
     all_paths = list(paths)
+    write_generalise_progress(
+        cwd, "enumerated",
+        witnessed=len(paths),
+        refused=len(refused or []),
+        caveats=len(caveats or []),
+        path_function=resolved_path_function,
+        salvage=read_enumeration_salvage(cwd),
+    )
     if not paths:
         # ⛔ THE OLD TEXT HERE ASSERTED A RESULT AND WAS WRONG ON REAL INPUT.
         # It said "That is a result, not an error ... (The report was checked:
@@ -6129,6 +6219,11 @@ def main():
                   "domain to keep, so there is nothing to grow a region "
                   "around. ⛔ Still not a reachability statement: it is bounded "
                   "by this run's --max-tx, --unwind and scope.")
+        write_generalise_progress(
+            cwd, "no-witness",
+            fatal_empty_enumeration=fatal,
+            reason=why,
+        )
         return 1
     arith_conditions_seen = enumeration_has_arith_conditions(cwd)
     if arith_conditions_seen:
@@ -6565,6 +6660,14 @@ def main():
                 "paths were witnessed and their region is a point, so each "
                 "falls back to its concrete counterexample test. Widening the "
                 "ladder or the shrink budget cannot change it")
+        write_generalise_progress(
+            cwd, "no-generalizable-coordinate",
+            witnessed=len(paths),
+            refused=list(refused),
+            unsettable=sorted(unsettable),
+            pins={n: str(v) for n, v in sorted(pins.items())},
+            reason="; ".join(why),
+        )
         return 1
     # ---- `FREE:` IS A MARKER, NOT DECORATION ----
     #
@@ -6581,6 +6684,13 @@ def main():
     # defect pointing the other way.
     print(f"[coords] FREE: {', '.join(coords)}"
           + (f"   [pinned: {pins}]" if pins else ""))
+    write_generalise_progress(
+        cwd, "coordinates-selected",
+        coords=list(coords),
+        coord_count=len(coords),
+        pins={n: str(v) for n, v in sorted(pins.items())},
+        nonquery_pins=sorted(nonquery_pins),
+    )
     declaration_id = path_function_declaration_id(args.path_function) \
         if args.path_function else None
     coord_types = dict(unit_params(args.ast, args.contract, args.unit,
@@ -8357,6 +8467,13 @@ def main():
     result_path = os.path.join(cwd, "generalise-result.json")
     with open(result_path, "w") as f:
         json.dump(out, f, indent=2, sort_keys=True)
+    write_generalise_progress(
+        cwd, "complete",
+        certified=len(out["certified"]),
+        not_certified=len(out["not_certified"]),
+        witnessed=len(out["enumerated"]),
+        result=os.path.basename(result_path),
+    )
     print(f"\n[result] machine-readable result written to {result_path}: "
           f"{len(out['certified'])} certified region(s), "
           f"{len(out['not_certified'])} not certified, over "

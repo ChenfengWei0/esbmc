@@ -650,6 +650,20 @@ def result_enumeration_salvage(workdir, since_mtime=None):
     return salvage if isinstance(salvage, dict) and salvage else None
 
 
+def result_generalise_progress(workdir, since_mtime=None):
+    path = os.path.join(workdir, "generalise-progress.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return None
+        with open(path) as stream:
+            data = json.load(stream)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
 def result_partial_witness_journal(workdir, since_mtime=None):
     """Summarise the refutation-only witness journal left by a partial run.
 
@@ -1928,6 +1942,8 @@ def main():
                             result_not_certified_details(uwd, t1),
                         "enumeration_salvage":
                             result_enumeration_salvage(uwd, t1),
+                        "generalise_progress":
+                            result_generalise_progress(uwd, t1),
                         "partial_witness_journal":
                             result_partial_witness_journal(uwd, t1),
                         "bucket": bucket(rec, rc, out),

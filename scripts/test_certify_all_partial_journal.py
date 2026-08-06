@@ -108,6 +108,22 @@ def main():
                      f"sidecar salvage metadata is preserved after timeout: "
                      f"{sidecar_salvage}")
 
+        progress = workdir / "generalise-progress.json"
+        progress.write_text(json.dumps({
+            "schema": "path-generalise-progress/1",
+            "stage": "certify-query-started",
+            "enc": 31,
+            "history": [{"stage": "coordinates-selected"}],
+        }))
+        progress_row = certify_all.result_generalise_progress(str(workdir),
+                                                              since)
+        bad += check(progress_row["stage"] == "certify-query-started"
+                     and progress_row["enc"] == 31,
+                     f"generalise progress sidecar is preserved: {progress_row}")
+        bad += check(certify_all.result_generalise_progress(str(workdir),
+                                                            stale_since) is None,
+                     "stale generalise progress sidecar is ignored")
+
         parsed = certify_all.parse_driver(
             "[coords] STATE PINNED (all 2 paths' counterexamples agree): "
             "state._owner==1\n"

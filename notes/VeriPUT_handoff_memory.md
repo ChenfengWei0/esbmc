@@ -10174,3 +10174,48 @@ Recommended next step:
 - Before a broad run, improve timeout accounting / partial status emission for
   the post-enumeration stages.  Otherwise the full run will spend many attempts
   rediscovering already-known witnessed paths and still label them `KILLED`.
+
+## 2026-08-07 stage progress sidecar
+
+Change retained after the stress attempt-2 diagnosis:
+
+- `solidity_path_generalise.py` now writes
+  `generalise-progress.json` in the unit workdir.
+- The file is deliberately observational only.  It does not certify anything,
+  does not promote a `KILLED` row, and does not change any ESBMC argument.
+- It is written before every expensive ESBMC call that can be killed by the
+  outer wrapper:
+  - `outer-round-started` with `round_kind` of `level-0`,
+    `geometric-bracket`, or `linear-refine`;
+  - `certify-query-started` with the path id and box sent to certification.
+- It is also written at `started`, `enumerated`, `coordinates-selected`,
+  `no-witness`, `no-generalizable-coordinate`, and `complete`.
+- The writer is atomic (`.tmp` then `os.replace`) and keeps only the last 40
+  history events so result rows do not balloon during long shrink loops.
+- `certify_all.py` now copies this sidecar into each JSONL row as
+  `generalise_progress`, using the same mtime guard as the existing salvage
+  readers.
+
+Why this matters:
+
+- The two sampled 120s/8GiB stress rows died after useful work had already been
+  done.  Before this sidecar, the machine-readable row could say
+  `enumeration_salvage` existed but could not reliably say whether the live
+  budget was consumed in refine or certification.
+- The next stratified benchmark run should therefore produce KILLED rows that
+  identify their last stage, e.g. `outer-round-started` with
+  `round_kind=linear-refine` or `certify-query-started`.
+- This gives the scheduler enough evidence to decide whether a unit deserves a
+  longer certification attempt, a cheaper fuzz/refutation pass, or a coordinate
+  strategy change.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_solidity_path_generalise.py scripts/test_certify_all_partial_journal.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_partial_journal.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_solidity_path_generalise.py scripts/test_certify_all_partial_journal.py`
+  passed.

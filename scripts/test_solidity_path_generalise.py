@@ -89,6 +89,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       partial_journal_report,
                                       write_enumeration_salvage,
                                       read_enumeration_salvage,
+                                      write_generalise_progress,
+                                      generalise_progress_path,
                                       payload_extras,
                                       extcall_inseparable_failures,
                                       file_identity,
@@ -2527,8 +2529,27 @@ check("enumeration salvage sidecar records path count",
       _salvage_meta["path_count"], 1)
 check("enumeration salvage sidecar records witness count",
       read_enumeration_salvage(_journal_dir)["witness_count"], 2)
+write_generalise_progress(_journal_dir, "outer-round-started",
+                          round_kind="linear-refine",
+                          coords={"z", "a"},
+                          regions={31: {"x": (0, 7)}})
+write_generalise_progress(_journal_dir, "certify-query-started",
+                          enc=31,
+                          box=[{"name": "x", "lo": "0", "hi": "7"}])
+with open(generalise_progress_path(_journal_dir)) as f:
+    _progress = json.load(f)
+check("generalise progress records latest stage",
+      _progress["stage"], "certify-query-started")
+check("generalise progress keeps recent history",
+      [e["stage"] for e in _progress["history"]],
+      ["outer-round-started", "certify-query-started"])
+check("generalise progress serializes sets deterministically",
+      _progress["history"][0]["coords"], ["a", "z"])
+check("generalise progress serializes integer dict keys",
+      _progress["history"][0]["regions"]["31"]["x"], [0, 7])
 os.unlink(os.path.join(_journal_dir, "cov-ce-journal.json"))
 os.unlink(os.path.join(_journal_dir, "enumeration-salvage.json"))
+os.unlink(generalise_progress_path(_journal_dir))
 os.rmdir(_journal_dir)
 
 
