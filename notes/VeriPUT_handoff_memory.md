@@ -10502,6 +10502,67 @@ Current interpretation:
     level0-first/zero-refine the first retry for witnessed timeout cases instead
     of waiting for attempt 2.
 
+## 2026-08-07 bounded-holds no-witness retry strategy
+
+Code change:
+
+- `notes/coverage/scripts/unit_campaign_plan.py` now separates
+  `bounded-holds no witness` from the generic `no certified regions` bucket
+  when a certification row has `generalise_progress.stage == "no-witness"` and
+  the reason text names `bounded-holds`.
+- Such jobs remain retryable, but their retry schedule now gets
+  `retry_strategy=deepen-witness-search` and `--max-tx 2`.
+- The strategy deliberately does NOT set `--scope whole`.
+- Existing retry policies are unchanged:
+  - `certification-stage no verdict` -> `--refine-rounds 1`;
+  - `refinement-stage no verdict` -> `--refine-rounds 0`;
+  - ordinary weak/missing certification -> default `--refine-rounds 2`.
+
+Why not `--scope whole`:
+
+- I tested `AIRBets.approve` attempt 2 once with the initially tempting
+  `--scope whole --max-tx 2` strategy:
+  - schedule:
+    `/tmp/veriput_stratified_20260807_03/next-unit-schedule-airbets-approve-a2-nowitness.json`;
+  - results:
+    `/tmp/veriput_stratified_20260807_03/certify-results-airbets-approve-a2-nowitness.jsonl`;
+  - journal:
+    `/tmp/veriput_stratified_20260807_03/unit-run-airbets-approve-a2-nowitness.jsonl`;
+  - workdir:
+    `/tmp/veriput_stratified_20260807_03/certify-work-airbets-approve-a2_nowitness_t130_r120_m8`.
+- It exited quickly as `NO-WITNESS-UNKNOWN`, not because of solver budget, but
+  because whole-scope path coverage pulled unrelated heavy units into the probe
+  universe:
+  `transferFrom` needed 20026 probe claims and exceeded
+  `--path-cov-max-goals 10000`.
+- That makes whole-scope a bad default retry for no-witness rows.  It may still
+  be a manual diagnostic arm for selected units, but it should not be the
+  campaign planner's automatic second attempt.
+
+Current planned retry for the earlier 3-job smoke sample:
+
+- Replanned with:
+  `/tmp/veriput_stratified_20260807_03/unit-campaign-readwrite-sample-a2-deepen-nowitness.json`.
+- Next schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-readwrite-sample-a2-deepen-nowitness.json`.
+- `AIRBets.approve`:
+  `reason=bounded-holds no witness`,
+  `retry_strategy=deepen-witness-search`,
+  `--max-tx 2`, no explicit `--scope`, `--refine-rounds 2`.
+- `IdentityRegistryStorage.modifyStoredInvestorCountry`:
+  `reason=refinement-stage no verdict`,
+  `retry_strategy=level0-certification-first`,
+  `--refine-rounds 0`.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+
 ## 2026-08-07: Region Slot Coordinates Now Use Read-Only Source Accesses
 
 Problem found on the balanced6b `IdentityRegistryStorage.addIdentityToStorage`

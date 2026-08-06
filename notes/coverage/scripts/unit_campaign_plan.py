@@ -45,6 +45,7 @@ DEFAULT_POLICY = (
 CERTIFY_TIMEOUT_GRACE_S = 10.0
 RUNNER_TIMEOUT_GRACE_S = 5.0
 DEFAULT_RETRY_REFINE_ROUNDS = "2"
+BOUNDED_HOLDS_NO_WITNESS_REASON = "bounded-holds no witness"
 
 
 class CampaignError(ValueError):
@@ -144,6 +145,16 @@ def _is_method_unsupported_reason(reason: str) -> bool:
             or "external-call" in lowered)
 
 
+def _is_bounded_holds_no_witness(row: dict) -> bool:
+    progress = row.get("generalise_progress") or {}
+    if not isinstance(progress, dict):
+        return False
+    if progress.get("stage") != "no-witness":
+        return False
+    text = str(progress.get("reason") or "")
+    return "bounded-holds" in text
+
+
 def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> tuple[dict, int]:
     latest = {}
     bad_lines = 0
@@ -178,10 +189,13 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         buckets = Counter()
         no_coordinate = False
         preflight_refused = False
+        bounded_holds_no_witness = False
         for row in rows:
             buckets[row.get("bucket") or "<missing-bucket>"] += 1
             progress_bucket = _progress_bucket(row)
             progress_buckets[progress_bucket] += 1
+            if _is_bounded_holds_no_witness(row):
+                bounded_holds_no_witness = True
             if row.get("bucket") == "NO-COORDINATE" or row.get("no_coordinate_reason"):
                 no_coordinate = True
             empty_reason = str(row.get("empty_witness_reason") or "")
@@ -239,6 +253,8 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             reason = "refinement-stage no verdict"
         elif not regions and partial_journal_paths:
             reason = "partial witness journal only"
+        elif not regions and bounded_holds_no_witness:
+            reason = BOUNDED_HOLDS_NO_WITNESS_REASON
         elif not regions:
             reason = "no certified regions"
         elif rate < min_certified_path_rate:
@@ -376,6 +392,33 @@ def _apply_retry_strategy(item: dict) -> None:
         retry_reason = (
             "prior witnessed paths timed out during refinement; certify the "
             "coarse level-0 regions before spending retry budget on refinement")
+    elif reason == BOUNDED_HOLDS_NO_WITNESS_REASON:
+        item["certify_argv"] = _with_argv_value(
+            [str(arg) for arg in item.get("certify_argv") or []],
+            "--max-tx",
+            "2")
+        item["certify_argv"] = _with_argv_value(
+            item["certify_argv"],
+            "--refine-rounds",
+            DEFAULT_RETRY_REFINE_ROUNDS)
+        if "dry_run_argv" in item:
+            item["dry_run_argv"] = _with_argv_value(
+                [str(arg) for arg in item.get("dry_run_argv") or []],
+                "--max-tx",
+                "2")
+            item["dry_run_argv"] = _with_argv_value(
+                item["dry_run_argv"],
+                "--refine-rounds",
+                DEFAULT_RETRY_REFINE_ROUNDS)
+        quality["retry_strategy"] = "deepen-witness-search"
+        quality["retry_max_tx"] = 2
+        quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
+        quality["retry_reason"] = (
+            "the previous focused single-transaction enumeration decided every "
+            "claim as bounded-holds and produced no path witness; keep the "
+            "same dispatcher alphabet but allow one additional transaction "
+            "before spending more certification budget")
+        return
     else:
         item["certify_argv"] = _with_argv_value(
             [str(arg) for arg in item.get("certify_argv") or []],

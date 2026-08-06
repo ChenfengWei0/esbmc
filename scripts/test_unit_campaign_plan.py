@@ -546,6 +546,72 @@ def test_campaign_prefers_level0_certification_for_refinement_timeouts():
     return bad
 
 
+def test_campaign_deepens_tx_for_bounded_holds_no_witness():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__nowitness__approve", benchmark="peer182",
+                        unit="approve"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__nowitness__approve",
+                    "ok",
+                    benchmark="peer182",
+                    campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "peer182",
+                    "unit": "approve",
+                    "bucket": "NO-PATH",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "empty_witness_verdict": "DECIDED",
+                    "generalise_progress": {
+                        "stage":
+                        "no-witness",
+                        "reason":
+                        "4 claim(s) for this unit, none witnessed: "
+                        "4x bounded-holds -- no counterexample exists WITHIN "
+                        "THE BOUND this run used. A deeper --max-tx or "
+                        "--unwind may witness it",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    next_job = doc["next_schedule"]["jobs"][0]
+    quality = next_job.get("certification_quality") or {}
+    argv = next_job["certify_argv"]
+    bad = 0
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"bounded-holds no-witness remains retryable: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {
+        "bounded-holds no witness": 1,
+    }, f"bounded-holds no-witness has a precise weak reason: {doc['summary']}")
+    bad += check(quality.get("retry_strategy") == "deepen-witness-search"
+                 and quality.get("retry_max_tx") == 2
+                 and "retry_scope" not in quality,
+                 f"bounded-holds no-witness deepens witness search: {quality}")
+    bad += check(argv_value(argv, "--scope") is None
+                 and argv_value(argv, "--max-tx") == "2",
+                 f"bounded-holds retry changes max-tx only: {argv}")
+    bad += check(argv_value(argv, "--refine-rounds") == "2",
+                 f"bounded-holds retry keeps normal refinement budget: {argv}")
+    return bad
+
+
 def test_campaign_restores_default_refine_rounds_after_strategy_attempt():
     with tempfile.TemporaryDirectory() as td:
         sched_doc = {
@@ -812,6 +878,7 @@ TESTS = [
     test_campaign_retries_runner_ok_when_certification_is_weak,
     test_campaign_names_partial_journal_only_as_weak_certification,
     test_campaign_prefers_level0_certification_for_refinement_timeouts,
+    test_campaign_deepens_tx_for_bounded_holds_no_witness,
     test_campaign_restores_default_refine_rounds_after_strategy_attempt,
     test_campaign_treats_slice_excluded_paths_as_body_slice_ready,
     test_campaign_treats_method_unsupported_paths_as_non_retryable,
