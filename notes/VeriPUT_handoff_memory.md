@@ -8368,3 +8368,39 @@ after compaction:
 - `2026-08-06 block.coinbase Stage-2 address domain`: stage-2 now treats
   `block.coinbase` as a 160-bit address coordinate rather than defaulting to a
   256-bit numeric search domain.
+
+## 2026-08-06 nonzero literal return equality rendering
+
+Scope:
+
+- This is an external VeriPUT PUT-emitter oracle-strength fix.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Finding:
+
+- Post-state rungs already rendered direct decimal equality such as
+  `post == 7`.
+- Return rungs special-cased only `return == 0`. A certified ladder row
+  `return == 7` was dropped unless the optional structured-R2 term table also
+  contained a literal entry for `7`.
+- That weakens getter and pure/view PUTs: the solver has proved a concrete
+  nonzero return equality over the region, but the generated test could lose
+  the return oracle.
+
+Code change:
+
+- `return_rung_assertions()` now renders decimal `return == N` directly for
+  non-bool scalar/address/fixed-bytes return types, preserving the existing
+  cast path for each declared return kind.
+- Added a regression where `return == 7` produces an `assertEq` and no
+  `oracle_skipped` entry without relying on `r2_terms`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 212/212 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check` passed.

@@ -1315,6 +1315,29 @@ def test_a_return_only_oracle_still_reaches_the_test():
     return bad
 
 
+def test_a_nonzero_literal_return_equality_is_asserted():
+    """A plain ladder row `return == 7` needs no structured term table.
+
+    State rungs already accepted decimal equality directly; return rungs only
+    special-cased zero and otherwise required an R2 term entry. That dropped a
+    common getter/pure-function oracle even though the solver had already
+    proved the literal equality over the region.
+    """
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return", "return == 7", "HOLDS")],
+        [("", "uint256")])
+    bad = 0
+    bad += check("assertEq(uint256(_put_ret), 7," in text,
+                 "the nonzero literal equality is asserted")
+    bad += check(stats["return_asserts"] == 1,
+                 f"one return assertion: {stats['return_asserts']}")
+    bad += check(not stats["oracle_skipped"],
+                 f"the literal return row is not skipped: "
+                 f"{stats['oracle_skipped']}")
+    return bad
+
+
 def test_a_refuted_return_rung_is_never_asserted():
     """REFUTED is the ladder working, not an oracle."""
     text, stats, _n = _ret_put(
@@ -9617,6 +9640,7 @@ def main():
               test_an_unbindable_return_type_is_reported,
               test_bind_return_refuses_the_exit_kind_shapes,
               test_a_return_only_oracle_still_reaches_the_test,
+              test_a_nonzero_literal_return_equality_is_asserted,
               test_a_refuted_return_rung_is_never_asserted,
               test_an_ESTABLISHED_SCALAR_PIN_is_READ_BACK_and_checked,
               test_an_ESTABLISHED_MAPPING_PIN_is_READ_BACK_at_the_HASHED_slot,
