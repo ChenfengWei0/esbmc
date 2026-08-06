@@ -224,6 +224,53 @@ def test_unit_manifest_cli_lists_units_without_esbmc():
     return bad
 
 
+def test_unit_manifest_cli_shard_and_resume():
+    with tempfile.TemporaryDirectory() as td:
+        for sid in ("s0", "s1", "s2", "s3"):
+            d = make_subject(td, sid)
+            (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
+        journal = Path(td) / "manifest.jsonl"
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", td,
+            "--shard", "1/2",
+            "--journal", str(journal),
+        ], capture_output=True, text=True)
+        if cp.returncode:
+            print(cp.stdout)
+            print(cp.stderr)
+            return 1
+        first = json.loads(cp.stdout)
+        cp2 = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", td,
+            "--shard", "1/2",
+            "--resume-journal", str(journal),
+        ], capture_output=True, text=True)
+    if cp2.returncode:
+        print(cp2.stdout)
+        print(cp2.stderr)
+        return 1
+    second = json.loads(cp2.stdout)
+    bad = 0
+    got_ids = [row["subject"]["subject_id"] for row in first["subjects"]]
+    bad += check(got_ids == ["s1", "s3"],
+                 f"shard 1/2 selects sorted odd positions: {got_ids}")
+    bad += check(first["summary"]["ok"] == 2,
+                 f"first shard processed two ok subjects: {first['summary']}")
+    bad += check(second["summary"]["subjects"] == 0,
+                 f"resume emits no already-ok rows: {second['summary']}")
+    bad += check(second["summary"]["skipped_resume"] == 2,
+                 f"resume counts skipped ok rows: {second['summary']}")
+    return bad
+
+
 def main():
     tests = [
         test_resolve_subject_from_root_and_unit,
@@ -233,6 +280,7 @@ def main():
         test_ast_unit_enumeration_is_target_contract_scoped,
         test_unit_manifest_records_missing_ast_without_solc,
         test_unit_manifest_cli_lists_units_without_esbmc,
+        test_unit_manifest_cli_shard_and_resume,
     ]
     bad = 0
     for test in tests:

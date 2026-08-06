@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -19,10 +21,30 @@ sys.path.insert(0, str(HERE))
 from veriput_subjects import (  # noqa: E402
     KNOWN_SUBJECT_ROOTS,
     SubjectError,
+    manifest_for_subject,
     resolve_subject,
     subject_dirs,
-    unit_manifest,
 )
+
+
+def _parse_shard(text: str):
+    if not text:
+        return None
+    try:
+        left, right = text.split("/", 1)
+        idx, total = int(left), int(right)
+    except (ValueError, AttributeError):
+        raise SubjectError("--shard must be in i/n form")
+    if total <= 0 or idx < 0 or idx >= total:
+        raise SubjectError("--shard needs 0 <= i < n")
+    return idx, total
+
+
+def _apply_shard(items, shard):
+    if shard is None:
+        return items
+    idx, total = shard
+    return [item for pos, item in enumerate(items) if pos % total == idx]
 
 
 def _subjects(args):
@@ -30,7 +52,7 @@ def _subjects(args):
         if not args.subject_root and not args.benchmark:
             raise SubjectError(
                 "--subject-id without --subject-root needs --benchmark")
-        return [
+        subjects = [
             resolve_subject(
                 sid,
                 root=args.subject_root or None,
@@ -39,7 +61,9 @@ def _subjects(args):
             )
             for sid in args.subject_id
         ]
+        return _apply_shard(subjects, _parse_shard(args.shard))
     dirs = subject_dirs(args.benchmark, args.subject_root or None)
+    dirs = _apply_shard(dirs, _parse_shard(args.shard))
     if args.limit:
         dirs = dirs[:args.limit]
     return [
@@ -50,6 +74,77 @@ def _subjects(args):
         )
         for path in dirs
     ]
+
+
+def _load_resume_keys(path):
+    if not path:
+        return set()
+    p = Path(path)
+    if not p.exists():
+        return set()
+    done = set()
+    for line in p.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("status") != "ok":
+            continue
+        subj = row.get("subject") or {}
+        key = subj.get("subject_id")
+        if key:
+            done.add(key)
+    return done
+
+
+def _write_journal(path, row):
+    if not path:
+        return
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a") as stream:
+        stream.write(json.dumps(row, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def build_manifest(args):
+    subjects = _subjects(args)
+    skipped = _load_resume_keys(args.resume_journal)
+    rows = []
+    skipped_resume = 0
+    for subject in subjects:
+        if subject.subject_id in skipped:
+            skipped_resume += 1
+            continue
+        row = manifest_for_subject(subject, generate_ast=args.generate_ast)
+        rows.append(row)
+        _write_journal(args.journal, row)
+    summary = {
+        "subjects": len(rows),
+        "ok": sum(1 for row in rows if row["status"] == "ok"),
+        "missing_ast": sum(1 for row in rows
+                           if row["status"] == "missing-ast"),
+        "error": sum(1 for row in rows if row["status"] == "error"),
+        "units": sum(len((row.get("units") or {}).get("units") or [])
+                     for row in rows),
+        "skipped": sum(len((row.get("units") or {}).get("skipped") or [])
+                       for row in rows),
+        "skipped_resume": skipped_resume,
+    }
+    return {
+        "schema": "veriput-unit-manifest/v1",
+        "benchmark": args.benchmark,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generate_ast": bool(args.generate_ast),
+        "shard": args.shard or None,
+        "journal": args.journal or None,
+        "resume_journal": args.resume_journal or None,
+        "summary": summary,
+        "subjects": rows,
+    }
 
 
 def main():
@@ -65,17 +160,24 @@ def main():
     ap.add_argument("--limit", type=int, default=0,
                     help="only the first N subjects from the sorted root. "
                          "Ignored with --subject-id")
+    ap.add_argument("--shard", default="",
+                    help="select subject positions i/n after sorting. Example: "
+                         "--shard 0/4. Works with --limit and --subject-id")
     ap.add_argument("--generate-ast", action="store_true",
                     help="invoke each subject's solc_bin to create a missing "
                          "compact AST before enumeration. Still never starts "
                          "ESBMC")
+    ap.add_argument("--journal", default="",
+                    help="append one JSONL row per processed subject and fsync "
+                         "it. Useful for long AST preheat runs")
+    ap.add_argument("--resume-journal", default="",
+                    help="skip subject ids that already have status=ok in this "
+                         "journal. Non-ok rows are retried")
     ap.add_argument("--out", default="",
                     help="write JSON manifest here. Without it, print to stdout")
     args = ap.parse_args()
     try:
-        subjects = _subjects(args)
-        doc = unit_manifest(
-            args.benchmark, subjects, generate_ast=args.generate_ast)
+        doc = build_manifest(args)
     except SubjectError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 1
@@ -89,7 +191,8 @@ def main():
         print(
             f"subjects={s['subjects']} ok={s['ok']} "
             f"missing_ast={s['missing_ast']} error={s['error']} "
-            f"units={s['units']} skipped={s['skipped']}")
+            f"units={s['units']} skipped={s['skipped']} "
+            f"skipped_resume={s['skipped_resume']}")
     else:
         sys.stdout.write(text)
     return 0

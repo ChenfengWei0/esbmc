@@ -4128,3 +4128,42 @@ Next practical acceleration step:
   shards, recording the manifest after each shard. This is a compile-only
   cost, not a proof run, and unlocks fast deterministic unit denominator
   construction before any ESBMC POC/benchmark attempt.
+
+### Resumable AST preheat support
+
+`subject_unit_manifest.py` now has the controls needed for safe AST preheating:
+
+- `--shard i/n` selects sorted subject positions by modulo after subject
+  discovery. This lets a large population be split without changing the
+  manifest schema or subject order.
+- `--journal <path>` appends one JSONL row per processed subject and `fsync`s
+  each row. If a long solc preheat is interrupted, completed subject results
+  are already durable.
+- `--resume-journal <path>` skips subject ids whose latest successful journal
+  row has `status == "ok"`; non-ok rows are retried.
+- The manifest summary now includes `skipped_resume` so a resumed shard cannot
+  look like it simply had fewer subjects.
+- `generated_at` is present on the CLI-built manifest, matching the library
+  manifest schema.
+
+Validation without ESBMC:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/subject_unit_manifest.py \
+  notes/coverage/scripts/veriput_subjects.py \
+  scripts/test_veriput_subjects.py \
+  notes/coverage/scripts/certify_all.py \
+  notes/coverage/scripts/put_all.py
+python3 scripts/test_veriput_subjects.py
+python3 scripts/test_poc_stage_drivers.py
+python3 scripts/test_put_all_accounting.py
+python3 notes/coverage/scripts/subject_unit_manifest.py \
+  --benchmark stress243 --limit 3 --shard 0/2
+```
+
+The `--limit 3 --shard 0/2` smoke run selected three sorted Stress subjects
+from the shard and reported all as `missing-ast`, as expected. The added tests
+cover shard selection and journal resume on temporary prepared subjects with
+prebuilt compact ASTs. No solc invocation was needed for those tests, and no
+ESBMC/Forge/POC run was started.
