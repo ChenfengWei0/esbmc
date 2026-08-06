@@ -112,6 +112,21 @@ def make_peer(root):
         "source_080": True,
         "has_assert": False,
     }) + "\n")
+    old = root / "Results" / "Peer182" / "subjects" / "peer_tool__OldThing"
+    old.mkdir(parents=True)
+    (old / "flat.sol").write_text("contract OldThing {}\n")
+    (old / "meta.json").write_text(json.dumps({
+        "subject_id": "peer_tool__OldThing",
+        "status": "ok",
+        "contract": "OldThing",
+        "peer_tool": "Tool",
+        "peer_arm": "tool",
+        "source_file": "Tool/contracts/OldThing.sol",
+        "target_rule": "file-stem",
+        "target_alternatives": ["OldThing"],
+        "source_080": False,
+        "has_assert": False,
+    }) + "\n")
 
 
 def test_manifest_from_three_target_sources():
@@ -129,6 +144,8 @@ def test_manifest_from_three_target_sources():
                  f"schema is stable: {doc['schema']}")
     bad += check(doc["summary"]["ok"] == 4,
                  f"all fixture targets are ok: {doc['summary']}")
+    bad += check(doc["summary"]["skipped"] == 1,
+                 f"non-080 peer subject is skipped: {doc['summary']}")
     rows = {(r["benchmark"], r["subject_id"]): r for r in doc["targets"]}
     bad += check(rows[("bugfix124", "case_a")]["contract"] == "C",
                  "bugfix target contract is preserved")

@@ -4243,6 +4243,11 @@ from real VeriPUT benchmark metadata to a frozen target list:
 - `peer182` reads the prepared `Results/Peer182/subjects/*/meta.json` target
   metadata, because `prepare_peer.py` already records the auditable target rule
   and alternatives needed to avoid CC-SolBMC multi-contract-file ambiguity.
+- Peer has one non-upgraded/unavailable paper contract in the raw Dataset
+  history. Ignore it for VeriPUT runs: the benchmark denominator is the
+  `contracts_080` prepared population. `target_manifest.py` now skips any peer
+  prepared row whose metadata is not `source_080 == true` or whose `source_file`
+  is not under `contracts_080/`.
 - `--benchmark stress203` is accepted only as an input alias and normalizes to
   the current prepared key `stress243`. Do not report `stress203` as a proven
   disk denominator yet: current files yield Stress denominators of 242

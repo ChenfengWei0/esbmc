@@ -167,6 +167,26 @@ def peer_targets(root: Path) -> list[dict]:
         subject_id = meta.get("subject_id") or meta_path.parent.name
         if meta.get("status") != "ok":
             continue
+        source_file = meta.get("source_file") or ""
+        if not meta.get("source_080") or "contracts_080/" not in source_file:
+            targets.append({
+                "schema": "veriput-eval-target/v1",
+                "benchmark": "peer182",
+                "subject_id": subject_id,
+                "status": "skipped",
+                "reason": "peer subject is not from contracts_080",
+                "contract": meta.get("contract") or "",
+                "source_kind": "prepared-non-080-source",
+                "sources": [],
+                "units_hint": [],
+                "metadata": {
+                    "peer_tool": meta.get("peer_tool"),
+                    "peer_arm": meta.get("peer_arm"),
+                    "source_file": source_file,
+                    "source_080": bool(meta.get("source_080")),
+                },
+            })
+            continue
         flat = meta_path.parent / "flat.sol"
         contract = meta.get("contract") or ""
         if not contract or not flat.exists():
@@ -190,7 +210,7 @@ def peer_targets(root: Path) -> list[dict]:
             "metadata": {
                 "peer_tool": meta.get("peer_tool"),
                 "peer_arm": meta.get("peer_arm"),
-                "source_file": meta.get("source_file"),
+                "source_file": source_file,
                 "target_rule": meta.get("target_rule"),
                 "target_alternatives": meta.get("target_alternatives") or [],
                 "source_080": bool(meta.get("source_080")),
@@ -225,10 +245,13 @@ def build_manifest(root: Path, benchmarks: list[str], stress_scope: str) -> dict
     summary = {
         "targets": len(targets),
         "ok": sum(1 for row in targets if row["status"] == "ok"),
+        "skipped": sum(1 for row in targets
+                       if row["status"] == "skipped"),
         "error": sum(1 for row in targets if row["status"] == "error"),
         "by_benchmark": {
             bench: {
                 "ok": counts[(bench, "ok")],
+                "skipped": counts[(bench, "skipped")],
                 "error": counts[(bench, "error")],
             }
             for bench in BENCHMARKS
