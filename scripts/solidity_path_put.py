@@ -3468,7 +3468,10 @@ def return_rung_assertions(text, kind, var, label, idents_abs=None,
         if text == "return == true":
             return [f"    assertTrue({var}, {lit});"]
         if text.startswith("return == "):
-            expr = structured(text[len("return == "):])
+            spelling = text[len("return == "):]
+            expr = structured(spelling)
+            if expr is None and spelling in ("0", "1"):
+                expr = spelling
             if expr is not None:
                 if expr == "0":
                     return [f"    assertFalse({var}, {lit});"]

@@ -1100,15 +1100,35 @@ def test_a_bool_return_can_assert_a_structured_bool_coord():
         {"ok": {"kind": "coord", "name": "ok"}})
     literal = return_rung_assertions(
         "return == 1", ("bool", None), "_put_ret",
-        "return: return == 1", {},
-        {"1": {"kind": "literal", "value": "1"}})
+        "return: return == 1", {}, {})
+    bad_literal = return_rung_assertions(
+        "return == 2", ("bool", None), "_put_ret",
+        "return: return == 2", {}, {})
     bad = 0
     bad += check(coord == [
         '    assertEq(_put_ret, p_ok, "return: return == ok");'
     ], f"a bool return can compare against a certified bool coord: {coord}")
     bad += check(literal == [
         '    assertTrue(_put_ret, "return: return == 1");'
-    ], f"a numeric bool literal is rendered as bool, not uint: {literal}")
+    ], f"a numeric bool literal is rendered as bool without R2 terms: {literal}")
+    bad += check(bad_literal is None,
+                 f"out-of-domain bool literal is still refused: {bad_literal}")
+    return bad
+
+
+def test_a_bool_literal_return_equality_reaches_the_put():
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return", "return == 1", "HOLDS")],
+        [("", "bool")])
+    bad = 0
+    bad += check('assertTrue(_put_ret, "return: return == 1");' in text,
+                 "the bool literal equality is asserted")
+    bad += check(stats["return_asserts"] == 1,
+                 f"one return assertion: {stats['return_asserts']}")
+    bad += check(not stats["oracle_skipped"],
+                 f"the bool literal return row is not skipped: "
+                 f"{stats['oracle_skipped']}")
     return bad
 
 
@@ -9630,6 +9650,7 @@ def main():
               test_a_retlive_that_HOLDS_kills_every_return_rung,
               test_a_bool_return_uses_assertTrue_not_a_cast,
               test_a_bool_return_can_assert_a_structured_bool_coord,
+              test_a_bool_literal_return_equality_reaches_the_put,
               test_fixed_bytes_return_casts_through_the_matching_uint_width,
               test_a_whole_value_rung_on_a_tuple_unit_is_refused,
               test_per_member_rungs_destructure_in_declaration_order,

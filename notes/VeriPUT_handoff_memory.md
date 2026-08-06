@@ -8404,3 +8404,38 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-06 bool literal return equality rendering
+
+Scope:
+
+- This is an external VeriPUT PUT-emitter oracle-strength follow-up to nonzero
+  literal return equality rendering.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Finding:
+
+- Bool returns already rendered `return == true` and `return == false`, and
+  could render `return == 0/1` only when the structured-R2 term table included
+  a literal entry.
+- A direct ladder/source-R2 row `return == 1` on a bool return could therefore
+  be dropped even though it is exactly the same assertion as `return == true`.
+
+Code change:
+
+- `return_rung_assertions()` now treats bare bool-return spellings
+  `return == 0` and `return == 1` as `assertFalse` / `assertTrue`.
+- Other numeric bool literals, e.g. `return == 2`, remain refused rather than
+  guessed.
+- Added a regression that reaches full PUT emission with a bool `return == 1`
+  row and records no `oracle_skipped` entry.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 213/213 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check` passed.
