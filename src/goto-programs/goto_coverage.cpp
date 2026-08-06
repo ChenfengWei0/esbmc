@@ -764,10 +764,13 @@ void goto_coveraget::audit_certify_witness(bool ce_payload_requested)
 
   std::vector<std::pair<std::string, std::string>> certify_refutation_keys(
     all_claims.begin(), all_claims.end());
-  certify_refutation_keys.insert(
-    certify_refutation_keys.end(),
-    path_cov_certify_safety_refutations.begin(),
-    path_cov_certify_safety_refutations.end());
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    certify_refutation_keys.insert(
+      certify_refutation_keys.end(),
+      path_cov_certify_safety_refutations.begin(),
+      path_cov_certify_safety_refutations.end());
+  }
 
   std::vector<std::string> witnessless;
   {
@@ -1269,7 +1272,14 @@ void goto_coveraget::report_path_cov_certify()
     }
 
   size_t safety_refuted = 0;
-  for (const auto &k : path_cov_certify_safety_refutations)
+  std::vector<std::pair<std::string, std::string>> safety_refutation_keys;
+  {
+    std::lock_guard lock(claim_outcome_mutex);
+    safety_refutation_keys.assign(
+      path_cov_certify_safety_refutations.begin(),
+      path_cov_certify_safety_refutations.end());
+  }
+  for (const auto &k : safety_refutation_keys)
     if (verdict_of(k) == 'F')
       ++safety_refuted;
 
