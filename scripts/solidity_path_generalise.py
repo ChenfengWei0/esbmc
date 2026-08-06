@@ -799,6 +799,33 @@ def partial_journal_report(cwd):
         return None
 
 
+def enumeration_salvage_path(cwd):
+    return os.path.join(cwd, "enumeration-salvage.json")
+
+
+def write_enumeration_salvage(cwd, salvaged):
+    meta = dict(salvaged.get("veriput_salvage") or {})
+    meta.update({
+        "partial": bool(salvaged.get("partial")),
+        "path_count": len(salvaged.get("claims") or []),
+    })
+    summary = salvaged.get("summary") or {}
+    if "witnesses_total" in summary:
+        meta["witness_count"] = summary.get("witnesses_total")
+    with open(enumeration_salvage_path(cwd), "w", encoding="utf-8") as stream:
+        json.dump(meta, stream, indent=2, sort_keys=True)
+    return meta
+
+
+def read_enumeration_salvage(cwd):
+    try:
+        with open(enumeration_salvage_path(cwd), encoding="utf-8") as stream:
+            data = json.load(stream)
+        return data if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     ast=None, focus=None, memlimit="8g", path_function=None,
                     esbmc_args=(), state_structs=False, probe_witnesses=0,
@@ -861,6 +888,9 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     # ESBMC's own message about a solc mismatch or a missing contract -- can
     # never fire, so the actionable diagnostic is replaced by silent stale data.
     report = os.path.join(cwd, "cov-report.json")
+    salvage_sidecar = enumeration_salvage_path(cwd)
+    if os.path.exists(salvage_sidecar):
+        os.remove(salvage_sidecar)
     if enumeration_report:
         validate_enumeration_import(
             enumeration_index, enumeration_report, esbmc, sol, ast, contract,
@@ -887,7 +917,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
             if salvaged:
                 with open(report, "w", encoding="utf-8") as stream:
                     json.dump(salvaged, stream, indent=2, sort_keys=True)
-                meta = salvaged.get("veriput_salvage") or {}
+                meta = write_enumeration_salvage(cwd, salvaged)
                 print(
                     f"[enumerate] salvaged {len(salvaged.get('claims', []))} "
                     "witnessed path(s) from partial cov-ce-journal.json "
@@ -8246,6 +8276,7 @@ def main():
             "mode": "imported-stage-1" if args.enumeration_report else "direct",
             "index": file_identity(args.enumeration_index),
             "report": file_identity(args.enumeration_report),
+            "salvage": read_enumeration_salvage(cwd),
         },
         # The slice every region below is a statement ABOUT. A region quoted
         # without its pins is a region quoted wrong.

@@ -87,6 +87,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       witness_values,
                                       report_from_ce_journal,
                                       partial_journal_report,
+                                      write_enumeration_salvage,
+                                      read_enumeration_salvage,
                                       payload_extras,
                                       extcall_inseparable_failures,
                                       file_identity,
@@ -2520,7 +2522,13 @@ with open(os.path.join(_journal_dir, "cov-ce-journal.json"), "w") as f:
     }, f)
 check("partial_journal_report reads cwd journal",
       partial_journal_report(_journal_dir)["claims"][0]["path_id"], "31")
+_salvage_meta = write_enumeration_salvage(_journal_dir, _journal_report)
+check("enumeration salvage sidecar records path count",
+      _salvage_meta["path_count"], 1)
+check("enumeration salvage sidecar records witness count",
+      read_enumeration_salvage(_journal_dir)["witness_count"], 2)
 os.unlink(os.path.join(_journal_dir, "cov-ce-journal.json"))
+os.unlink(os.path.join(_journal_dir, "enumeration-salvage.json"))
 os.rmdir(_journal_dir)
 
 

@@ -72,6 +72,26 @@ def main():
         os.remove(journal)
         bad += check(certify_all.result_partial_witness_journal(str(workdir)) is None,
                      "missing journal is absent rather than empty data")
+
+        result = workdir / "generalise-result.json"
+        result.write_text(json.dumps({
+            "enumeration_source": {
+                "salvage": {
+                    "from": "cov-ce-journal.json",
+                    "claims_decided": 6,
+                    "claims_total": 277,
+                    "path_count": 1,
+                    "witness_count": 8,
+                }
+            }
+        }))
+        got_salvage = certify_all.result_enumeration_salvage(str(workdir), since)
+        bad += check(got_salvage["path_count"] == 1
+                     and got_salvage["witness_count"] == 8,
+                     f"enumeration salvage metadata is preserved: {got_salvage}")
+        bad += check(certify_all.result_enumeration_salvage(str(workdir),
+                                                            stale_since) is None,
+                     "stale enumeration salvage metadata is ignored")
     return bad
 
 

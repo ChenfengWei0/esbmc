@@ -82,6 +82,95 @@ Verification:
   scheduler, campaign, runner, summary, pipeline, and tests passed.
 - `git diff --check` passed.
 
+## 2026-08-06 salvage benchmark smoke after ad52c97
+
+Ran a new small benchmark sample after partial CE journal salvage.  All outputs
+were under `/tmp`; no Dataset or Results contract was modified.
+
+Plans:
+
+- BugFix:
+  `/tmp/veriput_bench_salvage_bugfix_20260806_235923`
+- Stress:
+  `/tmp/veriput_bench_salvage_stress_20260806_235923`
+- Peer:
+  `/tmp/veriput_bench_salvage_peer_20260806_235924`
+
+Execution:
+
+- `unit_schedule_run.py`, serial `--jobs 1`.
+- Runner outer timeout 75s, certify wrapper timeout 70s, ESBMC
+  `--run-timeout 60`, memory 8GiB.
+- AST cache reused from `/tmp/veriput_bench_ast_cache_20260806`.
+
+Results:
+
+- BugFix attempt-1 sample: 4/4 runner-ok and 4/4 `CERTIFIED`.
+  - `DepositLog.approvedToLog`: `1 certified / 1 not / 2 witnessed`, 2.8s.
+  - `DepositLog.setApprovedLogger`: `2 certified / 1 not / 3 witnessed`,
+    11.7s.
+  - `EtherLotto.play`: `1 certified / 2 not / 3 witnessed`, 23.7s.
+  - `DepositLog.logCreated`: `1 certified / 1 not / 2 witnessed`, 1.5s.
+- Stress attempt-1 sample on `ClaimTopicsRegistry`: 3/3 runner-ok.
+  - `init`: still `KILLED` at 60s with no partial witness journal.
+  - `addClaimTopic`: now `CERTIFIED`, `1 certified / 0 not / 1 witnessed`,
+    65.7s wall.  `driver.log` says:
+    `[enumerate] salvaged 1 witnessed path(s) from partial cov-ce-journal.json
+    (6/277 claims decided); regions still require independent certification`.
+  - `removeClaimTopic`: now `CERTIFIED`, `1 certified / 0 not / 1 witnessed`,
+    67.9s wall.  `driver.log` says:
+    `[enumerate] salvaged 1 witnessed path(s) from partial cov-ce-journal.json
+    (13/227 claims decided); regions still require independent certification`.
+- Peer attempt-1 sanity:
+  - `AIRBets.initialize2`: `NO-PATH`, about 1s.
+  - `AIRBets.transfer`: `NO-WITNESS-UNDECIDED`, about 0.1s.  This is not a
+    journal-salvage case; it remains a witness-discovery/reachability
+    classification problem.
+
+Replan after the stress sample:
+
+- `unit_campaign_plan.py` over the stress schedule/journal/cert rows reports
+  `completed_ok=2`, `cert_weak={"no certified regions": 1}`,
+  `pending_by_attempt={"2": 1}`, `selected_attempt=2`.
+- The only attempt-2 job is `ClaimTopicsRegistry.init`, with ESBMC
+  `--run-timeout 120`, wrapper timeout 130, runner timeout 135, 8GiB.
+
+Current go/no-go:
+
+- This is strong evidence that partial-journal salvage is worth keeping:
+  two stress units that previously ended as 60s KILLED now certify on the first
+  attempt because the partial path witness is reused and then independently
+  certified.
+- Do not full-sweep stress yet.  First expand to a slightly larger stratified
+  sample across already cached/preheated stress subjects, and schedule
+  attempt-2 only for weak rows such as `init`.
+- BugFix is ready for broader sampling.
+
+Code follow-up retained after the smoke:
+
+- `solidity_path_generalise.py` now writes `enumeration-salvage.json` when a
+  partial CE journal seeds enumeration, removes stale sidecars before a new
+  enumeration, and embeds the metadata under
+  `generalise-result.json["enumeration_source"]["salvage"]`.
+- `certify_all.py` now copies that metadata into each result row as
+  `enumeration_salvage`.  This fixes observability: successful salvage no longer
+  has to be inferred by grepping `driver.log`, and the later certification
+  `cov-ce-journal.json` cannot overwrite the evidence trail.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py
+  notes/coverage/scripts/certify_all.py
+  scripts/test_certify_all_partial_journal.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_partial_journal.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_generalise.py
+  scripts/test_solidity_path_generalise.py notes/coverage/scripts/certify_all.py
+  scripts/test_certify_all_partial_journal.py` passed.
+
 ## 2026-08-06 partial CE journal salvage in generalise
 
 Current answer to "can we start broad benchmark testing?":

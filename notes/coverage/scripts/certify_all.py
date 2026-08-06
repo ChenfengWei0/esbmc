@@ -627,6 +627,19 @@ def result_not_certified_details(workdir, since_mtime=None):
     return details
 
 
+def result_enumeration_salvage(workdir, since_mtime=None):
+    path = os.path.join(workdir, "generalise-result.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return None
+        with open(path) as stream:
+            source = (json.load(stream).get("enumeration_source") or {})
+    except (OSError, ValueError):
+        return None
+    salvage = source.get("salvage")
+    return salvage if isinstance(salvage, dict) and salvage else None
+
+
 def result_partial_witness_journal(workdir, since_mtime=None):
     """Summarise the refutation-only witness journal left by a partial run.
 
@@ -1903,6 +1916,8 @@ def main():
                         "path_function": result_path_function(uwd),
                         "not_certified_details":
                             result_not_certified_details(uwd, t1),
+                        "enumeration_salvage":
+                            result_enumeration_salvage(uwd, t1),
                         "partial_witness_journal":
                             result_partial_witness_journal(uwd, t1),
                         "bucket": bucket(rec, rc, out),
