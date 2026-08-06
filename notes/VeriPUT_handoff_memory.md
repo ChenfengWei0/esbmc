@@ -10548,6 +10548,109 @@ Current decision:
   `/home/samson/workspace/VeriPUT/Results` were modified; all benchmark
   outputs above are under `/tmp`.
 
+## 2026-08-07 stress registry named-obstacle / probe fix
+
+Benchmark symptom:
+
+- In the round-robin sample, four `stress243` units on
+  `BalancerContractRegistry` hit
+  `driver_diagnostic=path-coverage-no-claims-reached-solver`.
+- Example command, already recorded in the unit workdir, was the focused
+  path-coverage enumeration for `deregisterBalancerContract` with
+  `--path-cov-probe --all-witnesses --max-witnesses 8`, 60s, 8GiB.
+- ESBMC printed:
+  - 15 complete paths instrumented for the focused unit;
+  - all 15 paths named as a `NAMED OBSTACLE`, cause (a), i.e. a
+    branch-free assume / frontend-lowered decision that removes executions from
+    the model;
+  - 180 exit-latched probe claims;
+  - `0 of 15 instrumented path claim(s) reached the solver`;
+  - then aborted with `INTERNAL DEFECT — NOT ONE ... reached the solver`.
+
+Root cause:
+
+- `audit_entry_liveness()` grouped `all_claims`, the complete-path universe,
+  and treated a focused unit with zero complete-path solver verdicts as a hard
+  entry-liveness defect.
+- In probe mode, branch-arm probe claims are solved through
+  `path_probe_claims/path_probe_outcome`; complete-path claims may legitimately
+  have no direct solver verdict and are later reported through the complete-path
+  ledger.
+- When every complete path of the unit is already in
+  `named_obstacle_paths`, the absence of a complete-path verdict is not evidence
+  that the harness never entered the unit.  It is a structural model/chain
+  obstacle that should be reported as `u_reason=named-obstacle`, not hidden
+  behind an abort.
+
+ESBMC change:
+
+- `goto_coveraget::audit_entry_liveness()` now counts how many complete paths
+  of each unit are in `named_obstacle_paths`.
+- A unit whose instrumented complete-path universe is entirely named-obstacle
+  is not added to the hard `dead` list merely because zero complete-path
+  verdicts reached the solver.
+- True focused units with non-obstacle claims and zero verdicts still abort as
+  before.  This is important: the change does not weaken the entry-liveness
+  guard for ordinary vacuous runs.
+
+External driver / scheduler change:
+
+- `solidity_path_generalise.py` now gives the all-`named-obstacle` empty
+  enumeration case its own text:
+  structural model/chain mismatch, not solver-budget advice and not bounded
+  no-path.
+- `unit_campaign_plan.py` now classifies `empty_witness_verdict=REFUSED` rows
+  containing `named-obstacle` as non-retryable reason
+  `named obstacle no witness`.
+- The SafeMath/direct-recursion preflight bucket is now limited to the
+  `direct self-recursive function/helper` reason, so named obstacles no longer
+  get misreported as witness preflight refusal.
+
+Validation:
+
+- Built ESBMC:
+  `cmake --build build --target esbmc -j2` passed.
+  The build printed existing Solidity model array-bound warnings in
+  `solidity_address.c`; no new build error.
+- Reconfigured CTest:
+  `cmake -S . -B build -DESBMC_REGRESS_TIMEOUT=90` exited 0 and regenerated the
+  test list.  During configure, Bitwuzla's external sub-build printed cadical
+  header failures, but CMake still selected the existing Bitwuzla 0.8.2 tree
+  and wrote build files.
+- New regression:
+  `regression/esbmc-solidity/solidity_path_cov_probe_named_obstacle_reports`.
+  It is a payable function with `__ESBMC_assume(false)` under
+  `--path-cov-probe`; before this fix this shape trips the 0-of-N liveness
+  abort, after the fix it reports 2 `named-obstacle` U reasons and exits
+  `VERIFICATION SUCCESSFUL`.
+- CTest command passed:
+  `ctest --test-dir build -R "solidity_path_cov_(probe_named_obstacle_reports|explicit_assume_obstacle|residual_unit_call_obstacle|focus_function_keeps_callee_decisions|probe_fire)" --output-on-failure`.
+- Python checks passed:
+  - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_solidity_path_generalise.py scripts/test_unit_campaign_plan.py`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  - `git diff --check -- ...` on all touched files.
+- Direct stress recheck, one ESBMC enumeration only:
+  `/tmp/veriput_stress_claim_recheck_20260807`.
+  The same `deregisterBalancerContract` command that previously exited `-6`
+  now exits `0`, writes `cov-report.json`, reports 15 paths total, 0 witnessed,
+  and `u_reasons {'named-obstacle': 15}`.
+- Direct driver recheck:
+  `/tmp/veriput_stress_driver_recheck_20260807_b`.
+  `solidity_path_generalise.py` exits `1` before certification, with:
+  no witnessed path, 15/15 `named-obstacle`, structural mismatch.  This is the
+  desired outcome: not certifiable, not retryable as a timeout, and not an
+  internal crash.
+
+Impact on benchmark strategy:
+
+- This does not make the `stress243` registry units generate PUTs.  It removes
+  a misleading internal-defect bucket and exposes the real blocker: the focused
+  units are named-obstacle units under the current Solidity path model.
+- Full benchmark is still premature.  The next technical target is the peer
+  `AIRBets` SafeMath/direct-recursive-helper refusal and then the heavy
+  `bugfix124` timeout units.
+
 ## 2026-08-07 retry schedules use attempt-specific result JSONL
 
 Discovered before broad benchmark sampling:

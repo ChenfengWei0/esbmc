@@ -842,6 +842,53 @@ def test_campaign_does_not_retry_witness_preflight_refusals():
     return bad
 
 
+def test_campaign_does_not_retry_named_obstacle_no_witness():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("stress243__obstacle__f", "stress243", "f"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("stress243__obstacle__f", "ok",
+                    benchmark="stress243", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "stress243",
+                    "unit": "f",
+                    "bucket": "NO-WITNESS-UNDECIDED",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "empty_witness_verdict": "REFUSED",
+                    "empty_witness_reason":
+                    "2 of 2 claim(s) were named-obstacle paths. This is a "
+                    "structural model/chain mismatch for the unit",
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 0 and doc["summary"]["non_retryable"] == 1,
+                 f"named obstacle no-witness is separated from completed certification: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {},
+                 f"named obstacle no-witness does not consume a retry: {doc['summary']}")
+    bad += check(doc["summary"]["cert_non_retryable"] == {
+        "named obstacle no witness": 1,
+    }, f"named obstacle reason is counted separately: {doc['summary']}")
+    return bad
+
+
 def test_campaign_does_not_retry_path_coverage_no_claims_defect():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
@@ -1014,6 +1061,7 @@ TESTS = [
     test_campaign_treats_slice_excluded_paths_as_body_slice_ready,
     test_campaign_treats_method_unsupported_paths_as_non_retryable,
     test_campaign_does_not_retry_witness_preflight_refusals,
+    test_campaign_does_not_retry_named_obstacle_no_witness,
     test_campaign_does_not_retry_path_coverage_no_claims_defect,
     test_campaign_does_not_retry_legacy_pre_enumeration_stop,
     test_campaign_accepts_strong_certification_without_runner_journal,

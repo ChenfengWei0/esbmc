@@ -1,0 +1,8 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract CA --solidity-max-tx 1 --branch-function-coverage --path-cov-probe --all-witnesses --max-witnesses 2
+^WARNING: --solidity-path-coverage: NAMED OBSTACLE . 2 path\(s\) excluded, being ALL paths of every affected unit
+\A(?!(?:.|\n)*INTERNAL DEFECT)
+^--solidity-path-coverage: 0 of 2 instrumented path claim\(s\) reached the solver across 1 unit\(s\)$
+^U Reasons: named-obstacle 2, unit-not-entered 0, bounded-holds 0, solver-unknown 0, not-solved-this-run 0, run-died-before-solving 0, claim-budget-exceeded 0$
+^VERIFICATION SUCCESSFUL$

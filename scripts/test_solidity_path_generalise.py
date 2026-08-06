@@ -2772,7 +2772,21 @@ check("emptyenum-solver-unknown-is-not-a-result",
 check("emptyenum-solver-unknown-is-named",
       "solver answered `unknown`" in _txt_solver_unknown, True)
 
-# 5. A TOKEN THIS DRIVER DOES NOT KNOW fails CLOSED. The alternative -- treating
+# 5. NAMED OBSTACLE is structural, not a solver-budget miss. It is still
+#    fatal for PUT generation, but the remediation is to remove the obstacle,
+#    not to spend a larger per-claim budget.
+_report(_d, [_claim(2, "named-obstacle"),
+             _claim(3, "named-obstacle")])
+_fatal_named_obstacle, _txt_named_obstacle = empty_enumeration_reason(
+    _d, "balanceOf")
+check("emptyenum-named-obstacle-is-not-a-result",
+      _fatal_named_obstacle, True)
+check("emptyenum-named-obstacle-is-structural",
+      "structural model/chain mismatch" in _txt_named_obstacle, True)
+check("emptyenum-named-obstacle-is-not-budget-advice",
+      "--path-cov-claim-timeout" in _txt_named_obstacle, False)
+
+# 6. A TOKEN THIS DRIVER DOES NOT KNOW fails CLOSED. The alternative -- treating
 #    an unrecognised reason as benign -- is how a new ESBMC token would silently
 #    become "no coverage here", which is the failure `verdict()` above already
 #    refuses for certification verdicts.
@@ -2782,7 +2796,7 @@ check("emptyenum-an-unknown-reason-token-fails-closed", _fatal_new, True)
 check("emptyenum-and-says-it-does-not-know-it",
       "does not know this reason token" in _txt_new, True)
 
-# 6. NO CLAIM FOR THIS UNIT AT ALL is not the empty case either -- nothing was
+# 7. NO CLAIM FOR THIS UNIT AT ALL is not the empty case either -- nothing was
 #    attempted, which is a scope or wiring question.
 _report(_d, [_claim(2, "bounded-holds", unit="someOtherUnit")])
 check("emptyenum-no-claim-for-the-unit-is-not-the-empty-case",

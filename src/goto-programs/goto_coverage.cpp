@@ -2467,6 +2467,7 @@ void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
   {
     size_t instrumented = 0; // claims actually put to the solver this run
     size_t decided = 0;      // of those, how many came back with a verdict
+    size_t named_obstacle = 0;
   };
   std::map<std::string, tally> per_unit;
   size_t total_instrumented = 0, total_decided = 0;
@@ -2489,6 +2490,8 @@ void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
       tally &t = per_unit[unit];
       ++t.instrumented;
       ++total_instrumented;
+      if (named_obstacle_paths.count(key) != 0)
+        ++t.named_obstacle;
       if (claim_outcome.count(key.first + "\t" + key.second))
       {
         ++t.decided;
@@ -2509,7 +2512,9 @@ void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
 
   std::vector<std::string> dead, dead_by_design;
   for (const auto &[unit, t] : per_unit)
-    if (t.instrumented > 0 && t.decided == 0)
+    if (
+      t.instrumented > 0 && t.decided == 0 &&
+      t.named_obstacle != t.instrumented)
     {
       // Recorded for BOTH branches, WITH the cause. Whether or not the absence
       // is a defect, a path of this unit must be reported as "the unit was

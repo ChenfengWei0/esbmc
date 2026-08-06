@@ -156,6 +156,13 @@ def _is_bounded_holds_no_witness(row: dict) -> bool:
     return "bounded-holds" in text
 
 
+def _is_named_obstacle_no_witness(row: dict) -> bool:
+    if row.get("empty_witness_verdict") != "REFUSED":
+        return False
+    text = str(row.get("empty_witness_reason") or "")
+    return "named-obstacle" in text
+
+
 def _driver_diagnostic_tag(row: dict) -> str:
     diagnostic = row.get("driver_diagnostic") or {}
     if not isinstance(diagnostic, dict):
@@ -210,6 +217,7 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         buckets = Counter()
         no_coordinate = False
         preflight_refused = False
+        named_obstacle_no_witness = False
         path_cov_no_claims_reached = False
         pre_enumeration_stop = False
         bounded_holds_no_witness = False
@@ -226,8 +234,9 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             if row.get("bucket") == "NO-COORDINATE" or row.get("no_coordinate_reason"):
                 no_coordinate = True
             empty_reason = str(row.get("empty_witness_reason") or "")
-            if (row.get("empty_witness_verdict") == "REFUSED"
-                    or "direct self-recursive function/helper" in empty_reason):
+            if _is_named_obstacle_no_witness(row):
+                named_obstacle_no_witness = True
+            if "direct self-recursive function/helper" in empty_reason:
                 preflight_refused = True
             c = row.get("certified") or {}
             n = row.get("not_certified") or {}
@@ -289,6 +298,8 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         non_retryable_reason = ""
         if not regions and no_coordinate:
             non_retryable_reason = "no generalisable coordinate"
+        elif not regions and named_obstacle_no_witness:
+            non_retryable_reason = "named obstacle no witness"
         elif not regions and preflight_refused:
             non_retryable_reason = "witness preflight refused"
         elif not regions and path_cov_no_claims_reached:

@@ -1752,6 +1752,14 @@ def empty_enumeration_reason(cwd, unit):
         why = (U_NEVER_FOUND_OUT.get(r) or U_LOOKED_AND_FOUND_NONE.get(r)
                or "this driver does not know this reason token")
         lines.append(f"    {tally[r]}x {r} -- {why}")
+    if abandoned and all(r == "named-obstacle" for r in abandoned) and not unknown:
+        n = tally["named-obstacle"]
+        head = (f"⛔ and it is NOT a result: {n} of {len(mine)} claim(s) were "
+                f"named-obstacle paths. This is a structural model/chain "
+                f"mismatch for the unit, not a solver-budget miss and not a "
+                f"bounded no-path result; no certification query can use these "
+                f"paths until the obstacle is removed.")
+        return True, head + "\n  " + "\n  ".join(lines)
     if abandoned or unknown:
         n = sum(tally[r] for r in abandoned + unknown)
         head = (f"⛔ and it is NOT a result: {n} of {len(mine)} claim(s) were "
