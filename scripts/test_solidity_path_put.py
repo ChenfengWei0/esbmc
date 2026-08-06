@@ -3344,6 +3344,118 @@ def test_source_R2_constant_identifiers_prioritize_literal_endpoints():
     return bad
 
 
+def test_source_R2_mapping_literal_keys_are_named_when_slot_safe():
+    from solidity_path_put import r2_term_text, source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def boolean(value):
+        return {"nodeType": "Literal", "kind": "bool", "value": value}
+
+    def hex_lit(value):
+        return {"nodeType": "Literal", "kind": "hexString",
+                "hexValue": value, "value": value}
+
+    def address_num(value):
+        return {"nodeType": "FunctionCall", "kind": "typeConversion",
+                "typeDescriptions": {"typeString": "address"},
+                "expression": {
+                    "nodeType": "ElementaryTypeNameExpression",
+                    "typeName": {"nodeType": "ElementaryTypeName",
+                                 "name": "address"}},
+                "arguments": [num(value)]}
+
+    def index(base_ref, base_name, key, ty="uint256"):
+        return {"nodeType": "IndexAccess",
+                "baseExpression": ident(base_ref, base_name),
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    def assign(lhs, rhs, src, op="="):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": op, "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "count",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(uint256 => uint256)"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "flagged",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(bool => uint256)"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "owners",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "hexOwners",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "bytesMap",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(bytes4 => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 assign(index(10, "count", num(7)), ident(21, "amount"),
+                        "100:12:0"),
+                 assign(index(11, "flagged", boolean(True)), ident(21, "amount"),
+                        "120:12:0", "+="),
+                 assign(index(12, "owners", address_num(1)), ident(21, "amount"),
+                        "140:12:0"),
+                 assign(index(13, "hexOwners", hex_lit("12ab")),
+                        ident(21, "amount"), "160:12:0"),
+                 assign(index(14, "bytesMap", hex_lit("12ab")),
+                        ident(21, "amount"), "180:12:0")]}}
+        ]}]}
+    maps = {"count": (0, "uint256", 32, 0, "count", None),
+            "flagged": (1, "bool", 32, 0, "flagged", None),
+            "owners": (2, "address", 32, 0, "owners", None),
+            "hexOwners": (3, "address", 32, 0, "hexOwners", None),
+            "bytesMap": (4, "bytes4", 32, 0, "bytesMap", None)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "touch", [("amount", "uint256")], {},
+            [("amount", "num", None)], arity=1, maps=maps,
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    def equals(name):
+        return [r2_term_text(item["term"])
+                for item in entries.get(name, {}).get("equals", [])]
+
+    flagged_deltas = entries.get("flagged[1]", {}).get("deltas", [])
+    bad = 0
+    bad += check(equals("count[7]") == ["amount"],
+                 f"uint literal key slot is mined: {entries}")
+    bad += check(len(flagged_deltas) == 1 and
+                 r2_term_text(flagged_deltas[0]["lo"]) == "amount",
+                 f"bool literal key slot delta is mined: {flagged_deltas}")
+    bad += check(equals("owners[1]") == ["amount"],
+                 f"address(number) literal key slot is mined: {entries}")
+    bad += check(equals("hexOwners[0x12ab]") == ["amount"],
+                 f"address hex literal key slot is mined: {entries}")
+    bad += check("bytesMap[0x12ab]" not in entries,
+                 f"bytesN literal keys are not emitted as uint256 slots: "
+                 f"{entries}")
+    bad += check(any("count[7]: post == amount" in line for line in evidence),
+                 f"literal-key provenance is recorded: {evidence}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -5871,6 +5983,7 @@ def main():
               test_source_R2_state_entry_coords_are_used_only_when_rendered,
               test_source_R2_type_conversion_wrappers_are_unwrapped_conservatively,
               test_source_R2_constant_identifiers_prioritize_literal_endpoints,
+              test_source_R2_mapping_literal_keys_are_named_when_slot_safe,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,

@@ -1442,6 +1442,36 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if (param_name and param_name in param_names and
                 _norm_ty(param_tys.get(ref, "")) == _norm_ty(expected_ty)):
             return param_name
+        expected = _norm_ty(expected_ty)
+        literal = unitless_number_term(n)
+        if literal is not None and re.match(r"^u?int(\d+)?$", expected):
+            return literal[1]
+        if literal is not None and expected == "address":
+            return literal[1]
+        if isinstance(n, dict) and n.get("nodeType") == "Literal":
+            if n.get("kind") == "bool" and expected == "bool":
+                value = n.get("value")
+                if value is True or str(value).lower() == "true":
+                    return "1"
+                if value is False or str(value).lower() == "false":
+                    return "0"
+            if n.get("kind") == "hexString" and expected == "address":
+                value = str(n.get("hexValue") or n.get("value") or "")
+                if re.fullmatch(r"[0-9a-fA-F]{1,40}", value):
+                    return "0x" + value
+        if (expected == "address" and isinstance(n, dict)
+                and n.get("nodeType") == "FunctionCall"
+                and n.get("kind") == "typeConversion"):
+            args = n.get("arguments") or []
+            expr = n.get("expression")
+            if len(args) == 1 and isinstance(expr, dict):
+                ty = expr.get("typeName") or {}
+                literal = unitless_number_term(args[0])
+                if ty.get("name") == "address" and literal is not None:
+                    return literal[1]
+        zero_addr = address_zero_term(n, expected)
+        if zero_addr is not None:
+            return "0"
         if (isinstance(n, dict) and n.get("nodeType") == "MemberAccess" and
                 n.get("memberName") == "sender"):
             base = n.get("expression")

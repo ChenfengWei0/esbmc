@@ -5614,6 +5614,50 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 mapping-literal-key source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- The exact mapping-slot R2 miner could name slots keyed by unit parameters and
+  `msg.sender`, but not source-literal keys such as `count[7]`,
+  `flagged[true]`, `owners[address(1)]`, or address hex literals.
+- ESBMC and the PUT emitter already understand slot names whose key text is a
+  decimal or hex literal. Reusing that existing slot-name grammar lets the
+  source miner ask strong `post == amount` / exact delta rows for literal-keyed
+  stores without another verifier pass.
+- The new source key support is intentionally narrower than Solidity's full key
+  grammar. It emits uint/int numeric literals, bool literals as `1`/`0`, and
+  address numeric/hex literals. It does not emit `bytesN` literal keys because
+  the emitter's literal slot-key path casts literals as `uint256(...)`; that is
+  safe for uint/address/bool numeric ABI padding, but can be wrong for bytesN
+  left-aligned ABI encoding.
+- As usual, this only prioritizes candidates. Fuzz can refute; ESBMC certifies.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `key_name()` now recognizes safe literal
+  mapping keys by expected solc key type.
+- Address keys accept unitless numeric literals, `address(<unitless number>)`,
+  `address(0)`, and compact hex string literals up to 160 bits.
+- Bool keys render as `1`/`0`, matching the existing literal key grammar.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `160 test(s) ran, 160 declared in this module`.
+- `git diff --check` on the touched files passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:
