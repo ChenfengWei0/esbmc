@@ -3927,3 +3927,43 @@ This is an orchestration/interface issue first. Do not spend ESBMC POC attempts
 to diagnose it; unit-test the subject resolver and command construction
 directly, then use one fresh POC or one tiny synthetic subject only to validate
 that the shared path still invokes the existing drivers correctly.
+
+### Unit granularity caveat for the benchmark resolver
+
+Sampling the prepared benchmark metadata showed that the subject-level manifest
+is not yet a unit-level worklist:
+
+- Stress `meta.json` records `subject_id`, repo, target `contract`, original
+  source path, solc binary/version, compile rung, and status. It does not list
+  the target contract's public/external unit names. `TARGETS.csv` records
+  `named_entry_points` and `writing_entry_points` counts, but not the names.
+- Peer182 `meta.json` likewise records the target `contract`, target-rule
+  provenance, source file, peer arm, solc version, and whether the original
+  subject had asserts. It is still a contract-level subject, not a PUT unit
+  list.
+- BugFix124 `meta.json` adds `changed_functions`, but that field is about the
+  patch and should not be reused as the callable-unit universe. It can guide an
+  RQ2-focused bug-kill slice, but using it as the only VeriPUT unit set would
+  silently exclude reachable public/external entry points.
+
+Therefore the benchmark adapter needs an explicit unit-list source. Acceptable
+sources are:
+
+- a trusted precomputed unit manifest generated from the same flattened source
+  and solc AST;
+- an explicit command-line unit selection for a diagnostic/smoke run; or
+- an AST-based enumerator that is scoped to the target contract, not a regex
+  over Solidity text.
+
+The old `collect.py::enumerate_own_callable_functions()` is useful as a
+reference for AST walking, but its project-own-file filter depends on historical
+flat markers and project labels. For prepared flat subjects, the safer first
+benchmark adapter is target-contract scoped: enumerate public/external
+functions declared or inherited in the selected contract as reported by the
+Solidity AST/ESBMC target model, and record any ambiguity or unsupported
+fallback/receive/proxy-only target explicitly.
+
+Do not derive the real benchmark's denominator from the POC split. The POC
+split is a debugging subset with hand fixtures and per-unit input directories;
+the benchmark denominator must be a manifest over Stress/Peer/BugFix prepared
+subjects plus their chosen unit enumeration rule.
