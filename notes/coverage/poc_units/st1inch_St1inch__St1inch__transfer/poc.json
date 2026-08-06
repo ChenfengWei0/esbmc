@@ -16,6 +16,7 @@
       "why": "compared against the branch-coverage baseline, which is MEASURED to run at one transaction; running deeper than the thing being compared to is not a comparison",
       "scope": "single",
       "max_tx": 1,
+      "probe_witnesses": 0,
       "focus_function": "transfer",
       "instrument_only": "transfer"
     },
@@ -25,6 +26,21 @@
       "max_tx": 2,
       "focus_with": [],
       "instrument_only": "transfer"
+    }
+  },
+  "fixtures": {
+    "gate": {
+      "why": "transfer is a disabled ERC20 entry in St1inch and always reverts after the non-payable ABI gate. The constructor initializes immutables and voting-power state that the unit does not read, and prior no-fixture path coverage spent the budget in solver unknowns. The fixture skips deployment for ESBMC while keeping valid constructor metadata for Foundry replay.",
+      "skip_constructor": true,
+      "foundry": {
+        "constructor_args": [
+          "mk_IERC20_oneInch_",
+          "999999952502977889",
+          "address(uint160(7300))"
+        ],
+        "why": "Foundry cannot install St1inch runtimeCode directly because the contract has immutables. For replay only, deploy with a constructor value in the Solidity-checked valid expBase interval, then run the disabled entry."
+      },
+      "state": {}
     }
   }
 }

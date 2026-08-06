@@ -3540,3 +3540,125 @@ Third code-level repair, made after all Aqua pull attempts were spent:
 
 This repair still needs compile/format validation and commit/push. It cannot be
 validated on `aqua_Aqua__Aqua__pull` without violating the three-attempt budget.
+
+## 2026-08-06 st1inch disabled ERC20 entries prep
+
+Next high-probability POCs:
+
+- `st1inch_St1inch__St1inch__approve`
+- `st1inch_St1inch__St1inch__transfer`
+- `st1inch_St1inch__St1inch__transferFrom`
+
+Source ground truth:
+
+```solidity
+function approve(address, uint256) public pure override(IERC20, ERC20)
+    returns (bool)
+{
+    revert ApproveDisabled();
+}
+
+function transfer(address, uint256) public pure override(IERC20, ERC20)
+    returns (bool)
+{
+    revert TransferDisabled();
+}
+
+function transferFrom(address, address, uint256)
+    public pure override(IERC20, ERC20) returns (bool)
+{
+    revert TransferDisabled();
+}
+```
+
+Expected gate-cell paths for each unit:
+
+- `msg.value != 0`: Solidity non-payable ABI value gate, rollback/exit-kind
+  oracle only. Function parameters are still call data and can be fuzzed.
+- `msg.value == 0`: the function body is entered and immediately reverts with
+  the disabled-entry custom error. No post-state or return-value oracle is
+  meaningful; the right PUT oracle is `vm.expectRevert()` around the high-level
+  call.
+
+Old no-fixture Stage-1 artefacts:
+
+- `approve`: 2 paths, both `solver-unknown`, 0 witnessed; 48.21s.
+- `transfer`: 2 paths, both `solver-unknown`, 0 witnessed; 43.98s.
+- `transferFrom`: 2 paths, both `solver-unknown`, 0 witnessed; 44.19s.
+
+Those old rows were collected with no fixture, so ESBMC still paid for
+constructor/voting-power state even though these pure disabled entries read no
+contract state. They are not useful Stage-1 universes.
+
+Code/config repair before spending a new official attempt:
+
+- Added a gate fixture to all three POCs:
+  - `skip_constructor: true`;
+  - valid Foundry constructor metadata:
+    `mk_IERC20_oneInch_, 999999952502977889, address(uint160(7300))`;
+  - empty ESBMC state, because these pure disabled methods read no storage.
+- Added `probe_witnesses: 0` to all three gate cells. Multi-witness probe
+  enumeration is unnecessary for a two-path always-revert function and is the
+  part most exposed to the current all-witnesses crash class.
+
+Validation without spending ESBMC:
+
+```sh
+for p in approve transfer transferFrom; do
+  python3 -m json.tool \
+    notes/coverage/poc_units/st1inch_St1inch__St1inch__${p}/poc.json \
+    >/dev/null
+done
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__approve \
+  --stage all --cell gate --attempt 1 --fresh --dry-run
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__transfer \
+  --stage all --cell gate --attempt 1 --fresh --dry-run
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__transferFrom \
+  --stage all --cell gate --attempt 1 --fresh --dry-run
+```
+
+Dry-run result:
+
+- All three use attempt1 budget: 60s/8GiB.
+- Stage 1 passes `--probe-witnesses 0` and `--path-cov-fixture`.
+- Stage 2 passes the same fixture plus `--probe-witnesses 0` and omits
+  `--probe-ladder`.
+- Stage 3 passes the fixture and Z3 tuple-flattener solver flags.
+
+Recommended next official spend: run `approve` attempt1 first. If it reaches
+Stage 3, expected B is 2/2. If it still reports solver-unknown under the
+fixture, stop and inspect the path claim/GOTO lowering before running
+`transfer` or `transferFrom`.
+
+## 2026-08-06 ESBMC retry budget policy update
+
+Per-POC ESBMC spend should now be treated as an adaptive three/four-step budget,
+not a blind fixed ladder:
+
+- attempt 1: 60s / 8GiB;
+- attempt 2: 120s / 8GiB;
+- final proof spend: either one 600s / 10GiB run, or a diagnostic split of
+  300s / 10GiB + 300s / 10GiB.
+
+Selection rule:
+
+- Keep the final run as 600s when the earlier attempts show that insertion,
+  region, fixture, and candidate assertions are basically correct, and the only
+  remaining issue is solver proof time. Two independent 300s runs do not
+  accumulate solver effort and are not equivalent to one 600s proof run.
+- Split into 300s + 300s when the POC is still diagnostic: crash, solver
+  unknown with little signal, suspicious region, unstable fixture, or visibly
+  over-broad/under-semantic candidates. The first 300s run is for information;
+  the second 300s run should only be spent after inspecting the log and making
+  a code/config/region change or after deciding that a different option set is
+  justified.
+- Do not repeat the same 300s configuration merely because it timed out. If
+  nothing changed and the run only needs more proof time, spend one 600s run
+  instead.
+
+Fuzz policy remains refute-only. It can cheaply find counterexamples for
+candidate PUT assertions, region choices, and replay/instrumentation mistakes,
+but it must never be counted as proof that an assertion or region is correct.
