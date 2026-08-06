@@ -292,11 +292,19 @@ struct collected_nondet_value
   type2tc type;        // The type
 };
 
-/// Collect all nondet values from SSA
-/// Reuses generate_testcase pattern
+/// Collect all nondet values from SSA.
+///
+/// When @p path_probe_replayable_only is true, collect only scalar Solidity
+/// function-local values and replayable EVM environment values before querying
+/// the solver model. Path-probe blocking clauses cannot replay aggregate
+/// harness objects anyway, so avoiding those model queries keeps multi-witness
+/// enumeration away from partially materialised aggregate values.
+/// Reuses generate_testcase pattern.
 std::vector<collected_nondet_value> collect_nondet_values(
   const symex_target_equationt &target,
-  smt_convt &smt_conv);
+  smt_convt &smt_conv,
+  bool path_probe_replayable_only = false,
+  size_t *skipped_before_model = nullptr);
 
 /// Build a blocking clause that excludes the given input tuple from future
 /// solver queries: NOT (sym_1 == val_1 AND sym_2 == val_2 AND ...).

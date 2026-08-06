@@ -4558,7 +4558,9 @@ smt_convt::resultt bmct::multi_property_check(
         // The legacy single-witness renderer does not use them.
         if (enumerate)
         {
-          w.nondet_inputs = collect_nondet_values(local_eq, *solver_ptr);
+          size_t probe_skipped_before_model = 0;
+          w.nondet_inputs = collect_nondet_values(
+            local_eq, *solver_ptr, is_probe_claim, &probe_skipped_before_model);
           if (is_probe_claim)
           {
             const auto before = w.nondet_inputs.size();
@@ -4583,7 +4585,8 @@ smt_convt::resultt bmct::multi_property_check(
             goto_coveraget::path_probe_nondets_kept.fetch_add(
               w.nondet_inputs.size(), std::memory_order_relaxed);
             goto_coveraget::path_probe_nondets_dropped.fetch_add(
-              before - w.nondet_inputs.size(), std::memory_order_relaxed);
+              probe_skipped_before_model + before - w.nondet_inputs.size(),
+              std::memory_order_relaxed);
           }
         }
         w.ce_index = ce_counter++;

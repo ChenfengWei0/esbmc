@@ -1346,9 +1346,24 @@ static bool first_nil_component(const expr2tc &e, std::string &path)
   return false;
 }
 
+static bool
+is_path_probe_replayable_nondet(const std::string &lhs, const type2tc &type)
+{
+  const bool source_local =
+    lhs.rfind("sol:@", 0) == 0 && lhs.find("@F@") != std::string::npos;
+  const bool replayable_env = lhs.find("@msg_sender") != std::string::npos ||
+                              lhs.find("@msg_value") != std::string::npos;
+  const bool scalar =
+    is_unsignedbv_type(type) || is_signedbv_type(type) || is_bool_type(type);
+  return scalar && (source_local || replayable_env);
+}
+
 // Shared nondet collection logic (used by both TestComp and CTest)
-std::vector<collected_nondet_value>
-collect_nondet_values(const symex_target_equationt &target, smt_convt &smt_conv)
+std::vector<collected_nondet_value> collect_nondet_values(
+  const symex_target_equationt &target,
+  smt_convt &smt_conv,
+  bool path_probe_replayable_only,
+  size_t *skipped_before_model)
 {
   std::vector<collected_nondet_value> results;
   std::unordered_set<std::string> seen_nondets;
@@ -1389,6 +1404,19 @@ collect_nondet_values(const symex_target_equationt &target, smt_convt &smt_conv)
       }
 
       seen_nondets.insert(sym.thename.as_string());
+
+      std::string lhs_symbol_name;
+      if (is_symbol2t(SSA_step.lhs))
+        lhs_symbol_name = to_symbol2t(SSA_step.lhs).thename.as_string();
+
+      if (
+        path_probe_replayable_only &&
+        !is_path_probe_replayable_nondet(lhs_symbol_name, nondet_expr->type))
+      {
+        if (skipped_before_model)
+          ++*skipped_before_model;
+        continue;
+      }
 
       // Get concrete value, model-completing unconstrained aggregate
       // components to zero so witnesses render with all fields present
@@ -1460,8 +1488,7 @@ collect_nondet_values(const symex_target_equationt &target, smt_convt &smt_conv)
       // Store the collected value
       collected_nondet_value val;
       val.symbol_name = sym.thename.as_string();
-      if (is_symbol2t(SSA_step.lhs))
-        val.lhs_symbol_name = to_symbol2t(SSA_step.lhs).thename.as_string();
+      val.lhs_symbol_name = lhs_symbol_name;
       val.symbol_expr = nondet_expr;
       val.value_expr = concrete_value;
       val.type = concrete_value->type;

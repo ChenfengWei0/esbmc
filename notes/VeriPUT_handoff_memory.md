@@ -3402,3 +3402,53 @@ Both passed. The next real spend should be `aqua_Aqua__Aqua__pull` attempt1
 under 60s/8GiB. Expected Stage2: one certified value-gate region, four
 method-level unsupported external-call regions. Expected Stage3: one B PUT for
 enc=2 with a low-level value-call exit-kind oracle.
+
+## 2026-08-06 Aqua pull attempt1 crash and witness-filter repair
+
+Official attempt spent:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  aqua_Aqua__Aqua__pull --stage all --cell gate --attempt 1 --fresh
+```
+
+Result:
+
+- Stage 1 exited after 3.27s wall clock with ESBMC exit code `-11`
+  (SIGSEGV). It did not time out and did not write `cov-report.json`.
+- The command was correctly configured for attempt1: 60s outer timeout,
+  8GiB memlimit, `--path-cov-probe --all-witnesses --max-witnesses 8`.
+- ESBMC internally auto-selected CVC5 because Aqua has a deep nested mapping
+  shape, so this was not a missing solver flag.
+- The crash happened after the first path claim was refuted and while
+  `--all-witnesses` was enumerating additional path-probe witnesses. The log
+  repeatedly warned that aggregate nondets such as contract-object values had
+  unresolved components before the process segfaulted.
+
+Code-level repair made without spending another POC attempt:
+
+- `collect_nondet_values` now accepts a `path_probe_replayable_only` mode.
+- In that mode it filters before querying the solver model, keeping only scalar
+  Solidity function-local nondets and replayable EVM environment values
+  (`msg.sender`, `msg.value`).
+- This matches the existing BMC-side path-probe policy, but moves it ahead of
+  aggregate model materialisation. Path-probe blocking clauses cannot replay
+  harness objects or aggregate contract instances anyway, so asking CVC5 to
+  materialise them only created crash exposure without increasing the generated
+  region.
+- The pre-model skipped count is still included in
+  `path_probe_nondets_dropped`, so the coverage summary does not falsely claim
+  those quantities were never seen.
+
+Validation so far:
+
+```sh
+make -C build -j2 esbmc
+git diff --check -- src/esbmc/bmc.cpp \
+  src/goto-symex/witnesses.cpp src/goto-symex/witnesses.h
+build/src/esbmc/esbmc --version
+```
+
+The build completed and the binary reports `ESBMC version 8.2.0 64-bit x86_64
+linux`. The next official spend for `aqua_Aqua__Aqua__pull` is attempt2 under
+120s/8GiB, but do not run it until this repair is committed and pushed.
