@@ -2869,6 +2869,10 @@ def return_rung_assertions(text, kind, var, label, idents_abs=None,
         if text.startswith("return == "):
             expr = structured(text[len("return == "):])
             if expr is not None:
+                if expr == "0":
+                    return [f"    assertFalse({var}, {lit});"]
+                if expr == "1":
+                    return [f"    assertTrue({var}, {lit});"]
                 return [f"    assertEq({var}, {expr}, {lit});"]
         return None
     v = tou.format(v=var)

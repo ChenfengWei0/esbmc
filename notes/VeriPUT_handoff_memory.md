@@ -27,6 +27,9 @@ Finding and change:
 - `return_rung_assertions()` now keeps the true/false special cases and then
   renders any structured bool equality it can spell from `r2_terms`, producing
   `assertEq(_put_ret, p_ok, ...)`.
+- If ESBMC/report text uses the numeric spelling for a bool literal
+  (`return == 0` or `return == 1`), the renderer still emits
+  `assertFalse`/`assertTrue` rather than an invalid `assertEq(bool, uint)`.
 
 Verification:
 

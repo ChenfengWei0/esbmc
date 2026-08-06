@@ -820,14 +820,21 @@ def test_a_bool_return_uses_assertTrue_not_a_cast():
 def test_a_bool_return_can_assert_a_structured_bool_coord():
     from solidity_path_put import return_rung_assertions  # noqa: E402
 
-    got = return_rung_assertions(
+    coord = return_rung_assertions(
         "return == ok", ("bool", None), "_put_ret",
         "return: return == ok", {"ok": "p_ok"},
         {"ok": {"kind": "coord", "name": "ok"}})
+    literal = return_rung_assertions(
+        "return == 1", ("bool", None), "_put_ret",
+        "return: return == 1", {},
+        {"1": {"kind": "literal", "value": "1"}})
     bad = 0
-    bad += check(got == [
+    bad += check(coord == [
         '    assertEq(_put_ret, p_ok, "return: return == ok");'
-    ], f"a bool return can compare against a certified bool coord: {got}")
+    ], f"a bool return can compare against a certified bool coord: {coord}")
+    bad += check(literal == [
+        '    assertTrue(_put_ret, "return: return == 1");'
+    ], f"a numeric bool literal is rendered as bool, not uint: {literal}")
     return bad
 
 
