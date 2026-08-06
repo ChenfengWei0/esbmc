@@ -5259,6 +5259,45 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 unary-update source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- Solidity nonces and counters commonly use `++` / `--` rather than explicit
+  assignment syntax. These are semantically one-step deltas, so asking ESBMC
+  `post - pre == 1` or `pre - post == 1` first is stronger and cheaper than
+  waiting for the mechanical R2 term product.
+- This remains a source-prioritized candidate only. ESBMC must still certify it;
+  fuzz can only refute it.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now recognizes
+  `UnaryOperation` nodes with operator `++` or `--`.
+- It emits:
+  - unsigned scalar `x++` / `++x` as inc-by-one;
+  - unsigned scalar `x--` / `--x` as dec-by-one;
+  - readable mapping-slot `_nonces[msg.sender]++` / `--` analogously, with the
+    same solc-layout `maps` gating as assignment-shaped mapping candidates.
+- Other unary operations (`delete`, arithmetic negation, logical negation) are
+  not mined.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `152 test(s) ran, 152 declared in this module`.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:

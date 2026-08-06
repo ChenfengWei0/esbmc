@@ -2468,6 +2468,75 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
     return bad
 
 
+def test_source_R2_unary_updates_prioritize_one_step_deltas():
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+    nonces_sender = {
+        "nodeType": "IndexAccess",
+        "baseExpression": {"nodeType": "Identifier",
+                           "referencedDeclaration": 11,
+                           "name": "nonces"},
+        "indexExpression": msg_sender,
+        "typeDescriptions": {"typeString": "uint256"}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "nonce",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "nonces",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "UnaryOperation", "operator": "++",
+                     "prefix": False, "src": "100:7:0",
+                     "subExpression": {"nodeType": "Identifier",
+                                       "referencedDeclaration": 10,
+                                       "name": "nonce"}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "UnaryOperation", "operator": "--",
+                     "prefix": True, "src": "120:7:0",
+                     "subExpression": nonces_sender}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "touch", [], {"nonce": (0, 0, 32)}, [],
+            arity=0, maps={"nonces": (1, "address", 32, 0, "nonces", None)},
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    nonce_deltas = entries.get("nonce", {}).get("deltas", [])
+    slot_deltas = entries.get("nonces[msg.sender]", {}).get("deltas", [])
+    bad = 0
+    bad += check(len(nonce_deltas) == 1 and nonce_deltas[0]["dir"] == "inc",
+                 f"scalar ++ becomes an inc-by-one candidate: {nonce_deltas}")
+    bad += check(nonce_deltas and nonce_deltas[0]["lo"] ==
+                 {"kind": "literal", "value": "1"},
+                 f"scalar ++ uses literal one: {nonce_deltas}")
+    bad += check(len(slot_deltas) == 1 and slot_deltas[0]["dir"] == "dec",
+                 f"mapping -- becomes a dec-by-one candidate: {slot_deltas}")
+    bad += check(slot_deltas and slot_deltas[0]["lo"] ==
+                 {"kind": "literal", "value": "1"},
+                 f"mapping -- uses literal one: {slot_deltas}")
+    bad += check(specs[0].get("candidate_count") == 2 if specs else False,
+                 f"candidate_count includes unary deltas: {specs}")
+    bad += check(any("nonce: post - pre == 1" in line for line in evidence),
+                 f"scalar unary provenance is recorded: {evidence}")
+    bad += check(any("nonces[msg.sender]: pre - post == 1" in line
+                     for line in evidence),
+                 f"mapping unary provenance is recorded: {evidence}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -4987,6 +5056,7 @@ def main():
               test_source_R2_assignment_candidates_are_small_setter_queries,
               test_source_R2_self_updates_prioritize_delta_queries,
               test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries,
+              test_source_R2_unary_updates_prioritize_one_step_deltas,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,

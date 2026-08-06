@@ -1456,6 +1456,20 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     if term is not None:
                         add_equals_candidate(RETURN_VAR, term[0], term[1],
                                              n.get("src"))
+            elif n.get("nodeType") == "UnaryOperation" and n.get(
+                    "operator") in ("++", "--"):
+                direction = "inc" if n.get("operator") == "++" else "dec"
+                one = {"kind": "literal", "value": "1"}
+                sub = n.get("subExpression")
+                sub_ref = identifier_ref(sub)
+                state = state_ids.get(sub_ref)
+                if state is not None and unsigned_ty(_norm_ty(state[1])):
+                    add_delta_candidate(state[0], direction, one, "1",
+                                        n.get("src"))
+                slot = slot_lhs(sub)
+                if slot is not None and unsigned_ty(slot[1]):
+                    add_delta_candidate(slot[0], direction, one, "1",
+                                        n.get("src"))
             elif n.get("nodeType") == "Return" and return_target is not None:
                 term = return_term(n.get("expression"), return_target[1])
                 if term is not None:
