@@ -7473,3 +7473,44 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 193/193 tests.
 - `git diff --check` passed.
+
+## 2026-08-06 Observable env coordinates feed R2 proposals
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. Validation was Python-only.
+
+Finding:
+
+- The previous renderer-side fixes made observed `msg.sender`, `msg.value`,
+  `block.timestamp`, and `block.number` nameable when an already-certified R2
+  row reached `build_put()`.
+- The R2 proposer still only marked env coordinates as rendered when they were
+  explicit region coordinates. Source-R2 mining therefore missed strong
+  candidates such as `owner = msg.sender` unless the region already mentioned
+  `msg.sender`, even though the emitted replay had a concrete prank and the
+  renderer could spell it.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has `rendered_env_coords_for_r2()`.
+- R2 proposal receives env coordinates when either:
+  - the coordinate is in the certified region, or
+  - the current emitted replay makes it observable by the helpers added in the
+    renderer-side fixes.
+- Ordinary high-level calls expose observed `msg.sender` and `msg.value == 0`.
+- `block.timestamp` / `block.number` are exposed only when a literal
+  `vm.warp` / `vm.roll` governs the target call, or when they are explicit
+  region coordinates. No default block value is guessed.
+- This only changes which R2 candidates are asked. Fuzz remains refutation
+  only, and ESBMC remains the proof gate for any candidate that survives.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 194/194 tests.
+- `git diff --check` passed.

@@ -6659,6 +6659,41 @@ def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
     return bad
 
 
+def test_R2_proposal_env_coords_include_observable_replay_values():
+    from solidity_path_put import (find_unit_call,  # noqa: E402
+                                   rendered_env_coords_for_r2)
+    em, case = make_case()
+    body = em.lines[case[3][0] + 1:case[3][1]]
+    call_i = find_unit_call(body, "setDiscount")
+    with_block = EMITTED.replace(
+        "    vm.prank(address(uint160(0)));\n",
+        "    vm.warp(42);\n"
+        "    vm.roll(7);\n"
+        "    vm.prank(address(uint160(0)));\n")
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as out:
+        out.write(with_block)
+    try:
+        block_em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    block_case = block_em.case_for("sol:@C@FeeVault@F@setDiscount#61", 7)
+    block_body = block_em.lines[block_case[3][0] + 1:block_case[3][1]]
+    block_call_i = find_unit_call(block_body, "setDiscount")
+    got = rendered_env_coords_for_r2(body, call_i, {})
+    got_block = rendered_env_coords_for_r2(block_body, block_call_i, {})
+    bad = 0
+    bad += check(got == [("msg.sender", "id", 20),
+                         ("msg.value", "num", None)],
+                 f"ordinary replay exposes sender and value only: {got}")
+    bad += check(got_block == [("msg.sender", "id", 20),
+                               ("msg.value", "num", None),
+                               ("block.timestamp", "num", None),
+                               ("block.number", "num", None)],
+                 f"literal block cheatcodes expose block env too: {got_block}")
+    return bad
+
+
 def test_a_numeric_R2_bound_is_UNCHANGED():
     """NEGATIVE CONTROL for the widened regex. A decimal endpoint must render
     exactly as it did before names were allowed; if `([0-9]+|name)` had been
@@ -8454,6 +8489,7 @@ def main():
               test_an_OBSERVED_sender_renders_for_an_ABSOLUTE_R2_endpoint,
               test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints,
               test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints,
+              test_R2_proposal_env_coords_include_observable_replay_values,
               test_a_numeric_R2_bound_is_UNCHANGED,
               test_a_RENAMED_coordinate_is_spelled_with_its_TEST_name,
               test_a_hole_OUTSIDE_the_interval_costs_no_width,

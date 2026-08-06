@@ -4723,6 +4723,26 @@ def observable_block_expr_for_r2(body, call_i, pattern):
     return None if value is None else str(value)
 
 
+def rendered_env_coords_for_r2(body, call_i, region):
+    """Environment coordinates the R2 proposer may name for this emitted call."""
+    out = []
+    if ("msg.sender" in region
+            or observable_sender_expr_for_abs_r2(body, call_i) is not None):
+        out.append(("msg.sender", "id", 20))
+    if ("msg.value" in region
+            or observable_value_expr_for_r2(body, call_i) is not None):
+        out.append(("msg.value", "num", None))
+    if ("block.timestamp" in region
+            or observable_block_expr_for_r2(body, call_i, _WARP_RE)
+            is not None):
+        out.append(("block.timestamp", "num", None))
+    if ("block.number" in region
+            or observable_block_expr_for_r2(body, call_i, _ROLL_RE)
+            is not None):
+        out.append(("block.number", "num", None))
+    return out
+
+
 def low_level_value_gate_asserts_exit(body, call_i, call_line):
     """Whether the emitted low-level value-gate assertion survived the rewrite.
 
@@ -7836,14 +7856,7 @@ def main():
                 (_pn, _coord_kind,
                  (20 if _kind[0] == "address" else
                   (_kind[1] // 8 if _kind[0] == "bytes" else None))))
-        if "msg.sender" in region:
-            _rendered_coords.append(("msg.sender", "id", 20))
-        if "msg.value" in region:
-            _rendered_coords.append(("msg.value", "num", None))
-        if "block.timestamp" in region:
-            _rendered_coords.append(("block.timestamp", "num", None))
-        if "block.number" in region:
-            _rendered_coords.append(("block.number", "num", None))
+        _rendered_coords += rendered_env_coords_for_r2(body, call_i, region)
         for _sn in sorted({n for n in list(region) + list(pins)
                            if n.startswith("state.")}):
             _sv = _sn[len("state."):]
