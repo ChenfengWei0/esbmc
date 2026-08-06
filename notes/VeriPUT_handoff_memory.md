@@ -80,6 +80,66 @@ Effect on the earlier mini-batch if re-emitted under this code:
 - Case-level all sampled units remains 4 / 6 because the two BugFix units still
   stop at Stage2 `NO-WITNESS-UNKNOWN`.
 
+## 2026-08-07 current small-wave reference-valid rate
+
+User policy update:
+
+- Final per-case ESBMC timeout is now 600s.
+- User asked for speed and a small broad measurement that reports:
+  reference-valid generated tests on the unmodified contract, split into
+  concrete replay tests and parameterized unit tests.
+- The wave below is intentionally small. It is a status snapshot, not a
+  publishable corpus result.
+
+What was run:
+
+- No files under `/home/samson/workspace/VeriPUT/Datasets` were modified.
+- Output root:
+  `/tmp/veriput_wave_20260807_060455`.
+- To save ESBMC time, two older Stage2 certification JSONL files were reused
+  and re-emitted through the current Stage4 code at `c8023171f9`:
+  - BugFix:
+    `/tmp/veriput_sample_v10_20260806_212550/certify-bugfix124.jsonl`
+    -> `/tmp/veriput_wave_20260807_060455/put-bugfix-oldcert-current`.
+  - Stress:
+    `/tmp/veriput_sample_v10_20260806_212550/certify-stress203.jsonl`
+    -> `/tmp/veriput_wave_20260807_060455/put-stress-oldcert-current`.
+- The current 600s mini-batch rows from
+  `/tmp/veriput_minibatch_20260807_054341` were included, with
+  `BasicProvenance.Complete` corrected by the concrete fallback validation at
+  `/tmp/veriput_basicprovenance_concretefix2_20260807_055952`.
+
+Measured sample:
+
+- 11 unit rows total:
+  - 6 from the 600s mini-batch.
+  - 3 from the older BugFix cert file.
+  - 2 from the older Stress cert file.
+- 8 / 11 unit rows produced at least one reference-valid generated test
+  = 72.7%.
+- 8 / 8 unit rows with at least one certified region produced at least one
+  reference-valid generated test = 100%.
+- 3 / 11 unit rows still fail before emission because Stage2 does not produce a
+  certified region (`NO-WITNESS-UNKNOWN` / no path class failures).
+
+Certified-region / emitted-test accounting:
+
+- Certified region rows measured through current Stage4: 16.
+- Reference-valid generated tests: 16 / 16 = 100%.
+- Strict PUT B: 15 / 16 certified region rows = 93.8%.
+- Valid generated-test split:
+  - 15 / 16 are PUTs = 93.8%.
+  - 1 / 16 is a concrete replay fallback = 6.2%.
+
+Interpretation:
+
+- The current emitter is not the bottleneck on this small wave: once Stage2
+  certifies a region, Stage4 produced a green generated test for every measured
+  row.
+- The remaining end-to-end loss is Stage2 path witnessing/certification, mainly
+  early no-witness/no-path rows. This is where the next speed/quality work
+  should focus before expanding to a larger benchmark wave.
+
 ## 2026-08-07 600s mini-batch PUT success snapshot
 
 User policy update:
