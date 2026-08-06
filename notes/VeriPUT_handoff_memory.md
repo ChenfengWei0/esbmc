@@ -9434,6 +9434,38 @@ Next:
   `OwnableAuthentication.transferOwnership` in an ESBMC-crash bucket until the
   Solidity frontend/modeling abort is debugged separately.
 
+Additional first-attempt samples after the bare-state fix:
+
+- Results root: `/tmp/veriput_bench_strat_more_20260806`.
+- `peer182__peer_ccsolbmc__BasicProvenance / TransferResponsibility`,
+  60s/8GiB:
+  `CERTIFIED`, `2 certified / 1 not / 3 witnessed`, about 8s.
+  The certified regions cover the body paths over `msg.sender` and
+  `newCounterparty`; the nonpayable ABI value-gate path is excluded by
+  `msg.value == 0`.
+- `bugfix124__acfix_fixlink_DepositLog / setApprovedLogger`, 60s/8GiB:
+  `CERTIFIED`, `2 certified / 1 not / 3 witnessed`, about 12s.
+  The mapping slot `state.approvedLoggers[_logger]` is proposed from the
+  source slot access, stays in the free coordinate set, and both body paths
+  certify.  This is a useful positive sample for owner guard + mapping slot.
+- `stress243__ERC-3643__ERC-3643__IdentityRegistryStorage /
+  addIdentityToStorage`, 60s/8GiB:
+  `NO-WITNESS-UNKNOWN`, about 1s.  ESBMC exits `-6` with
+  `namespacet::follow(const typet&)` assertion failure during conversion, same
+  stress/ERC-3643 crash class as `ClaimTopicsRegistry.addClaimTopic` and
+  `OwnableAuthentication.transferOwnership`.
+
+Updated sampling conclusion:
+
+- peer182 and bugfix124 now have multiple quick positive first-attempt samples
+  under `veriput-strong/12`.
+- The current large visible blocker for stress203/243 is not PUT region search
+  but ESBMC Solidity frontend/modeling crashes on some ERC-3643/Balancer
+  subjects before `cov-report.json` exists.
+- Do not spend more PUT tuning attempts on those stress units until the ESBMC
+  `namespacet::follow` crash is isolated or statically preflighted into a
+  separate bucket.
+
 ## 2026-08-06 relation-retreated structural seeds for owner/sender guards
 
 Benchmark sample that exposed the next bottleneck:
