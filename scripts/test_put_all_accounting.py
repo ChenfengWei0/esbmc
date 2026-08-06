@@ -91,6 +91,7 @@ def main():
                      sorted(collect.BENCHES))
         args = Namespace(strong_recipe=True,
                          auto_unwind=0,
+                         auto_partial_loops=False,
                          propose_r2=False,
                          r2_depth=0,
                          r2_term_budget=1,
@@ -103,6 +104,8 @@ def main():
                      put_all.STRONG_RECIPE_VERSION)
         bad += check("stage4-strong-recipe-auto-unwind",
                      args.auto_unwind, 1)
+        bad += check("stage4-strong-recipe-auto-partial-loops",
+                     args.auto_partial_loops, True)
         bad += check("stage4-strong-recipe-r2",
                      (args.propose_r2, args.r2_depth, args.r2_term_budget,
                       args.r2_candidate_budget),
@@ -111,10 +114,12 @@ def main():
                      (args.fuzz_r2_prefilter, args.fuzz_runs,
                       args.fuzz_r2_candidate_budget),
                      (True, 256, 128))
-        plain = Namespace(strong_recipe=False, auto_unwind=0)
+        plain = Namespace(strong_recipe=False, auto_unwind=0,
+                          auto_partial_loops=False)
         bad += check("stage4-plain-recipe-unchanged",
-                     (put_all.apply_strong_put_recipe(plain), plain.auto_unwind),
-                     (None, 0))
+                     (put_all.apply_strong_put_recipe(plain),
+                      plain.auto_unwind, plain.auto_partial_loops),
+                     (None, 0, False))
         cp = subprocess.run([
             sys.executable,
             PUT_ALL,

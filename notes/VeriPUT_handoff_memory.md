@@ -10496,6 +10496,78 @@ Reporting correction after commit `ecfecd4548`:
   explicitly and changed the misleading summary text from
   `B = ... emitted PUT(s)` to `B = ... certified region row(s)`.
 
+## 2026-08-07 Stage-4 partial-loop fallback
+
+Problem:
+
+- The small Stage-4 benchmark wave refused both stress
+  `ClaimTopicsRegistry` certified regions because `--path-cov-assert`
+  returned `UNDECIDED-TRUNCATED`.
+- The existing `--auto-unwind 1` retry widened the named loops with
+  `--unwindset ...:8`, but both regions still truncated on the `onlyOwner`
+  wrapper loop and ESBMC's `__memset_impl`.
+- ESBMC's own refusal text names three repairs: raise unwind, use unwindset,
+  or pass `--partial-loops`.  The driver implemented only unwindset.
+
+Code change:
+
+- `scripts/solidity_path_put.py` now accepts `--auto-partial-loops`.
+- If the ladder is still `UNDECIDED-TRUNCATED` after named-loop
+  `--auto-unwind` attempts, the driver retries the assertion ladder once with
+  `--partial-loops`.
+- The retry is adopted only if it produces ladder rows or a recognized RESULT
+  token, using the same `attempt_is_usable` guard as unwindset retries.
+- The adopted flag is recorded as ladder-only provenance:
+  `LADDER WIDENED: --partial-loops`, and in `put.json`
+  `unwind_applied_to_ladder_only`.
+- `notes/coverage/scripts/veriput_recipe.py` advanced the shared recipe to
+  `veriput-strong/13` and enables this Stage-4 fallback.
+- `put_all.py --strong-recipe` passes the new flag through.
+
+Real benchmark measurement:
+
+- Command:
+  `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_put_smallwave_20260807_certified6.jsonl --only ClaimTopicsRegistry --strong-recipe --timeout 600 --memlimit-gib 8 --forge-timeout 300 --out-root /tmp/veriput_put_claimtopics_partial_20260807`
+- Output root:
+  `/tmp/veriput_put_claimtopics_partial_20260807`.
+- Selected rows: 2 certified stress regions.
+- Result:
+  - `ClaimTopicsRegistry.addClaimTopic` enc 31: emitted PUT, fuzz=1,
+    asserts=1, Forge green, B.
+  - `ClaimTopicsRegistry.removeClaimTopic` enc 15: emitted PUT, fuzz=1,
+    asserts=1, Forge green, B.
+- For each region, `--unwindset` at 8 still returned
+  `blocker=truncated rows=0`; the `--partial-loops` retry returned
+  `blocker=None rows=6`.
+- The R2 pass still saw truncation and therefore produced no R2 row; the final
+  PUT strength came from the base ladder oracle over `_owner`, plus the fuzzed
+  `_claimTopic` region.
+
+Updated small-wave success picture:
+
+- Previous same-wave B rows were 3 DepositLog PUTs.
+- Adding the two stress PUTs gives 5 B rows over the same 7 certified region
+  rows: `5 / 7 = 71.4%`.
+- Forge-visible generated PUT tests in the combined measurement: 5 green / 5
+  total.
+- Forge-visible concrete replay tests remain 0 / 0 in these Stage-4 projects.
+- Remaining non-B rows in the 7-row wave:
+  - `EtherLotto.play` enc 2: emitter cannot find a concrete `play` call to
+    lift.
+  - `DepositLog.logCreated` enc 6: region is not parameterized and would only
+    emit a concrete replay wearing bound syntax.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py notes/coverage/scripts/veriput_recipe.py scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed, 217 / 217 tests.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py notes/coverage/scripts/veriput_recipe.py scripts/test_put_all_accounting.py`
+  passed.
+
 Important code fix found by this wave:
 
 - Before the fix, Forge could not compile the generated DepositLog PUTs because

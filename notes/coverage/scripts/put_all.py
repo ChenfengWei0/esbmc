@@ -33,6 +33,7 @@ from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E40
 from veriput_subjects import SubjectError, subject_from_record  # noqa: E402
 from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 from veriput_recipe import (STRONG_RECIPE_VERSION, STRONG_PUT_AUTO_UNWIND,  # noqa: E402
+                            STRONG_PUT_AUTO_PARTIAL_LOOPS,
                             STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET,
                             STRONG_PUT_FUZZ_RUNS,
                             STRONG_PUT_R2_CANDIDATE_BUDGET,
@@ -306,6 +307,7 @@ def apply_strong_put_recipe(args):
     if not getattr(args, "strong_recipe", False):
         return None
     args.auto_unwind = STRONG_PUT_AUTO_UNWIND
+    args.auto_partial_loops = STRONG_PUT_AUTO_PARTIAL_LOOPS
     args.propose_r2 = True
     args.r2_depth = STRONG_PUT_R2_DEPTH
     args.r2_term_budget = STRONG_PUT_R2_TERM_BUDGET
@@ -477,6 +479,10 @@ def main():
                     help="passed to the driver: on an UNDECIDED-TRUNCATED "
                          "ladder, widen the loops the tool NAMED and retry, up "
                          "to N times. aqua `dock` is the recorded case.")
+    ap.add_argument("--auto-partial-loops", action="store_true",
+                    help="passed to the driver: after --auto-unwind is spent, "
+                         "try the ladder once with --partial-loops, the third "
+                         "repair named by ESBMC's UNDECIDED-TRUNCATED message")
     ap.add_argument("--timeout", type=int, default=600,
                     help="per ESBMC invocation in the PUT driver")
     ap.add_argument("--forge-timeout", type=int, default=300,
@@ -778,6 +784,8 @@ def main():
                "--scope", args.scope, "--max-tx", str(args.max_tx),
                "--auto-unwind", str(args.auto_unwind),
                "--derived-by", json.dumps(deriv)]
+        if args.auto_partial_loops:
+            cmd += ["--auto-partial-loops"]
         if path_function:
             cmd += ["--path-function", path_function]
         if exit_kind:

@@ -7839,6 +7839,13 @@ def main():
                          "feasible path look infeasible. OFF by default, "
                          "because it costs a run per attempt and changes what "
                          "a default invocation does.")
+    ap.add_argument("--auto-partial-loops", action="store_true",
+                    help="after the named-loop auto-unwind attempts are spent "
+                         "and the ladder is still UNDECIDED-TRUNCATED, retry "
+                         "the assertion ladder once with --partial-loops. This "
+                         "is the verifier's third named repair for truncation; "
+                         "it is recorded separately because it applies only to "
+                         "the ladder run, not to concrete test emission.")
     ap.add_argument("--scope", default="focus",
                     help="focus passes --focus-function <unit> (the GATE "
                          "cell); whole drops it; a comma-separated list passes "
@@ -8218,6 +8225,36 @@ def main():
         if blocker != "truncated":
             unwind_applied.extend(extra)
         k *= 2
+    if blocker == "truncated" and a.auto_partial_loops:
+        print("[put]   auto-partial-loops: named-loop widening did not settle "
+              "the ladder; re-running once with --partial-loops")
+        extra = ["--partial-loops"]
+        out2b, rc2b, w2b = run_esbmc(
+            a.esbmc, a.sol, a.ast, a.contract, a.unit,
+            ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
+             "--cov-report-json"] + a.esbmc_arg + extra,
+            assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+        rows_b, summary_b, refusal_b, blocker_b = parse_ladder(out2b)
+        usable = attempt_is_usable(rows_b, blocker_b)
+        unwind_attempts.append({"attempt": a.auto_unwind + 1,
+                                "mode": "partial-loops",
+                                "args": extra,
+                                "exit": rc2b,
+                                "wall_s": round(w2b, 1),
+                                "adopted": usable,
+                                "blocker_after": blocker_b if usable else None,
+                                "rows_after": len(rows_b) if usable else 0})
+        if usable:
+            out2, rows, summary, refusal, blocker = (
+                out2b, rows_b, summary_b, refusal_b, blocker_b)
+            print(f"[put]     exit={rc2b} {w2b:.1f}s  blocker={blocker} "
+                  f"rows={len(rows)}")
+            if blocker != "truncated":
+                unwind_applied.extend(extra)
+        else:
+            print(f"[put]     exit={rc2b} {w2b:.1f}s  NO LADDER: "
+                  "--partial-loops produced neither a candidate row nor a "
+                  "RESULT token, so the previous truncation verdict stands")
     if refusal:
         print(f"[put]   ladder REFUSED: {refusal}")
         notes.append(f"ladder refused: {refusal}")

@@ -755,6 +755,15 @@ def test_a_widened_ladder_says_which_half_it_applies_to():
                 "the widening is named on the test")
     bad += check("ASSERTION LADDER run only" in text,
                  "and it says which half of the test it applies to")
+    put_partial, _ = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=[], cell=cell_of("focus", 1),
+        unwind=["--partial-loops"])
+    bad += check("LADDER WIDENED: --partial-loops"
+                 in "\n".join(put_partial or []),
+                 "a partial-loop ladder repair is named on the test too")
     # MUST NOT FIRE: an un-widened run must not grow the disclaimer, or every
     # PUT would carry a caveat about something that did not happen.
     put2, _ = build_put(
