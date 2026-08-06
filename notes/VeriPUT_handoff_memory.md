@@ -8,6 +8,43 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 local alias invalidation for source-R2
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- The local-alias source miner remembered simple aliases such as
+  `uint fee = amount`, but it could keep using that alias after `fee += 1`,
+  `fee++`, or `delete fee`.
+- Such a stale candidate would still need ESBMC certification and therefore
+  would not become a proof by itself, but it wastes R2 candidate budget and can
+  crowd out stronger candidates on real benchmark units.
+
+Code change:
+
+- `source_assignment_r2_specs()` now invalidates a local alias when the local is
+  assigned with any non-`=` operator.
+- Unary `++`, `--`, and `delete` on a known local also invalidate its alias.
+- A later plain `local = expr` still creates a fresh alias, so straight-line
+  redefinitions remain mineable.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  167/167 tests.
+- `git diff --check -- scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md` passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 mapping-slot getter return R2
 
 Scope and constraint:

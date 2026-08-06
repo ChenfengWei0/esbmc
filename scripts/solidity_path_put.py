@@ -1680,6 +1680,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     for child in n.values():
                         walk(child)
                     return
+                if lhs_ref in local_ids:
+                    local_aliases.pop(lhs_ref, None)
                 state = state_ids.get(lhs_ref)
                 state_name = state[0] if state else None
                 state_ty = _norm_ty(state[1]) if state else ""
@@ -1792,6 +1794,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 one = {"kind": "literal", "value": "1"}
                 sub = n.get("subExpression")
                 sub_ref = identifier_ref(sub)
+                if sub_ref in local_ids:
+                    local_aliases.pop(sub_ref, None)
                 state = state_ids.get(sub_ref)
                 if state is not None and unsigned_ty(_norm_ty(state[1])):
                     add_delta_candidate(state[0], direction, one, "1",
@@ -1804,6 +1808,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     "operator") == "delete":
                 sub = n.get("subExpression")
                 sub_ref = identifier_ref(sub)
+                if sub_ref in local_ids:
+                    local_aliases.pop(sub_ref, None)
                 state = state_ids.get(sub_ref)
                 if state is not None:
                     zero = zero_term(_norm_ty(state[1]))

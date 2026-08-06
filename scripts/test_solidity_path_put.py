@@ -4047,6 +4047,89 @@ def test_source_R2_local_aliases_feed_return_state_and_mapping_terms():
     return bad
 
 
+def test_source_R2_local_aliases_are_invalidated_after_mutation():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def local_decl(ref, name, value):
+        return {"nodeType": "VariableDeclarationStatement",
+                "declarations": [{
+                    "nodeType": "VariableDeclaration", "id": ref,
+                    "name": name,
+                    "typeDescriptions": {"typeString": "uint256"}}],
+                "initialValue": value}
+
+    def assign(lhs, rhs, src, op="="):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": op, "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    def ret(expr, src):
+        return {"nodeType": "Return", "src": src, "expression": expr}
+
+    amount_param = {"id": 21, "name": "amount",
+                    "typeDescriptions": {"typeString": "uint256"}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "stale",
+             "parameters": {"parameters": [amount_param]},
+             "returnParameters": {"parameters": [{
+                 "id": 22, "name": "",
+                 "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 local_decl(30, "fee", ident(21, "amount")),
+                 assign(ident(30, "fee"), num(1), "100:10:0", "+="),
+                 ret(ident(30, "fee"), "120:10:0")]}},
+            {"nodeType": "FunctionDefinition", "id": 40, "name": "fresh",
+             "parameters": {"parameters": [amount_param]},
+             "returnParameters": {"parameters": [{
+                 "id": 42, "name": "",
+                 "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 local_decl(50, "fee", ident(21, "amount")),
+                 assign(ident(50, "fee"), num(1), "200:10:0", "+="),
+                 assign(ident(50, "fee"), num(7), "220:10:0"),
+                 ret(ident(50, "fee"), "240:10:0")]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out_file:
+        json.dump(ast, out_file)
+    try:
+        stale_specs, stale_evidence = source_assignment_r2_specs(
+            path, "C", "stale", [("amount", "uint256")], {},
+            [("amount", "num", None)], arity=1, rettypes=[("", "uint256")],
+            log=lambda _msg: None)
+        fresh_specs, _fresh_evidence = source_assignment_r2_specs(
+            path, "C", "fresh", [("amount", "uint256")], {},
+            [("amount", "num", None)], arity=1, rettypes=[("", "uint256")],
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    def return_terms(specs):
+        entry = next((item for item in specs[0]["vars"]
+                      if item["name"] == RETURN_VAR), {}) if specs else {}
+        return [r2_term_text(item["term"])
+                for item in entry.get("equals", [])]
+
+    bad = 0
+    bad += check(stale_specs == [],
+                 f"a mutated local does not keep a stale alias: "
+                 f"{stale_specs}, {stale_evidence}")
+    bad += check(return_terms(fresh_specs) == ["7"],
+                 f"a later simple assignment creates a fresh alias: "
+                 f"{fresh_specs}")
+    return bad
+
+
 def test_source_R2_mapping_getter_returns_named_entry_slot_coord():
     from solidity_path_put import RETURN_VAR, r2_candidates, r2_term_text  # noqa: E402
     from solidity_path_put import source_assignment_r2_specs  # noqa: E402
@@ -6522,6 +6605,7 @@ def main():
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_source_R2_return_type_conversion_wrappers_are_unwrapped,
               test_source_R2_local_aliases_feed_return_state_and_mapping_terms,
+              test_source_R2_local_aliases_are_invalidated_after_mutation,
               test_source_R2_mapping_getter_returns_named_entry_slot_coord,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
