@@ -166,6 +166,8 @@ def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id
 
 def _expr_coord_name(expr, state_by_id=None, constant_by_id=None,
                      alias_by_id=None, seen=None):
+    if isinstance(expr, str):
+        return expr
     if not isinstance(expr, dict):
         return None
     seen = set() if seen is None else set(seen)
@@ -343,7 +345,10 @@ def unit_mapping_slot_accesses(
             for formal, actual in zip(formals, actuals):
                 ref = declaration_ref(formal)
                 if ref is not None:
-                    out[ref] = actual
+                    name = _expr_coord_name(
+                        actual, state_by_id, constant_by_id, alias_by_id)
+                    if name is not None:
+                        out[ref] = name
             return out
 
         def call_expression_ref(expr):
@@ -384,7 +389,10 @@ def unit_mapping_slot_accesses(
                     if len(decls) == 1 and init is not None:
                         ref = declaration_ref(decls[0])
                         if ref is not None:
-                            alias_by_id[ref] = init
+                            name = _expr_coord_name(
+                                init, state_by_id, constant_by_id, alias_by_id)
+                            if name is not None:
+                                alias_by_id[ref] = name
                     return
                 if value.get("nodeType") == "IndexAccess":
                     chain_got = _index_access_chain(
@@ -405,8 +413,17 @@ def unit_mapping_slot_accesses(
                     for child in value.values():
                         scan(child)
                     ref = identifier_ref(value.get("leftHandSide"))
-                    if ref in alias_by_id:
-                        del alias_by_id[ref]
+                    if ref is not None:
+                        if value.get("operator") == "=":
+                            name = _expr_coord_name(
+                                value.get("rightHandSide"), state_by_id,
+                                constant_by_id, alias_by_id)
+                            if name is not None:
+                                alias_by_id[ref] = name
+                            elif ref in alias_by_id:
+                                del alias_by_id[ref]
+                        elif ref in alias_by_id:
+                            del alias_by_id[ref]
                     return
                 ref = callable_ref(value)
                 if ref is not None:

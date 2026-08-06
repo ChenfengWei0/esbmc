@@ -7442,6 +7442,49 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 assignment-updated source slot aliases
+
+Scope:
+
+- This is a source-resolved mapping slot improvement in the external VeriPUT
+  generator. It is not POC-specific and does not alter ESBMC internals.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `unit_mapping_slot_accesses` now tracks simple straight-line assignments to
+  local identifiers when the operator is `=` and the right-hand side can be
+  resolved to a safe source coordinate. This covers common code such as
+  `address who; who = msg.sender; bal[who]`.
+- Alias values are stored as resolved coordinate strings, not raw AST nodes.
+  That freezes the value at the assignment/initializer/call boundary, so a
+  later reassignment of an intermediate local cannot silently retarget an older
+  alias.
+- Compound assignments and unsupported right-hand sides still invalidate or
+  decline the alias rather than guessing.
+- Helper/modifier formal substitution now uses the same resolved-coordinate
+  snapshot, preserving the previous call-edge support while avoiding by-reference
+  local alias behaviour.
+
+Why it matters:
+
+- Real Solidity code often declares a local key and assigns it after a guard or
+  branch before indexing a mapping. Before this change, those accesses either
+  leaked a raw local name such as `who` or fell back to broader guessed slots,
+  weakening R1/R2 candidates.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 207/207 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 block env source mapping-slot keys
 
 Scope:

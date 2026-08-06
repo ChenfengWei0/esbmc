@@ -6777,11 +6777,16 @@ def test_source_access_slots_resolve_local_key_aliases_in_order():
     msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
                   "expression": {"nodeType": "Identifier", "name": "msg"}}
 
-    def local_decl(ref, name, init):
+    def local_decl(ref, name, init=None):
         return {"nodeType": "VariableDeclarationStatement",
                 "declarations": [{"nodeType": "VariableDeclaration",
                                   "id": ref, "name": name}],
                 "initialValue": init}
+
+    def assign(lhs, rhs):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=",
+            "leftHandSide": lhs, "rightHandSide": rhs}}
 
     def access(key, src):
         return {"nodeType": "ExpressionStatement", "expression": {
@@ -6801,14 +6806,14 @@ def test_source_access_slots_resolve_local_key_aliases_in_order():
             {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
              "parameters": {"parameters": []},
              "body": {"nodeType": "Block", "statements": [
+                 local_decl(32, "late"),
+                 assign(ident(32, "late"), msg_sender),
+                 access(ident(32, "late"), "90:5:0"),
                  local_decl(30, "sender", msg_sender),
                  access(ident(30, "sender"), "100:5:0"),
                  local_decl(31, "who", ident(11, "owner")),
                  access(ident(31, "who"), "120:5:0"),
-                 {"nodeType": "ExpressionStatement", "expression": {
-                     "nodeType": "Assignment", "operator": "=",
-                     "leftHandSide": ident(31, "who"),
-                     "rightHandSide": msg_sender}},
+                 assign(ident(31, "who"), ident(12, "admin")),
                  access(ident(31, "who"), "140:5:0")]}}
         ]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
@@ -6821,23 +6826,26 @@ def test_source_access_slots_resolve_local_key_aliases_in_order():
         os.unlink(path)
     slots, used, skipped = source_access_slot_vars(
         accesses, {"bal": (2, "address", 32, 0, "bal", None)},
-        state_types={"owner": "address"}, layout={"owner": (0, 0, 20)})
+        state_types={"admin": "address", "owner": "address"},
+        layout={"admin": (0, 0, 20), "owner": (1, 0, 20)})
     bad = 0
     bad += check(accesses == [
         ("bal", ("msg.sender",)),
+        ("bal", ("state.admin",)),
         ("bal", ("state.owner",)),
-        ("bal", ("who",)),
-    ], f"local aliases resolve in statement order and stale alias is dropped: "
+    ], f"local aliases resolve in statement order and assignments update: "
         f"{accesses}")
     bad += check(any("state.bal[msg.sender]" in line for line in evidence)
-                 and any("state.bal[state.owner]" in line for line in evidence),
+                 and any("state.bal[state.owner]" in line for line in evidence)
+                 and any("state.bal[state.admin]" in line for line in evidence),
                  f"evidence records the resolved alias keys: {evidence}")
-    bad += check(slots == ["bal[msg.sender]", "bal[state.owner]"],
+    bad += check(slots == ["bal[msg.sender]", "bal[state.admin]",
+                           "bal[state.owner]"],
                  f"only live renderable aliases become source slots: {slots}")
     bad += check(used == {"bal"},
                  f"accepted alias slots suppress fallback: {used}")
-    bad += check(any("source key `who`" in s for s in skipped),
-                 f"the reassigned alias is not used stale: {skipped}")
+    bad += check(skipped == [],
+                 f"assigned aliases do not leak stale local names: {skipped}")
     return bad
 
 
