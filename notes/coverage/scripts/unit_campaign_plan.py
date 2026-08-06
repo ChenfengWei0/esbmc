@@ -283,6 +283,44 @@ def _argv_value(argv: list[str], flag: str) -> str:
     return argv[idx + 1]
 
 
+def _with_argv_value(argv: list[str], flag: str, value: str) -> list[str]:
+    rewritten = list(argv)
+    try:
+        idx = rewritten.index(flag)
+    except ValueError:
+        rewritten.extend([flag, value])
+        return rewritten
+    if idx + 1 >= len(rewritten):
+        rewritten.append(value)
+    else:
+        rewritten[idx + 1] = value
+    return rewritten
+
+
+def _apply_retry_strategy(item: dict) -> None:
+    quality = item.get("certification_quality")
+    if not isinstance(quality, dict):
+        return
+    if quality.get("reason") != "certification-stage no verdict":
+        return
+
+    item["certify_argv"] = _with_argv_value(
+        [str(arg) for arg in item.get("certify_argv") or []],
+        "--refine-rounds",
+        "1")
+    if "dry_run_argv" in item:
+        item["dry_run_argv"] = _with_argv_value(
+            [str(arg) for arg in item.get("dry_run_argv") or []],
+            "--refine-rounds",
+            "1")
+
+    quality["retry_strategy"] = "certification-first"
+    quality["retry_refine_rounds"] = 1
+    quality["retry_reason"] = (
+        "prior witnessed paths reached certification without a final verdict; "
+        "spend the retry budget on certification before another refinement round")
+
+
 def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[dict]:
     if not attempt_cfg:
         return [copy.deepcopy(job) for job in jobs]
@@ -321,6 +359,7 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
             "memlimit_gib": memlimit_gib,
             "workdir": workdir,
         }
+        _apply_retry_strategy(item)
         budgeted.append(item)
     return budgeted
 

@@ -10427,3 +10427,85 @@ Checks:
   passed.
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
+
+## 2026-08-07 certification-first retry planning
+
+Attempt-2 diagnostic run:
+
+- Reused the balanced7 sample's machine-readable diagnosis and filtered the
+  single `certification-stage no verdict` job:
+  `stress243__ERC-3643__ERC-3643__IdentityRegistryStorage__bindIdentityRegistry`.
+- Filtered schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-balanced7-a2-certstage.json`.
+- Result JSONL:
+  `/tmp/veriput_stratified_20260807_03/certify-results-balanced7-a2-certstage.jsonl`.
+- Runner journal:
+  `/tmp/veriput_stratified_20260807_03/unit-run-balanced7-a2-certstage.jsonl`.
+- Workdir:
+  `/tmp/veriput_stratified_20260807_03/certify-work-balanced7-a2_certstage_t130_r120_m8`.
+- Policy:
+  attempt 2, `jobs=1`, 120s ESBMC budget, 130s unit timeout, 135s runner
+  timeout, 8GiB.
+
+Observed result:
+
+- Runner status was `ok`, but the certification row was still `KILLED`.
+- The row had `0 certified / 0 not / 1 witnessed`.
+- The progress history showed:
+  - `started`;
+  - `enumerated`;
+  - `coordinates-selected`;
+  - `outer-round-started` / `outer-round-finished` for level-0;
+  - one `linear-refine` round finished;
+  - the second `linear-refine` round started and timed out before
+    certification.
+- This differs from attempt 1, where the same unit reached
+  `certify-query-started`.  With the salvaged single-path set and the same
+  `--refine-rounds 2`, attempt 2 spent the longer budget in the second refine
+  round instead of reaching certification.
+
+Code change:
+
+- `unit_campaign_plan.py` now applies a stage-specific retry strategy only when
+  a pending job's `certification_quality.reason` is exactly
+  `certification-stage no verdict`.
+- For those jobs, the generated retry schedule rewrites both `certify_argv`
+  and `dry_run_argv` to use `--refine-rounds 1`.
+- The job metadata records:
+  - `certification_quality.retry_strategy = certification-first`;
+  - `certification_quality.retry_refine_rounds = 1`;
+  - a short `retry_reason`.
+- Other weak jobs keep the normal recipe defaults.  This is not contract-name
+  special casing: it is triggered by the observed progress stage.
+
+Why this is sound for VeriPUT:
+
+- The change only changes how retry budget is spent.  It does not promote a
+  witness, region, or fuzz counterexample to a proof.
+- Regions still count only after the usual ESBMC certification query succeeds.
+- Wider or less-refined retry candidates may fail certification; they will
+  remain non-certified if so.  If they verify, they are stronger PUT regions.
+
+Validation without consuming a new ESBMC attempt:
+
+- Replanned balanced7 into:
+  `/tmp/veriput_stratified_20260807_03/unit-campaign-balanced7-certfirst.json`.
+- New next schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-balanced7-a2-certfirst.json`.
+- Summary stayed:
+  `completed_ok=2`, `pending_by_attempt={"2": 5}`.
+- Weak reasons stayed:
+  1 `certification-stage no verdict`, 3 `certified path rate below threshold`,
+  and 1 `no certified regions`.
+- Only `IdentityRegistryStorage.bindIdentityRegistry` carried
+  `retry_strategy=certification-first` and `--refine-rounds 1`.
+- The other four attempt-2 jobs kept the normal `--refine-rounds 2`.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.

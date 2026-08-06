@@ -403,6 +403,7 @@ def test_campaign_retries_runner_ok_when_certification_is_weak():
         job["job_id"]: (job.get("certification_quality") or {}).get("reason")
         for job in doc["next_schedule"]["jobs"]
     }
+    next_jobs = {job["job_id"]: job for job in doc["next_schedule"]["jobs"]}
     bad = 0
     bad += check(doc["summary"]["completed_ok"] == 1,
                  f"only strong certification completes a runner-ok job: {doc['summary']}")
@@ -419,6 +420,19 @@ def test_campaign_retries_runner_ok_when_certification_is_weak():
         "peer182__weak__g": "certification-stage no verdict",
         "peer182__missing__h": "no certification row",
     }, f"next schedule carries per-job weak reasons: {next_reasons}")
+    weak_quality = next_jobs["peer182__weak__g"]["certification_quality"]
+    weak_argv = next_jobs["peer182__weak__g"]["certify_argv"]
+    missing_quality = next_jobs["peer182__missing__h"]["certification_quality"]
+    missing_argv = next_jobs["peer182__missing__h"]["certify_argv"]
+    bad += check(
+        weak_quality.get("retry_strategy") == "certification-first"
+        and weak_quality.get("retry_refine_rounds") == 1,
+        f"certification-stage retries carry the certification-first strategy: {weak_quality}")
+    bad += check(argv_value(weak_argv, "--refine-rounds") == "1",
+                 f"certification-stage retries reduce refine rounds: {weak_argv}")
+    bad += check("retry_strategy" not in missing_quality
+                 and argv_value(missing_argv, "--refine-rounds") is None,
+                 f"missing-certification retries keep the default strategy: {missing_quality}")
     return bad
 
 
