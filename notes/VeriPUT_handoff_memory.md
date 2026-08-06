@@ -665,6 +665,13 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   audited before spending ESBMC.
 - `veriput_readiness.py`: summarizes target->unit readiness without invoking
   solc/Forge/ESBMC.
+- `ast_preheat_schedule.py`: expands `missing-ast` rows from a
+  `veriput-unit-manifest/v1` into concrete per-subject
+  `subject_unit_manifest.py --generate-ast` preheat jobs. It is read-only and
+  refuses to schedule jobs unless an external `--ast-cache-root` is present, so
+  the generated commands do not write `.solast` files back into prepared
+  `Results` subjects. Inferred-solc jobs include
+  `--use-inferred-solc-bin`; explicit-solc jobs do not.
 - `unit_schedule.py`: expands a `veriput-unit-manifest/v1` into concrete
   per-unit `certify_all.py --subject-* --unit ...` jobs. It is also read-only:
   it never invokes solc, Forge, fuzzing, or ESBMC. Target-hinted units are
@@ -730,6 +737,13 @@ Interpretation:
   `jobs=0`, `skipped_rows=548`, `skipped_by_status={"error":39,
   "missing-ast":509}` and did not create the cache directory. This is expected
   until AST preheat/enumeration succeeds.
+- Read-only AST-preheat schedule smoke on the empty external cache path
+  `/tmp/veriput-ast-preheat-schedule-20260806-codex` produced:
+  `jobs=509`, `by_benchmark={"bugfix124":124,"peer182":182,
+  "stress243":203}`, `by_solc_source={"explicit":357,"inferred":152}`,
+  `unschedulable=0`, `skipped_by_status={"error":39}` and did not create the
+  cache directory. These jobs are only a plan; running their `preheat_argv`
+  would intentionally invoke solc and write external cache files.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4528,9 +4542,12 @@ Implication for next work:
    straightforward explicit-solc rows are `bugfix124=124`, `peer182=182`; the
    Stress rows add 51 explicit-solc rows and 152 inferable-solc rows when
    `--use-inferred-solc-bin` is intentionally enabled.
-3. After preheat, rerun `subject_unit_manifest.py` against the same
+3. Use `ast_preheat_schedule.py` first to audit the exact per-subject preheat
+   commands; it should show 509 schedulable jobs and 0 unschedulable rows on
+   the current real target set when an external cache root is supplied.
+4. After preheat, rerun `subject_unit_manifest.py` against the same
    `--ast-cache-root`, then run `unit_schedule.py` to produce priority-ordered
    per-unit `certify_all.py --subject-* --unit ...` jobs.
-4. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
+5. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.
