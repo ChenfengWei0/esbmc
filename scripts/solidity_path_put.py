@@ -3382,7 +3382,9 @@ def return_kind(sol_type):
         return (f"uint{m.group(1) or 256}", "uint256({v})")
     m = re.match(r"^bytes(\d+)$", t)
     if m:
-        return (t, "uint256({v})")
+        bits = int(m.group(1)) * 8
+        cast = "uint256({v})" if bits == 256 else f"uint256(uint{bits}({{v}}))"
+        return (t, cast)
     if t in ("address", "address payable"):
         return (t, "uint256(uint160({v}))")
     return None

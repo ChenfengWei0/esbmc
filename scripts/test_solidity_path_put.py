@@ -967,6 +967,27 @@ def test_a_bool_return_can_assert_a_structured_bool_coord():
     return bad
 
 
+def test_fixed_bytes_return_casts_through_the_matching_uint_width():
+    from solidity_path_put import return_kind, return_rung_assertions  # noqa: E402
+
+    b4 = return_rung_assertions(
+        "return == 7", return_kind("bytes4"), "_put_ret",
+        "return: return == 7", {},
+        {"7": {"kind": "literal", "value": "7"}})
+    b32 = return_rung_assertions(
+        "return == 7", return_kind("bytes32"), "_put_ret",
+        "return: return == 7", {},
+        {"7": {"kind": "literal", "value": "7"}})
+    bad = 0
+    bad += check(b4 == [
+        '    assertEq(uint256(uint32(_put_ret)), 7, "return: return == 7");'
+    ], f"bytes4 return casts through uint32 before uint256: {b4}")
+    bad += check(b32 == [
+        '    assertEq(uint256(_put_ret), 7, "return: return == 7");'
+    ], f"bytes32 return keeps the existing same-width cast: {b32}")
+    return bad
+
+
 def test_a_whole_value_rung_on_a_tuple_unit_is_refused():
     """A WHOLE-value rung against a two-member declaration: refuse.
 
@@ -8100,6 +8121,7 @@ def main():
               test_a_retlive_that_HOLDS_kills_every_return_rung,
               test_a_bool_return_uses_assertTrue_not_a_cast,
               test_a_bool_return_can_assert_a_structured_bool_coord,
+              test_fixed_bytes_return_casts_through_the_matching_uint_width,
               test_a_whole_value_rung_on_a_tuple_unit_is_refused,
               test_per_member_rungs_destructure_in_declaration_order,
               test_a_member_with_no_rung_gets_an_EMPTY_slot,

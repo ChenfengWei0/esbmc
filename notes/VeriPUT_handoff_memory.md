@@ -7298,15 +7298,21 @@ Code shape:
 - Source-assignment R2 mining now classifies fixed bytes as identity-shaped, so
   direct setters or mapping writes involving `bytesN` parameters can request
   the strongest equality rows.
+- Follow-up: fixed-bytes return-value assertions now cast through the matching
+  unsigned width before the final `uint256` cast. Example: `bytes4` returns
+  render as `uint256(uint32(_put_ret))`; `bytes32` keeps `uint256(_put_ret)`.
+  This avoids generating Solidity that fails to compile on narrower fixed
+  bytes return oracles.
 
 Verification:
 
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
   passed.
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
-  passed: 188/188 tests.
+  passed: 189/189 tests after the return-cast follow-up.
 - Added coverage for:
   - explicit `bytes4` region -> `uint32` PUT parameter -> `bytes4(...)` call;
   - omitted `bytes4` replay calldata -> full-domain fuzz input;
   - `mapping(bytes32 => ...)` slot proposal from a same-typed parameter;
-  - fixed-bytes R2 identity endpoint width filtering.
+  - fixed-bytes R2 identity endpoint width filtering;
+  - fixed-bytes return assertions using same-width integer casts.
