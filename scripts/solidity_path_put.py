@@ -1095,14 +1095,16 @@ def source_r2_literals(ast_path, contract, unit, arity=None,
 
 def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                                rendered_coords, arity=None,
-                               declaration_id=None, rettypes=None, log=print):
+                               declaration_id=None, rettypes=None, maps=None,
+                               log=print):
     """R2 specs for simple source assignments.
 
     This is deliberately narrower than general expression mining.  It only
     proposes a candidate when the target function body assigns one visible state
-    variable directly from either one of the unit's rendered parameters, a
-    source-level bool literal, or a source-level integer literal, or when it
-    performs a simple unsigned self-update such as `x += p` or `x = x + p`.
+    variable or readable mapping slot directly from either one of the unit's
+    rendered parameters, a source-level bool literal, or a source-level integer
+    literal, or when it performs a simple unsigned self-update such as `x += p`,
+    `m[k] += p`, or `x = x + p`.
     It also recognizes explicit single-value returns and direct assignments to
     a single named return parameter. The candidate is still proved by
     --path-cov-assert; the source only decides which small query to ask first.
@@ -1215,7 +1217,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return entry
 
     def target_readable(name):
-        return name == RETURN_VAR or name in (layout or {})
+        if name == RETURN_VAR or name in (layout or {}):
+            return True
+        mname, _keys, tail = parse_slot_name(name)
+        return bool(mname is not None and maps and mname + tail in maps)
 
     def add_equals_candidate(state_name, term, reason, src):
         key = (state_name, "equals", r2_term_text(term))
@@ -1258,23 +1263,75 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
     def self_ref(n, state_id):
         return identifier_ref(n) == state_id
 
-    def self_update_delta(rhs, state_id):
+    def self_update_delta(rhs, self_predicate):
         if not isinstance(rhs, dict) or rhs.get("nodeType") != "BinaryOperation":
             return None
         op = rhs.get("operator")
         left = rhs.get("leftExpression")
         right = rhs.get("rightExpression")
         if op == "+":
-            if self_ref(left, state_id):
+            if self_predicate(left):
                 term = delta_term(right)
                 return ("inc",) + term if term is not None else None
-            if self_ref(right, state_id):
+            if self_predicate(right):
                 term = delta_term(left)
                 return ("inc",) + term if term is not None else None
-        if op == "-" and self_ref(left, state_id):
+        if op == "-" and self_predicate(left):
             term = delta_term(right)
             return ("dec",) + term if term is not None else None
         return None
+
+    def key_name(n, expected_ty):
+        ref = identifier_ref(n)
+        param_name = param_ids.get(ref)
+        if (param_name and param_name in param_names and
+                _norm_ty(param_tys.get(ref, "")) == _norm_ty(expected_ty)):
+            return param_name
+        if (isinstance(n, dict) and n.get("nodeType") == "MemberAccess" and
+                n.get("memberName") == "sender"):
+            base = n.get("expression")
+            if (isinstance(base, dict) and base.get("nodeType") == "Identifier"
+                    and base.get("name") == "msg"
+                    and _norm_ty(expected_ty) == "address"):
+                return "msg.sender"
+        return None
+
+    def slot_lhs(n):
+        if not maps:
+            return None
+        cur = n
+        tail = ""
+        while isinstance(cur, dict) and cur.get("nodeType") == "MemberAccess":
+            member = cur.get("memberName")
+            if not member:
+                return None
+            tail = "." + member + tail
+            cur = cur.get("expression")
+        keys = []
+        while isinstance(cur, dict) and cur.get("nodeType") == "IndexAccess":
+            keys.append(cur.get("indexExpression"))
+            cur = cur.get("baseExpression")
+        if not keys:
+            return None
+        ref = identifier_ref(cur)
+        state = state_ids.get(ref)
+        if state is None:
+            return None
+        mkey = state[0] + tail
+        if mkey not in maps:
+            return None
+        _slot, kty, _nbytes, _off, _base, _member = maps[mkey]
+        ktypes = list(kty) if isinstance(kty, tuple) else [kty]
+        if len(keys) != len(ktypes):
+            return None
+        names = []
+        for key, expected_ty in zip(reversed(keys), ktypes):
+            name = key_name(key, expected_ty)
+            if name is None:
+                return None
+            names.append(name)
+        ty = _norm_ty((n.get("typeDescriptions") or {}).get("typeString") or "")
+        return state[0] + "".join(f"[{name}]" for name in names) + tail, ty
 
     return_target = None
     return_ids = set()
@@ -1327,11 +1384,25 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if isinstance(n, dict):
             if n.get("nodeType") == "Assignment":
                 operator = n.get("operator")
-                lhs_ref = identifier_ref(n.get("leftHandSide"))
+                lhs = n.get("leftHandSide")
+                lhs_ref = identifier_ref(lhs)
                 state = state_ids.get(lhs_ref)
                 state_name = state[0] if state else None
                 state_ty = _norm_ty(state[1]) if state else ""
+                slot = slot_lhs(lhs)
+                slot_name = slot[0] if slot else None
+                slot_ty = slot[1] if slot else ""
                 rhs = n.get("rightHandSide")
+                if slot_name and unsigned_ty(slot_ty) and operator in (
+                        "+=", "-="):
+                    delta = delta_term(rhs)
+                    if delta is not None:
+                        add_delta_candidate(
+                            slot_name, "inc" if operator == "+=" else "dec",
+                            delta[0], delta[1], n.get("src"))
+                    for child in n.values():
+                        walk(child)
+                    return
                 if state_name and unsigned_ty(state_ty) and operator in (
                         "+=", "-="):
                     delta = delta_term(rhs)
@@ -1348,6 +1419,23 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     return
                 rhs_ref = identifier_ref(rhs)
                 param_name = param_ids.get(rhs_ref)
+                if (slot_name and param_name and
+                        param_name in param_names and param_name in rendered):
+                    add_equals_candidate(
+                        slot_name, {"kind": "coord", "name": param_name},
+                        param_name, n.get("src"))
+                literal = literal_term(rhs, slot_ty)
+                if slot_name and literal is not None:
+                    add_equals_candidate(slot_name, literal[0], literal[1],
+                                         n.get("src"))
+                if slot_name and unsigned_ty(slot_ty):
+                    delta = self_update_delta(
+                        rhs,
+                        lambda candidate: (
+                            slot_lhs(candidate) or (None,))[0] == slot_name)
+                    if delta is not None:
+                        add_delta_candidate(slot_name, delta[0], delta[1],
+                                            delta[2], n.get("src"))
                 if (state_name and param_name and
                         param_name in param_names and param_name in rendered):
                     add_equals_candidate(
@@ -1358,7 +1446,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     add_equals_candidate(state_name, literal[0], literal[1],
                                          n.get("src"))
                 if state_name and unsigned_ty(state_ty):
-                    delta = self_update_delta(rhs, lhs_ref)
+                    delta = self_update_delta(
+                        rhs, lambda candidate: self_ref(candidate, lhs_ref))
                     if delta is not None:
                         add_delta_candidate(state_name, delta[0], delta[1],
                                             delta[2], n.get("src"))
@@ -6513,7 +6602,7 @@ def main():
         _r2, _source_assignment_evidence = source_assignment_r2_specs(
             a.ast, a.contract, a.unit, params, layout, _rendered_coords,
             arity=len(params or []), declaration_id=declaration_id,
-            rettypes=rettypes, log=print)
+            rettypes=rettypes, maps=maps, log=print)
         _typed_r2 = propose_r2_batch(
             rows, params, source_literals=_source_literals,
             depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,

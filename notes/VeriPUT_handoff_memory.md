@@ -5209,6 +5209,56 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 mapping-slot source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- Mapping-heavy contracts need stronger R2 than generic mechanical terms can
+  cheaply find. Common ledger shapes are direct slot writes such as
+  `balances[msg.sender] += amount`, `allowance[msg.sender][spender] -= amount`,
+  and `allowance[msg.sender][spender] = amount`.
+- This is not allowed to guess storage names. A source-prioritized mapping R2
+  candidate is safe only when:
+  - the AST left-hand side can be reconstructed as an exact mapping slot name;
+  - every key is either a declared parameter with a type matching solc's storage
+    layout key type, or `msg.sender` for an address-keyed level;
+  - the slot's `<mapping><tail>` is present in the solc-derived `maps` table.
+- Fuzz remains refute-only. This change only changes which candidates are asked
+  first; ESBMC still has to certify each survivor.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now accepts the
+  solc-derived `maps` table and treats readable mapping slots like scalar state
+  variables for source-prioritized R2 candidate mining.
+- It recognizes:
+  - `m[k] += renderedUintOrLiteral` as `post - pre == term`;
+  - `m[k] -= renderedUintOrLiteral` as `pre - post == term`;
+  - `m[k] = m[k] + term` / `m[k] = term + m[k]` / `m[k] = m[k] - term`;
+  - `m[k] = renderedParamOrLiteral` as `post == term`.
+- Nested mapping names preserve key order (`m[a][b]`) by peeling
+  `IndexAccess` inside-out and then reversing to source order.
+- Key type mismatches fail closed. For example, an `address` parameter is not
+  accepted as a key for `mapping(uint256 => uint256)`.
+- The Stage-4 main flow now passes `maps=maps` into
+  `source_assignment_r2_specs()`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `151 test(s) ran, 151 declared in this module`.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:

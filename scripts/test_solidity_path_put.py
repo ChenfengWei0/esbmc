@@ -2348,6 +2348,126 @@ def test_source_R2_self_updates_prioritize_delta_queries():
     return bad
 
 
+def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
+    from solidity_path_put import (r2_candidates,  # noqa: E402
+                                   source_assignment_r2_specs)
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+
+    def ident(ref, name, ty=None):
+        out = {"nodeType": "Identifier", "referencedDeclaration": ref,
+               "name": name}
+        if ty is not None:
+            out["typeDescriptions"] = {"typeString": ty}
+        return out
+
+    def index(base, key, ty="uint256"):
+        return {"nodeType": "IndexAccess", "baseExpression": base,
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    balances_sender = index(ident(10, "balances"), msg_sender)
+    allowance_sender = index(ident(11, "allowance"), msg_sender,
+                             "mapping(address => uint256)")
+    allowance_sender_spender = index(allowance_sender, ident(22, "spender"))
+    bad_key = index(ident(12, "badKeyed"), ident(22, "spender"))
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "balances",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "allowance",
+             "stateVariable": True,
+             "typeDescriptions": {
+                 "typeString": "mapping(address => mapping(address => uint256))"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "badKeyed",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(uint256 => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "move",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}},
+                 {"id": 22, "name": "spender",
+                  "typeDescriptions": {"typeString": "address"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "100:10:0",
+                     "leftHandSide": balances_sender,
+                     "rightHandSide": ident(21, "amount")}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "120:10:0",
+                     "leftHandSide": allowance_sender_spender,
+                     "rightHandSide": {
+                         "nodeType": "BinaryOperation", "operator": "-",
+                         "leftExpression": allowance_sender_spender,
+                         "rightExpression": ident(21, "amount")}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "140:10:0",
+                     "leftHandSide": allowance_sender_spender,
+                     "rightHandSide": ident(21, "amount")}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "160:10:0",
+                     "leftHandSide": bad_key,
+                     "rightHandSide": ident(21, "amount")}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "move", [("amount", "uint256"),
+                                ("spender", "address")], {},
+            [("amount", "num", None)], arity=2,
+            maps={"balances": (0, "address", 32, 0, "balances", None),
+                  "allowance": (1, ("address", "address"), 32, 0,
+                                "allowance", None),
+                  "badKeyed": (2, "uint256", 32, 0, "badKeyed", None)},
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    bal_deltas = entries.get("balances[msg.sender]", {}).get("deltas", [])
+    allow = entries.get("allowance[msg.sender][spender]", {})
+    allow_deltas = allow.get("deltas", [])
+    allow_equals = allow.get("equals", [])
+    candidates = r2_candidates(specs)
+    bad = 0
+    bad += check(len(specs) == 1, f"one source spec: {specs}")
+    bad += check(len(bal_deltas) == 1 and bal_deltas[0]["dir"] == "inc",
+                 f"msg.sender-keyed mapping increment is mined: {bal_deltas}")
+    bad += check(bal_deltas and bal_deltas[0]["lo"] ==
+                 {"kind": "coord", "name": "amount"},
+                 f"mapping inc delta uses the rendered amount: {bal_deltas}")
+    bad += check(len(allow_deltas) == 1 and allow_deltas[0]["dir"] == "dec",
+                 f"nested mapping self-subtract is mined: {allow_deltas}")
+    bad += check(allow_deltas and allow_deltas[0]["lo"] ==
+                 {"kind": "coord", "name": "amount"},
+                 f"nested mapping dec delta uses the rendered amount: "
+                 f"{allow_deltas}")
+    bad += check(len(allow_equals) == 1 and allow_equals[0]["term"] ==
+                 {"kind": "coord", "name": "amount"},
+                 f"nested mapping direct set is mined: {allow_equals}")
+    bad += check("badKeyed[spender]" not in entries,
+                 f"key type mismatches are skipped rather than guessed: "
+                 f"{entries}")
+    bad += check(specs[0].get("candidate_count") == 3 if specs else False,
+                 f"candidate_count includes mapping slot candidates: {specs}")
+    bad += check(any("balances[msg.sender]: post - pre == amount" in line
+                     for line in evidence),
+                 f"mapping increment provenance is recorded: {evidence}")
+    bad += check(any(item["var"] == "allowance[msg.sender][spender]"
+                     and item["text"] == "post == amount"
+                     for item in candidates),
+                 f"mapping direct-set R2 candidate is renderable: {candidates}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -4866,6 +4986,7 @@ def main():
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
               test_source_R2_assignment_candidates_are_small_setter_queries,
               test_source_R2_self_updates_prioritize_delta_queries,
+              test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
