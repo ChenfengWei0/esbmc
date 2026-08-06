@@ -4213,6 +4213,179 @@ def test_source_R2_mapping_getter_returns_named_entry_slot_coord():
     return bad
 
 
+def test_storage_layout_expands_top_level_struct_scalar_members():
+    from solidity_path_put import _storage_layout_struct_members  # noqa: E402
+
+    types = {
+        "t_uint256": {"encoding": "inplace", "numberOfBytes": "32"},
+        "t_bool": {"encoding": "inplace", "numberOfBytes": "1"},
+        "t_nested": {"encoding": "inplace", "members": []},
+        "t_array": {"encoding": "dynamic_array"},
+    }
+    members = [
+        {"label": "count", "slot": "0", "offset": "0",
+         "type": "t_uint256"},
+        {"label": "flag", "slot": "1", "offset": "31",
+         "type": "t_bool"},
+        {"label": "nested", "slot": "2", "offset": "0",
+         "type": "t_nested"},
+        {"label": "items", "slot": "3", "offset": "0",
+         "type": "t_array"},
+    ]
+    got = _storage_layout_struct_members("box", "7", members, types)
+    bad = 0
+    bad += check(got == {"box.count": (7, 0, 32),
+                         "box.flag": (8, 31, 1)},
+                 f"top-level struct layout exposes only scalar fields: {got}")
+    return bad
+
+
+def test_source_R2_top_level_struct_members_are_state_coords():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def member(base, name, ty="uint256"):
+        return {"nodeType": "MemberAccess", "memberName": name,
+                "expression": base,
+                "typeDescriptions": {"typeString": ty}}
+
+    def binop(op, lhs, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def assign(lhs, rhs, src, op="="):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": op, "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    def ret(expr, src):
+        return {"nodeType": "Return", "src": src, "expression": expr}
+
+    def box_field(name, ty="uint256"):
+        return member(ident(10, "box", "struct C.Box"), name, ty)
+
+    amount_param = {"id": 21, "name": "amount",
+                    "typeDescriptions": {"typeString": "uint256"}}
+    ok_param = {"id": 22, "name": "ok",
+                "typeDescriptions": {"typeString": "bool"}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "box",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "struct C.Box"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "get",
+             "parameters": {"parameters": []},
+             "returnParameters": {"parameters": [{
+                 "id": 24, "name": "",
+                 "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 ret(box_field("count"), "100:10:0")]}},
+            {"nodeType": "FunctionDefinition", "id": 30, "name": "set",
+             "parameters": {"parameters": [amount_param, ok_param]},
+             "returnParameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 assign(box_field("count"), ident(21, "amount"),
+                        "200:10:0"),
+                 assign(box_field("flag", "bool"), ident(22, "ok", "bool"),
+                        "220:10:0")]}},
+            {"nodeType": "FunctionDefinition", "id": 40, "name": "grow",
+             "parameters": {"parameters": [amount_param]},
+             "returnParameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 assign(box_field("count"),
+                        binop("+", box_field("count"),
+                              ident(21, "amount")), "300:10:0")]}},
+            {"nodeType": "FunctionDefinition", "id": 50, "name": "bump",
+             "parameters": {"parameters": []},
+             "returnParameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "UnaryOperation", "operator": "++",
+                     "src": "400:6:0", "subExpression": box_field("count")}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "UnaryOperation", "operator": "delete",
+                     "src": "420:6:0",
+                     "subExpression": box_field("flag", "bool")}}]}}
+        ]}]}
+    layout = {"box.count": (3, 0, 32), "box.flag": (4, 0, 1)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out_file:
+        json.dump(ast, out_file)
+    try:
+        get_specs, get_evidence = source_assignment_r2_specs(
+            path, "C", "get", [], layout, [], arity=0,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
+        set_specs, set_evidence = source_assignment_r2_specs(
+            path, "C", "set", [("amount", "uint256"), ("ok", "bool")],
+            layout, [("amount", "num", None), ("ok", "bool", 1)], arity=2,
+            log=lambda _msg: None)
+        grow_specs, _grow_evidence = source_assignment_r2_specs(
+            path, "C", "grow", [("amount", "uint256")], layout,
+            [("amount", "num", None)], arity=1, log=lambda _msg: None)
+        bump_specs, _bump_evidence = source_assignment_r2_specs(
+            path, "C", "bump", [], layout, [], arity=0,
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    def entries(specs):
+        return {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    get_entry = entries(get_specs).get(RETURN_VAR, {})
+    set_entries = entries(set_specs)
+    grow_entry = entries(grow_specs).get("box.count", {})
+    bump_entries = entries(bump_specs)
+    get_terms = [r2_term_text(item["term"])
+                 for item in get_entry.get("equals", [])]
+    count_terms = [r2_term_text(item["term"])
+                   for item in set_entries.get("box.count", {}).get("equals", [])]
+    flag_terms = [r2_term_text(item["term"])
+                  for item in set_entries.get("box.flag", {}).get("equals", [])]
+    grow_equals = [r2_term_text(item["term"])
+                   for item in grow_entry.get("equals", [])]
+    grow_deltas = [r2_term_text(item["lo"])
+                   for item in grow_entry.get("deltas", [])]
+    bump_deltas = [r2_term_text(item["lo"])
+                   for item in bump_entries.get("box.count", {}).get(
+                       "deltas", [])]
+    bump_deletes = [r2_term_text(item["term"])
+                    for item in bump_entries.get("box.flag", {}).get(
+                        "equals", [])]
+
+    bad = 0
+    bad += check(get_terms == ["state.box.count"],
+                 f"struct getter return names the entry-state field: "
+                 f"{get_specs}")
+    bad += check(count_terms == ["amount"],
+                 f"struct numeric setter mines the field assignment: "
+                 f"{set_specs}")
+    bad += check(flag_terms == ["ok"],
+                 f"struct bool setter mines the field assignment: {set_specs}")
+    bad += check(grow_equals == ["(state.box.count + amount)"],
+                 f"struct self-update mines a strong post endpoint: "
+                 f"{grow_specs}")
+    bad += check(grow_deltas == ["amount"],
+                 f"struct self-update mines a delta endpoint: {grow_specs}")
+    bad += check(bump_deltas == ["1"],
+                 f"struct unary increment mines a one-step delta: "
+                 f"{bump_specs}")
+    bad += check(bump_deletes == ["0"],
+                 f"struct delete mines a zero endpoint: {bump_specs}")
+    bad += check(any("return: return == state.box.count" in line
+                     for line in get_evidence),
+                 f"struct getter provenance is recorded: {get_evidence}")
+    bad += check(any("box.flag: post == ok" in line
+                     for line in set_evidence),
+                 f"struct setter provenance is recorded: {set_evidence}")
+    return bad
+
+
 def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     from solidity_path_put import r2_terms_from_specs, rung_assertions  # noqa: E402
     specs = [{"vars": [{"name": "ready", "equals": [{
@@ -6644,6 +6817,8 @@ def main():
               test_source_R2_local_aliases_feed_return_state_and_mapping_terms,
               test_source_R2_local_aliases_are_invalidated_after_mutation,
               test_source_R2_mapping_getter_returns_named_entry_slot_coord,
+              test_storage_layout_expands_top_level_struct_scalar_members,
+              test_source_R2_top_level_struct_members_are_state_coords,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
               test_source_R2_merge_preserves_the_candidate_budget,

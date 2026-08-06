@@ -1389,6 +1389,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if slot is not None and type_coord_kind(slot[1]) == expected_kind:
             return {"kind": "coord", "name": "state." + slot[0]}, (
                 "state." + slot[0])
+        member = state_member_lhs(n)
+        if (member is not None
+                and type_coord_kind(member[1]) == expected_kind):
+            return {"kind": "coord", "name": "state." + member[0]}, (
+                "state." + member[0])
         ref = identifier_ref(n)
         name = param_ids.get(ref)
         if name and name in rendered_by_kind.get(expected_kind, set()):
@@ -1464,6 +1469,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if slot is not None and type_coord_kind(slot[1]) == "num":
             return {"kind": "coord", "name": "state." + slot[0]}, (
                 "state." + slot[0])
+        member = state_member_lhs(n)
+        if member is not None and type_coord_kind(member[1]) == "num":
+            return {"kind": "coord", "name": "state." + member[0]}, (
+                "state." + member[0])
         ref = identifier_ref(n)
         param_name = param_ids.get(ref)
         if (param_name and param_name in param_names
@@ -1611,6 +1620,29 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         ty = _norm_ty((n.get("typeDescriptions") or {}).get("typeString") or "")
         return state[0] + "".join(f"[{name}]" for name in names) + tail, ty
 
+    def state_member_lhs(n):
+        if not layout:
+            return None
+        cur = n
+        tail = ""
+        while isinstance(cur, dict) and cur.get("nodeType") == "MemberAccess":
+            member = cur.get("memberName")
+            if not member:
+                return None
+            tail = "." + member + tail
+            cur = cur.get("expression")
+        if not tail:
+            return None
+        ref = identifier_ref(cur)
+        state = state_ids.get(ref)
+        if state is None:
+            return None
+        name = state[0] + tail
+        if name not in layout:
+            return None
+        ty = _norm_ty((n.get("typeDescriptions") or {}).get("typeString") or "")
+        return name, ty
+
     return_target = None
     return_ty = None
     return_ids = set()
@@ -1682,9 +1714,12 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     return
                 if lhs_ref in local_ids:
                     local_aliases.pop(lhs_ref, None)
+                member = state_member_lhs(lhs)
                 state = state_ids.get(lhs_ref)
-                state_name = state[0] if state else None
-                state_ty = _norm_ty(state[1]) if state else ""
+                state_name = (member[0] if member is not None
+                              else (state[0] if state else None))
+                state_ty = _norm_ty(member[1] if member is not None
+                                    else (state[1] if state else ""))
                 slot = slot_lhs(lhs)
                 slot_name = slot[0] if slot else None
                 slot_ty = slot[1] if slot else ""
@@ -1777,9 +1812,14 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     add_equals_candidate(state_name, endpoint[0], endpoint[1],
                                          n.get("src"))
                 if state_name and unsigned_ty(state_ty):
+                    state_self = (
+                        (lambda candidate:
+                         (state_member_lhs(candidate) or (None,))[0]
+                         == state_name)
+                        if member is not None
+                        else (lambda candidate: self_ref(candidate, lhs_ref)))
                     delta = self_update_delta(
-                        rhs, lambda candidate: self_ref(candidate, lhs_ref),
-                        state_ty)
+                        rhs, state_self, state_ty)
                     if delta is not None:
                         add_delta_candidate(state_name, delta[0], delta[1],
                                             delta[2], n.get("src"))
@@ -1800,6 +1840,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if state is not None and unsigned_ty(_norm_ty(state[1])):
                     add_delta_candidate(state[0], direction, one, "1",
                                         n.get("src"))
+                member = state_member_lhs(sub)
+                if member is not None and unsigned_ty(member[1]):
+                    add_delta_candidate(member[0], direction, one, "1",
+                                        n.get("src"))
                 slot = slot_lhs(sub)
                 if slot is not None and unsigned_ty(slot[1]):
                     add_delta_candidate(slot[0], direction, one, "1",
@@ -1815,6 +1859,12 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     zero = zero_term(_norm_ty(state[1]))
                     if zero is not None:
                         add_equals_candidate(state[0], zero[0], zero[1],
+                                             n.get("src"))
+                member = state_member_lhs(sub)
+                if member is not None:
+                    zero = zero_term(member[1])
+                    if zero is not None:
+                        add_equals_candidate(member[0], zero[0], zero[1],
                                              n.get("src"))
                 slot = slot_lhs(sub)
                 if slot is not None:
@@ -3158,6 +3208,30 @@ def assert_query_region_entries(region, holes, layout, maps):
     return entries, skipped
 
 
+def _storage_layout_struct_members(label, base_slot, members, types):
+    out = {}
+    if not label:
+        return out
+    try:
+        slot = int(base_slot)
+    except (TypeError, ValueError):
+        return out
+    for mem in members or []:
+        try:
+            mty = types.get(mem.get("type")) or {}
+            if (mty.get("encoding") != "inplace"
+                    or mty.get("members") is not None
+                    or mty.get("numberOfBytes") is None):
+                continue
+            out["%s.%s" % (label, mem["label"])] = (
+                slot + int(mem.get("slot", 0)),
+                int(mem.get("offset", 0)),
+                int(mty["numberOfBytes"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def storage_layout(project, contract):
     """({var: (slot, off, size)}, {map: (slot, key_type, value_size)}, err).
 
@@ -3370,7 +3444,11 @@ def storage_layout(project, contract):
         if enc != "inplace":
             continue
         nb = ty.get("numberOfBytes")
-        if nb is None or ty.get("members") is not None:
+        if ty.get("members") is not None:
+            out.update(_storage_layout_struct_members(
+                e.get("label"), e.get("slot"), ty["members"], types))
+            continue
+        if nb is None:
             continue
         try:
             out[e["label"]] = (int(e["slot"]), int(e["offset"]), int(nb))

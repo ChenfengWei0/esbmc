@@ -8,6 +8,50 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 top-level struct member source-R2
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- Mapping values whose leaf is a struct were already expanded into per-field
+  coordinates such as `bal[k].amount`.
+- Top-level struct state variables were still skipped by `storage_layout()`
+  because the previous scalar-slot branch rejected any solc type with
+  `members`.
+- That meant source-level units such as `return box.count`,
+  `box.count = amount`, and `box.count = box.count + amount` could not enter
+  the source-first R2 queue even though the PUT renderer and verifier can read
+  the underlying slot word once the coordinate is named.
+
+Code change:
+
+- Added `_storage_layout_struct_members()` and made `storage_layout()` expand
+  top-level struct scalar fields as `box.field` layout entries.
+- The expansion uses `base_slot + member.slot`, `member.offset`, and
+  `member.numberOfBytes`, and still skips aggregate or dynamic members instead
+  of guessing an unreadable word.
+- `source_assignment_r2_specs()` now recognizes direct state-member accesses
+  as state coordinates on RHS and as state targets on LHS.
+- The same coordinate support covers struct-field getter returns, simple
+  setters, `+=`/`-=`, `box.field = box.field +/- x`, unary `++`/`--`, and
+  `delete`.
+- This remains a candidate-prioritization change only. Fuzz can refute these
+  candidates cheaply, but ESBMC is still the proof authority.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  170/170 tests.
+- No POC ESBMC attempt was consumed.
+
 ## 2026-08-06 post-state R2 entry-state endpoint rendering
 
 Scope and constraint:
