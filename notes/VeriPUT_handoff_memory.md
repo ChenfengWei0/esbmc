@@ -3967,3 +3967,66 @@ Do not derive the real benchmark's denominator from the POC split. The POC
 split is a debugging subset with hand fixtures and per-unit input directories;
 the benchmark denominator must be a manifest over Stress/Peer/BugFix prepared
 subjects plus their chosen unit enumeration rule.
+
+## 2026-08-06 prepared-subject adapter progress
+
+Implemented a first safe bridge from VeriPUT prepared benchmark subjects to the
+existing Stage-2/Stage-3 drivers, without running ESBMC:
+
+- New `notes/coverage/scripts/veriput_subjects.py` resolves prepared subjects
+  in `Results/Stress243/subjects`, `Results/Peer182/subjects`, and
+  `Results/BugFix124/subjects`. It requires an explicit unit because the
+  prepared `meta.json` files are contract-level, not unit-level manifests.
+- `certify_all.py` now accepts `--subject-dir` or `--subject-id` plus exactly
+  one `--unit`. It bypasses the historical six-entry `BENCHMARKS` table only
+  on that explicit prepared-subject path, constructs the lower-level
+  `solidity_path_generalise.py --sol --ast --contract --unit` command, and
+  writes a `subject` block into every future result row from this path.
+- `certify_all.py --dry-run` now resolves inputs and prints the exact child
+  command without launching ESBMC, appending JSONL rows, writing driver logs, or
+  generating a missing AST. This is the cheap way to validate Dataset command
+  construction before spending a proof budget.
+- `put_all.py` now reads the `subject` block from a cert row. For such rows it
+  resolves `flat.sol`, `flat.sol.solast`, and the target contract directly from
+  the row rather than from the old `BENCHES` table or POC private input
+  directories. Gate 5 now treats prepared-subject rows as corpus rows.
+
+Validation completed without consuming any POC/ESBMC attempt:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/veriput_subjects.py \
+  notes/coverage/scripts/certify_all.py \
+  notes/coverage/scripts/put_all.py \
+  scripts/test_veriput_subjects.py \
+  scripts/test_poc_stage_drivers.py \
+  scripts/test_put_all_accounting.py
+python3 scripts/test_veriput_subjects.py
+python3 scripts/test_poc_stage_drivers.py
+python3 scripts/test_put_all_accounting.py
+python3 notes/coverage/scripts/certify_all.py \
+  --subject-dir /home/samson/workspace/VeriPUT/Results/Stress243/subjects/balancer__balancer-v3-monorepo__ProtocolFeeHelper \
+  --unit getProtocolFeePercentageCache \
+  --out /tmp/veriput_subject_resolver_smoke.jsonl \
+  --dry-run
+git diff --check -- \
+  notes/coverage/scripts/veriput_subjects.py \
+  notes/coverage/scripts/certify_all.py \
+  notes/coverage/scripts/put_all.py \
+  scripts/test_veriput_subjects.py
+```
+
+The dry-run constructed the expected Stage-2 command over the Stress prepared
+subject and reported that `flat.sol.solast` would be generated before a real
+run. No ESBMC process, Forge run, POC attempt, or benchmark proof run was
+started.
+
+Remaining gap before a real benchmark row:
+
+- Need a trusted unit enumeration manifest or AST-based target-contract unit
+  enumerator. The current adapter intentionally runs only an explicitly named
+  unit.
+- Need a small prepared-subject Stage-1 adapter, or an explicit decision that
+  Stage 2 will consume an existing enumeration report. The current patch
+  addresses Stage 2/3 source resolution and command construction, not full
+  end-to-end benchmark scheduling.

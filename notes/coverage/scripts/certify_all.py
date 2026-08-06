@@ -51,8 +51,10 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ESBMC_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ESBMC_ROOT, "scripts"))
 from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
+from veriput_subjects import (SubjectError, ensure_solast, resolve_subject)
 # ---- THE INPUTS DIRECTORY IS THE POC'S, NOT A SHARED CORPUS ----
 #
 # `notes/coverage/inputs/` has been DELETED. It was the benchmark: this file
@@ -681,6 +683,23 @@ def main():
                          "unit-not-entered), so there is no witnessed path for "
                          "stage 2 to generalise. Measured, not assumed, and "
                          "worth re-checking whenever the solver side moves")
+    ap.add_argument("--subject-dir", default="",
+                    help="prepared benchmark subject directory containing "
+                         "flat.sol and meta.json. Requires exactly one --unit "
+                         "and bypasses the historical six-entry BENCHMARKS "
+                         "table.")
+    ap.add_argument("--subject-id", default="",
+                    help="prepared subject id under --subject-root, or under "
+                         "one of the known VeriPUT Results/*/subjects roots "
+                         "when --subject-root is omitted.")
+    ap.add_argument("--subject-root", default="",
+                    help="directory containing prepared subject directories. "
+                         "Used with --subject-id.")
+    ap.add_argument("--subject-benchmark",
+                    choices=("stress243", "peer182", "bugfix124"),
+                    default="",
+                    help="known prepared-subject population used to resolve "
+                         "--subject-id and to label the output row.")
     ap.add_argument("--out", default=os.path.join(ESBMC_ROOT, "notes",
                                                   "coverage", "certify",
                                                   "results.jsonl"))
@@ -1264,6 +1283,10 @@ def main():
                     help="scratch root. The ARM's own subdirectory is added "
                          "under it automatically -- see below; pass this only "
                          "to move the whole tree off /tmp.")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="resolve inputs and print child commands, but do not "
+                         "run ESBMC, write driver logs, append JSONL rows, or "
+                         "generate missing AST files.")
     args = ap.parse_args()
 
     # A --unit that matches nothing must FAIL, not sweep everything. R8: iterate
@@ -1273,7 +1296,38 @@ def main():
     # "the restriction was lost".
     want_units = set(args.unit)
 
-    names = args.benchmarks or [b for b in BENCHMARKS if b != "st1inch_St1inch"]
+    subject = None
+    if args.subject_dir or args.subject_id or args.subject_root:
+        if args.benchmarks:
+            print("[sweep] REFUSED: --subject-* supplies the benchmark input; "
+                  "do not also pass positional BENCHMARKS")
+            return 1
+        if len(want_units) != 1:
+            print("[sweep] REFUSED: --subject-* is a contract-level prepared "
+                  "subject and requires exactly one --unit for this run")
+            return 1
+        try:
+            subject = resolve_subject(
+                args.subject_id or args.subject_dir,
+                root=args.subject_root if args.subject_root else None,
+                benchmark=(args.subject_benchmark
+                           if args.subject_benchmark else None),
+                unit=next(iter(want_units)))
+            wrote_ast = False if args.dry_run else ensure_solast(subject)
+        except (SubjectError, subprocess.CalledProcessError) as exc:
+            print(f"[sweep] REFUSED: could not resolve prepared subject: {exc}")
+            return 1
+        print(f"[sweep] prepared subject: {subject.benchmark_key} "
+              f"contract={subject.contract} unit={subject.unit} "
+              f"flat={subject.flat_sol}")
+        if wrote_ast:
+            print(f"[sweep] generated AST: {subject.solast}")
+        elif args.dry_run and not os.path.exists(subject.solast):
+            print(f"[sweep] dry-run: AST would be generated at "
+                  f"{subject.solast}")
+
+    names = [subject.benchmark_key] if subject else (
+        args.benchmarks or [b for b in BENCHMARKS if b != "st1inch_St1inch"])
 
     # ---- THERE IS NO CORPUS SWEEP ANY MORE, ONLY ONE POC AT A TIME ----
     #
@@ -1453,15 +1507,29 @@ def main():
                   f"{args.out}; they are SKIPPED. Pass --redo to re-run them")
 
     for bench in names:
-        if bench not in BENCHMARKS:
+        if subject and bench == subject.benchmark_key:
+            sol = subject.flat_sol
+            ast = subject.solast
+            contract = subject.contract
+            subject_record = subject.to_record()
+        elif bench not in BENCHMARKS:
             print(f"[sweep] unknown benchmark '{bench}'; known: "
                   + ", ".join(sorted(BENCHMARKS)))
             return 1
-        sol, contract = BENCHMARKS[bench]
+        else:
+            sol, contract = BENCHMARKS[bench]
+            ast = os.path.join(INPUTS, sol + ".solast")
+            sol = os.path.join(INPUTS, sol)
+            subject_record = None
         wd = os.path.join(args.workdir, arm_dir, bench)
         os.makedirs(wd, exist_ok=True)
         print(f"\n########## {bench} ({contract}) ##########", flush=True)
-        got, why = units_of(bench)
+        if subject and bench == subject.benchmark_key:
+            got, why = ([(subject.contract, subject.unit)], []), None
+            print(f"[sweep] {bench}: using explicit prepared-subject unit "
+                  f"{subject.contract}.{subject.unit}")
+        else:
+            got, why = units_of(bench)
         if got is None:
             got, poc_why = units_from_enumeration_index(
                 args.enumeration_index, bench, want_units)
@@ -1495,8 +1563,12 @@ def main():
             units = [u for u in units if u in want_units]
             print(f"[sweep] {bench}: --unit restricts this sweep to "
                   f"{len(units)} of the benchmark's units")
-        print(f"[sweep] {bench}: {len(units)} unit(s) from the round-trip's "
-              f"emit.jsonl: {', '.join(units)}")
+        if subject and bench == subject.benchmark_key:
+            print(f"[sweep] {bench}: {len(units)} unit(s) from the prepared "
+                  f"subject resolver: {', '.join(units)}")
+        else:
+            print(f"[sweep] {bench}: {len(units)} unit(s) from the "
+                  f"round-trip's emit.jsonl: {', '.join(units)}")
         if killed_in_roundtrip:
             # Named up front, because a unit the ENUMERATION could not finish is
             # very likely to be one this sweep cannot finish either -- and a
@@ -1536,8 +1608,8 @@ def main():
             # a fixed defect comes back under a different sweep's name.
             cmd = [sys.executable, "-u", DRIVER,
                    "--esbmc", ESBMC,
-                   "--sol", os.path.join(INPUTS, sol),
-                   "--ast", os.path.join(INPUTS, sol + ".solast"),
+                   "--sol", sol,
+                   "--ast", ast,
                    "--contract", contract, "--unit", unit,
                    "--scope", args.scope, "--max-tx", str(args.max_tx),
                    "--probes", str(args.probes),
@@ -1641,6 +1713,10 @@ def main():
             # case the two-token form cannot pass.
             for a in args.esbmc_arg:
                 cmd.append(f"--esbmc-arg={a}")
+            if args.dry_run:
+                print("[dry-run] " + " ".join(cmd), flush=True)
+                return {"benchmark": bench, "unit": unit,
+                        "bucket": "DRY-RUN", "subject": subject_record}
             t1 = time.time()
             # ---- KILL THE PROCESS GROUP, NOT THE CHILD ----
             #
@@ -1816,6 +1892,7 @@ def main():
                         "refine_rounds": args.refine_rounds,
                         "shrink_rounds": args.shrink_rounds,
                         "unit_timeout_s": args.timeout,
+                        "subject": subject_record,
                         # The per-ESBMC-RUN budget, which is NOT `unit_timeout_s`
                         # and is what "no outer-box round finished" counts. See
                         # the comment at the `--timeout` argument above: without
@@ -1960,7 +2037,10 @@ def main():
                 # the item tuple first.
                 list(pool.map(guarded, todo))
 
-    print(f"\n[sweep] wrote {args.out}")
+    if args.dry_run:
+        print("\n[sweep] dry run completed; wrote no result rows or driver logs")
+    else:
+        print(f"\n[sweep] wrote {args.out}")
     return 0
 
 

@@ -27,8 +27,10 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
+from veriput_subjects import SubjectError, subject_from_record  # noqa: E402
 NOTES = os.path.abspath(os.path.join(HERE, "..", ".."))
 INPUTS = os.path.join(NOTES, "coverage", "inputs")
 CERT = os.path.join(NOTES, "coverage", "certify", "results.jsonl")
@@ -500,6 +502,11 @@ def main():
         # produces a row this loop refuses by name.
         key = r.get("benchmark") or r.get("poc")
         is_poc = "poc" in r
+        try:
+            row_subject = subject_from_record(r)
+        except SubjectError as exc:
+            print(f"  SKIP {key}.{r.get('unit')} cert row: {exc}")
+            continue
         for enc, text in (r.get("certified") or {}).items():
             # ---- `<enc>` OR `<enc>#<piece>` --------------------------------
             #
@@ -556,7 +563,8 @@ def main():
                 r.get("enumeration_report"), r.get("path_function"), enc_i)
             rows.append((key, is_poc, r["unit"], r.get("path_function"),
                          enc_i, piece or None, text,
-                         bool(r.get("pin_extcall")), deriv, exit_kind))
+                         bool(r.get("pin_extcall")), deriv, exit_kind,
+                         row_subject))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
     #
@@ -616,13 +624,27 @@ def main():
               "the Stage-1 report's exit_kind. This changes scheduling only; "
               "regions and certification are unchanged")
     for (bench, is_poc, unit, path_function, enc, piece, text, pin_extcall,
-         deriv, exit_kind) in ordered_rows:
+         deriv, exit_kind, row_subject) in ordered_rows:
         # The label every downstream name is built from, derived ONCE and in
         # the same shape the emitter builds it (`p<K>`). Two derivations is how
         # the gate below comes to look up a function the emitted file does not
         # contain.
         encs = f"{enc}#{piece}" if piece else str(enc)
-        if is_poc:
+        is_corpus = False
+        if row_subject is not None:
+            flat = row_subject.flat_sol
+            ast = row_subject.solast
+            contract = row_subject.contract
+            is_corpus = True
+            if not os.path.exists(flat):
+                print(f"  SKIP {bench}.{unit} enc={encs}: prepared subject "
+                      f"source is missing at {flat}")
+                continue
+            if not os.path.exists(ast):
+                print(f"  SKIP {bench}.{unit} enc={encs}: prepared subject "
+                      f"AST is missing at {ast}")
+                continue
+        elif is_poc:
             # certify_poc.py runs the driver with `--contract <stem>`, so the
             # contract name IS the file stem; resolving it any other way would
             # be a second convention that can disagree with the sweep's.
@@ -637,6 +659,7 @@ def main():
             continue
         else:
             flat_name, contract = BENCHES[bench]
+            is_corpus = True
             # PER ROW, because one pass covers several units of several
             # benchmarks and there is no longer one directory that holds them
             # all. See corpus_inputs_dir: a miss returns None and falls back to
@@ -675,8 +698,9 @@ def main():
         # The PoC branch follows certify_poc.py's convention rather than
         # inventing a third: whichever file stage 2 generated is the one stage 4
         # must read, or the two stages are looking at different ASTs.
-        ast = (os.path.splitext(flat)[0] + ".solast") if is_poc \
-            else (flat + ".solast")
+        if row_subject is None:
+            ast = (os.path.splitext(flat)[0] + ".solast") if is_poc \
+                else (flat + ".solast")
         if not os.path.exists(ast):
             print(f"  SKIP {bench}.{unit} enc={encs}: no AST at {ast}")
             continue
@@ -753,7 +777,8 @@ def main():
             # never produced a PUT, which is exactly what the table should say.
             rec = json.load(open(j)) if os.path.exists(j) else {}
             rc = 0 if rec.get("file") else 1
-            results.append((bench, unit, enc, piece, rc, rec, proj, region))
+            results.append((bench, unit, enc, piece, rc, rec, proj, region,
+                            is_corpus, contract))
             continue
         print(f"\n--- {bench}.{unit} enc={encs} ---")
         p = subprocess.run(cmd, capture_output=True, text=True)
@@ -761,7 +786,7 @@ def main():
         sys.stdout.write(p.stderr)
         rec = json.load(open(j)) if os.path.exists(j) else {}
         results.append((bench, unit, enc, piece, p.returncode, rec, proj,
-                        region))
+                        region, is_corpus, contract))
 
     print("\n" + "=" * 84)
     print("STAGE 4: certified region -> PUT with oracle")
@@ -786,7 +811,8 @@ def main():
     print(f"{'benchmark':<28}{'unit':<16}{'enc':>7}{'rc':>4}"
           f"{'fuzz':>6}{'asserts':>9}  outcome")
     n_put = n_fuzz = n_oracle = n_both = 0
-    for bench, unit, enc, piece, rc, rec, _proj, _region in results:
+    for bench, unit, enc, piece, rc, rec, _proj, _region, _is_corpus, \
+            _contract in results:
         encs = f"{enc}#{piece}" if piece else str(enc)
         st = rec.get("stats") or {}
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
@@ -979,7 +1005,8 @@ def b_report(results, forge_timeout):
     print(f"  this tree: head={_now_binary['head']} "
           f"srcDirty={_now_binary['srcDirty']} "
           f"binaryMtime={_now_binary['binaryMtime']}")
-    for bench, unit, enc, piece, rc, rec, proj, region in results:
+    for bench, unit, enc, piece, rc, rec, proj, region, is_corpus, \
+            contract_name in results:
         # SAME shape the emitter builds, and the reason it is here rather than
         # inferred: a lookup that cannot match is a gate that never fires, and
         # it fails in the direction that LOOKS like caution ('?') while
@@ -1025,7 +1052,8 @@ def b_report(results, forge_timeout):
         # `test_put_FarmingPool_...` and came back '?'. A matcher that cannot
         # match is a gate that never fires, and it fails in the direction that
         # LOOKS like caution ('unknown') while actually reporting nothing.
-        contract = BENCHES[bench][1] if bench in BENCHES else bench
+        contract = contract_name or (BENCHES[bench][1]
+                                     if bench in BENCHES else bench)
         legacy_piece = f"p{piece}" if piece else ""
         want = rec.get("test") or (
             f"test_put_{contract}_{unit}_path{enc}{legacy_piece}")
@@ -1037,7 +1065,7 @@ def b_report(results, forge_timeout):
         # `is_poc` and is reported in its own table, so this is recorded rather
         # than inferred -- and it stays visible so a future shared table cannot
         # silently mix them.
-        g5 = bench in BENCHES
+        g5 = is_corpus
         # ---- GATE 0: WAS THIS ARTEFACT PRODUCED BY THIS TREE? ----
         # Not one of WORKORDER's five, and deliberately not folded into them: a
         # stale row's other five gates were measured by a build that no longer
