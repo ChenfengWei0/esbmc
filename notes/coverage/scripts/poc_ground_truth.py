@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 ESBMC_ROOT = HERE.parents[2]
 DEFAULT_POC_DIR = ESBMC_ROOT / "notes" / "coverage" / "poc"
 DEFAULT_PUT_ROOT = ESBMC_ROOT / "notes" / "coverage" / "put_roundtrip" / "_wd"
+DEFAULT_POC_UNITS_DIR = ESBMC_ROOT / "notes" / "coverage" / "poc_units"
 DEFAULT_CERT_ROOTS = (
     ESBMC_ROOT / "notes" / "coverage" / "certify",
     ESBMC_ROOT / "notes" / "coverage" / "poc_units",
@@ -104,6 +105,17 @@ def default_cert_paths(cert_roots: tuple[Path, ...]) -> list[Path]:
         paths.extend(sorted(root.glob("*.jsonl")))
         paths.extend(sorted(root.glob("*/*/certify_gate.jsonl")))
     return paths
+
+
+def default_put_roots() -> list[Path]:
+    roots = []
+    if DEFAULT_PUT_ROOT.exists():
+        roots.append(DEFAULT_PUT_ROOT)
+    if DEFAULT_POC_UNITS_DIR.exists():
+        roots.extend(sorted(
+            path for path in DEFAULT_POC_UNITS_DIR.glob("*/put_*")
+            if path.is_dir()))
+    return roots
 
 
 def read_jsonl(path: Path) -> tuple[list[dict], int]:
@@ -259,6 +271,22 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
     return rows, bad
 
 
+def collect_put_rows_from_roots(put_roots: list[Path]) -> tuple[list[dict], int]:
+    rows = []
+    bad = 0
+    seen = set()
+    for root in put_roots:
+        got, bad_docs = collect_put_rows(root)
+        bad += bad_docs
+        for row in got:
+            path = row.get("path")
+            if path in seen:
+                continue
+            seen.add(path)
+            rows.append(row)
+    return rows, bad
+
+
 def index_by_contract_unit(rows: list[dict]) -> dict[tuple[str | None, str | None], list[dict]]:
     by_key = defaultdict(list)
     for row in rows:
@@ -395,14 +423,17 @@ def add_unit_summaries(row: dict) -> None:
 
 def build_inventory(args) -> dict:
     poc_dir = Path(args.poc_dir)
-    put_root = Path(args.put_root)
+    if getattr(args, "put_root", ""):
+        put_roots = [Path(args.put_root)]
+    else:
+        put_roots = default_put_roots()
     cert_paths = [Path(p) for p in args.cert_jsonl]
     if not cert_paths:
         cert_paths = default_cert_paths(DEFAULT_CERT_ROOTS)
 
     sources = read_poc_sources(poc_dir, args.max_expected_lines)
     cert_rows, bad_cert_lines = collect_cert_rows(cert_paths)
-    put_rows, bad_put_docs = collect_put_rows(put_root)
+    put_rows, bad_put_docs = collect_put_rows_from_roots(put_roots)
 
     puts_by_key = index_by_contract_unit(put_rows)
     sources_by_contract = source_by_contract(sources)
@@ -454,7 +485,9 @@ def build_inventory(args) -> dict:
         },
         "inputs": {
             "poc_dir": str(poc_dir.resolve()),
-            "put_root": str(put_root.resolve()),
+            "put_root": str(put_roots[0].resolve()) if len(put_roots) == 1
+                        else None,
+            "put_roots": [str(root.resolve()) for root in put_roots],
             "cert_jsonl": [str(p.resolve()) for p in cert_paths],
             "filters": {
                 "contract": sorted(_filters(args, "contract")),
@@ -525,7 +558,9 @@ def print_text(doc: dict, limit: int) -> None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--poc-dir", default=str(DEFAULT_POC_DIR))
-    ap.add_argument("--put-root", default=str(DEFAULT_PUT_ROOT))
+    ap.add_argument("--put-root", default="",
+                    help="read PUTs from this root only. Default: old "
+                         "put_roundtrip/_wd plus every poc_units/*/put_* root")
     ap.add_argument("--cert-jsonl", action="append", default=[])
     ap.add_argument("--contract", action="append", default=[])
     ap.add_argument("--unit", action="append", default=[])

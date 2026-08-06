@@ -7128,3 +7128,41 @@ Verification:
   `tern_call -> return == 3/4/1/2`,
   `tern_nested -> return == 1/2/3`, and
   `cond_call -> return == 0/1`.
+
+## 2026-08-06 POC-local PUT inventory roots
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- `notes/coverage/scripts/poc_ground_truth.py` defaulted to the old
+  `notes/coverage/put_roundtrip/_wd` root only.
+- The official `poc_one.py` workflow writes current POC-local PUTs under
+  `notes/coverage/poc_units/<poc-id>/put_<cell>/...`.
+- As a result, the cheap ground-truth inventory could report stale weak
+  `put_roundtrip` rows while missing newer official POC-local strong rows.
+
+Code shape:
+
+- The inventory now uses default PUT roots:
+  `notes/coverage/put_roundtrip/_wd` plus every existing
+  `notes/coverage/poc_units/*/put_*` directory.
+- Passing `--put-root <path>` remains a single-root override for focused
+  debugging or tests.
+- The JSON output records both the legacy-compatible `inputs.put_root` when
+  exactly one root is used and `inputs.put_roots` for the full list.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/poc_ground_truth.py scripts/test_poc_ground_truth.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_poc_ground_truth.py`
+  passed.
+- Read-only default inventory smoke now reports 13 PUT roots, 249 `put.json`
+  rows, and 197 strong-shape PUT rows. This is still an artefact inventory, not
+  a new ESBMC/Forge measurement.

@@ -205,9 +205,68 @@ def test_inventory_filters_and_reports_weak_reasons():
         return bad
 
 
+def test_inventory_default_roots_include_poc_local_puts():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        poc_dir, old_put_root, cert = write_fixture(tmp)
+        poc_units = tmp / "poc_units"
+        local_dir = poc_units / "P01__P01__set" / "put_gate" / "_wd" / "P01__set__9"
+        local_dir.mkdir(parents=True)
+        (local_dir / "put.json").write_text(json.dumps({
+            "contract": "P01",
+            "unit": "set",
+            "enc": 9,
+            "depth": 1,
+            "test": "test_put_P01_set_path9",
+            "file": "/tmp/P01_9.t.sol",
+            "region": {
+                "x": ["2", "8"],
+            },
+            "stats": {
+                "fuzz_params": 1,
+                "asserts": 1,
+            },
+        }) + "\n")
+        old_default = poc_ground_truth.DEFAULT_PUT_ROOT
+        old_poc_units = poc_ground_truth.DEFAULT_POC_UNITS_DIR
+        poc_ground_truth.DEFAULT_PUT_ROOT = old_put_root
+        poc_ground_truth.DEFAULT_POC_UNITS_DIR = poc_units
+        try:
+            args = argparse.Namespace(poc_dir=str(poc_dir),
+                                      put_root="",
+                                      cert_jsonl=[str(cert)],
+                                      contract=[],
+                                      unit=[],
+                                      poc=[],
+                                      only=["P01.set"],
+                                      max_expected_lines=8,
+                                      limit=20,
+                                      format="json",
+                                      out="")
+            doc = poc_ground_truth.build_inventory(args)
+        finally:
+            poc_ground_truth.DEFAULT_PUT_ROOT = old_default
+            poc_ground_truth.DEFAULT_POC_UNITS_DIR = old_poc_units
+
+        unit = doc["units"][0]
+        bad = 0
+        bad += check(doc["summary"]["put_rows"] == 2
+                     and doc["summary"]["filtered_put_rows"] == 2,
+                     f"default roots include old and POC-local PUTs: "
+                     f"{doc['summary']}")
+        bad += check(len(doc["inputs"]["put_roots"]) == 2
+                     and doc["inputs"]["put_root"] is None,
+                     f"multiple default roots are recorded: {doc['inputs']}")
+        bad += check(unit["put_summary"]["strong_shape"] == 2,
+                     f"both strong PUTs attach to the same unit: "
+                     f"{unit['put_summary']}")
+        return bad
+
+
 TESTS = [
     test_inventory_reads_sources_cert_and_puts_without_execution,
     test_inventory_filters_and_reports_weak_reasons,
+    test_inventory_default_roots_include_poc_local_puts,
 ]
 
 
