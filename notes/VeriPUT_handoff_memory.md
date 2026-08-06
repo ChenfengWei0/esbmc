@@ -7442,6 +7442,43 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 Disagreed modeled environment region promotion
+
+Scope:
+
+- This is an external VeriPUT stage-2 driver improvement. It connects the
+  generalized PUT emitter environment-setter table to the automatic
+  `--env-coord-disagreed` region policy.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- Extracted `derive_env_coord_disagreed(paths, env_names, pins)` from the
+  inline `main()` loop so the policy is directly testable without running
+  ESBMC.
+- `--env-coord-disagreed` now clearly uses `ESTABLISHABLE_ENV_COORDS` imported
+  from the PUT emitter instead of a stale help-text notion that only mentioned
+  `msg.sender` and `msg.value`.
+- The policy promotes only PUT-establishable environment quantities on which
+  witnessed paths disagree. Pinned quantities stay pinned, path-agreed
+  quantities stay candidates for `--pin-env`, and unestablishable quantities
+  such as `tx.origin` / `block.gaslimit` remain refused rather than guessed.
+- Added a pure Python regression covering modeled positive cases
+  `block.basefee`, `block.prevrandao`, `tx.gasprice`, and `block.coinbase`,
+  plus agreed and unestablishable negative controls.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 211/211 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 Modeled environment cheatcode PUT establishment
 
 Scope:

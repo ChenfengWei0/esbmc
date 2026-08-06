@@ -245,11 +245,30 @@ def is_env(name):
     """Is this coordinate an EVM environment quantity rather than an input?
 
     Same namespace rule the tool uses to resolve coordinate names. It matters
-    for POLICY, not just naming: environment quantities are never made free
-    coordinates here, because the ladder cost is multiplicative in the number of
-    coordinates and there are fifteen of them.
+    for POLICY, not just naming: environment quantities are pinned only when
+    that is an explicit slice decision, and promoted only when the PUT emitter
+    can establish them.
     """
     return name.startswith(ENV_PREFIXES)
+
+
+def derive_env_coord_disagreed(paths, env_names, pins):
+    """Split env names into PUT-establishable disagreements and explanations."""
+    promoted, kept = [], []
+    for n in list(env_names):
+        if n in pins:
+            kept.append(f"{n} (already pinned at {pins[n]})")
+            continue
+        vals = {ce.get(n) for _, _, ce in paths}
+        if len(vals) == 1 and None not in vals:
+            kept.append(f"{n} (all {len(paths)} paths agree)")
+            continue
+        if n not in ESTABLISHABLE_ENV_COORDS:
+            kept.append(f"{n} (paths disagree, but the PUT emitter cannot "
+                        "establish this environment quantity)")
+            continue
+        promoted.append(n)
+    return promoted, kept
 
 
 def struct_fields(text, nested=False):
@@ -5119,11 +5138,12 @@ def main():
                          "msg.value.")
     ap.add_argument("--env-coord-disagreed", action="store_true",
                     help="promote every PUT-ESTABLISHABLE environment quantity "
-                         "the witnessed paths DISAGREE on (currently msg.sender "
-                         "and msg.value) to a free coordinate, instead of "
-                         "requiring each to be named with --env-coord. Other "
-                         "block./tx. quantities remain named as unsupported; a "
-                         "certified region the test cannot enter is not a PUT.\n"
+                         "the witnessed paths DISAGREE on to a free coordinate, "
+                         "instead of requiring each to be named with "
+                         "--env-coord. The establishable set is imported from "
+                         "the PUT emitter; unsupported block./tx. quantities "
+                         "remain named as unsupported because a certified "
+                         "region the test cannot enter is not a PUT.\n"
                          "WHY: --pin-env already computes this exact partition "
                          "and already prints of the disagreeing side 'Left "
                          "unconstrained, so a path guarded by one of these "
@@ -5409,11 +5429,12 @@ def main():
               f"the slice through whatever values they took in the "
               f"counterexample, and does NOT generalise over them.")
 
-    # ---- EVM environment: pin where every path agrees, never probe ----
+    # ---- EVM environment: pin agreement, optionally promote disagreements ----
     #
-    # Environment quantities are never made FREE coordinates: the ladder cost is
-    # multiplicative in the coordinate count and there are fifteen of them, and
-    # the bracket round is already the binding cost on real input.
+    # Environment quantities are not made FREE coordinates by default: the
+    # ladder cost is multiplicative in the coordinate count and the bracket
+    # round is already the binding cost on real input. A later opt-in promotion
+    # may make only PUT-establishable disagreements free.
     #
     # They are pinned only where EVERY witnessed path's counterexample agrees on
     # the value. A pin that contradicts some path's own counterexample would
@@ -5500,20 +5521,7 @@ def main():
     # below. Two tests that could disagree about what "the paths agree" means
     # would put one quantity in both groups.
     if args.env_coord_disagreed:
-        promoted, kept = [], []
-        for n in list(env_names):
-            if n in pins:
-                kept.append(f"{n} (already pinned at {pins[n]})")
-                continue
-            vals = {ce.get(n) for _, _, ce in paths}
-            if len(vals) == 1 and None not in vals:
-                kept.append(f"{n} (all {len(paths)} paths agree)")
-                continue
-            if n not in ESTABLISHABLE_ENV_COORDS:
-                kept.append(f"{n} (paths disagree, but the PUT emitter cannot "
-                            "establish this environment quantity)")
-                continue
-            promoted.append(n)
+        promoted, kept = derive_env_coord_disagreed(paths, env_names, pins)
         if promoted:
             env_names = [n for n in env_names if n not in promoted]
             print(f"[env] PROMOTED to free coordinate(s) because the "

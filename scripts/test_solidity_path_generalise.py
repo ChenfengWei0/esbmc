@@ -84,7 +84,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       extcall_inseparable_failures,
                                       file_identity,
                                       save_failed_round,
-                                      validate_enumeration_import)
+                                      validate_enumeration_import,
+                                      derive_env_coord_disagreed)
 
 FAILURES = []
 
@@ -2463,6 +2464,42 @@ with tempfile.TemporaryDirectory() as _stamp_dir:
         _stamp_refused = True
 check("workdir-refuses-a-policy-change-the-old-field-list-missed",
           _stamp_refused, True)
+
+_env_promoted, _env_kept = derive_env_coord_disagreed(
+    [(2, 1, {
+        "msg.value": 0,
+        "block.basefee": 1,
+        "block.prevrandao": 4,
+        "tx.gasprice": 9,
+        "block.chainid": 31337,
+        "block.coinbase": 11,
+        "tx.origin": 13,
+        "block.gaslimit": 15,
+    }), (3, 1, {
+        "msg.value": 0,
+        "block.basefee": 2,
+        "block.prevrandao": 5,
+        "tx.gasprice": 10,
+        "block.chainid": 31337,
+        "block.coinbase": 12,
+        "tx.origin": 14,
+        "block.gaslimit": 16,
+    })],
+    ["msg.value", "block.basefee", "block.prevrandao", "tx.gasprice",
+     "block.chainid", "block.coinbase", "tx.origin", "block.gaslimit"],
+    {"msg.value": 0})
+check("env-disagreed-promotes-modeled-cheatcode-quantities",
+      _env_promoted,
+      ["block.basefee", "block.prevrandao", "tx.gasprice",
+       "block.coinbase"])
+check("env-disagreed-keeps-pinned-agreed-and-unestablishable-quantities",
+      _env_kept,
+      ["msg.value (already pinned at 0)",
+       "block.chainid (all 2 paths agree)",
+       "tx.origin (paths disagree, but the PUT emitter cannot establish this "
+       "environment quantity)",
+       "block.gaslimit (paths disagree, but the PUT emitter cannot establish "
+       "this environment quantity)"])
 
 check("synthetic-abi-taken-is-the-body",
       abi_gate_class([{"synthetic_abi_gate": True, "arm": "taken"}]),
