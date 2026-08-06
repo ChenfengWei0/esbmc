@@ -5522,6 +5522,54 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 type-conversion-wrapped source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- Real Solidity frequently wraps values in explicit type conversions before
+  storing them, e.g. `small = uint128(amount)`, `total += uint256(amount)`,
+  `owner = address(who)`, `paid = uint256(msg.value)`, and mapping-slot writes
+  such as `quote[msg.sender] = uint256(amount)`.
+- The source-priority miner previously saw the outer `FunctionCall` and missed
+  the inner coordinate/literal, so strong R2 endpoints were displaced by broad
+  mechanical candidates.
+- The unwrap is conservative. Numeric conversions are peeled only when the cast
+  target equals the assignment target type; this allows `uint128(amount)` into
+  a `uint128` field while refusing to simplify `uint128(amount)` assigned to a
+  `uint256` field. Identity/bool casts are peeled only when their endpoint
+  kind matches the assignment target kind. ESBMC still owns the proof; if a
+  narrowed coordinate is not defined over the certified region, the structured
+  R2 row cannot hold.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has a local `type_conversion_arg()` helper
+  inside `source_assignment_r2_specs()`.
+- `coord_term()`, `delta_term()`, `numeric_endpoint_term()`, and
+  self-update-delta mining now pass the destination type when analyzing RHS
+  expressions, so cast-wrapped direct endpoints, deltas, one-level arithmetic
+  operands, and exact mapping-slot endpoints are mined consistently.
+- Existing `address(0)` handling remains separate, so a zero-address reset is
+  still recorded as `post == 0` / `address(0)` evidence rather than treated as
+  a numeric coordinate.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `158 test(s) ran, 158 declared in this module`.
+- `git diff --check` on the touched files passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:

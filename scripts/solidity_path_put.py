@@ -1256,7 +1256,32 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return "id"
         return None
 
-    def coord_term(n, expected_kind):
+    def type_conversion_arg(n, target_ty):
+        if not isinstance(n, dict) or n.get("nodeType") != "FunctionCall":
+            return None
+        if n.get("kind") != "typeConversion":
+            return None
+        args = n.get("arguments") or []
+        if len(args) != 1:
+            return None
+        target_ty = _norm_ty(target_ty)
+        cast_ty = _norm_ty((n.get("typeDescriptions") or {}).get(
+            "typeString") or "")
+        if not cast_ty or not target_ty:
+            return None
+        if unsigned_ty(target_ty):
+            return args[0] if cast_ty == target_ty else None
+        target_kind = type_coord_kind(target_ty)
+        cast_kind = type_coord_kind(cast_ty)
+        if target_kind in ("id", "bool") and target_kind == cast_kind:
+            return args[0]
+        return None
+
+    def coord_term(n, expected_kind, target_ty=None):
+        if target_ty is not None:
+            arg = type_conversion_arg(n, target_ty)
+            if arg is not None:
+                return coord_term(arg, expected_kind)
         if expected_kind is None:
             return None
         ref = identifier_ref(n)
@@ -1322,7 +1347,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 f"R2 source assignment candidate {state_name}: {lhs} - {rhs} "
                 f"== {reason} from AST src {src or '?'}")
 
-    def delta_term(n):
+    def delta_term(n, target_ty=None):
+        if target_ty is not None:
+            arg = type_conversion_arg(n, target_ty)
+            if arg is not None:
+                return delta_term(arg)
         ref = identifier_ref(n)
         param_name = param_ids.get(ref)
         if (param_name and param_name in param_names
@@ -1340,8 +1369,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return {"kind": "coord", "name": env_name}, env_name
         return unitless_number_term(n)
 
-    def numeric_endpoint_term(n):
-        direct = delta_term(n)
+    def numeric_endpoint_term(n, target_ty):
+        direct = delta_term(n, target_ty)
         if direct is not None:
             return direct
         if not isinstance(n, dict) or n.get("nodeType") != "BinaryOperation":
@@ -1350,8 +1379,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             n.get("operator"))
         if op is None:
             return None
-        lhs = delta_term(n.get("leftExpression"))
-        rhs = delta_term(n.get("rightExpression"))
+        lhs = delta_term(n.get("leftExpression"), target_ty)
+        rhs = delta_term(n.get("rightExpression"), target_ty)
         if lhs is None or rhs is None:
             return None
         if op == "div" and not (rhs[0].get("kind") == "literal"
@@ -1363,7 +1392,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
     def self_ref(n, state_id):
         return identifier_ref(n) == state_id
 
-    def self_update_delta(rhs, self_predicate):
+    def self_update_delta(rhs, self_predicate, target_ty):
         if not isinstance(rhs, dict) or rhs.get("nodeType") != "BinaryOperation":
             return None
         op = rhs.get("operator")
@@ -1371,13 +1400,13 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         right = rhs.get("rightExpression")
         if op == "+":
             if self_predicate(left):
-                term = delta_term(right)
+                term = delta_term(right, target_ty)
                 return ("inc",) + term if term is not None else None
             if self_predicate(right):
-                term = delta_term(left)
+                term = delta_term(left, target_ty)
                 return ("inc",) + term if term is not None else None
         if op == "-" and self_predicate(left):
-            term = delta_term(right)
+            term = delta_term(right, target_ty)
             return ("dec",) + term if term is not None else None
         return None
 
@@ -1488,7 +1517,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 rhs = n.get("rightHandSide")
                 if slot_name and unsigned_ty(slot_ty) and operator in (
                         "+=", "-="):
-                    delta = delta_term(rhs)
+                    delta = delta_term(rhs, slot_ty)
                     if delta is not None:
                         add_delta_candidate(
                             slot_name, "inc" if operator == "+=" else "dec",
@@ -1498,7 +1527,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     return
                 if state_name and unsigned_ty(state_ty) and operator in (
                         "+=", "-="):
-                    delta = delta_term(rhs)
+                    delta = delta_term(rhs, state_ty)
                     if delta is not None:
                         add_delta_candidate(
                             state_name, "inc" if operator == "+=" else "dec",
@@ -1517,7 +1546,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     add_equals_candidate(
                         slot_name, {"kind": "coord", "name": param_name},
                         param_name, n.get("src"))
-                coord = coord_term(rhs, type_coord_kind(slot_ty))
+                coord = coord_term(rhs, type_coord_kind(slot_ty), slot_ty)
                 if slot_name and coord is not None:
                     add_equals_candidate(slot_name, coord[0], coord[1],
                                          n.get("src"))
@@ -1529,7 +1558,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if slot_name and zero_addr is not None:
                     add_equals_candidate(slot_name, zero_addr[0],
                                          zero_addr[1], n.get("src"))
-                endpoint = (numeric_endpoint_term(rhs)
+                endpoint = (numeric_endpoint_term(rhs, slot_ty)
                             if unsigned_ty(slot_ty) else None)
                 if slot_name and endpoint is not None:
                     add_equals_candidate(slot_name, endpoint[0], endpoint[1],
@@ -1538,7 +1567,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     delta = self_update_delta(
                         rhs,
                         lambda candidate: (
-                            slot_lhs(candidate) or (None,))[0] == slot_name)
+                            slot_lhs(candidate) or (None,))[0] == slot_name,
+                        slot_ty)
                     if delta is not None:
                         add_delta_candidate(slot_name, delta[0], delta[1],
                                             delta[2], n.get("src"))
@@ -1547,7 +1577,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     add_equals_candidate(
                         state_name, {"kind": "coord", "name": param_name},
                         param_name, n.get("src"))
-                coord = coord_term(rhs, type_coord_kind(state_ty))
+                coord = coord_term(rhs, type_coord_kind(state_ty), state_ty)
                 if state_name and coord is not None:
                     add_equals_candidate(state_name, coord[0], coord[1],
                                          n.get("src"))
@@ -1559,14 +1589,15 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if state_name and zero_addr is not None:
                     add_equals_candidate(state_name, zero_addr[0],
                                          zero_addr[1], n.get("src"))
-                endpoint = (numeric_endpoint_term(rhs)
+                endpoint = (numeric_endpoint_term(rhs, state_ty)
                             if unsigned_ty(state_ty) else None)
                 if state_name and endpoint is not None:
                     add_equals_candidate(state_name, endpoint[0], endpoint[1],
                                          n.get("src"))
                 if state_name and unsigned_ty(state_ty):
                     delta = self_update_delta(
-                        rhs, lambda candidate: self_ref(candidate, lhs_ref))
+                        rhs, lambda candidate: self_ref(candidate, lhs_ref),
+                        state_ty)
                     if delta is not None:
                         add_delta_candidate(state_name, delta[0], delta[1],
                                             delta[2], n.get("src"))

@@ -3051,6 +3051,155 @@ def test_source_R2_state_entry_coords_are_used_only_when_rendered():
     return bad
 
 
+def test_source_R2_type_conversion_wrappers_are_unwrapped_conservatively():
+    from solidity_path_put import r2_term_text, source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def cast(ty, arg):
+        return {"nodeType": "FunctionCall", "kind": "typeConversion",
+                "typeDescriptions": {"typeString": ty},
+                "expression": {
+                    "nodeType": "ElementaryTypeNameExpression",
+                    "typeName": {"nodeType": "ElementaryTypeName",
+                                 "name": ty}},
+                "arguments": [arg]}
+
+    def binop(op, lhs, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def assign(ref_or_lhs, rhs, src, op="="):
+        if isinstance(ref_or_lhs, dict):
+            lhs = ref_or_lhs
+        else:
+            ref, name, ty = ref_or_lhs
+            lhs = ident(ref, name, ty)
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": op, "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+    msg_value = {"nodeType": "MemberAccess", "memberName": "value",
+                 "expression": {"nodeType": "Identifier", "name": "msg"},
+                 "typeDescriptions": {"typeString": "uint256"}}
+    quote_sender = {
+        "nodeType": "IndexAccess",
+        "baseExpression": ident(17, "quote", "mapping(address => uint256)"),
+        "indexExpression": msg_sender,
+        "typeDescriptions": {"typeString": "uint256"}}
+    amount = ident(21, "amount", "uint256")
+    who = ident(22, "who", "address")
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "small",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint128"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "wide",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "total",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "calc",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "owner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
+            {"nodeType": "VariableDeclaration", "id": 15, "name": "payableOwner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
+            {"nodeType": "VariableDeclaration", "id": 16, "name": "paid",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 17, "name": "quote",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "wrap",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}},
+                 {"id": 22, "name": "who",
+                  "typeDescriptions": {"typeString": "address"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 assign((10, "small", "uint128"), cast("uint128", amount),
+                        "100:12:0"),
+                 assign((11, "wide", "uint256"), cast("uint128", amount),
+                        "120:12:0"),
+                 assign((12, "total", "uint256"), cast("uint256", amount),
+                        "140:12:0", "+="),
+                 assign((13, "calc", "uint256"),
+                        binop("+", cast("uint256", amount),
+                              cast("uint256", num(7))), "160:12:0"),
+                 assign((14, "owner", "address"), cast("address", who),
+                        "180:12:0"),
+                 assign((15, "payableOwner", "address"),
+                        cast("address payable", who), "200:12:0"),
+                 assign((16, "paid", "uint256"), cast("uint256", msg_value),
+                        "220:12:0"),
+                 assign(quote_sender, cast("uint256", amount),
+                        "240:12:0")]}}
+        ]}]}
+    layout = {"small": (0, 0, 16), "wide": (1, 0, 32),
+              "total": (2, 0, 32), "calc": (3, 0, 32),
+              "owner": (4, 0, 20), "payableOwner": (5, 0, 20),
+              "paid": (6, 0, 32)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "wrap", [("amount", "uint256"), ("who", "address")],
+            layout, [("amount", "num", None), ("who", "id", 20),
+                     ("msg.value", "num", None)], arity=2,
+            maps={"quote": (7, "address", 32, 0, "quote", None)},
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    def equals(name):
+        return [r2_term_text(item["term"])
+                for item in entries.get(name, {}).get("equals", [])]
+
+    total_deltas = entries.get("total", {}).get("deltas", [])
+    bad = 0
+    bad += check(equals("small") == ["amount"],
+                 f"same-target uint128(amount) is mined: {entries}")
+    bad += check("wide" not in entries,
+                 f"uint128(amount) assigned to uint256 is not simplified: "
+                 f"{entries}")
+    bad += check(len(total_deltas) == 1 and
+                 r2_term_text(total_deltas[0]["lo"]) == "amount",
+                 f"cast-wrapped += amount is mined: {total_deltas}")
+    bad += check(equals("calc") == ["(amount + 7)"],
+                 f"cast-wrapped arithmetic operands are mined: {entries}")
+    bad += check(equals("owner") == ["who"],
+                 f"address(who) endpoint is mined: {entries}")
+    bad += check(equals("payableOwner") == ["who"],
+                 f"address payable cast endpoint is mined: {entries}")
+    bad += check(equals("paid") == ["msg.value"],
+                 f"uint256(msg.value) endpoint is mined: {entries}")
+    bad += check(equals("quote[msg.sender]") == ["amount"],
+                 f"cast-wrapped mapping endpoint is mined: {entries}")
+    bad += check(any("calc: post == (amount + 7)" in line
+                     for line in evidence),
+                 f"cast arithmetic provenance is recorded: {evidence}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -5576,6 +5725,7 @@ def main():
               test_source_R2_environment_value_assignments_use_rendered_env_coords,
               test_source_R2_arithmetic_assignments_prioritize_expression_endpoints,
               test_source_R2_state_entry_coords_are_used_only_when_rendered,
+              test_source_R2_type_conversion_wrappers_are_unwrapped_conservatively,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
