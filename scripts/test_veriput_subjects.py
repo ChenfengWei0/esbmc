@@ -644,6 +644,41 @@ def test_unit_manifest_cli_reads_target_manifest_hints():
     return bad
 
 
+def test_unit_manifest_cli_uses_prepared_changed_function_hints():
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(
+            td,
+            "repo__C",
+            changed_functions=["own", "missingChanged"])
+        (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", td,
+            "--subject-id", "repo__C",
+        ], capture_output=True, text=True)
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    row = data["subjects"][0]
+    bad = 0
+    bad += check(data["summary"]["hinted_units"] == 1,
+                 f"metadata changed function hint is counted: {data['summary']}")
+    bad += check(data["summary"]["missing_unit_hints"] == 1,
+                 f"missing metadata hint is counted: {data['summary']}")
+    bad += check(row["unit_hints"]["source"] == "prepared-metadata.changed_functions",
+                 f"hint source is explicit: {row['unit_hints']}")
+    bad += check(row["unit_hints"]["hinted_units"] == ["own"],
+                 f"metadata hint matched an enumerated unit: {row['unit_hints']}")
+    bad += check(row["unit_hints"]["missing_unit_hints"] == ["missingChanged"],
+                 f"metadata hint miss is retained: {row['unit_hints']}")
+    return bad
+
+
 def test_unit_manifest_cli_refuses_target_contract_mismatch():
     with tempfile.TemporaryDirectory() as td:
         d = make_subject(td, "repo__C")
@@ -775,6 +810,7 @@ def main():
         test_unit_manifest_cli_lists_units_without_esbmc,
         test_unit_manifest_cli_shard_and_resume,
         test_unit_manifest_cli_reads_target_manifest_hints,
+        test_unit_manifest_cli_uses_prepared_changed_function_hints,
         test_unit_manifest_cli_refuses_target_contract_mismatch,
         test_unit_manifest_cli_records_unusable_prepared_subject,
         test_unit_manifest_cli_continues_after_unusable_scanned_subject,

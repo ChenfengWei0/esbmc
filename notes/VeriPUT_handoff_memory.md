@@ -195,6 +195,46 @@ Impact:
   biased: bad prepared subjects are counted once and skipped, and scarce
   verification attempts are spread across subjects.
 
+Follow-up target relevance improvement:
+
+- Ordinary benchmark scans now also turn prepared metadata
+  `changed_functions` into `unit_hints` with source
+  `prepared-metadata.changed_functions`.
+- This is intentionally different from name-based filtering:
+  constructor-like names such as `owned` are not guessed away, because in
+  BugFix they can be the actual changed target unit.
+- Unit scheduling already treats hinted units as priority 0, so this makes
+  BugFix samples spend early attempts on changed functions when the prepared
+  subject names them.
+
+Validation for the metadata hint change:
+
+- `python3 -m py_compile notes/coverage/scripts/subject_unit_manifest.py scripts/test_veriput_subjects.py`
+  passed.
+- `python3 scripts/test_veriput_subjects.py` passed: 22 tests.
+- `python3 scripts/test_unit_schedule.py` passed.
+- `git diff --check -- notes/coverage/scripts/subject_unit_manifest.py scripts/test_veriput_subjects.py`
+  passed.
+
+Fresh wave plan prepared, not executed:
+
+- Root:
+  `/tmp/veriput_fresh_wave_plan_20260807_061251`.
+- Manifests were generated from existing AST caches only; no ESBMC and no solc
+  were started.
+- Initial 24-job plan:
+  - Peer: 8 jobs across 8 subjects.
+  - BugFix: 8 jobs across 8 subjects.
+  - Stress: 8 jobs across 8 subjects.
+  - All jobs carry `--timeout 600 --run-timeout 600 --memlimit-gib 8`.
+- After metadata hints, BugFix was regenerated as:
+  `/tmp/veriput_fresh_wave_plan_20260807_061251/bugfix-schedule-hinted.json`.
+  Its first 8 jobs contain 7 priority-0 changed-function units:
+  `Owned.owned` x3, `L1Block.setL1BlockValues` x2,
+  `DepositLog.approvedToLog`, and
+  `DnGmxBatchingManager.executeBatchDeposit`; the remaining slot is
+  `StaxLPStaking.setRewardDistributor`.
+
 ## 2026-08-07 600s mini-batch PUT success snapshot
 
 User policy update:

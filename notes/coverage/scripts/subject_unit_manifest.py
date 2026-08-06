@@ -247,6 +247,23 @@ def _annotate_target(row: dict, target_info: dict | None):
     return row
 
 
+def _annotate_metadata_hints(row: dict, subject: PreparedSubject):
+    hints = subject.metadata.get("changed_functions") or []
+    if row.get("status") != "ok" or not hints:
+        return row
+    units = (row.get("units") or {}).get("units") or []
+    unit_set = set(units)
+    hinted = [name for name in hints if name in unit_set]
+    missing = [name for name in hints if name not in unit_set]
+    row["unit_hints"] = {
+        "source": "prepared-metadata.changed_functions",
+        "hinted_units": hinted,
+        "missing_unit_hints": missing,
+        "pending_unit_hints": [],
+    }
+    return row
+
+
 def _load_resume_keys(path):
     if not path:
         return set()
@@ -305,7 +322,8 @@ def build_manifest(args):
                 subject,
                 generate_ast=args.generate_ast,
                 ast_timeout_s=args.ast_timeout)
-            row = _annotate_target(row, target_info)
+            row = (_annotate_target(row, target_info)
+                   if target_info else _annotate_metadata_hints(row, subject))
         rows.append(row)
         _write_journal(args.journal, row)
     summary = {
