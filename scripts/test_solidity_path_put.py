@@ -6362,7 +6362,7 @@ R2_LAYOUT = {"owner": (0, 0, 20), "feeReceiver": (1, 0, 20),
              "totalFees": (2, 0, 32)}
 
 
-def _r2_put(ladder, region=None):
+def _r2_put(ladder, region=None, r2_terms=None):
     """A PUT over a caller-chosen ladder, for the named-R2-bound tests."""
     em, case = make_case()
     notes = []
@@ -6371,7 +6371,7 @@ def _r2_put(ladder, region=None):
         region=region or {"bps": (0, 100), "u": (0, (1 << 160) - 1)},
         holes={}, pins={}, params=PARAMS, emitted=em,
         case=case, layout=R2_LAYOUT, ladder_rows=ladder, notes=notes,
-        maps=SLOT_MAPS)
+        maps=SLOT_MAPS, r2_terms=r2_terms)
     return put, stats, notes
 
 
@@ -6496,6 +6496,51 @@ def test_an_R2_bound_naming_an_UNLIFTED_COORDINATE_is_DROPPED():
                  "and so is the non-coordinate drop")
     if bad:
         print(body)
+    return bad
+
+
+def test_an_OBSERVED_sender_renders_for_an_ABSOLUTE_R2_endpoint():
+    """`owner = msg.sender` is a high-value source R2 fact.
+
+    The sender need not be a fuzzed coordinate for this scalar equality: the
+    emitted call already has a governing `vm.prank`, and the oracle can compare
+    against that exact caller. Mapping slots stay under the stricter
+    `key_expr_of` gate; this only widens the absolute endpoint table.
+    """
+    put, stats, notes = _r2_put(
+        [("owner", "post == msg.sender", "HOLDS")],
+        r2_terms={"msg.sender": {"kind": "coord", "name": "msg.sender"}})
+    bad = 0
+    bad += check(put is not None, f"the PUT is emitted (notes: {notes})")
+    if put is None:
+        return bad + 3
+    body = "\n".join(put)
+    bad += check("assertEq(_post_owner, uint256(uint160(0))" in body,
+                 "the observed prank sender becomes the absolute endpoint")
+    bad += check("_post_owner - _pre_owner" not in body,
+                 "the sender was not admitted as an arithmetic delta endpoint")
+    bad += check(stats.get("asserts") == 1,
+                 f"the sender equality is counted as a real oracle: {stats}")
+    fixed, fixed_stats, fixed_notes = _r2_put(
+        [("owner", "post == msg.sender", "HOLDS")],
+        region={"bps": (0, 100), "u": (0, (1 << 160) - 1),
+                "msg.sender": (5, 5)},
+        r2_terms={"msg.sender": {"kind": "coord", "name": "msg.sender"}})
+    fixed_body = "\n".join(fixed or [])
+    bad += check(fixed is not None,
+                 f"the width-one sender PUT is emitted (notes: {fixed_notes})")
+    bad += check("vm.prank(address(uint160(5)));" in fixed_body,
+                 "the governing prank is rewritten to the certified sender")
+    bad += check("assertEq(_post_owner, uint256(uint160(address(uint160(5))))"
+                 in fixed_body,
+                 "and that established sender is also an absolute endpoint")
+    bad += check("address p_msg_sender" not in fixed_body
+                 and fixed_stats.get("fuzz_params") == 2,
+                 f"the width-one sender does not become a fuzz parameter: "
+                 f"{fixed_stats}")
+    if bad:
+        print(body)
+        print(fixed_body)
     return bad
 
 
@@ -8291,6 +8336,7 @@ def main():
               test_an_ADDRESS_endpoint_is_STILL_REFUSED_for_a_DELTA_bound,
               test_a_named_R2_bound_renders_as_the_test_parameter,
               test_an_R2_bound_naming_an_UNLIFTED_COORDINATE_is_DROPPED,
+              test_an_OBSERVED_sender_renders_for_an_ABSOLUTE_R2_endpoint,
               test_a_numeric_R2_bound_is_UNCHANGED,
               test_a_RENAMED_coordinate_is_spelled_with_its_TEST_name,
               test_a_hole_OUTSIDE_the_interval_costs_no_width,

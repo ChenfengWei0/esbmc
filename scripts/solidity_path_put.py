@@ -4664,6 +4664,39 @@ def observed_env(body, call_i, call_line):
     return {"msg.sender": (sender, sender_ev), "msg.value": (value, value_ev)}
 
 
+def observable_sender_expr_for_abs_r2(body, call_i, env_sender_expr=None):
+    """A Solidity expression for the sender this emitted call will see.
+
+    This is deliberately narrower than `key_expr_of["msg.sender"]`.
+    Mapping-slot keys stay nameable only after this PUT has established the
+    sender, because hashing the wrong key makes green-but-empty storage
+    oracles. An absolute scalar R2 endpoint is different: `post == msg.sender`
+    compares against the caller the emitted test already gives the unit.
+    """
+    if env_sender_expr is not None:
+        return env_sender_expr
+    if not (0 <= call_i < len(body)):
+        return None
+    stmt_i = statement_start(body, call_i)
+    last_arg, saw_prank = None, False
+    for ln in body[:stmt_i]:
+        m = _PRANK_RE.search(ln)
+        if m:
+            saw_prank = True
+            last_arg = _arg0(ln, m.end() - 1)
+    if not saw_prank:
+        return "address(this)"
+    if last_arg is None:
+        return None
+    v = _lit_int(last_arg)
+    if v is not None:
+        return str(v)
+    s = last_arg.strip()
+    if s == "address(this)":
+        return s
+    return None
+
+
 def low_level_value_gate_asserts_exit(body, call_i, call_line):
     """Whether the emitted low-level value-gate assertion survived the rewrite.
 
@@ -5530,8 +5563,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 rendered_width["msg.sender"] = (_shi - _slo + 1) - len(
                     {h for h in holes.get("msg.sender", ())
                      if _slo <= h <= _shi})
-            coord_ident_abs["msg.sender"] = (
-                f"uint256(uint160({env_sender_expr}))")
+    sender_abs = observable_sender_expr_for_abs_r2(body, call_i,
+                                                   env_sender_expr)
+    if sender_abs is not None:
+        coord_ident_abs["msg.sender"] = f"uint256(uint160({sender_abs}))"
 
     (body, call_i, value_est, value_sig, value_pre,
      value_note) = establish_env_value(

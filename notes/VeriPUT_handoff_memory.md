@@ -7351,3 +7351,45 @@ Verification:
   passed: 190/190 tests.
 - Added coverage for omitted high-level `address payable` calldata repaired as
   full-domain address fuzz input and cast to `payable(arg0)` at the unit call.
+
+## 2026-08-06 Observable msg.sender absolute R2 endpoint
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. Validation was Python-only.
+
+Finding:
+
+- Source/typed R2 can produce high-value rows such as
+  `owner: post == msg.sender`.
+- The renderer only put `msg.sender` into the absolute endpoint spelling table
+  when `establish_env_sender()` added a fuzz parameter. That dropped scalar
+  equality rows for ordinary observed pranks, and also for width-one sender
+  regions where the prank was rewritten to a constant but no fuzz parameter was
+  added.
+- This is separate from mapping slot keys. `bal[msg.sender]` must still be
+  refused unless the PUT itself established the sender, because otherwise the
+  oracle can read a slot the unit never touched.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has
+  `observable_sender_expr_for_abs_r2()`.
+- For absolute scalar R2 endpoints only, the sender expression is:
+  - the established fuzz/constant sender when `establish_env_sender()` ran;
+  - `address(this)` when no prank governs the call;
+  - a canonical decimal literal when the governing `vm.prank(...)` argument is
+    readable as a literal address.
+- Complex non-literal prank arguments remain fail-closed for this endpoint.
+- `key_expr_of["msg.sender"]` is unchanged and remains gated by
+  `env_sender_expr is not None`, preserving the mapping-key refusal boundary.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 191/191 tests.
+- `git diff --check` passed.
