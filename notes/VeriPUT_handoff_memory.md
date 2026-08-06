@@ -735,6 +735,14 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   buckets, schedule priority buckets, duplicate rows, and scheduled units with
   no certification row. It is read-only unless `--out` is passed and never
   invokes solc, Forge, fuzzing, ESBMC, PUT emission, or certification jobs.
+- `poc_ground_truth.py`: read-only POC inventory for pre-run ground-truth
+  audit. It joins hand-written POC source comments containing `EXPECTED`, old
+  or current `certify_gate.jsonl`/certification JSONL rows, and existing
+  `put.json` artefacts. It reports per contract/unit witnessed/certified/
+  not-certified paths, coordinates, pins, PUT counts, oracle/fuzz counts, and a
+  conservative `strong_shape` flag (`fuzz_params > 0`, `asserts > 0`, and at
+  least one non-point region coordinate). It never invokes solc, Forge, fuzzing,
+  ESBMC, or PUT emission, and writes only when `--out` is explicitly passed.
 - `unit_campaign_plan.py`: read-only controller for the agreed per-unit
   certification gradient: attempt 1 is 60s/8GiB, attempt 2 is 120s/8GiB,
   attempt 3 is 600s/10GiB. It consumes a base unit schedule plus zero or more
@@ -925,6 +933,12 @@ Interpretation:
   directly in `summary.next_action`: `dry_run_cmd` contains `--dry-run` while
   `runner_cmd` does not. The selected batch size remained 32. The external AST
   cache directory and runner journal path were not created.
+- Read-only `poc_ground_truth.py --limit 3` smoke on 2026-08-06 reported:
+  `poc_sources=65`, `sources_with_expected=51`, `cert_rows=362`,
+  `put_rows=218`, `unit_rows=171`, `strong_shape_puts=169`, and zero bad JSONL
+  or `put.json` documents. It did not run solc/Forge/fuzz/ESBMC. This is now
+  the cheap first command for building a POC/unit ground-truth table before
+  spending one of the three allowed ESBMC attempts.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
