@@ -5209,6 +5209,67 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 direct CLI protected write guards
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, benchmark AST preheat, or
+  benchmark certification run was started.
+
+Finding:
+
+- Runner-level guards protect old schedules at execution time, but several
+  direct CLI entry points could still be invoked by hand and write under
+  Dataset/Results:
+  - `ast_preheat_schedule.py --out`, and generated `--ast-cache-root`.
+  - `unit_schedule.py --out`, generated `certify_all.py --out`, and generated
+    `--ast-cache-root`.
+  - `subject_unit_manifest.py --out` and `--journal`.
+  - `certify_all.py --out`, `--workdir`, and `--ast-cache-root`.
+- `certify_all.py --ast-cache-root` is treated as a write path because direct
+  prepared-subject runs may generate missing compact ASTs through that cache.
+
+Code shape:
+
+- Reused `veriput_path_guard.ensure_path_not_protected` in the direct CLI
+  planners/runners above.
+- `certify_all.py` now rejects protected `--out`, `--workdir`, and
+  `--ast-cache-root` immediately after `argparse`, before subject resolution,
+  AST generation, workdir creation, or JSONL append.
+- `unit_schedule_run.py` now also rejects protected `certify_argv
+  --ast-cache-root`, not only `--out`, so malformed schedules fail in dry-run
+  before starting a child process.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/ast_preheat_schedule.py notes/coverage/scripts/unit_schedule.py notes/coverage/scripts/unit_schedule_run.py notes/coverage/scripts/subject_unit_manifest.py notes/coverage/scripts/certify_all.py scripts/test_ast_preheat_schedule.py scripts/test_unit_schedule.py scripts/test_unit_schedule_run.py scripts/test_veriput_subjects.py scripts/test_certify_all_guards.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_ast_preheat_schedule.py`
+  passed and now checks protected schedule output and AST cache refusal.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed and
+  now checks protected schedule output, cert output, and AST cache refusal.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule_run.py` passed
+  and now checks protected `certify_argv --ast-cache-root` refusal.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_veriput_subjects.py` passed
+  and now checks protected manifest `--out` and `--journal` refusal using a
+  temporary `VERIPUT_ROOT`.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_guards.py`
+  passed and checks `certify_all.py` refuses protected `--out`, `--workdir`,
+  and `--ast-cache-root` before subject resolution.
+- Related tests also passed:
+  `scripts/test_benchmark_pipeline_plan.py` and
+  `scripts/test_put_all_accounting.py`.
+- `git diff --check` passed before this note update.
+- `python3 -m pylint ...` was run on touched scripts/tests. It exits 28 on
+  existing style debt: import-position after local `sys.path` setup, missing
+  docstrings, unspecified encodings, subprocess calls without `check`,
+  complexity/duplicate-code warnings, and existing large-function warnings in
+  `certify_all.py`.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 runner-level protected write guards
 
 Scope and constraint:

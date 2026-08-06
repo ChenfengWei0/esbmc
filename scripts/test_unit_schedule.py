@@ -174,10 +174,47 @@ def test_schedule_deduplicates_prepared_subject_units():
     return bad
 
 
+def test_schedule_refuses_protected_write_paths():
+    protected = "/home/samson/workspace/VeriPUT/Results/certify.jsonl"
+    try:
+        unit_schedule.build_schedule(manifest(), cert_out=protected)
+    except unit_schedule.ScheduleError as exc:
+        refused_cert = str(exc)
+    else:
+        refused_cert = ""
+    data = manifest()
+    data["ast_cache_root"] = "/home/samson/workspace/VeriPUT/Results/ast-cache"
+    try:
+        unit_schedule.build_schedule(data)
+    except unit_schedule.ScheduleError as exc:
+        refused_cache = str(exc)
+    else:
+        refused_cache = ""
+    cp = subprocess.run([
+        sys.executable,
+        str(ROOT / "notes" / "coverage" / "scripts" / "unit_schedule.py"),
+        "-",
+        "--out",
+        "/home/samson/workspace/VeriPUT/Results/unit-schedule.json",
+    ],
+                        input=json.dumps(manifest()),
+                        capture_output=True,
+                        text=True)
+    bad = 0
+    bad += check("--cert-out must not be under" in refused_cert,
+                 f"protected cert output is refused: {refused_cert}")
+    bad += check("--ast-cache-root must not be under" in refused_cache,
+                 f"protected AST cache is refused: {refused_cache}")
+    bad += check(cp.returncode != 0 and "--out must not be under" in cp.stderr,
+                 f"protected unit schedule output is refused: {cp.stderr.strip()}")
+    return bad
+
+
 TESTS = [
     test_schedule_prioritizes_hinted_units_and_preserves_argv,
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,
+    test_schedule_refuses_protected_write_paths,
 ]
 
 if __name__ == "__main__":

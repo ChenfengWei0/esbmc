@@ -18,6 +18,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 CERTIFY_ALL = SCRIPT_DIR / "certify_all.py"
 sys.path.insert(0, str(SCRIPT_DIR))
+from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 from veriput_recipe import STRONG_RECIPE_VERSION, strong_certify_args  # noqa: E402
 
 
@@ -113,6 +114,11 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
                             "veriput-unit-manifest/v1")
 
     ast_cache_root = manifest.get("ast_cache_root") or None
+    try:
+        ensure_path_not_protected("--ast-cache-root", ast_cache_root)
+        ensure_path_not_protected("--cert-out", cert_out)
+    except ValueError as exc:
+        raise ScheduleError(str(exc)) from exc
     jobs = []
     skipped_rows = []
     duplicate_jobs = []
@@ -213,6 +219,11 @@ def main() -> int:
         return 1
     text = json.dumps(doc, indent=2, sort_keys=True) + "\n"
     if args.out:
+        try:
+            ensure_path_not_protected("--out", args.out)
+        except ValueError as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 1
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text)

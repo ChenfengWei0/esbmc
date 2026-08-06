@@ -54,6 +54,7 @@ ESBMC_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ESBMC_ROOT, "scripts"))
 from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
+from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 from veriput_subjects import (SubjectError, ensure_solast,
                               enumerate_subject_units, resolve_subject)
 # ---- THE INPUTS DIRECTORY IS THE POC'S, NOT A SHARED CORPUS ----
@@ -1306,6 +1307,13 @@ def main():
                          "run ESBMC, write driver logs, append JSONL rows, or "
                          "generate missing AST files.")
     args = ap.parse_args()
+    try:
+        ensure_path_not_protected("--out", args.out)
+        ensure_path_not_protected("--workdir", args.workdir)
+        ensure_path_not_protected("--ast-cache-root", args.ast_cache_root)
+    except ValueError as exc:
+        print(f"[sweep] REFUSED: {exc}", file=sys.stderr)
+        return 1
 
     # A --unit that matches nothing must FAIL, not sweep everything. R8: iterate
     # the EXPECTED names, not the found ones; a typo that silently widens the

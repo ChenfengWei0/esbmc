@@ -28,6 +28,7 @@ from veriput_subjects import (  # noqa: E402
     resolve_subject,
     subject_dirs,
 )
+from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 
 
 def _parse_shard(text: str):
@@ -366,6 +367,12 @@ def main():
     args = ap.parse_args()
     if not args.benchmark and not args.target_manifest:
         print("REFUSED: pass --benchmark or --target-manifest", file=sys.stderr)
+        return 1
+    try:
+        ensure_path_not_protected("--journal", args.journal)
+        ensure_path_not_protected("--out", args.out)
+    except ValueError as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
         return 1
     try:
         doc = build_manifest(args)

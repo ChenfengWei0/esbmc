@@ -197,11 +197,40 @@ def test_preheat_schedule_cli_reads_stdin_and_overrides_cache():
     return bad
 
 
+def test_preheat_schedule_refuses_protected_write_paths():
+    protected = "/home/samson/workspace/VeriPUT/Results/ast-cache"
+    try:
+        ast_preheat_schedule.build_schedule(manifest(ast_cache_root=protected))
+    except ast_preheat_schedule.PreheatScheduleError as exc:
+        refused_cache = str(exc)
+    else:
+        refused_cache = ""
+    cp = subprocess.run([
+        sys.executable,
+        str(ROOT / "notes" / "coverage" / "scripts" / "ast_preheat_schedule.py"),
+        "-",
+        "--ast-cache-root",
+        "/tmp/cache",
+        "--out",
+        "/home/samson/workspace/VeriPUT/Results/preheat-schedule.json",
+    ],
+                        input=json.dumps(manifest(ast_cache_root="")),
+                        capture_output=True,
+                        text=True)
+    bad = 0
+    bad += check("--ast-cache-root must not be under" in refused_cache,
+                 f"protected AST cache is refused: {refused_cache}")
+    bad += check(cp.returncode != 0 and "--out must not be under" in cp.stderr,
+                 f"protected schedule output is refused: {cp.stderr.strip()}")
+    return bad
+
+
 TESTS = [
     test_preheat_schedule_distinguishes_explicit_and_inferred_solc,
     test_preheat_schedule_refuses_prepared_subject_writes_without_cache,
     test_preheat_schedule_deduplicates_prepared_subjects,
     test_preheat_schedule_cli_reads_stdin_and_overrides_cache,
+    test_preheat_schedule_refuses_protected_write_paths,
 ]
 
 if __name__ == "__main__":

@@ -471,6 +471,39 @@ def test_unit_manifest_cli_refuses_real_results_ast_writes():
     return bad
 
 
+def test_unit_manifest_cli_refuses_protected_report_outputs():
+    with tempfile.TemporaryDirectory() as td:
+        veriput_root = Path(td) / "VeriPUT"
+        root = Path(td) / "subjects"
+        make_subject(root, "repo__C", with_ast=True)
+        base_cmd = [
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", str(root),
+            "--subject-id", "repo__C",
+        ]
+        env = dict(os.environ)
+        env["VERIPUT_ROOT"] = str(veriput_root)
+        out = subprocess.run(
+            base_cmd + ["--out", str(veriput_root / "Results" / "manifest.json")],
+            capture_output=True,
+            text=True,
+            env=env)
+        journal = subprocess.run(
+            base_cmd + ["--journal", str(veriput_root / "Results" / "manifest.jsonl")],
+            capture_output=True,
+            text=True,
+            env=env)
+    bad = 0
+    bad += check(out.returncode == 1 and "--out must not be under" in out.stderr,
+                 f"protected manifest --out is refused: {out.stderr.strip()}")
+    bad += check(journal.returncode == 1 and "--journal must not be under" in journal.stderr,
+                 f"protected manifest --journal is refused: {journal.stderr.strip()}")
+    return bad
+
+
 def test_unit_manifest_cli_lists_units_without_esbmc():
     with tempfile.TemporaryDirectory() as td:
         d = make_subject(td, "repo__C")
@@ -683,6 +716,7 @@ def main():
         test_unit_manifest_cli_reads_ast_cache_without_touching_subject,
         test_unit_manifest_cli_generates_ast_into_cache_only,
         test_unit_manifest_cli_refuses_real_results_ast_writes,
+        test_unit_manifest_cli_refuses_protected_report_outputs,
         test_unit_manifest_cli_lists_units_without_esbmc,
         test_unit_manifest_cli_shard_and_resume,
         test_unit_manifest_cli_reads_target_manifest_hints,

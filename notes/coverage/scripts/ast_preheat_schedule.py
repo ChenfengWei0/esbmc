@@ -19,6 +19,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 SUBJECT_UNIT_MANIFEST = SCRIPT_DIR / "subject_unit_manifest.py"
 DEFAULT_BENCHMARK_ORDER = ("peer182", "bugfix124", "stress243")
+sys.path.insert(0, str(SCRIPT_DIR))
+from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 
 
 class PreheatScheduleError(ValueError):
@@ -146,6 +148,10 @@ def build_schedule(unit_manifest: dict,
     if not cache_root:
         raise PreheatScheduleError("pass --ast-cache-root or use a unit manifest produced with "
                                    "--ast-cache-root; refusing to schedule prepared-subject writes")
+    try:
+        ensure_path_not_protected("--ast-cache-root", cache_root)
+    except ValueError as exc:
+        raise PreheatScheduleError(str(exc)) from exc
     timeout = ast_timeout if ast_timeout is not None else (unit_manifest.get("ast_timeout_s")
                                                            or 60.0)
 
@@ -246,6 +252,11 @@ def main() -> int:
         return 1
     text = json.dumps(doc, indent=2, sort_keys=True) + "\n"
     if args.out:
+        try:
+            ensure_path_not_protected("--out", args.out)
+        except ValueError as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 1
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text)

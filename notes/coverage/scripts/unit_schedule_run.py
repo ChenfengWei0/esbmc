@@ -91,6 +91,7 @@ def _validate_job(job: dict):
     if "--dry-run" in argv:
         raise UnitRunError(f"job {job.get('job_id')!r} certify_argv is dry-run")
     try:
+        ensure_path_not_protected("--ast-cache-root", argv_value(argv, "--ast-cache-root"))
         ensure_path_not_protected("--out", argv_value(argv, "--out"))
     except ValueError as exc:
         raise UnitRunError(f"job {job.get('job_id')!r}: {exc}") from exc

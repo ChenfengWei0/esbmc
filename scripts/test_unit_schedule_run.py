@@ -30,7 +30,7 @@ def fake_script(path, rc=0):
     return str(p)
 
 
-def job(job_id, cmd, unit="f", out_path=""):
+def job(job_id, cmd, unit="f", out_path="", ast_cache_root=""):
     argv = [
         cmd,
         "--subject-dir",
@@ -40,6 +40,8 @@ def job(job_id, cmd, unit="f", out_path=""):
     ]
     if out_path:
         argv += ["--out", out_path]
+    if ast_cache_root:
+        argv += ["--ast-cache-root", ast_cache_root]
     return {
         "schema": "veriput-unit-job/v1",
         "job_id": job_id,
@@ -196,12 +198,27 @@ def test_runner_refuses_protected_write_paths_and_negative_memlimit():
             "schema": "veriput-unit-schedule/v1",
             "jobs": [job("peer182__repo__C__f", ok, out_path=protected)],
         }
+        bad_cache_sched = {
+            "schema":
+            "veriput-unit-schedule/v1",
+            "jobs": [
+                job("peer182__repo__C__f",
+                    ok,
+                    ast_cache_root="/home/samson/workspace/VeriPUT/Results/ast-cache")
+            ],
+        }
         try:
             unit_schedule_run.dry_run_doc(bad_sched)
         except unit_schedule_run.UnitRunError as exc:
             refused_out = str(exc)
         else:
             refused_out = ""
+        try:
+            unit_schedule_run.dry_run_doc(bad_cache_sched)
+        except unit_schedule_run.UnitRunError as exc:
+            refused_cache = str(exc)
+        else:
+            refused_cache = ""
         try:
             unit_schedule_run.run_schedule(schedule(ok),
                                            journal=protected,
@@ -222,6 +239,8 @@ def test_runner_refuses_protected_write_paths_and_negative_memlimit():
     bad = 0
     bad += check("--out must not be under" in refused_out,
                  f"protected certify output is refused: {refused_out}")
+    bad += check("--ast-cache-root must not be under" in refused_cache,
+                 f"protected AST cache is refused: {refused_cache}")
     bad += check("--journal must not be under" in refused_journal,
                  f"protected unit journal is refused: {refused_journal}")
     bad += check("--memlimit-gb" in refused_mem,
