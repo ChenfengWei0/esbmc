@@ -3816,3 +3816,114 @@ example:
 The st1inch disabled-entry repairs above satisfy this standard because they fix
 generic emitted-call reconstruction and PUT-project assembly behavior; they are
 not keyed on the st1inch contract, disabled ERC20 names, or any one path id.
+
+### Dataset target distribution, not POC distribution
+
+Static survey on 2026-08-06 confirmed that the later evaluation target is not
+the diagnostic POC queue. It is the material under
+`/home/samson/workspace/VeriPUT/Datasets`, plus the prepared subject layouts in
+`/home/samson/workspace/VeriPUT/Results`.
+
+The important target shapes are:
+
+- `Datasets/Stress-Projects`: ten production repositories, 243 target rows in
+  `TARGETS.csv`. `Results/Stress243/prepare_subjects.py` has already converted
+  these into the common baseline layout
+  `Results/Stress243/subjects/<sid>/{flat.sol,meta.json}`. Stage 1 reports
+  203 usable flat subjects, 32 compile failures, and 7 flatten failures. Every
+  downstream baseline consumes the flat single-file subject plus a target
+  contract name, not a hand-written POC fixture.
+- `Datasets/Peer-Reviewed-Contracts`: 182 positive-control contracts from
+  CC-SolBMC, SolTG, SynTest, and SolAR. Both original tool-native sources and
+  `contracts_080` ports exist; the 0.8 ports are the inputs suitable for
+  VeriPUT/SuMo/Forge, while original versions are for baseline controls. This
+  means VeriPUT fixes must tolerate upgraded but ABI-checked legacy contracts,
+  not assume modern production project structure only.
+- `Datasets/Patch-Bug-Bench`: 124 bug/fix pairs. `Results/BugFix124` prepares
+  each case in the same subject layout as Stress243, with `flat.sol` as the
+  reference fix and `bug.sol` kept beside it for the real-bug kill question.
+  A useful VeriPUT integration must preserve this reference/mutant distinction
+  and cannot rely on POC-only pathcov directory conventions.
+
+Additional distribution facts that matter for code design:
+
+- Stress projects are assembly-heavy. The survey documents 160/243 targets
+  reaching assembly and 78 tier-1/tier-2 own or inherited assembly cases.
+  Path-origin attribution, unsupported evidence, and source-level path grouping
+  must therefore handle Yul/lowering/model decisions generally; treating every
+  witnessed decision as a fuzzable source branch will over-count paths on the
+  real benchmark.
+- The common campaign runner records timeout, memory, wall/cpu time, RSS, and
+  status separately. VeriPUT benchmark integration should follow that discipline:
+  append-only journals, resumable keys, explicit memory/time budgets, and
+  distinct `timeout` / `oom` / `crash` / `unsupported` / `no-oracle` outcomes.
+- The real benchmark interface is centered on prepared flat subjects and
+  manifests. A repair is general only if it works from source/AST/metadata
+  available for those subjects. A repair that depends on a `poc_units` name,
+  a disabled-entry hand fixture, or one historical path id is overfitting and
+  must be rejected.
+
+Immediate implication: before spending more POC attempts, inspect how the
+current ESBMC-side `poc_one.py`/`certify_all.py`/`put_all.py` flow would be
+fed from `Results/Stress243/subjects`, `Results/Peer182`, and
+`Results/BugFix124/subjects`. The next code changes should close mismatches in
+that general interface: target-contract selection, flat-file AST generation,
+constructor/fixture establishment, source-path attribution, emitted PUT
+assembly, and benchmark journal fields.
+
+### Static interface audit after the Dataset survey
+
+The lower-level ESBMC/VeriPUT drivers are more general than the current POC
+orchestration:
+
+- `scripts/solidity_path_generalise.py` accepts explicit
+  `--sol --ast --contract --unit --scope --max-tx`, so it can in principle run
+  on any prepared flat subject if the caller supplies a correct AST, target
+  contract, unit, scope, fixture flags, and budget.
+- `scripts/solidity_path_put.py` also accepts explicit
+  `--sol --ast --contract --unit --enc --region`, so PUT emission is likewise
+  not intrinsically tied to the POC directory layout.
+
+The current blockers are in the outer orchestration:
+
+- `notes/coverage/scripts/pathcov_collect.py` is still built around the locked
+  `collect.py` benchmark table. Its ad-hoc `--sol` mode deliberately supports
+  only `--scope whole`, because it has no project tree and therefore no trusted
+  callable-unit enumeration. A Stress/BugFix prepared flat subject also lacks
+  the original project tree, so the current ad-hoc path cannot run the gate
+  cell for one target unit.
+- `notes/coverage/scripts/certify_all.py` still has a hard-coded
+  `BENCHMARKS` table for six historical corpus entries. `poc_one.py` works
+  around that by passing a POC's private `VERIPUT_INPUTS_DIR` plus the same
+  historical benchmark key. That does not scale to arbitrary
+  `Results/Stress243/subjects/<sid>/flat.sol` or
+  `Results/BugFix124/subjects/<sid>/flat.sol`.
+- `notes/coverage/scripts/put_all.py` repeats the same `BENCHES` table and
+  resolves corpus sources either from `poc_units/<pid>/inputs` or the deleted
+  shared `notes/coverage/inputs`. Unknown benchmark keys are skipped rather
+  than resolved from a subject manifest.
+- `poc_one.py` is correctly narrow for POC accounting, but its input contract
+  is explicitly `notes/coverage/poc_units/index.json`/`poc.json`. It should not
+  become the benchmark runner by accreting special cases. The benchmark runner
+  should share the same stage functions/recipes but read subject manifests.
+
+General repair direction:
+
+1. introduce a manifest-backed subject resolver whose record contains at least
+   `{benchmark, subject_id, flat_sol, solast, contract, unit, scope, max_tx,
+   fixture?, solc/build metadata?}`;
+2. make Stage 1, Stage 2, and Stage 3 accept that resolved subject explicitly,
+   while keeping `poc_one.py` as a thin POC adapter over the same resolved
+   shape;
+3. keep the existing POC retry accounting separate from benchmark campaign
+   accounting. POC attempts are debugging budget; Stress/Peer/BugFix rows need
+   append-only benchmark journals with the campaign's own time/memory fields;
+4. avoid re-implementing callable-unit discovery for flat subjects with a
+   weak regex. For prepared benchmarks, use the existing target manifest or
+   `meta.json` contract/unit metadata; for general source, fail closed unless
+   a trusted source of unit names is supplied.
+
+This is an orchestration/interface issue first. Do not spend ESBMC POC attempts
+to diagnose it; unit-test the subject resolver and command construction
+directly, then use one fresh POC or one tiny synthetic subject only to validate
+that the shared path still invokes the existing drivers correctly.
