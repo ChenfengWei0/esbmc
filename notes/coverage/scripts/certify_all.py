@@ -664,7 +664,7 @@ def result_generalise_progress(workdir, since_mtime=None):
     return data
 
 
-def result_partial_witness_journal(workdir, since_mtime=None):
+def result_partial_witness_journal(workdir, since_mtime=None, progress=None):
     """Summarise the refutation-only witness journal left by a partial run.
 
     `cov-ce-journal.json` is not a certificate and must not promote a killed
@@ -712,9 +712,15 @@ def result_partial_witness_journal(workdir, since_mtime=None):
         })
     if not paths:
         return None
+    stage = (progress or {}).get("stage") if isinstance(progress, dict) else None
+    context = ("certification-query"
+               if isinstance(stage, str) and stage.startswith("certify-query")
+               else "path-enumeration-or-probe")
     return {
         "kind": data.get("kind"),
         "version": data.get("version"),
+        "source_stage": stage,
+        "source_context": context,
         "partial": bool(data.get("partial")),
         "complete": bool(data.get("complete")),
         "claims_decided": data.get("claims_decided"),
@@ -1936,16 +1942,17 @@ def main():
                 _killpg(proc)
             wall = time.time() - t1
             rec = parse_driver(out)
+            generalise_progress = result_generalise_progress(uwd, t1)
             rec.update({"benchmark": bench, "unit": unit,
                         "path_function": result_path_function(uwd),
                         "not_certified_details":
                             result_not_certified_details(uwd, t1),
                         "enumeration_salvage":
                             result_enumeration_salvage(uwd, t1),
-                        "generalise_progress":
-                            result_generalise_progress(uwd, t1),
+                        "generalise_progress": generalise_progress,
                         "partial_witness_journal":
-                            result_partial_witness_journal(uwd, t1),
+                            result_partial_witness_journal(
+                                uwd, t1, progress=generalise_progress),
                         "bucket": bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
                         "memlimit_gib": memlimit, "jobs": args.jobs,

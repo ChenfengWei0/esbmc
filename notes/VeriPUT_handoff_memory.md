@@ -10256,3 +10256,97 @@ Post-validation checks:
   passed.
 - `git diff --check -- scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_solidity_path_generalise.py scripts/test_certify_all_partial_journal.py notes/VeriPUT_handoff_memory.md`
   passed.
+
+## 2026-08-07 stratified benchmark sample
+
+Read-only planning:
+
+- Pipeline output:
+  `/tmp/veriput_stratified_20260807_03`.
+- Generated from the benchmark pipeline controller with:
+  peer182 + bugfix124 + stress243, stress scope `stateful`, AST cache
+  `/tmp/veriput_bench_ast_cache_20260806`.
+- The full schedulable set under the existing cache was 76 unit jobs:
+  15 bugfix124, 38 peer182, 23 stress243.
+- The full denominator is still not ready:
+  the unit manifest gate reports 473 missing AST rows and 37 prepared stress
+  errors.  This is why the current action remains stratified sampling, not
+  full benchmark execution.
+
+Balanced attempt-1 sample:
+
+- Schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-balanced7.json`.
+- Results:
+  `/tmp/veriput_stratified_20260807_03/certify-results-balanced7.jsonl`.
+- Runner journal:
+  `/tmp/veriput_stratified_20260807_03/unit-run-balanced7.jsonl`.
+- Policy:
+  attempt 1, `jobs=1`, 60s per ESBMC invocation, 70s driver timeout, 75s
+  runner timeout, 8GiB.
+- Units:
+  - bugfix124 `DepositLog.approvedToLog`;
+  - bugfix124 `EtherLotto.play`;
+  - peer182 `AIRBets.transfer`;
+  - peer182 `EtherBank.deposit`;
+  - stress243 `ClaimTopicsRegistry.addClaimTopic`;
+  - stress243 `IdentityRegistryStorage.bindIdentityRegistry`;
+  - stress243 `IdentityRegistryStorage.storedIdentity`.
+
+Results:
+
+- Runner status: 7 / 7 `ok`.
+- Buckets: 5 `CERTIFIED`, 1 `KILLED`, 1 `NO-WITNESS-UNDECIDED`.
+- Certified units:
+  - `DepositLog.approvedToLog`: 1 certified / 1 not / 2 witnessed, 2.8s.
+  - `EtherLotto.play`: 1 / 2 / 3, 22.8s.
+  - `EtherBank.deposit`: 1 / 0 / 1, 2.0s.
+  - `ClaimTopicsRegistry.addClaimTopic`: 1 / 0 / 1, 65.7s.
+  - `IdentityRegistryStorage.storedIdentity`: 1 / 1 / 2, 8.1s.
+- Non-certified buckets:
+  - `AIRBets.transfer`: `NO-WITNESS-UNDECIDED`, immediate.  This is still a
+    peer witness-discovery/front-end modelling problem, not a region strategy
+    result.
+  - `IdentityRegistryStorage.bindIdentityRegistry`: `KILLED`, 1 witnessed,
+    level-0 and both linear-refine rounds finished.  `generalise_progress`
+    ended at `certify-query-started`, `enc=255`, so the 70s attempt was
+    consumed in certification / witness-floor checking, not in enumeration or
+    region refinement.
+
+Certification summary:
+
+- `certify_result_summary.py` over the balanced7 JSONL reports:
+  - certified path rate: 0.5;
+  - verdict path rate: 0.9;
+  - certified region shapes: 3 wide, 2 point;
+  - not-certified reason buckets: 2 empty-region, 2
+    method-unsupported:static-uncontrolled.
+- Interpretation: this sample is not broadly blocked by insertion failure.
+  Most rows get verdicts; the main remaining losses are witness discovery for
+  some peer contracts, method-level unsupported/static-uncontrolled splits, and
+  certification timeout after a candidate region exists on stress.
+
+Follow-up fix from this sample:
+
+- In a certification-timeout row, `cov-ce-journal.json` may have been
+  overwritten by the last certification query, so `partial_witness_journal`
+  can describe `path:255#nonvacuous` instead of the original enumeration
+  journal.
+- `enumeration_salvage` remains the correct enumeration evidence because it is
+  a sidecar written before certification.
+- `certify_all.py` now annotates `partial_witness_journal` with:
+  - `source_stage`;
+  - `source_context`, either `path-enumeration-or-probe` or
+    `certification-query`.
+- This keeps the extra journal evidence useful while preventing a scheduler
+  from treating a certification-query journal as complete-path enumeration
+  progress.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/certify_all.py scripts/test_certify_all_partial_journal.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_partial_journal.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/certify_all.py scripts/test_certify_all_partial_journal.py`
+  passed.

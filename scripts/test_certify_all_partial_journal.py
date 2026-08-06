@@ -57,6 +57,9 @@ def main():
         since = time.time() - 1
         got = certify_all.result_partial_witness_journal(str(workdir), since)
         bad += check(got is not None, "partial journal is read")
+        bad += check(got["source_stage"] is None
+                     and got["source_context"] == "path-enumeration-or-probe",
+                     f"unattributed journal keeps neutral source context: {got}")
         bad += check(got["path_count"] == 2 and got["witness_count"] == 5,
                      f"path/witness counts are compacted: {got}")
         bad += check(got["claims_decided"] == 6 and got["claims_total"] == 277,
@@ -72,6 +75,26 @@ def main():
         os.remove(journal)
         bad += check(certify_all.result_partial_witness_journal(str(workdir)) is None,
                      "missing journal is absent rather than empty data")
+        journal.write_text(json.dumps({
+            "kind": "solidity-complete-path-ce-journal",
+            "partial": True,
+            "complete": False,
+            "witnesses": {
+                "sol:@C@C@F@f#1:path:31#nonvacuous": {
+                    "condition": "f:path:31#nonvacuous",
+                    "path_id": "31#nonvacuous",
+                    "witness_count": 1,
+                },
+            },
+        }))
+        cert_journal = certify_all.result_partial_witness_journal(
+            str(workdir),
+            since,
+            progress={"stage": "certify-query-started"})
+        bad += check(cert_journal["source_stage"] == "certify-query-started"
+                     and cert_journal["source_context"] == "certification-query",
+                     f"certification journals are tagged separately: {cert_journal}")
+        journal.unlink()
 
         result = workdir / "generalise-result.json"
         result.write_text(json.dumps({
