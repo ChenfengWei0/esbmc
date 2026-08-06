@@ -5209,6 +5209,52 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 source R2 merge keeps mechanical candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, benchmark AST preheat, or
+  benchmark certification run was started.
+
+Finding:
+
+- After source-assignment R2 was added, Stage 4 used the source spec as a
+  replacement: if a direct setter candidate existed, the typed mechanical R2
+  batch was skipped.
+- That makes the setter oracle cheaper, but it can silently lose other strong
+  candidates on the same path: return-value R2, delta terms, literal/range
+  terms, and candidates for other state variables.
+- Running source and typed as two specs would recover strength but cost another
+  ESBMC R2 invocation per path. The better shape is one verifier query whose
+  `vars` carries both candidate families.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has `merge_source_r2_specs()`.
+- Stage 4 now always builds the typed mechanical R2 batch, then merges any
+  source-assignment candidates into that same batch.
+- Source candidates are inserted ahead of mechanical candidates for their
+  variable, de-duplicated by rendered structured term, and the merged spec is
+  marked `kind = typed+source-assign`.
+- The `--r2-candidate-budget` cap is preserved: if the source candidates would
+  push the merged batch over budget, only mechanical tail candidates are removed
+  and logged as NOT ASKED. Source candidates keep priority because they come
+  from the unit's own assignment syntax and are typically the strongest setter
+  oracle.
+- This improves PUT strength without increasing the number of ESBMC R2 passes
+  for a path.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  148 tests ran, 148 declared.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 bool-literal source R2 candidates
 
 Scope and constraint:

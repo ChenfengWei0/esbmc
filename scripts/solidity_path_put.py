@@ -1464,6 +1464,100 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
              "vars": entries}]
 
 
+def _r2_entry_count(entries):
+    return sum(len(entry.get(kind, ())) for entry in entries or []
+               for kind in ("equals", "abs", "deltas"))
+
+
+def _r2_refresh_candidate_count(spec):
+    spec["candidate_count"] = _r2_entry_count(spec.get("vars", ()))
+
+
+def _r2_trim_mechanical_tail(spec, candidate_budget, log):
+    """Keep source candidates in front and trim generated suffixes if needed."""
+    if candidate_budget is None:
+        return 0
+    over = _r2_entry_count(spec.get("vars", ())) - candidate_budget
+    if over <= 0:
+        return 0
+    dropped = 0
+    for entry in reversed(spec.get("vars", ())):
+        for kind in ("deltas", "abs", "equals"):
+            queue = entry.get(kind, [])
+            while queue and dropped < over:
+                candidate = queue[-1]
+                if str(candidate.get("id", "")).startswith("src"):
+                    break
+                queue.pop()
+                dropped += 1
+            if dropped >= over:
+                break
+        if dropped >= over:
+            break
+    spec["vars"] = [
+        entry for entry in spec.get("vars", ())
+        if any(entry.get(kind) for kind in ("equals", "abs", "deltas"))
+    ]
+    _r2_refresh_candidate_count(spec)
+    if dropped:
+        log(f"[put]   typed R2 candidate budget made room for source "
+            f"assignment candidate(s) by naming {dropped} mechanical "
+            "candidate(s) as NOT ASKED")
+    return dropped
+
+
+def merge_source_r2_specs(source_specs, typed_specs, candidate_budget=None,
+                          log=print):
+    """Merge source-prioritized candidates into one typed R2 verifier query."""
+    source = json.loads(json.dumps(source_specs or []))
+    typed = json.loads(json.dumps(typed_specs or []))
+    if not source:
+        return typed
+    if not typed:
+        return source
+
+    target = typed[0]
+    entries = target.setdefault("vars", [])
+    by_name = {entry.get("name"): entry for entry in entries}
+    new_entries = []
+    inserted = 0
+
+    for spec in source:
+        for entry in spec.get("vars", []):
+            name = entry.get("name")
+            if not name:
+                continue
+            dest = by_name.get(name)
+            if dest is None:
+                dest = {"name": name, "equals": [], "abs": [], "deltas": []}
+                by_name[name] = dest
+                new_entries.append(dest)
+            dest.setdefault("equals", [])
+            existing = {r2_term_text(item["term"])
+                        for item in dest.get("equals", [])}
+            prepend = []
+            for candidate in entry.get("equals", []):
+                text = r2_term_text(candidate["term"])
+                if text in existing:
+                    continue
+                existing.add(text)
+                prepend.append(candidate)
+                inserted += 1
+            if prepend:
+                dest["equals"] = prepend + dest.get("equals", [])
+
+    if new_entries:
+        target["vars"] = new_entries + entries
+    if inserted:
+        target["kind"] = "typed+source-assign"
+        _r2_refresh_candidate_count(target)
+        _r2_trim_mechanical_tail(target, candidate_budget, log)
+        log(f"[put]   typed R2 source assignment merge kept {inserted} "
+            "source candidate(s) in the same verifier query as the "
+            "mechanical batch")
+    return typed
+
+
 def r2_terms_from_specs(specs):
     """Canonical term lookup consumed by the Foundry renderer."""
     out = {}
@@ -6223,17 +6317,14 @@ def main():
             a.ast, a.contract, a.unit, params, layout, _rendered_coords,
             arity=len(params or []), declaration_id=declaration_id,
             log=print)
-        if _r2:
-            print("[put]   typed R2 mechanical batch SKIPPED: source "
-                  "assignment candidate(s) give a smaller verifier query for "
-                  "the same setter oracle")
-        else:
-            _r2 = propose_r2_batch(
-                rows, params, source_literals=_source_literals,
-                depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,
-                rendered_coords=_rendered_coords,
-                term_budget=a.r2_term_budget,
-                candidate_budget=a.r2_candidate_budget, log=print)
+        _typed_r2 = propose_r2_batch(
+            rows, params, source_literals=_source_literals,
+            depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,
+            rendered_coords=_rendered_coords,
+            term_budget=a.r2_term_budget,
+            candidate_budget=a.r2_candidate_budget, log=print)
+        _r2 = merge_source_r2_specs(
+            _r2, _typed_r2, candidate_budget=a.r2_candidate_budget, log=print)
         r2_term_lookup = r2_terms_from_specs(_r2)
         r2_requested = True
 

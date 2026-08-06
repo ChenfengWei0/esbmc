@@ -2189,6 +2189,73 @@ def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     return bad
 
 
+def test_source_R2_candidates_merge_into_the_typed_batch():
+    from solidity_path_put import merge_source_r2_specs, r2_candidates  # noqa: E402
+    source = [{"param": "source_assign", "kind": "source-assign",
+               "vars": [{"name": "ready", "equals": [{
+                   "id": "src0", "term": {"kind": "literal", "value": "1"}}],
+                          "abs": [], "deltas": []}]}]
+    typed = [{"param": "batch", "stage": 1, "kind": "typed",
+              "candidate_count": 2, "vars": [
+                  {"name": "bal", "equals": [{
+                      "id": "e0", "term": {"kind": "coord",
+                                           "name": "amount"}}],
+                   "abs": [], "deltas": []},
+                  {"name": "ready", "equals": [{
+                      "id": "e1", "term": {"kind": "coord",
+                                           "name": "flag_"}}],
+                   "abs": [], "deltas": []}]}]
+    said = []
+    got = merge_source_r2_specs(source, typed, candidate_budget=8,
+                                log=said.append)
+    candidates = r2_candidates(got)
+    bad = 0
+    bad += check(len(got) == 1,
+                 f"source and typed candidates share one R2 query: {got}")
+    bad += check(got[0].get("kind") == "typed+source-assign",
+                 f"the merged provenance is visible: {got[0]}")
+    bad += check(got[0].get("candidate_count") == 3,
+                 f"no typed candidate was lost: {got}")
+    bad += check([c["text"] for c in candidates] ==
+                 ["post == amount", "post == 1", "post == flag_"],
+                 f"the source bool candidate is inserted before the "
+                 f"mechanical bool endpoint: {candidates}")
+    bad += check(any("same verifier query" in line for line in said),
+                 f"the log says this is not an extra ESBMC pass: {said}")
+    return bad
+
+
+def test_source_R2_merge_preserves_the_candidate_budget():
+    from solidity_path_put import merge_source_r2_specs, r2_candidates  # noqa: E402
+    source = [{"vars": [{"name": "ready", "equals": [{
+        "id": "src0", "term": {"kind": "literal", "value": "1"}}],
+                         "abs": [], "deltas": []}]}]
+    typed = [{"param": "batch", "stage": 1, "kind": "typed",
+              "candidate_count": 2, "vars": [
+                  {"name": "bal", "equals": [{
+                      "id": "e0", "term": {"kind": "coord",
+                                           "name": "amount"}}],
+                   "abs": [], "deltas": []},
+                  {"name": "ready", "equals": [{
+                      "id": "e1", "term": {"kind": "coord",
+                                           "name": "flag_"}}],
+                   "abs": [], "deltas": []}]}]
+    said = []
+    got = merge_source_r2_specs(source, typed, candidate_budget=2,
+                                log=said.append)
+    texts = [candidate["text"] for candidate in r2_candidates(got)]
+    bad = 0
+    bad += check(got[0].get("candidate_count") == 2,
+                 f"the global candidate cap is still respected: {got}")
+    bad += check("post == 1" in texts and "post == flag_" not in texts,
+                 f"source survives and the mechanical suffix is dropped: "
+                 f"{texts}")
+    bad += check(any("made room" in line and "NOT ASKED" in line
+                     for line in said),
+                 f"the dropped mechanical candidate is named: {said}")
+    return bad
+
+
 def test_same_arity_overloads_use_the_exact_path_declaration():
     from solidity_path_put import (function_params, function_returns,  # noqa: E402
                                    overload_artifact_label,
@@ -4475,6 +4542,8 @@ def main():
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
               test_source_R2_assignment_candidates_are_small_setter_queries,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
+              test_source_R2_candidates_merge_into_the_typed_batch,
+              test_source_R2_merge_preserves_the_candidate_budget,
               test_same_arity_overloads_use_the_exact_path_declaration,
               test_overload_persistence_keys_and_work_suffixes_are_distinct,
               test_structured_R2_term_renders_with_the_lifted_coordinate,
