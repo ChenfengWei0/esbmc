@@ -2938,6 +2938,119 @@ def test_source_R2_arithmetic_assignments_prioritize_expression_endpoints():
     return bad
 
 
+def test_source_R2_state_entry_coords_are_used_only_when_rendered():
+    from solidity_path_put import r2_term_text, source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def binop(op, lhs, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def assign(ref, name, rhs, src, op="="):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": op, "src": src,
+            "leftHandSide": ident(ref, name), "rightHandSide": rhs}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "seed",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "mirror",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "next",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "total",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "owner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
+            {"nodeType": "VariableDeclaration", "id": 15, "name": "savedOwner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
+            {"nodeType": "VariableDeclaration", "id": 16, "name": "ready",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "bool"}},
+            {"nodeType": "VariableDeclaration", "id": 17, "name": "copiedReady",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "bool"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "copy",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 assign(11, "mirror", ident(10, "seed"), "100:12:0"),
+                 assign(12, "next", binop("+", ident(10, "seed"),
+                                          ident(21, "amount")), "120:12:0"),
+                 assign(13, "total", ident(10, "seed"), "140:12:0", "+="),
+                 assign(15, "savedOwner", ident(14, "owner", "address"),
+                        "160:12:0"),
+                 assign(17, "copiedReady", ident(16, "ready", "bool"),
+                        "180:12:0"),
+                 assign(12, "next", binop("/", ident(10, "seed"), num(0)),
+                        "200:12:0")]}}
+        ]}]}
+    layout = {"seed": (0, 0, 32), "mirror": (1, 0, 32),
+              "next": (2, 0, 32), "total": (3, 0, 32),
+              "owner": (4, 0, 20), "savedOwner": (5, 0, 20),
+              "ready": (6, 0, 1), "copiedReady": (7, 0, 1)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "copy", [("amount", "uint256")], layout,
+            [("amount", "num", None), ("state.seed", "num", None),
+             ("state.owner", "id", 20), ("state.ready", "bool", 1)],
+            arity=1, log=lambda _msg: None)
+        unrendered, _ = source_assignment_r2_specs(
+            path, "C", "copy", [("amount", "uint256")], layout,
+            [("amount", "num", None)], arity=1, log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    def equals(name):
+        return [r2_term_text(item["term"])
+                for item in entries.get(name, {}).get("equals", [])]
+
+    total_deltas = entries.get("total", {}).get("deltas", [])
+    bad = 0
+    bad += check(equals("mirror") == ["state.seed"],
+                 f"state.seed direct endpoint is mined: {entries}")
+    bad += check(equals("next") == ["(state.seed + amount)"],
+                 f"state.seed arithmetic endpoint is mined and divide-by-zero "
+                 f"is skipped: {entries}")
+    bad += check(len(total_deltas) == 1 and
+                 r2_term_text(total_deltas[0]["lo"]) == "state.seed",
+                 f"state.seed delta endpoint is mined: {total_deltas}")
+    bad += check(equals("savedOwner") == ["state.owner"],
+                 f"state.owner id endpoint is mined: {entries}")
+    bad += check(equals("copiedReady") == ["state.ready"],
+                 f"state.ready bool endpoint is mined: {entries}")
+    bad += check(any("mirror: post == state.seed" in line
+                     for line in evidence),
+                 f"state coord provenance is recorded: {evidence}")
+    bad += check(any("total: post - pre == state.seed" in line
+                     for line in evidence),
+                 f"state delta provenance is recorded: {evidence}")
+    bad += check(unrendered == [],
+                 f"unrendered state coords are not mined: {unrendered}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -5462,6 +5575,7 @@ def main():
               test_source_R2_address_zero_assignments_prioritize_zero_endpoints,
               test_source_R2_environment_value_assignments_use_rendered_env_coords,
               test_source_R2_arithmetic_assignments_prioritize_expression_endpoints,
+              test_source_R2_state_entry_coords_are_used_only_when_rendered,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,

@@ -5474,6 +5474,54 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 rendered-state-coordinate source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- Stage 4 already passes scalar `state.<field>` region/pin coordinates into
+  the typed R2 batch when they are rendered. ESBMC's `--path-cov-assert` can
+  resolve them as entry-state coordinates, and the Foundry renderer can spell
+  them when the PUT establishes that state slice.
+- The source-priority miner did not use those rendered state coordinates on the
+  RHS of source assignments. This missed strong candidates such as
+  `mirror = seed`, `next = seed + amount`, `total += seed`,
+  `savedOwner = owner`, and `copiedReady = ready` when `state.seed`,
+  `state.owner`, or `state.ready` were already part of the certified region.
+- The rule remains gated by `rendered_coords`. It does not invent new
+  entry-state assumptions, and it deliberately stays on scalar state variables;
+  mapping-slot state coordinates are left to the existing explicit slot naming
+  path.
+- Fuzz remains refute-only. ESBMC remains the only proof step for the resulting
+  R2 row.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `coord_term()` now maps a RHS state-variable
+  identifier to `state.<name>` when that exact coordinate is rendered with the
+  expected `num`/`id`/`bool` kind.
+- `delta_term()` now accepts rendered numeric scalar state coordinates, enabling
+  source-prioritized exact delta rows such as `post - pre == state.seed`.
+- This composes with the previous arithmetic endpoint rule, so one-level terms
+  like `(state.seed + amount)` are prioritized without extending the structured
+  R2 grammar.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `157 test(s) ran, 157 declared in this module`.
+- `git diff --check` on the touched files passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:

@@ -1263,6 +1263,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         name = param_ids.get(ref)
         if name and name in rendered_by_kind.get(expected_kind, set()):
             return {"kind": "coord", "name": name}, name
+        state = state_ids.get(ref)
+        if state is not None:
+            state_name = f"state.{state[0]}"
+            if state_name in rendered_by_kind.get(expected_kind, set()):
+                return {"kind": "coord", "name": state_name}, state_name
         env_name = env_coord_name(n)
         if env_name and env_name in rendered_by_kind.get(expected_kind, set()):
             return {"kind": "coord", "name": env_name}, env_name
@@ -1324,6 +1329,12 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 and param_name in rendered_numeric
                 and unsigned_ty(param_tys.get(ref, ""))):
             return {"kind": "coord", "name": param_name}, param_name
+        state = state_ids.get(ref)
+        if state is not None:
+            state_name = f"state.{state[0]}"
+            if (state_name in rendered_numeric
+                    and unsigned_ty(_norm_ty(state[1]))):
+                return {"kind": "coord", "name": state_name}, state_name
         env_name = env_coord_name(n)
         if env_name == "msg.value" and env_name in rendered_numeric:
             return {"kind": "coord", "name": env_name}, env_name
