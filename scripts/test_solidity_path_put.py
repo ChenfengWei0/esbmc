@@ -3200,6 +3200,150 @@ def test_source_R2_type_conversion_wrappers_are_unwrapped_conservatively():
     return bad
 
 
+def test_source_R2_constant_identifiers_prioritize_literal_endpoints():
+    from solidity_path_put import r2_term_text, source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def boolean(value):
+        return {"nodeType": "Literal", "kind": "bool", "value": value}
+
+    def address_zero():
+        return {"nodeType": "FunctionCall", "kind": "typeConversion",
+                "typeDescriptions": {"typeString": "address"},
+                "expression": {
+                    "nodeType": "ElementaryTypeNameExpression",
+                    "typeName": {"nodeType": "ElementaryTypeName",
+                                 "name": "address"}},
+                "arguments": [num(0)]}
+
+    def binop(op, lhs, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def assign(ref_or_lhs, rhs, src, op="="):
+        if isinstance(ref_or_lhs, dict):
+            lhs = ref_or_lhs
+        else:
+            ref, name, ty = ref_or_lhs
+            lhs = ident(ref, name, ty)
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": op, "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+    bal_sender = {
+        "nodeType": "IndexAccess",
+        "baseExpression": ident(15, "bal", "mapping(address => uint256)"),
+        "indexExpression": msg_sender,
+        "typeDescriptions": {"typeString": "uint256"}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 30, "name": "MAX",
+             "stateVariable": True, "constant": True, "value": num(7),
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 31, "name": "STEP",
+             "stateVariable": True, "constant": True, "value": num(3),
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 32, "name": "READY",
+             "stateVariable": True, "constant": True, "value": boolean(True),
+             "typeDescriptions": {"typeString": "bool"}},
+            {"nodeType": "VariableDeclaration", "id": 33, "name": "ZERO",
+             "stateVariable": True, "constant": True, "value": address_zero(),
+             "typeDescriptions": {"typeString": "address"}},
+            {"nodeType": "VariableDeclaration", "id": 34, "name": "COMPLEX",
+             "stateVariable": True, "constant": True,
+             "value": binop("+", num(1), num(2)),
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "fee",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "total",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "ready",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "bool"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "owner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "bad",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 15, "name": "bal",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "useConstants",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 assign((10, "fee", "uint256"), ident(30, "MAX", "uint256"),
+                        "100:12:0"),
+                 assign((11, "total", "uint256"), ident(31, "STEP", "uint256"),
+                        "120:12:0", "+="),
+                 assign((12, "ready", "bool"), ident(32, "READY", "bool"),
+                        "140:12:0"),
+                 assign((13, "owner", "address"), ident(33, "ZERO", "address"),
+                        "160:12:0"),
+                 assign((14, "bad", "uint256"), ident(34, "COMPLEX", "uint256"),
+                        "180:12:0"),
+                 assign(bal_sender, ident(30, "MAX", "uint256"),
+                        "200:12:0")]}}
+        ]}]}
+    layout = {"fee": (0, 0, 32), "total": (1, 0, 32),
+              "ready": (2, 0, 1), "owner": (3, 0, 20),
+              "bad": (4, 0, 32)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "useConstants", [], layout, [], arity=0,
+            maps={"bal": (5, "address", 32, 0, "bal", None)},
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    def equals(name):
+        return [r2_term_text(item["term"])
+                for item in entries.get(name, {}).get("equals", [])]
+
+    total_deltas = entries.get("total", {}).get("deltas", [])
+    bad = 0
+    bad += check(equals("fee") == ["7"],
+                 f"numeric constant endpoint is mined: {entries}")
+    bad += check(len(total_deltas) == 1 and
+                 r2_term_text(total_deltas[0]["lo"]) == "3",
+                 f"numeric constant delta is mined: {total_deltas}")
+    bad += check(equals("ready") == ["1"],
+                 f"bool constant endpoint is mined: {entries}")
+    bad += check(equals("owner") == ["0"],
+                 f"address-zero constant endpoint is mined: {entries}")
+    bad += check(equals("bal[msg.sender]") == ["7"],
+                 f"mapping constant endpoint is mined: {entries}")
+    bad += check("bad" not in entries,
+                 f"complex constant expressions are not interpreted: {entries}")
+    bad += check(any("fee: post == MAX" in line for line in evidence),
+                 f"numeric constant provenance uses the constant name: "
+                 f"{evidence}")
+    bad += check(any("total: post - pre == STEP" in line
+                     for line in evidence),
+                 f"delta constant provenance uses the constant name: "
+                 f"{evidence}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -5726,6 +5870,7 @@ def main():
               test_source_R2_arithmetic_assignments_prioritize_expression_endpoints,
               test_source_R2_state_entry_coords_are_used_only_when_rendered,
               test_source_R2_type_conversion_wrappers_are_unwrapped_conservatively,
+              test_source_R2_constant_identifiers_prioritize_literal_endpoints,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,

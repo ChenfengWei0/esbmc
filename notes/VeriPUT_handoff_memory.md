@@ -5570,6 +5570,50 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 constant-identifier source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- Solidity contracts often write from named constants:
+  `fee = MAX_FEE`, `total += STEP`, `ready = READY`,
+  `owner = ZERO_ADDRESS`, or `bal[msg.sender] = LIMIT`.
+- `source_r2_literals()` already mined numeric constants as mechanical term
+  atoms, but source-priority R2 did not connect an assignment RHS identifier
+  back to the constant declaration. That meant a strong endpoint/delta could be
+  buried behind generic candidate ordering.
+- The new rule is intentionally small: it only interprets constant declarations
+  whose value is a unitless decimal numeric literal, bool literal, or exact
+  `address(0)` type conversion. Complex constant expressions are not evaluated
+  by the source miner.
+- Fuzz remains refute-only. ESBMC still certifies every resulting row.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now indexes constant `VariableDeclaration`
+  nodes across the target contract's linearized scope chain.
+- `constant_term()` converts RHS identifiers that name compatible literal
+  constants into structured R2 literal terms while preserving the constant name
+  in evidence.
+- Constant terms feed direct scalar endpoints, exact mapping-slot endpoints,
+  and numeric delta mining through `delta_term()`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `159 test(s) ran, 159 declared in this module`.
+- `git diff --check` on the touched files passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:

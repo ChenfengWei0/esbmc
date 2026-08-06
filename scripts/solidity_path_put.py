@@ -1159,6 +1159,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
     if not scopes:
         scopes = [ast]
     state_ids = {}
+    constant_ids = {}
     for scope in scopes:
         for n in (scope.get("nodes") or []):
             if (isinstance(n, dict) and
@@ -1167,6 +1168,12 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     n.get("id") is not None):
                 ty = (n.get("typeDescriptions") or {}).get("typeString") or ""
                 state_ids[n["id"]] = (n["name"], ty)
+            if (isinstance(n, dict) and
+                    n.get("nodeType") == "VariableDeclaration" and
+                    n.get("constant") and n.get("name") and
+                    n.get("id") is not None):
+                ty = (n.get("typeDescriptions") or {}).get("typeString") or ""
+                constant_ids[n["id"]] = (n["name"], ty, n.get("value"))
 
     entries, evidence, seen, by_name = [], [], set(), {}
     next_id = [0]
@@ -1232,6 +1239,22 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             ty = expr.get("typeName") or {}
             if ty.get("name") == "address":
                 return {"kind": "literal", "value": "0"}, "address(0)"
+        return None
+
+    def constant_term(n, state_ty):
+        ref = identifier_ref(n)
+        const = constant_ids.get(ref)
+        if const is None:
+            return None
+        name, const_ty, value = const
+        if type_coord_kind(const_ty) != type_coord_kind(state_ty):
+            return None
+        literal = literal_term(value, _norm_ty(state_ty))
+        if literal is not None:
+            return literal[0], name
+        zero_addr = address_zero_term(value, state_ty)
+        if zero_addr is not None:
+            return zero_addr[0], name
         return None
 
     def env_coord_name(n):
@@ -1364,6 +1387,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             if (state_name in rendered_numeric
                     and unsigned_ty(_norm_ty(state[1]))):
                 return {"kind": "coord", "name": state_name}, state_name
+        constant = constant_term(n, target_ty) if target_ty else None
+        if constant is not None and constant[0].get("kind") == "literal":
+            return constant
         env_name = env_coord_name(n)
         if env_name == "msg.value" and env_name in rendered_numeric:
             return {"kind": "coord", "name": env_name}, env_name
@@ -1558,6 +1584,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if slot_name and zero_addr is not None:
                     add_equals_candidate(slot_name, zero_addr[0],
                                          zero_addr[1], n.get("src"))
+                constant = constant_term(rhs, slot_ty)
+                if slot_name and constant is not None:
+                    add_equals_candidate(slot_name, constant[0], constant[1],
+                                         n.get("src"))
                 endpoint = (numeric_endpoint_term(rhs, slot_ty)
                             if unsigned_ty(slot_ty) else None)
                 if slot_name and endpoint is not None:
@@ -1589,6 +1619,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if state_name and zero_addr is not None:
                     add_equals_candidate(state_name, zero_addr[0],
                                          zero_addr[1], n.get("src"))
+                constant = constant_term(rhs, state_ty)
+                if state_name and constant is not None:
+                    add_equals_candidate(state_name, constant[0], constant[1],
+                                         n.get("src"))
                 endpoint = (numeric_endpoint_term(rhs, state_ty)
                             if unsigned_ty(state_ty) else None)
                 if state_name and endpoint is not None:
