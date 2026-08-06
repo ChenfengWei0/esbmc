@@ -10651,6 +10651,53 @@ Impact on benchmark strategy:
   `AIRBets` SafeMath/direct-recursive-helper refusal and then the heavy
   `bugfix124` timeout units.
 
+## 2026-08-07 peer AIRBets SafeMath preflight diagnosis
+
+Observed sample rows:
+
+- `peer182__peer_ccsolbmc__AIRBets.transfer`
+- `peer182__peer_ccsolbmc__AIRBets.transferFrom`
+- Both rows are `NO-WITNESS-UNDECIDED`, no ESBMC process started.
+- Driver text:
+  target call closure reaches direct self-recursive function/helper wrappers
+  `SafeMath.div/2`, `SafeMath.sub/2`.
+
+Source diagnosis:
+
+- The benchmark flat source under
+  `/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer_ccsolbmc__AIRBets/flat.sol`
+  literally contains:
+  - `function sub(uint256 a, uint256 b) ... { return sub(a, b); }`
+  - `function div(uint256 a, uint256 b) ... { return div(a, b); }`
+- The usual OpenZeppelin third argument is present only as a trailing comment:
+  `//SafeMath: subtraction overflow")` / `//SafeMath: division by zero")`.
+- The solc AST confirms the two-argument wrappers are function ids 70 and 144,
+  with a single `Return` statement.  The three-argument overloads are separate
+  ids 96 and 170.
+- Therefore this is not a false positive from overload resolution in the
+  preflight.  In the current source text, the wrappers are genuinely direct
+  self-recursive under Solidity overload/arity rules.
+
+Consequence:
+
+- Running ESBMC on these units would spend budget expanding/handling a helper
+  with no source-level base case.  It is unlikely to improve PUT yield and is
+  exactly the waste the preflight was designed to avoid.
+- Do not classify this as a region strategy failure.
+- Do not spend attempt-2/attempt-3 on these AIRBets units unless explicitly
+  testing the `--allow-recursive-helper-enumeration` escape hatch.
+- The correct scheduler behavior is the one now in
+  `unit_campaign_plan.py`: non-retryable reason `witness preflight refused`.
+
+Open question:
+
+- If a later benchmark target contains the same comment-truncated SafeMath
+  source but is otherwise important, a possible future experiment is an
+  explicit source-repair/preprocess mode that rewrites only this canonical
+  malformed wrapper back to the three-argument overload.  That would be a
+  benchmark-normalization choice, not a verifier proof step, and should be kept
+  opt-in because the current Solidity source really is recursive.
+
 ## 2026-08-07 retry schedules use attempt-specific result JSONL
 
 Discovered before broad benchmark sampling:
