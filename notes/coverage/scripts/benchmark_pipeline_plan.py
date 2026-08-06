@@ -107,6 +107,42 @@ def choose_next_action(gate_doc: dict, preheat_doc: dict, unit_sched_doc: dict,
     }
 
 
+def attach_next_action_command(next_action: dict, preheat_campaign_doc: dict,
+                               campaign_doc: dict) -> dict:
+    """Copy the currently actionable runner command into summary.next_action."""
+
+    if next_action.get("action") == "preheat-ast":
+        command_kind = "ast_preheat"
+        next_run = preheat_campaign_doc.get("next_run")
+    elif next_action.get("action") == "run-unit-campaign":
+        command_kind = "unit_campaign"
+        next_run = campaign_doc.get("next_run")
+    else:
+        return next_action
+
+    if not next_run:
+        return next_action
+
+    enriched = dict(next_action)
+    enriched["command_kind"] = command_kind
+    for key in (
+        "attempt",
+        "batch_size",
+        "dry_run_argv",
+        "dry_run_cmd",
+        "jobs",
+        "memlimit_gb",
+        "runner_argv",
+        "runner_cmd",
+        "runner_workers",
+        "selected_jobs",
+        "timeout_s",
+    ):
+        if key in next_run:
+            enriched[key] = next_run[key]
+    return enriched
+
+
 def build_pipeline(args) -> dict:
     if not args.ast_cache_root:
         raise PipelineError("pass --ast-cache-root; refusing to plan prepared-subject AST writes")
@@ -193,6 +229,7 @@ def build_pipeline(args) -> dict:
                                                       cert_doc)
 
     next_action = choose_next_action(gate_doc, preheat_doc, unit_sched_doc, campaign_doc, cert_doc)
+    next_action = attach_next_action_command(next_action, preheat_campaign_doc, campaign_doc)
     return {
         "schema": "veriput-benchmark-pipeline-plan/v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),

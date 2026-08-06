@@ -767,7 +767,12 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   directory for the next AST-preheat and unit-campaign runner argv, but does
   not create those journal files. Its `summary.next_action` is the intended
   first triage point: `preheat-ast`, `run-unit-campaign`,
-  `certification-ready-for-put`, or a blocker-inspection action.
+  `certification-ready-for-put`, or a blocker-inspection action. When the
+  selected action is runnable, `summary.next_action` now mirrors the relevant
+  current-stage command block from `next_runs`: `command_kind`,
+  `dry_run_argv`/`dry_run_cmd`, `runner_argv`/`runner_cmd`, and budget fields.
+  This makes the summary alone enough to audit the next command after a
+  context compact.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -913,6 +918,13 @@ Interpretation:
   `next_runs.ast_preheat.dry_run_cmd` and `runner_cmd`. The smoke confirmed
   only `dry_run_cmd` contains `--dry-run`; neither command was executed, and it
   did not create the external AST cache or runner journal.
+- A follow-up read-only benchmark pipeline smoke on 2026-08-06 with the same
+  three benchmarks and `--ast-preheat-selection-strategy round-robin-benchmark`
+  confirmed `summary.next_action.command_kind=ast_preheat`,
+  `summary.next_action.memlimit_gb=8.0`, and the same dry-run/runner split
+  directly in `summary.next_action`: `dry_run_cmd` contains `--dry-run` while
+  `runner_cmd` does not. The selected batch size remained 32. The external AST
+  cache directory and runner journal path were not created.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 

@@ -156,6 +156,12 @@ def test_missing_ast_pipeline_recommends_preheat_without_writes():
             bad += check(doc["next_runs"]["ast_preheat"]["memlimit_gb"] == 8.0
                          and "--memlimit-gb" in doc["next_runs"]["ast_preheat"]["runner_argv"],
                          f"missing-AST path carries AST memlimit: {doc['next_runs']}")
+            bad += check(doc["summary"]["next_action"]["command_kind"] == "ast_preheat"
+                         and "--dry-run" in doc["summary"]["next_action"]["dry_run_cmd"]
+                         and "--dry-run" not in doc["summary"]["next_action"]["runner_cmd"]
+                         and doc["summary"]["next_action"]["memlimit_gb"] == 8.0,
+                         f"next_action carries actionable AST commands: "
+                         f"{doc['summary']['next_action']}")
             bad += check(not cache_root.exists(),
                          f"planning does not create the AST cache: {cache_root}")
             return bad
@@ -228,6 +234,14 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
                          f"pipeline exposes unit dry-run argv: {doc['next_runs']}")
             bad += check("--dry-run" in doc["next_runs"]["unit_campaign"]["dry_run_cmd"],
                          f"pipeline exposes unit dry-run command: {doc['next_runs']}")
+            bad += check(doc["summary"]["next_action"]["command_kind"] == "unit_campaign"
+                         and "--dry-run" in doc["summary"]["next_action"]["dry_run_cmd"]
+                         and "--dry-run" not in doc["summary"]["next_action"]["runner_cmd"]
+                         and doc["summary"]["next_action"]["attempt"] == 1
+                         and doc["summary"]["next_action"]["timeout_s"] == 60.0
+                         and doc["summary"]["next_action"]["memlimit_gb"] == 8.0,
+                         f"next_action carries actionable unit commands: "
+                         f"{doc['summary']['next_action']}")
             bad += check(unit_schedule["summary"]["jobs"] == 1
                          and unit_schedule["cert_out"] == str(out_dir / "certify-results.jsonl"),
                          f"unit schedule is usable by certify_all: {unit_schedule['summary']}")
