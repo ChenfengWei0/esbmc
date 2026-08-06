@@ -1104,6 +1104,15 @@ def test_a_bool_return_can_assert_a_structured_bool_coord():
     bad_literal = return_rung_assertions(
         "return == 2", ("bool", None), "_put_ret",
         "return: return == 2", {}, {})
+    neq_zero = return_rung_assertions(
+        "return != 0", ("bool", None), "_put_ret",
+        "return: return != 0", {}, {})
+    neq_one = return_rung_assertions(
+        "return != 1", ("bool", None), "_put_ret",
+        "return: return != 1", {}, {})
+    bad_neq = return_rung_assertions(
+        "return != 2", ("bool", None), "_put_ret",
+        "return: return != 2", {}, {})
     bad = 0
     bad += check(coord == [
         '    assertEq(_put_ret, p_ok, "return: return == ok");'
@@ -1113,6 +1122,14 @@ def test_a_bool_return_can_assert_a_structured_bool_coord():
     ], f"a numeric bool literal is rendered as bool without R2 terms: {literal}")
     bad += check(bad_literal is None,
                  f"out-of-domain bool literal is still refused: {bad_literal}")
+    bad += check(neq_zero == [
+        '    assertTrue(_put_ret, "return: return != 0");'
+    ], f"bool return != 0 is assertTrue: {neq_zero}")
+    bad += check(neq_one == [
+        '    assertFalse(_put_ret, "return: return != 1");'
+    ], f"bool return != 1 is assertFalse: {neq_one}")
+    bad += check(bad_neq is None,
+                 f"out-of-domain bool inequality is still refused: {bad_neq}")
     return bad
 
 
@@ -1354,6 +1371,23 @@ def test_a_nonzero_literal_return_equality_is_asserted():
                  f"one return assertion: {stats['return_asserts']}")
     bad += check(not stats["oracle_skipped"],
                  f"the literal return row is not skipped: "
+                 f"{stats['oracle_skipped']}")
+    return bad
+
+
+def test_a_nonzero_literal_return_inequality_is_asserted():
+    """A proved `return != N` is weaker than equality but still an oracle."""
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return", "return != 7", "HOLDS")],
+        [("", "uint256")])
+    bad = 0
+    bad += check("assertTrue(uint256(_put_ret) != 7," in text,
+                 "the nonzero literal inequality is asserted")
+    bad += check(stats["return_asserts"] == 1,
+                 f"one return assertion: {stats['return_asserts']}")
+    bad += check(not stats["oracle_skipped"],
+                 f"the literal return inequality is not skipped: "
                  f"{stats['oracle_skipped']}")
     return bad
 
@@ -9662,6 +9696,7 @@ def main():
               test_bind_return_refuses_the_exit_kind_shapes,
               test_a_return_only_oracle_still_reaches_the_test,
               test_a_nonzero_literal_return_equality_is_asserted,
+              test_a_nonzero_literal_return_inequality_is_asserted,
               test_a_refuted_return_rung_is_never_asserted,
               test_an_ESTABLISHED_SCALAR_PIN_is_READ_BACK_and_checked,
               test_an_ESTABLISHED_MAPPING_PIN_is_READ_BACK_at_the_HASHED_slot,

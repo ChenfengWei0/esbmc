@@ -3478,6 +3478,10 @@ def return_rung_assertions(text, kind, var, label, idents_abs=None,
                 if expr == "1":
                     return [f"    assertTrue({var}, {lit});"]
                 return [f"    assertEq({var}, {expr}, {lit});"]
+        if text == "return != 0":
+            return [f"    assertTrue({var}, {lit});"]
+        if text == "return != 1":
+            return [f"    assertFalse({var}, {lit});"]
         return None
     v = tou.format(v=var)
     if text.startswith("return == ") and text != "return == 0":
@@ -3491,6 +3495,9 @@ def return_rung_assertions(text, kind, var, label, idents_abs=None,
         return [f"    assertEq({v}, 0, {lit});"]
     if text == "return != 0":
         return [f"    assertTrue({v} != 0, {lit});"]
+    m = re.match(r"^return != (\d+)$", text)
+    if m:
+        return [f"    assertTrue({v} != {m.group(1)}, {lit});"]
     m = re.match(r"^return in \[(.*), (.*)\]$", text)
     if m:
         lo = structured(m.group(1))

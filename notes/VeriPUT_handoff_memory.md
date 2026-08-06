@@ -8405,6 +8405,43 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 literal return inequality rendering
+
+Scope:
+
+- This is an external VeriPUT PUT-emitter oracle-strength follow-up to literal
+  return equality rendering.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Finding:
+
+- Non-bool returns only rendered the built-in `return != 0` inequality.
+  A certified row such as `return != 7` was dropped even though it is a valid
+  return-value oracle.
+- Bool returns rendered equality but not numeric inequalities. `return != 0`
+  is exactly `assertTrue(ret)` and `return != 1` is `assertFalse(ret)`;
+  other numeric bool inequalities remain unsafe to spell.
+
+Code change:
+
+- Non-bool scalar/address/fixed-bytes return rows `return != N` now render as
+  `assertTrue(cast(ret) != N, ...)` using the declared return type's existing
+  cast path.
+- Bool return rows `return != 0` and `return != 1` now render as
+  `assertTrue` / `assertFalse`; `return != 2` and other out-of-domain bool
+  literals remain refused.
+- Added regressions for both direct rendering and full PUT emission.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 214/214 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 bool literal return equality rendering
 
 Scope:
