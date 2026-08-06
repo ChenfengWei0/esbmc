@@ -54,7 +54,8 @@ ESBMC_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ESBMC_ROOT, "scripts"))
 from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
-from veriput_subjects import (SubjectError, ensure_solast, resolve_subject)
+from veriput_subjects import (SubjectError, ensure_solast,
+                              enumerate_subject_units, resolve_subject)
 # ---- THE INPUTS DIRECTORY IS THE POC'S, NOT A SHARED CORPUS ----
 #
 # `notes/coverage/inputs/` has been DELETED. It was the benchmark: this file
@@ -700,6 +701,10 @@ def main():
                     default="",
                     help="known prepared-subject population used to resolve "
                          "--subject-id and to label the output row.")
+    ap.add_argument("--list-subject-units", action="store_true",
+                    help="for --subject-*, print named public/external units "
+                         "from the target contract's compact AST and exit. "
+                         "This starts no ESBMC process.")
     ap.add_argument("--out", default=os.path.join(ESBMC_ROOT, "notes",
                                                   "coverage", "certify",
                                                   "results.jsonl"))
@@ -1302,7 +1307,7 @@ def main():
             print("[sweep] REFUSED: --subject-* supplies the benchmark input; "
                   "do not also pass positional BENCHMARKS")
             return 1
-        if len(want_units) != 1:
+        if not args.list_subject_units and len(want_units) != 1:
             print("[sweep] REFUSED: --subject-* is a contract-level prepared "
                   "subject and requires exactly one --unit for this run")
             return 1
@@ -1312,19 +1317,39 @@ def main():
                 root=args.subject_root if args.subject_root else None,
                 benchmark=(args.subject_benchmark
                            if args.subject_benchmark else None),
-                unit=next(iter(want_units)))
+                unit=next(iter(want_units)) if want_units else None,
+                require_unit=not args.list_subject_units)
             wrote_ast = False if args.dry_run else ensure_solast(subject)
         except (SubjectError, subprocess.CalledProcessError) as exc:
             print(f"[sweep] REFUSED: could not resolve prepared subject: {exc}")
             return 1
+        unit_label = f" unit={subject.unit}" if subject.unit else ""
         print(f"[sweep] prepared subject: {subject.benchmark_key} "
-              f"contract={subject.contract} unit={subject.unit} "
+              f"contract={subject.contract}{unit_label} "
               f"flat={subject.flat_sol}")
         if wrote_ast:
             print(f"[sweep] generated AST: {subject.solast}")
         elif args.dry_run and not os.path.exists(subject.solast):
             print(f"[sweep] dry-run: AST would be generated at "
                   f"{subject.solast}")
+        if args.list_subject_units:
+            if args.dry_run and not os.path.exists(subject.solast):
+                print("[sweep] dry-run: cannot list units until the AST exists")
+                return 0
+            try:
+                enum = enumerate_subject_units(subject)
+            except SubjectError as exc:
+                print(f"[sweep] REFUSED: could not enumerate units: {exc}")
+                return 1
+            print("[sweep] subject units: " + (
+                ", ".join(enum.units) if enum.units else "<none>"))
+            if enum.skipped:
+                print("[sweep] skipped entry point(s):")
+                for row in enum.skipped:
+                    label = row.get("name") or row.get("kind") or "entry"
+                    print(f"  - {row.get('contract')}.{label}: "
+                          f"{row.get('reason')}")
+            return 0
 
     names = [subject.benchmark_key] if subject else (
         args.benchmarks or [b for b in BENCHMARKS if b != "st1inch_St1inch"])

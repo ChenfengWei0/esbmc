@@ -4021,12 +4021,62 @@ subject and reported that `flat.sol.solast` would be generated before a real
 run. No ESBMC process, Forge run, POC attempt, or benchmark proof run was
 started.
 
-Remaining gap before a real benchmark row:
+Remaining gap after the first prepared-subject adapter:
 
-- Need a trusted unit enumeration manifest or AST-based target-contract unit
-  enumerator. The current adapter intentionally runs only an explicitly named
-  unit.
+- Need a persisted unit enumeration manifest and denominator policy. The first
+  adapter can resolve or list one subject's AST-backed function units, but it
+  does not yet materialize a Stress/Peer/BugFix-wide worklist.
 - Need a small prepared-subject Stage-1 adapter, or an explicit decision that
   Stage 2 will consume an existing enumeration report. The current patch
   addresses Stage 2/3 source resolution and command construction, not full
   end-to-end benchmark scheduling.
+
+### Prepared-subject unit enumeration progress
+
+The first AST-backed unit enumerator now exists:
+
+- `veriput_subjects.py::enumerate_subject_units()` reads the prepared subject's
+  compact solc AST, finds the target contract from `meta.json`, follows
+  `linearizedBaseContracts`, and returns named public/external
+  `FunctionDefinition` units scoped to that target contract.
+- Overrides/inherited duplicates are deduplicated by unit name for the current
+  first adapter. This matches the existing `--focus-function <unit>` interface,
+  which also names a unit by function name unless an overload path-function is
+  supplied separately.
+- `fallback`/`receive` and public state variable getters are reported in a
+  `skipped` list with reasons. They are ABI entry points but not currently
+  usable as named `--focus-function` units backed by a FunctionDefinition, so
+  they must not silently enter the denominator as if tested.
+- `certify_all.py --subject-* --list-subject-units` exposes this enumeration
+  without launching ESBMC. If the AST is missing and `--dry-run` is present, it
+  reports that the AST would be generated and exits without writing it.
+
+Validation:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/veriput_subjects.py \
+  notes/coverage/scripts/certify_all.py \
+  notes/coverage/scripts/put_all.py \
+  scripts/test_veriput_subjects.py \
+  scripts/test_poc_stage_drivers.py \
+  scripts/test_put_all_accounting.py
+python3 scripts/test_veriput_subjects.py
+python3 scripts/test_poc_stage_drivers.py
+python3 scripts/test_put_all_accounting.py
+python3 notes/coverage/scripts/certify_all.py \
+  --subject-dir /home/samson/workspace/VeriPUT/Results/Stress243/subjects/balancer__balancer-v3-monorepo__ProtocolFeeHelper \
+  --list-subject-units --dry-run
+```
+
+Also verified on a temporary prepared subject with an existing compact AST:
+`--list-subject-units` printed `own` and listed `fallback` as skipped. This
+used only `/tmp` files and started no ESBMC/Forge process.
+
+Remaining denominator work:
+
+- Persist a unit-manifest for Stress/Peer/BugFix rather than requiring
+  per-subject ad-hoc enumeration at run time.
+- Decide how to account for overloads, public-state getters, fallback/receive,
+  and proxy-only targets in the benchmark denominator. The current code records
+  skips, but the paper/evaluation needs an explicit denominator policy.

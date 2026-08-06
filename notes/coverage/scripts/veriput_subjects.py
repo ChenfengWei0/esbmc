@@ -70,6 +70,21 @@ class PreparedSubject:
         }
 
 
+@dataclass(frozen=True)
+class UnitEnumeration:
+    contract: str
+    units: tuple[str, ...]
+    skipped: tuple[dict, ...]
+
+    def to_record(self) -> dict:
+        return {
+            "schema": "veriput-subject-units/v1",
+            "contract": self.contract,
+            "units": list(self.units),
+            "skipped": list(self.skipped),
+        }
+
+
 def _subject_dir(subject: str | None, root: str | None,
                  benchmark: str | None) -> Path:
     if root:
@@ -106,7 +121,8 @@ def _solast_for(flat: Path) -> Path:
 
 def resolve_subject(subject: str | None = None, *, root: str | None = None,
                     benchmark: str | None = None,
-                    unit: str | None = None) -> PreparedSubject:
+                    unit: str | None = None,
+                    require_unit: bool = True) -> PreparedSubject:
     if benchmark and benchmark not in KNOWN_SUBJECT_ROOTS:
         raise SubjectError(
             f"unknown subject benchmark {benchmark!r}; known: "
@@ -128,7 +144,7 @@ def resolve_subject(subject: str | None = None, *, root: str | None = None,
     contract = meta.get("contract")
     if not contract:
         raise SubjectError(f"{meta_path} has no target contract")
-    if not unit:
+    if require_unit and not unit:
         raise SubjectError(
             f"{d} is a contract-level subject; pass an explicit --unit")
     bench = benchmark or meta.get("benchmark") or d.parent.parent.name.lower()
@@ -139,7 +155,7 @@ def resolve_subject(subject: str | None = None, *, root: str | None = None,
         flat_sol=str(flat.resolve()),
         solast=str(_solast_for(flat).resolve()),
         contract=contract,
-        unit=unit,
+        unit=unit or "",
         solc_bin=meta.get("solc_bin"),
         solc_extra=tuple(meta.get("solc_extra") or ()),
         metadata=meta,
@@ -170,6 +186,115 @@ def subject_from_record(record: dict) -> PreparedSubject | None:
         solc_bin=data.get("solc_bin"),
         solc_extra=tuple(data.get("solc_extra") or ()),
         metadata={"status": data.get("meta_status")},
+    )
+
+
+def _read_compact_ast(path: Path) -> dict:
+    text = path.read_text(errors="replace")
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end < start:
+        raise SubjectError(f"{path} does not contain a compact JSON AST")
+    try:
+        return json.loads(text[start:end + 1])
+    except json.JSONDecodeError as exc:
+        raise SubjectError(f"{path} is not valid compact JSON AST: {exc}") \
+            from exc
+
+
+def _walk_contracts(node, out):
+    if isinstance(node, list):
+        for item in node:
+            _walk_contracts(item, out)
+        return
+    if not isinstance(node, dict):
+        return
+    if node.get("nodeType") == "ContractDefinition":
+        out[node.get("id")] = node
+    for value in node.values():
+        if isinstance(value, (list, dict)):
+            _walk_contracts(value, out)
+
+
+def _function_units(contract_node: dict, owner_name: str):
+    for node in contract_node.get("nodes") or []:
+        if node.get("nodeType") != "FunctionDefinition":
+            continue
+        kind = node.get("kind", "function")
+        visibility = node.get("visibility")
+        name = node.get("name") or ""
+        if kind != "function":
+            if kind in ("fallback", "receive"):
+                yield None, {
+                    "contract": owner_name,
+                    "kind": kind,
+                    "reason": "fallback/receive has no named focus-function",
+                }
+            continue
+        if visibility not in ("public", "external"):
+            continue
+        if not name:
+            yield None, {
+                "contract": owner_name,
+                "kind": kind,
+                "reason": "public/external function has no name",
+            }
+            continue
+        yield name, None
+
+
+def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
+    """Named public/external function units for the target contract.
+
+    The result is target-contract scoped and includes inherited callable
+    functions through Solidity's `linearizedBaseContracts`.  Public state
+    variable getters are reported as skipped rather than invented from source
+    text; they are ABI entry points but not `--focus-function` names backed by
+    a FunctionDefinition in the AST.
+    """
+    ast_path = Path(subject.solast)
+    if not ast_path.exists():
+        raise SubjectError(
+            f"{ast_path} does not exist; run ensure_solast() before "
+            "enumerating units")
+    ast = _read_compact_ast(ast_path)
+    contracts = {}
+    _walk_contracts(ast, contracts)
+    target = next((c for c in contracts.values()
+                   if c.get("name") == subject.contract), None)
+    if target is None:
+        raise SubjectError(
+            f"contract {subject.contract!r} is absent from {ast_path}")
+
+    ordered_ids = target.get("linearizedBaseContracts") or [target.get("id")]
+    units = []
+    seen = set()
+    skipped = []
+    for cid in ordered_ids:
+        node = contracts.get(cid)
+        if not node:
+            continue
+        owner = node.get("name") or f"<contract {cid}>"
+        for name, skip in _function_units(node, owner):
+            if skip:
+                skipped.append(skip)
+                continue
+            if name not in seen:
+                seen.add(name)
+                units.append(name)
+        for child in node.get("nodes") or []:
+            if child.get("nodeType") == "VariableDeclaration" and \
+                    child.get("visibility") == "public":
+                skipped.append({
+                    "contract": owner,
+                    "kind": "public-state-getter",
+                    "name": child.get("name"),
+                    "reason": "public state getter is not a FunctionDefinition",
+                })
+    return UnitEnumeration(
+        contract=subject.contract,
+        units=tuple(units),
+        skipped=tuple(skipped),
     )
 
 
