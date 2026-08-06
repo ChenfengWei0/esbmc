@@ -3795,3 +3795,24 @@ Do not rerun `transfer` attempt2 only to regenerate the same row after this
 source-level fix. The next official spend should be a fresh sibling POC
 (`transferFrom` attempt1) or an explicit measurement run if we decide that
 confirming B on this exact unit is worth the attempt.
+
+## 2026-08-06 anti-overfit reminder
+
+The POCs under `notes/coverage/poc_units` are diagnostic tools for hardening
+VeriPUT, not the final evaluation target. The later benchmark run will use
+`/home/samson/workspace/VeriPUT/Datasets`.
+
+Do not introduce POC-specific special cases just to raise a POC's B number. A
+change should be accepted only when it fixes a general pipeline obligation, for
+example:
+
+- a certified path should produce a PUT whose fuzz inputs cover every calldata
+  parameter the proof left unconstrained and the Solidity type system can render;
+- a PUT project should measure generated `test_put_*` rows, not fail because a
+  retained Stage-1 concrete replay is stale;
+- fuzz may refute bad generated assertions or region choices, but never proves
+  them.
+
+The st1inch disabled-entry repairs above satisfy this standard because they fix
+generic emitted-call reconstruction and PUT-project assembly behavior; they are
+not keyed on the st1inch contract, disabled ERC20 names, or any one path id.
