@@ -11022,6 +11022,98 @@ Interpretation:
   candidate assertions by concrete failures, but every survivor counted as PUT
   still went through ESBMC proof before being emitted.
 
+## 2026-08-07 current 9-case breadth smoke after ESBMC string fix
+
+Purpose:
+
+- User requested a faster current intuition for benchmark success under the
+  final 600s per-case budget:
+  - reference-valid generated tests on the reference contract;
+  - split between concrete replay and strict PUT;
+  - quick diagnosis of where unsuccessful units stop.
+- Outputs only under `/tmp`; no Dataset or Results contract was modified.
+
+Inputs:
+
+- Root:
+  `/tmp/veriput_current_smoke_20260807_065046`.
+- Reused existing compact AST cache/manifest:
+  `/tmp/veriput_sample_v10_20260806_212550`.
+- Schedules:
+  - Peer:
+    `/tmp/veriput_current_smoke_20260807_065046/peer182-schedule.json`.
+  - BugFix:
+    `/tmp/veriput_current_smoke_20260807_065046/bugfix124-schedule.json`.
+  - Stress:
+    `/tmp/veriput_current_smoke_20260807_065046/stress203-schedule.json`.
+- Each schedule selected 3 units with `round-robin-subject`, using
+  `--timeout 600 --run-timeout 600 --memlimit-gib 8`; runner was serial with
+  `--timeout 700 --memlimit-gb 8 --jobs 1`.
+
+Stage 2 result:
+
+- Total units: 9.
+- Buckets:
+  - `CERTIFIED`: 4.
+  - `NO-WITNESS-UNDECIDED`: 3.
+  - `NO-PATH`: 1.
+  - `NOT-CERTIFIED`: 1.
+- Unit-level certified rate in this breadth smoke: `4 / 9 = 44.4%`.
+- Certified regions: 13.
+- Not-certified paths: 5.
+- Known witnessed paths: 18.
+
+Per-suite:
+
+- Peer: 0 / 3 certified.
+  - `AIRBets.transfer` and `Arcadia_Token.transfer` were refused before ESBMC
+    by the recursive-helper preflight (`SafeMath.div/2`, `SafeMath.sub/2`).
+  - `Animalia.transfer` ran about 116s and still ended
+    `NO-WITNESS-UNDECIDED`.
+- BugFix: 1 / 3 certified.
+  - `DepositLog.approvedToLog`: `CERTIFIED`, 1 certified region, 1
+    not-certified path, about 3s.
+  - `DnGmxBatchingManager.executeBatchDeposit`: `NO-PATH`, about 443s.
+  - `MStableYieldSource.supplyTokenTo`: `NOT-CERTIFIED`, 1 not-certified path,
+    about 445s.
+- Stress: 3 / 3 certified.
+  - `AgentRole.addAgent`, `AgentRole.removeAgent`,
+    `AgentRoleUpgradeable.addAgent`.
+  - Each yielded 4 certified regions and 1 not-certified path; wall time was
+    about 54-78s per unit.
+
+Stage 4 result on the 13 certified regions:
+
+- Command:
+  `python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_current_smoke_20260807_065046/combined-cert.jsonl --out-root /tmp/veriput_current_smoke_20260807_065046/put-all --scope focus --max-tx 1 --timeout 600 --memlimit-gib 8 --strong-recipe`.
+- Summary:
+  `/tmp/veriput_current_smoke_20260807_065046/put-all/put-summary.json`.
+- Reference-valid generated tests: `13 / 13`.
+- Split:
+  - strict PUT/B: `9 / 13 = 69.2%`;
+  - concrete replay fallback: `4 / 13 = 30.8%`.
+- Forge gate:
+  - PUTs: 9 green / 9 total.
+  - Concrete replays: 10 green / 10 total.
+
+Interpretation:
+
+- Compared with the earlier biased wave600 smoke, unit-level success improved
+  from 4/12 to 4/9 mainly because BugFix now has one fast certified unit; Peer
+  remains 0/3.
+- The Stage4 emitter remains strong once Stage2 certifies a region: all 13
+  certified regions generated reference-valid tests, and 9 of them were strict
+  PUT/B.
+- Current bottlenecks are still Stage2:
+  - Peer recursive-helper preflight is over-conservative for flattened
+    SafeMath wrappers;
+  - BugFix has expensive no-path/not-certified cases around entry/path region
+    selection rather than Stage4 emission;
+  - Stress ERC-3643 remains the easy green subset.
+- Stage4 logs show some ladder repair via named-loop auto-unwind and
+  `--partial-loops` for upgradeable stress paths; that is separate from the
+  fixed `nondet_string` prefill blocker.
+
 ## 2026-08-07 relation-establish PUT alignment
 
 Problem fixed:
