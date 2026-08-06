@@ -318,6 +318,39 @@ def test_campaign_counts_distinct_attempts_not_duplicate_rows():
     return bad
 
 
+def test_campaign_rewrites_retry_certification_out_by_attempt():
+    with tempfile.TemporaryDirectory() as td:
+        sched_doc = {
+            "schema": "veriput-unit-schedule/v1",
+            "summary": {
+                "jobs": 1,
+            },
+            "jobs": [
+                job("peer182__retry_out__f"),
+            ],
+        }
+        base_out = str(Path(td) / "certify-results-a1.jsonl")
+        sched_doc["jobs"][0]["certify_argv"].extend(["--out", base_out])
+        sched = write_json(Path(td) / "schedule.json", sched_doc)
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__retry_out__f", "timeout", "timeout after 60s"),
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched), journal_paths=[str(j1)])
+    next_job = doc["next_schedule"]["jobs"][0]
+    next_argv = next_job["certify_argv"]
+    next_out = str(Path(td) / "certify-results-a2.jsonl")
+    bad = 0
+    bad += check(argv_value(next_argv, "--out") == next_out,
+                 f"attempt-2 schedule writes a fresh certification JSONL: {next_argv}")
+    bad += check(doc["next_schedule"]["cert_out"] == next_out
+                 and doc["next_schedule"]["summary"]["certify_out"] == next_out,
+                 f"attempt schedule exposes the rewritten out path: {doc['next_schedule']}")
+    bad += check((next_job.get("certification_budget") or {}).get("out") == next_out,
+                 f"job budget records the rewritten out path: {next_job}")
+    return bad
+
+
 def test_campaign_uses_explicit_attempt_metadata_for_budget_state():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
@@ -874,6 +907,7 @@ TESTS = [
     test_campaign_cli_writes_plan_and_schedule,
     test_campaign_writes_empty_schedule_when_no_jobs_are_pending,
     test_campaign_counts_distinct_attempts_not_duplicate_rows,
+    test_campaign_rewrites_retry_certification_out_by_attempt,
     test_campaign_uses_explicit_attempt_metadata_for_budget_state,
     test_campaign_retries_runner_ok_when_certification_is_weak,
     test_campaign_names_partial_journal_only_as_weak_certification,

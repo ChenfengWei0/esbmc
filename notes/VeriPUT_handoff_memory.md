@@ -10428,6 +10428,49 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 retry schedules use attempt-specific result JSONL
+
+Discovered before broad benchmark sampling:
+
+- `unit_campaign_plan.py` could generate an attempt-2/3 retry schedule whose
+  per-job `certify_argv` still wrote to the previous attempt's `--out` JSONL.
+- `certify_all.py` treats an existing row for the same unit in that JSONL as
+  already recorded.  Therefore a retry schedule could be correct in timeout,
+  memory, and retry strategy, but still skip the unit instead of spending the
+  intended ESBMC attempt.
+- This is a campaign plumbing issue, not a region-quality result.  It can make
+  a strategy look ineffective because the retry did not actually run.
+
+Code change:
+
+- Added `_attempt_out_path` in `unit_campaign_plan.py`.
+- For attempt `N > 1`, `foo-a1.jsonl` becomes `foo-aN.jsonl`; if no terminal
+  `-a<digits>` suffix exists, `foo.jsonl` becomes `foo-aN.jsonl`.
+- The rewritten path is synchronized across:
+  - job `certify_argv`;
+  - job `dry_run_argv`;
+  - `certification_budget.out`;
+  - top-level schedule `cert_out`;
+  - schedule summary `certify_out`.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py notes/VeriPUT_handoff_memory.md`
+  passed before this note append.
+
+Go/no-go update:
+
+- After this fix is committed, it is reasonable to start a small stratified
+  benchmark sample.  Do not start full-corpus execution yet.
+- The first benchmark run should be measurement-oriented: sample across
+  `peer182`/`bugfix124`/`stress243`, inspect weak buckets and retry behavior,
+  then decide whether another generator/region optimization is needed before
+  scaling.
+
 ## 2026-08-07 read/write slot split benchmark smoke sample
 
 Branch:

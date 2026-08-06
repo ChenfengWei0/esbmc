@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import shlex
 import sys
 from collections import Counter, defaultdict
@@ -375,6 +376,20 @@ def _with_argv_value(argv: list[str], flag: str, value: str) -> list[str]:
     return rewritten
 
 
+def _attempt_out_path(out_path: str, attempt: int) -> str:
+    if not out_path or attempt <= 1:
+        return out_path
+    p = Path(out_path)
+    stem = p.stem
+    suffix = p.suffix
+    replacement = f"-a{attempt}"
+    if re.search(r"-a[0-9]+$", stem):
+        stem = re.sub(r"-a[0-9]+$", replacement, stem)
+    else:
+        stem = stem + replacement
+    return str(p.with_name(stem + suffix))
+
+
 def _apply_retry_strategy(item: dict) -> None:
     quality = item.get("certification_quality")
     if not isinstance(quality, dict):
@@ -459,7 +474,8 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
     for job in jobs:
         item = copy.deepcopy(job)
         out_path = _argv_value([str(arg) for arg in item.get("certify_argv") or []], "--out")
-        workdir = unit_schedule.default_workdir_root(out_path,
+        retry_out_path = _attempt_out_path(out_path, attempt)
+        workdir = unit_schedule.default_workdir_root(retry_out_path,
                                                      timeout_s=certify_timeout_s,
                                                      run_timeout_s=run_timeout_s,
                                                      memlimit_gib=memlimit_gib,
@@ -470,6 +486,9 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
             run_timeout_s=run_timeout_s,
             memlimit_gib=memlimit_gib,
             workdir=workdir)
+        if retry_out_path:
+            item["certify_argv"] = _with_argv_value(
+                item["certify_argv"], "--out", retry_out_path)
         if "dry_run_argv" in item:
             dry = unit_schedule.budgeted_certify_argv(
                 [str(arg) for arg in item.get("dry_run_argv") or []],
@@ -477,6 +496,8 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
                 run_timeout_s=run_timeout_s,
                 memlimit_gib=memlimit_gib,
                 workdir=workdir)
+            if retry_out_path:
+                dry = _with_argv_value(dry, "--out", retry_out_path)
             if "--dry-run" not in dry:
                 dry.append("--dry-run")
             item["dry_run_argv"] = dry
@@ -485,6 +506,7 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
             "run_timeout_s": run_timeout_s,
             "memlimit_gib": memlimit_gib,
             "workdir": workdir,
+            "out": retry_out_path or None,
         }
         _apply_retry_strategy(item)
         budgeted.append(item)
@@ -501,6 +523,8 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
     budgeted_jobs = _attempt_budgeted_jobs(selected_jobs, attempt_cfg)
     by_benchmark = Counter(job.get("benchmark") for job in budgeted_jobs)
     by_priority = Counter(str(job.get("priority", "<missing>")) for job in budgeted_jobs)
+    certify_out = (budgeted_jobs[0].get("certification_budget") or {}).get("out") \
+        if budgeted_jobs else None
     return {
         "schema": "veriput-unit-schedule/v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -515,7 +539,7 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
         },
         "shard": base_schedule.get("shard"),
         "limit": base_schedule.get("limit"),
-        "cert_out": base_schedule.get("cert_out"),
+        "cert_out": certify_out or base_schedule.get("cert_out"),
         "workdir": (budgeted_jobs[0].get("certification_budget") or {}).get("workdir")
         if budgeted_jobs else None,
         "summary": {
@@ -528,6 +552,7 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
             "certify_timeout_s": certify_timeout_s,
             "certify_run_timeout_s": int(run_timeout_s) if run_timeout_s else None,
             "certify_memlimit_gib": int(memlimit_gb) if memlimit_gb else None,
+            "certify_out": certify_out,
             "certify_workdir": (budgeted_jobs[0].get("certification_budget")
                                 or {}).get("workdir") if budgeted_jobs else None,
             "by_benchmark": dict(sorted(by_benchmark.items())),
