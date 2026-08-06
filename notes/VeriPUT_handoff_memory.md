@@ -9327,6 +9327,113 @@ Checks:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 stratified benchmark sample and bare-state relation fix
+
+First stratified sample after `veriput-strong/12`:
+
+- Inputs and outputs were kept under `/tmp`:
+  - target manifest: `/tmp/veriput_targets_strat7_20260806.json`
+  - unit manifest: `/tmp/veriput_unit_manifest_strat7_20260806.json`
+  - first sample results: `/tmp/veriput_bench_strat_20260806/results.jsonl`
+  - final PermissionGroups confirmation:
+    `/tmp/veriput_bench_strat_confirm_20260806/results.jsonl`
+- No Dataset or Results contract source was modified.
+- The 7-subject unit manifest generated compact ASTs only in
+  `/tmp/veriput_bench_ast_cache_20260806`; this starts solc but not ESBMC.
+  It found 57 target-contract public/external units.
+
+Ground-truth sample choices:
+
+- `PermissionGroups.transferAdmin`: constructor initializes `admin`, modifier
+  checks `msg.sender == admin`, body checks `newAdmin != 0`.
+- `EtherBank.withdraw`: nonpayable value gate, then `_amount >= min_withdraw`
+  and `balances[msg.sender] >= _amount`.
+- `Randomness.reveal`: state/block/hash gated; expected to expose
+  bytes/hash/random modeling limitations rather than product-region strength.
+- `ClaimTopicsRegistry.addClaimTopic`: Ownable guard plus array-length and
+  duplicate-topic loop; expected to test ERC-3643 owner/array behavior.
+
+Measured sample results before the bare-state fix:
+
+- `EtherBank.withdraw`, 60s/8GiB:
+  `CERTIFIED`, `2 certified / 1 not / 3 witnessed`, about 18s.  Certified
+  regions match the source: `_amount < min_withdraw` and
+  `_amount >= min_withdraw` with zero balance; the nonpayable ABI value-gate
+  path is excluded by `msg.value == 0`.
+- `Randomness.reveal`, 60s/8GiB:
+  `NOT-CERTIFIED`, `0 / 2`, about 8s.  `_seed` is aggregate/bytes-like, only
+  `_seed.length` becomes a coordinate; certification prints no verdict for both
+  paths.  This is a hash/bytes/block modeling limitation, not a search timeout.
+- `ClaimTopicsRegistry.addClaimTopic`, 60s/8GiB:
+  `NO-WITNESS-UNKNOWN`, about 1s.  ESBMC exits `-6` before producing
+  `cov-report.json`; this joins the current stress/ERC-3643 frontend/modeling
+  crash bucket rather than the region-strategy bucket.
+- `PermissionGroups.transferAdmin`, second allowed attempt 120s/8GiB:
+  `NOT-CERTIFIED`, `0 / 4`, about 72s.  It no longer timed out, but the
+  region search failed to capture the admin/sender relation, then shrink spent
+  its budget shaving single values from `msg.sender` and `state.admin`.
+
+Root cause of the remaining PermissionGroups miss:
+
+- The previous fix recognised `return_value$admin$1 -> state.admin`.
+- Real `PermissionGroups` branch decisions are source-shaped:
+  `msg.sender == admin`, not getter-shaped.  `_decision_term()` did not resolve
+  bare source-level state names such as `admin`, so
+  `structural_decision_regions_with_retreat()` never saw
+  `msg.sender == state.admin`.
+
+Implemented fix:
+
+- `_decision_term()` now maps a bare identifier `x` to `state.x` only when
+  `state.x` is present in the current CE or pin set.  This keeps local
+  parameters such as `newAdmin` resolved by the earlier direct `term in ce`
+  branch, and avoids guessing that an arbitrary identifier is state.
+- Tests now cover:
+  - direct `admin -> state.admin` CE and pin resolution;
+  - getter-shaped `return_value$admin$1 -> state.admin`;
+  - PermissionGroups-shaped branch claims
+    `msg.sender == admin` / `msg.sender != admin`.
+
+Measured confirmation after the fix:
+
+- `PermissionGroups.transferAdmin`, third and final allowed attempt,
+  600s/10GiB max:
+  `CERTIFIED`, `3 certified / 1 not / 4 witnessed`, about 51s.
+- The driver printed:
+  - relation-retreated seed regions for enc=6, enc=14, enc=15;
+  - skipped level0, witness-pool probes, per-path ladders, bracket and refine;
+  - certified all three body paths through ESBMC certification.
+- Certified path shapes:
+  - enc=6: `state.admin == 4294967295`,
+    `msg.sender != 4294967295`, `newAdmin` full address range;
+  - enc=14: `state.admin == 4294967295`,
+    `msg.sender == 4294967295`, `newAdmin == 0`;
+  - enc=15: `state.admin == 4294967295`,
+    `msg.sender == 4294967295`, `newAdmin != 0`.
+- enc=2 remains the nonpayable ABI value-gate path excluded by the
+  `msg.value == 0` pin and should not be read as a region-search failure.
+- Speed attribution: the search stage is now cheap/skipped for this class.
+  The remaining about 51s is dominated by three ESBMC certification queries
+  under checked arithmetic, not by ladder/refine/shrink.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py notes/coverage/scripts/certify_all.py`
+  passed.
+- `git diff --check` passed.
+
+Next:
+
+- Run a few more first-attempt 60s/8GiB samples before any full sweep:
+  `BasicProvenance.TransferResponsibility`,
+  `DepositLog.setApprovedLogger`, and one ERC-3643 storage/mapping unit such as
+  `IdentityRegistryStorage.addIdentityToStorage`.
+- Keep `ClaimTopicsRegistry.addClaimTopic` and
+  `OwnableAuthentication.transferOwnership` in an ESBMC-crash bucket until the
+  Solidity frontend/modeling abort is debugged separately.
+
 ## 2026-08-06 relation-retreated structural seeds for owner/sender guards
 
 Benchmark sample that exposed the next bottleneck:

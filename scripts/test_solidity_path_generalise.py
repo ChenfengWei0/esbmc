@@ -3077,6 +3077,12 @@ check("decision-term-public-getter-state-coord",
 check("decision-term-public-getter-state-pin",
       _decision_term("return_value$admin$1", {}, {"state.admin": 7}),
       ("const", 7))
+check("decision-term-bare-state-coord",
+      _decision_term("admin", {"state.admin": 7}, {}),
+      ("coord", "state.admin"))
+check("decision-term-bare-state-pin",
+      _decision_term("admin", {}, {"state.admin": 7}),
+      ("const", 7))
 _admin_rel_paths = [
     (6, 2, {"msg.value": 0, "msg.sender": 9, "state.admin": 1,
             "newAdmin": 0}),
@@ -3114,6 +3120,31 @@ check("admin-sender-relation-retreat-pins-admin-path-sender",
       _admin_boxes[14]["msg.sender"], (7, 7))
 check("admin-sender-relation-retreat-keeps-success-argument-wide",
       _admin_boxes[15]["newAdmin"], (1, (1 << 160) - 1))
+_admin_bare_rel_decisions = {
+    6: [{"branch_claim": "!(msg.value == 0)"},
+        {"branch_claim": "!(!(msg.sender == admin))"}],
+    14: [{"branch_claim": "!(msg.value == 0)"},
+         {"branch_claim": "!(msg.sender == admin)"},
+         {"branch_claim": "!(!(newAdmin != 0))"}],
+    15: [{"branch_claim": "!(msg.value == 0)"},
+         {"branch_claim": "!(msg.sender == admin)"},
+         {"branch_claim": "!(newAdmin != 0)"}],
+}
+_admin_bare_boxes, _admin_bare_holes, _admin_bare_reasons, \
+    _admin_bare_retreats = structural_decision_regions_with_retreat(
+        _admin_rel_paths, _admin_bare_rel_decisions, {"msg.value": 0},
+        ["msg.sender", "newAdmin", "state.admin"],
+        coord_types={"newAdmin": "address"})
+check("admin-bare-sender-relation-retreat-pins-entry-admin",
+      _admin_bare_retreats,
+      {6: {"state.admin": 1}, 14: {"state.admin": 7},
+       15: {"state.admin": 7}})
+check("admin-bare-sender-relation-retreat-keeps-nonadmin-sender-wide",
+      (_admin_bare_boxes[6]["msg.sender"],
+       _admin_bare_holes[6]["msg.sender"]),
+      ((0, (1 << 160) - 1), {1}))
+check("admin-bare-sender-relation-retreat-pins-admin-path-sender",
+      _admin_bare_boxes[14]["msg.sender"], (7, 7))
 check("decision-relation-inverts-ordered-claim",
       _decision_relation("x > 5"), ("x", "<=", "5"))
 check("decision-relation-keeps-negated-ordered-claim",
