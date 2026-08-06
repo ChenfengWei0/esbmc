@@ -215,6 +215,15 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
     return quality, bad_lines
 
 
+def _job_cert_quality(job: dict, cert_quality: dict) -> dict | None:
+    cert_key = (job.get("benchmark") or job.get("poc") or "<unknown>",
+                job.get("subject_id") or "<unknown>",
+                job.get("unit") or "<none>")
+    legacy_cert_key = (job.get("benchmark") or job.get("poc") or "<unknown>",
+                       job.get("unit") or "<none>")
+    return cert_quality.get(cert_key) or cert_quality.get(legacy_cert_key)
+
+
 def _policy_by_attempt() -> dict[int, dict]:
     return {item["attempt"]: dict(item) for item in DEFAULT_POLICY}
 
@@ -414,12 +423,7 @@ def plan_campaign_for_schedule(schedule: dict,
     for job_id, job in jobs_by_id.items():
         latest_row = latest.get(job_id)
         attempts = max(attempts_by_job[job_id], default=0)
-        cert_key = (job.get("benchmark") or job.get("poc") or "<unknown>",
-                    job.get("subject_id") or "<unknown>",
-                    job.get("unit") or "<none>")
-        legacy_cert_key = (job.get("benchmark") or job.get("poc") or "<unknown>",
-                           job.get("unit") or "<none>")
-        quality = cert_quality.get(cert_key) or cert_quality.get(legacy_cert_key)
+        quality = _job_cert_quality(job, cert_quality)
         cert_strong = (not cert_jsonls) or (quality and quality.get("strong"))
         has_completion_source = ((latest_row and latest_row.get("status") == "ok")
                                  or (cert_jsonls and not latest_row and cert_strong))
@@ -434,10 +438,18 @@ def plan_campaign_for_schedule(schedule: dict,
         else:
             next_attempt = attempts + 1
             state = f"pending-attempt-{next_attempt}"
+            pending_job = job
             if latest_row and latest_row.get("status") == "ok" and cert_jsonls:
                 reason = (quality or {}).get("reason") or "no certification row"
                 cert_weak[reason] += 1
-            pending_by_attempt[next_attempt].append(job)
+                pending_job = copy.deepcopy(job)
+                pending_job["certification_quality"] = (
+                    dict(quality) if isinstance(quality, dict) else {
+                        "strong": False,
+                        "reason": reason,
+                    })
+                pending_job["certification_quality"]["reason"] = reason
+            pending_by_attempt[next_attempt].append(pending_job)
             latest_status[(latest_row or {}).get("status") or "never"] += 1
         by_benchmark_state[job.get("benchmark") or "<unknown>"][state] += 1
         by_priority_state[str(job.get("priority", "<missing>"))][state] += 1

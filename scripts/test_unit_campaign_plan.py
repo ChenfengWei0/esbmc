@@ -399,6 +399,10 @@ def test_campaign_retries_runner_ok_when_certification_is_weak():
                                                cert_jsonl_paths=[str(cert)],
                                                min_certified_path_rate=0.70)
     next_ids = [job["job_id"] for job in doc["next_schedule"]["jobs"]]
+    next_reasons = {
+        job["job_id"]: (job.get("certification_quality") or {}).get("reason")
+        for job in doc["next_schedule"]["jobs"]
+    }
     bad = 0
     bad += check(doc["summary"]["completed_ok"] == 1,
                  f"only strong certification completes a runner-ok job: {doc['summary']}")
@@ -411,6 +415,10 @@ def test_campaign_retries_runner_ok_when_certification_is_weak():
         }, f"weak certification reasons are counted: {doc['summary']}")
     bad += check(next_ids == ["peer182__weak__g", "peer182__missing__h"],
                  f"next schedule keeps weak runner-ok jobs: {next_ids}")
+    bad += check(next_reasons == {
+        "peer182__weak__g": "certification-stage no verdict",
+        "peer182__missing__h": "no certification row",
+    }, f"next schedule carries per-job weak reasons: {next_reasons}")
     return bad
 
 
