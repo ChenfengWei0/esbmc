@@ -7393,3 +7393,42 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 191/191 tests.
 - `git diff --check` passed.
+
+## 2026-08-06 Observable msg.value numeric R2 endpoint
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. Validation was Python-only.
+
+Finding:
+
+- Existing POC artifacts contain many certified rows naming `msg.value`, such
+  as `post == msg.value` and `post - pre in [msg.value, msg.value]`, but the
+  PUT renderer only made `msg.value` nameable when it was actively fuzzed into
+  a low-level `{value: p_msg_value}` call.
+- For a concrete emitted call, `msg.value` is still observable: absence of a
+  `{value:}` option is EVM value zero, and a literal `{value: N}` is a readable
+  one-point value. Rendering that one point is weaker than fuzzing the value
+  coordinate, but stronger than dropping the oracle.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has
+  `observable_value_expr_for_r2()`, returning a decimal literal only when the
+  emitted call's value is readable through the existing `observed_env()` logic.
+- If `establish_env_value()` did not create a fuzz parameter, the renderer
+  inserts that observed literal into both `coord_ident` and `coord_ident_abs`.
+  This makes `msg.value` usable for numeric delta endpoints and absolute
+  endpoints.
+- Complex value expressions remain fail-closed because `_lit_int()` returns
+  `None`; the emitter still refuses rather than guessing.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 192/192 tests.
+- `git diff --check` passed.

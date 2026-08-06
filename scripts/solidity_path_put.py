@@ -4697,6 +4697,16 @@ def observable_sender_expr_for_abs_r2(body, call_i, env_sender_expr=None):
     return None
 
 
+def observable_value_expr_for_r2(body, call_i):
+    """A Solidity literal for the value this emitted call sends, if readable."""
+    if not (0 <= call_i < len(body)):
+        return None
+    got, _ev = observed_env(body, call_i, body[call_i])["msg.value"]
+    if got is None:
+        return None
+    return str(got)
+
+
 def low_level_value_gate_asserts_exit(body, call_i, call_line):
     """Whether the emitted low-level value-gate assertion survived the rewrite.
 
@@ -5583,6 +5593,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              if _vlo <= h <= _vhi})
         coord_ident["msg.value"] = value_sig[1]
         coord_ident_abs["msg.value"] = value_sig[1]
+    elif "msg.value" not in coord_ident:
+        value_abs = observable_value_expr_for_r2(body, call_i)
+        if value_abs is not None:
+            coord_ident["msg.value"] = value_abs
+            coord_ident_abs["msg.value"] = value_abs
 
     (body, call_i, time_est, time_sig, time_pre,
      time_note) = establish_env_timestamp(

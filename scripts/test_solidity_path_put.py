@@ -6544,6 +6544,46 @@ def test_an_OBSERVED_sender_renders_for_an_ABSOLUTE_R2_endpoint():
     return bad
 
 
+def test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints():
+    """A call without `{value:}` runs with `msg.value == 0`.
+
+    That observed literal is safe for both absolute and delta numeric endpoints:
+    it does not prove anything about other values, but it does let a certified
+    row that names the emitted call's value become a real oracle instead of a
+    dropped rung.
+    """
+    terms = {"msg.value": {"kind": "coord", "name": "msg.value"}}
+    absolute, abs_stats, abs_notes = _r2_put(
+        [("totalFees", "post == msg.value", "HOLDS")],
+        r2_terms=terms)
+    delta, delta_stats, delta_notes = _r2_put(
+        [("totalFees", "post - pre in [msg.value, msg.value] with post >= pre",
+          "HOLDS")],
+        r2_terms=terms)
+    abs_body = "\n".join(absolute or [])
+    delta_body = "\n".join(delta or [])
+    bad = 0
+    bad += check(absolute is not None,
+                 f"the absolute value PUT is emitted (notes: {abs_notes})")
+    bad += check("assertEq(_post_totalFees, 0," in abs_body,
+                 "the absent value option renders as the EVM default 0")
+    bad += check(abs_stats.get("asserts") == 1,
+                 f"the absolute value equality is counted: {abs_stats}")
+    bad += check(delta is not None,
+                 f"the delta value PUT is emitted (notes: {delta_notes})")
+    bad += check("assertGe(_post_totalFees - _pre_totalFees, 0," in delta_body
+                 and "assertLe(_post_totalFees - _pre_totalFees, 0,"
+                 in delta_body,
+                 "the observed value is also a numeric delta endpoint")
+    bad += check(delta_stats.get("asserts") == 3,
+                 f"the delta value oracle has all three assertions: "
+                 f"{delta_stats}")
+    if bad:
+        print(abs_body)
+        print(delta_body)
+    return bad
+
+
 def test_a_numeric_R2_bound_is_UNCHANGED():
     """NEGATIVE CONTROL for the widened regex. A decimal endpoint must render
     exactly as it did before names were allowed; if `([0-9]+|name)` had been
@@ -8337,6 +8377,7 @@ def main():
               test_a_named_R2_bound_renders_as_the_test_parameter,
               test_an_R2_bound_naming_an_UNLIFTED_COORDINATE_is_DROPPED,
               test_an_OBSERVED_sender_renders_for_an_ABSOLUTE_R2_endpoint,
+              test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints,
               test_a_numeric_R2_bound_is_UNCHANGED,
               test_a_RENAMED_coordinate_is_spelled_with_its_TEST_name,
               test_a_hole_OUTSIDE_the_interval_costs_no_width,
