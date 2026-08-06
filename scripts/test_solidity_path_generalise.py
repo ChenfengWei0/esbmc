@@ -85,7 +85,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       file_identity,
                                       save_failed_round,
                                       validate_enumeration_import,
-                                      derive_env_coord_disagreed)
+                                      derive_env_coord_disagreed,
+                                      _coord_range)
 
 FAILURES = []
 
@@ -2500,6 +2501,14 @@ check("env-disagreed-keeps-pinned-agreed-and-unestablishable-quantities",
        "environment quantity)",
        "block.gaslimit (paths disagree, but the PUT emitter cannot establish "
        "this environment quantity)"])
+check("address-like-environment-coordinates-use-address-domain",
+      (_coord_range("msg.sender"), _coord_range("tx.origin"),
+       _coord_range("block.coinbase")),
+      ((0, (1 << 160) - 1), (0, (1 << 160) - 1),
+       (0, (1 << 160) - 1)))
+check("numeric-modeled-environment-coordinates-stay-uint256-domain",
+      (_coord_range("block.basefee"), _coord_range("tx.gasprice")),
+      ((0, (1 << 256) - 1), (0, (1 << 256) - 1)))
 
 check("synthetic-abi-taken-is-the-body",
       abi_gate_class([{"synthetic_abi_gate": True, "arm": "taken"}]),

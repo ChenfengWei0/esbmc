@@ -7442,6 +7442,41 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 `block.coinbase` Stage-2 address domain
+
+Scope:
+
+- This is a small external VeriPUT stage-2 generalisation fix following the
+  modeled environment cheatcode work.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Finding:
+
+- The PUT emitter can now establish and fuzz `block.coinbase` with
+  `vm.coinbase(address)`, but stage 2 still gave unknown environment
+  coordinates the default `uint256` search domain.
+- That was wrong for `block.coinbase`: it is address-like, so the geometric
+  bracket and certified region should live in `[0, 2^160-1]`, matching
+  `msg.sender` and `tx.origin`.
+
+Code change:
+
+- `_coord_range()` now treats `block.coinbase` as an address-domain
+  environment coordinate.
+- Added a pure Python regression locking `msg.sender`, `tx.origin`, and
+  `block.coinbase` to 160-bit ranges while keeping numeric modeled environment
+  coordinates such as `block.basefee` and `tx.gasprice` at 256-bit ranges.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 Disagreed modeled environment region promotion
 
 Scope:
@@ -8317,3 +8352,19 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-06 Latest handoff pointers
+
+The newest env-related sections were inserted earlier in this file because the
+verification footer text repeats across entries. Use these headings with `rg`
+after compaction:
+
+- `2026-08-06 Modeled environment cheatcode PUT establishment`: PUT emitter
+  support for `block.basefee`, `block.prevrandao`, `tx.gasprice`, and
+  `block.coinbase`, building on timestamp/number/chainid.
+- `2026-08-06 Disagreed modeled environment region promotion`: stage-2
+  `--env-coord-disagreed` now promotes only PUT-establishable environment
+  disagreements using the emitter's shared metadata.
+- `2026-08-06 block.coinbase Stage-2 address domain`: stage-2 now treats
+  `block.coinbase` as a 160-bit address coordinate rather than defaulting to a
+  256-bit numeric search domain.

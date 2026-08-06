@@ -893,7 +893,7 @@ def _decision_term(term, ce, pins, constants=None):
 def _coord_range(name, coord_types=None, type_ranges=None):
     if type_ranges and name in type_ranges:
         return type_ranges[name]
-    if name in ("msg.sender", "tx.origin"):
+    if name in ("msg.sender", "tx.origin", "block.coinbase"):
         return 0, ADDRESS_MAX
     if name == "msg.value":
         return 0, UINT256_MAX
