@@ -2229,6 +2229,66 @@ def test_R2_fuzz_filter_removes_only_concretely_refuted_candidates():
     return bad
 
 
+def test_R2_candidate_dedup_uses_safe_normalized_text_before_fuzz():
+    from solidity_path_put import (dedup_r2_specs_by_normalized_text,  # noqa: E402
+                                   r2_candidates)
+    specs = [{"param": "batch", "stage": 1, "kind": "typed",
+              "candidate_count": 8, "vars": [{
+                  "name": "slot",
+                  "equals": [
+                      {"id": "e0", "term": {"kind": "coord", "name": "n"}},
+                      {"id": "e1", "term": {
+                          "kind": "op", "op": "add",
+                          "lhs": {"kind": "coord", "name": "n"},
+                          "rhs": {"kind": "coord", "name": "msg.value"}}},
+                      {"id": "e2", "term": {
+                          "kind": "coord", "name": "_claimTopic"}},
+                  ],
+                  "abs": [
+                      {"id": "a0", "lo": {"kind": "coord", "name": "n"},
+                       "hi": {"kind": "coord", "name": "n"}},
+                      {"id": "a1", "lo": {
+                          "kind": "op", "op": "sub",
+                          "lhs": {"kind": "coord", "name": "n"},
+                          "rhs": {"kind": "coord", "name": "msg.value"}},
+                       "hi": {
+                          "kind": "op", "op": "sub",
+                          "lhs": {"kind": "coord", "name": "n"},
+                          "rhs": {"kind": "coord", "name": "msg.value"}}},
+                  ],
+                  "deltas": [
+                      {"id": "d0", "dir": "inc",
+                       "lo": {"kind": "coord", "name": "n"},
+                       "hi": {"kind": "coord", "name": "n"}},
+                      {"id": "d1", "dir": "inc",
+                       "lo": {
+                          "kind": "op", "op": "add",
+                          "lhs": {"kind": "coord", "name": "msg.value"},
+                          "rhs": {"kind": "coord", "name": "n"}},
+                       "hi": {
+                          "kind": "op", "op": "add",
+                          "lhs": {"kind": "coord", "name": "msg.value"},
+                          "rhs": {"kind": "coord", "name": "n"}}},
+                  ],
+              }]}]
+    said = []
+    got, dropped = dedup_r2_specs_by_normalized_text(
+        specs, {"msg.value": 0}, log=said.append)
+    texts = [candidate["text"] for candidate in r2_candidates(got)]
+    bad = 0
+    bad += check(dropped == 3, f"three normalized duplicates are removed: "
+                 f"{dropped}, {texts}")
+    bad += check(texts == [
+        "post == n",
+        "post in [n, n]",
+        "post - pre in [n, n] with post >= pre",
+        "post == _claimTopic",
+    ], f"one representative per normalized rung survives: {texts}")
+    bad += check(any("before Forge/ESBMC" in line for line in said),
+                 f"the log names when the drop happened: {said}")
+    return bad
+
+
 def test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate():
     from solidity_path_put import (propose_r2_batch,  # noqa: E402
                                    r2_terms_from_specs,
@@ -9153,6 +9213,49 @@ def test_the_ANTICHAIN_does_not_normalize_unpinned_R2_coordinates():
     return bad
 
 
+def test_the_ANTICHAIN_folds_R2_zero_and_one_identities():
+    from solidity_path_put import antichain  # noqa: E402
+    rows = [("slot", "post == n", "HOLDS"),
+            ("slot", "post == (n + msg.value)", "HOLDS"),
+            ("slot", "post == (msg.value + n)", "HOLDS"),
+            ("slot", "post == (n - msg.value)", "HOLDS"),
+            ("slot", "post == (n * 1)", "HOLDS"),
+            ("slot", "post == (n + state.ZERO)", "HOLDS")]
+    kept, implied = antichain(
+        rows, point_values={"msg.value": 0, "state.ZERO": 0})
+    bad = 0
+    bad += check(kept == [("slot", "post == n", "HOLDS")],
+                 f"the source-level exact endpoint is the one kept: {kept}")
+    bad += check(sorted(t for _v, t, _d in implied) == sorted(
+        ["post == (n + msg.value)", "post == (msg.value + n)",
+         "post == (n - msg.value)", "post == (n * 1)",
+         "post == (n + state.ZERO)"]),
+                 f"all algebraic copies are implied: {implied}")
+    return bad
+
+
+def test_the_ANTICHAIN_folds_safe_commutative_and_self_delta_terms_only():
+    from solidity_path_put import antichain  # noqa: E402
+    rows = [("slot", "post == (pre + n)", "HOLDS"),
+            ("slot", "post == (n + pre)", "HOLDS"),
+            ("slot", "post == (n - n)", "HOLDS"),
+            ("slot", "post == 0", "HOLDS"),
+            ("slot", "post == (n - pre)", "HOLDS")]
+    kept, implied = antichain(rows)
+    bad = 0
+    bad += check(("slot", "post == (n - pre)", "HOLDS") in kept,
+                 f"non-identity subtraction is not normalized away: {kept}")
+    bad += check(("slot", "post == 0", "HOLDS") in kept,
+                 f"literal zero is preferred over `n - n`: {kept}")
+    bad += check(("slot", "post == (n - n)", "HOLDS") in implied,
+                 f"`n - n` is an implied spelling of zero: {implied}")
+    bad += check(len([1 for _v, t, _d in kept
+                      if t in ("post == (pre + n)", "post == (n + pre)")])
+                 == 1,
+                 f"commutative addition keeps one spelling: {kept}")
+    return bad
+
+
 def test_a_ladder_where_nothing_held_still_says_so():
     """THE NEGATIVE CONTROL. If the headline were hard-wired to the dropped
     wording it would pass the case above and be wrong on every genuinely empty
@@ -9844,6 +9947,8 @@ def main():
               test_the_ANTICHAIN_does_not_use_REFUTED_return_rows_as_evidence,
               test_the_ANTICHAIN_normalizes_R2_point_values_before_dominance,
               test_the_ANTICHAIN_does_not_normalize_unpinned_R2_coordinates,
+              test_the_ANTICHAIN_folds_R2_zero_and_one_identities,
+              test_the_ANTICHAIN_folds_safe_commutative_and_self_delta_terms_only,
               test_a_ladder_where_nothing_held_still_says_so,
               test_the_retlive_witness_is_not_counted_as_a_rung_that_held,
               test_a_revert_tolerant_body_is_NOT_called_an_assertion,
@@ -9941,6 +10046,7 @@ def main():
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,
               test_a_fixed_bytes_region_parameter_is_lifted_via_uint_input,
+              test_R2_candidate_dedup_uses_safe_normalized_text_before_fuzz,
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
               test_source_R2_assignment_candidates_are_small_setter_queries,
               test_source_R2_self_updates_prioritize_delta_queries,

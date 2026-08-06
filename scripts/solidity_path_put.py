@@ -2832,6 +2832,44 @@ def r2_candidates(specs):
     return out
 
 
+def dedup_r2_specs_by_normalized_text(specs, point_values=None, log=print):
+    """Drop R2 candidates that spell the same rung after safe normalization."""
+    filtered = json.loads(json.dumps(specs or []))
+    seen = {}
+    remove = set()
+    for candidate in r2_candidates(filtered):
+        normalized = _normalize_rung_text(candidate["text"], point_values or {})
+        key = (candidate["var"], normalized)
+        if key in seen:
+            remove.add(candidate["key"])
+        else:
+            seen[key] = candidate["key"]
+    if not remove:
+        return filtered, 0
+
+    for si, spec in enumerate(filtered):
+        kept = 0
+        for vi, var in enumerate(spec.get("vars", [])):
+            for kind in ("equals", "abs", "deltas"):
+                prefix = f"s{si}:v{vi}:{kind}:"
+                values = var.get(kind, [])
+                var[kind] = [
+                    candidate for candidate in values
+                    if prefix + str(candidate.get("id")) not in remove
+                ]
+                kept += len(var[kind])
+        spec["candidate_count"] = kept
+        spec["vars"] = [
+            var for var in spec.get("vars", [])
+            if any(var.get(kind) for kind in ("equals", "abs", "deltas"))
+        ]
+    out = [spec for spec in filtered if spec.get("vars")]
+    if log is not None:
+        log(f"[put]   typed R2 normalized candidate dedup dropped "
+            f"{len(remove)} equivalent candidate(s) before Forge/ESBMC")
+    return out, len(remove)
+
+
 def skipped_forge_r2_evidence(specs, candidate_budget, reason, fuzz_runs):
     """Complete accounting for a Forge prefilter that issued no process."""
     candidates = r2_candidates(specs)
@@ -3222,14 +3260,84 @@ def point_value_texts(region, pins):
     return out
 
 
-def _normalize_r2_endpoint(term, point_values):
+def _split_r2_binary(term):
     term = (term or "").strip()
-    return point_values.get(term, term)
+    if not (term.startswith("(") and term.endswith(")")):
+        return None
+    inner = term[1:-1].strip()
+    depth = 0
+    for i, ch in enumerate(inner):
+        if ch == "(":
+            depth += 1
+            continue
+        if ch == ")":
+            depth -= 1
+            continue
+        if depth != 0:
+            continue
+        for op in ("+", "-", "*", "/"):
+            marker = f" {op} "
+            if inner.startswith(marker, i):
+                lhs = inner[:i].strip()
+                rhs = inner[i + len(marker):].strip()
+                if lhs and rhs:
+                    return lhs, op, rhs
+    return None
+
+
+def _canonical_commutative(lhs, rhs):
+    def rank(term):
+        if term == "pre":
+            return (0, term)
+        if re.fullmatch(r"\d+", term):
+            return (1, term)
+        if term.startswith("("):
+            return (3, term)
+        return (2, term)
+    return tuple(sorted((lhs, rhs), key=rank))
+
+
+def _normalize_r2_algebra(term, point_values):
+    term = (term or "").strip()
+    term = point_values.get(term, term)
+    text = _literal_text(term)
+    if text is not None:
+        return text
+
+    split = _split_r2_binary(term)
+    if split is None:
+        return term
+    lhs, op, rhs = split
+    lhs = _normalize_r2_algebra(lhs, point_values)
+    rhs = _normalize_r2_algebra(rhs, point_values)
+
+    if op == "+":
+        if lhs == "0":
+            return rhs
+        if rhs == "0":
+            return lhs
+        lhs, rhs = _canonical_commutative(lhs, rhs)
+    elif op == "-":
+        if rhs == "0":
+            return lhs
+        if lhs == rhs:
+            return "0"
+    elif op == "*":
+        if lhs == "0" or rhs == "0":
+            return "0"
+        if lhs == "1":
+            return rhs
+        if rhs == "1":
+            return lhs
+        lhs, rhs = _canonical_commutative(lhs, rhs)
+    return f"({lhs} {op} {rhs})"
+
+
+def _normalize_r2_endpoint(term, point_values):
+    return _normalize_r2_algebra(term, point_values)
 
 
 def _normalize_rung_text(text, point_values):
-    if not point_values:
-        return text
     if text.startswith("post == "):
         return "post == " + _normalize_r2_endpoint(
             text[len("post == "):], point_values)
@@ -3238,21 +3346,31 @@ def _normalize_rung_text(text, point_values):
         lo = _normalize_r2_endpoint(m.group(1), point_values)
         hi = _normalize_r2_endpoint(m.group(2), point_values)
         return f"post in [{lo}, {hi}]"
+    m = re.match(r"^(post - pre|pre - post) in \[(.+), (.+)\] with "
+                 r"(post >= pre|pre >= post)$", text)
+    if m:
+        lo = _normalize_r2_endpoint(m.group(2), point_values)
+        hi = _normalize_r2_endpoint(m.group(3), point_values)
+        return f"{m.group(1)} in [{lo}, {hi}] with {m.group(4)}"
     return text
 
 
-def _rung_keep_rank(text):
+def _rung_keep_rank(original_text, normalized_text=None):
+    text = original_text
     if text == "post == pre":
         return 0
     if re.match(r"^post == \d+$", text):
         return 1
-    if text.startswith("post == "):
+    if normalized_text is not None and re.match(r"^post == \d+$",
+                                                normalized_text):
         return 2
-    if re.match(r"^post in \[\d+, \d+\]$", text):
+    if text.startswith("post == "):
         return 3
-    if text.startswith("post in ["):
+    if re.match(r"^post in \[\d+, \d+\]$", text):
         return 4
-    return 5
+    if text.startswith("post in ["):
+        return 5
+    return 6
 
 
 def _zero_lower_interval(text):
@@ -3330,7 +3448,8 @@ def antichain(rows, revert_tolerant=False, point_values=None):
         if len(indexed) < 2:
             continue
         keep_idx, _keep_text = min(
-            indexed, key=lambda it: (_rung_keep_rank(normalized[it[0]]), it[0]))
+            indexed,
+            key=lambda it: (_rung_keep_rank(it[1], normalized[it[0]]), it[0]))
         for idx, _text in indexed:
             if idx != keep_idx:
                 dominated_idx.add(idx)
@@ -8489,6 +8608,8 @@ def main():
             candidate_budget=a.r2_candidate_budget, log=print)
         _r2 = merge_source_r2_specs(
             _r2, _typed_r2, candidate_budget=a.r2_candidate_budget, log=print)
+        _r2, _ = dedup_r2_specs_by_normalized_text(
+            _r2, point_value_texts(region, pins), log=print)
         r2_term_lookup = r2_terms_from_specs(_r2)
         r2_requested = True
         if unwind_applied:
