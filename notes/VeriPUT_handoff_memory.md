@@ -10428,6 +10428,80 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 read/write slot split benchmark smoke sample
+
+Branch:
+
+- `feat/veriput-fuzz-first`, pushed to `E-SOL/feat/veriput-fuzz-first`.
+- Latest code commit before this sample:
+  `5e6bf23d58 [solidity] Split VeriPUT read and write slot uses`.
+
+Static candidate selection:
+
+- Base schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule.json`.
+- 76 scheduled jobs, 39 with mapping slot accesses.
+- 9 jobs have `all` slot accesses strictly wider than `read` slot accesses,
+  so they exercise the region/oracle split.
+- Representative affected units:
+  - `DepositLog.setApprovedLogger`: write-only `approvedLoggers[_logger]`.
+  - `AIRBets.approve`: write-only `_allowances[owner][spender]`.
+  - `AIRBets.transferFrom`: write-only allowance slots plus read balance/fee
+    slots.
+  - `IdentityRegistryStorage.addIdentityToStorage` and
+    `modifyStoredInvestorCountry`: read
+    `_identities[_userAddress].identityContract`, write
+    `_identities[_userAddress].investorCountry`.
+
+Smoke schedule:
+
+- Schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-readwrite-sample-a1.json`.
+- Results:
+  `/tmp/veriput_stratified_20260807_03/certify-results-readwrite-sample-a1.jsonl`.
+- Runner journal:
+  `/tmp/veriput_stratified_20260807_03/unit-run-readwrite-sample-a1.jsonl`.
+- Workdir:
+  `/tmp/veriput_stratified_20260807_03/certify-work-readwrite-sample-a1_t70_r60_m8`.
+- Policy:
+  `jobs=1`, runner timeout 90s, certification timeout 70s, ESBMC run timeout
+  60s, memory limit 8GiB.
+- No benchmark/dataset contract file was modified; all outputs are under
+  `/tmp`.
+
+Smoke result:
+
+- Runner: 3 / 3 jobs exited `ok`.
+- `bugfix124 acfix_fixlink_DepositLog DepositLog.setApprovedLogger`:
+  `CERTIFIED`, 2 certified / 1 not / 3 witnessed, 13.2s.
+  The not-certified path is `EXCLUDED FROM THE SLICE by the pins` on
+  `msg.value`, so this is a body-slice success.
+- `peer182 peer_ccsolbmc__AIRBets AIRBets.approve`:
+  `NO-PATH`, 0 witnessed, 1.0s.
+  Generalise progress says all 4 claims were `bounded-holds` under current
+  bound/scope. This is a witness-generation / path-depth issue, not a proof of
+  unreachable behavior.
+- `stress243 ERC-3643__ERC-3643__IdentityRegistryStorage
+  IdentityRegistryStorage.modifyStoredInvestorCountry`:
+  `KILLED`, 3 witnessed, 0 certified / 0 not, 70.0s.
+  Partial journal: 67 / 116 claims decided, 3 paths, 24 witnesses. Failure
+  bucket is refinement-stage no verdict; campaign planner marks it retryable
+  with `retry_strategy=level0-certification-first` and `retry_refine_rounds=0`.
+
+Current interpretation:
+
+- The read/write slot split is behaving as intended: write-only slots are still
+  available to PUT/R2 oracles, but no longer inflate the entry region.
+- We are ready for targeted benchmark sampling, not full corpus普测 yet.
+- Before broad runs, fix or tune two buckets:
+  - no-witness/bounded-holds units such as `AIRBets.approve`, likely by using a
+    deeper or broader cheap witness strategy before spending certification
+    budget;
+  - refinement-stage timeouts such as
+    `IdentityRegistryStorage.modifyStoredInvestorCountry`, likely by making
+    level0-first/zero-refine the first retry for witnessed timeout cases instead
+    of waiting for attempt 2.
+
 ## 2026-08-07: Region Slot Coordinates Now Use Read-Only Source Accesses
 
 Problem found on the balanced6b `IdentityRegistryStorage.addIdentityToStorage`
