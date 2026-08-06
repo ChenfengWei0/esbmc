@@ -4386,6 +4386,143 @@ def test_source_R2_top_level_struct_members_are_state_coords():
     return bad
 
 
+def test_source_R2_storage_local_aliases_resolve_to_state_coords():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def member(base, name, ty="uint256"):
+        return {"nodeType": "MemberAccess", "memberName": name,
+                "expression": base,
+                "typeDescriptions": {"typeString": ty}}
+
+    def index(base_ref, base_name, key, ty="uint256"):
+        return {"nodeType": "IndexAccess",
+                "baseExpression": ident(base_ref, base_name),
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    def binop(op, lhs, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def local_decl(ref, name, ty, value, storage_location):
+        return {"nodeType": "VariableDeclarationStatement",
+                "declarations": [{
+                    "nodeType": "VariableDeclaration", "id": ref,
+                    "name": name, "storageLocation": storage_location,
+                    "typeDescriptions": {"typeString": ty}}],
+                "initialValue": value}
+
+    def assign(lhs, rhs, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=", "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    def ret(expr, src):
+        return {"nodeType": "Return", "src": src, "expression": expr}
+
+    def function(fid, name, params, statements):
+        return {"nodeType": "FunctionDefinition", "id": fid, "name": name,
+                "parameters": {"parameters": params},
+                "returnParameters": {"parameters": [{
+                    "id": fid + 1, "name": "",
+                    "typeDescriptions": {"typeString": "uint256"}}]},
+                "body": {"nodeType": "Block", "statements": statements}}
+
+    amount_param = {"id": 21, "name": "amount",
+                    "typeDescriptions": {"typeString": "uint256"}}
+    who_param = {"id": 22, "name": "who",
+                 "typeDescriptions": {"typeString": "address"}}
+    box_ident = ident(10, "box", "struct C.Box storage ref")
+    bal_who = index(11, "bal", ident(22, "who", "address"),
+                    "struct C.Bal storage ref")
+    b_count = member(ident(30, "b", "struct C.Box storage pointer"), "count")
+    row_amount = member(ident(31, "row", "struct C.Bal storage pointer"),
+                        "amount")
+    mem_count = member(ident(40, "m", "struct C.Box memory"), "count")
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "box",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "struct C.Box"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "bal",
+             "stateVariable": True,
+             "typeDescriptions": {
+                 "typeString": "mapping(address => struct C.Bal)"}},
+            function(20, "storageAlias", [amount_param, who_param], [
+                local_decl(30, "b", "struct C.Box storage pointer",
+                           box_ident, "storage"),
+                local_decl(31, "row", "struct C.Bal storage pointer",
+                           bal_who, "storage"),
+                assign(b_count, ident(21, "amount"), "100:10:0"),
+                assign(row_amount,
+                       binop("+", row_amount, ident(21, "amount")),
+                       "120:10:0"),
+                ret(b_count, "140:10:0")]),
+            function(50, "memoryAlias", [amount_param], [
+                local_decl(40, "m", "struct C.Box memory", box_ident,
+                           "memory"),
+                assign(mem_count, ident(21, "amount"), "200:10:0"),
+                ret(mem_count, "220:10:0")])
+        ]}]}
+    layout = {"box.count": (3, 0, 32)}
+    maps = {"bal.amount": (7, "address", 32, 0, "bal", "amount")}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out_file:
+        json.dump(ast, out_file)
+    try:
+        storage_specs, storage_evidence = source_assignment_r2_specs(
+            path, "C", "storageAlias",
+            [("amount", "uint256"), ("who", "address")], layout,
+            [("amount", "num", None), ("who", "id", 20)], arity=2,
+            maps=maps, rettypes=[("", "uint256")], log=lambda _msg: None)
+        memory_specs, memory_evidence = source_assignment_r2_specs(
+            path, "C", "memoryAlias", [("amount", "uint256")], layout,
+            [("amount", "num", None)], arity=1, maps=maps,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry
+               for entry in storage_specs[0]["vars"]} if storage_specs else {}
+    box_terms = [r2_term_text(item["term"])
+                 for item in entries.get("box.count", {}).get("equals", [])]
+    row_equals = [r2_term_text(item["term"])
+                  for item in entries.get("bal[who].amount", {}).get(
+                      "equals", [])]
+    row_deltas = [r2_term_text(item["lo"])
+                  for item in entries.get("bal[who].amount", {}).get(
+                      "deltas", [])]
+    ret_terms = [r2_term_text(item["term"])
+                 for item in entries.get(RETURN_VAR, {}).get("equals", [])]
+    bad = 0
+    bad += check(box_terms == ["amount"],
+                 f"storage struct alias feeds the top-level field setter: "
+                 f"{storage_specs}")
+    bad += check(row_equals == ["(state.bal[who].amount + amount)"],
+                 f"storage mapping-value alias feeds the exact endpoint: "
+                 f"{storage_specs}")
+    bad += check(row_deltas == ["amount"],
+                 f"storage mapping-value alias feeds the delta: "
+                 f"{storage_specs}")
+    bad += check(ret_terms == ["state.box.count"],
+                 f"storage struct alias feeds the return coord: "
+                 f"{storage_specs}")
+    bad += check(any("bal[who].amount: post - pre == amount" in line
+                     for line in storage_evidence),
+                 f"storage alias provenance is recorded: {storage_evidence}")
+    bad += check(memory_specs == [],
+                 f"memory aliases are not treated as state writes: "
+                 f"{memory_specs}, {memory_evidence}")
+    return bad
+
+
 def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     from solidity_path_put import r2_terms_from_specs, rung_assertions  # noqa: E402
     specs = [{"vars": [{"name": "ready", "equals": [{
@@ -6819,6 +6956,7 @@ def main():
               test_source_R2_mapping_getter_returns_named_entry_slot_coord,
               test_storage_layout_expands_top_level_struct_scalar_members,
               test_source_R2_top_level_struct_members_are_state_coords,
+              test_source_R2_storage_local_aliases_resolve_to_state_coords,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
               test_source_R2_merge_preserves_the_candidate_budget,

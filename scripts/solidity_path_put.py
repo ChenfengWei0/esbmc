@@ -1137,6 +1137,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
 
     local_ids = set()
     local_aliases = {}
+    local_storage_ids = set()
+    local_storage_aliases = {}
 
     by_id, owner = {}, None
 
@@ -1198,6 +1200,29 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         expr = local_aliases[ref]
         nested = local_alias_expr(expr, seen)
         return nested if nested is not None else expr
+
+    def local_storage_alias_expr(n, seen=None):
+        ref = identifier_ref(n)
+        if ref is None or ref not in local_storage_aliases:
+            return None
+        seen = set() if seen is None else set(seen)
+        if ref in seen:
+            return None
+        seen.add(ref)
+        expr = local_storage_aliases[ref]
+        expr_ref = identifier_ref(expr)
+        if expr_ref in seen:
+            return None
+        nested = local_storage_alias_expr(expr, seen)
+        return nested if nested is not None else expr
+
+    def is_storage_local_decl(n):
+        if not isinstance(n, dict):
+            return False
+        if n.get("storageLocation") == "storage":
+            return True
+        ty = (n.get("typeDescriptions") or {}).get("typeString") or ""
+        return " storage" in ty
 
     def unsigned_ty(t):
         return re.match(r"^uint(\d+)?$", t or "") is not None
@@ -1598,6 +1623,20 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         while isinstance(cur, dict) and cur.get("nodeType") == "IndexAccess":
             keys.append(cur.get("indexExpression"))
             cur = cur.get("baseExpression")
+        alias = local_storage_alias_expr(cur)
+        if alias is not None:
+            expanded = alias
+            final_ty = _norm_ty((n.get("typeDescriptions") or {}).get(
+                "typeString") or "")
+            members = tail.lstrip(".").split(".") if tail else []
+            for member in members:
+                expanded = {
+                    "nodeType": "MemberAccess",
+                    "memberName": member,
+                    "expression": expanded,
+                    "typeDescriptions": {"typeString": final_ty},
+                }
+            return slot_lhs(expanded)
         if not keys:
             return None
         ref = identifier_ref(cur)
@@ -1633,6 +1672,20 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             cur = cur.get("expression")
         if not tail:
             return None
+        alias = local_storage_alias_expr(cur)
+        if alias is not None:
+            expanded = alias
+            final_ty = _norm_ty((n.get("typeDescriptions") or {}).get(
+                "typeString") or "")
+            members = tail.lstrip(".").split(".")
+            for member in members:
+                expanded = {
+                    "nodeType": "MemberAccess",
+                    "memberName": member,
+                    "expression": expanded,
+                    "typeDescriptions": {"typeString": final_ty},
+                }
+            return state_member_lhs(expanded)
         ref = identifier_ref(cur)
         state = state_ids.get(ref)
         if state is None:
@@ -1695,11 +1748,16 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                          if isinstance(d, dict)]
                 init = n.get("initialValue")
                 if len(decls) == 1:
-                    ref = decls[0].get("id")
+                    decl = decls[0]
+                    ref = decl.get("id")
                     if isinstance(ref, int):
                         local_ids.add(ref)
+                        if is_storage_local_decl(decl):
+                            local_storage_ids.add(ref)
                         if init is not None:
                             local_aliases[ref] = init
+                            if ref in local_storage_ids:
+                                local_storage_aliases[ref] = init
                 for child in n.values():
                     walk(child)
                 return
@@ -1708,12 +1766,18 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 lhs = n.get("leftHandSide")
                 lhs_ref = identifier_ref(lhs)
                 if operator == "=" and lhs_ref in local_ids:
-                    local_aliases[lhs_ref] = n.get("rightHandSide")
+                    rhs = n.get("rightHandSide")
+                    local_aliases[lhs_ref] = rhs
+                    if lhs_ref in local_storage_ids and rhs is not None:
+                        local_storage_aliases[lhs_ref] = rhs
+                    else:
+                        local_storage_aliases.pop(lhs_ref, None)
                     for child in n.values():
                         walk(child)
                     return
                 if lhs_ref in local_ids:
                     local_aliases.pop(lhs_ref, None)
+                    local_storage_aliases.pop(lhs_ref, None)
                 member = state_member_lhs(lhs)
                 state = state_ids.get(lhs_ref)
                 state_name = (member[0] if member is not None
@@ -1836,6 +1900,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 sub_ref = identifier_ref(sub)
                 if sub_ref in local_ids:
                     local_aliases.pop(sub_ref, None)
+                    local_storage_aliases.pop(sub_ref, None)
                 state = state_ids.get(sub_ref)
                 if state is not None and unsigned_ty(_norm_ty(state[1])):
                     add_delta_candidate(state[0], direction, one, "1",
@@ -1854,6 +1919,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 sub_ref = identifier_ref(sub)
                 if sub_ref in local_ids:
                     local_aliases.pop(sub_ref, None)
+                    local_storage_aliases.pop(sub_ref, None)
                 state = state_ids.get(sub_ref)
                 if state is not None:
                     zero = zero_term(_norm_ty(state[1]))

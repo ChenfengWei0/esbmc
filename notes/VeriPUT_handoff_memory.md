@@ -8,6 +8,50 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 storage local alias source-R2
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- Real Solidity code often writes through local storage aliases, for example
+  `Box storage b = box; b.count = amount` or
+  `Bal storage row = bal[who]; row.amount += amount`.
+- The source-first R2 miner already handled direct
+  `box.count` / `bal[who].amount` spellings, but it did not connect the local
+  storage pointer back to the original state coordinate.
+- That lost strong candidates such as `post == amount`,
+  `post == state.bal[who].amount + amount`, and exact deltas on mapping-value
+  struct fields.
+
+Code change:
+
+- `source_assignment_r2_specs()` now keeps a separate `local_storage_aliases`
+  table for local declarations or rebinding assignments whose AST says
+  `storage`.
+- `slot_lhs()` and `state_member_lhs()` expand only those storage aliases before
+  resolving state coordinates.
+- Ordinary local aliases still feed numeric/source terms as before, but memory
+  aliases such as `Box memory b = box` are deliberately not treated as state
+  writes or entry-state reads.
+- Alias invalidation now clears the storage-alias table alongside the ordinary
+  alias table on mutation/delete, preventing stale coordinates.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  171/171 tests.
+- `git diff --check -- scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md` passed.
+- No POC ESBMC attempt was consumed.
+
 ## 2026-08-06 top-level struct member source-R2
 
 Scope and constraint:
