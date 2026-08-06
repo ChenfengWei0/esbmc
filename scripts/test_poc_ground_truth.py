@@ -73,6 +73,7 @@ contract P01 {
         },
         "stats": {
             "fuzz_params": 1,
+            "lifted": ["x"],
             "asserts": 1,
         },
     }) + "\n")
@@ -121,6 +122,10 @@ def test_inventory_reads_sources_cert_and_puts_without_execution():
                      and unit["put_summary"]["weak_reasons"] == {}
                      and unit["puts"][0]["wide_region"] is True,
                      f"PUT strength shape is summarized: {unit['put_summary']}")
+        bad += check(unit["puts"][0]["wide_fuzz_coords"] == ["x"]
+                     and unit["puts"][0]["wide_fuzz"] is True,
+                     f"wide rendered fuzz coordinates are recorded: "
+                     f"{unit['puts'][0]}")
         bad += check(not (tmp / "out.json").exists(),
                      "no output file is written without --out")
         return bad
@@ -227,6 +232,7 @@ def test_inventory_default_roots_include_poc_local_puts():
             },
             "stats": {
                 "fuzz_params": 1,
+                "lifted": ["x"],
                 "asserts": 1,
             },
         }) + "\n")
@@ -303,6 +309,7 @@ contract Harness {
             },
             "stats": {
                 "fuzz_params": 1,
+                "lifted": ["x"],
                 "asserts": 1,
             },
         }) + "\n")
@@ -360,12 +367,64 @@ def test_default_cert_paths_include_poc_local_gate_files():
         return bad
 
 
+def test_implicit_full_domain_lift_counts_as_wide_fuzz():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        poc_dir, put_root, cert = write_fixture(tmp)
+        put_dir = put_root / "P01__set__implicit"
+        put_dir.mkdir()
+        (put_dir / "put.json").write_text(json.dumps({
+            "contract": "P01",
+            "unit": "set",
+            "path_function": "sol:@C@P01@F@set#1",
+            "enc": 8,
+            "region": {
+                "msg.value": ["0", "0"],
+            },
+            "stats": {
+                "fuzz_params": 1,
+                "lifted": ["x"],
+                "asserts": 1,
+            },
+            "notes": [
+                "emitted replay omitted x; lifting it as a full-domain calldata fuzz input",
+            ],
+        }) + "\n")
+        args = argparse.Namespace(poc_dir=str(poc_dir),
+                                  put_root=str(put_root),
+                                  cert_jsonl=[str(cert)],
+                                  contract=[],
+                                  unit=[],
+                                  poc=[],
+                                  only=["P01.set"],
+                                  max_expected_lines=8,
+                                  limit=20,
+                                  format="json",
+                                  out="")
+        doc = poc_ground_truth.build_inventory(args)
+        unit = doc["units"][0]
+        implicit = next(p for p in unit["puts"] if p["enc"] == 8)
+        bad = 0
+        bad += check(implicit["wide_region"] is False
+                     and implicit["wide_fuzz"] is True
+                     and implicit["wide_fuzz_coords"] == ["x"],
+                     f"implicit full-domain lifted arg supplies PUT width: "
+                     f"{implicit}")
+        bad += check(implicit["strong_shape"] is True,
+                     f"implicit full-domain PUT is strong-shaped: {implicit}")
+        bad += check(unit["put_summary"]["strong_shape"] == 2,
+                     f"implicit full-domain PUT contributes to summary: "
+                     f"{unit['put_summary']}")
+        return bad
+
+
 TESTS = [
     test_inventory_reads_sources_cert_and_puts_without_execution,
     test_inventory_filters_and_reports_weak_reasons,
     test_inventory_default_roots_include_poc_local_puts,
     test_inventory_joins_cert_and_put_with_path_derived_contract,
     test_default_cert_paths_include_poc_local_gate_files,
+    test_implicit_full_domain_lift_counts_as_wide_fuzz,
 ]
 
 

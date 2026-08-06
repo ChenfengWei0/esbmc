@@ -162,6 +162,23 @@ def region_has_width(region: dict) -> bool:
     return bool(wide_region_coords(region))
 
 
+def wide_fuzz_coords(region: dict, lifted: list[str], fuzz_params: int) -> list[str]:
+    if not lifted and fuzz_params > 0:
+        return wide_region_coords(region)
+    coords = []
+    for name in lifted or []:
+        if name in region:
+            lo_hi = region.get(name)
+            if isinstance(lo_hi, list) and len(lo_hi) == 2:
+                lo = _as_int(lo_hi[0])
+                hi = _as_int(lo_hi[1])
+                if lo is not None and hi is not None and hi > lo:
+                    coords.append(name)
+        else:
+            coords.append(name)
+    return sorted(set(coords))
+
+
 def wide_region_coords(region: dict) -> list[str]:
     coords = []
     for name, lo_hi in (region or {}).items():
@@ -237,6 +254,10 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
             "wide_region_coords": wide_region_coords(region),
             "wide_region": region_has_width(region),
         }
+        row["wide_fuzz_coords"] = (
+            sorted(stats.get("wide_fuzz_coords") or [])
+            or wide_fuzz_coords(region, row["lifted"], row["fuzz_params"]))
+        row["wide_fuzz"] = bool(row["wide_fuzz_coords"])
         weak_reasons = []
         weak_details = []
         if row["fuzz_params"] <= 0:
@@ -262,7 +283,7 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
                 weak_details.append(f"no-oracle:ladder-refusal:{doc.get('ladder_refusal')}")
             if not weak_details or all(not d.startswith("no-oracle:") for d in weak_details):
                 weak_details.append("no-oracle:undifferentiated")
-        if not row["wide_region"]:
+        if not row["wide_fuzz"]:
             weak_reasons.append("no-wide-region")
             weak_details.append("no-wide-region")
         row["weak_reasons"] = weak_reasons

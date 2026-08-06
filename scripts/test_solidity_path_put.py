@@ -2198,6 +2198,10 @@ contract FlaggerCovTest is Test {
                  "the bool R2 endpoint is rendered as the storage bit")
     bad += check(stats["fuzz_params"] == 1 and stats["asserts"] == 1,
                  f"the bool PUT is parameterized and has one oracle: {stats}")
+    bad += check(stats["rendered_width"] == {"flag_": 2}
+                 and stats["wide_fuzz_coords"] == ["flag_"],
+                 f"stats record rendered fuzz width, not just region width: "
+                 f"{stats}")
     return bad
 
 

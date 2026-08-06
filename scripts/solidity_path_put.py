@@ -6734,6 +6734,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     if low_level_exit_asserted:
         exit_kind_asserts += 1
     stats = {"fuzz_params": len(sig), "lifted": lifted,
+             "rendered_width": dict(sorted(rendered_width.items())),
+             "wide_fuzz_coords": sorted(
+                 n for n, width in rendered_width.items() if width > 1),
              # COUNTED, and counted separately. A conditional assertion is an
              # assertion the test carries, so it belongs in the total; it is a
              # WEAKER one, so a reader who cannot see how many are conditional

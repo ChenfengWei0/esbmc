@@ -7213,3 +7213,51 @@ Verification:
   with 5 certified paths and 24 strong-shape PUTs among 25 PUT artefacts;
   `St1inch.setFeeReceiver` is now `partial-strong-put` with 5 certified paths
   and 4 strong-shape PUTs.
+
+## 2026-08-06 Rendered fuzz width in PUT inventory
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- The inventory's old `strong_shape` gate used `wide_region`: any certified
+  coordinate with `hi > lo`.
+- That overcounted state-only width, because wide `state.*` bounds are
+  deliberately not rendered as fuzz inputs when entry state is not havoced.
+- It also undercounted implicit full-domain calldata fuzzing. Example:
+  `St1inch.transfer` enc=3 has region `msg.value == 0`, but the emitted replay
+  omitted two calldata args, so Stage 4 lifted `arg0,arg1` over their full
+  domains and emitted a real parameterized test with an exit-kind oracle.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now records `stats.rendered_width` and
+  `stats.wide_fuzz_coords` in future `put.json` files.
+- `notes/coverage/scripts/poc_ground_truth.py` now uses rendered fuzz width for
+  `strong_shape`: prefer `stats.wide_fuzz_coords`; otherwise infer from
+  `stats.lifted` and `region`; for older schema rows that have `fuzz_params`
+  but no `lifted`, fall back to legacy region-width inference.
+- Full `path_function` remains audit metadata, not the grouping key.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/poc_ground_truth.py scripts/test_poc_ground_truth.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 184/184 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_poc_ground_truth.py`
+  passed.
+- Read-only default inventory smoke under rendered-width semantics reports
+  178 unit rows, 376 cert rows, 249 PUT rows, 157 strong-shape PUT rows, and
+  unit statuses: `ready-strong=41`, `partial-strong-put=23`,
+  `no-strong-put=24`, `no-certified-paths=81`, `certified-no-put=6`,
+  `no-certification-row=3`.
+- Sanity checks: `St1inch.transfer` is now correctly `ready-strong` with both
+  certified paths covered by strong PUTs; `St1inch.setDefaultFarm` remains
+  `partial-strong-put` because its missing enc=15 row is point-only under the
+  current definition and current `build_put()` refuses it as not parameterized.
