@@ -8,6 +8,37 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 bool-coordinate return oracle rendering
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Finding and change:
+
+- Source R2 mining already produced bool-coordinate return candidates such as
+  `return == ok`.
+- The Foundry renderer only emitted bool return rungs for `return == true` and
+  `return == false`, so a certified `return == ok` rung could be dropped as
+  "not renderable".
+- `return_rung_assertions()` now keeps the true/false special cases and then
+  renders any structured bool equality it can spell from `r2_terms`, producing
+  `assertEq(_put_ret, p_ok, ...)`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  163/163 tests.
+- `git diff --check -- scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md` passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 cast-wrapped return R2 candidates
 
 Scope and constraint:

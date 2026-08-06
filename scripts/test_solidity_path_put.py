@@ -817,6 +817,20 @@ def test_a_bool_return_uses_assertTrue_not_a_cast():
     return bad
 
 
+def test_a_bool_return_can_assert_a_structured_bool_coord():
+    from solidity_path_put import return_rung_assertions  # noqa: E402
+
+    got = return_rung_assertions(
+        "return == ok", ("bool", None), "_put_ret",
+        "return: return == ok", {"ok": "p_ok"},
+        {"ok": {"kind": "coord", "name": "ok"}})
+    bad = 0
+    bad += check(got == [
+        '    assertEq(_put_ret, p_ok, "return: return == ok");'
+    ], f"a bool return can compare against a certified bool coord: {got}")
+    return bad
+
+
 def test_a_whole_value_rung_on_a_tuple_unit_is_refused():
     """A WHOLE-value rung against a two-member declaration: refuse.
 
@@ -6205,6 +6219,7 @@ def main():
               test_return_rung_can_assert_a_scalar_entry_state_coord,
               test_a_retlive_that_HOLDS_kills_every_return_rung,
               test_a_bool_return_uses_assertTrue_not_a_cast,
+              test_a_bool_return_can_assert_a_structured_bool_coord,
               test_a_whole_value_rung_on_a_tuple_unit_is_refused,
               test_per_member_rungs_destructure_in_declaration_order,
               test_a_member_with_no_rung_gets_an_EMPTY_slot,
