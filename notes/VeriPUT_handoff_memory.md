@@ -8,6 +8,55 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 struct-contained mapping source-R2
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- A read-only Dataset scan showed many real contracts use state shapes such as
+  `voters[msg.sender].weight`, `_roles[role].members[account]`, and
+  `vaultBatchingState.userDeposits[receiver]`.
+- Before this change, `storage_layout()` handled top-level mappings and
+  top-level struct scalar fields, but not mappings stored inside a top-level
+  struct.
+- The slot-name parser also only accepted a bare mapping base (`bal[k].field`),
+  so a correct coordinate like `vault.userDeposits[who].amount` could not be
+  parsed for pin/oracle rendering.
+- Source-R2's `slot_lhs()` likewise stopped at an identifier-backed state var
+  and could not treat `vault.userDeposits` as the mapping base.
+
+Code change:
+
+- `parse_slot_name()` now accepts a dotted mapping base before the key list,
+  while keeping the post-key member tail separate:
+  `vault.userDeposits[who].amount` parses as base `vault.userDeposits`, key
+  `who`, tail `.amount`.
+- Added shared mapping-layout expansion for top-level mappings and mappings
+  contained inside top-level structs, including nested mapping key chains and
+  packed struct-valued mapping fields.
+- Top-level struct layout expansion now recurses through nested inplace struct
+  members for scalar fields and separately records mapping members in `maps`.
+- Source-R2 now reconstructs a dotted state path from `MemberAccess` chains, so
+  both direct access and storage aliases resolve to the same coordinate:
+  `vault.userDeposits[who].amount`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 175/175 tests.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed before this note update.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 enum mapping-key source-R2
 
 Scope and constraint:

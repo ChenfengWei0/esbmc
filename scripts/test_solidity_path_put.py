@@ -4321,6 +4321,164 @@ def test_storage_layout_expands_top_level_struct_scalar_members():
     return bad
 
 
+def test_storage_layout_expands_struct_mapping_members():
+    from solidity_path_put import (  # noqa: E402
+        _storage_layout_struct_mappings, parse_slot_name, propose_slot_vars)
+
+    types = {
+        "t_address": {"encoding": "inplace", "label": "address",
+                      "numberOfBytes": "20"},
+        "t_uint256": {"encoding": "inplace", "label": "uint256",
+                      "numberOfBytes": "32"},
+        "t_uint8": {"encoding": "inplace", "label": "uint8",
+                    "numberOfBytes": "1"},
+        "t_bal": {"encoding": "inplace", "label": "struct C.Bal",
+                  "numberOfBytes": "32",
+                  "members": [
+                      {"label": "amount", "slot": "0", "offset": "0",
+                       "type": "t_uint256"},
+                      {"label": "tag", "slot": "0", "offset": "31",
+                       "type": "t_uint8"}]},
+        "t_map": {"encoding": "mapping", "key": "t_address",
+                  "value": "t_bal"},
+    }
+    members = [{"label": "userDeposits", "slot": "2", "offset": "0",
+                "type": "t_map"}]
+    maps = _storage_layout_struct_mappings("vault", "7", members, types)
+    parsed = parse_slot_name("vault.userDeposits[who].amount")
+    proposed = propose_slot_vars(
+        maps, [("who", "address"), ("amount", "uint256")],
+        log=lambda _msg: None)
+
+    bad = 0
+    bad += check(maps == {
+        "vault.userDeposits.amount": (9, "address", 32, 0,
+                                      "vault.userDeposits", "amount"),
+        "vault.userDeposits.tag": (9, "address", 1, 31,
+                                   "vault.userDeposits", "tag"),
+    }, f"struct-contained mapping fields are layout coords: {maps}")
+    bad += check(parsed == ("vault.userDeposits", ["who"], ".amount"),
+                 f"dotted mapping base is parsed without eating tail: {parsed}")
+    bad += check(proposed == ["vault.userDeposits[msg.sender].amount",
+                              "vault.userDeposits[who].amount",
+                              "vault.userDeposits[msg.sender].tag",
+                              "vault.userDeposits[who].tag"],
+                 f"struct-contained mapping fields are proposed: {proposed}")
+    return bad
+
+
+def test_source_R2_struct_mapping_members_are_state_slots():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def member(base, name, ty="uint256"):
+        return {"nodeType": "MemberAccess", "memberName": name,
+                "expression": base,
+                "typeDescriptions": {"typeString": ty}}
+
+    def index(base, key, ty="struct C.Bal storage ref"):
+        return {"nodeType": "IndexAccess", "baseExpression": base,
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    def local_decl(ref, name, ty, value):
+        return {"nodeType": "VariableDeclarationStatement",
+                "declarations": [{
+                    "nodeType": "VariableDeclaration", "id": ref,
+                    "name": name, "storageLocation": "storage",
+                    "typeDescriptions": {"typeString": ty}}],
+                "initialValue": value}
+
+    def assign(lhs, rhs, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=", "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    def ret(expr, src):
+        return {"nodeType": "Return", "src": src, "expression": expr}
+
+    def function(fid, name, statements):
+        return {"nodeType": "FunctionDefinition", "id": fid, "name": name,
+                "parameters": {"parameters": [who_param, amount_param]},
+                "returnParameters": {"parameters": [{
+                    "id": fid + 1, "name": "",
+                    "typeDescriptions": {"typeString": "uint256"}}]},
+                "body": {"nodeType": "Block", "statements": statements}}
+
+    who_param = {"id": 21, "name": "who",
+                 "typeDescriptions": {"typeString": "address"}}
+    amount_param = {"id": 22, "name": "amount",
+                    "typeDescriptions": {"typeString": "uint256"}}
+    deposits = member(ident(10, "vault", "struct C.Vault"),
+                      "userDeposits", "mapping(address => struct C.Bal)")
+    direct_row = index(deposits, ident(21, "who", "address"))
+    direct_amount = member(direct_row, "amount")
+    alias_amount = member(ident(30, "row", "struct C.Bal storage pointer"),
+                          "amount")
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "vault",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "struct C.Vault"}},
+            function(20, "direct", [
+                assign(direct_amount, ident(22, "amount"), "100:10:0"),
+                ret(direct_amount, "120:10:0")]),
+            function(40, "viaAlias", [
+                local_decl(30, "row", "struct C.Bal storage pointer",
+                           direct_row),
+                assign(alias_amount, ident(22, "amount"), "200:10:0"),
+                ret(alias_amount, "220:10:0")])
+        ]}]}
+    maps = {"vault.userDeposits.amount": (9, "address", 32, 0,
+                                          "vault.userDeposits", "amount")}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out_file:
+        json.dump(ast, out_file)
+    try:
+        direct_specs, direct_evidence = source_assignment_r2_specs(
+            path, "C", "direct", [("who", "address"), ("amount", "uint256")],
+            {}, [("who", "id", 20), ("amount", "num", None)], arity=2,
+            maps=maps, rettypes=[("", "uint256")], log=lambda _msg: None)
+        alias_specs, alias_evidence = source_assignment_r2_specs(
+            path, "C", "viaAlias",
+            [("who", "address"), ("amount", "uint256")], {},
+            [("who", "id", 20), ("amount", "num", None)], arity=2,
+            maps=maps, rettypes=[("", "uint256")], log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    def entries(specs):
+        return {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    def equals(specs, name):
+        return [r2_term_text(item["term"])
+                for item in entries(specs).get(name, {}).get("equals", [])]
+
+    coord = "vault.userDeposits[who].amount"
+    bad = 0
+    bad += check(equals(direct_specs, coord) == ["amount"],
+                 f"direct struct mapping field assignment is mined: "
+                 f"{direct_specs}")
+    bad += check(equals(direct_specs, RETURN_VAR) == ["state." + coord],
+                 f"direct struct mapping field return is mined: {direct_specs}")
+    bad += check(equals(alias_specs, coord) == ["amount"],
+                 f"storage alias to struct mapping field is mined: "
+                 f"{alias_specs}")
+    bad += check(equals(alias_specs, RETURN_VAR) == ["state." + coord],
+                 f"storage alias return preserves struct mapping coord: "
+                 f"{alias_specs}")
+    bad += check(any(coord + ": post == amount" in line
+                     for line in direct_evidence + alias_evidence),
+                 f"struct mapping provenance is recorded: "
+                 f"{direct_evidence + alias_evidence}")
+    return bad
+
+
 def test_source_R2_top_level_struct_members_are_state_coords():
     from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
     from solidity_path_put import source_assignment_r2_specs  # noqa: E402
@@ -7134,6 +7292,8 @@ def main():
               test_source_R2_local_aliases_are_invalidated_after_mutation,
               test_source_R2_mapping_getter_returns_named_entry_slot_coord,
               test_storage_layout_expands_top_level_struct_scalar_members,
+              test_storage_layout_expands_struct_mapping_members,
+              test_source_R2_struct_mapping_members_are_state_slots,
               test_source_R2_top_level_struct_members_are_state_coords,
               test_source_R2_storage_local_aliases_resolve_to_state_coords,
               test_source_R2_storage_mapping_aliases_preserve_later_indices,

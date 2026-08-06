@@ -1608,6 +1608,18 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return "msg.sender"
         return None
 
+    def state_path(n):
+        ref = identifier_ref(n)
+        state = state_ids.get(ref)
+        if state is not None:
+            return state[0]
+        if isinstance(n, dict) and n.get("nodeType") == "MemberAccess":
+            base = state_path(n.get("expression"))
+            member = n.get("memberName")
+            if base and member:
+                return base + "." + member
+        return None
+
     def slot_lhs(n):
         if not maps:
             return None
@@ -1646,11 +1658,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return slot_lhs(expanded)
         if not keys:
             return None
-        ref = identifier_ref(cur)
-        state = state_ids.get(ref)
-        if state is None:
+        base_name = state_path(cur)
+        if base_name is None:
             return None
-        mkey = state[0] + tail
+        mkey = base_name + tail
         if mkey not in maps:
             return None
         _slot, kty, _nbytes, _off, _base, _member = maps[mkey]
@@ -1664,7 +1675,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return None
             names.append(name)
         ty = _norm_ty((n.get("typeDescriptions") or {}).get("typeString") or "")
-        return state[0] + "".join(f"[{name}]" for name in names) + tail, ty
+        return base_name + "".join(f"[{name}]" for name in names) + tail, ty
 
     def state_member_lhs(n):
         if not layout:
@@ -3195,7 +3206,8 @@ def map_key_type_ok(label):
 # forbidding brackets inside a key makes the split unambiguous instead of
 # backtracking into a wrong one.
 SLOT_NAME_RE = re.compile(
-    r"^([A-Za-z_]\w*)((?:\[[^\[\]]+\])+)((?:\.[A-Za-z_]\w*)*)$")
+    r"^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)((?:\[[^\[\]]+\])+)"
+    r"((?:\.[A-Za-z_]\w*)*)$")
 SLOT_KEY_RE = re.compile(r"\[([^\[\]]+)\]")
 
 
@@ -3298,6 +3310,13 @@ def _storage_layout_struct_members(label, base_slot, members, types):
     for mem in members or []:
         try:
             mty = types.get(mem.get("type")) or {}
+            if (mty.get("encoding") == "inplace"
+                    and mty.get("members") is not None):
+                out.update(_storage_layout_struct_members(
+                    "%s.%s" % (label, mem["label"]),
+                    slot + int(mem.get("slot", 0)),
+                    mty.get("members"), types))
+                continue
             if (mty.get("encoding") != "inplace"
                     or mty.get("members") is not None
                     or mty.get("numberOfBytes") is None):
@@ -3306,6 +3325,79 @@ def _storage_layout_struct_members(label, base_slot, members, types):
                 slot + int(mem.get("slot", 0)),
                 int(mem.get("offset", 0)),
                 int(mty["numberOfBytes"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _storage_layout_mapping_entries(label, base_slot, key_type, value_type,
+                                    types):
+    out = {}
+    try:
+        mslot = int(base_slot)
+    except (TypeError, ValueError):
+        return out
+    vt = value_type or {}
+    kts = [key_type]
+    depth_guard = 0
+    while vt.get("encoding") == "mapping":
+        depth_guard += 1
+        if depth_guard > 16:
+            return {}
+        kts.append((types.get(vt.get("key")) or {}).get("label") or "")
+        vt = types.get(vt.get("value")) or {}
+    if (vt.get("encoding") != "inplace"
+            or vt.get("numberOfBytes") is None
+            or not all(map_key_type_ok(k) for k in kts)):
+        return out
+    ktxt = (kts[0].strip() if len(kts) == 1
+            else tuple(k.strip() for k in kts))
+    if vt.get("members") is None:
+        try:
+            out[label] = (mslot, ktxt, int(vt["numberOfBytes"]), 0,
+                          label, None)
+        except (TypeError, ValueError):
+            return {}
+        return out
+    for mem in vt["members"]:
+        try:
+            mty = types.get(mem.get("type")) or {}
+            if (mty.get("encoding") != "inplace"
+                    or mty.get("members") is not None
+                    or mty.get("numberOfBytes") is None):
+                continue
+            if int(mem.get("slot", 0)) != 0:
+                continue
+            out["%s.%s" % (label, mem["label"])] = (
+                mslot, ktxt, int(mty["numberOfBytes"]),
+                int(mem.get("offset", 0)), label, mem["label"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _storage_layout_struct_mappings(label, base_slot, members, types):
+    out = {}
+    if not label:
+        return out
+    try:
+        slot = int(base_slot)
+    except (TypeError, ValueError):
+        return out
+    for mem in members or []:
+        try:
+            mty = types.get(mem.get("type")) or {}
+            name = "%s.%s" % (label, mem["label"])
+            mslot = slot + int(mem.get("slot", 0))
+            if mty.get("encoding") == "mapping":
+                kt = (types.get(mty.get("key")) or {}).get("label") or ""
+                vt = types.get(mty.get("value")) or {}
+                out.update(_storage_layout_mapping_entries(
+                    name, mslot, kt, vt, types))
+            elif (mty.get("encoding") == "inplace"
+                  and mty.get("members") is not None):
+                out.update(_storage_layout_struct_mappings(
+                    name, mslot, mty.get("members"), types))
         except (KeyError, TypeError, ValueError):
             continue
     return out
@@ -3451,71 +3543,8 @@ def storage_layout(project, contract):
             # `_balances` never entered this table at all. Peeling reaches the
             # scalar (or packed-struct) leaf and records what each level's key
             # must be; `map_slot_expr` hashes them in the same order.
-            kts = [kt]
-            depth_guard = 0
-            while vt.get("encoding") == "mapping":
-                depth_guard += 1
-                if depth_guard > 16:
-                    # Not reachable from Solidity, but a malformed or cyclic
-                    # `types` table would otherwise spin here forever, and a
-                    # hang in a layout reader looks exactly like a slow solver.
-                    kts = None
-                    break
-                kts.append((types.get(vt.get("key")) or {}).get("label") or "")
-                vt = types.get(vt.get("value")) or {}
-            if kts is None:
-                continue
-            if (vt.get("encoding") != "inplace"
-                    or vt.get("numberOfBytes") is None):
-                continue
-            # EVERY level's key must be a value type, not just the first. One
-            # dynamic key anywhere in the chain makes the whole address
-            # uncomputable by `abi.encode`, and computing it anyway would name
-            # a word nothing wrote.
-            if not all(map_key_type_ok(k) for k in kts):
-                continue
-            try:
-                # One level keeps the plain string, so every reader that has
-                # only ever seen a string is bit-identical on the shapes it
-                # already handled.
-                ktxt = (kts[0].strip() if len(kts) == 1
-                        else tuple(k.strip() for k in kts))
-                mslot = int(e["slot"])
-                if vt.get("members") is None:
-                    maps[e["label"]] = (mslot, ktxt,
-                                        int(vt["numberOfBytes"]), 0,
-                                        e["label"], None)
-                else:
-                    # ---- A PACKED STRUCT VALUE: ONE ENTRY PER SCALAR FIELD --
-                    #
-                    # The element is an aggregate and carries no candidate --
-                    # the verifier says so in as many words, "bounding it would
-                    # need a COORDINATE PER FIELD, which is a different
-                    # coordinate kind". Its scalar FIELDS are ordinary
-                    # coordinates, so each becomes its own row, named
-                    # `<map>.<field>` here and proposed as `<map>[k].<field>`.
-                    #
-                    # ONLY FIELDS IN THE ELEMENT'S FIRST WORD. solc reports a
-                    # member's own `slot` relative to the struct's base, and a
-                    # member at slot n lives at `keccak(...) + n` -- expressible,
-                    # but it is address arithmetic this file does not do yet, and
-                    # emitting it with the offset ignored would read the wrong
-                    # word. A skipped field costs a candidate; a wrong one costs
-                    # a green assertion about an unrelated quantity.
-                    for mem in vt["members"]:
-                        mty = types.get(mem.get("type")) or {}
-                        if (mty.get("encoding") != "inplace"
-                                or mty.get("members") is not None
-                                or mty.get("numberOfBytes") is None):
-                            continue
-                        if int(mem.get("slot", 0)) != 0:
-                            continue
-                        maps["%s.%s" % (e["label"], mem["label"])] = (
-                            mslot, ktxt, int(mty["numberOfBytes"]),
-                            int(mem.get("offset", 0)),
-                            e["label"], mem["label"])
-            except (KeyError, TypeError, ValueError):
-                continue
+            maps.update(_storage_layout_mapping_entries(e["label"], e["slot"],
+                                                        kt, vt, types))
             continue
         # Only INPLACE value types can be read/written as a masked slot word.
         # A `bytes`/`string` slot holds a length-or-payload encoding, not the
@@ -3525,6 +3554,8 @@ def storage_layout(project, contract):
         nb = ty.get("numberOfBytes")
         if ty.get("members") is not None:
             out.update(_storage_layout_struct_members(
+                e.get("label"), e.get("slot"), ty["members"], types))
+            maps.update(_storage_layout_struct_mappings(
                 e.get("label"), e.get("slot"), ty["members"], types))
             continue
         if nb is None:
