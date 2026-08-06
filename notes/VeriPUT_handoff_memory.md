@@ -701,6 +701,12 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   actual certified/not-certified PUT verdict remains in `certify_all.py`'s own
   output JSONL. Optional `--memlimit-gb` applies an inherited address-space cap
   to the certifier process and its ESBMC children.
+- `unit_schedule_journal.py`: summarizes a `unit_schedule_run.py` JSONL journal
+  and, when given the original unit schedule, emits a retry schedule containing
+  jobs whose latest journal row is not `ok` plus jobs never attempted. This is
+  read-only unless `--out` or `--retry-out` is passed. It reports latest status
+  by benchmark and schedule priority, so failed priority-0 changed-function
+  units can be triaged before spending a longer certification pass.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -792,6 +798,10 @@ Interpretation:
   `selected=0`, `pending=0`, `already_done=0` and did not create the external
   cache path. This is expected until the post-preheat gate is no longer
   `blocked`.
+- Read-only unit journal summary smoke with an empty journal and the current
+  no-AST unit schedule produced: `schedule_jobs=0`, `skipped_rows=548`,
+  `attempt_rows=0`, `retry_jobs=0`, `never_attempted=0`, and did not create the
+  external cache path.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4606,7 +4616,11 @@ Implication for next work:
    `certify_all.py --subject-* --unit ...` jobs.
    Audit that schedule with `unit_schedule_run.py --dry-run --journal <jsonl>`
    before real certification. For real runs, pass an explicit external journal
-   and the agreed memory cap through `--memlimit-gb`.
+   and the agreed memory cap through `--memlimit-gb`. After any interrupted or
+   completed unit run, use
+   `unit_schedule_journal.py --schedule <schedule.json> --retry-out <retry.json>`
+   to summarize latest status and build the next retry schedule before spending
+   the next time/memory gradient.
 6. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.
