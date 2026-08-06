@@ -150,6 +150,30 @@ def test_subject_from_cert_record_round_trips():
     return bad
 
 
+def test_subject_record_preserves_inferred_solc_bin():
+    with tempfile.TemporaryDirectory() as td:
+        solc = str(Path(td) / "toolchain" / "solc-0.8.17")
+        make_subject(
+            td,
+            "repo__C",
+            solc_bin=None,
+            solc="0.8.17",
+            compile={"cmd": f"{solc} --bin flat.sol"})
+        subject = resolve_subject("repo__C", root=td, unit="f")
+        record = subject.to_record()
+        restored = subject_from_record({"subject": record})
+    bad = 0
+    bad += check(record["solc"] == "0.8.17",
+                 f"solc version is retained: {record}")
+    bad += check(record["inferred_solc_bin"] == solc,
+                 f"compile command solc is inferred: {record}")
+    bad += check(subject.with_inferred_solc_bin().solc_bin == solc,
+                 "inferred solc can be promoted explicitly")
+    bad += check(restored.to_record() == record,
+                 "inferred solc survives manifest round-trip")
+    return bad
+
+
 def test_bad_status_is_not_usable():
     with tempfile.TemporaryDirectory() as td:
         make_subject(td, status="compile-failed")
@@ -280,6 +304,42 @@ def test_generate_ast_start_failure_cleans_temp_file():
                  "missing solc did not leave flat.sol.solast")
     bad += check(not tmp_left,
                  f"missing solc cleaned temp files: {tmp_left}")
+    return bad
+
+
+def test_unit_manifest_cli_generates_ast_with_inferred_solc():
+    with tempfile.TemporaryDirectory() as td:
+        script = make_fake_solc(
+            Path(td) / "solc-0.8.17",
+            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+        d = make_subject(
+            td,
+            "repo__C",
+            solc_bin=None,
+            solc="0.8.17",
+            compile={"cmd": f"{script} --bin flat.sol"})
+        (d / "flat.sol.solast").unlink()
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", td,
+            "--subject-id", "repo__C",
+            "--generate-ast",
+            "--use-inferred-solc-bin",
+        ], capture_output=True, text=True)
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    row = data["subjects"][0]
+    bad = 0
+    bad += check(row["status"] == "ok",
+                 f"inferred solc generated an AST: {row}")
+    bad += check(row["subject"]["solc_bin"] == script,
+                 f"inferred solc was promoted for this run: {row['subject']}")
     return bad
 
 
@@ -484,12 +544,14 @@ def main():
         test_resolve_subject_from_root_and_unit,
         test_resolve_subject_requires_explicit_unit,
         test_subject_from_cert_record_round_trips,
+        test_subject_record_preserves_inferred_solc_bin,
         test_bad_status_is_not_usable,
         test_ast_unit_enumeration_is_target_contract_scoped,
         test_unit_manifest_records_missing_ast_without_solc,
         test_generate_ast_is_atomic_on_success,
         test_generate_ast_failure_leaves_no_partial_solast,
         test_generate_ast_start_failure_cleans_temp_file,
+        test_unit_manifest_cli_generates_ast_with_inferred_solc,
         test_unit_manifest_cli_lists_units_without_esbmc,
         test_unit_manifest_cli_shard_and_resume,
         test_unit_manifest_cli_reads_target_manifest_hints,

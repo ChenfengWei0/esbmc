@@ -53,9 +53,21 @@ def _unit_hints(row: dict) -> dict:
 
 def _solc_key(row: dict) -> str:
     subject = _subject(row)
-    solc = subject.get("solc_bin") or "<missing-solc-bin>"
+    solc = subject.get("solc_bin") or subject.get("inferred_solc_bin") \
+        or "<missing-solc-bin>"
     extra = " ".join(subject.get("solc_extra") or [])
-    return f"{Path(solc).name} {extra}".strip()
+    version = subject.get("solc")
+    suffix = f" {extra}".rstrip()
+    if subject.get("solc_bin"):
+        return f"{Path(solc).name}{suffix}".strip()
+    if subject.get("inferred_solc_bin"):
+        label = f"inferred:{Path(solc).name}"
+        if version:
+            label = f"{label}({version})"
+        return f"{label}{suffix}".strip()
+    if version:
+        return f"<missing-solc-bin>({version}){suffix}".strip()
+    return f"{Path(solc).name}{suffix}".strip()
 
 
 def _sample(row: dict) -> dict:
@@ -98,8 +110,11 @@ def build_readiness(unit_manifest: dict, *, sample_limit: int = 10) -> dict:
 
         if status == "missing-ast":
             ast_by_solc[bench][_solc_key(row)] += 1
-            if _subject(row).get("solc_bin"):
+            subject = _subject(row)
+            if subject.get("solc_bin"):
                 preheat_by_benchmark[bench]["preheatable_missing_ast"] += 1
+            elif subject.get("inferred_solc_bin"):
+                preheat_by_benchmark[bench]["inferable_solc_bin"] += 1
             else:
                 preheat_by_benchmark[bench]["missing_solc_bin"] += 1
             if len(samples["missing_ast"]) < sample_limit:

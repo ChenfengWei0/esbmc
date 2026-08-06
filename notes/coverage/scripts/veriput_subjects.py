@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,27 @@ def _clean_key(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("_")
 
 
+def _infer_solc_bin(metadata: dict) -> str | None:
+    recorded = metadata.get("inferred_solc_bin")
+    if isinstance(recorded, str) and recorded:
+        return recorded
+    compile_block = metadata.get("compile") or {}
+    cmd = compile_block.get("cmd") if isinstance(compile_block, dict) else None
+    if not isinstance(cmd, str) or not cmd.strip():
+        return None
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return None
+    if not argv:
+        return None
+    first = argv[0]
+    name = Path(first).name
+    if name == "solc" or name.startswith("solc-"):
+        return first
+    return None
+
+
 @dataclass(frozen=True)
 class PreparedSubject:
     benchmark: str
@@ -56,6 +78,18 @@ class PreparedSubject:
     def benchmark_key(self) -> str:
         return f"{_clean_key(self.benchmark)}__{_clean_key(self.subject_id)}"
 
+    @property
+    def inferred_solc_bin(self) -> str | None:
+        if self.solc_bin:
+            return None
+        return _infer_solc_bin(self.metadata)
+
+    def with_inferred_solc_bin(self) -> "PreparedSubject":
+        inferred = self.inferred_solc_bin
+        if not inferred:
+            return self
+        return replace(self, solc_bin=inferred)
+
     def to_record(self) -> dict:
         return {
             "schema": "veriput-subject/v1",
@@ -68,6 +102,8 @@ class PreparedSubject:
             "contract": self.contract,
             "unit": self.unit,
             "solc_bin": self.solc_bin,
+            "solc": self.metadata.get("solc"),
+            "inferred_solc_bin": self.inferred_solc_bin,
             "solc_extra": list(self.solc_extra),
             "meta_status": self.metadata.get("status"),
         }
@@ -188,7 +224,11 @@ def subject_from_record(record: dict) -> PreparedSubject | None:
         unit=data["unit"],
         solc_bin=data.get("solc_bin"),
         solc_extra=tuple(data.get("solc_extra") or ()),
-        metadata={"status": data.get("meta_status")},
+        metadata={
+            "status": data.get("meta_status"),
+            "solc": data.get("solc"),
+            "inferred_solc_bin": data.get("inferred_solc_bin"),
+        },
     )
 
 

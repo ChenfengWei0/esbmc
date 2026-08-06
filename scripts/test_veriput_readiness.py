@@ -40,6 +40,22 @@ def fixture_manifest():
                 },
             },
             {
+                "status": "missing-ast",
+                "subject": {
+                    "benchmark": "stress243",
+                    "subject_id": "stress_missing_ast",
+                    "contract": "S",
+                    "solc": "0.8.17",
+                    "inferred_solc_bin": "/opt/solc-0.8.17",
+                    "solc_extra": [],
+                },
+                "unit_hints": {
+                    "hinted_units": [],
+                    "missing_unit_hints": [],
+                    "pending_unit_hints": [],
+                },
+            },
+            {
                 "status": "error",
                 "reason": "/tmp/s is not a usable subject: status='compile-failed'",
                 "subject": {
@@ -75,7 +91,7 @@ def test_readiness_groups_status_errors_and_hints():
     bad = 0
     bad += check(report["schema"] == "veriput-readiness/v1",
                  f"schema is stable: {report['schema']}")
-    bad += check(s["status"] == {"error": 1, "missing-ast": 1, "ok": 1},
+    bad += check(s["status"] == {"error": 1, "missing-ast": 2, "ok": 1},
                  f"status totals are grouped: {s['status']}")
     bad += check(s["benchmarks"]["bugfix124"]["missing-ast"] == 1,
                  f"benchmark status is counted: {s['benchmarks']}")
@@ -89,8 +105,13 @@ def test_readiness_groups_status_errors_and_hints():
     bad += check(s["missing_ast_by_solc"]["bugfix124"]
                  ["solc-0.8.29 --via-ir"] == 1,
                  f"AST preheat solc bucket is recorded: {s['missing_ast_by_solc']}")
+    bad += check(s["missing_ast_by_solc"]["stress243"]
+                 ["inferred:solc-0.8.17(0.8.17)"] == 1,
+                 f"inferred solc bucket is recorded: {s['missing_ast_by_solc']}")
     bad += check(s["preheat"]["bugfix124"]["preheatable_missing_ast"] == 1,
                  f"preheatable missing AST is counted: {s['preheat']}")
+    bad += check(s["preheat"]["stress243"]["inferable_solc_bin"] == 1,
+                 f"inferable solc is counted separately: {s['preheat']}")
     return bad
 
 

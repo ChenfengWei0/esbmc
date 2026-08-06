@@ -57,6 +57,12 @@ The user's current execution constraints tighten the work order:
   60s/8GiB, then 120s/8GiB, then at most 600s/10GiB.
 - Do not run a POC merely to answer a question already answered by logs, source,
   unit tests, a small synthetic regression, or GOTO inspection.
+- `/home/samson/workspace/VeriPUT/Datasets` and the prepared `Results`
+  subjects are shared with another running experiment. Treat both trees as
+  read-only unless the user explicitly authorizes a preheat/write pass. In
+  particular, do not modify Dataset contracts. Current readiness checks use
+  stdout pipes only and pass neither `--out`, `--journal`, nor
+  `--generate-ast`.
 - Before spending a POC run, read the POC source and existing pathcov artefacts
   and write down the expected path, input region, slot region, and assertion
   oracle. Treat this as the ground truth for debugging.
@@ -621,6 +627,73 @@ into one coherent 5/5 attempt.
 
 This is essential for external-call POCs but should not block a queue-head unit
 that contains no relevant external call.
+
+## 10.1 Real benchmark target bridge status
+
+The POCs are diagnostic only. The eventual benchmark target set is read from
+`/home/samson/workspace/VeriPUT/Datasets` plus prepared subject metadata under
+`/home/samson/workspace/VeriPUT/Results`.
+
+Current target-manifest policy:
+
+- `peer182`: only prepared `contracts_080` subjects are targets. The
+  unupgraded Peer contract is skipped/ignored.
+- `bugfix124`: `Datasets/Patch-Bug-Bench/summary.csv` supplies the bug/fix
+  pair, target contract, and changed functions as unit hints.
+- `stress243`: `Datasets/Stress-Projects/TARGETS.csv` supplies target
+  contracts. `stress203` is accepted as a CLI alias for the current prepared
+  key, but readiness summaries are reported under `stress243`.
+- Difficulty assumption from the user remains:
+  `peer < bugfix124 <= stress203/stress243`.
+
+The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
+
+- `target_manifest.py`: read-only target manifest, no solc/Forge/ESBMC.
+- `subject_unit_manifest.py`: maps target rows to prepared subject rows and
+  enumerates public/external target-contract units from compact ASTs when they
+  already exist. By default it does not invoke solc. It can preheat with
+  `--generate-ast`, and can explicitly promote a solc path inferred from
+  `meta.compile.cmd` with `--use-inferred-solc-bin`.
+- `veriput_readiness.py`: summarizes target->unit readiness without invoking
+  solc/Forge/ESBMC.
+
+As of the latest read-only census on 2026-08-06:
+
+- Combined target rows: 548.
+- Unit-manifest status: 509 `missing-ast`, 39 `error`, 0 `ok`.
+- By benchmark:
+  - `peer182`: 182 `missing-ast`.
+  - `bugfix124`: 124 `missing-ast`.
+  - `stress243`: 203 `missing-ast`, 39 `error`.
+- Stress prepared errors:
+  - 32 `prepared-status:compile-failed`;
+  - 7 `prepared-status:flatten-failed`.
+- Missing AST preheat classification:
+  - `bugfix124`: 124 `preheatable_missing_ast`;
+  - `peer182`: 182 `preheatable_missing_ast`;
+  - `stress243`: 51 `preheatable_missing_ast`, 152
+    `inferable_solc_bin`, 0 true `missing_solc_bin`.
+- Stress inferred solc buckets from historical `meta.compile.cmd`:
+  - `solc-0.8.35`: 96 inferred, 46 explicit;
+  - `solc-0.8.15`: 35 inferred, 5 explicit;
+  - `solc-0.8.17`: 19 inferred;
+  - `solc-0.8.19`: 1 inferred;
+  - `solc-0.8.26`: 1 inferred.
+- Bugfix pending unit hints: 381 changed-function hints pending AST
+  enumeration. These hints are priorities, not filters.
+
+Interpretation:
+
+- The current real-benchmark blocker is not yet region synthesis or ESBMC
+  proof strength. The first blocker is missing compact ASTs for all 509 usable
+  prepared subjects.
+- For Stress, most apparent `missing_solc_bin` rows were not real metadata
+  loss. The successful flatten/compile record contains the exact solc path in
+  `meta.compile.cmd`, so the tool now reports this as `inferable_solc_bin` and
+  can use it only when explicitly requested.
+- Do not run the preheat pass while the user's other experiment depends on
+  Dataset/Results immutability. When authorized, preheat in shards with journals
+  and no ESBMC.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 

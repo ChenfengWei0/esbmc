@@ -226,6 +226,8 @@ def build_manifest(args):
                                "error"):
             row = _target_error_row(subject, target_info)
         else:
+            if args.generate_ast and args.use_inferred_solc_bin:
+                subject = subject.with_inferred_solc_bin()
             row = manifest_for_subject(
                 subject,
                 generate_ast=args.generate_ast,
@@ -294,6 +296,9 @@ def main():
                     help="invoke each subject's solc_bin to create a missing "
                          "compact AST before enumeration. Still never starts "
                          "ESBMC")
+    ap.add_argument("--use-inferred-solc-bin", action="store_true",
+                    help="with --generate-ast, use a solc path inferred from "
+                         "prepared meta compile.cmd when solc_bin is absent")
     ap.add_argument("--ast-timeout", type=float, default=DEFAULT_AST_TIMEOUT_S,
                     help="per-subject solc timeout in seconds when "
                          "--generate-ast is set")
