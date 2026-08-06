@@ -146,14 +146,51 @@ def _as_int(value):
 
 
 def region_has_width(region: dict) -> bool:
-    for lo_hi in (region or {}).values():
+    return bool(wide_region_coords(region))
+
+
+def wide_region_coords(region: dict) -> list[str]:
+    coords = []
+    for name, lo_hi in (region or {}).items():
         if not isinstance(lo_hi, list) or len(lo_hi) != 2:
             continue
         lo = _as_int(lo_hi[0])
         hi = _as_int(lo_hi[1])
         if lo is not None and hi is not None and hi > lo:
-            return True
-    return False
+            coords.append(name)
+    return sorted(coords)
+
+
+def weak_detail_tag(detail: str) -> str:
+    if detail == "no-fuzz-params":
+        return "no-fuzz-params"
+    if detail == "no-wide-region":
+        return "no-wide-region"
+    if detail.startswith("no-fuzz:wide-state-coordinate:"):
+        return "no-fuzz:wide-state-coordinate"
+    if detail.startswith("no-fuzz:wide-derived-coordinate:"):
+        return "no-fuzz:wide-derived-coordinate"
+    if detail.startswith("no-fuzz:wide-unlifted-coordinate:"):
+        return "no-fuzz:wide-unlifted-coordinate"
+    if detail.startswith("no-fuzz:state-skipped:"):
+        return "no-fuzz:state-coordinate-dropped"
+    if detail.startswith("no-fuzz:") and "cannot bound" in detail:
+        if "type `bool`" in detail:
+            return "no-fuzz:stale-bool-unliftable-note"
+        return "no-fuzz:unliftable-type-note"
+    if detail.startswith("no-fuzz:"):
+        return "no-fuzz:other"
+    if detail.startswith("no-oracle:ladder-refusal:"):
+        return "no-oracle:ladder-refusal"
+    if detail.startswith("no-oracle:") and "constant/immutable" in detail:
+        return "no-oracle:constant-immutable"
+    if detail.startswith("no-oracle:") and "no storage slot" in detail:
+        return "no-oracle:no-storage-slot"
+    if detail == "no-oracle:undifferentiated":
+        return "no-oracle:undifferentiated"
+    if detail.startswith("no-oracle:"):
+        return "no-oracle:other-skipped"
+    return "other"
 
 
 def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
@@ -178,10 +215,12 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
             "test": doc.get("test"),
             "file": doc.get("file"),
             "fuzz_params": stats.get("fuzz_params", 0),
+            "lifted": stats.get("lifted") or [],
             "asserts": stats.get("asserts", 0),
             "holes": doc.get("holes") or {},
             "pins": doc.get("pins") or {},
             "region_coords": sorted(region),
+            "wide_region_coords": wide_region_coords(region),
             "wide_region": region_has_width(region),
         }
         weak_reasons = []
@@ -189,6 +228,18 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
         if row["fuzz_params"] <= 0:
             weak_reasons.append("no-fuzz-params")
             weak_details.append("no-fuzz-params")
+            for note in doc.get("notes") or []:
+                if "cannot bound" in note or "NOT PARAMETERIZED" in note:
+                    weak_details.append(f"no-fuzz:{note}")
+            for skipped in stats.get("state_skipped") or []:
+                weak_details.append(f"no-fuzz:state-skipped:{skipped}")
+            for coord in row["wide_region_coords"]:
+                if coord.startswith("state."):
+                    weak_details.append(f"no-fuzz:wide-state-coordinate:{coord}")
+                elif "." in coord:
+                    weak_details.append(f"no-fuzz:wide-derived-coordinate:{coord}")
+                elif coord not in row["lifted"]:
+                    weak_details.append(f"no-fuzz:wide-unlifted-coordinate:{coord}")
         if row["asserts"] <= 0:
             weak_reasons.append("no-oracle")
             for reason in doc.get("oracle_skipped") or (stats.get("oracle_skipped") or []):
@@ -202,6 +253,7 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
             weak_details.append("no-wide-region")
         row["weak_reasons"] = weak_reasons
         row["weak_details"] = weak_details
+        row["weak_detail_tags"] = sorted({weak_detail_tag(d) for d in weak_details})
         row["strong_shape"] = not weak_reasons
         rows.append(row)
     return rows, bad
@@ -296,9 +348,11 @@ def unit_matches_filters(row: dict, args) -> bool:
 def add_unit_summaries(row: dict) -> None:
     weak_reasons = Counter()
     weak_details = Counter()
+    weak_detail_tags = Counter()
     for put in row["puts"]:
         weak_reasons.update(put.get("weak_reasons") or [])
         weak_details.update(put.get("weak_details") or [])
+        weak_detail_tags.update(put.get("weak_detail_tags") or [])
     certs = row.get("certifications") or []
     certified_paths = set()
     not_certified_paths = set()
@@ -313,6 +367,7 @@ def add_unit_summaries(row: dict) -> None:
         "with_oracle": sum(1 for p in row["puts"] if p.get("asserts", 0) > 0),
         "with_fuzz_params": sum(1 for p in row["puts"] if p.get("fuzz_params", 0) > 0),
         "weak_reasons": dict(sorted(weak_reasons.items())),
+        "weak_detail_tags": dict(sorted(weak_detail_tags.items())),
         "weak_details": dict(sorted(weak_details.items())),
     }
     row["cert_summary"] = {
@@ -450,6 +505,8 @@ def print_text(doc: dict, limit: int) -> None:
         print(f"  strong-shape PUTs      {row['put_summary']['strong_shape']}")
         if row["put_summary"]["weak_reasons"]:
             print(f"  weak reasons           {row['put_summary']['weak_reasons']}")
+        if row["put_summary"]["weak_detail_tags"]:
+            print(f"  weak detail tags       {row['put_summary']['weak_detail_tags']}")
         if row["put_summary"]["weak_details"]:
             shown = dict(list(row["put_summary"]["weak_details"].items())[:3])
             print(f"  weak details           {shown}")

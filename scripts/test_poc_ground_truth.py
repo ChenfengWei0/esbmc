@@ -137,6 +137,9 @@ def test_inventory_filters_and_reports_weak_reasons():
             "enc": 7,
             "depth": 1,
             "ladder_refusal": "region coordinate refused",
+            "notes": [
+                "coordinate `b` has type `bool`, which this emitter cannot bound",
+            ],
             "region": {
                 "x": ["5", "5"],
             },
@@ -145,6 +148,9 @@ def test_inventory_filters_and_reports_weak_reasons():
                 "asserts": 0,
                 "oracle_skipped": [
                     "state.x (no storage slot)",
+                ],
+                "state_skipped": [
+                    "state.y in [0, 9] (width > 1, DROPPED)",
                 ],
             },
         }) + "\n")
@@ -172,10 +178,20 @@ def test_inventory_filters_and_reports_weak_reasons():
         }, f"weak PUT reasons are bucketed: {unit['put_summary']}")
         bad += check(unit["put_summary"]["weak_details"] == {
             "no-fuzz-params": 1,
+            "no-fuzz:coordinate `b` has type `bool`, which this emitter cannot bound": 1,
+            "no-fuzz:state-skipped:state.y in [0, 9] (width > 1, DROPPED)": 1,
             "no-oracle:ladder-refusal:region coordinate refused": 1,
             "no-oracle:state.x (no storage slot)": 1,
             "no-wide-region": 1,
         }, f"weak PUT details preserve oracle causes: {unit['put_summary']}")
+        bad += check(unit["put_summary"]["weak_detail_tags"] == {
+            "no-fuzz-params": 1,
+            "no-fuzz:stale-bool-unliftable-note": 1,
+            "no-fuzz:state-coordinate-dropped": 1,
+            "no-oracle:ladder-refusal": 1,
+            "no-oracle:no-storage-slot": 1,
+            "no-wide-region": 1,
+        }, f"weak PUT detail tags are bucketed: {unit['put_summary']}")
         bad += check(unit["put_summary"]["strong_shape"] == 1,
                      f"strong PUTs stay counted separately: {unit['put_summary']}")
         bad += check(doc["summary"]["unit_status"] == {"ready-strong": 1}

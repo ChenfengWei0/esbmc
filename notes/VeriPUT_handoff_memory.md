@@ -15,6 +15,8 @@ rule against creating new Markdown files.
   (`[solidity] Strengthen parameterized path test synthesis`)
 - Latest pushed commit when the st1inch attempt-3 replay repair began:
   `bb9443d52f` (`[solidity] Recognize all corpus benches in PUT sweep`)
+- Latest pushed commit before the no-fuzz inventory classifier work:
+  `a83fc1715b` (`[solidity] Explain weak VeriPUT POC oracles`)
 - Pushed remote branch: `E-SOL/feat/veriput-fuzz-first`
 - Snapshot checks:
   - `python3 -m py_compile scripts/solidity_path_generalise.py
@@ -27,6 +29,16 @@ rule against creating new Markdown files.
     pending script patch.
   - `git diff --check` on the touched scripts/docs: passed after the pending
     script patch.
+  - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+    notes/coverage/scripts/poc_ground_truth.py
+    scripts/test_poc_ground_truth.py`: passed after the no-fuzz inventory
+    classifier patch.
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_poc_ground_truth.py`:
+    passed after the no-fuzz inventory classifier patch.
+  - Read-only `poc_ground_truth.py --only ... --limit 1` smokes passed for
+    `D11_Bytes32Equality.takeBytes32`, `P26_TypeMatrix.takeBool`, and
+    `F02_SetterFocus.seed`. These runs did not call solc, Forge, fuzzing, or
+    ESBMC.
 - POC run after the script patch:
   - `aqua_Aqua__Aqua__rawBalances` Stage 2 attempt 2, 120s/8GiB:
     passed, `2 certified / 0 not / 2 witnessed`.
@@ -180,6 +192,9 @@ The snapshot contains substantial improvements over the paper prototype:
 - width provenance, guarded-assertion accounting, binary provenance, refusal
   buckets, and fresh per-invocation logs;
 - stage drivers and a single-POC entry point.
+- read-only POC ground-truth inventory with `Contract.unit` filtering,
+  per-unit status buckets, raw weak PUT evidence, and compact
+  `weak_detail_tags` for no-oracle/no-fuzz triage.
 
 The Python unit tests exercise many of these mechanisms, including state pins,
 mapping members, sender/value gates, R2 proposal, rollback, antichains, guarded
@@ -319,6 +334,27 @@ properties, but it does not implement the paper's fixed candidate grammar.
   but are not enabled coherently by the official entry point.
 - A function existing behind a switch is not pipeline functionality until its
   call site enables it and records the configuration.
+
+### 5.5 Current no-fuzz PUT attribution
+
+The read-only inventory now preserves raw `weak_details` and also emits compact
+`weak_detail_tags`. The tags are diagnostic; they do not make a weak PUT count
+as B.
+
+Static smoke classification on existing artefacts:
+
+- `D11_Bytes32Equality.takeBytes32`: certified paths exist, but the emitted
+  PUTs have no fuzz parameter. The wide region is over the derived coordinate
+  `b.length` plus dropped `state.tag`. This points to a bytesN
+  derived-coordinate/model gap, not a missing proof run.
+- `P26_TypeMatrix.takeBool`: the checked-in PUT artefact still says `bool`
+  cannot be bounded. Current `scripts/solidity_path_put.py` already supports
+  bool lifting, so this is classified as a stale bool-unliftable note plus
+  dropped state, not a current bool emitter bug.
+- `F02_SetterFocus.seed`: the only wide region is `state.bal`, and the emitter
+  drops it because entry state is not havoced by the generated test. This is a
+  fixture/state-establishment problem, not a fuzz-parameter synthesis target
+  under the current PUT shape.
 
 ## 6. Queue-head evidence: `farming__Distributor__setDistributor`
 
