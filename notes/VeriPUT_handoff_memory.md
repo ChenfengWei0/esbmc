@@ -3662,3 +3662,71 @@ Selection rule:
 Fuzz policy remains refute-only. It can cheaply find counterexamples for
 candidate PUT assertions, region choices, and replay/instrumentation mistakes,
 but it must never be counted as proof that an assertion or region is correct.
+
+## 2026-08-06 st1inch approve attempt1 result and PUT-emitter repair
+
+Official spend:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__approve \
+  --stage all --cell gate --attempt 1 --fresh
+```
+
+Budget tier used: attempt1, 60s / 8GiB.
+
+Result:
+
+- Stage 1 completed in 31.3s and produced a path report.
+- Stage 2 completed in 0.8s and certified 2/2 witnessed paths:
+  - enc=2: `msg.value in [1, 2^256-1]`, non-payable value-gate revert;
+  - enc=3: `msg.value in [0, 0]`, body enters and immediately reverts.
+- Stage 3 completed without crashing but emitted 0 PUTs:
+  - enc=2 REFUSED;
+  - enc=3 REFUSED.
+
+Root cause was outside ESBMC proving:
+
+- The concrete Foundry replay emitted by coverage had dropped irrelevant
+  calldata arguments:
+  - high-level body-revert case: `try c1.approve() {} catch {}`;
+  - value-gate case: `abi.encodeWithSignature("approve()")`.
+- The Solidity declaration is `approve(address,uint256)`.
+- `scripts/solidity_path_put.py` correctly refused to rewrite by position when
+  declared arity 2 did not match emitted arity 0, but that made always-revert
+  ERC20 entries unproductive even though Stage 2 proved the path independent of
+  calldata.
+
+Code-level repair:
+
+- `scripts/solidity_path_put.py` now detects omitted concrete calldata
+  arguments when the AST declaration has more parameters than the emitted call.
+- If each omitted parameter has a renderable scalar type (`bool`, `address`,
+  `uint*`), the PUT emitter:
+  - gives anonymous parameters stable names (`arg0`, `arg1`, ...);
+  - completes the high-level or low-level call;
+  - updates low-level `abi.encodeWithSignature` strings, e.g.
+    `approve()` -> `approve(address,uint256)`;
+  - lifts the omitted calldata parameters as full-domain fuzz inputs.
+- Unsupported omitted parameter types still fail closed.
+- This is sound for the st1inch disabled entries because the certified region
+  leaves those calldata parameters unconstrained: they do not affect the path,
+  and the only oracle is the revert exit kind.
+
+Validation, without spending another ESBMC run:
+
+```sh
+python3 scripts/test_solidity_path_put.py
+```
+
+Result: 142/142 tests passed. Added regression coverage for both failing shapes:
+
+- `test_missing_replay_args_become_full_domain_fuzz_inputs`;
+- `test_missing_low_level_value_gate_args_update_abi_signature`.
+
+Do not rerun `st1inch approve` immediately just to see the expected B change if
+we are still preserving attempts. The next justified run can be either
+`transfer` attempt1, which should exercise the same repair on a sibling disabled
+entry, or `approve` attempt2 if we specifically want to measure the repaired
+row. Under the adaptive policy, this is a diagnostic fix, not a proof-time
+timeout.

@@ -2930,6 +2930,58 @@ def lift_kind(sol_type):
     return None
 
 
+def full_lift_bounds(sol_type):
+    """Full scalar domain for a type this emitter can place in a PUT signature."""
+    lk = lift_kind(sol_type)
+    if lk is None:
+        return None
+    kind, width = lk
+    if kind == "bool":
+        return (0, 1)
+    return (0, (1 << width) - 1)
+
+
+def default_call_arg(sol_type):
+    """Concrete placeholder used before a missing emitted arg is fuzz-lifted."""
+    lk = lift_kind(sol_type)
+    if lk is None:
+        return None
+    kind, _width = lk
+    if kind == "bool":
+        return "false"
+    if kind == "address":
+        return "address(uint160(0))"
+    return "0"
+
+
+def signature_type(sol_type):
+    """ABI signature spelling for a type whose omitted argument can be rebuilt."""
+    t = _norm_ty(sol_type)
+    if t == "address payable":
+        return "address"
+    if t in ("bool", "address"):
+        return t
+    m = re.match(r"^uint(\d+)?$", t)
+    if m:
+        return f"uint{m.group(1) or 256}"
+    return None
+
+
+def named_params(params):
+    """Stable names for anonymous or duplicate Solidity parameters."""
+    out, used = [], set()
+    for idx, (name, ty) in enumerate(params or []):
+        base = (name or "").strip() or f"arg{idx}"
+        candidate = base
+        if candidate in used:
+            candidate = f"{base}_{idx}"
+        while candidate in used:
+            candidate += "_"
+        used.add(candidate)
+        out.append((candidate, ty))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Reading the emitter's own output
 # ---------------------------------------------------------------------------
@@ -3682,6 +3734,37 @@ CALL_LINE_RE_TMPL = r"^(\s*)(try )?(\w+)\.{unit}\("
 LOWLEVEL_CALL_RE_TMPL = r'abi\.encodeWithSignature\(\s*"{unit}\('
 
 
+def call_arg_span(line, unit):
+    """Argument-list span and ABI-signature offset for a supported unit call."""
+    key = "." + unit + "("
+    k = line.find(key)
+    sig_offset = 0
+    if k < 0:
+        m = re.search(LOWLEVEL_CALL_RE_TMPL.format(unit=re.escape(unit)), line)
+        if not m:
+            return None
+        # Start of `abi.encodeWithSignature(`'s argument list.
+        k = line.find("(", m.start())
+        key = "("
+        sig_offset = 1
+    start = k + len(key)
+    depth, i = 1, start
+    while i < len(line) and depth:
+        if line[i] == "(":
+            depth += 1
+        elif line[i] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    if depth:
+        return None
+    args = split_top_level(line[start:i])
+    if len(args) == 1 and args[0] == "":
+        args = []
+    return start, i, sig_offset, args
+
+
 def find_unit_call(lines, unit):
     """Index of the LAST line in `lines` that calls `unit` on an instance.
 
@@ -3720,32 +3803,10 @@ def rewrite_call_args(line, unit, replacements):
     # the unit's argument k is element k+1. The offset is applied here, in the
     # one place that knows which shape it is looking at -- a caller that had to
     # know would be a second reader of the same fact.
-    key = "." + unit + "("
-    k = line.find(key)
-    sig_offset = 0
-    if k < 0:
-        m = re.search(LOWLEVEL_CALL_RE_TMPL.format(unit=re.escape(unit)), line)
-        if not m:
-            return None, None
-        # Start of `abi.encodeWithSignature(`'s argument list.
-        k = line.find("(", m.start())
-        key = "("
-        sig_offset = 1
-    start = k + len(key)
-    depth, i = 1, start
-    while i < len(line) and depth:
-        if line[i] == "(":
-            depth += 1
-        elif line[i] == ")":
-            depth -= 1
-            if depth == 0:
-                break
-        i += 1
-    if depth:
+    span = call_arg_span(line, unit)
+    if span is None:
         return None, None
-    args = split_top_level(line[start:i])
-    if len(args) == 1 and args[0] == "":
-        args = []
+    start, i, sig_offset, args = span
     new = list(args)
     for idx, txt in replacements.items():
         if idx + sig_offset < len(new):
@@ -3754,6 +3815,56 @@ def rewrite_call_args(line, unit, replacements):
     # caller counts them against the unit's declared parameter list, and an
     # extra leading element would shift every index by one silently.
     return line[:start] + ", ".join(new) + line[i:], args[sig_offset:]
+
+
+def complete_missing_call_args(line, unit, params, args):
+    """Fill omitted concrete calldata args from the AST declaration.
+
+    The coverage emitter can omit arguments that do not affect a revert-only
+    path, leaving `try c.f() {}` or `abi.encodeWithSignature("f()")` for a
+    function whose declaration has parameters.  A PUT can still fuzz those
+    parameters over their full type domain: the certified region did not bound
+    them precisely because the path predicate ignored them.  Unsupported types
+    remain refused.
+    """
+    if len(args) >= len(params):
+        return line, args, [], None
+    span = call_arg_span(line, unit)
+    if span is None:
+        return None, None, [], "could not parse the emitted call's argument list"
+    start, i, sig_offset, full_args = span
+    if full_args[sig_offset:] != args:
+        return None, None, [], "internal argument parser disagreement"
+    completed = list(full_args)
+    implicit = []
+    for idx in range(len(args), len(params)):
+        name, ty = params[idx]
+        default = default_call_arg(ty)
+        bounds = full_lift_bounds(ty)
+        if default is None or bounds is None:
+            return None, None, [], (
+                f"emitted call omits parameter {idx} `{name}` of type `{ty}`, "
+                "which this emitter cannot synthesize as a full-domain fuzz input")
+        completed.append(default)
+        implicit.append(idx)
+    if sig_offset:
+        sig_types = []
+        for _name, ty in params:
+            sty = signature_type(ty)
+            if sty is None:
+                return None, None, [], (
+                    f"emitted low-level call omits a `{ty}` parameter whose ABI "
+                    "signature spelling this emitter cannot render")
+            sig_types.append(sty)
+        if not completed:
+            return None, None, [], "low-level call has no signature string"
+        sig = completed[0].strip()
+        if not re.match(rf'^"{re.escape(unit)}\([^"]*\)"$', sig):
+            return None, None, [], (
+                "low-level call's signature string could not be recognized")
+        completed[0] = f'"{unit}({",".join(sig_types)})"'
+    new_line = line[:start] + ", ".join(completed) + line[i:]
+    return new_line, completed[sig_offset:], implicit, None
 
 
 def target_instance_for_call(lines, call_i, unit):
@@ -3901,12 +4012,29 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         notes.append("the unit's declared parameters could not be read "
                      "from the AST")
         return None, None
+    params = named_params(params)
+    completed, completed_args, implicit_full, cerr = complete_missing_call_args(
+        call_line, unit, params, args)
+    if cerr is not None:
+        notes.append(cerr)
+        return None, None
+    if implicit_full:
+        body = list(body)
+        body[call_i] = completed
+        call_line = completed
+        args = completed_args
+        notes.append(
+            "emitted replay omitted "
+            + ", ".join(params[i][0] for i in implicit_full)
+            + "; lifting them as full-domain calldata fuzz inputs because the "
+              "certified region leaves them unconstrained")
     if len(params) != len(args):
         notes.append(f"declared arity {len(params)} != emitted arity "
                      f"{len(args)}; refusing to rewrite positionally")
         return None, None
 
     lifted, repl, sig, pre_lines = [], {}, [], []
+    implicit_full = set(implicit_full)
     # coordinate -> how many values the EMITTED test leaves it. See the floor
     # test below; `lifted` alone cannot answer it.
     rendered_width = {}
@@ -3999,7 +4127,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                      "environment slice: " + "; ".join(env_refusals))
         return None, None
     for idx, (pname, ptype) in enumerate(params):
-        if pname not in region:
+        if pname in region:
+            lo, hi = region[pname]
+            param_holes = sorted(holes.get(pname, ()))
+        elif idx in implicit_full:
+            lo, hi = full_lift_bounds(ptype)
+            param_holes = []
+        else:
             continue                       # pinned: keep the emitter's literal
         lk = lift_kind(ptype)
         if lk is None:
@@ -4009,12 +4143,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             continue
         kind, width = lk
         var = pname if pname not in used and pname != "c0" else "p_" + pname
-        lo, hi = region[pname]
         sig_ty = "address" if kind == "address" else (
             "bool" if kind == "bool" else f"uint{width}")
         sig.append((sig_ty, var))
-        pre_lines += bound_lines(var, kind, width, lo, hi,
-                                 sorted(holes.get(pname, ())))
+        pre_lines += bound_lines(var, kind, width, lo, hi, param_holes)
         repl[idx] = var
         lifted.append(pname)
         # ---- AN ADDRESS BOUNDS AN ABSOLUTE VALUE, NEVER A DELTA ------------
@@ -4057,7 +4189,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         # subtracted at all understates it for a value the bound already
         # excludes. Both directions cost a PUT that should have been emitted.
         rendered_width[pname] = (hi - lo + 1) - len(
-            {h for h in holes.get(pname, ()) if lo <= h <= hi})
+            {h for h in param_holes if lo <= h <= hi})
 
     # ---- §From a Region to a Test: THE FLOOR TEST IS ON THE RENDERED SET ----
     #
