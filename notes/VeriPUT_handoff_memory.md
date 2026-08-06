@@ -8,6 +8,78 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 unit campaign budget and summary fix
+
+Context:
+
+- The first small benchmark sample was useful as a diagnosis but is not a
+  clean measurement. The schedules were run with an outer `unit_schedule_run.py`
+  timeout/memlimit, but each job's inner `certify_all.py` argv still used its
+  defaults: rows recorded `unit_timeout_s=600`, `run_timeout_s=180`.
+- A Peer timeout also exposed an infrastructure bug: `subprocess.TimeoutExpired`
+  can carry bytes stdout/stderr even when `text=True`, and the runner tried to
+  JSON-serialize those bytes.
+- `certify_result_summary.py` mismatched schedule rows and result rows for
+  prepared subjects because schedule jobs used population names such as
+  `bugfix124`, while `certify_all.py` rows use the prepared `benchmark_key`,
+  e.g. `bugfix124__acfix_fixlink_DepositLog`.
+
+Code change:
+
+- `unit_schedule.py` now makes executable schedules self-describing:
+  default job argv carries the first-attempt budget
+  `--timeout 60 --run-timeout 60 --memlimit-gib 8`.
+- `unit_campaign_plan.py` now rewrites every next-attempt job argv to the
+  selected policy:
+  attempt 1 = `60s/8GiB`, attempt 2 = `120s/8GiB`,
+  attempt 3 = `600s/10GiB`. The runner still carries the same outer timeout and
+  memory cap as a process-level guard.
+- `unit_schedule_run.py` now decodes timeout stdout/stderr tails before writing
+  the JSONL journal, so a timed-out job remains resumable and auditable.
+- `certify_result_summary.py` now matches schedule jobs through prepared
+  subject aliases, preferring `subject.benchmark_key` when present. It also
+  separates hash/nondet static-inseparable reasons from external-call static
+  inseparability.
+
+Read-only sample re-summary after the fix:
+
+- BugFix old sample:
+  `/tmp/veriput_sample_v10_20260806_212550/certify-bugfix124.jsonl` with its
+  schedule now reports `missing_scheduled_units=0`, `gate=ready`,
+  `5 certified / 0 not / 5 witnessed` over the two witnessed DepositLog units;
+  the DnGmxBatchingManager row remains `NO-WITNESS-UNKNOWN`.
+- Stress old sample:
+  `/tmp/veriput_sample_v10_20260806_212550/certify-stress203.jsonl` with its
+  schedule now reports `missing_scheduled_units=0`, `2 certified / 8 not / 10
+  witnessed`, gate `degraded` only because the certified path rate is 0.2.
+- Peer old sample:
+  `/tmp/veriput_sample_v10_20260806_212550/certify-peer182.jsonl` correctly
+  reports two genuinely missing certification rows: `transfer` timed out at the
+  runner layer and `approve` was not attempted in that diagnostic run.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_result_summary.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile ...` over the changed
+  scheduler, campaign, runner, summary, pipeline, and tests passed.
+- `git diff --check` passed.
+
+Next:
+
+- It is now reasonable to start a small, budget-clean benchmark sample. Use
+  newly generated schedules or `unit_campaign_plan.py`'s `next-unit-schedule`;
+  do not reuse the old `/tmp/veriput_sample_v10_20260806_212550/*.json`
+  schedules for official measurements because their job argv did not carry the
+  first-attempt inner budget.
+
 ## 2026-08-06 benchmark population handoff
 
 Scope and constraint:

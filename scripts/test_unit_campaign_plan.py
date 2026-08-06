@@ -19,6 +19,16 @@ def check(cond, msg):
     return 1
 
 
+def argv_value(argv, flag):
+    try:
+        idx = argv.index(flag)
+    except ValueError:
+        return None
+    if idx + 1 >= len(argv):
+        return None
+    return argv[idx + 1]
+
+
 def job(job_id, benchmark="peer182", unit="f", priority=0):
     subject_id = job_id.split("__", 1)[-1].rsplit("__", 1)[0]
     return {
@@ -150,6 +160,11 @@ def test_campaign_partitions_attempts_and_auto_selects_earliest():
                  f"attempt 1 uses the agreed short budget: {doc['next_run']}")
     bad += check([job["job_id"] for job in doc["next_schedule"]["jobs"]] == ["peer182__new__f"],
                  f"next schedule keeps only attempt-1 jobs: {doc['next_schedule']['jobs']}")
+    next_argv = doc["next_schedule"]["jobs"][0]["certify_argv"]
+    bad += check(argv_value(next_argv, "--timeout") == "60"
+                 and argv_value(next_argv, "--run-timeout") == "60"
+                 and argv_value(next_argv, "--memlimit-gib") == "8",
+                 f"attempt-1 schedule embeds the inner certify budget: {next_argv}")
     return bad
 
 
@@ -173,6 +188,7 @@ def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
                                                jobs=2)
         out_doc = json.loads(out.read_text())
     runner = doc["next_run"]["runner_argv"]
+    certify_argv = out_doc["jobs"][0]["certify_argv"]
     bad = 0
     bad += check(doc["summary"]["selected_attempt"] == 3,
                  f"explicit attempt 3 is selected: {doc['summary']}")
@@ -192,6 +208,11 @@ def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
         out_doc["summary"]["campaign_attempt"] == 3
         and [job["job_id"] for job in out_doc["jobs"]] == ["stress243__retry3__h"],
         f"attempt schedule is written: {out_doc['summary']}")
+    bad += check(argv_value(certify_argv, "--timeout") == "600"
+                 and argv_value(certify_argv, "--run-timeout") == "600"
+                 and argv_value(certify_argv, "--memlimit-gib") == "10"
+                 and certify_argv.count("--timeout") == 1,
+                 f"attempt-3 schedule rewrites inner certify budget: {certify_argv}")
     return bad
 
 

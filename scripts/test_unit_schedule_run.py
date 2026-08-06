@@ -30,6 +30,19 @@ def fake_script(path, rc=0):
     return str(p)
 
 
+def sleepy_script(path):
+    p = Path(path)
+    p.write_text("#!/usr/bin/env python3\n"
+                 "import sys, time\n"
+                 "print('before sleep')\n"
+                 "print('stderr before sleep', file=sys.stderr)\n"
+                 "sys.stdout.flush()\n"
+                 "sys.stderr.flush()\n"
+                 "time.sleep(5)\n")
+    p.chmod(0o755)
+    return str(p)
+
+
 def job(job_id, cmd, unit="f", out_path="", ast_cache_root=""):
     argv = [
         cmd,
@@ -116,6 +129,25 @@ def test_runner_records_failures_as_retryable():
     bad += check(
         sum(1 for row in rows if row["status"] == "error") == 2,
         f"failure is journaled on each attempt: {rows}")
+    return bad
+
+
+def test_runner_journals_timeout_with_text_tails():
+    with tempfile.TemporaryDirectory() as td:
+        slow = sleepy_script(Path(td) / "slow.py")
+        journal = Path(td) / "run.jsonl"
+        first = unit_schedule_run.run_schedule(schedule(slow),
+                                               journal=str(journal),
+                                               timeout_s=0.2)
+        row = json.loads(journal.read_text().splitlines()[0])
+    bad = 0
+    bad += check(first["summary"]["status"] == {"timeout": 1},
+                 f"timeout command is journaled: {first['summary']}")
+    bad += check(row["status"] == "timeout" and isinstance(row["stdout_tail"], str)
+                 and "before sleep" in row["stdout_tail"],
+                 f"timeout stdout tail is JSON text: {row}")
+    bad += check(isinstance(row["stderr_tail"], str),
+                 f"timeout stderr tail is JSON text: {row}")
     return bad
 
 
@@ -251,6 +283,7 @@ def test_runner_refuses_protected_write_paths_and_negative_memlimit():
 TESTS = [
     test_runner_executes_and_resumes_from_journal,
     test_runner_records_failures_as_retryable,
+    test_runner_journals_timeout_with_text_tails,
     test_runner_dry_run_start_failure_and_fail_closed_modes,
     test_runner_cli_dry_run_reads_schedule,
     test_runner_journals_campaign_metadata_from_schedule,

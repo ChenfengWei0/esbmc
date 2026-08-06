@@ -67,15 +67,42 @@ def _load_schedule(path: str) -> dict | None:
     return doc
 
 
-def _schedule_jobs(schedule: dict | None) -> dict[tuple[str, str], dict]:
+def _schedule_job_subject_aliases(job: dict) -> list[str]:
+    subject = job.get("subject") or {}
+    aliases = []
+    for value in (
+            subject.get("benchmark_key"),
+            job.get("benchmark_key"),
+            job.get("benchmark"),
+            subject.get("benchmark"),
+            job.get("poc"),
+            subject.get("poc"),
+    ):
+        if value and value != "<unknown>" and value not in aliases:
+            aliases.append(value)
+    if not aliases:
+        aliases.append("<unknown>")
+    return aliases
+
+
+def _schedule_jobs(schedule: dict | None) -> tuple[dict[tuple[str, str], dict],
+                                                   list[tuple[tuple[str, str], dict,
+                                                              set[tuple[str, str]]]]]:
     if not schedule:
-        return {}
-    jobs = {}
+        return {}, []
+    jobs_by_alias = {}
+    scheduled = []
     for job in schedule.get("jobs") or []:
-        subject = job.get("benchmark") or job.get("poc") or "<unknown>"
         unit = job.get("unit") or "<none>"
-        jobs[(subject, unit)] = job
-    return jobs
+        aliases = {(subject, unit) for subject in _schedule_job_subject_aliases(job)}
+        canonical = sorted(aliases)[0]
+        preferred = ((job.get("subject") or {}).get("benchmark_key"), unit)
+        if preferred[0]:
+            canonical = preferred
+        for key in aliases:
+            jobs_by_alias[key] = job
+        scheduled.append((canonical, job, aliases))
+    return jobs_by_alias, scheduled
 
 
 def _reason_bucket(reason: str) -> str:
@@ -83,6 +110,12 @@ def _reason_bucket(reason: str) -> str:
     if not text:
         return "<empty>"
     if "STATICALLY INSEPARABLE" in text:
+        lowered = text.lower()
+        if ("hash" in lowered or "nondet" in lowered or "uncontrolled decision"
+                in lowered or "__esbmc_hash_result" in text):
+            return "method-unsupported:static-uncontrolled"
+        if "extcall" in lowered or "external-call" in lowered:
+            return "method-unsupported:static-extcall"
         return "method-unsupported:static-extcall"
     if "refuted" in text.lower() or "concrete witness" in text.lower():
         return "refuted"
@@ -133,7 +166,7 @@ def summarize(cert_jsonl: str,
               sample_limit: int = 10) -> dict:
     rows, bad_lines = _read_jsonl(cert_jsonl)
     schedule = _load_schedule(schedule_path)
-    jobs = _schedule_jobs(schedule)
+    jobs, scheduled_entries = _schedule_jobs(schedule)
     latest = {}
     duplicate_rows = 0
     for row in rows:
@@ -212,9 +245,13 @@ def summarize(cert_jsonl: str,
                 "no_coordinate_reason": row.get("no_coordinate_reason"),
             })
 
-    scheduled_units = set(jobs)
+    scheduled_units = {canonical for canonical, _job, _aliases in scheduled_entries}
     seen_units = {(key[0], key[1]) for key in latest}
-    missing_scheduled = sorted(scheduled_units - seen_units)
+    missing_scheduled = []
+    for canonical, job, aliases in scheduled_entries:
+        if not (aliases & seen_units):
+            missing_scheduled.append((canonical, job))
+    missing_scheduled.sort(key=lambda item: item[0])
     certified_path_rate = (certified_paths / witnessed_paths) if witnessed_paths else None
     verdict_path_rate = ((certified_paths + not_certified_paths) /
                          witnessed_paths if witnessed_paths else None)
@@ -281,9 +318,9 @@ def summarize(cert_jsonl: str,
         "missing_scheduled_units": [{
             "subject": subject,
             "unit": unit,
-            "job_id": jobs[(subject, unit)].get("job_id"),
-            "priority": jobs[(subject, unit)].get("priority"),
-        } for subject, unit in missing_scheduled[:sample_limit]],
+            "job_id": job.get("job_id"),
+            "priority": job.get("priority"),
+        } for (subject, unit), job in missing_scheduled[:sample_limit]],
         "samples":
         dict(samples),
     }

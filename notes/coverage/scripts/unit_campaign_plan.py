@@ -12,6 +12,7 @@ certification jobs.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import shlex
 import sys
@@ -21,6 +22,8 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 UNIT_SCHEDULE_RUN = SCRIPT_DIR / "unit_schedule_run.py"
+sys.path.insert(0, str(SCRIPT_DIR))
+import unit_schedule  # noqa: E402
 
 DEFAULT_POLICY = (
     {
@@ -196,13 +199,45 @@ def _cmd(argv: list[str]) -> str:
     return shlex.join(str(arg) for arg in argv)
 
 
+def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[dict]:
+    if not attempt_cfg:
+        return [copy.deepcopy(job) for job in jobs]
+    timeout_s = int(attempt_cfg["timeout_s"])
+    memlimit_gib = int(attempt_cfg["memlimit_gb"])
+    budgeted = []
+    for job in jobs:
+        item = copy.deepcopy(job)
+        item["certify_argv"] = unit_schedule.budgeted_certify_argv(
+            [str(arg) for arg in item.get("certify_argv") or []],
+            timeout_s=timeout_s,
+            run_timeout_s=timeout_s,
+            memlimit_gib=memlimit_gib)
+        if "dry_run_argv" in item:
+            dry = unit_schedule.budgeted_certify_argv(
+                [str(arg) for arg in item.get("dry_run_argv") or []],
+                timeout_s=timeout_s,
+                run_timeout_s=timeout_s,
+                memlimit_gib=memlimit_gib)
+            if "--dry-run" not in dry:
+                dry.append("--dry-run")
+            item["dry_run_argv"] = dry
+        item["certification_budget"] = {
+            "timeout_s": timeout_s,
+            "run_timeout_s": timeout_s,
+            "memlimit_gib": memlimit_gib,
+        }
+        budgeted.append(item)
+    return budgeted
+
+
 def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attempt_cfg: dict | None,
                           source_journals: list[str]) -> dict:
-    by_benchmark = Counter(job.get("benchmark") for job in selected_jobs)
-    by_priority = Counter(str(job.get("priority", "<missing>")) for job in selected_jobs)
     attempt = (attempt_cfg or {}).get("attempt")
     timeout_s = (attempt_cfg or {}).get("timeout_s")
     memlimit_gb = (attempt_cfg or {}).get("memlimit_gb")
+    budgeted_jobs = _attempt_budgeted_jobs(selected_jobs, attempt_cfg)
+    by_benchmark = Counter(job.get("benchmark") for job in budgeted_jobs)
+    by_priority = Counter(str(job.get("priority", "<missing>")) for job in budgeted_jobs)
     return {
         "schema": "veriput-unit-schedule/v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -219,17 +254,20 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
         "limit": base_schedule.get("limit"),
         "cert_out": base_schedule.get("cert_out"),
         "summary": {
-            "jobs": len(selected_jobs),
+            "jobs": len(budgeted_jobs),
             "jobs_before_campaign_filter": len(base_schedule.get("jobs") or []),
             "campaign_attempt": attempt,
             "timeout_s": timeout_s,
             "memlimit_gb": memlimit_gb,
+            "certify_timeout_s": int(timeout_s) if timeout_s else None,
+            "certify_run_timeout_s": int(timeout_s) if timeout_s else None,
+            "certify_memlimit_gib": int(memlimit_gb) if memlimit_gb else None,
             "by_benchmark": dict(sorted(by_benchmark.items())),
             "by_priority": dict(sorted(by_priority.items())),
         },
         "skipped_rows": base_schedule.get("skipped_rows") or [],
         "duplicate_jobs": base_schedule.get("duplicate_jobs") or [],
-        "jobs": selected_jobs,
+        "jobs": budgeted_jobs,
     }
 
 

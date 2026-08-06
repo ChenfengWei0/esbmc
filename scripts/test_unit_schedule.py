@@ -20,6 +20,16 @@ def check(cond, msg):
     return 1
 
 
+def argv_value(argv, flag):
+    try:
+        idx = argv.index(flag)
+    except ValueError:
+        return None
+    if idx + 1 >= len(argv):
+        return None
+    return argv[idx + 1]
+
+
 def subject_record(unit=""):
     return {
         "schema": "veriput-subject/v1",
@@ -121,10 +131,26 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
     bad += check("--skip-bracket" in argv and "--probe-ladder" in argv
                  and "--pin-agreed-state" in argv and "--slot-coords" in argv,
                  f"strong region controls are scheduled for benchmarks: {argv}")
+    bad += check(argv_value(argv, "--timeout") == "60"
+                 and argv_value(argv, "--run-timeout") == "60"
+                 and argv_value(argv, "--memlimit-gib") == "8",
+                 f"schedule embeds the first-attempt certify budget: {argv}")
+    bad += check(hinted["certification_budget"] == {
+        "timeout_s": 60,
+        "run_timeout_s": 60,
+        "memlimit_gib": 8,
+    }, f"job records the embedded certify budget: {hinted['certification_budget']}")
     bad += check("--dry-run" not in argv and "--dry-run" in hinted["dry_run_argv"],
                  f"normal and dry-run argv are separate: {hinted}")
+    bad += check(argv_value(hinted["dry_run_argv"], "--timeout") == "60",
+                 f"dry-run argv carries the same budget: {hinted['dry_run_argv']}")
     bad += check(doc["recipe_version"] == veriput_recipe.STRONG_RECIPE_VERSION,
                  f"schedule records the recipe version: {doc.get('recipe_version')}")
+    bad += check(doc["certification_budget"] == {
+        "timeout_s": 60,
+        "run_timeout_s": 60,
+        "memlimit_gib": 8,
+    }, f"schedule records the default certification budget: {doc['certification_budget']}")
     return bad
 
 
@@ -181,6 +207,12 @@ def test_schedule_cli_reads_stdin_and_applies_limit():
             "1",
             "--cert-out",
             str(Path(td) / "results.jsonl"),
+            "--timeout",
+            "120",
+            "--run-timeout",
+            "30",
+            "--memlimit-gib",
+            "10",
         ],
                             input=json.dumps(manifest()),
                             capture_output=True,
@@ -201,6 +233,10 @@ def test_schedule_cli_reads_stdin_and_applies_limit():
     bad += check(
         out_idx >= 0 and job["certify_argv"][out_idx + 1].endswith("results.jsonl"),
         f"cert output path is threaded into argv: {job['certify_argv']}")
+    bad += check(argv_value(job["certify_argv"], "--timeout") == "120"
+                 and argv_value(job["certify_argv"], "--run-timeout") == "30"
+                 and argv_value(job["certify_argv"], "--memlimit-gib") == "10",
+                 f"CLI budget flags are threaded into certify argv: {job['certify_argv']}")
     return bad
 
 

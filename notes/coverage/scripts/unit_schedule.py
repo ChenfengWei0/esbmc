@@ -21,6 +21,16 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 from veriput_recipe import STRONG_RECIPE_VERSION, strong_certify_args  # noqa: E402
 
+DEFAULT_TIMEOUT_S = 60
+DEFAULT_RUN_TIMEOUT_S = 60
+DEFAULT_MEMLIMIT_GIB = 8
+
+BUDGET_VALUE_FLAGS = {
+    "--timeout",
+    "--run-timeout",
+    "--memlimit-gib",
+}
+
 
 class ScheduleError(ValueError):
     """The input manifest cannot be converted into unit jobs."""
@@ -60,8 +70,43 @@ def _apply_shard(items, shard):
     return [item for pos, item in enumerate(items) if pos % total == idx]
 
 
+def _validate_budget(name: str, value: int) -> int:
+    if value < 0:
+        raise ScheduleError(f"{name} must be non-negative")
+    return value
+
+
+def _append_budget(argv: list[str], flag: str, value: int) -> None:
+    if value:
+        argv.extend([flag, str(value)])
+
+
+def budgeted_certify_argv(argv: list[str],
+                          *,
+                          timeout_s: int = 0,
+                          run_timeout_s: int = 0,
+                          memlimit_gib: int = 0) -> list[str]:
+    """Return argv with a single authoritative certify_all budget."""
+
+    filtered = []
+    skip_next = False
+    for item in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if item in BUDGET_VALUE_FLAGS:
+            skip_next = True
+            continue
+        filtered.append(item)
+    _append_budget(filtered, "--timeout", timeout_s)
+    _append_budget(filtered, "--run-timeout", run_timeout_s)
+    _append_budget(filtered, "--memlimit-gib", memlimit_gib)
+    return filtered
+
+
 def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path: str | None,
-                  dry_run: bool) -> list[str]:
+                  dry_run: bool, *, timeout_s: int, run_timeout_s: int,
+                  memlimit_gib: int) -> list[str]:
     argv = [
         sys.executable,
         str(CERTIFY_ALL),
@@ -77,6 +122,10 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
     if out_path:
         argv.extend(["--out", out_path])
     argv.extend(strong_certify_args())
+    argv = budgeted_certify_argv(argv,
+                                 timeout_s=timeout_s,
+                                 run_timeout_s=run_timeout_s,
+                                 memlimit_gib=memlimit_gib)
     if dry_run:
         argv.append("--dry-run")
     return argv
@@ -98,7 +147,8 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None) -> tuple
 
 
 def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None,
-                  out_path: str | None, unit_info: dict | None) -> dict:
+                  out_path: str | None, unit_info: dict | None, *,
+                  timeout_s: int, run_timeout_s: int, memlimit_gib: int) -> dict:
     subject = dict(row["subject"])
     subject["unit"] = unit
     hinted = set((row.get("unit_hints") or {}).get("hinted_units") or [])
@@ -118,15 +168,44 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
         "target": row.get("target"),
         "unit_hints": row.get("unit_hints"),
         "unit_info": unit_info,
-        "certify_argv": _certify_argv(subject, unit, ast_cache_root, out_path, dry_run=False),
-        "dry_run_argv": _certify_argv(subject, unit, ast_cache_root, out_path, dry_run=True),
+        "certification_budget": {
+            "timeout_s": timeout_s or None,
+            "run_timeout_s": run_timeout_s or None,
+            "memlimit_gib": memlimit_gib or None,
+        },
+        "certify_argv": _certify_argv(subject,
+                                      unit,
+                                      ast_cache_root,
+                                      out_path,
+                                      dry_run=False,
+                                      timeout_s=timeout_s,
+                                      run_timeout_s=run_timeout_s,
+                                      memlimit_gib=memlimit_gib),
+        "dry_run_argv": _certify_argv(subject,
+                                      unit,
+                                      ast_cache_root,
+                                      out_path,
+                                      dry_run=True,
+                                      timeout_s=timeout_s,
+                                      run_timeout_s=run_timeout_s,
+                                      memlimit_gib=memlimit_gib),
     }
 
 
-def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out: str = "") -> dict:
+def build_schedule(manifest: dict,
+                   *,
+                   shard: str = "",
+                   limit: int = 0,
+                   cert_out: str = "",
+                   timeout_s: int = DEFAULT_TIMEOUT_S,
+                   run_timeout_s: int = DEFAULT_RUN_TIMEOUT_S,
+                   memlimit_gib: int = DEFAULT_MEMLIMIT_GIB) -> dict:
     if manifest.get("schema") != "veriput-unit-manifest/v1":
         raise ScheduleError(f"unsupported schema {manifest.get('schema')!r}; expected "
                             "veriput-unit-manifest/v1")
+    timeout_s = _validate_budget("--timeout", timeout_s)
+    run_timeout_s = _validate_budget("--run-timeout", run_timeout_s)
+    memlimit_gib = _validate_budget("--memlimit-gib", memlimit_gib)
 
     ast_cache_root = manifest.get("ast_cache_root") or None
     try:
@@ -175,7 +254,10 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
                 continue
             seen_jobs.add(key)
             jobs.append(_job_for_unit(row, unit, len(jobs), ast_cache_root,
-                                      cert_out or None, infos.get(unit)))
+                                      cert_out or None, infos.get(unit),
+                                      timeout_s=timeout_s,
+                                      run_timeout_s=run_timeout_s,
+                                      memlimit_gib=memlimit_gib))
 
     shard_spec = _parse_shard(shard)
     total_jobs = len(jobs)
@@ -202,6 +284,11 @@ def build_schedule(manifest: dict, *, shard: str = "", limit: int = 0, cert_out:
         "limit": limit or None,
         "cert_out": cert_out or None,
         "recipe_version": STRONG_RECIPE_VERSION,
+        "certification_budget": {
+            "timeout_s": timeout_s or None,
+            "run_timeout_s": run_timeout_s or None,
+            "memlimit_gib": memlimit_gib or None,
+        },
         "summary": {
             "jobs": len(jobs),
             "jobs_before_shard": total_jobs,
@@ -230,11 +317,29 @@ def main() -> int:
     ap.add_argument("--cert-out",
                     default="",
                     help="append this --out path to generated certify_all argv")
+    ap.add_argument("--timeout",
+                    type=int,
+                    default=DEFAULT_TIMEOUT_S,
+                    help="certify_all.py unit budget to embed in every job")
+    ap.add_argument("--run-timeout",
+                    type=int,
+                    default=DEFAULT_RUN_TIMEOUT_S,
+                    help="certify_all.py per-ESBMC-run budget to embed in every job")
+    ap.add_argument("--memlimit-gib",
+                    type=int,
+                    default=DEFAULT_MEMLIMIT_GIB,
+                    help="certify_all.py per-ESBMC memory budget to embed in every job")
     ap.add_argument("--out", default="", help="write JSON schedule here. Without it, print stdout")
     args = ap.parse_args()
     try:
         manifest = _read_json(args.manifest)
-        doc = build_schedule(manifest, shard=args.shard, limit=args.limit, cert_out=args.cert_out)
+        doc = build_schedule(manifest,
+                             shard=args.shard,
+                             limit=args.limit,
+                             cert_out=args.cert_out,
+                             timeout_s=args.timeout,
+                             run_timeout_s=args.run_timeout,
+                             memlimit_gib=args.memlimit_gib)
     except ScheduleError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 1

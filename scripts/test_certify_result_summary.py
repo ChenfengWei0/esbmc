@@ -173,6 +173,56 @@ def test_summary_gate_ready_when_threshold_and_schedule_are_clean():
     return bad
 
 
+def test_summary_matches_prepared_subject_benchmark_key_alias():
+    with tempfile.TemporaryDirectory() as td:
+        cert = write_jsonl(Path(td) / "cert.jsonl", [
+            {
+                "benchmark": "bugfix124__acfix_fixlink_DepositLog",
+                "unit": "approvedToLog",
+                "bucket": "CERTIFIED",
+                "witnessed": 2,
+                "certified": {
+                    "2": "msg.value in [1, 9]",
+                },
+                "not_certified": {
+                    "12": "STATICALLY INSEPARABLE: decision#3 random == 0 "
+                          "uses __esbmc_hash_result / NONDET source",
+                },
+            },
+        ],
+                           bad_line=False)
+        sched = Path(td) / "schedule.json"
+        doc = schedule_doc()
+        doc["jobs"] = [{
+            "schema": "veriput-unit-job/v1",
+            "job_id": "bugfix124__acfix_fixlink_DepositLog__approvedToLog",
+            "priority": 0,
+            "benchmark": "bugfix124",
+            "subject_id": "acfix_fixlink_DepositLog",
+            "contract": "DepositLog",
+            "unit": "approvedToLog",
+            "subject": {
+                "benchmark": "bugfix124",
+                "benchmark_key": "bugfix124__acfix_fixlink_DepositLog",
+            },
+            "certify_argv": ["/bin/false"],
+        }]
+        sched.write_text(json.dumps(doc) + "\n")
+        summary = certify_result_summary.summarize(str(cert), schedule_path=str(sched))
+    bad = 0
+    bad += check(summary["summary"]["missing_scheduled_units"] == 0,
+                 f"prepared benchmark_key rows satisfy schedule coverage: {summary['summary']}")
+    bad += check(summary["by_priority"] == {
+        "0": {
+            "CERTIFIED": 1,
+        },
+    }, f"priority grouping uses benchmark_key aliases: {summary['by_priority']}")
+    bad += check(summary["summary"]["not_certified_reason_buckets"] == {
+        "method-unsupported:static-uncontrolled": 1,
+    }, f"hash/nondet static split gets its own reason bucket: {summary['summary']}")
+    return bad
+
+
 def test_summary_cli_writes_json():
     with tempfile.TemporaryDirectory() as td:
         cert = write_jsonl(Path(td) / "cert.jsonl", rows()[:1])
@@ -200,6 +250,7 @@ def test_summary_cli_writes_json():
 TESTS = [
     test_summary_counts_paths_shapes_and_schedule_gaps,
     test_summary_gate_ready_when_threshold_and_schedule_are_clean,
+    test_summary_matches_prepared_subject_benchmark_key_alias,
     test_summary_cli_writes_json,
 ]
 

@@ -19,6 +19,16 @@ def check(cond, msg):
     return 1
 
 
+def argv_value(argv, flag):
+    try:
+        idx = argv.index(flag)
+    except ValueError:
+        return None
+    if idx + 1 >= len(argv):
+        return None
+    return argv[idx + 1]
+
+
 def args(tmp, out_dir=""):
     return argparse.Namespace(veriput_root=str(tmp / "VeriPUT"),
                               benchmark=["peer182"],
@@ -251,10 +261,20 @@ def test_ready_pipeline_writes_requested_docs_and_selects_campaign():
                          f"unit schedule is usable by certify_all: {unit_schedule['summary']}")
             certify_argv = unit_schedule["jobs"][0]["certify_argv"]
             bad += check("--recipe-version" in certify_argv
-                         and "veriput-strong/7" in certify_argv
+                         and benchmark_pipeline_plan.STRONG_RECIPE_VERSION in certify_argv
                          and "--skip-bracket" in certify_argv
                          and "--pin-agreed-state" in certify_argv,
                          f"benchmark pipeline schedules the strong recipe: {certify_argv}")
+            bad += check(argv_value(certify_argv, "--timeout") == "60"
+                         and argv_value(certify_argv, "--run-timeout") == "60"
+                         and argv_value(certify_argv, "--memlimit-gib") == "8",
+                         f"base unit schedule carries first-attempt budget: {certify_argv}")
+            next_unit_schedule = json.loads(Path(doc["outputs"]["next_unit_schedule"]).read_text())
+            next_argv = next_unit_schedule["jobs"][0]["certify_argv"]
+            bad += check(argv_value(next_argv, "--timeout") == "60"
+                         and argv_value(next_argv, "--run-timeout") == "60"
+                         and argv_value(next_argv, "--memlimit-gib") == "8",
+                         f"campaign next schedule carries inner attempt budget: {next_argv}")
             return bad
 
         patches = [

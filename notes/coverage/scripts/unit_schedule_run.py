@@ -60,6 +60,8 @@ def _apply_shard(items, shard):
 
 
 def _tail(text: str, limit: int = 4000) -> str:
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
     if len(text) <= limit:
         return text
     return text[-limit:]
