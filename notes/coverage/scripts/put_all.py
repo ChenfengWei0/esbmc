@@ -1007,6 +1007,10 @@ def b_report(results, forge_timeout):
     # row would recompile the benchmark flat once per region (70-180 KB each),
     # and a per-row run cannot see a failure caused by two PUTs sharing a project.
     verdicts = {}
+    forge_seen = {
+        "put": {"Success": 0, "Failure": 0, "other": 0},
+        "concrete": {"Success": 0, "Failure": 0, "other": 0},
+    }
     for proj in sorted({r[6] for r in results if r[6]}):
         _rc, stdout, stderr, timed_out = run_forge(proj, forge_timeout)
         if timed_out:
@@ -1025,7 +1029,17 @@ def b_report(results, forge_timeout):
             continue
         for suite in data.values():
             for name, res in (suite.get("test_results") or {}).items():
-                verdicts[name.split("(")[0]] = res.get("status")
+                fn = name.split("(")[0]
+                status = res.get("status")
+                verdicts[fn] = status
+                bucket = None
+                if fn.startswith("test_put_"):
+                    bucket = "put"
+                elif fn.startswith("test_cov_"):
+                    bucket = "concrete"
+                if bucket:
+                    key = status if status in ("Success", "Failure") else "other"
+                    forge_seen[bucket][key] += 1
 
     print(f"{'benchmark':<24}{'unit':<16}{'enc':>7}  "
           f"{'1.fuzz':>7}{'2.width':>8}{'3.assert':>9}{'4.green':>8}"
@@ -1147,7 +1161,13 @@ def b_report(results, forge_timeout):
             print(f"      ⛔ NOT COUNTED: {stale}")
             n_stale += 1
     print()
-    print(f"  B = {b} of {len(results)} emitted PUT(s)")
+    print(f"  B = {b} of {len(results)} certified region row(s)")
+    print(f"  Forge-visible PUT test functions: "
+          f"{forge_seen['put']['Success']} green / "
+          f"{sum(forge_seen['put'].values())} total")
+    print(f"  Forge-visible concrete replays  : "
+          f"{forge_seen['concrete']['Success']} green / "
+          f"{sum(forge_seen['concrete'].values())} total")
     print(f"  {n_refused} row(s) were EXCLUDED as REFUSED -- the emitter "
           f"produced no PUT for them in this tree, so nothing in their row was "
           f"measured here. They are UNKNOWN, not failures.")

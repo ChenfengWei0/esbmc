@@ -100,7 +100,7 @@ def main():
                          fuzz_r2_candidate_budget=1)
         bad += check("stage4-strong-recipe-version",
                      put_all.apply_strong_put_recipe(args),
-                     "veriput-strong/7")
+                     put_all.STRONG_RECIPE_VERSION)
         bad += check("stage4-strong-recipe-auto-unwind",
                      args.auto_unwind, 1)
         bad += check("stage4-strong-recipe-r2",

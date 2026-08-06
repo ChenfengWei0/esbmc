@@ -10483,6 +10483,19 @@ Stage-4 result:
     assertion ladder returns `UNDECIDED-TRUNCATED`; loops named include
     the `onlyOwner` wrapper loop and `__memset_impl`.
 
+Reporting correction after commit `ecfecd4548`:
+
+- `put_all.py --forge-only` was rerun over the same output.  The correct
+  deliverable denominator is certified region rows, not emitted PUTs:
+  `B = 3 / 7 certified region rows`.
+- Forge-visible emitted PUT tests were `3 green / 3 total`.
+- Forge-visible concrete replay tests were `0 green / 0 total` in this Stage-4
+  project.  The Stage-2 `3 concrete-fallback` paths are accounting candidates,
+  not measured reference-valid concrete-only output tests in this run.
+- `put_all.py` now prints these PUT/concrete replay Forge-visible counts
+  explicitly and changed the misleading summary text from
+  `B = ... emitted PUT(s)` to `B = ... certified region row(s)`.
+
 Important code fix found by this wave:
 
 - Before the fix, Forge could not compile the generated DepositLog PUTs because
