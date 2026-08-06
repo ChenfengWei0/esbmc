@@ -10428,6 +10428,70 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 Stage-4 normal-exit arithmetic retreat
+
+User policy update:
+
+- Final per-case timeout should be understood as 600s maximum.
+- For speed, keep sampling small and stratified; use `/tmp` outputs only.
+- Fuzz remains refutation-only. It can cheaply expose a bad region, bad
+  insertion, or bad oracle, but never upgrades a survivor to proved. ESBMC is
+  still the proof authority.
+
+Current small-wave PUT picture:
+
+- After the latest pushed path-decision guard work, the sampled Stage-4
+  benchmark/peer rows were already:
+  - small-wave rows: 7 / 7 Forge-valid PUTs;
+  - `BasicToken.transfer`: 1 / 1 Forge-valid PUT;
+  - `MetaCoin.sendCoin`: 2 / 2 Forge-valid PUTs;
+  - store-state setter sample: 1 / 1 Forge-valid PUT.
+- The problematic peer `return_1.add` sample was initially only 2 / 5:
+  the failing generated PUTs were all normal-return arithmetic paths where
+  Solidity checked arithmetic could revert inside the supposedly normal region.
+- After the arithmetic retreat patch below, `return_1.add` became 5 / 5:
+  `/tmp/veriput_put_peer_pair_retreat2_20260807`.
+- Aggregate sampled intuition after the patch is 16 / 16 Forge-visible PUTs,
+  all with PUT shape and 0 concrete replay-only rows.  This is not a full
+  benchmark success rate; it is a small, biased smoke sample used to decide
+  whether broader sampling is worth spending.
+
+Root cause and fix:
+
+- Stage 2 had certified product boxes for normal-exit paths, but the product
+  box could include values where the selected source return expression reverts
+  under checked arithmetic:
+  - `return ++x` needs `x <= UINT256_MAX - 1`;
+  - `return x + 2` needs `x <= UINT256_MAX - 2`;
+  - `return x + y` cannot be represented exactly as a rectangular product
+    region, so the current conservative retreat keeps the wide `y` fuzz
+    coordinate and pins/narrows `x` to a product-safe slice.
+- `scripts/solidity_path_put.py` now applies
+  `normal_exit_region_retreat()` before Stage-4 ladder/R2 certification.
+  Therefore the generated Foundry PUT and the ESBMC ladder/R2 proof use the
+  same narrowed region.
+- Source-prioritized R2 extraction now recognizes prefix `++` / `--` return
+  expressions, so `return ++x` can ask the semantic candidate
+  `return == (x + 1)`.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 232 / 232 tests.
+- Targeted peer pair command:
+  `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_peer_pair_certify-results.jsonl --strong-recipe --timeout 600 --memlimit-gib 8 --forge-timeout 300 --out-root /tmp/veriput_put_peer_pair_retreat2_20260807`.
+- Result:
+  5 / 5 Forge-valid PUTs, all fuzz+oracle, concrete replay 0 / 0.
+
+Next recommended action:
+
+- Commit and push this patch, then run a slightly broader stratified sample
+  across peer / bugfix / stress with the 600s maximum policy.  Do not run a full
+  benchmark sweep yet; use the next sample to estimate whether current PUT
+  validity and PUT-vs-replay ratios are stable outside the easy peer slice.
+
 ## 2026-08-07 small Stage-4 benchmark wave
 
 Goal:

@@ -1920,6 +1920,15 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return coord_term(n, "id", target_ty)
         if expected_kind != "num":
             return None
+        if (isinstance(n, dict) and n.get("nodeType") == "UnaryOperation"
+                and n.get("prefix") and n.get("operator") in ("++", "--")):
+            sub = return_term(n.get("subExpression"), "num", target_ty)
+            if sub is None:
+                return None
+            one = {"kind": "literal", "value": "1"}
+            op = "add" if n.get("operator") == "++" else "sub"
+            term = {"kind": "op", "op": op, "lhs": sub[0], "rhs": one}
+            return term, r2_term_text(term)
         direct = delta_term(n, target_ty)
         if direct is not None:
             return direct
@@ -4632,6 +4641,218 @@ def _select_def(defs, arity, declaration_id=None):
         if fit:
             return fit[-1]
     return defs[-1]
+
+
+def _expr_text_for_path(node, id_names):
+    if not isinstance(node, dict):
+        return None
+    if node.get("nodeType") == "Identifier":
+        ref = node.get("referencedDeclaration")
+        return id_names.get(ref, node.get("name")) if isinstance(ref, int) \
+            else node.get("name")
+    if node.get("nodeType") == "Literal":
+        if node.get("kind") == "number" and not node.get("subdenomination"):
+            value = str(node.get("value") or "")
+            return value if value.isdigit() else None
+        if node.get("kind") == "bool":
+            value = node.get("value")
+            if value is True or str(value).lower() == "true":
+                return "true"
+            if value is False or str(value).lower() == "false":
+                return "false"
+        return None
+    if node.get("nodeType") == "BinaryOperation":
+        lhs = _expr_text_for_path(node.get("leftExpression"), id_names)
+        rhs = _expr_text_for_path(node.get("rightExpression"), id_names)
+        op = node.get("operator")
+        if lhs is not None and rhs is not None and op:
+            return f"{lhs} {op} {rhs}"
+    if node.get("nodeType") == "UnaryOperation" and node.get("prefix"):
+        sub = _expr_text_for_path(node.get("subExpression"), id_names)
+        op = node.get("operator")
+        if sub is not None and op in ("++", "--"):
+            return f"{op}{sub}"
+    return None
+
+
+def _relation_key(lhs, op, rhs):
+    return (str(lhs).strip(), op, str(rhs).strip())
+
+
+def _negate_relation_key(key):
+    lhs, op, rhs = key
+    return lhs, DECISION_NEGATE_OP[op], rhs
+
+
+def _return_expr_in_statement(stmt, walked, id_names):
+    if not isinstance(stmt, dict):
+        return None
+    if stmt.get("nodeType") == "Return":
+        return stmt.get("expression")
+    if stmt.get("nodeType") == "Block":
+        return _selected_return_expr(stmt.get("statements") or [], walked,
+                                     id_names)
+    return None
+
+
+def _selected_return_expr(statements, walked, id_names):
+    for stmt in statements or []:
+        if not isinstance(stmt, dict):
+            continue
+        if stmt.get("nodeType") == "Return":
+            return stmt.get("expression")
+        if stmt.get("nodeType") != "IfStatement":
+            continue
+        cond = stmt.get("condition")
+        if not isinstance(cond, dict) or cond.get("nodeType") != "BinaryOperation":
+            return None
+        lhs = _expr_text_for_path(cond.get("leftExpression"), id_names)
+        rhs = _expr_text_for_path(cond.get("rightExpression"), id_names)
+        op = cond.get("operator")
+        if lhs is None or rhs is None or op not in DECISION_NEGATE_OP:
+            return None
+        key = _relation_key(lhs, op, rhs)
+        if key in walked:
+            got = _return_expr_in_statement(stmt.get("trueBody"), walked,
+                                            id_names)
+            return got
+        if _negate_relation_key(key) in walked:
+            false_body = stmt.get("falseBody")
+            if false_body is not None:
+                got = _return_expr_in_statement(false_body, walked, id_names)
+                if got is not None:
+                    return got
+            continue
+        return None
+    return None
+
+
+def _path_decision_relation_keys(path_decisions):
+    out = set()
+    for dec in path_decisions or []:
+        if isinstance(dec, dict) and dec.get("synthetic_abi_gate"):
+            continue
+        claim = dec.get("branch_claim") if isinstance(dec, dict) else None
+        rel = path_condition_from_branch_claim(claim)
+        if rel is not None:
+            out.add(_relation_key(*rel))
+    return out
+
+
+def _uint_add_terms(expr, id_names):
+    if not isinstance(expr, dict):
+        return None
+    if expr.get("nodeType") == "Identifier":
+        name = _expr_text_for_path(expr, id_names)
+        return [("coord", name)] if name else None
+    if expr.get("nodeType") == "Literal":
+        text = _expr_text_for_path(expr, id_names)
+        return [("literal", int(text))] if text and text.isdigit() else None
+    if (expr.get("nodeType") == "UnaryOperation" and expr.get("prefix")
+            and expr.get("operator") == "++"):
+        terms = _uint_add_terms(expr.get("subExpression"), id_names)
+        return terms + [("literal", 1)] if terms is not None else None
+    if (expr.get("nodeType") == "BinaryOperation"
+            and expr.get("operator") == "+"):
+        lhs = _uint_add_terms(expr.get("leftExpression"), id_names)
+        rhs = _uint_add_terms(expr.get("rightExpression"), id_names)
+        if lhs is not None and rhs is not None:
+            return lhs + rhs
+    return None
+
+
+def _region_int_pair(region, name):
+    if name not in region:
+        return None
+    lo, hi = region[name]
+    try:
+        return int(lo), int(hi)
+    except (TypeError, ValueError):
+        return None
+
+
+def _retreat_uint_add_region(expr, region, holes, id_names):
+    terms = _uint_add_terms(expr, id_names)
+    if not terms:
+        return None
+    literal_sum = sum(value for kind, value in terms if kind == "literal")
+    coords = [name for kind, name in terms if kind == "coord"]
+    if not coords:
+        return None
+    unique_coords = []
+    for name in coords:
+        if name not in unique_coords:
+            unique_coords.append(name)
+    bounds = {name: _region_int_pair(region, name) for name in unique_coords}
+    if any(value is None for value in bounds.values()):
+        return None
+    best = None
+    for name in unique_coords:
+        other_hi = literal_sum
+        for other in coords:
+            if other == name:
+                continue
+            other_hi += bounds[other][1]
+        new_hi = UINT256_MAX - other_hi
+        lo, hi = bounds[name]
+        if new_hi < lo:
+            continue
+        new_hi = min(hi, new_hi)
+        old_width = hi - lo
+        new_width = new_hi - lo
+        score = (new_width > 0, new_width, old_width, name)
+        if best is None or score > best[0]:
+            best = (score, name, lo, hi, new_hi)
+    if best is None:
+        return None
+    _score, name, lo, hi, new_hi = best
+    if new_hi == hi:
+        return None
+    new_region = dict(region)
+    new_holes = {k: set(v) for k, v in (holes or {}).items()}
+    new_region[name] = [lo, new_hi]
+    if name in new_holes:
+        kept = {h for h in new_holes[name] if lo <= int(h) <= new_hi}
+        if kept:
+            new_holes[name] = kept
+        else:
+            new_holes.pop(name, None)
+    text = _expr_text_for_path(expr, id_names) or "<return expression>"
+    note = (f"normal-exit arithmetic retreat: `{text}` may overflow on the "
+            f"full certified box, so `{name}` was narrowed from [{lo}, {hi}] "
+            f"to [{lo}, {new_hi}] before the ladder/R2 proof")
+    return new_region, new_holes, note
+
+
+def normal_exit_region_retreat(ast_path, contract, unit, path_decisions,
+                               region, holes, params, arity=None,
+                               declaration_id=None, rettypes=None):
+    if not ast_path or rettypes is None or len(rettypes) != 1:
+        return region, holes, []
+    if not re.match(r"^uint(\d+)?$", _norm_ty(rettypes[0][1])):
+        return region, holes, []
+    try:
+        target = _select_def(_function_defs(ast_path, contract, unit), arity,
+                             declaration_id)
+    except (OSError, ValueError):
+        return region, holes, []
+    if target is None:
+        return region, holes, []
+    id_names = {}
+    for p in ((target.get("parameters") or {}).get("parameters") or []):
+        if p.get("id") is not None and p.get("name"):
+            id_names[p["id"]] = p["name"]
+    walked = _path_decision_relation_keys(path_decisions)
+    expr = _selected_return_expr(
+        ((target.get("body") or {}).get("statements") or []), walked,
+        id_names)
+    if expr is None:
+        return region, holes, []
+    retreated = _retreat_uint_add_region(expr, region, holes, id_names)
+    if retreated is None:
+        return region, holes, []
+    new_region, new_holes, note = retreated
+    return new_region, new_holes, [note]
 
 
 def function_params(ast_path, contract, unit, arity=None,
@@ -8414,6 +8635,14 @@ def main():
     else:
         print(f"[put]   declared return: "
               f"{', '.join(t for _n2, t in rettypes) or '(none)'}")
+    if claim.get("exit_kind") == "normal":
+        region, holes, retreat_notes = normal_exit_region_retreat(
+            a.ast, a.contract, a.unit, claim.get("decisions") or [],
+            region, holes, params, arity=arity,
+            declaration_id=declaration_id, rettypes=rettypes)
+        for note in retreat_notes:
+            print(f"[put]   {note}")
+            notes.append(note)
 
     # ---- WHICH SLOTS TO ASK ABOUT, and why the DRIVER chooses --------------
     #

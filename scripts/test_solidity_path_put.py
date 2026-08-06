@@ -63,6 +63,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                check_esbmc_args, cell_of,
                                exit_kind_asserted, find_unit_call,
                                no_oracle_reason, observed_env,
+                               normal_exit_region_retreat,
                                path_condition_from_branch_claim,
                                path_decision_assumes,
                                rendered_env_coords_for_emitted_case,
@@ -2385,6 +2386,132 @@ def test_typed_R2_bool_return_asks_equality_only():
                  and not return_entry["deltas"],
                  f"bool return has no interval/delta candidates: "
                  f"{return_entry}")
+    return bad
+
+
+def _return_chain_ast_path():
+    def ident(name, ref):
+        return {"nodeType": "Identifier", "name": name,
+                "referencedDeclaration": ref,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def lit(value):
+        return {"nodeType": "Literal", "kind": "number",
+                "value": str(value),
+                "typeDescriptions": {"typeString": f"int_const {value}"}}
+
+    def binop(lhs, op, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def cond(value):
+        return binop(ident("y", 5), "==", lit(value))
+
+    def ret(expr):
+        return {"nodeType": "Return", "expression": expr}
+
+    def ifret(value, expr):
+        return {"nodeType": "IfStatement", "condition": cond(value),
+                "trueBody": {"nodeType": "Block",
+                             "statements": [ret(expr)]}}
+
+    fn = {
+        "nodeType": "FunctionDefinition",
+        "id": 36,
+        "name": "add",
+        "parameters": {"parameters": [
+            {"nodeType": "VariableDeclaration", "id": 3, "name": "x",
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 5, "name": "y",
+             "typeDescriptions": {"typeString": "uint256"}},
+        ]},
+        "returnParameters": {"parameters": [
+            {"nodeType": "VariableDeclaration", "id": 8, "name": "",
+             "typeDescriptions": {"typeString": "uint256"}},
+        ]},
+        "body": {"nodeType": "Block", "statements": [
+            ifret(0, ident("x", 3)),
+            ifret(1, {"nodeType": "UnaryOperation", "operator": "++",
+                      "prefix": True, "subExpression": ident("x", 3),
+                      "typeDescriptions": {"typeString": "uint256"}}),
+            ifret(2, binop(ident("x", 3), "+", lit(2))),
+            ret(binop(ident("x", 3), "+", ident("y", 5))),
+        ]},
+    }
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition",
+        "id": 84,
+        "name": "Cr1",
+        "linearizedBaseContracts": [84],
+        "nodes": [fn],
+    }]}
+    f = tempfile.NamedTemporaryFile("w", suffix=".solast", delete=False)
+    json.dump(ast, f)
+    f.close()
+    return f.name
+
+
+def test_normal_exit_retreat_bounds_prefix_increment_return():
+    from solidity_path_put import UINT256_MAX  # noqa: E402
+    ast = _return_chain_ast_path()
+    region = {"x": ["0", str(UINT256_MAX)], "y": ["1", "1"],
+              "msg.value": ["0", "0"]}
+    new_region, holes, notes = normal_exit_region_retreat(
+        ast, "Cr1", "add",
+        [{"branch_claim": "y == 0"},
+         {"branch_claim": "!(y == 1)"}],
+        region, {}, [("x", "uint256"), ("y", "uint256")],
+        arity=2, declaration_id=36, rettypes=[("", "uint256")])
+    bad = 0
+    bad += check(new_region["x"] == [0, UINT256_MAX - 1],
+                 f"++x normal exit narrows x below max: {new_region}")
+    bad += check(new_region["y"] == ["1", "1"],
+                 f"the branch coordinate stays pinned: {new_region}")
+    bad += check(holes == {}, f"no holes introduced: {holes}")
+    bad += check(notes and "normal-exit arithmetic retreat" in notes[0],
+                 f"the retreat is disclosed: {notes}")
+    os.unlink(ast)
+    return bad
+
+
+def test_normal_exit_retreat_keeps_product_region_for_variable_add():
+    from solidity_path_put import UINT256_MAX  # noqa: E402
+    ast = _return_chain_ast_path()
+    region = {"x": ["0", str(UINT256_MAX)],
+              "y": ["3", str(UINT256_MAX)], "msg.value": ["0", "0"]}
+    new_region, _holes, notes = normal_exit_region_retreat(
+        ast, "Cr1", "add",
+        [{"branch_claim": "y == 0"},
+         {"branch_claim": "y == 1"},
+         {"branch_claim": "y == 2"}],
+        region, {}, [("x", "uint256"), ("y", "uint256")],
+        arity=2, declaration_id=36, rettypes=[("", "uint256")])
+    bad = 0
+    bad += check(new_region["x"] == [0, 0],
+                 f"x is retreated to the product-safe slice: {new_region}")
+    bad += check(new_region["y"] == ["3", str(UINT256_MAX)],
+                 f"y remains the wide fuzz coordinate: {new_region}")
+    bad += check(notes and "`x + y`" in notes[0],
+                 f"the selected return expression is named: {notes}")
+    os.unlink(ast)
+    return bad
+
+
+def test_source_R2_prefix_increment_return_candidate_is_asked():
+    from solidity_path_put import (r2_candidates,  # noqa: E402
+                                   source_assignment_r2_specs)
+    ast = _return_chain_ast_path()
+    specs, _evidence = source_assignment_r2_specs(
+        ast, "Cr1", "add", [("x", "uint256"), ("y", "uint256")],
+        {}, [("x", "num", None), ("y", "num", None)],
+        arity=2, declaration_id=36, rettypes=[("", "uint256")],
+        maps=None, log=lambda _line: None)
+    texts = {c["text"] for c in r2_candidates(specs)}
+    bad = 0
+    bad += check("return == (x + 1)" in texts,
+                 f"prefix ++ return becomes a direct R2 candidate: {texts}")
+    os.unlink(ast)
     return bad
 
 
@@ -10128,6 +10255,9 @@ def main():
               test_typed_R2_proposes_return_equals_entry_state_coord_for_getters,
               test_typed_R2_return_candidates_never_name_pre_snapshot,
               test_typed_R2_bool_return_asks_equality_only,
+              test_normal_exit_retreat_bounds_prefix_increment_return,
+              test_normal_exit_retreat_keeps_product_region_for_variable_add,
+              test_source_R2_prefix_increment_return_candidate_is_asked,
               test_typed_R2_candidate_budget_ignores_empty_bool_return_queue,
               test_path_decision_guard_renders_mapping_slot_relation,
               test_path_decision_guard_negates_plain_branch_claim,
