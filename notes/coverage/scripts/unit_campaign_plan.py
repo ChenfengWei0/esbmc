@@ -133,6 +133,16 @@ def _is_slice_excluded_reason(reason: str) -> bool:
     return "EXCLUDED FROM THE SLICE by the pins" in str(reason or "")
 
 
+def _is_method_unsupported_reason(reason: str) -> bool:
+    text = str(reason or "")
+    if "STATICALLY INSEPARABLE" not in text:
+        return False
+    lowered = text.lower()
+    return ("hash" in lowered or "nondet" in lowered or "uncontrolled decision" in lowered
+            or "__esbmc_hash_result" in text or "extcall" in lowered
+            or "external-call" in lowered)
+
+
 def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> tuple[dict, int]:
     latest = {}
     bad_lines = 0
@@ -151,9 +161,11 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
     for key, rows in by_unit.items():
         witnessed = 0
         eligible_witnessed = 0
+        retry_eligible_witnessed = 0
         certified = 0
         not_certified = 0
         slice_excluded = 0
+        method_unsupported = 0
         regions = 0
         partial_journal_paths = 0
         partial_journal_witnesses = 0
@@ -163,26 +175,40 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         no_verdict_progress = Counter()
         progress_buckets = Counter()
         buckets = Counter()
+        no_coordinate = False
+        preflight_refused = False
         for row in rows:
             buckets[row.get("bucket") or "<missing-bucket>"] += 1
             progress_bucket = _progress_bucket(row)
             progress_buckets[progress_bucket] += 1
+            if row.get("bucket") == "NO-COORDINATE" or row.get("no_coordinate_reason"):
+                no_coordinate = True
+            empty_reason = str(row.get("empty_witness_reason") or "")
+            if (row.get("empty_witness_verdict") == "REFUSED"
+                    or "direct self-recursive function/helper" in empty_reason):
+                preflight_refused = True
             c = row.get("certified") or {}
             n = row.get("not_certified") or {}
             c_count = len(c) if isinstance(c, dict) else 0
             n_count = len(n) if isinstance(n, dict) else 0
             slice_excluded_count = 0
+            method_unsupported_count = 0
             if isinstance(n, dict):
                 slice_excluded_count = sum(
                     1 for reason in n.values() if _is_slice_excluded_reason(reason))
+                method_unsupported_count = sum(
+                    1 for reason in n.values() if _is_method_unsupported_reason(reason))
             regions += c_count
             if isinstance(row.get("witnessed"), int):
                 witnessed_row = max(0, row["witnessed"])
                 witnessed += witnessed_row
                 eligible_witnessed += max(0, witnessed_row - slice_excluded_count)
+                retry_eligible_witnessed += max(
+                    0, witnessed_row - slice_excluded_count - method_unsupported_count)
                 certified += c_count
                 not_certified += n_count
                 slice_excluded += slice_excluded_count
+                method_unsupported += method_unsupported_count
                 gap = max(0, witnessed_row - c_count - n_count)
                 no_verdict_paths += gap
                 if gap:
@@ -194,8 +220,11 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
                 partial_claims_decided += int(journal.get("claims_decided") or 0)
                 partial_claims_total += int(journal.get("claims_total") or 0)
         raw_rate = (certified / witnessed) if witnessed else (1.0 if regions else 0.0)
-        rate = (
+        slice_adjusted_rate = (
             certified / eligible_witnessed if eligible_witnessed else
+            (1.0 if regions else 0.0))
+        rate = (
+            certified / retry_eligible_witnessed if retry_eligible_witnessed else
             (1.0 if regions else 0.0))
         strong = regions > 0 and rate >= min_certified_path_rate
         reason = ""
@@ -209,18 +238,28 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             reason = "no certified regions"
         elif rate < min_certified_path_rate:
             reason = "certified path rate below threshold"
+        non_retryable_reason = ""
+        if not regions and no_coordinate:
+            non_retryable_reason = "no generalisable coordinate"
+        elif not regions and preflight_refused:
+            non_retryable_reason = "witness preflight refused"
         quality[key] = {
             "strong": strong,
+            "retryable": not non_retryable_reason,
+            "non_retryable_reason": non_retryable_reason,
             "reason": reason,
             "rows": len(rows),
             "witnessed_paths": witnessed,
             "eligible_witnessed_paths": eligible_witnessed,
+            "retry_eligible_witnessed_paths": retry_eligible_witnessed,
             "certified_paths": certified,
             "not_certified_paths": not_certified,
             "slice_excluded_paths": slice_excluded,
+            "method_unsupported_paths": method_unsupported,
             "no_verdict_paths": no_verdict_paths,
             "certified_regions": regions,
             "raw_certified_path_rate": raw_rate,
+            "slice_adjusted_certified_path_rate": slice_adjusted_rate,
             "certified_path_rate": rate,
             "progress_buckets": dict(sorted(progress_buckets.items())),
             "no_verdict_progress_paths": dict(sorted(no_verdict_progress.items())),
@@ -454,6 +493,7 @@ def plan_campaign_for_schedule(schedule: dict,
     bad_lines = 0
     orphan_rows = 0
     cert_weak = Counter()
+    cert_non_retryable = Counter()
 
     for fallback_attempt, journal in enumerate(journals, start=1):
         rows, bad = _read_journal(journal)
@@ -471,6 +511,7 @@ def plan_campaign_for_schedule(schedule: dict,
 
     pending_by_attempt = defaultdict(list)
     completed = []
+    non_retryable = []
     exhausted = []
     latest_status = Counter()
     by_benchmark_state = defaultdict(Counter)
@@ -488,6 +529,15 @@ def plan_campaign_for_schedule(schedule: dict,
             state = "completed-ok" if latest_row else "completed-certified"
             completed.append(job)
             latest_status["ok" if latest_row else "certified-without-runner-journal"] += 1
+        elif cert_jsonls and quality and quality.get("retryable") is False:
+            state = "non-retryable"
+            non_retryable.append(job)
+            reason = (
+                quality.get("non_retryable_reason") or quality.get("reason")
+                or "non-retryable")
+            cert_non_retryable[reason] += 1
+            latest_status[(latest_row or {}).get("status")
+                          or "certified-without-runner-journal"] += 1
         elif attempts >= max_attempt:
             state = "exhausted"
             exhausted.append(job)
@@ -573,12 +623,14 @@ def plan_campaign_for_schedule(schedule: dict,
         "summary": {
             "jobs": len(jobs_by_id),
             "completed_ok": len(completed),
+            "non_retryable": len(non_retryable),
             "exhausted": len(exhausted),
             "bad_journal_lines": bad_lines,
             "bad_cert_jsonl_lines": bad_cert_lines,
             "orphan_journal_rows": orphan_rows,
             "cert_quality_enabled": bool(cert_jsonls),
             "cert_weak": dict(sorted(cert_weak.items())),
+            "cert_non_retryable": dict(sorted(cert_non_retryable.items())),
             "status_attempts": dict(sorted(status_attempts.items())),
             "distinct_attempts_max": max((len(value) for value in attempts_by_job.values()),
                                          default=0),

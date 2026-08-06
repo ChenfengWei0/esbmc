@@ -10428,6 +10428,74 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 retry-adjusted quality and non-retryable failures
+
+Further diagnosis on the same attempt-2 sample:
+
+- `EtherLotto.play` has source-level randomness:
+  `uint random = uint(keccak256(abi.encodePacked(block.timestamp, block.difficulty))) % 2;`
+  followed by `if (random == 0)`.
+- The two not-certified paths for this unit are therefore correctly classified
+  as static uncontrolled / hash-nondet inseparable.  More ESBMC time will not
+  let a generated PUT force one side of that uncontrolled decision with the
+  current coordinate system.
+- `AIRBets.transfer` did not start ESBMC at all.  It was refused by the narrow
+  recursive-helper preflight:
+  `SafeMath.div/2` and `SafeMath.sub/2` are flattened direct self-recursive
+  wrappers in the target call closure.
+
+Code change:
+
+- `certify_result_summary.py` now also reports retry-adjusted accounting:
+  - `retry_eligible_witnessed_paths`;
+  - `method_unsupported_paths`;
+  - `retry_adjusted_certified_path_rate`.
+- The summary gate uses the retry-adjusted rate.  Raw and slice-adjusted rates
+  remain present, so reporting can still show the true number of witnessed
+  paths and method limitations.
+- `unit_campaign_plan.py` now uses the same retry-adjusted denominator for
+  certification quality.  Static uncontrolled / external-call inseparable
+  siblings no longer trigger another attempt.
+- `unit_campaign_plan.py` also has an explicit `non_retryable` bucket for
+  rows that should not consume more ESBMC time under the same recipe:
+  - `NO-COORDINATE` / `no generalisable coordinate`;
+  - witness preflight refusal, including the direct self-recursive helper
+    guard.
+
+Validation on the real attempt-2 sample:
+
+- Retry-adjusted summary:
+  `/tmp/veriput_stratified_20260807_03/certify-summary-balanced7-a2-remaining4-retryadjusted.json`.
+- Raw certified path rate:
+  `3 / 7 = 0.4286`.
+- Slice-adjusted certified path rate:
+  `3 / 5 = 0.6`.
+- Retry-adjusted certified path rate:
+  `3 / 3 = 1.0`.
+- Method-unsupported paths:
+  2, both from `EtherLotto.play`.
+- Final campaign plan:
+  `/tmp/veriput_stratified_20260807_03/unit-campaign-balanced7-a2-remaining4-nonretryable.json`.
+- Final split for the 4 attempt-2 jobs:
+  - `completed_ok = 3`;
+  - `non_retryable = 1`;
+  - `pending_by_attempt = {}`.
+- The sole non-retryable reason is:
+  `witness preflight refused` for `AIRBets.transfer`.
+- This prevents the planner from scheduling any 600s attempt-3 job for this
+  sample.  That is a campaign-speed fix, not a proof-strength claim.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_result_summary.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
+  passed.
+
 ## 2026-08-07 certification-first retry planning
 
 Attempt-2 diagnostic run:

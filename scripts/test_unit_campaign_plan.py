@@ -536,6 +536,100 @@ def test_campaign_treats_slice_excluded_paths_as_body_slice_ready():
     return bad
 
 
+def test_campaign_treats_method_unsupported_paths_as_non_retryable():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__method__f"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__method__f", "ok", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "peer182",
+                    "unit": "f",
+                    "bucket": "CERTIFIED",
+                    "witnessed": 2,
+                    "certified": {
+                        "3": "x in [0, 9]",
+                    },
+                    "not_certified": {
+                        "12": "STATICALLY INSEPARABLE: this path has a witnessed sibling "
+                              "whose source-level split is driven by an ESBMC hash/nondet/"
+                              "external-call decision rather than by a generated-test-settable "
+                              "coordinate (decision#3 random == 0).",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 1,
+                 f"method-unsupported sibling path does not force a retry: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {},
+                 f"method-limited unit has no pending retry: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {},
+                 f"method limitations are not counted as retry-weak: {doc['summary']}")
+    return bad
+
+
+def test_campaign_does_not_retry_witness_preflight_refusals():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__recursive__f"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__recursive__f", "ok", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "peer182",
+                    "unit": "f",
+                    "bucket": "NO-WITNESS-UNDECIDED",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "empty_witness_verdict": "REFUSED",
+                    "empty_witness_reason":
+                    "target call closure reaches direct self-recursive function/helper "
+                    "wrapper(s): SafeMath.div/2, SafeMath.sub/2",
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 0 and doc["summary"]["non_retryable"] == 1,
+                 f"preflight refusal is separated from completed certification: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {},
+                 f"preflight refusal does not consume the next ESBMC attempt: {doc['summary']}")
+    bad += check(doc["summary"]["cert_non_retryable"] == {
+        "witness preflight refused": 1,
+    }, f"preflight refusal reason is counted: {doc['summary']}")
+    return bad
+
+
 def test_campaign_accepts_strong_certification_without_runner_journal():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
@@ -605,6 +699,8 @@ TESTS = [
     test_campaign_retries_runner_ok_when_certification_is_weak,
     test_campaign_names_partial_journal_only_as_weak_certification,
     test_campaign_treats_slice_excluded_paths_as_body_slice_ready,
+    test_campaign_treats_method_unsupported_paths_as_non_retryable,
+    test_campaign_does_not_retry_witness_preflight_refusals,
     test_campaign_accepts_strong_certification_without_runner_journal,
     test_campaign_can_plan_from_in_memory_schedule,
 ]

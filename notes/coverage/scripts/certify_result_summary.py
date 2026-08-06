@@ -134,6 +134,13 @@ def _is_slice_excluded_reason(reason: str) -> bool:
     return "EXCLUDED FROM THE SLICE by the pins" in str(reason or "")
 
 
+def _is_method_unsupported_reason(reason: str) -> bool:
+    return _reason_bucket(str(reason)) in {
+        "method-unsupported:static-uncontrolled",
+        "method-unsupported:static-extcall",
+    }
+
+
 def _region_shape(text: str) -> dict:
     intervals = {}
     holes = {}
@@ -205,9 +212,11 @@ def summarize(cert_jsonl: str,
 
     witnessed_paths = 0
     eligible_witnessed_paths = 0
+    retry_eligible_witnessed_paths = 0
     certified_paths = 0
     not_certified_paths = 0
     slice_excluded_paths = 0
+    method_unsupported_paths = 0
     no_verdict_paths = 0
     certified_regions = 0
     rows_with_certified = 0
@@ -231,9 +240,13 @@ def summarize(cert_jsonl: str,
         c_count = len(certified) if isinstance(certified, dict) else 0
         n_count = len(not_certified) if isinstance(not_certified, dict) else 0
         slice_excluded_count = 0
+        method_unsupported_count = 0
         if isinstance(not_certified, dict):
             slice_excluded_count = sum(
                 1 for reason in not_certified.values() if _is_slice_excluded_reason(reason))
+            method_unsupported_count = sum(
+                1 for reason in not_certified.values()
+                if _is_method_unsupported_reason(reason))
         certified_regions += c_count
         if c_count:
             rows_with_certified += 1
@@ -242,9 +255,12 @@ def summarize(cert_jsonl: str,
             rows_with_witnessed += 1
             witnessed_paths += witnessed
             eligible_witnessed_paths += max(0, witnessed - slice_excluded_count)
+            retry_eligible_witnessed_paths += max(
+                0, witnessed - slice_excluded_count - method_unsupported_count)
             certified_paths += c_count
             not_certified_paths += n_count
             slice_excluded_paths += slice_excluded_count
+            method_unsupported_paths += method_unsupported_count
             no_verdict = max(0, witnessed - c_count - n_count)
             no_verdict_paths += no_verdict
             if no_verdict:
@@ -294,6 +310,9 @@ def summarize(cert_jsonl: str,
     certified_path_rate = (certified_paths / witnessed_paths) if witnessed_paths else None
     slice_adjusted_certified_path_rate = (
         certified_paths / eligible_witnessed_paths if eligible_witnessed_paths else None)
+    retry_adjusted_certified_path_rate = (
+        certified_paths / retry_eligible_witnessed_paths
+        if retry_eligible_witnessed_paths else None)
     verdict_path_rate = ((certified_paths + not_certified_paths) /
                          witnessed_paths if witnessed_paths else None)
     gate = "blocked"
@@ -306,8 +325,10 @@ def summarize(cert_jsonl: str,
         blockers.append("no certification rows")
     if certified_regions == 0:
         blockers.append("no certified regions")
-    gate_rate = (slice_adjusted_certified_path_rate
-                 if slice_adjusted_certified_path_rate is not None else certified_path_rate)
+    gate_rate = (retry_adjusted_certified_path_rate
+                 if retry_adjusted_certified_path_rate is not None else
+                 (slice_adjusted_certified_path_rate
+                  if slice_adjusted_certified_path_rate is not None else certified_path_rate))
     if witnessed_paths and gate_rate is not None and gate_rate < min_certified_path_rate:
         blockers.append("certified path rate is below threshold")
     if blockers:
@@ -340,13 +361,16 @@ def summarize(cert_jsonl: str,
             "rows_with_certified": rows_with_certified,
             "witnessed_paths": witnessed_paths,
             "eligible_witnessed_paths": eligible_witnessed_paths,
+            "retry_eligible_witnessed_paths": retry_eligible_witnessed_paths,
             "certified_paths": certified_paths,
             "not_certified_paths": not_certified_paths,
             "slice_excluded_paths": slice_excluded_paths,
+            "method_unsupported_paths": method_unsupported_paths,
             "no_verdict_paths": no_verdict_paths,
             "certified_regions": certified_regions,
             "certified_path_rate": certified_path_rate,
             "slice_adjusted_certified_path_rate": slice_adjusted_certified_path_rate,
+            "retry_adjusted_certified_path_rate": retry_adjusted_certified_path_rate,
             "verdict_path_rate": verdict_path_rate,
             "bucket_rows": dict(sorted(bucket_rows.items())),
             "progress_rows": dict(sorted(progress_rows.items())),
