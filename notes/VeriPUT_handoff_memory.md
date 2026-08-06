@@ -4285,3 +4285,67 @@ generation. Next wiring step is to feed this manifest into subject/unit
 enumeration so the denominator is: target contract first, then target's
 public/external units, with `bugfix124.units_hint` available as a prioritization
 hint rather than a hard filter.
+
+### Target manifest to unit manifest bridge
+
+`notes/coverage/scripts/subject_unit_manifest.py` now accepts
+`--target-manifest <veriput-eval/target/v1.json>`.
+
+Behavior:
+
+- Only `status=ok` target rows are enumerated.
+- Each target row is resolved through the prepared `Results/*/subjects`
+  metadata, not through POC fixtures.
+- Target contract mismatch is fail-closed: the row becomes `status=error`
+  with both the target manifest contract and prepared subject contract recorded.
+- The original target row is attached to the unit row as `target`.
+- `units_hint` is preserved as priority metadata, not a filter:
+  - If AST enumeration succeeds, matching hints are `hinted_units`; hints not
+    found in enumerated public/external units are `missing_unit_hints`.
+  - If AST is absent or enumeration did not run, hints are
+    `pending_unit_hints`, because absence has not been proven.
+- Summary now records `hinted_units`, `missing_unit_hints`, and
+  `pending_unit_hints`.
+
+Real no-proof smoke:
+
+```sh
+python3 notes/coverage/scripts/target_manifest.py --benchmark bugfix124 | \
+  python3 notes/coverage/scripts/subject_unit_manifest.py \
+    --target-manifest /dev/stdin --limit 3
+# subjects=3 missing_ast=3 pending_unit_hints=5
+```
+
+That smoke is the expected ground-truth state before AST preheat: the first
+three BugFix targets have changed-function hints, but their compact AST files
+are not present yet, so we cannot classify hints as matched/missing. No solc,
+Forge, fuzzing, ESBMC, or POC attempt was consumed.
+
+Full real target->unit no-proof census, 2026-08-06:
+
+```sh
+python3 notes/coverage/scripts/target_manifest.py \
+  --benchmark peer182 --benchmark bugfix124 --benchmark stress243 | \
+python3 notes/coverage/scripts/subject_unit_manifest.py \
+  --target-manifest /dev/stdin
+```
+
+Summary:
+
+- total target rows: 548
+- `peer182`: 182 `missing-ast`, 0 error
+- `bugfix124`: 124 `missing-ast`, 0 error
+- `stress243`: 203 `missing-ast`, 39 error
+- pending unit hints: 381, all from targets whose AST has not been enumerated
+
+Interpretation:
+
+- The user-provided `stress203` name aligns with the currently usable prepared
+  Stress subset: `TARGETS.csv` has 242 `include=yes` rows, but 39 corresponding
+  `Results/Stress243/subjects/*/meta.json` rows are not usable
+  (`status=compile-failed` or equivalent), leaving 203 prepared targets.
+- Those 203 still need compact AST preheat before target-contract unit
+  enumeration can produce a real unit denominator.
+- Do not run ESBMC before this is resolved; otherwise proof attempts would be
+  spent without a verified unit denominator or changed-function prioritization
+  map.

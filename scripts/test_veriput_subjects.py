@@ -356,6 +356,129 @@ def test_unit_manifest_cli_shard_and_resume():
     return bad
 
 
+def test_unit_manifest_cli_reads_target_manifest_hints():
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(td, "repo__C")
+        (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
+        target_manifest = Path(td) / "targets.json"
+        target_manifest.write_text(json.dumps({
+            "schema": "veriput-eval/target/v1",
+            "targets": [{
+                "schema": "veriput-eval-target/v1",
+                "benchmark": "stress243",
+                "subject_id": "repo__C",
+                "status": "ok",
+                "contract": "C",
+                "sources": [{"variant": "source", "path": "flat.sol"}],
+                "units_hint": ["own", "missingChanged"],
+            }],
+        }) + "\n")
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--target-manifest", str(target_manifest),
+            "--subject-root", td,
+        ], capture_output=True, text=True)
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    row = data["subjects"][0]
+    bad = 0
+    bad += check(data["summary"]["hinted_units"] == 1,
+                 f"one target hint matches enumerated units: {data['summary']}")
+    bad += check(data["summary"]["missing_unit_hints"] == 1,
+                 f"one target hint is absent from AST units: {data['summary']}")
+    bad += check(row["unit_hints"]["hinted_units"] == ["own"],
+                 f"matched hint is retained: {row['unit_hints']}")
+    bad += check(row["unit_hints"]["missing_unit_hints"] == ["missingChanged"],
+                 f"missing hint is retained: {row['unit_hints']}")
+    bad += check(row["target"]["subject_id"] == "repo__C",
+                 f"target row is attached: {row['target']}")
+    return bad
+
+
+def test_unit_manifest_cli_refuses_target_contract_mismatch():
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(td, "repo__C")
+        (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
+        target_manifest = Path(td) / "targets.json"
+        target_manifest.write_text(json.dumps({
+            "schema": "veriput-eval/target/v1",
+            "targets": [{
+                "schema": "veriput-eval-target/v1",
+                "benchmark": "stress243",
+                "subject_id": "repo__C",
+                "status": "ok",
+                "contract": "WrongC",
+                "sources": [{"variant": "source", "path": "flat.sol"}],
+                "units_hint": [],
+            }],
+        }) + "\n")
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--target-manifest", str(target_manifest),
+            "--subject-root", td,
+        ], capture_output=True, text=True)
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    row = data["subjects"][0]
+    bad = 0
+    bad += check(data["summary"]["error"] == 1,
+                 f"mismatched target counts as error: {data['summary']}")
+    bad += check("disagrees" in row["reason"],
+                 f"mismatch reason is explicit: {row}")
+    bad += check(row["subject_contract"] == "C",
+                 f"prepared contract is recorded: {row}")
+    return bad
+
+
+def test_unit_manifest_cli_records_unusable_prepared_subject():
+    with tempfile.TemporaryDirectory() as td:
+        make_subject(td, "repo__C", status="compile-failed")
+        target_manifest = Path(td) / "targets.json"
+        target_manifest.write_text(json.dumps({
+            "schema": "veriput-eval/target/v1",
+            "targets": [{
+                "schema": "veriput-eval-target/v1",
+                "benchmark": "stress243",
+                "subject_id": "repo__C",
+                "status": "ok",
+                "contract": "C",
+                "sources": [{"variant": "source", "path": "flat.sol"}],
+                "units_hint": ["f"],
+            }],
+        }) + "\n")
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--target-manifest", str(target_manifest),
+            "--subject-root", td,
+        ], capture_output=True, text=True)
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    row = data["subjects"][0]
+    bad = 0
+    bad += check(data["summary"]["error"] == 1,
+                 f"unusable prepared subject is row-local: {data['summary']}")
+    bad += check("status='compile-failed'" in row["reason"],
+                 f"prepared status is recorded: {row}")
+    bad += check(row["target"]["subject_id"] == "repo__C",
+                 f"target row is retained: {row}")
+    return bad
+
+
 def main():
     tests = [
         test_resolve_subject_from_root_and_unit,
@@ -369,6 +492,9 @@ def main():
         test_generate_ast_start_failure_cleans_temp_file,
         test_unit_manifest_cli_lists_units_without_esbmc,
         test_unit_manifest_cli_shard_and_resume,
+        test_unit_manifest_cli_reads_target_manifest_hints,
+        test_unit_manifest_cli_refuses_target_contract_mismatch,
+        test_unit_manifest_cli_records_unusable_prepared_subject,
     ]
     bad = 0
     for test in tests:

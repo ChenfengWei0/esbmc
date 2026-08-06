@@ -21,6 +21,7 @@ sys.path.insert(0, str(HERE))
 from veriput_subjects import (  # noqa: E402
     DEFAULT_AST_TIMEOUT_S,
     KNOWN_SUBJECT_ROOTS,
+    PreparedSubject,
     SubjectError,
     manifest_for_subject,
     resolve_subject,
@@ -48,18 +49,75 @@ def _apply_shard(items, shard):
     return [item for pos, item in enumerate(items) if pos % total == idx]
 
 
+def _target_manifest_subjects(args):
+    if not args.target_manifest:
+        return None
+    p = Path(args.target_manifest)
+    try:
+        doc = json.loads(p.read_text())
+    except json.JSONDecodeError as exc:
+        raise SubjectError(f"{p} is not valid JSON: {exc}") from exc
+    if doc.get("schema") != "veriput-eval/target/v1":
+        raise SubjectError(
+            f"{p} has unsupported schema {doc.get('schema')!r}")
+    items = []
+    for target in doc.get("targets") or []:
+        if target.get("status") != "ok":
+            continue
+        benchmark = target.get("benchmark")
+        subject_id = target.get("subject_id")
+        if not benchmark or not subject_id:
+            raise SubjectError(
+                f"{p} has an ok target row without benchmark/subject_id")
+        try:
+            subject = resolve_subject(
+                subject_id,
+                root=args.subject_root or None,
+                benchmark=benchmark,
+                require_unit=False)
+        except SubjectError as exc:
+            items.append((None, {
+                "schema": "veriput-unit-target/v1",
+                "status": "error",
+                "reason": str(exc),
+                "target": target,
+            }))
+            continue
+        if subject.contract != target.get("contract"):
+            items.append((subject, {
+                "schema": "veriput-unit-target/v1",
+                "status": "error",
+                "reason": "target manifest contract disagrees with subject",
+                "target": target,
+                "subject_contract": subject.contract,
+            }))
+            continue
+        items.append((subject, {
+            "schema": "veriput-unit-target/v1",
+            "status": "ok",
+            "target": target,
+        }))
+    items = _apply_shard(items, _parse_shard(args.shard))
+    if args.limit:
+        items = items[:args.limit]
+    return items
+
+
 def _subjects(args):
+    manifest_subjects = _target_manifest_subjects(args)
+    if manifest_subjects is not None:
+        return manifest_subjects
     if args.subject_id:
         if not args.subject_root and not args.benchmark:
             raise SubjectError(
                 "--subject-id without --subject-root needs --benchmark")
         subjects = [
-            resolve_subject(
-                sid,
-                root=args.subject_root or None,
-                benchmark=args.benchmark or None,
-                require_unit=False,
-            )
+            (resolve_subject(
+                 sid,
+                 root=args.subject_root or None,
+                 benchmark=args.benchmark or None,
+                 require_unit=False),
+             None)
             for sid in args.subject_id
         ]
         return _apply_shard(subjects, _parse_shard(args.shard))
@@ -68,13 +126,55 @@ def _subjects(args):
     if args.limit:
         dirs = dirs[:args.limit]
     return [
-        resolve_subject(
-            str(path),
-            benchmark=args.benchmark or None,
-            require_unit=False,
-        )
+        (resolve_subject(
+             str(path),
+             benchmark=args.benchmark or None,
+             require_unit=False),
+         None)
         for path in dirs
     ]
+
+
+def _target_error_row(subject: PreparedSubject, target_info: dict):
+    target = target_info.get("target") or {}
+    subject_record = subject.to_record() if subject else {
+        "benchmark": target.get("benchmark"),
+        "subject_id": target.get("subject_id"),
+        "contract": target.get("contract"),
+    }
+    return {
+        "subject": subject_record,
+        "status": "error",
+        "reason": target_info["reason"],
+        "target": target,
+        "subject_contract": target_info.get("subject_contract"),
+    }
+
+
+def _annotate_target(row: dict, target_info: dict | None):
+    if not target_info:
+        return row
+    target = target_info.get("target") or {}
+    row["target"] = target
+    hints = target.get("units_hint") or []
+    if row.get("status") != "ok" or not hints:
+        if hints:
+            row["unit_hints"] = {
+                "hinted_units": [],
+                "missing_unit_hints": [],
+                "pending_unit_hints": list(hints),
+            }
+        return row
+    units = (row.get("units") or {}).get("units") or []
+    unit_set = set(units)
+    hinted = [name for name in hints if name in unit_set]
+    missing = [name for name in hints if name not in unit_set]
+    row["unit_hints"] = {
+        "hinted_units": hinted,
+        "missing_unit_hints": missing,
+        "pending_unit_hints": [],
+    }
+    return row
 
 
 def _load_resume_keys(path):
@@ -116,14 +216,21 @@ def build_manifest(args):
     skipped = _load_resume_keys(args.resume_journal)
     rows = []
     skipped_resume = 0
-    for subject in subjects:
-        if subject.subject_id in skipped:
+    for subject, target_info in subjects:
+        target = (target_info or {}).get("target") or {}
+        subject_id = subject.subject_id if subject else target.get("subject_id")
+        if subject_id in skipped:
             skipped_resume += 1
             continue
-        row = manifest_for_subject(
-            subject,
-            generate_ast=args.generate_ast,
-            ast_timeout_s=args.ast_timeout)
+        if subject is None or (target_info and target_info.get("status") ==
+                               "error"):
+            row = _target_error_row(subject, target_info)
+        else:
+            row = manifest_for_subject(
+                subject,
+                generate_ast=args.generate_ast,
+                ast_timeout_s=args.ast_timeout)
+            row = _annotate_target(row, target_info)
         rows.append(row)
         _write_journal(args.journal, row)
     summary = {
@@ -134,13 +241,23 @@ def build_manifest(args):
         "error": sum(1 for row in rows if row["status"] == "error"),
         "units": sum(len((row.get("units") or {}).get("units") or [])
                      for row in rows),
+        "hinted_units": sum(
+            len((row.get("unit_hints") or {}).get("hinted_units") or [])
+            for row in rows),
+        "missing_unit_hints": sum(
+            len((row.get("unit_hints") or {}).get("missing_unit_hints") or [])
+            for row in rows),
+        "pending_unit_hints": sum(
+            len((row.get("unit_hints") or {}).get("pending_unit_hints") or [])
+            for row in rows),
         "skipped": sum(len((row.get("units") or {}).get("skipped") or [])
                        for row in rows),
         "skipped_resume": skipped_resume,
     }
     return {
         "schema": "veriput-unit-manifest/v1",
-        "benchmark": args.benchmark,
+        "benchmark": args.benchmark or None,
+        "target_manifest": args.target_manifest or None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generate_ast": bool(args.generate_ast),
         "ast_timeout_s": args.ast_timeout,
@@ -155,10 +272,15 @@ def build_manifest(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--benchmark", choices=sorted(KNOWN_SUBJECT_ROOTS),
-                    required=True,
+                    default="",
                     help="prepared-subject population label")
+    ap.add_argument("--target-manifest", default="",
+                    help="read a veriput-eval/target/v1 manifest and enumerate "
+                         "its ok targets through prepared Results subjects")
     ap.add_argument("--subject-root", default="",
-                    help="override the population's subjects directory")
+                    help="override the population's subjects directory. With "
+                         "--target-manifest this is intended for a manifest "
+                         "whose rows all live under one prepared-subject root")
     ap.add_argument("--subject-id", action="append", default=[],
                     help="one subject id to include. Repeatable. Without it, "
                          "all subjects under the root are considered")
@@ -184,6 +306,9 @@ def main():
     ap.add_argument("--out", default="",
                     help="write JSON manifest here. Without it, print to stdout")
     args = ap.parse_args()
+    if not args.benchmark and not args.target_manifest:
+        print("REFUSED: pass --benchmark or --target-manifest", file=sys.stderr)
+        return 1
     try:
         doc = build_manifest(args)
     except SubjectError as exc:
