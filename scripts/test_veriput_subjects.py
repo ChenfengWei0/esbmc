@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -9,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
 from veriput_subjects import (SubjectError, enumerate_subject_units,  # noqa: E402
-                              resolve_subject, subject_from_record)
+                              resolve_subject, subject_from_record,
+                              unit_manifest)
 
 
 def check(cond, msg):
@@ -178,6 +180,50 @@ def test_ast_unit_enumeration_is_target_contract_scoped():
     return bad
 
 
+def test_unit_manifest_records_missing_ast_without_solc():
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(td, "repo__C")
+        (d / "flat.sol.solast").unlink()
+        subject = resolve_subject("repo__C", root=td, require_unit=False)
+        manifest = unit_manifest("stress243", [subject], generate_ast=False)
+    bad = 0
+    bad += check(manifest["schema"] == "veriput-unit-manifest/v1",
+                 f"manifest schema is stable: {manifest['schema']}")
+    bad += check(manifest["summary"]["subjects"] == 1,
+                 f"one subject counted: {manifest['summary']}")
+    bad += check(manifest["summary"]["missing_ast"] == 1,
+                 f"missing AST is counted: {manifest['summary']}")
+    bad += check(manifest["subjects"][0]["status"] == "missing-ast",
+                 f"row records missing AST: {manifest['subjects'][0]}")
+    return bad
+
+
+def test_unit_manifest_cli_lists_units_without_esbmc():
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(td, "repo__C")
+        (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", td,
+            "--subject-id", "repo__C",
+        ], capture_output=True, text=True)
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    bad = 0
+    bad += check(data["summary"]["ok"] == 1,
+                 f"CLI manifest has one ok subject: {data['summary']}")
+    units = data["subjects"][0]["units"]["units"]
+    bad += check(units == ["own", "baseOnly"],
+                 f"CLI manifest carries units: {units}")
+    return bad
+
+
 def main():
     tests = [
         test_resolve_subject_from_root_and_unit,
@@ -185,6 +231,8 @@ def main():
         test_subject_from_cert_record_round_trips,
         test_bad_status_is_not_usable,
         test_ast_unit_enumeration_is_target_contract_scoped,
+        test_unit_manifest_records_missing_ast_without_solc,
+        test_unit_manifest_cli_lists_units_without_esbmc,
     ]
     bad = 0
     for test in tests:

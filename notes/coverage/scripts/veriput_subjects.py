@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -296,6 +297,69 @@ def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
         units=tuple(units),
         skipped=tuple(skipped),
     )
+
+
+def subject_dirs(benchmark: str, root: str | None = None):
+    if root:
+        base = Path(root).expanduser().resolve()
+    else:
+        if benchmark not in KNOWN_SUBJECT_ROOTS:
+            raise SubjectError(
+                f"unknown subject benchmark {benchmark!r}; known: "
+                + ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
+        base = KNOWN_SUBJECT_ROOTS[benchmark]
+    if not base.is_dir():
+        raise SubjectError(f"subject root does not exist: {base}")
+    return sorted(p for p in base.iterdir() if (p / "meta.json").exists())
+
+
+def manifest_for_subject(subject: PreparedSubject, *, generate_ast=False) -> dict:
+    try:
+        wrote_ast = ensure_solast(subject) if generate_ast else False
+        if not Path(subject.solast).exists():
+            return {
+                "subject": subject.to_record(),
+                "status": "missing-ast",
+                "reason": f"{subject.solast} does not exist",
+            }
+        enum = enumerate_subject_units(subject)
+        return {
+            "subject": subject.to_record(),
+            "status": "ok",
+            "ast_generated": wrote_ast,
+            "units": enum.to_record(),
+        }
+    except (SubjectError, subprocess.CalledProcessError) as exc:
+        return {
+            "subject": subject.to_record(),
+            "status": "error",
+            "reason": str(exc),
+        }
+
+
+def unit_manifest(benchmark: str, subjects: list[PreparedSubject], *,
+                  generate_ast=False) -> dict:
+    rows = [manifest_for_subject(subject, generate_ast=generate_ast)
+            for subject in subjects]
+    summary = {
+        "subjects": len(rows),
+        "ok": sum(1 for row in rows if row["status"] == "ok"),
+        "missing_ast": sum(1 for row in rows
+                           if row["status"] == "missing-ast"),
+        "error": sum(1 for row in rows if row["status"] == "error"),
+        "units": sum(len((row.get("units") or {}).get("units") or [])
+                     for row in rows),
+        "skipped": sum(len((row.get("units") or {}).get("skipped") or [])
+                       for row in rows),
+    }
+    return {
+        "schema": "veriput-unit-manifest/v1",
+        "benchmark": benchmark,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generate_ast": bool(generate_ast),
+        "summary": summary,
+        "subjects": rows,
+    }
 
 
 def ensure_solast(subject: PreparedSubject) -> bool:

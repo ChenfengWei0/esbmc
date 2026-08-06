@@ -4080,3 +4080,51 @@ Remaining denominator work:
 - Decide how to account for overloads, public-state getters, fallback/receive,
   and proxy-only targets in the benchmark denominator. The current code records
   skips, but the paper/evaluation needs an explicit denominator policy.
+
+### Unit manifest builder progress
+
+The prepared-subject unit enumeration can now be materialized into a benchmark
+manifest without starting ESBMC:
+
+- New `notes/coverage/scripts/subject_unit_manifest.py` builds a
+  `veriput-unit-manifest/v1` document for `stress243`, `peer182`, or
+  `bugfix124`.
+- Default behavior is read-only with respect to solc: if a subject has no
+  compact AST, its row is `missing-ast`. This makes a safe census possible
+  before spending any compile or proof budget.
+- `--generate-ast` is explicit and invokes the subject's recorded `solc_bin` to
+  create a missing AST before enumeration. This still does not start ESBMC.
+- `--subject-id`, `--subject-root`, and `--limit` make it possible to build or
+  preheat the manifest in bounded shards instead of accidentally sweeping the
+  entire Dataset.
+- `veriput_subjects.py::unit_manifest()` records summary counts:
+  `subjects`, `ok`, `missing_ast`, `error`, `units`, and `skipped`.
+
+Validation:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/veriput_subjects.py \
+  notes/coverage/scripts/subject_unit_manifest.py \
+  scripts/test_veriput_subjects.py \
+  notes/coverage/scripts/certify_all.py \
+  notes/coverage/scripts/put_all.py
+python3 scripts/test_veriput_subjects.py
+python3 scripts/test_poc_stage_drivers.py
+python3 scripts/test_put_all_accounting.py
+python3 notes/coverage/scripts/subject_unit_manifest.py --benchmark stress243 --limit 3
+python3 notes/coverage/scripts/subject_unit_manifest.py --benchmark peer182 --limit 2
+python3 notes/coverage/scripts/subject_unit_manifest.py --benchmark bugfix124 --limit 2
+```
+
+The real prepared-subject samples all returned `missing-ast`, which matches the
+current disk state: `Results/Stress243/subjects`, `Results/Peer182/subjects`,
+and `Results/BugFix124/subjects` currently have `meta.json`/`flat.sol` but no
+prebuilt `*.solast`. No ESBMC/Forge process and no POC attempt was used.
+
+Next practical acceleration step:
+
+- Preheat compact ASTs with `subject_unit_manifest.py --generate-ast` in small
+  shards, recording the manifest after each shard. This is a compile-only
+  cost, not a proof run, and unlocks fast deterministic unit denominator
+  construction before any ESBMC POC/benchmark attempt.
