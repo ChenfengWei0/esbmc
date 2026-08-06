@@ -838,6 +838,10 @@ def write_generalise_progress(cwd, stage, **fields):
     history.append(event)
     if len(history) > 40:
         del history[:-40]
+    data = {
+        "schema": data.get("schema", "path-generalise-progress/1"),
+        "history": history,
+    }
     data.update(event)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as stream:

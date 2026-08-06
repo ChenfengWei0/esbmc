@@ -10219,3 +10219,40 @@ Checks:
   passed.
 - `git diff --check -- scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_solidity_path_generalise.py scripts/test_certify_all_partial_journal.py`
   passed.
+
+Validation on one benchmark unit:
+
+- Schedule:
+  `/tmp/veriput_progress_validate_20260807_01/schedule.json`.
+- Unit:
+  `stress243__balancer__balancer-v3-monorepo__OwnableAuthentication.forceTransferOwnership`.
+- Policy:
+  `jobs=1`, 60s per ESBMC invocation, 70s driver timeout, 8GiB.
+- Result:
+  `/tmp/veriput_progress_validate_20260807_01/certify-results.jsonl`.
+- Bucket stayed `KILLED`, as expected:
+  `0 certified / 0 not / 1 witnessed`.
+- The JSONL row carried both:
+  - `enumeration_salvage`: `1 / 303` claims decided, `1` path, `8`
+    witnesses;
+  - `generalise_progress`: last stage `certify-query-started`, `enc=31`.
+- The history tail showed that level-0 and linear-refine had both finished
+  before the wrapper kill, and the live budget was consumed during the
+  single-point/witness certification path rather than during witness discovery.
+- The validation also exposed a harmless but confusing stale-key issue in the
+  progress sidecar: the top-level event inherited keys from the prior event
+  (e.g. `round_kind=linear-refine` while `stage=certify-query-started`).
+  This was fixed immediately.  The sidecar top level is now only
+  `{schema, history} + latest_event`; the full sequence remains in `history`.
+  A unit test now checks that stale top-level keys are not retained.
+
+Post-validation checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_solidity_path_generalise.py scripts/test_certify_all_partial_journal.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_partial_journal.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_solidity_path_generalise.py scripts/test_certify_all_partial_journal.py notes/VeriPUT_handoff_memory.md`
+  passed.

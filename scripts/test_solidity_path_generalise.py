@@ -2540,6 +2540,8 @@ with open(generalise_progress_path(_journal_dir)) as f:
     _progress = json.load(f)
 check("generalise progress records latest stage",
       _progress["stage"], "certify-query-started")
+check("generalise progress top-level does not retain stale event keys",
+      "round_kind" in _progress, False)
 check("generalise progress keeps recent history",
       [e["stage"] for e in _progress["history"]],
       ["outer-round-started", "certify-query-started"])
