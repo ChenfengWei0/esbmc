@@ -388,6 +388,10 @@ def test_campaign_retries_runner_ok_when_certification_is_weak():
                     "not_certified": {
                         "2": "refuted",
                     },
+                    "generalise_progress": {
+                        "stage": "certify-query-started",
+                        "enc": 3,
+                    },
                 },
             ])
         doc = unit_campaign_plan.plan_campaign(str(sched),
@@ -402,7 +406,7 @@ def test_campaign_retries_runner_ok_when_certification_is_weak():
                  f"weak or missing certification is retryable: {doc['summary']}")
     bad += check(
         doc["summary"]["cert_weak"] == {
-            "certified path rate below threshold": 1,
+            "certification-stage no verdict": 1,
             "no certification row": 1,
         }, f"weak certification reasons are counted: {doc['summary']}")
     bad += check(next_ids == ["peer182__weak__g", "peer182__missing__h"],

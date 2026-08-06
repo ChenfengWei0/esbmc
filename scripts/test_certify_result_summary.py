@@ -66,6 +66,16 @@ def schedule_doc():
                 "unit": "h",
                 "certify_argv": ["/bin/false"],
             },
+            {
+                "schema": "veriput-unit-job/v1",
+                "job_id": "stress243__I__i",
+                "priority": 2,
+                "benchmark": "stress243",
+                "subject_id": "I",
+                "contract": "I",
+                "unit": "i",
+                "certify_argv": ["/bin/false"],
+            },
         ],
     }
 
@@ -84,6 +94,9 @@ def rows():
             "not_certified": {
                 "3": "refuted with concrete witness",
             },
+            "generalise_progress": {
+                "stage": "complete",
+            },
         },
         {
             "benchmark": "bugfix124",
@@ -93,6 +106,10 @@ def rows():
             "certified": {},
             "not_certified": {
                 "7": "no outer-box round finished, so nothing was measured",
+            },
+            "generalise_progress": {
+                "stage": "outer-round-started",
+                "round_kind": "linear-refine",
             },
         },
         {
@@ -104,6 +121,21 @@ def rows():
                 "8": "z in [5, 5]",
             },
             "not_certified": {},
+            "generalise_progress": {
+                "stage": "complete",
+            },
+        },
+        {
+            "benchmark": "stress243",
+            "unit": "h",
+            "bucket": "KILLED",
+            "witnessed": 2,
+            "certified": {},
+            "not_certified": {},
+            "generalise_progress": {
+                "stage": "certify-query-started",
+                "enc": 31,
+            },
         },
     ]
 
@@ -118,11 +150,11 @@ def test_summary_counts_paths_shapes_and_schedule_gaps():
     bad = 0
     bad += check(doc["schema"] == "veriput-certify-result-summary/v1",
                  f"summary schema is stable: {doc['schema']}")
-    bad += check(s["attempt_rows"] == 3 and s["bad_lines"] == 1 and s["duplicate_rows"] == 1,
+    bad += check(s["attempt_rows"] == 4 and s["bad_lines"] == 1 and s["duplicate_rows"] == 1,
                  f"rows and duplicate latest records are counted: {s}")
     bad += check(
-        s["witnessed_paths"] == 5 and s["certified_paths"] == 3 and s["not_certified_paths"] == 1
-        and s["no_verdict_paths"] == 1, f"path accounting keeps the no-verdict gap: {s}")
+        s["witnessed_paths"] == 7 and s["certified_paths"] == 3 and s["not_certified_paths"] == 1
+        and s["no_verdict_paths"] == 3, f"path accounting keeps the no-verdict gap: {s}")
     bad += check(s["certified_region_shapes"] == {
         "point": 2,
         "wide": 1,
@@ -132,6 +164,7 @@ def test_summary_counts_paths_shapes_and_schedule_gaps():
     bad += check(doc["by_priority"] == {
         "0": {
             "CERTIFIED": 1,
+            "KILLED": 1,
         },
         "1": {
             "CERTIFIED": 1,
@@ -139,6 +172,17 @@ def test_summary_counts_paths_shapes_and_schedule_gaps():
     }, f"schedule priority grouping is applied: {doc['by_priority']}")
     bad += check(doc["summary"]["missing_scheduled_units"] == 1,
                  f"schedule-only unit is reported missing: {doc['summary']}")
+    bad += check(s["progress_rows"] == {
+        "certification:certify-query-started": 1,
+        "complete": 2,
+    }, f"progress stages are counted from latest rows: {s}")
+    bad += check(s["noncert_progress_rows"] == {
+        "certification:certify-query-started": 1,
+    }, f"non-certified rows are grouped by last progress stage: {s}")
+    bad += check(s["no_verdict_progress_paths"] == {
+        "certification:certify-query-started": 2,
+        "complete": 1,
+    }, f"no-verdict gaps are weighted by progress stage: {s}")
     bad += check(doc["gate"]["status"] == "degraded",
                  f"missing schedule row degrades the gate: {doc['gate']}")
     return bad

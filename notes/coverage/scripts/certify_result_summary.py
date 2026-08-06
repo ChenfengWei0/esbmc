@@ -159,6 +159,18 @@ def _region_shape(text: str) -> dict:
     }
 
 
+def _progress_bucket(row: dict) -> str:
+    progress = row.get("generalise_progress") or {}
+    if not isinstance(progress, dict) or not progress:
+        return "<missing-progress>"
+    stage = progress.get("stage") or "<missing-stage>"
+    if isinstance(stage, str) and stage.startswith("outer-round"):
+        return f"{stage}:{progress.get('round_kind') or '<unknown-round>'}"
+    if isinstance(stage, str) and stage.startswith("certify-query"):
+        return f"certification:{stage}"
+    return str(stage)
+
+
 def summarize(cert_jsonl: str,
               *,
               schedule_path: str = "",
@@ -180,6 +192,9 @@ def summarize(cert_jsonl: str,
     by_priority = defaultdict(Counter)
     reason_buckets = Counter()
     region_shapes = Counter()
+    progress_rows = Counter()
+    noncert_progress_rows = Counter()
+    no_verdict_progress_paths = Counter()
     samples = defaultdict(list)
 
     witnessed_paths = 0
@@ -195,7 +210,11 @@ def summarize(cert_jsonl: str,
         job = jobs.get((subject, unit)) or {}
         priority = str(job.get("priority", row.get("priority", "<unknown>")))
         bucket = row.get("bucket") or "<missing-bucket>"
+        progress_bucket = _progress_bucket(row)
         bucket_rows[bucket] += 1
+        progress_rows[progress_bucket] += 1
+        if bucket != "CERTIFIED":
+            noncert_progress_rows[progress_bucket] += 1
         by_subject[subject][bucket] += 1
         by_priority[priority][bucket] += 1
 
@@ -212,7 +231,10 @@ def summarize(cert_jsonl: str,
             witnessed_paths += witnessed
             certified_paths += c_count
             not_certified_paths += n_count
-            no_verdict_paths += max(0, witnessed - c_count - n_count)
+            no_verdict = max(0, witnessed - c_count - n_count)
+            no_verdict_paths += no_verdict
+            if no_verdict:
+                no_verdict_progress_paths[progress_bucket] += no_verdict
 
         if isinstance(not_certified, dict):
             for reason in not_certified.values():
@@ -243,6 +265,9 @@ def summarize(cert_jsonl: str,
                 "not_certified": n_count,
                 "driver_refusal": row.get("driver_refusal"),
                 "no_coordinate_reason": row.get("no_coordinate_reason"),
+                "progress_bucket": progress_bucket,
+                "progress_stage": (row.get("generalise_progress") or {}).get("stage")
+                if isinstance(row.get("generalise_progress"), dict) else None,
             })
 
     scheduled_units = {canonical for canonical, _job, _aliases in scheduled_entries}
@@ -304,6 +329,9 @@ def summarize(cert_jsonl: str,
             "certified_path_rate": certified_path_rate,
             "verdict_path_rate": verdict_path_rate,
             "bucket_rows": dict(sorted(bucket_rows.items())),
+            "progress_rows": dict(sorted(progress_rows.items())),
+            "noncert_progress_rows": dict(sorted(noncert_progress_rows.items())),
+            "no_verdict_progress_paths": dict(sorted(no_verdict_progress_paths.items())),
             "not_certified_reason_buckets": dict(sorted(reason_buckets.items())),
             "certified_region_shapes": dict(sorted(region_shapes.items())),
         },

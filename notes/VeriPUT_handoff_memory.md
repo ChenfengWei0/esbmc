@@ -10350,3 +10350,80 @@ Checks:
   passed.
 - `git diff --check -- notes/coverage/scripts/certify_all.py scripts/test_certify_all_partial_journal.py`
   passed.
+
+## 2026-08-07 progress-aware summaries and campaign planning
+
+Change retained:
+
+- `certify_result_summary.py` now aggregates the `generalise_progress` field:
+  - `progress_rows`: all latest rows by last progress bucket;
+  - `noncert_progress_rows`: non-`CERTIFIED` rows by last progress bucket;
+  - `no_verdict_progress_paths`: witnessed-but-no-verdict path gaps, weighted
+    by path count, by last progress bucket.
+- The progress bucket names are stable:
+  - `certification:certify-query-started`;
+  - `certification:certify-query-finished`;
+  - `outer-round-started:<round_kind>`;
+  - `outer-round-finished:<round_kind>`;
+  - ordinary stages such as `started`, `complete`, `no-witness`.
+- Non-certified samples now carry `progress_bucket` and `progress_stage`.
+- `unit_campaign_plan.py` now reads the same progress signal when judging weak
+  certification quality.  If a row has witnessed no-verdict paths and the last
+  progress bucket is a certification query, its weak reason is now
+  `certification-stage no verdict` instead of the generic
+  `certified path rate below threshold`.
+- Historical rows without progress keep the old behavior and use
+  `<missing-progress>`.
+
+Validated on the balanced7 sample:
+
+- New summary path:
+  `/tmp/veriput_stratified_20260807_03/certify-summary-balanced7-progress.json`.
+- Summary fields:
+  - `bucket_rows`: 5 `CERTIFIED`, 1 `KILLED`, 1 `NO-WITNESS-UNDECIDED`;
+  - `progress_rows`: 5 `complete`, 1 `started`, 1
+    `certification:certify-query-started`;
+  - `noncert_progress_rows`: 1 `started`, 1
+    `certification:certify-query-started`;
+  - `no_verdict_progress_paths`: 1 `certification:certify-query-started`.
+- The KILLED sample is directly visible as:
+  `IdentityRegistryStorage.bindIdentityRegistry`,
+  `progress_bucket=certification:certify-query-started`.
+
+Balanced7 campaign re-plan:
+
+- Plan path:
+  `/tmp/veriput_stratified_20260807_03/unit-campaign-balanced7-progress.json`.
+- Next attempt schedule:
+  `/tmp/veriput_stratified_20260807_03/next-unit-schedule-balanced7-a2.json`.
+- With certification quality enabled, the 7-row sample splits as:
+  - `completed_ok`: 2 strong units;
+  - `pending_by_attempt`: 5 for attempt 2.
+- Weak reasons:
+  - `certification-stage no verdict`: 1;
+  - `certified path rate below threshold`: 3;
+  - `no certified regions`: 1.
+- The attempt-2 schedule correctly uses the second budget:
+  `run_timeout_s=120`, `timeout_s=130`, `memlimit_gib=8`, `jobs=1`.
+
+Interpretation:
+
+- We can now decide the next experiment mechanically instead of by reading logs:
+  - `certification-stage no verdict` rows are candidates for attempt 2/3 or a
+    cheaper certification-specific refutation/fuzz pass.
+  - `started` / `no certified regions` rows are witness-discovery/modeling
+    candidates.
+  - `certified path rate below threshold` rows already produce tests but are
+    not strong enough for the >=70% target; they need stronger R1/R2, not just
+    more time.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_result_summary.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
+  passed.

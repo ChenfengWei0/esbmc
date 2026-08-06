@@ -117,6 +117,18 @@ def _cert_quality_keys(row: dict) -> set[tuple]:
     return keys
 
 
+def _progress_bucket(row: dict) -> str:
+    progress = row.get("generalise_progress") or {}
+    if not isinstance(progress, dict) or not progress:
+        return "<missing-progress>"
+    stage = progress.get("stage") or "<missing-stage>"
+    if isinstance(stage, str) and stage.startswith("outer-round"):
+        return f"{stage}:{progress.get('round_kind') or '<unknown-round>'}"
+    if isinstance(stage, str) and stage.startswith("certify-query"):
+        return f"certification:{stage}"
+    return str(stage)
+
+
 def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> tuple[dict, int]:
     latest = {}
     bad_lines = 0
@@ -141,18 +153,28 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         partial_journal_witnesses = 0
         partial_claims_decided = 0
         partial_claims_total = 0
+        no_verdict_paths = 0
+        no_verdict_progress = Counter()
+        progress_buckets = Counter()
         buckets = Counter()
         for row in rows:
             buckets[row.get("bucket") or "<missing-bucket>"] += 1
+            progress_bucket = _progress_bucket(row)
+            progress_buckets[progress_bucket] += 1
             c = row.get("certified") or {}
             n = row.get("not_certified") or {}
             c_count = len(c) if isinstance(c, dict) else 0
             n_count = len(n) if isinstance(n, dict) else 0
             regions += c_count
             if isinstance(row.get("witnessed"), int):
-                witnessed += max(0, row["witnessed"])
+                witnessed_row = max(0, row["witnessed"])
+                witnessed += witnessed_row
                 certified += c_count
                 not_certified += n_count
+                gap = max(0, witnessed_row - c_count - n_count)
+                no_verdict_paths += gap
+                if gap:
+                    no_verdict_progress[progress_bucket] += gap
             journal = row.get("partial_witness_journal") or {}
             if isinstance(journal, dict):
                 partial_journal_paths += int(journal.get("path_count") or 0)
@@ -162,7 +184,11 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         rate = (certified / witnessed) if witnessed else (1.0 if regions else 0.0)
         strong = regions > 0 and rate >= min_certified_path_rate
         reason = ""
-        if not regions and partial_journal_paths:
+        certification_gap = any(
+            key.startswith("certification:") for key in no_verdict_progress)
+        if no_verdict_paths and certification_gap:
+            reason = "certification-stage no verdict"
+        elif not regions and partial_journal_paths:
             reason = "partial witness journal only"
         elif not regions:
             reason = "no certified regions"
@@ -175,8 +201,11 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             "witnessed_paths": witnessed,
             "certified_paths": certified,
             "not_certified_paths": not_certified,
+            "no_verdict_paths": no_verdict_paths,
             "certified_regions": regions,
             "certified_path_rate": rate,
+            "progress_buckets": dict(sorted(progress_buckets.items())),
+            "no_verdict_progress_paths": dict(sorted(no_verdict_progress.items())),
             "partial_journal_paths": partial_journal_paths,
             "partial_journal_witnesses": partial_journal_witnesses,
             "partial_claims_decided": partial_claims_decided,
