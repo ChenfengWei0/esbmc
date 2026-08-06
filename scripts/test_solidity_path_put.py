@@ -2094,6 +2094,9 @@ def test_source_R2_assignment_candidates_are_small_setter_queries():
              "stateVariable": True},
             {"nodeType": "VariableDeclaration", "id": 11, "name": "ignored",
              "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "ready",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "bool"}},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "setX",
              "parameters": {"parameters": [
                  {"id": 21, "name": "amount",
@@ -2112,6 +2115,15 @@ def test_source_R2_assignment_candidates_are_small_setter_queries():
                                        "name": "amount"}}},
                  {"nodeType": "ExpressionStatement", "expression": {
                      "nodeType": "Assignment", "operator": "=",
+                     "src": "234:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 12,
+                                      "name": "ready"},
+                     "rightHandSide": {"nodeType": "Literal",
+                                       "kind": "bool",
+                                       "value": "true"}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
                      "src": "456:10:0",
                      "leftHandSide": {"nodeType": "Identifier",
                                       "referencedDeclaration": 11,
@@ -2126,29 +2138,54 @@ def test_source_R2_assignment_candidates_are_small_setter_queries():
     try:
         specs, evidence = source_assignment_r2_specs(
             path, "C", "setX", [("amount", "uint256"), ("other", "uint256")],
-            {"x": (0, 0, 32), "ignored": (1, 0, 32)},
+            {"x": (0, 0, 32), "ignored": (1, 0, 32),
+             "ready": (2, 0, 1)},
             [("amount", "num", None)], arity=2, log=lambda _msg: None)
         none, none_evidence = source_assignment_r2_specs(
             path, "C", "setX", [("amount", "uint256"), ("other", "uint256")],
-            {"x": (0, 0, 32), "ignored": (1, 0, 32)},
+            {"x": (0, 0, 32), "ignored": (1, 0, 32),
+             "ready": (2, 0, 1)},
             [], arity=2, log=lambda _msg: None)
     finally:
         os.unlink(path)
     bad = 0
     bad += check(len(specs) == 1, f"one small source spec: {specs}")
-    var = specs[0]["vars"][0] if specs else {}
+    vars_ = specs[0]["vars"] if specs else []
+    var = next((item for item in vars_ if item.get("name") == "x"), {})
     bad += check(var.get("name") == "x",
                  f"the assigned state variable is targeted: {var}")
     bad += check(var.get("equals", [{}])[0].get("term") ==
                  {"kind": "coord", "name": "amount"},
                  f"the endpoint is the rendered parameter: {var}")
-    bad += check(specs[0].get("candidate_count") == 1 if specs else False,
+    bvar = next((item for item in vars_ if item.get("name") == "ready"), {})
+    bad += check(bvar.get("equals", [{}])[0].get("term") ==
+                 {"kind": "literal", "value": "1"},
+                 f"the bool literal endpoint is encoded as a verifier decimal: "
+                 f"{bvar}")
+    bad += check(specs[0].get("candidate_count") == 2 if specs else False,
                  f"only the source assignment candidate is asked: {specs}")
     bad += check(any("x: post == amount" in line for line in evidence),
                  f"the source provenance is recorded: {evidence}")
-    bad += check(none == [],
-                 f"nothing is proposed when the parameter is not rendered: "
-                 f"{none}, {none_evidence}")
+    bad += check(any("ready: post == true" in line for line in evidence),
+                 f"the bool source provenance is recorded: {evidence}")
+    bad += check(len(none) == 1 and none[0].get("candidate_count") == 1,
+                 f"the bool literal remains even when the parameter is not "
+                 f"rendered: {none}, {none_evidence}")
+    return bad
+
+
+def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
+    from solidity_path_put import r2_terms_from_specs, rung_assertions  # noqa: E402
+    specs = [{"vars": [{"name": "ready", "equals": [{
+        "id": "src0", "term": {"kind": "literal", "value": "1"}}],
+                       "abs": [], "deltas": []}]}]
+    terms = r2_terms_from_specs(specs)
+    got = rung_assertions("post == true", "_pre_ready", "_post_ready",
+                          "ready: post == true", r2_terms=terms)
+    bad = 0
+    bad += check(got == [
+        '    assertEq(_post_ready, 1, "ready: post == true");'
+    ], f"ESBMC's bool text maps back to the verifier decimal term: {got}")
     return bad
 
 
@@ -4437,6 +4474,7 @@ def main():
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
               test_source_R2_assignment_candidates_are_small_setter_queries,
+              test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_same_arity_overloads_use_the_exact_path_declaration,
               test_overload_persistence_keys_and_work_suffixes_are_distinct,
               test_structured_R2_term_renders_with_the_lifted_coordinate,

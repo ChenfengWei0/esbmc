@@ -1096,14 +1096,13 @@ def source_r2_literals(ast_path, contract, unit, arity=None,
 def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                                rendered_coords, arity=None,
                                declaration_id=None, log=print):
-    """R2 specs for literal source assignments `stateVar = parameter`.
+    """R2 specs for literal source assignments.
 
     This is deliberately narrower than general expression mining.  It only
-    proposes a candidate when the target function body assigns one visible
-    state variable directly from one of the unit's parameters, and the PUT has
-    already rendered that parameter as a coordinate.  The candidate is still
-    proved by --path-cov-assert; the source only decides which small query to
-    ask first.
+    proposes a candidate when the target function body assigns one visible state
+    variable directly from either one of the unit's rendered parameters or a
+    source-level bool literal.  The candidate is still proved by
+    --path-cov-assert; the source only decides which small query to ask first.
     """
     try:
         target = _select_def(_function_defs(ast_path, contract, unit), arity,
@@ -1153,7 +1152,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     n.get("nodeType") == "VariableDeclaration" and
                     n.get("stateVariable") and n.get("name") and
                     n.get("id") is not None):
-                state_ids[n["id"]] = n["name"]
+                ty = (n.get("typeDescriptions") or {}).get("typeString") or ""
+                state_ids[n["id"]] = (n["name"], ty)
 
     entries, evidence, seen = [], [], set()
 
@@ -1163,31 +1163,56 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         ref = n.get("referencedDeclaration")
         return ref if isinstance(ref, int) else None
 
+    def bool_literal_term(n):
+        if not isinstance(n, dict) or n.get("nodeType") != "Literal":
+            return None
+        if n.get("kind") != "bool":
+            return None
+        value = n.get("value")
+        if value is True or str(value).lower() == "true":
+            return {"kind": "literal", "value": "1"}
+        if value is False or str(value).lower() == "false":
+            return {"kind": "literal", "value": "0"}
+        return None
+
+    def add_candidate(state_name, term, reason, src):
+        key = (state_name, r2_term_text(term))
+        if state_name in (layout or {}) and key not in seen:
+            seen.add(key)
+            entries.append({
+                "name": state_name,
+                "equals": [{
+                    "id": f"src{len(entries)}",
+                    "term": term,
+                }],
+                "abs": [],
+                "deltas": [],
+            })
+            evidence.append(
+                f"R2 source assignment candidate {state_name}: post == "
+                f"{reason} from AST src {src or '?'}")
+
     def walk(n):
         if isinstance(n, dict):
             if n.get("nodeType") == "Assignment" and n.get("operator") == "=":
                 lhs_ref = identifier_ref(n.get("leftHandSide"))
-                rhs_ref = identifier_ref(n.get("rightHandSide"))
-                state_name = state_ids.get(lhs_ref)
+                state = state_ids.get(lhs_ref)
+                state_name = state[0] if state else None
+                state_ty = _norm_ty(state[1]) if state else ""
+                rhs = n.get("rightHandSide")
+                rhs_ref = identifier_ref(rhs)
                 param_name = param_ids.get(rhs_ref)
-                key = (state_name, param_name)
-                if (state_name and param_name and key not in seen and
-                        state_name in (layout or {}) and
+                if (state_name and param_name and
                         param_name in param_names and param_name in rendered):
-                    seen.add(key)
-                    entries.append({
-                        "name": state_name,
-                        "equals": [{
-                            "id": f"src{len(entries)}",
-                            "term": {"kind": "coord", "name": param_name},
-                        }],
-                        "abs": [],
-                        "deltas": [],
-                    })
-                    evidence.append(
-                        f"R2 source assignment candidate "
-                        f"{state_name}: post == {param_name} from AST src "
-                        f"{n.get('src') or '?'}")
+                    add_candidate(
+                        state_name, {"kind": "coord", "name": param_name},
+                        param_name, n.get("src"))
+                literal = bool_literal_term(rhs)
+                if state_name and state_ty == "bool" and literal is not None:
+                    add_candidate(
+                        state_name, literal,
+                        "true" if literal["value"] == "1" else "false",
+                        n.get("src"))
             for child in n.values():
                 walk(child)
         elif isinstance(n, list):
@@ -1442,14 +1467,24 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
 def r2_terms_from_specs(specs):
     """Canonical term lookup consumed by the Foundry renderer."""
     out = {}
+
+    def remember(term):
+        text = r2_term_text(term)
+        out[text] = term
+        if term.get("kind") == "literal":
+            if str(term.get("value")) == "0":
+                out.setdefault("false", term)
+            elif str(term.get("value")) == "1":
+                out.setdefault("true", term)
+
     for spec in specs or []:
         for var in spec.get("vars", []):
             for item in var.get("equals", []):
-                out[r2_term_text(item["term"])] = item["term"]
+                remember(item["term"])
             for key in ("abs", "deltas"):
                 for item in var.get(key, []):
-                    out[r2_term_text(item["lo"])] = item["lo"]
-                    out[r2_term_text(item["hi"])] = item["hi"]
+                    remember(item["lo"])
+                    remember(item["hi"])
     return out
 
 

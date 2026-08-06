@@ -5209,6 +5209,53 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 bool-literal source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, benchmark AST preheat, or
+  benchmark certification run was started.
+
+Finding:
+
+- Stage-4 R2 already proposed strong endpoint candidates such as
+  `post == amount` for direct setter assignments and `post == flag_` when the
+  PUT lifted a bool parameter.
+- It did not propose the equally common source shape `boolState = true/false`
+  unless a bool coordinate happened to be rendered. For benchmark contracts this
+  loses a strong mutation-sensitive oracle: a path that sets a pause/enable/
+  initialized flag should be able to certify `post == true` or `post == false`,
+  not only the weaker R1 equality/changed pair.
+- Fuzz remains refute-only in this path. The new candidate can be removed by a
+  concrete Forge failure, but a Forge pass is still not proof; surviving
+  candidates remain ESBMC-certified by `--path-cov-assert`.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now indexes
+  state variable type strings and recognizes AST assignments from a source-level
+  bool literal to a visible bool state variable.
+- The generated structured R2 term stays verifier-native decimal literal
+  `{"kind": "literal", "value": "1"}` or `"0"`; this matches ESBMC's structured
+  term parser, which accepts unsigned decimal literals and prints bool terms as
+  `true`/`false` when the candidate type is bool.
+- `r2_terms_from_specs()` now records aliases `true -> 1` and `false -> 0` for
+  literal terms. This lets the final Foundry renderer consume ESBMC rows such as
+  `post == true` even though the original spec used decimal `1`.
+- This is not a POC-specific rule: it is gated by the AST state-variable type,
+  the real storage layout, and the ordinary Stage-4 source assignment pathway.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  146 tests ran, 146 declared.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 direct CLI protected write guards
 
 Scope and constraint:
