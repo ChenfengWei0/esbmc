@@ -6509,6 +6509,85 @@ def test_source_access_slots_preserve_state_keys_before_fallback():
     return bad
 
 
+def test_source_access_slots_keep_msg_value_environment_key():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "name": name,
+                "referencedDeclaration": ref}
+
+    def member(base, name):
+        return {"nodeType": "MemberAccess", "memberName": name,
+                "expression": {"nodeType": "Identifier", "name": base}}
+
+    def access(base_ref, base_name, key, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "IndexAccess", "src": src,
+            "baseExpression": ident(base_ref, base_name),
+            "indexExpression": key}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "paid",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "byTime",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "byHeight",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "byAddr",
+             "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 access(10, "paid", member("msg", "value"), "100:5:0"),
+                 access(11, "byTime", member("block", "timestamp"),
+                        "120:5:0"),
+                 access(12, "byHeight", member("block", "number"),
+                        "140:5:0"),
+                 access(13, "byAddr", member("block", "timestamp"),
+                        "160:5:0")]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "touch", declaration_id=20)
+    finally:
+        os.unlink(path)
+    maps = {"paid": (2, "uint256", 32, 0, "paid", None),
+            "byTime": (3, "uint256", 32, 0, "byTime", None),
+            "byHeight": (4, "uint256", 32, 0, "byHeight", None),
+            "byAddr": (5, "address", 32, 0, "byAddr", None)}
+    slots, used, skipped = source_access_slot_vars(
+        accesses, maps, params=[], state_types={}, layout={})
+    bad = 0
+    bad += check(accesses == [
+        ("byAddr", ("block.timestamp",)),
+        ("byHeight", ("block.number",)),
+        ("byTime", ("block.timestamp",)),
+        ("paid", ("msg.value",)),
+    ], f"environment keys are preserved from source: {accesses}")
+    bad += check(any("state.paid[msg.value]" in line for line in evidence),
+                 f"environment key evidence is recorded: {evidence}")
+    bad += check(slots == ["paid[msg.value]"],
+                 f"msg.value becomes a source slot: {slots}")
+    bad += check(used == {"paid"},
+                 f"accepted msg.value slot suppresses fallback map: {used}")
+    bad += check(any("byAddr[block.timestamp]" in s
+                     and "cannot be rendered as `address`" in s
+                     for s in skipped),
+                 f"block env key remains refused in this path: {skipped}")
+    bad += check(any("byHeight[block.number]" in s
+                     and "cannot be rendered as `uint256`" in s
+                     for s in skipped),
+                 f"block.number env key waits for ESBMC resolver support: "
+                 f"{skipped}")
+    return bad
+
+
 def test_source_access_slots_keep_safe_literal_keys():
     from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
     from solidity_path_put import source_access_slot_vars  # noqa: E402
@@ -7770,22 +7849,25 @@ def test_a_slot_keyed_by_an_ESTABLISHED_POINT_sender_is_WRITTEN():
     return bad
 
 
-def test_ESTABLISHING_THE_SENDER_makes_ONLY_THAT_KEY_nameable():
-    """NEGATIVE CONTROL, and the reason it is separate from the two refusal
-    tests above: those show the refusal surviving when NOTHING was established.
-    This shows that establishing the sender does not quietly open the gate for
-    every other environment quantity -- `msg.value` is decided by the call, not
-    by the prank, and no expression for it was returned.
+def test_an_OBSERVED_msg_value_slot_key_is_nameable():
+    """`msg.value` becomes a slot key only when the emitter has an expression.
+
+    For an ordinary call without a `{value: ...}` option, that expression is the
+    observed value `0`. This is not inherited from establishing `msg.sender`;
+    it comes from the same call-line observation used by R2 endpoint rendering.
     """
     text, stats = _sender_keyed_put(
         (0, 100), ladder=[("bal[msg.value]", "post == pre", "HOLDS")])
     bad = 0
-    bad += check(any("ENVIRONMENT quantity" in s
-                     for s in stats["oracle_skipped"]),
-                 f"msg.value is STILL refused, with the wording unchanged: "
+    bad += check(not any("ENVIRONMENT quantity" in s
+                         for s in stats["oracle_skipped"]),
+                 f"observed msg.value is no longer refused: "
                  f"{stats['oracle_skipped']}")
-    bad += check("_pre_bal_msg_value" not in text,
-                 "and no read of that slot reaches the body")
+    bad += check("keccak256(abi.encode(uint256(0), uint256(2)))" in text,
+                 "and the slot is read at the observed zero-value key")
+    bad += check("_pre_bal_msg_value" in text
+                 and "_post_bal_msg_value" in text,
+                 "the msg.value-keyed rung's reads are emitted")
     return bad
 
 
@@ -9177,6 +9259,7 @@ def main():
               test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter,
               test_mapping_proposer_includes_safe_entry_state_keys_after_params,
               test_source_access_slots_preserve_state_keys_before_fallback,
+              test_source_access_slots_keep_msg_value_environment_key,
               test_source_access_slots_keep_safe_literal_keys,
               test_source_access_slots_fold_safe_constant_keys,
               test_source_access_slots_resolve_local_key_aliases_in_order,
@@ -9204,7 +9287,7 @@ def main():
               test_the_oracle_side_refuses_the_same_key,
               test_a_slot_keyed_by_an_ESTABLISHED_FUZZED_sender_is_READ,
               test_a_slot_keyed_by_an_ESTABLISHED_POINT_sender_is_WRITTEN,
-              test_ESTABLISHING_THE_SENDER_makes_ONLY_THAT_KEY_nameable,
+              test_an_OBSERVED_msg_value_slot_key_is_nameable,
               test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call,
               test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT,
               test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle,

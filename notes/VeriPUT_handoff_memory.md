@@ -7442,6 +7442,52 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 `msg.value` source mapping-slot keys
+
+Scope:
+
+- This is a source-resolved mapping slot and PUT emitter improvement in the
+  external VeriPUT generator. It is not POC-specific and does not alter ESBMC
+  internals.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `source_access_slot_vars` now accepts `msg.value` as a safe source mapping
+  key for unsigned-integer mapping key types. This lets source accesses such as
+  `paid[msg.value]` enter the first ladder/source-slot candidate set instead of
+  falling back to guessed slots.
+- `build_put` now adds `key_expr_of["msg.value"]` only when the emitter already
+  has a concrete expression in `coord_ident`. That expression can be a bounded
+  fuzz variable for a certified low-level value-gate region, or the observed
+  literal `0` for an ordinary no-value call. The emitter still does not guess
+  a value.
+- `block.timestamp` and `block.number` are intentionally not opened as mapping
+  keys in this patch. The Python source walker can name them, but ESBMC's
+  current mapping-key resolver text still advertises only literals,
+  parameters, `msg.sender`, `msg.value`, and entry-state variables for slots.
+  Opening block keys should be done together with an internal resolver update
+  and regression, not as a Python-only candidate expansion.
+
+Why it matters:
+
+- Payable/value-gated Solidity units often key accounting by `msg.value`.
+  Before this change, even when the path's value is established or observed,
+  the generated PUT could not read/write the corresponding mapping slot, so
+  useful frame and exact-update oracles were lost.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 206/206 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 FunctionCallOptions-wrapped helper source slots
 
 Scope:
