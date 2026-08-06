@@ -9261,6 +9261,72 @@ Checks:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 benchmark sampling gate and public getter relation fix
+
+Small benchmark sample after the recursive-helper preflight:
+
+- `peer182__peer_ccsolbmc__AIRBets / AIRBets.transfer`:
+  `NO-WITNESS-UNDECIDED` immediately.  The new preflight refuses because the
+  target call closure reaches direct recursive SafeMath wrappers
+  (`SafeMath.div/2`, `SafeMath.sub/2`).  This is the intended cheap outcome;
+  it avoids spending the old 60s budget on a no-witness run.
+- `peer182__peer_solar__PermissionGroups / transferAdmin`:
+  first 60s/8GiB sample was `KILLED`, but witness discovery was already cheap:
+  level-0 found four paths in about 0.9s and refine rounds were still single
+  digit seconds.  The timeout happened later in certification/shrink.
+- Ground truth for `PermissionGroups.transferAdmin`:
+  constructor sets `admin = msg.sender`; `onlyAdmin` checks
+  `msg.sender == admin`; the unit then requires
+  `newAdmin != address(0)` and writes `pendingAdmin = newAdmin`.
+  Expected useful regions are the non-admin revert, admin+zero revert, and
+  admin+nonzero normal path, with the nonpayable `msg.value != 0` ABI gate
+  excluded by the global pin.
+- Root cause of the `PermissionGroups` timeout:
+  relation-retreat only recognised getter names like
+  `return_value$_owner$1 -> state._owner`.  Public state getters without a
+  leading underscore, e.g. `return_value$admin$1`, were not mapped to
+  `state.admin`.  The path relation therefore remained an unhandled
+  cross-coordinate relation instead of pinning the entry-state side.
+- `bugfix124__rc_time_manipulation__ether_lotto__SolGPT__ether_lotto_1round /
+  EtherLotto.play`: certified `1 / 3` in 23s.  The value path
+  `msg.value >= 11` is certified; paths depending on `random == 0` remain
+  statically inseparable, which matches the expected hash/random limitation.
+- `stress243__balancer__balancer-v3-monorepo__OwnableAuthentication /
+  transferOwnership`: `NO-WITNESS-UNKNOWN` after ESBMC aborts in
+  `namespacet::follow(const typet&)` during conversion.  This is an ESBMC
+  Solidity frontend/modeling crash, not a region strategy result.
+
+Implemented fix:
+
+- `_decision_term()` now maps any source-level getter-shaped term
+  `return_value$<identifier>$N` to `state.<identifier>` when that coordinate
+  exists in the CE or pin set.  The existing `__msgSender` special case still
+  runs first, so caller modeling is unchanged.
+- Tests now cover both the direct mapping
+  `return_value$admin$1 -> state.admin` and the PermissionGroups-shaped
+  relation-retreat case where `admin == msg.sender` / `admin != msg.sender`
+  should pin the entry-state `state.admin` side.
+
+Current gate decision:
+
+- Code completion for the current known region bug is high enough to run the
+  next sample, but not a full benchmark sweep.
+- Recommended next run: a small stratified sample, serial, first-pass
+  60s/8GiB only, covering peer/bugfix/stress and at least:
+  ownership/admin guards, payable/value gates, hash/random paths, and one
+  known ESBMC-crash-shaped subject.
+- Do not rerun `PermissionGroups.transferAdmin` as a first attempt; its 60s
+  budget has already been used.  If using it as the confirmation subject after
+  this fix, count it as the second attempt and use 120s/8GiB.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py notes/coverage/scripts/certify_all.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 relation-retreated structural seeds for owner/sender guards
 
 Benchmark sample that exposed the next bottleneck:

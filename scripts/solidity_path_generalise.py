@@ -911,7 +911,7 @@ def _decision_term(term, ce, pins, constants=None):
     if term == "return_value$__msgSender$2" or \
        re.match(r"^return_value\$__msgSender\$\d+$", term):
         return "coord", "msg.sender"
-    m = re.match(r"^return_value\$(_[A-Za-z0-9_]+)\$\d+$", term)
+    m = re.match(r"^return_value\$([A-Za-z_][A-Za-z0-9_]*)\$\d+$", term)
     if m:
         state_name = "state." + m.group(1)
         if state_name in pins:

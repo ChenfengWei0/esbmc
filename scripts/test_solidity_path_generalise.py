@@ -93,6 +93,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       derive_agreed_establishable_env_pins,
                                       tiny_safety_cut_retreat,
                                       uncontrolled_decision_splits,
+                                      _decision_term,
                                       _coord_range)
 
 FAILURES = []
@@ -3070,6 +3071,49 @@ check("owner-sender-relation-retreat-pins-owner-path-sender",
       _rel_boxes[15]["msg.sender"], (7, 7))
 check("owner-sender-relation-retreat-keeps-success-argument-wide",
       _rel_boxes[15]["newOwner"], (1, (1 << 160) - 1))
+check("decision-term-public-getter-state-coord",
+      _decision_term("return_value$admin$1", {"state.admin": 7}, {}),
+      ("coord", "state.admin"))
+check("decision-term-public-getter-state-pin",
+      _decision_term("return_value$admin$1", {}, {"state.admin": 7}),
+      ("const", 7))
+_admin_rel_paths = [
+    (6, 2, {"msg.value": 0, "msg.sender": 9, "state.admin": 1,
+            "newAdmin": 0}),
+    (14, 3, {"msg.value": 0, "msg.sender": 7, "state.admin": 7,
+             "newAdmin": 0}),
+    (15, 3, {"msg.value": 0, "msg.sender": 7, "state.admin": 7,
+             "newAdmin": 5}),
+]
+_admin_rel_decisions = {
+    6: [{"branch_claim": "!(msg.value == 0)"},
+        {"branch_claim":
+         "!(!(return_value$admin$1 == return_value$__msgSender$2))"}],
+    14: [{"branch_claim": "!(msg.value == 0)"},
+         {"branch_claim":
+          "!(return_value$admin$1 == return_value$__msgSender$2)"},
+         {"branch_claim": "!(!(newAdmin != 0))"}],
+    15: [{"branch_claim": "!(msg.value == 0)"},
+         {"branch_claim":
+          "!(return_value$admin$1 == return_value$__msgSender$2)"},
+         {"branch_claim": "!(newAdmin != 0)"}],
+}
+_admin_boxes, _admin_holes, _admin_reasons, _admin_retreats = \
+    structural_decision_regions_with_retreat(
+        _admin_rel_paths, _admin_rel_decisions, {"msg.value": 0},
+        ["msg.sender", "newAdmin", "state.admin"],
+        coord_types={"newAdmin": "address"})
+check("admin-sender-relation-retreat-pins-entry-admin",
+      _admin_retreats,
+      {6: {"state.admin": 1}, 14: {"state.admin": 7},
+       15: {"state.admin": 7}})
+check("admin-sender-relation-retreat-keeps-nonadmin-sender-wide",
+      (_admin_boxes[6]["msg.sender"],
+       _admin_holes[6]["msg.sender"]), ((0, (1 << 160) - 1), {1}))
+check("admin-sender-relation-retreat-pins-admin-path-sender",
+      _admin_boxes[14]["msg.sender"], (7, 7))
+check("admin-sender-relation-retreat-keeps-success-argument-wide",
+      _admin_boxes[15]["newAdmin"], (1, (1 << 160) - 1))
 check("decision-relation-inverts-ordered-claim",
       _decision_relation("x > 5"), ("x", "<=", "5"))
 check("decision-relation-keeps-negated-ordered-claim",
