@@ -8,6 +8,67 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-07 current benchmark breadth signal
+
+User budget update:
+
+- Treat the final per-case ESBMC certification budget as 600s.
+- Keep the normal small-run memory cap at 8GiB unless the user explicitly says
+  otherwise.
+- Fuzz is still refute-only.  It can cheaply find counterexamples for bad
+  assertions/regions/instrumentation, but it cannot prove a region or a PUT.
+
+Current 600s / 8GiB breadth smoke:
+
+- Root: `/tmp/veriput_current_smoke_20260807_065046`.
+- Scope: 9 benchmark units, 3 each from Peer/BugFix/Stress, using cached ASTs
+  and writing only under `/tmp`.
+- Stage2 unit results:
+  - Overall certified units: 4 / 9 = 44.4%.
+  - Peer: 0 / 3.
+  - BugFix: 1 / 3.
+  - Stress: 3 / 3.
+  - Buckets: 4 `CERTIFIED`, 3 `NO-WITNESS-UNDECIDED`, 1 `NO-PATH`,
+    1 `NOT-CERTIFIED`.
+- Stage2 certified regions:
+  - 13 total certified regions from the 4 certified units.
+  - Peer contributed 0 regions.
+  - BugFix contributed 1 region.
+  - Stress contributed 12 regions.
+- Stage4 on those 13 certified regions:
+  - Reference-valid generated tests: 13 / 13.
+  - Strict PUT/B: 9 / 13 = 69.2%.
+  - Concrete replay fallback: 4 / 13 = 30.8%.
+  - Forge replay was green for all emitted PUT/concrete tests.
+
+Latest-code Peer spot check after static-obstacle scheduling:
+
+- Root: `/tmp/veriput_latest_peer_probe`.
+- Ran 3 Peer jobs, 600s certify budget embedded, 700s outer runner timeout,
+  8GiB, `jobs=1`.
+- Results:
+  - `AIRBets.approve`: `NO-PATH`, 0 certified / 0 not, about 1s.
+  - `Arcadia_Token.approve`: `NO-PATH`, 0 certified / 0 not, about 9s.
+  - `Animalia.transfer`: `NO-WITNESS-UNDECIDED`, 0 certified / 0 not,
+    about 128s; 132/132 claims were named-obstacle paths.
+
+Interpretation:
+
+- The current emitter is not the main bottleneck: when Stage2 produces certified
+  regions, Stage4 currently gives 100% reference-valid tests on this smoke.
+- The main bottleneck is Stage2 witness/region production, especially Peer.
+- Peer failures are mixed:
+  - Some ERC20-like simple methods are genuinely `NO-PATH` within the current
+    bounded model.
+  - Some transfer-like methods hit named/static obstacles before useful region
+    certification.
+  - Recursive-helper preflight is useful for avoiding wasted solver budget, but
+    breadth scheduling should avoid spending early slots on those units.
+- Campaign planning already marks bounded-holds/no-witness as retryable with a
+  `--max-tx 2` strategy, but the default priority policy still prefers fresh
+  attempt-1 jobs before retrying attempt-2 jobs.  That is good for breadth, but
+  not for immediately rescuing a known no-witness Peer unit.
+
 ## 2026-08-07 point-region concrete fallback
 
 Why this was changed:
