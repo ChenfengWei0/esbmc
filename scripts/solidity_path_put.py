@@ -1465,7 +1465,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         member = n.get("memberName")
         if member in ("sender", "value"):
             base_name = "msg"
-        elif member == "timestamp":
+        elif member in ("timestamp", "number"):
             base_name = "block"
         else:
             return None
@@ -1621,7 +1621,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if constant is not None and constant[0].get("kind") == "literal":
             return constant
         env_name = env_coord_name(n)
-        if env_name in ("msg.value", "block.timestamp") \
+        if env_name in ("msg.value", "block.timestamp", "block.number") \
                 and env_name in rendered_numeric:
             return {"kind": "coord", "name": env_name}, env_name
         return unitless_number_term(n)
@@ -4414,12 +4414,12 @@ class EmittedFile:
 ENV_PREFIXES = ("msg.", "tx.", "block.")
 # Auto-derived environment coordinates must be realizable by the emitted test.
 # msg.value remains conditional on an existing value-bearing call; that final
-# `block.timestamp` is also test-controlled: Foundry's `vm.warp` sets the
-# timestamp for the next call frame.  It must be inserted before the governing
-# `vm.prank`, because the prank is intentionally kept as the last cheatcode
-# before the target call.
+# `block.timestamp` and `block.number` are also test-controlled: Foundry's
+# `vm.warp` and `vm.roll` set them for the next call frame. They must be
+# inserted before the governing `vm.prank`, because the prank is intentionally
+# kept as the last cheatcode before the target call.
 ESTABLISHABLE_ENV_COORDS = frozenset(
-    ("msg.sender", "msg.value", "block.timestamp"))
+    ("msg.sender", "msg.value", "block.timestamp", "block.number"))
 
 _PRANK_RE = re.compile(r"vm\.(?:start)?[Pp]rank\(")
 _VALUE_RE = re.compile(r"\{\s*value\s*:\s*([^},]+?)\s*\}")
@@ -4804,36 +4804,37 @@ def establish_env_value(body, call_i, region, holes, value_var,
             bound_lines(value_var, "uint", 256, lo, hi, value_holes), note)
 
 
-def establish_env_timestamp(body, call_i, region, holes, pins, used):
-    """Insert `vm.warp` so block.timestamp matches the certified slice."""
-    if "block.timestamp" in region:
-        lo, hi = region["block.timestamp"]
-        timestamp_holes = sorted(holes.get("block.timestamp", ()))
-    elif "block.timestamp" in pins:
-        lo = hi = pins["block.timestamp"]
-        timestamp_holes = []
+def establish_block_env(body, call_i, region, holes, pins, used, coord,
+                        cheatcode, var_base):
+    """Insert a block cheatcode so the call matches the certified slice."""
+    if coord in region:
+        lo, hi = region[coord]
+        coord_holes = sorted(holes.get(coord, ()))
+    elif coord in pins:
+        lo = hi = pins[coord]
+        coord_holes = []
     else:
         return body, call_i, None, None, [], None
 
     sig_add, pre_add = None, []
     if hi > lo:
-        var = "p_block_timestamp"
+        var = var_base
         while var in used:
             var += "_"
         sig_add = ("uint256", var)
-        pre_add = bound_lines(var, "uint", 256, lo, hi, timestamp_holes)
-        timestamp_expr = var
-        note = (f"block.timestamp in [{lo}, {hi}]"
-                + ("  \\ {" + ", ".join(str(h) for h in timestamp_holes)
-                   + "}" if timestamp_holes else "")
-                + f" is ESTABLISHED and FUZZED: vm.warp now takes the "
+        pre_add = bound_lines(var, "uint", 256, lo, hi, coord_holes)
+        coord_expr = var
+        note = (f"{coord} in [{lo}, {hi}]"
+                + ("  \\ {" + ", ".join(str(h) for h in coord_holes)
+                   + "}" if coord_holes else "")
+                + f" is ESTABLISHED and FUZZED: {cheatcode} now takes the "
                   f"bound() fuzz parameter `{var}`"
-                + (f", and the {len(timestamp_holes)} punched value(s) are "
-                   f"excluded by vm.assume" if timestamp_holes else ""))
+                + (f", and the {len(coord_holes)} punched value(s) are "
+                   f"excluded by vm.assume" if coord_holes else ""))
     else:
-        timestamp_expr = str(lo)
-        note = (f"block.timestamp == {lo} is ESTABLISHED with "
-                f"`vm.warp({timestamp_expr})` before the target call")
+        coord_expr = str(lo)
+        note = (f"{coord} == {lo} is ESTABLISHED with "
+                f"`{cheatcode}({coord_expr})` before the target call")
 
     new_body = list(body)
     stmt_i = (statement_start(new_body, call_i)
@@ -4842,9 +4843,23 @@ def establish_env_timestamp(body, call_i, region, holes, pins, used):
     for i in range(min(stmt_i, len(new_body))):
         if _PRANK_RE.search(new_body[i]):
             insert_at = i
-    new_body.insert(insert_at, f"    vm.warp({timestamp_expr});")
+    new_body.insert(insert_at, f"    {cheatcode}({coord_expr});")
     call_i += 1
-    return (new_body, call_i, "block.timestamp", sig_add, pre_add, note)
+    return (new_body, call_i, coord, sig_add, pre_add, note)
+
+
+def establish_env_timestamp(body, call_i, region, holes, pins, used):
+    """Insert `vm.warp` so block.timestamp matches the certified slice."""
+    return establish_block_env(
+        body, call_i, region, holes, pins, used,
+        "block.timestamp", "vm.warp", "p_block_timestamp")
+
+
+def establish_env_block_number(body, call_i, region, holes, pins, used):
+    """Insert `vm.roll` so block.number matches the certified slice."""
+    return establish_block_env(
+        body, call_i, region, holes, pins, used,
+        "block.number", "vm.roll", "p_block_number")
 
 
 def env_disagreements(body, call_i, call_line, region, pins, established=()):
@@ -5441,11 +5456,35 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             coord_ident_abs["block.timestamp"] = coord_ident[
                 "block.timestamp"]
 
+    (body, call_i, block_num_est, block_num_sig, block_num_pre,
+     block_num_note) = establish_env_block_number(
+        body, call_i, region, holes, pins, used)
+    if block_num_est is not None:
+        env_established.append(block_num_note)
+        if block_num_sig is not None:
+            sig.append(block_num_sig)
+            pre_lines += block_num_pre
+            lifted.append("block.number")
+            used.add(block_num_sig[1])
+            _blo, _bhi = region["block.number"]
+            rendered_width["block.number"] = (_bhi - _blo + 1) - len(
+                {h for h in holes.get("block.number", ())
+                 if _blo <= h <= _bhi})
+            coord_ident["block.number"] = block_num_sig[1]
+            coord_ident_abs["block.number"] = block_num_sig[1]
+        else:
+            block_number_value = (region["block.number"][0]
+                                  if "block.number" in region
+                                  else pins["block.number"])
+            coord_ident["block.number"] = str(block_number_value)
+            coord_ident_abs["block.number"] = coord_ident["block.number"]
+
     call_line = body[call_i]
 
     env_refusals, env_unchecked = env_disagreements(
         body, call_i, call_line, region, pins,
-        established={e for e in (env_est, value_est, time_est) if e})
+        established={e for e in (env_est, value_est, time_est, block_num_est)
+                     if e})
     if env_refusals:
         notes.append("the emitted case does not run in the certified "
                      "environment slice: " + "; ".join(env_refusals))
@@ -7599,6 +7638,8 @@ def main():
             _rendered_coords.append(("msg.value", "num", None))
         if "block.timestamp" in region:
             _rendered_coords.append(("block.timestamp", "num", None))
+        if "block.number" in region:
+            _rendered_coords.append(("block.number", "num", None))
         for _sn in sorted({n for n in list(region) + list(pins)
                            if n.startswith("state.")}):
             _sv = _sn[len("state."):]

@@ -115,6 +115,51 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 `block.number` PUT establishment
+
+Scope and constraint:
+
+- `/home/samson/workspace/VeriPUT/Datasets` contracts were not modified.
+- `/home/samson/workspace/VeriPUT/Results` files were not modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Ground truth:
+
+- Read-only scans showed `block.number` is less frequent than timestamp but
+  still present in prepared subjects: roughly 5 Peer subjects, 9 BugFix
+  subjects, and 2 Stress prepared flat files mention it.
+- The main expected shapes are block-height guards and bad-randomness /
+  old-blockhash cases. These are useful for real-bug regression because a PUT
+  that cannot establish block height may be forced back to a single concrete
+  replay or refused as outside the certified environment slice.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now uses the same block-environment helper for
+  `block.timestamp` and `block.number`.
+- A singleton block-number region or pin emits `vm.roll(<value>)` before the
+  target call.
+- A wide block-number region emits a `uint256 p_block_number` PUT parameter,
+  applies the certified `bound()` plus any holes, and calls
+  `vm.roll(p_block_number)`.
+- `vm.roll` is inserted before a governing `vm.prank`, preserving the invariant
+  that the prank remains the last cheatcode before the target call.
+- Source-R2 now recognizes `block.number` as a numeric environment endpoint
+  when it is rendered, enabling candidates such as `height = block.number` and
+  `total += block.number`.
+- `tx.origin` remains fail-closed; this change does not rely on Forge prank
+  overload semantics for origin.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 182/182 tests.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 struct-contained mapping source-R2
 
 Scope and constraint:

@@ -487,6 +487,56 @@ def test_block_timestamp_range_is_fuzzed_with_warp():
     return bad
 
 
+def test_block_number_point_is_established_with_roll():
+    """A singleton block-number region becomes a `vm.roll` before the call."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "block.number": (42, 42)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"block-number point emits instead of refusing: {notes}")
+    bad += check("    vm.roll(42);" in text,
+                 "block.number point is established by vm.roll")
+    bad += check(stats["fuzz_params"] == 2,
+                 f"point block.number does not add a fuzz param: {stats}")
+    return bad
+
+
+def test_block_number_range_is_fuzzed_with_roll():
+    """A wide block-number region is a bounded fuzz parameter for vm.roll."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "block.number": (10, 20)},
+        holes={"block.number": [13]}, pins={}, params=PARAMS,
+        emitted=em, case=case, layout=LAYOUT, ladder_rows=LADDER,
+        notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"block-number range emits instead of refusing: {notes}")
+    bad += check("uint256 p_block_number" in text,
+                 "wide block.number is in the PUT signature")
+    bad += check("p_block_number = bound(p_block_number, 10, 20);" in text,
+                 "wide block.number is bounded")
+    bad += check("vm.assume(p_block_number != 13);" in text,
+                 "block.number holes are preserved")
+    bad += check("    vm.roll(p_block_number);" in text,
+                 "wide block.number drives vm.roll")
+    bad += check(stats["fuzz_params"] == 3
+                 and "block.number" in stats["lifted"],
+                 f"block.number range is counted as fuzzed: {stats}")
+    return bad
+
+
 def test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies():
     """`--unwindset` through, every strategy flag stopped.
 
@@ -2831,6 +2881,10 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                        "expression": {"nodeType": "Identifier",
                                       "name": "block"},
                        "typeDescriptions": {"typeString": "uint256"}}
+    block_number = {"nodeType": "MemberAccess", "memberName": "number",
+                    "expression": {"nodeType": "Identifier",
+                                   "name": "block"},
+                    "typeDescriptions": {"typeString": "uint256"}}
     bal_sender = {
         "nodeType": "IndexAccess",
         "baseExpression": {"nodeType": "Identifier",
@@ -2854,6 +2908,9 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
              "stateVariable": True,
              "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
             {"nodeType": "VariableDeclaration", "id": 14, "name": "stamp",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 15, "name": "height",
              "stateVariable": True,
              "typeDescriptions": {"typeString": "uint256"}},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "pay",
@@ -2898,7 +2955,21 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                      "leftHandSide": {"nodeType": "Identifier",
                                       "referencedDeclaration": 12,
                                       "name": "total"},
-                     "rightHandSide": block_timestamp}}]}}
+                     "rightHandSide": block_timestamp}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "220:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 15,
+                                      "name": "height"},
+                     "rightHandSide": block_number}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "240:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 12,
+                                      "name": "total"},
+                     "rightHandSide": block_number}}]}}
         ]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
@@ -2908,16 +2979,19 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
             path, "C", "pay", [], {"owner": (0, 0, 20),
                                    "paid": (1, 0, 32),
                                    "total": (2, 0, 32),
-                                   "stamp": (4, 0, 32)},
+                                   "stamp": (4, 0, 32),
+                                   "height": (5, 0, 32)},
             [("msg.sender", "id", 20), ("msg.value", "num", None),
-             ("block.timestamp", "num", None)],
+             ("block.timestamp", "num", None),
+             ("block.number", "num", None)],
             arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
             log=lambda _msg: None)
         none, _none_evidence = source_assignment_r2_specs(
             path, "C", "pay", [], {"owner": (0, 0, 20),
                                    "paid": (1, 0, 32),
                                    "total": (2, 0, 32),
-                                   "stamp": (4, 0, 32)},
+                                   "stamp": (4, 0, 32),
+                                   "height": (5, 0, 32)},
             [], arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
             log=lambda _msg: None)
     finally:
@@ -2928,6 +3002,8 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     paid_terms = [item["term"] for item in entries.get("paid", {}).get(
         "equals", [])]
     stamp_terms = [item["term"] for item in entries.get("stamp", {}).get(
+        "equals", [])]
+    height_terms = [item["term"] for item in entries.get("height", {}).get(
         "equals", [])]
     total_deltas = entries.get("total", {}).get("deltas", [])
     bal_deltas = entries.get("bal[msg.sender]", {}).get("deltas", [])
@@ -2940,12 +3016,20 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                                   "name": "block.timestamp"}],
                  f"stamp = block.timestamp is mined as a numeric endpoint: "
                  f"{entries}")
+    bad += check(height_terms == [{"kind": "coord",
+                                   "name": "block.number"}],
+                 f"height = block.number is mined as a numeric endpoint: "
+                 f"{entries}")
     total_delta_terms = [item["lo"] for item in total_deltas]
     bad += check({"kind": "coord", "name": "msg.value"} in total_delta_terms,
                  f"total += msg.value is mined as a delta: {total_deltas}")
     bad += check({"kind": "coord", "name": "block.timestamp"}
                  in total_delta_terms,
                  f"total += block.timestamp is mined as a delta: "
+                 f"{total_deltas}")
+    bad += check({"kind": "coord", "name": "block.number"}
+                 in total_delta_terms,
+                 f"total += block.number is mined as a delta: "
                  f"{total_deltas}")
     bad += check(len(bal_deltas) == 1 and bal_deltas[0]["lo"] ==
                  {"kind": "coord", "name": "msg.value"},
@@ -2959,6 +3043,9 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     bad += check(any("stamp: post == block.timestamp" in line
                      for line in evidence),
                  f"timestamp provenance is recorded: {evidence}")
+    bad += check(any("height: post == block.number" in line
+                     for line in evidence),
+                 f"block-number provenance is recorded: {evidence}")
     bad += check(none == [], f"unrendered environment coords are not mined: {none}")
     return bad
 
@@ -7673,6 +7760,8 @@ def main():
               test_uncomparable_env_quantity_refuses_emission,
               test_block_timestamp_point_is_established_with_warp,
               test_block_timestamp_range_is_fuzzed_with_warp,
+              test_block_number_point_is_established_with_roll,
+              test_block_number_range_is_fuzzed_with_roll,
               test_return_rung_is_bound_and_asserted,
               test_return_rung_can_assert_a_scalar_entry_state_coord,
               test_return_rung_can_assert_a_mapping_entry_state_coord,
