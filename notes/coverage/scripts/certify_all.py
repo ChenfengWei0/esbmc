@@ -664,6 +664,12 @@ def result_generalise_progress(workdir, since_mtime=None):
     return data
 
 
+RE_PATH_COV_PROBE_COUNTS = re.compile(
+    r"--path-cov-probe: unit '([^']+)' added ([0-9]+) "
+    r"exit-latched claim\(s\) for ([0-9]+) branch arm\(s\) at ([0-9]+) "
+    r"physical exit\(s\); complete-path denominator remains ([0-9]+)")
+
+
 def result_driver_diagnostic(out):
     if ("INTERNAL DEFECT" in out
             and "instrumented path claim(s) reached the solver" in out
@@ -671,6 +677,19 @@ def result_driver_diagnostic(out):
         return {
             "tag": "path-coverage-no-claims-reached-solver",
             "reason": "path coverage instrumentation emitted claims, but none reached the solver",
+        }
+    m = RE_PATH_COV_PROBE_COUNTS.search(out or "")
+    if m and "[run] TIMEOUT after" in out:
+        return {
+            "tag": "path-coverage-probe-claim-explosion",
+            "reason": (
+                "path coverage probe enumeration timed out after emitting a "
+                "large exit-latched claim product"),
+            "unit_id": m.group(1),
+            "probe_claims": int(m.group(2)),
+            "branch_arms": int(m.group(3)),
+            "physical_exits": int(m.group(4)),
+            "complete_path_denominator": int(m.group(5)),
         }
     return None
 

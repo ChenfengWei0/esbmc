@@ -5364,6 +5364,8 @@ def establish_block_env(body, call_i, region, holes, pins, used, coord,
         sig_add = ("uint256", var)
         pre_add = bound_lines(var, "uint", 256, lo, hi, coord_holes)
         coord_expr = var
+        cheat_arg = f"uint256({coord_expr})" if coord == "block.prevrandao" \
+            else coord_expr
         note = (f"{coord} in [{lo}, {hi}]"
                 + ("  \\ {" + ", ".join(str(h) for h in coord_holes)
                    + "}" if coord_holes else "")
@@ -5373,8 +5375,10 @@ def establish_block_env(body, call_i, region, holes, pins, used, coord,
                    f"excluded by vm.assume" if coord_holes else ""))
     else:
         coord_expr = str(lo)
+        cheat_arg = f"uint256({coord_expr})" if coord == "block.prevrandao" \
+            else coord_expr
         note = (f"{coord} == {lo} is ESTABLISHED with "
-                f"`{cheatcode}({coord_expr})` before the target call")
+                f"`{cheatcode}({cheat_arg})` before the target call")
 
     new_body = list(body)
     stmt_i = (statement_start(new_body, call_i)
@@ -5383,7 +5387,7 @@ def establish_block_env(body, call_i, region, holes, pins, used, coord,
     for i in range(min(stmt_i, len(new_body))):
         if _PRANK_RE.search(new_body[i]):
             insert_at = i
-    new_body.insert(insert_at, f"    {cheatcode}({coord_expr});")
+    new_body.insert(insert_at, f"    {cheatcode}({cheat_arg});")
     call_i += 1
     return (new_body, call_i, coord, sig_add, pre_add, note, coord_expr)
 

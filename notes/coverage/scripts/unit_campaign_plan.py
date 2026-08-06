@@ -47,6 +47,8 @@ CERTIFY_TIMEOUT_GRACE_S = 10.0
 RUNNER_TIMEOUT_GRACE_S = 5.0
 DEFAULT_RETRY_REFINE_ROUNDS = "2"
 BOUNDED_HOLDS_NO_WITNESS_REASON = "bounded-holds no witness"
+PROBE_CLAIM_EXPLOSION_REASON = "probe enumeration claim explosion"
+PROBE_CLAIM_EXPLOSION_TAG = "path-coverage-probe-claim-explosion"
 
 
 class CampaignError(ValueError):
@@ -219,6 +221,8 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         preflight_refused = False
         named_obstacle_no_witness = False
         path_cov_no_claims_reached = False
+        probe_claim_explosion = False
+        probe_claim_explosion_diagnostic = None
         pre_enumeration_stop = False
         bounded_holds_no_witness = False
         for row in rows:
@@ -227,6 +231,9 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             progress_buckets[progress_bucket] += 1
             if _driver_diagnostic_tag(row) == "path-coverage-no-claims-reached-solver":
                 path_cov_no_claims_reached = True
+            if _driver_diagnostic_tag(row) == PROBE_CLAIM_EXPLOSION_TAG:
+                probe_claim_explosion = True
+                probe_claim_explosion_diagnostic = row.get("driver_diagnostic")
             if _driver_stopped_before_enumeration(row):
                 pre_enumeration_stop = True
             if _is_bounded_holds_no_witness(row):
@@ -291,6 +298,8 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             reason = "partial witness journal only"
         elif not regions and bounded_holds_no_witness:
             reason = BOUNDED_HOLDS_NO_WITNESS_REASON
+        elif not regions and probe_claim_explosion:
+            reason = PROBE_CLAIM_EXPLOSION_REASON
         elif not regions:
             reason = "no certified regions"
         elif rate < min_certified_path_rate:
@@ -332,6 +341,8 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             "partial_claims_total": partial_claims_total,
             "bucket_rows": dict(sorted(buckets.items())),
         }
+        if isinstance(probe_claim_explosion_diagnostic, dict):
+            quality[key]["driver_diagnostic"] = probe_claim_explosion_diagnostic
     return quality, bad_lines
 
 
@@ -417,6 +428,20 @@ def _with_argv_value(argv: list[str], flag: str, value: str) -> list[str]:
     return rewritten
 
 
+def _without_argv_flag(argv: list[str], flag: str, *, has_value: bool) -> list[str]:
+    rewritten = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == flag:
+            skip_next = has_value
+            continue
+        rewritten.append(arg)
+    return rewritten
+
+
 def _attempt_out_path(out_path: str, attempt: int) -> str:
     if not out_path or attempt <= 1:
         return out_path
@@ -429,6 +454,46 @@ def _attempt_out_path(out_path: str, attempt: int) -> str:
     else:
         stem = stem + replacement
     return str(p.with_name(stem + suffix))
+
+
+def _apply_argv_rewrite(item: dict, rewrite) -> None:
+    item["certify_argv"] = rewrite(
+        [str(arg) for arg in item.get("certify_argv") or []])
+    if "dry_run_argv" in item:
+        item["dry_run_argv"] = rewrite(
+            [str(arg) for arg in item.get("dry_run_argv") or []])
+
+
+def _set_retry_refine_rounds(item: dict, refine_rounds: str) -> None:
+    _apply_argv_rewrite(
+        item, lambda argv: _with_argv_value(argv, "--refine-rounds",
+                                           refine_rounds))
+
+
+def _apply_probe_claim_explosion_retry(item: dict, quality: dict) -> None:
+    def rewrite(argv: list[str]) -> list[str]:
+        argv = _with_argv_value(argv, "--probe-witnesses", "1")
+        argv = _without_argv_flag(argv, "--probe-ladder", has_value=False)
+        argv = _without_argv_flag(argv, "--probe-ladder-budget", has_value=True)
+        return _with_argv_value(argv, "--refine-rounds",
+                                DEFAULT_RETRY_REFINE_ROUNDS)
+
+    _apply_argv_rewrite(item, rewrite)
+    diagnostic = quality.get("driver_diagnostic") or {}
+    quality["retry_strategy"] = "cheap-probe-enumeration"
+    quality["retry_probe_witnesses"] = 1
+    quality["retry_probe_ladder"] = False
+    quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
+    if isinstance(diagnostic, dict):
+        for key in ("probe_claims", "branch_arms", "physical_exits",
+                    "complete_path_denominator"):
+            if key in diagnostic:
+                quality[f"retry_observed_{key}"] = diagnostic[key]
+    quality["retry_reason"] = (
+        "the previous enumeration timed out after ESBMC expanded path probes "
+        "into an exit-by-branch claim product; keep a cheap refutation probe "
+        "for path diversity, but drop multi-witness collection and the "
+        "per-path probe ladder on the retry")
 
 
 def _apply_retry_strategy(item: dict) -> None:
@@ -451,23 +516,11 @@ def _apply_retry_strategy(item: dict) -> None:
             "produce fully bounded regions without spending the whole budget "
             "on refinement")
     elif reason == BOUNDED_HOLDS_NO_WITNESS_REASON:
-        item["certify_argv"] = _with_argv_value(
-            [str(arg) for arg in item.get("certify_argv") or []],
-            "--max-tx",
-            "2")
-        item["certify_argv"] = _with_argv_value(
-            item["certify_argv"],
-            "--refine-rounds",
-            DEFAULT_RETRY_REFINE_ROUNDS)
-        if "dry_run_argv" in item:
-            item["dry_run_argv"] = _with_argv_value(
-                [str(arg) for arg in item.get("dry_run_argv") or []],
-                "--max-tx",
-                "2")
-            item["dry_run_argv"] = _with_argv_value(
-                item["dry_run_argv"],
+        _apply_argv_rewrite(
+            item, lambda argv: _with_argv_value(
+                _with_argv_value(argv, "--max-tx", "2"),
                 "--refine-rounds",
-                DEFAULT_RETRY_REFINE_ROUNDS)
+                DEFAULT_RETRY_REFINE_ROUNDS))
         quality["retry_strategy"] = "deepen-witness-search"
         quality["retry_max_tx"] = 2
         quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
@@ -477,27 +530,14 @@ def _apply_retry_strategy(item: dict) -> None:
             "same dispatcher alphabet but allow one additional transaction "
             "before spending more certification budget")
         return
+    elif reason == PROBE_CLAIM_EXPLOSION_REASON:
+        _apply_probe_claim_explosion_retry(item, quality)
+        return
     else:
-        item["certify_argv"] = _with_argv_value(
-            [str(arg) for arg in item.get("certify_argv") or []],
-            "--refine-rounds",
-            DEFAULT_RETRY_REFINE_ROUNDS)
-        if "dry_run_argv" in item:
-            item["dry_run_argv"] = _with_argv_value(
-                [str(arg) for arg in item.get("dry_run_argv") or []],
-                "--refine-rounds",
-                DEFAULT_RETRY_REFINE_ROUNDS)
+        _set_retry_refine_rounds(item, DEFAULT_RETRY_REFINE_ROUNDS)
         return
 
-    item["certify_argv"] = _with_argv_value(
-        [str(arg) for arg in item.get("certify_argv") or []],
-        "--refine-rounds",
-        refine_rounds)
-    if "dry_run_argv" in item:
-        item["dry_run_argv"] = _with_argv_value(
-            [str(arg) for arg in item.get("dry_run_argv") or []],
-            "--refine-rounds",
-            refine_rounds)
+    _set_retry_refine_rounds(item, refine_rounds)
 
     quality["retry_strategy"] = strategy
     quality["retry_refine_rounds"] = int(refine_rounds)

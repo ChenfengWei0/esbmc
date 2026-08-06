@@ -579,6 +579,82 @@ def test_campaign_prefers_single_refine_for_refinement_timeouts():
     return bad
 
 
+def test_campaign_cheapens_probe_claim_explosion_retries():
+    with tempfile.TemporaryDirectory() as td:
+        sched_doc = {
+            "schema": "veriput-unit-schedule/v1",
+            "summary": {
+                "jobs": 1,
+            },
+            "jobs": [
+                job("bugfix124__probeheavy__setGoverned",
+                    benchmark="bugfix124",
+                    unit="setGoverned"),
+            ],
+        }
+        sched_doc["jobs"][0]["certify_argv"].extend([
+            "--probe-witnesses",
+            "8",
+            "--probe-ladder",
+            "--probe-ladder-budget",
+            "4",
+        ])
+        sched = write_json(Path(td) / "schedule.json", sched_doc)
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("bugfix124__probeheavy__setGoverned",
+                    "ok",
+                    benchmark="bugfix124",
+                    campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "bugfix124",
+                    "unit": "setGoverned",
+                    "bucket": "KILLED",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "driver_diagnostic": {
+                        "tag": "path-coverage-probe-claim-explosion",
+                        "probe_claims": 370,
+                        "branch_arms": 10,
+                        "physical_exits": 37,
+                        "complete_path_denominator": 37,
+                    },
+                    "generalise_progress": {
+                        "stage": "started",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    next_job = doc["next_schedule"]["jobs"][0]
+    quality = next_job.get("certification_quality") or {}
+    argv = next_job["certify_argv"]
+    bad = 0
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"probe explosion remains retryable: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {
+        "probe enumeration claim explosion": 1,
+    }, f"probe explosion has a precise weak reason: {doc['summary']}")
+    bad += check(quality.get("retry_strategy") == "cheap-probe-enumeration"
+                 and quality.get("retry_probe_witnesses") == 1
+                 and quality.get("retry_probe_ladder") is False,
+                 f"retry metadata names the cheap probe strategy: {quality}")
+    bad += check(argv_value(argv, "--probe-witnesses") == "1"
+                 and "--probe-ladder" not in argv
+                 and "--probe-ladder-budget" not in argv,
+                 f"retry argv keeps cheap probe and drops ladder: {argv}")
+    bad += check(quality.get("retry_observed_probe_claims") == 370
+                 and quality.get("retry_observed_physical_exits") == 37,
+                 f"observed probe product travels with retry metadata: {quality}")
+    return bad
+
+
 def test_campaign_deepens_tx_for_bounded_holds_no_witness():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
@@ -1056,6 +1132,7 @@ TESTS = [
     test_campaign_retries_runner_ok_when_certification_is_weak,
     test_campaign_names_partial_journal_only_as_weak_certification,
     test_campaign_prefers_single_refine_for_refinement_timeouts,
+    test_campaign_cheapens_probe_claim_explosion_retries,
     test_campaign_deepens_tx_for_bounded_holds_no_witness,
     test_campaign_restores_default_refine_rounds_after_strategy_attempt,
     test_campaign_treats_slice_excluded_paths_as_body_slice_ready,

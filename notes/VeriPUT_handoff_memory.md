@@ -1,6 +1,6 @@
 # VeriPUT Engineering Memory
 
-Last updated: 2026-08-06
+Last updated: 2026-08-07
 
 This document is the durable handoff state for VeriPUT. It records facts that
 were established by reading the paper, the work order, the implementation, and
@@ -10426,6 +10426,100 @@ Checks:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
   passed.
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
+  passed.
+
+## 2026-08-07 small Stage-4 benchmark wave
+
+Goal:
+
+- Give a quick current success-rate picture for benchmark-derived certified
+  regions, using the final per-case ESBMC timeout setting of 600s.
+- Measure concrete replay / PUT validity on reference contracts rather than
+  relying only on Stage-2 certification counts.
+
+Input:
+
+- Combined certified-row file:
+  `/tmp/veriput_put_smallwave_20260807_certified6.jsonl`.
+- Sources:
+  - `/tmp/veriput_bench_salvage_bugfix_20260806_235923/certify-results.jsonl`
+  - `/tmp/veriput_bench_salvage_stress_20260806_235923/certify-results.jsonl`
+- Rows: 6 certified units/records, 7 certified regions:
+  - BugFix DepositLog: `approvedToLog`, `setApprovedLogger` x2,
+    `logCreated`
+  - BugFix EtherLotto: `play`
+  - Stress ClaimTopicsRegistry: `addClaimTopic`, `removeClaimTopic`
+
+Command:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_put_smallwave_20260807_certified6.jsonl --strong-recipe --timeout 600 --memlimit-gib 8 --forge-timeout 300 --out-root /tmp/veriput_put_smallwave_20260807_out_fix1`
+
+Stage-2 accounting over these rows:
+
+- Witnessed paths: 12.
+- Certified paths/regions: 7.
+- Not-certified paths: 5.
+- Of not-certified paths: 3 concrete-fallback, 2 method-unsupported.
+- No witnessed path lacked a verdict.
+
+Stage-4 result:
+
+- PUT emitted: 3 / 7 certified regions.
+- Reference-valid B rows: 3 / 7 certified regions.
+- Every emitted PUT was also reference-valid: 3 / 3.
+- Every emitted PUT carried both fuzz parameters and an oracle: 3 / 3.
+- Emitted/green PUTs:
+  - `DepositLog.approvedToLog` enc 3: fuzz=1, asserts=2.
+  - `DepositLog.setApprovedLogger` enc 6: fuzz=3, asserts=1
+    rollback/exit-kind oracle.
+  - `DepositLog.setApprovedLogger` enc 7: fuzz=2, asserts=1.
+- Refused regions:
+  - `EtherLotto.play` enc 2: no concrete call to `play` found in the emitted
+    replay case, so there was nothing to lift.
+  - `DepositLog.logCreated` enc 6: not parameterized; the only wide coordinate
+    is omitted by the emitter, so the result would be the concrete replay
+    wearing bound syntax.
+  - `ClaimTopicsRegistry.addClaimTopic` enc 31 and `removeClaimTopic` enc 15:
+    assertion ladder returns `UNDECIDED-TRUNCATED`; loops named include
+    the `onlyOwner` wrapper loop and `__memset_impl`.
+
+Important code fix found by this wave:
+
+- Before the fix, Forge could not compile the generated DepositLog PUTs because
+  the emitter wrote `vm.prevrandao(0)`.  The installed forge-std has both
+  `prevrandao(bytes32)` and `prevrandao(uint256)`, so integer literals are
+  ambiguous under solc 0.8.29.
+- `scripts/solidity_path_put.py` now renders `block.prevrandao` cheatcode
+  arguments as `uint256(...)`, for both singleton pins and fuzz parameters.
+- `scripts/test_solidity_path_put.py` was updated to expect
+  `vm.prevrandao(uint256(...))`.
+
+Probe-timeout campaign fix:
+
+- `certify_all.py` now parses the ESBMC line
+  `--path-cov-probe: unit ... added N exit-latched claim(s) for B branch
+  arm(s) at E physical exit(s)` when the same driver output ends in a timeout.
+  The row receives `driver_diagnostic.tag =
+  path-coverage-probe-claim-explosion` plus the observed dimensions.
+- `unit_campaign_plan.py` treats this as a retryable weak result named
+  `probe enumeration claim explosion`.
+- The retry strategy is `cheap-probe-enumeration`: keep probe mode but rewrite
+  the next attempt to `--probe-witnesses 1` and remove `--probe-ladder` /
+  `--probe-ladder-budget`.  This preserves cheap refutation/path diversity
+  while avoiding the first-stage 300+ claim multi-witness queue that killed the
+  BugFix `setGoverned` / `executeBatchDeposit` attempts.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_certify_all_partial_journal.py notes/coverage/scripts/certify_all.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed, 217 / 217 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_partial_journal.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_certify_all_partial_journal.py notes/coverage/scripts/certify_all.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
   passed.
 
 ## 2026-08-07 round-robin benchmark sampling and unit-level gate

@@ -158,6 +158,21 @@ def main():
             "pinned by request\n")
         bad += check(parsed["coords"] == [] and parsed["coords_line"] is None,
                      f"mapping dependency prose is not parsed as coords: {parsed}")
+
+        diagnostic = certify_all.result_driver_diagnostic(
+            "--path-cov-probe: unit 'sol:@C@C@F@f#1' added 370 "
+            "exit-latched claim(s) for 10 branch arm(s) at 37 physical "
+            "exit(s); complete-path denominator remains 37\n"
+            "[run] TIMEOUT after 60s: esbmc ... --path-cov-probe\n")
+        bad += check(
+            diagnostic and diagnostic["tag"] ==
+            "path-coverage-probe-claim-explosion",
+            f"probe claim explosion timeout is diagnosed: {diagnostic}")
+        bad += check(diagnostic["probe_claims"] == 370
+                     and diagnostic["branch_arms"] == 10
+                     and diagnostic["physical_exits"] == 37
+                     and diagnostic["complete_path_denominator"] == 37,
+                     f"probe product dimensions are recorded: {diagnostic}")
     return bad
 
 

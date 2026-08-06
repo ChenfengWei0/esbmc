@@ -626,7 +626,7 @@ def test_extra_numeric_env_ranges_use_modeled_cheatcodes():
                  and "p_block_prevrandao = bound(p_block_prevrandao, 4, 6);"
                  in text
                  and "vm.assume(p_block_prevrandao != 5);" in text
-                 and "    vm.prevrandao(p_block_prevrandao);" in text,
+                 and "    vm.prevrandao(uint256(p_block_prevrandao));" in text,
                  "block.prevrandao is established with holes")
     bad += check("uint256 p_tx_gasprice" in text
                  and "p_tx_gasprice = bound(p_tx_gasprice, 7, 9);" in text
@@ -7823,7 +7823,7 @@ def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
         "    vm.roll(7);\n"
         "    vm.chainId(31337);\n"
         "    vm.fee(101);\n"
-        "    vm.prevrandao(202);\n"
+        "    vm.prevrandao(uint256(202));\n"
         "    vm.txGasPrice(303);\n"
         "    vm.coinbase(address(uint160(404)));\n"
         "    vm.prank(address(uint160(0)));\n")
@@ -7893,7 +7893,7 @@ def test_OBSERVED_block_env_slot_keys_are_nameable():
         "    vm.roll(7);\n"
         "    vm.chainId(31337);\n"
         "    vm.fee(101);\n"
-        "    vm.prevrandao(202);\n"
+        "    vm.prevrandao(uint256(202));\n"
         "    vm.txGasPrice(303);\n"
         "    vm.coinbase(address(uint160(404)));\n"
         "    vm.prank(address(uint160(0)));\n")
@@ -7950,7 +7950,7 @@ def test_R2_proposal_env_coords_include_observable_replay_values():
         "    vm.roll(7);\n"
         "    vm.chainId(31337);\n"
         "    vm.fee(101);\n"
-        "    vm.prevrandao(202);\n"
+        "    vm.prevrandao(uint256(202));\n"
         "    vm.txGasPrice(303);\n"
         "    vm.coinbase(address(uint160(404)));\n"
         "    vm.prank(address(uint160(0)));\n")
