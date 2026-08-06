@@ -59,6 +59,7 @@ contract P01 {
     (put_dir / "put.json").write_text(json.dumps({
         "contract": "P01",
         "unit": "set",
+        "path_function": "sol:@C@P01@F@set#1",
         "enc": 6,
         "depth": 1,
         "test": "test_put_P01_set_path6",
@@ -134,6 +135,7 @@ def test_inventory_filters_and_reports_weak_reasons():
         (weak_dir / "put.json").write_text(json.dumps({
             "contract": "P01",
             "unit": "set",
+            "path_function": "sol:@C@P01@F@set#1",
             "enc": 7,
             "depth": 1,
             "ladder_refusal": "region coordinate refused",
@@ -215,6 +217,7 @@ def test_inventory_default_roots_include_poc_local_puts():
         (local_dir / "put.json").write_text(json.dumps({
             "contract": "P01",
             "unit": "set",
+            "path_function": "sol:@C@P01@F@set#1",
             "enc": 9,
             "depth": 1,
             "test": "test_put_P01_set_path9",
@@ -263,10 +266,106 @@ def test_inventory_default_roots_include_poc_local_puts():
         return bad
 
 
+def test_inventory_joins_cert_and_put_with_path_derived_contract():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        poc_dir = tmp / "poc"
+        put_root = tmp / "put"
+        cert = tmp / "cert.jsonl"
+        poc_dir.mkdir()
+        (poc_dir / "Harness.sol").write_text("""// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// EXPECTED: PUT and certification rows join through path-derived contract.
+contract Harness {
+    uint256 public y;
+    function set(uint256 x) external {
+        y = x;
+    }
+}
+""")
+        cert.write_text(json.dumps({
+            "contract": None,
+            "unit": "set",
+            "path_function": "sol:@C@Harness@F@set#9",
+            "bucket": "CERTIFIED",
+            "certified": {"9": "x in [1, 3]"},
+        }) + "\n")
+        put_dir = put_root / "Harness__set__9"
+        put_dir.mkdir(parents=True)
+        (put_dir / "put.json").write_text(json.dumps({
+            "contract": "Harness",
+            "unit": "set",
+            "path_function": "sol:@C@Harness@F@set#9",
+            "enc": 9,
+            "region": {
+                "x": ["1", "3"],
+            },
+            "stats": {
+                "fuzz_params": 1,
+                "asserts": 1,
+            },
+        }) + "\n")
+        args = argparse.Namespace(poc_dir=str(poc_dir),
+                                  put_root=str(put_root),
+                                  cert_jsonl=[str(cert)],
+                                  contract=[],
+                                  unit=[],
+                                  poc=[],
+                                  only=[],
+                                  max_expected_lines=8,
+                                  limit=20,
+                                  format="json",
+                                  out="")
+        doc = poc_ground_truth.build_inventory(args)
+        bad = 0
+        bad += check(doc["summary"]["unit_rows"] == 1,
+                     f"path-derived contract avoids split rows: {doc['summary']}")
+        unit = doc["units"][0]
+        bad += check(unit["contract"] == "Harness"
+                     and unit["unit"] == "set"
+                     and len(unit["certifications"]) == 1
+                     and len(unit["puts"]) == 1,
+                     f"certification and PUT attach to one unit: {unit}")
+        bad += check(unit["certifications"][0]["path_function"]
+                     == "sol:@C@Harness@F@set#9"
+                     and unit["puts"][0]["path_function"]
+                     == "sol:@C@Harness@F@set#9",
+                     f"path_function is preserved in artifacts: {unit}")
+        bad += check(unit["ground_truth_status"] == "ready-strong",
+                     f"joined row is classified correctly: {unit}")
+        return bad
+
+
+def test_default_cert_paths_include_poc_local_gate_files():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        root = tmp / "certs"
+        top = root / "top.jsonl"
+        local = root / "poc_a" / "certify_gate.jsonl"
+        nested = root / "poc_b" / "nested" / "certify_gate.jsonl"
+        local.parent.mkdir(parents=True)
+        nested.parent.mkdir(parents=True)
+        root.mkdir(exist_ok=True)
+        top.write_text("{}\n")
+        local.write_text("{}\n")
+        nested.write_text("{}\n")
+        paths = [p.relative_to(root) for p in poc_ground_truth.default_cert_paths((root,))]
+        bad = 0
+        bad += check(Path("top.jsonl") in paths
+                     and Path("poc_a/certify_gate.jsonl") in paths
+                     and Path("poc_b/nested/certify_gate.jsonl") in paths,
+                     f"default cert scan includes top-level and POC-local gates: "
+                     f"{paths}")
+        return bad
+
+
 TESTS = [
     test_inventory_reads_sources_cert_and_puts_without_execution,
     test_inventory_filters_and_reports_weak_reasons,
     test_inventory_default_roots_include_poc_local_puts,
+    test_inventory_joins_cert_and_put_with_path_derived_contract,
+    test_default_cert_paths_include_poc_local_gate_files,
 ]
 
 

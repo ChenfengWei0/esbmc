@@ -7166,3 +7166,50 @@ Verification:
 - Read-only default inventory smoke now reports 13 PUT roots, 249 `put.json`
   rows, and 197 strong-shape PUT rows. This is still an artefact inventory, not
   a new ESBMC/Forge measurement.
+
+## 2026-08-06 POC-local certification inventory roots
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- The read-only ground-truth inventory still undercounted current official POC
+  progress after adding POC-local PUT roots.
+- Default certification scanning included global `notes/coverage/certify/*.jsonl`
+  and nested `poc_units/*/*/certify_gate.jsonl`, but missed the common official
+  one-level layout `notes/coverage/poc_units/<poc-id>/certify_gate.jsonl`.
+- This made POC-local PUTs appear as `no-certification-row`, e.g.
+  `FarmingPool.setDistributor`, even though its local certification row existed.
+
+Code shape:
+
+- `notes/coverage/scripts/poc_ground_truth.py` now includes
+  `poc_units/*/certify_gate.jsonl` in default cert discovery.
+- PUT rows and certification summaries preserve `path_function` for audit.
+- Inventory grouping remains by derived `(contract, unit)`: if a cert row lacks
+  `contract`, `contract_from_cert_row()` derives the harness contract from
+  `path_function` such as `sol:@C@FarmingPool@F@setDistributor#5926`. Full
+  `path_function` is not used as the primary grouping key because older cert
+  rows may not have it, and exact strings can split otherwise equivalent
+  function-level artefacts.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/poc_ground_truth.py scripts/test_poc_ground_truth.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_poc_ground_truth.py`
+  passed.
+- Read-only default inventory smoke now reports 178 unit rows, 376 cert rows,
+  249 PUT rows, 197 strong-shape PUT rows, and unit statuses:
+  `ready-strong=61`, `partial-strong-put=5`, `no-strong-put=22`,
+  `no-certified-paths=81`, `certified-no-put=6`,
+  `no-certification-row=3`.
+- Example sanity checks: `FarmingPool.setDistributor` is now `ready-strong`
+  with 5 certified paths and 24 strong-shape PUTs among 25 PUT artefacts;
+  `St1inch.setFeeReceiver` is now `partial-strong-put` with 5 certified paths
+  and 4 strong-shape PUTs.

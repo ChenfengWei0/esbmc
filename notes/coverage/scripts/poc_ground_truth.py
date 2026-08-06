@@ -12,7 +12,7 @@ import argparse
 import json
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -103,6 +103,7 @@ def default_cert_paths(cert_roots: tuple[Path, ...]) -> list[Path]:
         if not root.exists():
             continue
         paths.extend(sorted(root.glob("*.jsonl")))
+        paths.extend(sorted(root.glob("*/certify_gate.jsonl")))
         paths.extend(sorted(root.glob("*/*/certify_gate.jsonl")))
     return paths
 
@@ -222,6 +223,7 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
             "path": str(path),
             "contract": doc.get("contract"),
             "unit": doc.get("unit"),
+            "path_function": doc.get("path_function"),
             "enc": doc.get("enc"),
             "depth": doc.get("depth"),
             "test": doc.get("test"),
@@ -287,13 +289,6 @@ def collect_put_rows_from_roots(put_roots: list[Path]) -> tuple[list[dict], int]
     return rows, bad
 
 
-def index_by_contract_unit(rows: list[dict]) -> dict[tuple[str | None, str | None], list[dict]]:
-    by_key = defaultdict(list)
-    for row in rows:
-        by_key[(row.get("contract"), row.get("unit"))].append(row)
-    return by_key
-
-
 def source_by_contract(rows: list[dict]) -> dict[str, dict]:
     out = {}
     for row in rows:
@@ -308,6 +303,7 @@ def summarize_cert(row: dict) -> dict:
     return {
         "source": row.get("_source"),
         "line": row.get("_line"),
+        "path_function": row.get("path_function"),
         "bucket": row.get("bucket"),
         "witnessed": row.get("witnessed"),
         "coords": row.get("coords") or [],
@@ -336,6 +332,31 @@ def contract_from_cert_row(row: dict, sources: list[dict]) -> str | None:
     if "_" in benchmark:
         return benchmark.rsplit("_", 1)[1]
     return None
+
+
+def empty_unit(contract: str | None,
+               unit: str | None,
+               sources_by_contract: dict[str, dict]) -> dict:
+    return {
+        "contract": contract,
+        "unit": unit,
+        "source": sources_by_contract.get(contract),
+        "certifications": [],
+        "puts": [],
+    }
+
+
+def update_unit_identity(entry: dict,
+                         contract: str | None,
+                         unit: str | None,
+                         sources_by_contract: dict[str, dict]) -> None:
+    if entry.get("contract") is None and contract is not None:
+        entry["contract"] = contract
+        entry["source"] = sources_by_contract.get(contract)
+    if entry.get("unit") is None and unit is not None:
+        entry["unit"] = unit
+    if entry.get("source") is None and entry.get("contract") is not None:
+        entry["source"] = sources_by_contract.get(entry.get("contract"))
 
 
 def _filters(args, name: str) -> set[str]:
@@ -435,7 +456,6 @@ def build_inventory(args) -> dict:
     cert_rows, bad_cert_lines = collect_cert_rows(cert_paths)
     put_rows, bad_put_docs = collect_put_rows_from_roots(put_roots)
 
-    puts_by_key = index_by_contract_unit(put_rows)
     sources_by_contract = source_by_contract(sources)
 
     units = {}
@@ -443,24 +463,17 @@ def build_inventory(args) -> dict:
         contract = contract_from_cert_row(row, sources)
         unit = row.get("unit")
         key = (contract, unit)
-        entry = units.setdefault(key, {
-            "contract": contract,
-            "unit": unit,
-            "source": sources_by_contract.get(contract),
-            "certifications": [],
-            "puts": [],
-        })
+        entry = units.setdefault(key, empty_unit(contract, unit, sources_by_contract))
+        update_unit_identity(entry, contract, unit, sources_by_contract)
         entry["certifications"].append(summarize_cert(row))
 
-    for key, rows in puts_by_key.items():
-        entry = units.setdefault(key, {
-            "contract": key[0],
-            "unit": key[1],
-            "source": sources_by_contract.get(key[0]),
-            "certifications": [],
-            "puts": [],
-        })
-        entry["puts"].extend(rows)
+    for row in put_rows:
+        contract = row.get("contract")
+        unit = row.get("unit")
+        key = (contract, unit)
+        entry = units.setdefault(key, empty_unit(contract, unit, sources_by_contract))
+        update_unit_identity(entry, contract, unit, sources_by_contract)
+        entry["puts"].append(row)
 
     unit_rows = sorted(units.values(),
                        key=lambda r: (r.get("contract") is None,
