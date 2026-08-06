@@ -1329,6 +1329,26 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return {"kind": "coord", "name": env_name}, env_name
         return unitless_number_term(n)
 
+    def numeric_endpoint_term(n):
+        direct = delta_term(n)
+        if direct is not None:
+            return direct
+        if not isinstance(n, dict) or n.get("nodeType") != "BinaryOperation":
+            return None
+        op = {"+": "add", "-": "sub", "*": "mul", "/": "div"}.get(
+            n.get("operator"))
+        if op is None:
+            return None
+        lhs = delta_term(n.get("leftExpression"))
+        rhs = delta_term(n.get("rightExpression"))
+        if lhs is None or rhs is None:
+            return None
+        if op == "div" and not (rhs[0].get("kind") == "literal"
+                                and int(rhs[0].get("value", "0")) != 0):
+            return None
+        term = {"kind": "op", "op": op, "lhs": lhs[0], "rhs": rhs[0]}
+        return term, r2_term_text(term)
+
     def self_ref(n, state_id):
         return identifier_ref(n) == state_id
 
@@ -1498,6 +1518,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if slot_name and zero_addr is not None:
                     add_equals_candidate(slot_name, zero_addr[0],
                                          zero_addr[1], n.get("src"))
+                endpoint = (numeric_endpoint_term(rhs)
+                            if unsigned_ty(slot_ty) else None)
+                if slot_name and endpoint is not None:
+                    add_equals_candidate(slot_name, endpoint[0], endpoint[1],
+                                         n.get("src"))
                 if slot_name and unsigned_ty(slot_ty):
                     delta = self_update_delta(
                         rhs,
@@ -1523,6 +1548,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if state_name and zero_addr is not None:
                     add_equals_candidate(state_name, zero_addr[0],
                                          zero_addr[1], n.get("src"))
+                endpoint = (numeric_endpoint_term(rhs)
+                            if unsigned_ty(state_ty) else None)
+                if state_name and endpoint is not None:
+                    add_equals_candidate(state_name, endpoint[0], endpoint[1],
+                                         n.get("src"))
                 if state_name and unsigned_ty(state_ty):
                     delta = self_update_delta(
                         rhs, lambda candidate: self_ref(candidate, lhs_ref))

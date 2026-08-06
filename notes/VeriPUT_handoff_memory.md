@@ -5430,6 +5430,50 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 arithmetic-assignment source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- Fee, cap, quote, and normalization code commonly writes state from a simple
+  expression over the unit input, for example `fee = amount + 7`,
+  `scaled = 2 * amount`, `paidLess = msg.value - 1`, and
+  `quote[msg.sender] = amount * 3`.
+- The structured R2 grammar and Foundry renderer already support one-level
+  arithmetic endpoint terms. The missing piece was source prioritization for
+  direct storage/mapping assignments; without it, these strong endpoints could
+  be pushed behind broad mechanical candidates.
+- The rule remains conservative: operands must be already-rendered numeric
+  coordinates or unitless decimal literals; division is accepted only when the
+  RHS is a nonzero literal; nested arithmetic is not mined by this direct
+  assignment rule. Fuzz can only refute these; ESBMC still certifies.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now has `numeric_endpoint_term()` for
+  one-level `+`, `-`, `*`, and safe `/` structured terms.
+- Direct unsigned scalar and exact mapping-slot assignments now add
+  source-prioritized `post == (<expr>)` candidates using that helper. Existing
+  direct coord/literal candidates deduplicate through the same candidate key.
+- Mapping arithmetic endpoints still reuse solc `maps` and exact slot-name
+  recovery, so this is not a whole-mapping guess.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `156 test(s) ran, 156 declared in this module`.
+- `git diff --check` on the touched files passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:

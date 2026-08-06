@@ -2810,6 +2810,134 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     return bad
 
 
+def test_source_R2_arithmetic_assignments_prioritize_expression_endpoints():
+    from solidity_path_put import (r2_term_text,  # noqa: E402
+                                   source_assignment_r2_specs)
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def binop(op, lhs, rhs):
+        return {"nodeType": "BinaryOperation", "operator": op,
+                "leftExpression": lhs, "rightExpression": rhs,
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+    msg_value = {"nodeType": "MemberAccess", "memberName": "value",
+                 "expression": {"nodeType": "Identifier", "name": "msg"},
+                 "typeDescriptions": {"typeString": "uint256"}}
+    quote_sender = {
+        "nodeType": "IndexAccess",
+        "baseExpression": ident(15, "quote"),
+        "indexExpression": msg_sender,
+        "typeDescriptions": {"typeString": "uint256"}}
+
+    def assign(ref_or_lhs, rhs, src):
+        lhs = ref_or_lhs if isinstance(ref_or_lhs, dict) else ident(
+            ref_or_lhs[0], ref_or_lhs[1])
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=", "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "fee",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "scaled",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "paidLess",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "half",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "broken",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 15, "name": "quote",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "calc",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 assign((10, "fee"), binop("+", ident(21, "amount"), num(7)),
+                        "100:12:0"),
+                 assign((11, "scaled"), binop("*", num(2), ident(21, "amount")),
+                        "120:12:0"),
+                 assign((12, "paidLess"), binop("-", msg_value, num(1)),
+                        "140:12:0"),
+                 assign((13, "half"), binop("/", ident(21, "amount"), num(2)),
+                        "160:12:0"),
+                 assign((14, "broken"), binop("/", ident(21, "amount"), num(0)),
+                        "180:12:0"),
+                 assign(quote_sender, binop("*", ident(21, "amount"), num(3)),
+                        "200:12:0")]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "calc", [("amount", "uint256")],
+            {"fee": (0, 0, 32), "scaled": (1, 0, 32),
+             "paidLess": (2, 0, 32), "half": (3, 0, 32),
+             "broken": (4, 0, 32)},
+            [("amount", "num", None), ("msg.value", "num", None)],
+            arity=1, maps={"quote": (5, "address", 32, 0, "quote", None)},
+            log=lambda _msg: None)
+        unrendered, _ = source_assignment_r2_specs(
+            path, "C", "calc", [("amount", "uint256")],
+            {"fee": (0, 0, 32), "scaled": (1, 0, 32),
+             "paidLess": (2, 0, 32), "half": (3, 0, 32),
+             "broken": (4, 0, 32)},
+            [], arity=1,
+            maps={"quote": (5, "address", 32, 0, "quote", None)},
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    def equal_text(name):
+        return [r2_term_text(item["term"])
+                for item in entries.get(name, {}).get("equals", [])]
+
+    bad = 0
+    bad += check(equal_text("fee") == ["(amount + 7)"],
+                 f"amount + literal endpoint is mined: {entries}")
+    bad += check(equal_text("scaled") == ["(2 * amount)"],
+                 f"literal * amount endpoint is mined: {entries}")
+    bad += check(equal_text("paidLess") == ["(msg.value - 1)"],
+                 f"msg.value - literal endpoint is mined: {entries}")
+    bad += check(equal_text("half") == ["(amount / 2)"],
+                 f"division by nonzero literal endpoint is mined: {entries}")
+    bad += check("broken" not in entries,
+                 f"division by zero is not mined as an endpoint: {entries}")
+    bad += check(equal_text("quote[msg.sender]") == ["(amount * 3)"],
+                 f"mapping arithmetic endpoint is mined: {entries}")
+    bad += check(any("fee: post == (amount + 7)" in line
+                     for line in evidence),
+                 f"scalar arithmetic provenance is recorded: {evidence}")
+    bad += check(any("quote[msg.sender]: post == (amount * 3)" in line
+                     for line in evidence),
+                 f"mapping arithmetic provenance is recorded: {evidence}")
+    bad += check(unrendered == [],
+                 f"arithmetic endpoints do not mine unrendered coords: "
+                 f"{unrendered}")
+    return bad
+
+
 def test_source_R2_return_candidates_prioritize_return_expressions():
     from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
                                    r2_term_text,
@@ -5333,6 +5461,7 @@ def main():
               test_source_R2_delete_updates_prioritize_zero_endpoints,
               test_source_R2_address_zero_assignments_prioritize_zero_endpoints,
               test_source_R2_environment_value_assignments_use_rendered_env_coords,
+              test_source_R2_arithmetic_assignments_prioritize_expression_endpoints,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
