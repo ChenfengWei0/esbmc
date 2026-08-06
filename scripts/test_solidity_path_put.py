@@ -2348,6 +2348,110 @@ def test_source_R2_self_updates_prioritize_delta_queries():
     return bad
 
 
+def test_source_R2_return_candidates_prioritize_return_expressions():
+    from solidity_path_put import (RETURN_VAR, r2_candidates,  # noqa: E402
+                                   r2_term_text,
+                                   source_assignment_r2_specs)
+    quote = {
+        "nodeType": "FunctionDefinition", "id": 20, "name": "quote",
+        "parameters": {"parameters": [
+            {"id": 21, "name": "amount",
+             "typeDescriptions": {"typeString": "uint256"}}]},
+        "returnParameters": {"parameters": [
+            {"id": 22, "name": "", "typeDescriptions": {
+                "typeString": "uint256"}}]},
+        "body": {"nodeType": "Block", "statements": [{
+            "nodeType": "Return", "src": "100:10:0",
+            "expression": {"nodeType": "BinaryOperation", "operator": "+",
+                           "leftExpression": {"nodeType": "Identifier",
+                                              "referencedDeclaration": 21,
+                                              "name": "amount"},
+                           "rightExpression": {"nodeType": "Literal",
+                                               "kind": "number",
+                                               "value": "7"}}}]}}
+    flag = {
+        "nodeType": "FunctionDefinition", "id": 30, "name": "flag",
+        "parameters": {"parameters": [
+            {"id": 31, "name": "ok",
+             "typeDescriptions": {"typeString": "bool"}}]},
+        "returnParameters": {"parameters": [
+            {"id": 32, "name": "", "typeDescriptions": {
+                "typeString": "bool"}}]},
+        "body": {"nodeType": "Block", "statements": [{
+            "nodeType": "Return", "src": "200:10:0",
+            "expression": {"nodeType": "Identifier",
+                           "referencedDeclaration": 31,
+                           "name": "ok"}}]}}
+    pair = {
+        "nodeType": "FunctionDefinition", "id": 40, "name": "pair",
+        "parameters": {"parameters": [
+            {"id": 41, "name": "amount",
+             "typeDescriptions": {"typeString": "uint256"}}]},
+        "returnParameters": {"parameters": [
+            {"id": 42, "name": "", "typeDescriptions": {
+                "typeString": "uint256"}},
+            {"id": 43, "name": "", "typeDescriptions": {
+                "typeString": "uint256"}}]},
+        "body": {"nodeType": "Block", "statements": [{
+            "nodeType": "Return", "src": "300:10:0",
+            "expression": {"nodeType": "Identifier",
+                           "referencedDeclaration": 41,
+                           "name": "amount"}}]}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1],
+        "nodes": [quote, flag, pair]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        quote_specs, quote_evidence = source_assignment_r2_specs(
+            path, "C", "quote", [("amount", "uint256")], {},
+            [("amount", "num", None)], arity=1,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
+        flag_specs, flag_evidence = source_assignment_r2_specs(
+            path, "C", "flag", [("ok", "bool")], {},
+            [("ok", "bool", 1)], arity=1,
+            rettypes=[("", "bool")], log=lambda _msg: None)
+        pair_specs, _pair_evidence = source_assignment_r2_specs(
+            path, "C", "pair", [("amount", "uint256")], {},
+            [("amount", "num", None)], arity=1,
+            rettypes=[("", "uint256"), ("", "uint256")],
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+    quote_entry = next((entry for entry in quote_specs[0]["vars"]
+                        if entry["name"] == RETURN_VAR), {}) if quote_specs else {}
+    quote_terms = [r2_term_text(item["term"])
+                   for item in quote_entry.get("equals", [])]
+    flag_entry = next((entry for entry in flag_specs[0]["vars"]
+                       if entry["name"] == RETURN_VAR), {}) if flag_specs else {}
+    flag_terms = [r2_term_text(item["term"])
+                  for item in flag_entry.get("equals", [])]
+    bad = 0
+    bad += check(quote_terms == ["(amount + 7)"],
+                 f"the arithmetic return expression is prioritized: "
+                 f"{quote_specs}")
+    bad += check([c["text"] for c in r2_candidates(quote_specs)] ==
+                 ["return == (amount + 7)"],
+                 f"return candidates render as return rows: "
+                 f"{r2_candidates(quote_specs)}")
+    bad += check(any("return: return == (amount + 7)" in line
+                     for line in quote_evidence),
+                 f"the return provenance is recorded: {quote_evidence}")
+    bad += check(flag_terms == ["ok"],
+                 f"bool return coordinates are preserved as bool terms: "
+                 f"{flag_specs}, {flag_evidence}")
+    bad += check([c["text"] for c in r2_candidates(flag_specs)] ==
+                 ["return == ok"],
+                 f"bool return candidate is rendered: "
+                 f"{r2_candidates(flag_specs)}")
+    bad += check(pair_specs == [],
+                 f"multi-return whole-value source candidates are skipped: "
+                 f"{pair_specs}")
+    return bad
+
+
 def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     from solidity_path_put import r2_terms_from_specs, rung_assertions  # noqa: E402
     specs = [{"vars": [{"name": "ready", "equals": [{
@@ -4724,6 +4828,7 @@ def main():
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
               test_source_R2_assignment_candidates_are_small_setter_queries,
               test_source_R2_self_updates_prioritize_delta_queries,
+              test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
               test_source_R2_merge_preserves_the_candidate_budget,

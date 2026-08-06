@@ -1095,7 +1095,7 @@ def source_r2_literals(ast_path, contract, unit, arity=None,
 
 def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                                rendered_coords, arity=None,
-                               declaration_id=None, log=print):
+                               declaration_id=None, rettypes=None, log=print):
     """R2 specs for simple source assignments.
 
     This is deliberately narrower than general expression mining.  It only
@@ -1119,6 +1119,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
     rendered = {name for name, _kind, _width in (rendered_coords or [])}
     rendered_numeric = {name for name, kind, _width in (rendered_coords or [])
                         if kind == "num"}
+    rendered_by_kind = {}
+    for name, kind, _width in (rendered_coords or []):
+        rendered_by_kind.setdefault(kind, set()).add(name)
     param_ids = {}
     param_tys = {}
     param_names = {name for name, _ty in (params or [])}
@@ -1210,21 +1213,25 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             entries.append(entry)
         return entry
 
+    def target_readable(name):
+        return name == RETURN_VAR or name in (layout or {})
+
     def add_equals_candidate(state_name, term, reason, src):
         key = (state_name, "equals", r2_term_text(term))
-        if state_name in (layout or {}) and key not in seen:
+        if target_readable(state_name) and key not in seen:
             seen.add(key)
             entry_for(state_name)["equals"].append({
                 "id": source_id(),
                 "term": term,
             })
+            label = "return" if state_name == RETURN_VAR else "post"
             evidence.append(
-                f"R2 source assignment candidate {state_name}: post == "
+                f"R2 source assignment candidate {state_name}: {label} == "
                 f"{reason} from AST src {src or '?'}")
 
     def add_delta_candidate(state_name, direction, term, reason, src):
         key = (state_name, "deltas", direction, r2_term_text(term))
-        if state_name in (layout or {}) and key not in seen:
+        if target_readable(state_name) and key not in seen:
             seen.add(key)
             entry_for(state_name)["deltas"].append({
                 "id": source_id(),
@@ -1268,6 +1275,46 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return ("dec",) + term if term is not None else None
         return None
 
+    return_target = None
+    if rettypes is not None and len(rettypes) == 1:
+        return_target = endpoint_candidate(RETURN_VAR, rettypes[0][1])
+
+    def coord_term(n, expected_kind):
+        ref = identifier_ref(n)
+        name = param_ids.get(ref)
+        if name and name in rendered_by_kind.get(expected_kind, set()):
+            return {"kind": "coord", "name": name}, name
+        return None
+
+    def return_term(n, expected_kind):
+        if expected_kind == "bool":
+            literal = literal_term(n, "bool")
+            if literal is not None:
+                return literal
+            return coord_term(n, "bool")
+        if expected_kind == "id":
+            return coord_term(n, "id")
+        if expected_kind != "num":
+            return None
+        direct = delta_term(n)
+        if direct is not None:
+            return direct
+        if not isinstance(n, dict) or n.get("nodeType") != "BinaryOperation":
+            return None
+        op = {"+": "add", "-": "sub", "*": "mul", "/": "div"}.get(
+            n.get("operator"))
+        if op is None:
+            return None
+        lhs = return_term(n.get("leftExpression"), "num")
+        rhs = return_term(n.get("rightExpression"), "num")
+        if lhs is None or rhs is None:
+            return None
+        if op == "div" and not (rhs[0].get("kind") == "literal"
+                                and int(rhs[0].get("value", "0")) != 0):
+            return None
+        term = {"kind": "op", "op": op, "lhs": lhs[0], "rhs": rhs[0]}
+        return term, r2_term_text(term)
+
     def walk(n):
         if isinstance(n, dict):
             if n.get("nodeType") == "Assignment":
@@ -1307,6 +1354,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     if delta is not None:
                         add_delta_candidate(state_name, delta[0], delta[1],
                                             delta[2], n.get("src"))
+            elif n.get("nodeType") == "Return" and return_target is not None:
+                term = return_term(n.get("expression"), return_target[1])
+                if term is not None:
+                    add_equals_candidate(RETURN_VAR, term[0], term[1],
+                                         n.get("src"))
             for child in n.values():
                 walk(child)
         elif isinstance(n, list):
@@ -6425,8 +6477,10 @@ def main():
             _kind = lift_kind(_pt)
             if _kind is None:
                 continue
+            _coord_kind = {"address": "id", "bool": "bool"}.get(_kind[0],
+                                                                "num")
             _rendered_coords.append(
-                (_pn, "id" if _kind[0] == "address" else "num",
+                (_pn, _coord_kind,
                  20 if _kind[0] == "address" else None))
         if "msg.sender" in region:
             _rendered_coords.append(("msg.sender", "id", 20))
@@ -6446,7 +6500,7 @@ def main():
         _r2, _source_assignment_evidence = source_assignment_r2_specs(
             a.ast, a.contract, a.unit, params, layout, _rendered_coords,
             arity=len(params or []), declaration_id=declaration_id,
-            log=print)
+            rettypes=rettypes, log=print)
         _typed_r2 = propose_r2_batch(
             rows, params, source_literals=_source_literals,
             depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,

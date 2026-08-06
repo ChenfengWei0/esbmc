@@ -5209,6 +5209,57 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 source return R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, benchmark AST preheat, or
+  benchmark certification run was started.
+
+Finding:
+
+- Pure/view and getter-shaped units often expose their strongest oracle in the
+  return expression itself, e.g. `return amount + 7`, `return ok`, or
+  `return true`.
+- Typed R2 can mechanically generate many return candidates, but the source
+  expression is a strong priority signal. Without using it, a precise return
+  equality can be displaced by unrelated mechanical terms under the global
+  candidate budget.
+- Return candidates can still share the existing Stage-4 typed R2 verifier
+  query. They do not need a separate ESBMC pass, and a candidate remains only a
+  question until `--path-cov-assert` proves it.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now also
+  recognizes single-value `Return` nodes when the declared return type is an
+  R2 endpoint type.
+- Supported source return terms are deliberately narrow:
+  - rendered numeric/id/bool parameters;
+  - unitless decimal numeric literals;
+  - bool literals;
+  - one-level numeric `+`, `-`, `*`, and division by a nonzero literal.
+- Multi-return whole-value source candidates are skipped. Existing member
+  return rendering remains the authority for tuple returns.
+- State-coordinate return expressions are not newly inferred here. That avoids
+  inventing pre-state reads outside the existing rendered-coordinate pipeline.
+- Main Stage-4 rendered-coordinate construction now preserves bool parameters
+  as `kind == "bool"` instead of folding every non-address lifted parameter
+  into `num`; this lets bool source return candidates and bool R2 equality use
+  the existing bool path.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  150 tests ran, 150 declared.
+- `git diff --check` on the touched files: passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 source self-update delta R2 candidates
 
 Scope and constraint:
