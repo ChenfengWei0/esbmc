@@ -352,6 +352,84 @@ def test_unit_manifest_cli_generates_ast_with_inferred_solc():
     return bad
 
 
+def test_unit_manifest_cli_reads_ast_cache_without_touching_subject():
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(td, "repo__C")
+        prepared_ast = d / "flat.sol.solast"
+        prepared_ast.unlink()
+        cache = Path(td) / "cache"
+        cached_ast = cache / "stress243" / "stress243__repo__C" \
+            / "flat.sol.solast"
+        cached_ast.parent.mkdir(parents=True)
+        cached_ast.write_text(json.dumps(compact_ast()) + "\n")
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", td,
+            "--subject-id", "repo__C",
+            "--ast-cache-root", str(cache),
+        ], capture_output=True, text=True)
+        prepared_exists = prepared_ast.exists()
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    row = data["subjects"][0]
+    bad = 0
+    bad += check(row["status"] == "ok",
+                 f"cached AST enumerates units: {row}")
+    bad += check(row["subject"]["solast"] == str(cached_ast.resolve()),
+                 f"subject points at cache AST: {row['subject']}")
+    bad += check(row["subject"]["solast_source"] == "cache",
+                 f"cache provenance is recorded: {row['subject']}")
+    bad += check(not prepared_exists,
+                 "prepared subject AST was not recreated")
+    return bad
+
+
+def test_unit_manifest_cli_generates_ast_into_cache_only():
+    with tempfile.TemporaryDirectory() as td:
+        script = make_fake_solc(
+            Path(td) / "solc-ok",
+            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+        d = make_subject(td, "repo__C", solc_bin=script)
+        prepared_ast = d / "flat.sol.solast"
+        prepared_ast.unlink()
+        cache = Path(td) / "cache"
+        cached_ast = cache / "stress243" / "stress243__repo__C" \
+            / "flat.sol.solast"
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", td,
+            "--subject-id", "repo__C",
+            "--ast-cache-root", str(cache),
+            "--generate-ast",
+        ], capture_output=True, text=True)
+        prepared_exists = prepared_ast.exists()
+        cached_exists = cached_ast.exists()
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    row = data["subjects"][0]
+    bad = 0
+    bad += check(row["status"] == "ok",
+                 f"cache AST generation row is ok: {row}")
+    bad += check(row["ast"]["generated"] is True,
+                 f"cache AST was generated: {row['ast']}")
+    bad += check(cached_exists, "cache AST file was created")
+    bad += check(not prepared_exists,
+                 "prepared subject AST was not written")
+    return bad
+
+
 def test_unit_manifest_cli_lists_units_without_esbmc():
     with tempfile.TemporaryDirectory() as td:
         d = make_subject(td, "repo__C")
@@ -561,6 +639,8 @@ def main():
         test_generate_ast_failure_leaves_no_partial_solast,
         test_generate_ast_start_failure_cleans_temp_file,
         test_unit_manifest_cli_generates_ast_with_inferred_solc,
+        test_unit_manifest_cli_reads_ast_cache_without_touching_subject,
+        test_unit_manifest_cli_generates_ast_into_cache_only,
         test_unit_manifest_cli_lists_units_without_esbmc,
         test_unit_manifest_cli_shard_and_resume,
         test_unit_manifest_cli_reads_target_manifest_hints,

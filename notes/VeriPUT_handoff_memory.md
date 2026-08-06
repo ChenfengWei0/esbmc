@@ -654,6 +654,11 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   already exist. By default it does not invoke solc. It can preheat with
   `--generate-ast`, and can explicitly promote a solc path inferred from
   `meta.compile.cmd` with `--use-inferred-solc-bin`.
+- `subject_unit_manifest.py --ast-cache-root <dir>` redirects compact AST reads
+  and writes to an external cache path
+  `<dir>/<benchmark>/<benchmark_key>/flat.sol.solast`. This keeps prepared
+  `Results` subjects read-only. Without `--generate-ast`, the option only
+  checks cache hits/misses and creates no directories or files.
 - `veriput_readiness.py`: summarizes target->unit readiness without invoking
   solc/Forge/ESBMC.
 
@@ -700,6 +705,11 @@ Interpretation:
   path needed for those 509 missing-AST rows currently exists and is
   executable. The remaining write-sensitive step is generating the `.solast`
   files themselves.
+- The AST write-sensitive step no longer has to touch VeriPUT `Results`:
+  once authorized, run `subject_unit_manifest.py` with both `--ast-cache-root`
+  and `--generate-ast` to preheat an external cache, then rerun the manifest
+  against that cache to enumerate units. Keep using `--use-inferred-solc-bin`
+  for Stress rows whose solc path comes from `meta.compile.cmd`.
 - Do not run the preheat pass while the user's other experiment depends on
   Dataset/Results immutability. When authorized, preheat in shards with journals
   and no ESBMC.

@@ -107,6 +107,11 @@ class PreparedSubject:
         metadata["solc_bin_source"] = "inferred"
         return replace(self, solc_bin=inferred, metadata=metadata)
 
+    def with_solast_path(self, solast: str, *, source: str) -> "PreparedSubject":
+        metadata = dict(self.metadata)
+        metadata["solast_source"] = source
+        return replace(self, solast=solast, metadata=metadata)
+
     def to_record(self) -> dict:
         return {
             "schema": "veriput-subject/v1",
@@ -116,6 +121,7 @@ class PreparedSubject:
             "root": self.root,
             "flat_sol": self.flat_sol,
             "solast": self.solast,
+            "solast_source": self.metadata.get("solast_source") or "prepared",
             "contract": self.contract,
             "unit": self.unit,
             "solc_bin": self.solc_bin,
@@ -247,6 +253,7 @@ def subject_from_record(record: dict) -> PreparedSubject | None:
             "solc": data.get("solc"),
             "inferred_solc_bin": data.get("inferred_solc_bin"),
             "solc_bin_source": data.get("solc_bin_source"),
+            "solast_source": data.get("solast_source"),
         },
     )
 

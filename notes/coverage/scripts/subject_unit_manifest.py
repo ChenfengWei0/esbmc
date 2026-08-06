@@ -103,6 +103,16 @@ def _target_manifest_subjects(args):
     return items
 
 
+def _apply_ast_cache(subject: PreparedSubject | None,
+                     cache_root: str) -> PreparedSubject | None:
+    if subject is None or not cache_root:
+        return subject
+    base = Path(cache_root).expanduser().resolve()
+    ast_name = Path(subject.solast).name
+    cached = base / subject.benchmark / subject.benchmark_key / ast_name
+    return subject.with_solast_path(str(cached), source="cache")
+
+
 def _subjects(args):
     manifest_subjects = _target_manifest_subjects(args)
     if manifest_subjects is not None:
@@ -217,6 +227,7 @@ def build_manifest(args):
     rows = []
     skipped_resume = 0
     for subject, target_info in subjects:
+        subject = _apply_ast_cache(subject, args.ast_cache_root)
         target = (target_info or {}).get("target") or {}
         subject_id = subject.subject_id if subject else target.get("subject_id")
         if subject_id in skipped:
@@ -263,6 +274,7 @@ def build_manifest(args):
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generate_ast": bool(args.generate_ast),
         "ast_timeout_s": args.ast_timeout,
+        "ast_cache_root": args.ast_cache_root or None,
         "shard": args.shard or None,
         "journal": args.journal or None,
         "resume_journal": args.resume_journal or None,
@@ -296,6 +308,9 @@ def main():
                     help="invoke each subject's solc_bin to create a missing "
                          "compact AST before enumeration. Still never starts "
                          "ESBMC")
+    ap.add_argument("--ast-cache-root", default="",
+                    help="read/write compact ASTs under this cache root "
+                         "instead of each prepared subject directory")
     ap.add_argument("--use-inferred-solc-bin", action="store_true",
                     help="with --generate-ast, use a solc path inferred from "
                          "prepared meta compile.cmd when solc_bin is absent")
