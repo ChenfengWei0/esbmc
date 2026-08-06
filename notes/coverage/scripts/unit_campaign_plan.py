@@ -156,6 +156,26 @@ def _is_bounded_holds_no_witness(row: dict) -> bool:
     return "bounded-holds" in text
 
 
+def _driver_diagnostic_tag(row: dict) -> str:
+    diagnostic = row.get("driver_diagnostic") or {}
+    if not isinstance(diagnostic, dict):
+        return ""
+    return str(diagnostic.get("tag") or "")
+
+
+def _driver_stopped_before_enumeration(row: dict) -> bool:
+    progress = row.get("generalise_progress") or {}
+    if not isinstance(progress, dict):
+        return False
+    if progress.get("stage") != "started":
+        return False
+    if row.get("bucket") != "NO-WITNESS-UNKNOWN":
+        return False
+    if row.get("partial_witness_journal"):
+        return False
+    return row.get("exit") not in (None, 0, 124)
+
+
 def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> tuple[dict, int]:
     latest = {}
     bad_lines = 0
@@ -190,11 +210,17 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         buckets = Counter()
         no_coordinate = False
         preflight_refused = False
+        path_cov_no_claims_reached = False
+        pre_enumeration_stop = False
         bounded_holds_no_witness = False
         for row in rows:
             buckets[row.get("bucket") or "<missing-bucket>"] += 1
             progress_bucket = _progress_bucket(row)
             progress_buckets[progress_bucket] += 1
+            if _driver_diagnostic_tag(row) == "path-coverage-no-claims-reached-solver":
+                path_cov_no_claims_reached = True
+            if _driver_stopped_before_enumeration(row):
+                pre_enumeration_stop = True
             if _is_bounded_holds_no_witness(row):
                 bounded_holds_no_witness = True
             if row.get("bucket") == "NO-COORDINATE" or row.get("no_coordinate_reason"):
@@ -265,6 +291,10 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             non_retryable_reason = "no generalisable coordinate"
         elif not regions and preflight_refused:
             non_retryable_reason = "witness preflight refused"
+        elif not regions and path_cov_no_claims_reached:
+            non_retryable_reason = "path coverage no claims reached solver"
+        elif not regions and pre_enumeration_stop:
+            non_retryable_reason = "driver stopped before enumeration"
         quality[key] = {
             "strong": strong,
             "retryable": not non_retryable_reason,

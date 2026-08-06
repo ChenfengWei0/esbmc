@@ -10471,6 +10471,111 @@ Go/no-go update:
   then decide whether another generator/region optimization is needed before
   scaling.
 
+## 2026-08-07 min3 benchmark sample and non-retryable pathcov defects
+
+Read/write discipline:
+
+- No Dataset or Results contract files were modified.
+- New benchmark artifacts are under:
+  `/tmp/veriput_bench_sample_20260807_022340`.
+- AST preheat wrote compact ASTs only under:
+  `/tmp/veriput_bench_sample_20260807_022340/ast-cache`.
+
+AST preheat:
+
+- Initial read-only pipeline with a fresh cache found 508 missing compact AST
+  rows, so unit scheduling was blocked.
+- Ran the planner-suggested AST preheat batch only, not ESBMC certification:
+  `/tmp/veriput_bench_sample_20260807_022340/next-ast-preheat-schedule.json`.
+- Budget: `jobs=1`, 90s outer timeout, 8GiB.
+- Result: 32 / 32 preheat jobs `ok`.
+- Coverage of preheated subjects:
+  - 11 peer182 subjects, 198 units;
+  - 11 bugfix124 subjects, 224 units;
+  - 10 stress243 subjects, 99 units.
+
+Benchmark schedule sampling:
+
+- Per-benchmark schedules were generated to avoid bugfix priority-0 units
+  crowding out peer/stress observations.
+- The 3-job smoke schedule is:
+  `/tmp/veriput_bench_sample_20260807_022340/min3_a1/unit-schedule-min3-a1.json`.
+- Jobs:
+  - bugfix124 `DepositLog.setApprovedLogger`;
+  - peer182 `AIRBets.approve`;
+  - stress243 `BalancerContractRegistry.registerBalancerContract`.
+- Attempt-1 budget: 60s ESBMC run timeout, 75s runner timeout, 8GiB, `jobs=1`.
+- Result JSONL:
+  `/tmp/veriput_bench_sample_20260807_022340/min3_a1/certify-results-a1.jsonl`.
+
+Attempt-1 results:
+
+- `DepositLog.setApprovedLogger`: `CERTIFIED`, 2 certified / 1 not / 3
+  witnessed, 15s.  The one not-certified path is the expected
+  `EXCLUDED FROM THE SLICE by the pins` msg.value gate.
+- `AIRBets.approve`: `NO-PATH`, zero witnesses.  Progress reached
+  `no-witness`; all 4 claims were decided as `bounded-holds`.
+- `BalancerContractRegistry.registerBalancerContract`:
+  `NO-WITNESS-UNKNOWN`, zero certified regions, 4s.  This is NOT a normal
+  region failure: driver log reports:
+  `INTERNAL DEFECT — NOT ONE of the 19 instrumented path claim(s) reached the solver`
+  and says the harness never entered any unit.  The same log names an obstacle:
+  all 19 paths were excluded because the model removed executions through an
+  assume/require-style construct.  This should be tracked as a path coverage /
+  frontend-modeling defect, not retried as stronger R1/R2 search.
+
+Attempt-2 peer-only retry:
+
+- Generated from campaign strategy for bounded-holds no-witness:
+  `/tmp/veriput_bench_sample_20260807_022340/min3_a1/next-unit-schedule-a2-peer-only.json`.
+- Budget: 120s ESBMC run timeout, 135s runner timeout, 8GiB, `jobs=1`.
+- Strategy: same focus scope, `--max-tx 2`, `--refine-rounds 2`.
+- Result:
+  `/tmp/veriput_bench_sample_20260807_022340/min3_a1/certify-results-a2.jsonl`.
+- `AIRBets.approve` remained `NO-PATH`; progress again reached `no-witness`
+  with all 4 claims `bounded-holds`.  Therefore the automatic
+  max-tx-2 retry did not help this ERC20-style approve case.  Further spending
+  should first analyze initializer/state-precondition modeling, not blindly
+  jump to 600s.
+
+Code change from the sample:
+
+- `certify_all.py` now records a structured `driver_diagnostic` when driver
+  output contains the path-coverage internal defect where no instrumented path
+  claim reaches the solver.
+- `unit_campaign_plan.py` treats that diagnostic as non-retryable:
+  `path coverage no claims reached solver`.
+- To protect already-produced rows that predate the diagnostic field,
+  `unit_campaign_plan.py` also treats
+  `bucket=NO-WITNESS-UNKNOWN`, `generalise_progress.stage=started`, nonzero
+  non-timeout `exit`, and no partial witness journal as non-retryable:
+  `driver stopped before enumeration`.
+- Replanning the real min3 sample after this fix gives:
+  - completed strong: 1 (`DepositLog.setApprovedLogger`);
+  - non-retryable: 1 (`BalancerContractRegistry.registerBalancerContract`);
+  - pending retry: 1 (`AIRBets.approve`, attempt 3 only).
+- Replan output:
+  `/tmp/veriput_bench_sample_20260807_022340/min3_a1/unit-campaign-after-nonretryable-fix.json`.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/certify_all.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/certify_all.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_unit_campaign_plan.py`
+  passed.
+
+Current conclusion:
+
+- It is still reasonable to continue small stratified benchmark sampling.
+- Do not run full-corpus evaluation yet.
+- Do not automatically spend 600s on bounded-holds no-witness rows until a
+  small set is inspected for missing initializer/state preconditions; `AIRBets`
+  shows that max-tx-2 alone is not enough.
+- Treat path-coverage "no claims reached solver" rows as tool/modeling
+  blockers, not PUT-region synthesis failures.
+
 ## 2026-08-07 read/write slot split benchmark smoke sample
 
 Branch:

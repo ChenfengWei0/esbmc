@@ -842,6 +842,103 @@ def test_campaign_does_not_retry_witness_preflight_refusals():
     return bad
 
 
+def test_campaign_does_not_retry_path_coverage_no_claims_defect():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("stress243__pathcovdefect__f", "stress243", "f"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("stress243__pathcovdefect__f", "ok",
+                    benchmark="stress243", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "stress243",
+                    "unit": "f",
+                    "bucket": "NO-WITNESS-UNKNOWN",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "driver_diagnostic": {
+                        "tag": "path-coverage-no-claims-reached-solver",
+                        "reason": "path coverage instrumentation emitted claims, but none reached the solver",
+                    },
+                    "generalise_progress": {
+                        "stage": "started",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 0 and doc["summary"]["non_retryable"] == 1,
+                 f"path coverage internal defect is separated from completed certification: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {},
+                 f"path coverage internal defect does not consume a retry: {doc['summary']}")
+    bad += check(doc["summary"]["cert_non_retryable"] == {
+        "path coverage no claims reached solver": 1,
+    }, f"path coverage defect reason is counted: {doc['summary']}")
+    return bad
+
+
+def test_campaign_does_not_retry_legacy_pre_enumeration_stop():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("stress243__legacydefect__f", "stress243", "f"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("stress243__legacydefect__f", "ok",
+                    benchmark="stress243", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "stress243",
+                    "unit": "f",
+                    "bucket": "NO-WITNESS-UNKNOWN",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "exit": 1,
+                    "generalise_progress": {
+                        "stage": "started",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    bad = 0
+    bad += check(doc["summary"]["non_retryable"] == 1,
+                 f"legacy pre-enumeration stop is non-retryable: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {},
+                 f"legacy pre-enumeration stop does not consume a retry: {doc['summary']}")
+    bad += check(doc["summary"]["cert_non_retryable"] == {
+        "driver stopped before enumeration": 1,
+    }, f"legacy pre-enumeration reason is counted: {doc['summary']}")
+    return bad
+
+
 def test_campaign_accepts_strong_certification_without_runner_journal():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
@@ -917,6 +1014,8 @@ TESTS = [
     test_campaign_treats_slice_excluded_paths_as_body_slice_ready,
     test_campaign_treats_method_unsupported_paths_as_non_retryable,
     test_campaign_does_not_retry_witness_preflight_refusals,
+    test_campaign_does_not_retry_path_coverage_no_claims_defect,
+    test_campaign_does_not_retry_legacy_pre_enumeration_stop,
     test_campaign_accepts_strong_certification_without_runner_journal,
     test_campaign_can_plan_from_in_memory_schedule,
 ]

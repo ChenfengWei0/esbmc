@@ -664,6 +664,17 @@ def result_generalise_progress(workdir, since_mtime=None):
     return data
 
 
+def result_driver_diagnostic(out):
+    if ("INTERNAL DEFECT" in out
+            and "instrumented path claim(s) reached the solver" in out
+            and "The harness never entered any unit" in out):
+        return {
+            "tag": "path-coverage-no-claims-reached-solver",
+            "reason": "path coverage instrumentation emitted claims, but none reached the solver",
+        }
+    return None
+
+
 def result_partial_witness_journal(workdir, since_mtime=None, progress=None):
     """Summarise the refutation-only witness journal left by a partial run.
 
@@ -1949,6 +1960,7 @@ def main():
                             result_not_certified_details(uwd, t1),
                         "enumeration_salvage":
                             result_enumeration_salvage(uwd, t1),
+                        "driver_diagnostic": result_driver_diagnostic(out),
                         "generalise_progress": generalise_progress,
                         "partial_witness_journal":
                             result_partial_witness_journal(
