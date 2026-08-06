@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Versioned VeriPUT recipe fragments shared by POC and benchmark runners."""
 
-STRONG_RECIPE_VERSION = "veriput-strong/9"
+STRONG_RECIPE_VERSION = "veriput-strong/10"
 STRONG_PROBE_WITNESSES = 8
 STRONG_PUT_AUTO_UNWIND = 1
 STRONG_PUT_R2_DEPTH = 1

@@ -9024,7 +9024,64 @@ Checks:
 
 Next:
 
-- Start small stratified benchmark sampling under `veriput-strong/9`.
+- Start small stratified benchmark sampling under `veriput-strong/10`.
 - Watch the `static_uncontrolled_inseparable` count separately from true
   failures: it is a speed/attribution improvement, not a generalized-test
   success.
+
+## 2026-08-06 strong/10 double-negated decision parsing
+
+Follow-up after `veriput-strong/9`:
+
+- ESBMC sometimes prints source decisions under nested negation, e.g.
+  `!(!(msg.value == TICKET_AMOUNT))` for a failing `require` branch.
+- The old parser stripped only the outer `!`, then parsed the left term as
+  `!(msg.value`, so the simple structural decision recogniser missed this
+  otherwise product-shaped value gate.
+
+Change retained:
+
+- `_unwrap_not()` now strips balanced outer negations recursively and tracks
+  parity.
+- `structural_decision_region()` can now read the above shape as
+  `msg.value != TICKET_AMOUNT`, producing a product interval with a punched
+  value.
+- The shared recipe version is now `veriput-strong/10`.
+- The final not-certified suffix no longer calls hash/randomness split cases an
+  "external-call fixture" case; it says "uncontrolled decision source" unless
+  the reason specifically names `extcall.*` / external-call behavior.
+
+Measured confirmation:
+
+- Run:
+  `/tmp/veriput_sample_bugfix_etherlotto_v10_confirm_20260806_212128`,
+  recipe `veriput-strong/10`, 60s/8GiB.
+- Result:
+  `CERTIFIED`, `1 certified / 2 not / 3 witnessed`, 23s.
+- Same useful outcome as strong/9:
+  enc=2 is certified for `msg.value in [11, UINT_MAX]`; enc=12/13 are
+  statically not-certified due `decision#3 random == 0`.
+
+Rejected experiment:
+
+- I tried using structural decision regions under global checked-arithmetic as
+  "pre-certify" candidates: skip level0/refine, but still send the region to
+  ESBMC certification.
+- On `EtherLotto.play()` this reduced wall time to about 11s but degraded the
+  result to `0 certified / 3 not / 3 witnessed`; enc=2's widened structural
+  region got `UNKNOWN` in certification while the concrete witness check passed.
+- That code was removed. Do not reintroduce this shortcut without first saving
+  the certification log and understanding why the region query produces no
+  result. Speed without preserving certified count is not acceptable for the
+  benchmark objective.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_guards.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py notes/coverage/scripts/certify_all.py notes/coverage/scripts/veriput_recipe.py`
+  passed.
+- `git diff --check` passed.

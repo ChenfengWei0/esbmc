@@ -2595,6 +2595,17 @@ check("simple-decision-region-has-no-hole-for-endpoint-nonzero",
 check("simple-decision-region-records-structural-reason",
       _setdist_reason.startswith("STRUCTURAL simple decision region"), True)
 
+_double_not_region = structural_decision_region(
+    [{"branch_claim": "!(!(msg.value == TICKET_AMOUNT))"}],
+    {"msg.value": 11},
+    {},
+    ["msg.value"],
+    constants={"TICKET_AMOUNT": 10})
+check("double-negated-require-branch-keeps-operator",
+      _double_not_region[0]["msg.value"], (0, BIG))
+check("double-negated-require-branch-punches-required-value",
+      _double_not_region[1]["msg.value"], {10})
+
 _setdist_reject = structural_decision_region(
     [{"synthetic_abi_gate": True, "arm": "fall-through",
       "branch_claim": "msg.value == 0"}],

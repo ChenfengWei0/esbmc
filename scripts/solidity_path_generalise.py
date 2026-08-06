@@ -822,8 +822,24 @@ SIMPLE_BRANCH_RE = re.compile(r"^(.+?)\s*(==|!=|<=|>=|<|>)\s*(.+)$")
 
 def _unwrap_not(expr):
     expr = (expr or "").strip()
-    if expr.startswith("!(") and expr.endswith(")"):
-        return expr[2:-1].strip(), True
+    negated = False
+    while expr.startswith("!(") and expr.endswith(")"):
+        depth = 0
+        whole = True
+        for i, ch in enumerate(expr[2:], start=2):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                if depth == 0 and i != len(expr) - 1:
+                    whole = False
+                    break
+                depth -= 1
+        if not whole:
+            break
+        expr = expr[2:-1].strip()
+        negated = not negated
+    if negated:
+        return expr, True
     return expr, False
 
 
@@ -7534,7 +7550,7 @@ def main():
                   f"they are pairwise disjoint (checked above)")
     for enc, why in sorted(failed.items()):
         if enc in pre_failed:
-            if "external-call" in why:
+            if "extcall." in why or "external-call behavior" in why:
                 suffix = ("; no concrete counterexample test is emitted "
                           "without a deterministic external-call fixture")
             else:
