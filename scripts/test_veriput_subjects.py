@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -430,6 +431,46 @@ def test_unit_manifest_cli_generates_ast_into_cache_only():
     return bad
 
 
+def test_unit_manifest_cli_refuses_real_results_ast_writes():
+    with tempfile.TemporaryDirectory() as td:
+        veriput_root = Path(td) / "VeriPUT"
+        subjects = veriput_root / "Results" / "Stress243" / "subjects"
+        script = make_fake_solc(
+            Path(td) / "solc-ok",
+            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+        d = make_subject(subjects, "repo__C", solc_bin=script)
+        (d / "flat.sol.solast").unlink()
+        base_cmd = [
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", str(subjects),
+            "--subject-id", "repo__C",
+            "--generate-ast",
+        ]
+        env = dict(os.environ)
+        env["VERIPUT_ROOT"] = str(veriput_root)
+        no_cache = subprocess.run(base_cmd, capture_output=True, text=True, env=env)
+        results_cache = subprocess.run(
+            base_cmd + ["--ast-cache-root", str(veriput_root / "Results" / "cache")],
+            capture_output=True,
+            text=True,
+            env=env)
+        ast_exists = (d / "flat.sol.solast").exists()
+    bad = 0
+    bad += check(no_cache.returncode == 1
+                 and "requires external --ast-cache-root" in no_cache.stderr,
+                 f"real Results subject generation without cache is refused: "
+                 f"{no_cache.stderr.strip()}")
+    bad += check(results_cache.returncode == 1
+                 and "--ast-cache-root must not be under" in results_cache.stderr,
+                 f"Results-local AST cache is refused: {results_cache.stderr.strip()}")
+    bad += check(not ast_exists,
+                 "refused real Results generation did not create a prepared AST")
+    return bad
+
+
 def test_unit_manifest_cli_lists_units_without_esbmc():
     with tempfile.TemporaryDirectory() as td:
         d = make_subject(td, "repo__C")
@@ -641,6 +682,7 @@ def main():
         test_unit_manifest_cli_generates_ast_with_inferred_solc,
         test_unit_manifest_cli_reads_ast_cache_without_touching_subject,
         test_unit_manifest_cli_generates_ast_into_cache_only,
+        test_unit_manifest_cli_refuses_real_results_ast_writes,
         test_unit_manifest_cli_lists_units_without_esbmc,
         test_unit_manifest_cli_shard_and_resume,
         test_unit_manifest_cli_reads_target_manifest_hints,

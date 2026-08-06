@@ -23,6 +23,7 @@ from veriput_subjects import (  # noqa: E402
     KNOWN_SUBJECT_ROOTS,
     PreparedSubject,
     SubjectError,
+    VERIPUT_ROOT,
     manifest_for_subject,
     resolve_subject,
     subject_dirs,
@@ -117,6 +118,35 @@ def _apply_ast_cache(subject: PreparedSubject | None,
     ast_name = Path(subject.solast).name
     cached = base / subject.benchmark / subject.benchmark_key / ast_name
     return subject.with_solast_path(str(cached), source="cache")
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.expanduser().resolve().relative_to(root.expanduser().resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _protected_roots() -> list[Path]:
+    root = Path(VERIPUT_ROOT)
+    return [root / "Datasets", root / "Results"]
+
+
+def _validate_generate_ast_target(subject: PreparedSubject, cache_root: str):
+    if cache_root:
+        cache = Path(cache_root)
+        for root in _protected_roots():
+            if _is_under(cache, root):
+                raise SubjectError(
+                    f"--ast-cache-root must not be under {root}; choose an external path")
+        return
+    subject_root = Path(subject.root)
+    for root in _protected_roots():
+        if _is_under(subject_root, root):
+            raise SubjectError(
+                "--generate-ast for VeriPUT prepared subjects requires "
+                f"external --ast-cache-root; refusing to write under {root}")
 
 
 def _subjects(args):
@@ -245,6 +275,8 @@ def build_manifest(args):
         else:
             if args.generate_ast and args.use_inferred_solc_bin:
                 subject = subject.with_inferred_solc_bin()
+            if args.generate_ast:
+                _validate_generate_ast_target(subject, args.ast_cache_root)
             row = manifest_for_subject(
                 subject,
                 generate_ast=args.generate_ast,

@@ -5156,3 +5156,55 @@ Verification:
   broad exception in the local test harness, and existing encoding warnings.
   No new line-length warning remains.
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+
+## 2026-08-06 protected AST generation entry point
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark proof run was
+  started.
+
+Finding:
+
+- The benchmark planner now refuses write paths under Dataset/Results, but a
+  direct `subject_unit_manifest.py --generate-ast` call could still write
+  `flat.sol.solast` back into a real prepared subject directory when
+  `--ast-cache-root` was omitted. That is too easy to trigger during AST
+  preheat debugging and conflicts with the current "do not touch Dataset/Results"
+  operating rule.
+
+Code shape:
+
+- `subject_unit_manifest.py` now fails closed before invoking solc when:
+  - `--generate-ast` targets a subject under `<VERIPUT_ROOT>/Results` without
+    an external `--ast-cache-root`; or
+  - `--generate-ast --ast-cache-root` points under `<VERIPUT_ROOT>/Datasets` or
+    `<VERIPUT_ROOT>/Results`.
+- Synthetic `/tmp` prepared subjects without a VeriPUT Results root are still
+  allowed to generate ASTs in place. That preserves the atomic-write regression
+  tests for the lower-level generator while protecting real benchmark trees.
+- External AST cache generation remains the supported preheat path and keeps
+  `solast_source == "cache"` in subject records.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/subject_unit_manifest.py scripts/test_veriput_subjects.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_veriput_subjects.py`
+  passed and now includes a temporary `VERIPUT_ROOT`/`Results/Stress243/subjects`
+  fixture proving both no-cache and Results-cache generation are refused.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_ast_preheat_schedule.py` and
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- Real refusal smoke:
+  `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/subject_unit_manifest.py --benchmark peer182 --subject-id peer_ccsolbmc__AIRBets --generate-ast`
+  returned `rc=1` with
+  `requires external --ast-cache-root; refusing to write under /home/samson/workspace/VeriPUT/Results`.
+- `python3 -m pylint notes/coverage/scripts/subject_unit_manifest.py scripts/test_veriput_subjects.py`
+  was run. It exits 20 on existing style debt such as import-position after
+  `sys.path` setup, missing docstrings, unspecified encoding, and the local
+  tests' subprocess calls without explicit `check`. No line-length warning was
+  reported.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
