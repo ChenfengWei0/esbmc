@@ -2867,6 +2867,131 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     return bad
 
 
+def test_source_R2_msg_sender_helper_calls_use_rendered_env_coord():
+    from solidity_path_put import r2_term_text, source_assignment_r2_specs  # noqa: E402
+
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+
+    def ident(ref, name, ty="address"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def call(ref, name):
+        return {"nodeType": "FunctionCall", "arguments": [],
+                "expression": ident(ref, name, "function () view returns "
+                                    "(address)"),
+                "typeDescriptions": {"typeString": "address"}}
+
+    def assign(lhs, rhs, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=", "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    sender_call = call(30, "_msgSender")
+    fake_call = call(31, "senderLike")
+    seen_sender = {
+        "nodeType": "IndexAccess",
+        "baseExpression": ident(11, "seen",
+                                "mapping(address => uint256)"),
+        "indexExpression": sender_call,
+        "typeDescriptions": {"typeString": "uint256"}}
+    ast = {"nodeType": "SourceUnit", "nodes": [
+        {"nodeType": "ContractDefinition", "name": "Context", "id": 1,
+         "linearizedBaseContracts": [1], "nodes": [
+             {"nodeType": "FunctionDefinition", "id": 30,
+              "name": "_msgSender",
+              "parameters": {"parameters": []},
+              "returnParameters": {"parameters": [
+                  {"id": 32, "name": "",
+                   "typeDescriptions": {"typeString": "address"}}]},
+              "body": {"nodeType": "Block", "statements": [
+                  {"nodeType": "Return", "expression": msg_sender}]}}]},
+        {"nodeType": "ContractDefinition", "name": "C", "id": 2,
+         "linearizedBaseContracts": [2, 1], "nodes": [
+             {"nodeType": "VariableDeclaration", "id": 10, "name": "owner",
+              "stateVariable": True,
+              "typeDescriptions": {"typeString": "address"}},
+             {"nodeType": "VariableDeclaration", "id": 11, "name": "seen",
+              "stateVariable": True,
+              "typeDescriptions": {
+                  "typeString": "mapping(address => uint256)"}},
+             {"nodeType": "FunctionDefinition", "id": 31,
+              "name": "senderLike",
+              "parameters": {"parameters": []},
+              "returnParameters": {"parameters": [
+                  {"id": 33, "name": "",
+                   "typeDescriptions": {"typeString": "address"}}]},
+              "body": {"nodeType": "Block", "statements": [
+                  {"nodeType": "Return",
+                   "expression": ident(10, "owner")}]}},
+             {"nodeType": "FunctionDefinition", "id": 40, "name": "touch",
+              "parameters": {"parameters": [
+                  {"id": 41, "name": "amount",
+                   "typeDescriptions": {"typeString": "uint256"}}]},
+              "body": {"nodeType": "Block", "statements": [
+                  assign(ident(10, "owner"), sender_call, "100:12:0"),
+                  assign(seen_sender, ident(41, "amount", "uint256"),
+                         "120:12:0")]}},
+             {"nodeType": "FunctionDefinition", "id": 50, "name": "bad",
+              "parameters": {"parameters": []},
+              "body": {"nodeType": "Block", "statements": [
+                  assign(ident(10, "owner"), fake_call, "160:12:0")]}}
+         ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "touch", [("amount", "uint256")],
+            {"owner": (0, 0, 20)},
+            [("msg.sender", "id", 20), ("amount", "num", None)],
+            arity=1, maps={"seen": (1, "address", 32, 0, "seen", None)},
+            log=lambda _msg: None)
+        unrendered, _unrendered_evidence = source_assignment_r2_specs(
+            path, "C", "touch", [("amount", "uint256")],
+            {"owner": (0, 0, 20)}, [("amount", "num", None)],
+            arity=1, maps={"seen": (1, "address", 32, 0, "seen", None)},
+            log=lambda _msg: None)
+        bad_specs, _bad_evidence = source_assignment_r2_specs(
+            path, "C", "bad", [], {"owner": (0, 0, 20)}, [],
+            arity=0, maps={}, log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+
+    def equal_text(name):
+        return [r2_term_text(item["term"])
+                for item in entries.get(name, {}).get("equals", [])]
+
+    bad = 0
+    bad += check(equal_text("owner") == ["msg.sender"],
+                 f"_msgSender() assignment is mined as msg.sender: {entries}")
+    bad += check(equal_text("seen[msg.sender]") == ["amount"],
+                 f"_msgSender() mapping key is mined as msg.sender: {entries}")
+    bad += check(any("owner: post == msg.sender" in line
+                     for line in evidence),
+                 f"helper-call provenance uses msg.sender: {evidence}")
+    unrendered_entries = {entry["name"]: entry
+                          for entry in unrendered[0]["vars"]} if unrendered else {}
+    bad += check("owner" not in unrendered_entries,
+                 f"_msgSender() RHS is still gated by rendered msg.sender: "
+                 f"{unrendered_entries}")
+    unrendered_seen = [
+        r2_term_text(item["term"])
+        for item in unrendered_entries.get("seen[msg.sender]", {}).get(
+            "equals", [])]
+    bad += check(unrendered_seen == ["amount"],
+                 f"_msgSender() slot keys keep existing msg.sender-key "
+                 f"semantics: {unrendered_entries}")
+    bad += check(bad_specs == [],
+                 f"nontrivial address helpers are not treated as msg.sender: "
+                 f"{bad_specs}")
+    return bad
+
+
 def test_source_R2_arithmetic_assignments_prioritize_expression_endpoints():
     from solidity_path_put import (r2_term_text,  # noqa: E402
                                    source_assignment_r2_specs)
@@ -7378,6 +7503,7 @@ def main():
               test_source_R2_delete_updates_prioritize_zero_endpoints,
               test_source_R2_address_zero_assignments_prioritize_zero_endpoints,
               test_source_R2_environment_value_assignments_use_rendered_env_coords,
+              test_source_R2_msg_sender_helper_calls_use_rendered_env_coord,
               test_source_R2_arithmetic_assignments_prioritize_expression_endpoints,
               test_source_R2_state_entry_coords_are_used_only_when_rendered,
               test_source_R2_type_conversion_wrappers_are_unwrapped_conservatively,

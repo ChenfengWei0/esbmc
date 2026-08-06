@@ -109,6 +109,55 @@ Verification:
   dataset contract produced `['2']` for `BasicProvenance.Complete` with
   evidence `State: post == StateType.Completed`.
 
+## 2026-08-06 `_msgSender()` source-R2 alias
+
+Scope and constraint:
+
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` stayed read-only.
+- No POC ESBMC attempt, benchmark certification run, Forge, or fuzz run was
+  started.
+
+Ground truth:
+
+- The peer `contracts_080` set contains many OpenZeppelin-style
+  `_msgSender()` uses in owner, approve, allowance, balance, and anti-bot
+  logic. A read-only scan showed examples in `CyberFox.sol`, `SOTH.sol`,
+  `ShibaJail.sol`, `Lunar.sol`, `EStack.sol`, `Thicc.sol`, and others.
+- For source-R2 purposes, `_msgSender()` should be treated as `msg.sender`
+  only when the AST proves the helper is the canonical no-arg address function
+  whose only body statement is `return msg.sender;`.
+- This remains gated by rendered environment coordinates for RHS equality:
+  `owner = _msgSender()` is mined only when `msg.sender` is in
+  `rendered_coords`. Existing mapping-key semantics are preserved:
+  `_balances[_msgSender()] = amount` can still name the exact slot as
+  `state._balances[msg.sender]`, and later verifier/emitter stages decide
+  whether that slot is usable for the concrete PUT.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now indexes
+  function definitions in the selected contract/base scopes.
+- It registers a `msg.sender` alias only for no-arg functions with one
+  `address` return parameter and a single `Return` expression equal to
+  `msg.sender`.
+- `env_coord_name()` recognizes calls to those helper ids as `msg.sender`,
+  which lets existing source-R2 assignment/return logic mine
+  `post == msg.sender` without adding a new term kind.
+- `key_name()` now reuses `env_coord_name()`, so canonical helper calls can
+  serve as mapping slot keys under the existing `msg.sender` slot-key text.
+- Nontrivial address helpers such as `return owner;` are refused closed.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 177/177 tests.
+- `git diff --check` passed before this note update.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 Important caveat found immediately afterward:
 
 - This change proves the external tool can name, propose, and render Foundry

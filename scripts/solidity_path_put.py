@@ -1166,6 +1166,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
     state_ids = {}
     constant_ids = {}
     enum_member_ids = {}
+    function_nodes = []
     for scope in scopes:
         for n in (scope.get("nodes") or []):
             if (isinstance(n, dict) and
@@ -1200,6 +1201,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                                  else str(ordinal))
                         enum_member_ids[member["id"]] = (
                             enum_types, ordinal, label)
+            if (isinstance(n, dict) and
+                    n.get("nodeType") == "FunctionDefinition"):
+                function_nodes.append(n)
 
     entries, evidence, seen, by_name = [], [], set(), {}
     next_id = [0]
@@ -1209,6 +1213,42 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return None
         ref = n.get("referencedDeclaration")
         return ref if isinstance(ref, int) else None
+
+    def direct_msg_sender(n):
+        if not isinstance(n, dict) or n.get("nodeType") != "MemberAccess":
+            return False
+        if n.get("memberName") != "sender":
+            return False
+        base = n.get("expression")
+        return (isinstance(base, dict) and base.get("nodeType") == "Identifier"
+                and base.get("name") == "msg")
+
+    def single_return_expr(fn):
+        body = fn.get("body") or {}
+        statements = body.get("statements") or []
+        if len(statements) != 1:
+            return None
+        stmt = statements[0]
+        if not isinstance(stmt, dict) or stmt.get("nodeType") != "Return":
+            return None
+        return stmt.get("expression")
+
+    msg_sender_alias_ids = set()
+    for fn in function_nodes:
+        ref = fn.get("id")
+        if not isinstance(ref, int):
+            continue
+        if ((fn.get("parameters") or {}).get("parameters") or []):
+            continue
+        rets = (fn.get("returnParameters") or {}).get("parameters") or []
+        if len(rets) != 1:
+            continue
+        rty = _norm_ty((rets[0].get("typeDescriptions") or {}).get(
+            "typeString") or "")
+        if rty != "address":
+            continue
+        if direct_msg_sender(single_return_expr(fn)):
+            msg_sender_alias_ids.add(ref)
 
     def local_alias_expr(n, seen=None):
         ref = identifier_ref(n)
@@ -1407,6 +1447,16 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     def env_coord_name(n):
+        alias = local_alias_expr(n)
+        if alias is not None:
+            return env_coord_name(alias)
+        if isinstance(n, dict) and n.get("nodeType") == "FunctionCall":
+            if n.get("arguments"):
+                return None
+            ref = identifier_ref(n.get("expression"))
+            if ref in msg_sender_alias_ids:
+                return "msg.sender"
+            return None
         if not isinstance(n, dict) or n.get("nodeType") != "MemberAccess":
             return None
         member = n.get("memberName")
@@ -1649,13 +1699,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         zero_addr = address_zero_term(n, expected)
         if zero_addr is not None:
             return "0"
-        if (isinstance(n, dict) and n.get("nodeType") == "MemberAccess" and
-                n.get("memberName") == "sender"):
-            base = n.get("expression")
-            if (isinstance(base, dict) and base.get("nodeType") == "Identifier"
-                    and base.get("name") == "msg"
-                    and _norm_ty(expected_ty) == "address"):
-                return "msg.sender"
+        if env_coord_name(n) == "msg.sender" and expected == "address":
+            return "msg.sender"
         return None
 
     def state_path(n):
