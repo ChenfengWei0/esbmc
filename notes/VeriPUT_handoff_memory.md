@@ -709,6 +709,13 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   read-only unless `--out` or `--retry-out` is passed. It reports latest status
   by benchmark and schedule priority, so failed priority-0 changed-function
   units can be triaged before spending a longer certification pass.
+- `certify_result_summary.py`: summarizes `certify_all.py --out` JSONL after
+  `unit_schedule_run.py` has completed. This is the machine-readable Stage-2
+  quality gate: it counts witnessed/certified/not-certified/no-verdict paths,
+  certified region shapes (`wide`, `point`, `unparsed`), not-certified reason
+  buckets, schedule priority buckets, duplicate rows, and scheduled units with
+  no certification row. It is read-only unless `--out` is passed and never
+  invokes solc, Forge, fuzzing, ESBMC, PUT emission, or certification jobs.
 - `unit_campaign_plan.py`: read-only controller for the agreed per-unit
   certification gradient: attempt 1 is 60s/8GiB, attempt 2 is 120s/8GiB,
   attempt 3 is 600s/10GiB. It consumes a base unit schedule plus zero or more
@@ -822,6 +829,12 @@ Interpretation:
   `next_attempt=null`, `distinct_attempts_max=0`; it wrote only an empty
   next-attempt schedule under `/tmp` and did not create the external cache
   path.
+- Read-only certification-result summary smoke with an empty `certify_all.py
+  --out` JSONL and the current no-AST unit schedule produced:
+  `schedule_jobs=0`, `skipped_rows=548`, `gate=blocked`,
+  blockers `no certification rows` and `no certified regions`,
+  `certified_regions=0`, `missing_scheduled_units=0`; it did not create the
+  external cache path.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4645,6 +4658,12 @@ Implication for next work:
    as the controlling layer: it encodes the default 60s/8GiB, 120s/8GiB, and
    600s/10GiB attempts, writes the filtered schedule for the next attempt, and
    prints the exact `unit_schedule_run.py` argv to audit before execution.
+   Once `unit_schedule_run.py` reports completed certifier commands, summarize
+   the actual Stage-2 result JSONL with
+   `certify_result_summary.py <cert-out.jsonl> --schedule <attempt-schedule.json>`.
+   Use that gate, not runner exit codes alone, to decide whether certified
+   path coverage and region strength are sufficient for PUT emission and later
+   mutation/vulnerability-regression experiments.
 6. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.
