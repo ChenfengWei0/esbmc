@@ -8,6 +8,111 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-07 600s mini-batch PUT success snapshot
+
+User policy update:
+
+- Final per-case ESBMC timeout is 600s.
+- User needs speed and asked for a small broad sample that gives an intuitive
+  current success-rate picture: generated tests valid on the reference contract,
+  split into concrete replay vs parameterized unit tests.
+- Outputs stayed under `/tmp`; no Dataset/Results contract files were modified.
+
+Code/memory state before the run:
+
+- Handoff memory update for Stage-4 summary JSON was committed and pushed:
+  `61d95d942b [docs] Record VeriPUT PUT summary output`.
+- Branch remains `feat/veriput-fuzz-first`, pushed to `E-SOL`.
+
+AST preheat:
+
+- Peer/BugFix compact ASTs were generated into:
+  - `/tmp/veriput_ast_cache_peer_20260807`
+  - `/tmp/veriput_ast_cache_bugfix_20260807`
+- Stress needed `--use-inferred-solc-bin`; compact ASTs were generated into:
+  `/tmp/veriput_ast_cache_stress_20260807`.
+- This preheat starts `solc` only, not ESBMC, and does not spend verification
+  attempts.
+
+Mini-batch root:
+
+- `/tmp/veriput_minibatch_20260807_054341`
+- Summary:
+  `/tmp/veriput_minibatch_20260807_054341/batch-summary.json`
+
+Common Stage-2/Stage-4 settings:
+
+- Stage 2:
+  `--recipe-version veriput-strong/15-relation-establish --scope focus
+  --max-tx 1 --timeout 600 --run-timeout 600 --memlimit-gib 8 --jobs 1
+  --probes 8 --refine-rounds 2 --shrink-rounds 4
+  --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0
+  --level0-perturb --probe-witnesses 8 --probe-ladder
+  --probe-ladder-budget 4 --skip-bracket --env-coord-disagreed
+  --pin-agreed-establishable-env --pin-agreed-state --max-holes 1
+  --max-region-pieces 1 --cut-policy spec --state-struct-fields
+  --slot-coords 8 --static-uncontrolled-inseparable
+  --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check
+  --esbmc-arg=--path-cov-arith-resolve`
+- Stage 4:
+  `put_all.py --scope focus --max-tx 1 --timeout 600 --memlimit-gib 8
+  --strong-recipe`.
+
+Raw sample:
+
+- `peer182 / peer_ccsolbmc__MayoOcho.transfer`
+  - Stage2: 87.6s, witnessed 5, certified 4, not-certified 1.
+  - Stage4: 22.1s, certified-region rows 4, B=4.
+  - Forge: PUT Success 4, concrete Success 0.
+  - All 4 emitted PUTs have fuzz inputs and oracle assertions.
+- `peer182 / peer_ccsolbmc__Ballot.vote`
+  - Stage2: 9.8s, witnessed 2, certified 1, not-certified 1.
+  - Stage4: 2.2s, certified-region rows 1, B=1.
+  - Forge: PUT Success 1, concrete Success 0.
+- `peer182 / peer_ccsolbmc__BasicProvenance.Complete`
+  - Stage2: 3.6s, witnessed 3, certified 2, not-certified 1.
+  - Stage4: 3.1s, certified-region rows 2, B=1.
+  - Forge: PUT Success 1, concrete Success 0.
+  - One certified region was refused by Stage4; this is the only observed
+    certified-region-to-PUT loss in the mini-batch.
+- `bugfix124 / acfix_015_CVE_2018_10666.setOwner`
+  - Stage2: 1.2s, `NO-WITNESS-UNKNOWN`, certified 0.
+  - No Stage4 run because there was no certified region.
+- `bugfix124 / acfix_022_CVE_2018_19833.transfer`
+  - Stage2: 0.6s, `NO-WITNESS-UNKNOWN`, certified 0.
+  - No Stage4 run because there was no certified region.
+- `stress243 / ERC-3643__ERC-3643__ClaimTopicsRegistry.addClaimTopic`
+  - Stage2: 340.8s, witnessed 3, certified 2, not-certified 1.
+  - Stage4: 51.1s, certified-region rows 2, B=2.
+  - Forge: PUT Success 2, concrete Success 0.
+  - This is the first direct signal in this round that Stress can fit under
+    600s but Stage2 certification cost is already the bottleneck.
+
+Measured rates from this tiny sample:
+
+- Case-level, all sampled units: 4 / 6 units generated at least one valid
+  reference test = 66.7%.
+- Case-level, units with a certified region: 4 / 4 generated at least one
+  valid reference test = 100%.
+- Certified-region-level: 8 / 9 certified regions became valid reference tests
+  = 88.9%.
+- Valid-test split: 8 / 8 are parameterized unit tests, 0 / 8 are concrete
+  replay tests.
+- Forge outcome among emitted PUTs: 8 Success, 0 Failure, 0 other.
+
+Interpretation:
+
+- Do not treat the 6-unit denominator as a corpus success rate; the sample is
+  intentionally tiny and manually selected to get a fast picture.
+- Current Stage4 emitter health looks good on certified regions: 88.9% B in
+  this sample, with all successes as actual PUTs.
+- The immediate throughput bottleneck is still Stage2/path witnessing and
+  certification.  The two BugFix rows failed before PUT generation
+  (`NO-WITNESS-UNKNOWN`), and the Stress row consumed 340.8s before Stage4.
+- The next code target for speed should be scheduling/prioritization and
+  no-witness diagnosis, not blindly expanding Stage4.  The only Stage4-specific
+  loss observed here is the one refused BasicProvenance region.
+
 ## 2026-08-06 unit campaign budget and summary fix
 
 Context:
