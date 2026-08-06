@@ -3452,3 +3452,48 @@ build/src/esbmc/esbmc --version
 The build completed and the binary reports `ESBMC version 8.2.0 64-bit x86_64
 linux`. The next official spend for `aqua_Aqua__Aqua__pull` is attempt2 under
 120s/8GiB, but do not run it until this repair is committed and pushed.
+
+Attempt2 was then spent after commit `6bbf0183c4`:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  aqua_Aqua__Aqua__pull --stage all --cell gate --attempt 2 --fresh
+```
+
+It failed in the same shape:
+
+- Stage 1 exited after 2.87s with ESBMC exit code `-11`.
+- No report was produced; Stage 2 and Stage 3 did not run.
+- The run record names binary head `6bbf0183c4` and the 120s/8GiB attempt2
+  config.
+- The log still printed the full nondet census and unresolved aggregate warnings
+  for `nondet$symex::nondet39` and `nondet$symex::nondet44`, proving the first
+  repair did not apply to this claim.
+
+Root cause of the missed repair:
+
+- `pull:path:15` is a normal complete-path claim, not `is_probe_claim`, even
+  when the run is using `--path-cov-probe`.
+- The replayable-only filtering therefore has to be controlled by the run-level
+  option `is_path_cov && path-cov-probe`, not by the individual claim being a
+  probe claim.
+
+Second code-level repair, made after attempt2 and before any attempt3 spend:
+
+- `bmc.cpp` now computes `path_probe_replayable_only` once per claim loop from
+  `is_path_cov && options.get_bool_option("path-cov-probe")`.
+- `collect_nondet_values` receives that run-level flag, so normal complete-path
+  claims in a path-probe run also skip non-replayable aggregate model queries.
+- The defensive post-filter and dropped-count accounting now use the same
+  run-level flag.
+
+Validation:
+
+```sh
+clang-format -n --Werror src/esbmc/bmc.cpp \
+  src/goto-symex/witnesses.cpp src/goto-symex/witnesses.h
+make -C build -j2 esbmc
+```
+
+Both passed. `aqua_Aqua__Aqua__pull` now has only attempt3 remaining
+(600s/10GiB). Do not spend it until this second repair is committed and pushed.

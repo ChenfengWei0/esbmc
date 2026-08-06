@@ -4540,6 +4540,9 @@ smt_convt::resultt bmct::multi_property_check(
       if (want_testcase)
         generate_testcase_metadata();
 
+      const bool path_probe_replayable_only =
+        is_path_cov && options.get_bool_option("path-cov-probe");
+
       // Drive enumeration with a separate variable so the original SAT
       // outcome stays in `solver_result` for downstream bookkeeping
       // (final_result, fail-fast counter, claim cleanup).
@@ -4560,8 +4563,11 @@ smt_convt::resultt bmct::multi_property_check(
         {
           size_t probe_skipped_before_model = 0;
           w.nondet_inputs = collect_nondet_values(
-            local_eq, *solver_ptr, is_probe_claim, &probe_skipped_before_model);
-          if (is_probe_claim)
+            local_eq,
+            *solver_ptr,
+            path_probe_replayable_only,
+            &probe_skipped_before_model);
+          if (path_probe_replayable_only)
           {
             const auto before = w.nondet_inputs.size();
             w.nondet_inputs.erase(
