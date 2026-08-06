@@ -2097,6 +2097,12 @@ def test_source_R2_assignment_candidates_are_small_setter_queries():
             {"nodeType": "VariableDeclaration", "id": 12, "name": "ready",
              "stateVariable": True,
              "typeDescriptions": {"typeString": "bool"}},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "limit",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint16"}},
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "timed",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "setX",
              "parameters": {"parameters": [
                  {"id": 21, "name": "amount",
@@ -2124,6 +2130,25 @@ def test_source_R2_assignment_candidates_are_small_setter_queries():
                                        "value": "true"}}},
                  {"nodeType": "ExpressionStatement", "expression": {
                      "nodeType": "Assignment", "operator": "=",
+                     "src": "345:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 13,
+                                      "name": "limit"},
+                     "rightHandSide": {"nodeType": "Literal",
+                                       "kind": "number",
+                                       "value": "7"}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "367:10:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 14,
+                                      "name": "timed"},
+                     "rightHandSide": {"nodeType": "Literal",
+                                       "kind": "number",
+                                       "value": "2",
+                                       "subdenomination": "seconds"}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
                      "src": "456:10:0",
                      "leftHandSide": {"nodeType": "Identifier",
                                       "referencedDeclaration": 11,
@@ -2139,12 +2164,14 @@ def test_source_R2_assignment_candidates_are_small_setter_queries():
         specs, evidence = source_assignment_r2_specs(
             path, "C", "setX", [("amount", "uint256"), ("other", "uint256")],
             {"x": (0, 0, 32), "ignored": (1, 0, 32),
-             "ready": (2, 0, 1)},
+             "ready": (2, 0, 1), "limit": (3, 0, 2),
+             "timed": (4, 0, 32)},
             [("amount", "num", None)], arity=2, log=lambda _msg: None)
         none, none_evidence = source_assignment_r2_specs(
             path, "C", "setX", [("amount", "uint256"), ("other", "uint256")],
             {"x": (0, 0, 32), "ignored": (1, 0, 32),
-             "ready": (2, 0, 1)},
+             "ready": (2, 0, 1), "limit": (3, 0, 2),
+             "timed": (4, 0, 32)},
             [], arity=2, log=lambda _msg: None)
     finally:
         os.unlink(path)
@@ -2162,14 +2189,24 @@ def test_source_R2_assignment_candidates_are_small_setter_queries():
                  {"kind": "literal", "value": "1"},
                  f"the bool literal endpoint is encoded as a verifier decimal: "
                  f"{bvar}")
-    bad += check(specs[0].get("candidate_count") == 2 if specs else False,
+    nvar = next((item for item in vars_ if item.get("name") == "limit"), {})
+    bad += check(nvar.get("equals", [{}])[0].get("term") ==
+                 {"kind": "literal", "value": "7"},
+                 f"the numeric literal endpoint is encoded as a verifier "
+                 f"decimal: {nvar}")
+    bad += check(not any(item.get("name") == "timed" for item in vars_),
+                 f"subdenominated source literals are not unitless R2 atoms: "
+                 f"{vars_}")
+    bad += check(specs[0].get("candidate_count") == 3 if specs else False,
                  f"only the source assignment candidate is asked: {specs}")
     bad += check(any("x: post == amount" in line for line in evidence),
                  f"the source provenance is recorded: {evidence}")
     bad += check(any("ready: post == true" in line for line in evidence),
                  f"the bool source provenance is recorded: {evidence}")
-    bad += check(len(none) == 1 and none[0].get("candidate_count") == 1,
-                 f"the bool literal remains even when the parameter is not "
+    bad += check(any("limit: post == 7" in line for line in evidence),
+                 f"the numeric source provenance is recorded: {evidence}")
+    bad += check(len(none) == 1 and none[0].get("candidate_count") == 2,
+                 f"literal assignments remain even when the parameter is not "
                  f"rendered: {none}, {none_evidence}")
     return bad
 

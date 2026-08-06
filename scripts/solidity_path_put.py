@@ -1100,8 +1100,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
 
     This is deliberately narrower than general expression mining.  It only
     proposes a candidate when the target function body assigns one visible state
-    variable directly from either one of the unit's rendered parameters or a
-    source-level bool literal.  The candidate is still proved by
+    variable directly from either one of the unit's rendered parameters, a
+    source-level bool literal, or a source-level integer literal.  The
+    candidate is still proved by
     --path-cov-assert; the source only decides which small query to ask first.
     """
     try:
@@ -1163,16 +1164,20 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         ref = n.get("referencedDeclaration")
         return ref if isinstance(ref, int) else None
 
-    def bool_literal_term(n):
+    def literal_term(n, state_ty):
         if not isinstance(n, dict) or n.get("nodeType") != "Literal":
             return None
-        if n.get("kind") != "bool":
-            return None
-        value = n.get("value")
-        if value is True or str(value).lower() == "true":
-            return {"kind": "literal", "value": "1"}
-        if value is False or str(value).lower() == "false":
-            return {"kind": "literal", "value": "0"}
+        if n.get("kind") == "bool" and state_ty == "bool":
+            value = n.get("value")
+            if value is True or str(value).lower() == "true":
+                return {"kind": "literal", "value": "1"}, "true"
+            if value is False or str(value).lower() == "false":
+                return {"kind": "literal", "value": "0"}, "false"
+        if (n.get("kind") == "number" and re.match(r"^uint(\d+)?$", state_ty)
+                and not n.get("subdenomination")):
+            value = str(n.get("value") or "")
+            if value.isdigit():
+                return {"kind": "literal", "value": value}, value
         return None
 
     def add_candidate(state_name, term, reason, src):
@@ -1207,12 +1212,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     add_candidate(
                         state_name, {"kind": "coord", "name": param_name},
                         param_name, n.get("src"))
-                literal = bool_literal_term(rhs)
-                if state_name and state_ty == "bool" and literal is not None:
-                    add_candidate(
-                        state_name, literal,
-                        "true" if literal["value"] == "1" else "false",
-                        n.get("src"))
+                literal = literal_term(rhs, state_ty)
+                if state_name and literal is not None:
+                    add_candidate(state_name, literal[0], literal[1],
+                                  n.get("src"))
             for child in n.values():
                 walk(child)
         elif isinstance(n, list):

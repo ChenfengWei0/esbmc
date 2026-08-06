@@ -5209,6 +5209,51 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 numeric-literal source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, benchmark AST preheat, or
+  benchmark certification run was started.
+
+Finding:
+
+- `source_r2_literals()` already mines integer literals globally, and the typed
+  mechanical R2 batch can ask literal endpoint candidates. However, that path
+  does not know which state variable was assigned from the literal in the
+  target function body.
+- Under a finite `--r2-candidate-budget`, the strongest literal setter oracle
+  for `uintState = 7` can be displaced by mechanical candidates for other
+  variables or unrelated literals.
+- The source-assignment R2 path is a better priority signal: it is still proved
+  by ESBMC, but it asks the endpoint that the target unit itself writes first.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now recognizes
+  direct assignments from a unitless Solidity numeric literal to a visible
+  `uint*` state variable and emits a structured decimal literal term such as
+  `{"kind": "literal", "value": "7"}`.
+- Literal source candidates continue to merge into the same typed Stage-4 R2
+  batch, so this does not add an extra ESBMC R2 pass.
+- Subdenominated literals such as `2 seconds` are deliberately skipped. Treating
+  them as plain decimal atoms at this layer would erase Solidity unit semantics
+  before the verifier sees the actual lowered expression.
+- This is not POC-specific: the rule is gated by the AST assignment shape, the
+  normalized state-variable type, and the real storage layout.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  148 tests ran, 148 declared.
+- `git diff --check` on the touched files: passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 source R2 merge keeps mechanical candidates
 
 Scope and constraint:
