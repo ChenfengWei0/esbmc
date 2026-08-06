@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 contract.sol
 --contract C --solidity-max-tx 1
 ^VERIFICATION SUCCESSFUL$

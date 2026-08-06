@@ -465,6 +465,46 @@ bool solidity_convertert::get_function_definition(
       body_exprt = new_body;
     }
 
+    // Source-level `bytesN` values always have length N. Function parameters
+    // arrive from the harness as a whole `BytesStatic` nondet struct so the
+    // payload remains recoverable for witness/Foundry generation; constrain the
+    // length field here instead of hiding that nondet behind a with-expression
+    // or a bytes_static_from_uint call at the caller.
+    if (body_exprt.is_code())
+    {
+      code_blockt bytesn_assumes;
+      for (const auto &arg : type.arguments())
+      {
+        const std::string bytesn_size = arg.get("#sol_bytesn_size").as_string();
+        if (bytesn_size.empty() || arg.get_identifier().empty())
+          continue;
+
+        const symbolt *param_sym = context.find_symbol(arg.get_identifier());
+        if (param_sym == nullptr)
+          continue;
+
+        const typet sz_t = size_type();
+        exprt param_len = member_exprt(symbol_expr(*param_sym), "length", sz_t);
+        exprt expected_len = constant_exprt(
+          integer2binary(std::stoul(bytesn_size), bv_width(sz_t)),
+          bytesn_size,
+          sz_t);
+        code_assumet assume_len(equality_exprt(param_len, expected_len));
+        assume_len.location() = location_begin;
+        bytesn_assumes.copy_to_operands(assume_len);
+      }
+
+      if (!bytesn_assumes.operands().empty())
+      {
+        code_blockt constrained_body;
+        for (const auto &op : bytesn_assumes.operands())
+          constrained_body.copy_to_operands(op);
+        for (const auto &op : body_exprt.operands())
+          constrained_body.copy_to_operands(op);
+        body_exprt = constrained_body;
+      }
+    }
+
     // Wrap contract method bodies with an enclosing-contract save /
     // set / restore so library bodies called from within can recover
     // the currently-executing contract's identity (msg.sender for
@@ -483,9 +523,7 @@ bool solidity_convertert::get_function_definition(
     //   - If the caller is the auto-dispatch loop (`_ESBMC_Main_X`),
     //     no code runs after the callee returns, so the stale value
     //     is never observed.
-    if (
-      !is_event_err_lib && !is_free_function && has_body &&
-      body_exprt.is_code())
+    if (!is_event_err_lib && !is_free_function && body_exprt.is_code())
     {
       std::string this_id = id + "#this";
       const symbolt *this_sym = context.find_symbol(this_id);

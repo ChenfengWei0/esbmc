@@ -4840,3 +4840,63 @@ Implication for next work:
 6. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.
+
+## 2026-08-06 bytesN ABI-length model repair
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No POC ESBMC attempt was consumed. All solver runs below were ESBMC
+  regression/temp-copy checks.
+
+Problem:
+
+- Solidity fixed bytes (`bytes1` ... `bytes32`) lower to `BytesStatic {
+  data[32], length }`.
+- `assign_param_nondet` passed a whole-struct nondet for bytesN parameters, so
+  `.length` was free. This admits calldata-impossible states and refuted a
+  Solidity tautology: `b == bytes32(uint256(b))`.
+- The older obvious fix, `bytes_static_from_uint(nondet_uint256(), N)`, proved
+  the tautology but hid the payload nondet from witness/Foundry recovery.
+- A later attempted fix, `with(nondet_struct, length=N)`, also proved the
+  tautology but still broke Foundry recovery (`DEFAULTED BYTES4`, 1 case).
+
+Final code shape:
+
+- `src/solidity-frontend/solidity_convert_call.cpp` keeps scalar/bytesN harness
+  parameters as direct `get_nondet_expr(t, nondet_scalar)` arguments. This
+  preserves the raw `nondet$symex::...` symbol for counterexample harvesting.
+- `src/solidity-frontend/solidity_convert_modifier.cpp` prepends, at function
+  entry, `ASSUME(param.length == N)` for every function argument carrying
+  `#sol_bytesn_size`.
+- This pins ABI-legal bytesN length in the verifier without changing the
+  recoverable payload expression at the call site.
+- The redundant `has_body` conjunct in the same wrapper block was removed after
+  cppcheck reported it is always true in that scope.
+
+Verification:
+
+- Build:
+  `timeout 5m cmake --build build -j2`
+  passed. Existing warning remains:
+  `solidity_convert_call.cpp:2811 unused parameter 'base'`.
+- Cppcheck on changed Solidity frontend files passed with no output:
+  `git diff --name-only --diff-filter=d HEAD | grep 'src/solidity-frontend/.*\.\(cpp\|h\)$' | xargs -r cppcheck ...`
+- Direct regression:
+  `timeout 60s bash -lc 'ulimit -Sv 8388608; build/src/esbmc/esbmc regression/esbmc-solidity/solidity_bytesn_param_length_free_knownbug/contract.sol --contract C --solidity-max-tx 1'`
+  returned `VERIFICATION SUCCESSFUL`.
+- CTest:
+  `timeout 60s bash -lc 'ulimit -Sv 8388608; cd build && ctest -R solidity_bytesn_param_length_free_knownbug --output-on-failure'`
+  passed 1/1.
+- GOTO inspection confirmed the intended split:
+  dispatcher call remains
+  `roundTrip(..., NONDET(struct BytesStatic ...))`, while function entry has
+  `ASSUME b.length == 32`.
+- Foundry temp-copy check:
+  `foundry_covgen_bytesN_fail` copied to `/tmp`, then run with
+  `--branch-coverage --generate-foundry-testcase --no-assertions` under
+  60s/8GiB. It generated `2 case(s)`, emitted no `DEFAULTED` warning, and the
+  generated calls used exact-width payloads:
+  `poke(bytes4(0x12345678))` and `poke(bytes4(0xffffffff))`.
+  The constructor argument rendered as `bytes4(0x00000000)` in that run; it is
+  semantically irrelevant to the covered branch and still exact-width.
