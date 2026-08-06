@@ -59,7 +59,7 @@ def fake_preheat_script(path, *, status="ok", rc=0):
     return str(p)
 
 
-def schedule(ok_cmd, fail_cmd=None):
+def schedule(ok_cmd, fail_cmd=None, ast_cache_root="/tmp/cache"):
     jobs = [{
         "schema": "veriput-ast-preheat-job/v1",
         "job_id": "peer182__repo__C",
@@ -71,7 +71,7 @@ def schedule(ok_cmd, fail_cmd=None):
             ok_cmd,
             "--generate-ast",
             "--ast-cache-root",
-            "/tmp/cache",
+            ast_cache_root,
         ],
     }]
     if fail_cmd:
@@ -92,7 +92,7 @@ def schedule(ok_cmd, fail_cmd=None):
                 fail_cmd,
                 "--generate-ast",
                 "--ast-cache-root",
-                "/tmp/cache",
+                ast_cache_root,
             ],
         })
     return {
@@ -222,12 +222,40 @@ def test_runner_cli_dry_run_reads_schedule():
     return bad
 
 
+def test_runner_refuses_protected_write_paths():
+    protected = "/home/samson/workspace/VeriPUT/Results/ast-cache"
+    with tempfile.TemporaryDirectory() as td:
+        ok_cmd = fake_preheat_script(Path(td) / "ok.py")
+        sched = schedule(ok_cmd, ast_cache_root=protected)
+        try:
+            ast_preheat_run.dry_run_doc(sched)
+        except ast_preheat_run.PreheatRunError as exc:
+            refused_cache = str(exc)
+        else:
+            refused_cache = ""
+        try:
+            ast_preheat_run.run_schedule(schedule(ok_cmd),
+                                         journal=protected + "/run.jsonl",
+                                         timeout_s=5)
+        except ast_preheat_run.PreheatRunError as exc:
+            refused_journal = str(exc)
+        else:
+            refused_journal = ""
+    bad = 0
+    bad += check("--ast-cache-root must not be under" in refused_cache,
+                 f"protected AST cache root is refused: {refused_cache}")
+    bad += check("--journal must not be under" in refused_journal,
+                 f"protected preheat journal is refused: {refused_journal}")
+    return bad
+
+
 TESTS = [
     test_runner_executes_and_resumes_from_journal,
     test_runner_records_non_ok_row_and_keeps_it_retryable,
     test_runner_dry_run_and_fail_closed_modes,
     test_runner_journals_start_failure,
     test_runner_cli_dry_run_reads_schedule,
+    test_runner_refuses_protected_write_paths,
 ]
 
 if __name__ == "__main__":

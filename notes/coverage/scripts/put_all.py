@@ -31,6 +31,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
 from veriput_subjects import SubjectError, subject_from_record  # noqa: E402
+from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 from veriput_recipe import (STRONG_RECIPE_VERSION, STRONG_PUT_AUTO_UNWIND,  # noqa: E402
                             STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET,
                             STRONG_PUT_FUZZ_RUNS,
@@ -508,6 +509,10 @@ def main():
         if not scope_names or ",".join(scope_names) != args.scope:
             sys.exit("--scope must be focus, whole, or a canonical "
                      "comma-separated function list")
+    try:
+        ensure_path_not_protected("--out-root", args.out_root)
+    except ValueError as exc:
+        sys.exit(str(exc))
     OUT = os.path.abspath(args.out_root)
     os.makedirs(OUT, exist_ok=True)
     cert_path = args.cert or (POC_CERT if args.poc else CERT)

@@ -20,6 +20,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from veriput_path_guard import argv_value, ensure_path_not_protected  # noqa: E402
+
 
 class PreheatRunError(ValueError):
     """The schedule or requested run mode is unsafe."""
@@ -84,8 +89,13 @@ def _validate_job(job: dict):
         raise PreheatRunError(f"job {job.get('job_id')!r} has no preheat_argv")
     if "--generate-ast" not in argv:
         raise PreheatRunError(f"job {job.get('job_id')!r} is not an AST preheat argv")
-    if "--ast-cache-root" not in argv:
+    ast_cache_root = argv_value(argv, "--ast-cache-root")
+    if not ast_cache_root:
         raise PreheatRunError(f"job {job.get('job_id')!r} has no external --ast-cache-root")
+    try:
+        ensure_path_not_protected("--ast-cache-root", ast_cache_root)
+    except ValueError as exc:
+        raise PreheatRunError(f"job {job.get('job_id')!r}: {exc}") from exc
     for name in ("job_id", "benchmark", "subject_id"):
         if not job.get(name):
             raise PreheatRunError(f"job is missing {name}")
@@ -217,6 +227,10 @@ def run_schedule(schedule: dict,
                  stop_on_failure: bool = False) -> dict:
     if not journal:
         raise PreheatRunError("pass --journal for real preheat execution")
+    try:
+        ensure_path_not_protected("--journal", journal)
+    except ValueError as exc:
+        raise PreheatRunError(str(exc)) from exc
     if jobs <= 0:
         raise PreheatRunError("--jobs must be positive")
     if memlimit_gb < 0:

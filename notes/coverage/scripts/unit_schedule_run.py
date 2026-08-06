@@ -21,6 +21,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from veriput_path_guard import argv_value, ensure_path_not_protected  # noqa: E402
+
 
 class UnitRunError(ValueError):
     """The schedule or requested run mode is unsafe."""
@@ -85,6 +90,10 @@ def _validate_job(job: dict):
         raise UnitRunError(f"job {job.get('job_id')!r} has no certify_argv")
     if "--dry-run" in argv:
         raise UnitRunError(f"job {job.get('job_id')!r} certify_argv is dry-run")
+    try:
+        ensure_path_not_protected("--out", argv_value(argv, "--out"))
+    except ValueError as exc:
+        raise UnitRunError(f"job {job.get('job_id')!r}: {exc}") from exc
     for flag in ("--subject-dir", "--unit"):
         if flag not in argv:
             raise UnitRunError(f"job {job.get('job_id')!r} missing {flag}")
@@ -217,8 +226,14 @@ def run_schedule(schedule: dict,
                  stop_on_failure: bool = False) -> dict:
     if not journal:
         raise UnitRunError("pass --journal for real unit execution")
+    try:
+        ensure_path_not_protected("--journal", journal)
+    except ValueError as exc:
+        raise UnitRunError(str(exc)) from exc
     if jobs <= 0:
         raise UnitRunError("--jobs must be positive")
+    if memlimit_gb < 0:
+        raise UnitRunError("--memlimit-gb must be non-negative")
     if stop_on_failure and jobs != 1:
         raise UnitRunError("--stop-on-failure requires --jobs 1")
     selected = _selected_jobs(schedule, shard=shard, limit=limit)

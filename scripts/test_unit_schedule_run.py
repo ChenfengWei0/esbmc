@@ -30,7 +30,16 @@ def fake_script(path, rc=0):
     return str(p)
 
 
-def job(job_id, cmd, unit="f"):
+def job(job_id, cmd, unit="f", out_path=""):
+    argv = [
+        cmd,
+        "--subject-dir",
+        "/tmp/repo__C",
+        "--unit",
+        unit,
+    ]
+    if out_path:
+        argv += ["--out", out_path]
     return {
         "schema": "veriput-unit-job/v1",
         "job_id": job_id,
@@ -40,13 +49,7 @@ def job(job_id, cmd, unit="f"):
         "subject_id": "repo__C",
         "contract": "C",
         "unit": unit,
-        "certify_argv": [
-            cmd,
-            "--subject-dir",
-            "/tmp/repo__C",
-            "--unit",
-            unit,
-        ],
+        "certify_argv": argv,
     }
 
 
@@ -185,12 +188,54 @@ def test_runner_journals_campaign_metadata_from_schedule():
     return bad
 
 
+def test_runner_refuses_protected_write_paths_and_negative_memlimit():
+    protected = "/home/samson/workspace/VeriPUT/Results/certify.jsonl"
+    with tempfile.TemporaryDirectory() as td:
+        ok = fake_script(Path(td) / "ok.py")
+        bad_sched = {
+            "schema": "veriput-unit-schedule/v1",
+            "jobs": [job("peer182__repo__C__f", ok, out_path=protected)],
+        }
+        try:
+            unit_schedule_run.dry_run_doc(bad_sched)
+        except unit_schedule_run.UnitRunError as exc:
+            refused_out = str(exc)
+        else:
+            refused_out = ""
+        try:
+            unit_schedule_run.run_schedule(schedule(ok),
+                                           journal=protected,
+                                           timeout_s=5)
+        except unit_schedule_run.UnitRunError as exc:
+            refused_journal = str(exc)
+        else:
+            refused_journal = ""
+        try:
+            unit_schedule_run.run_schedule(schedule(ok),
+                                           journal=str(Path(td) / "run.jsonl"),
+                                           timeout_s=5,
+                                           memlimit_gb=-1)
+        except unit_schedule_run.UnitRunError as exc:
+            refused_mem = str(exc)
+        else:
+            refused_mem = ""
+    bad = 0
+    bad += check("--out must not be under" in refused_out,
+                 f"protected certify output is refused: {refused_out}")
+    bad += check("--journal must not be under" in refused_journal,
+                 f"protected unit journal is refused: {refused_journal}")
+    bad += check("--memlimit-gb" in refused_mem,
+                 f"negative unit memlimit is refused: {refused_mem}")
+    return bad
+
+
 TESTS = [
     test_runner_executes_and_resumes_from_journal,
     test_runner_records_failures_as_retryable,
     test_runner_dry_run_start_failure_and_fail_closed_modes,
     test_runner_cli_dry_run_reads_schedule,
     test_runner_journals_campaign_metadata_from_schedule,
+    test_runner_refuses_protected_write_paths_and_negative_memlimit,
 ]
 
 if __name__ == "__main__":

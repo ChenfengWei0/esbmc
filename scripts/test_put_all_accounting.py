@@ -2,6 +2,8 @@
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 import tempfile
 from argparse import Namespace
 
@@ -113,6 +115,20 @@ def main():
         bad += check("stage4-plain-recipe-unchanged",
                      (put_all.apply_strong_put_recipe(plain), plain.auto_unwind),
                      (None, 0))
+        cp = subprocess.run([
+            sys.executable,
+            PUT_ALL,
+            "--out-root",
+            "/home/samson/workspace/VeriPUT/Results/put-stage4",
+            "--cert",
+            path,
+        ],
+                            capture_output=True,
+                            text=True)
+        bad += check("stage4-refuses-protected-out-root",
+                     (cp.returncode != 0
+                      and "--out-root must not be under" in cp.stderr),
+                     True)
         return bad
     finally:
         os.unlink(path)

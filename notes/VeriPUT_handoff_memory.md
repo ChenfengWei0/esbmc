@@ -5208,3 +5208,64 @@ Verification:
   reported.
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
+## 2026-08-06 runner-level protected write guards
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Finding:
+
+- The planner and `subject_unit_manifest.py` now protect the normal AST/cache
+  entry points, but direct runner execution could still bypass the planner with
+  an old or hand-written schedule. The unsafe write targets were:
+  - `ast_preheat_run.py`: generated AST cache path inside each `preheat_argv`,
+    and the real-run `--journal`.
+  - `unit_schedule_run.py`: `certify_all.py --out` inside each `certify_argv`,
+    and the real-run `--journal`.
+  - `put_all.py`: Stage-4 `--out-root`, which creates Forge projects and PUT
+    artefacts.
+
+Code shape:
+
+- Added `notes/coverage/scripts/veriput_path_guard.py` with shared helpers for:
+  protected `<VERIPUT_ROOT>/Datasets` and `<VERIPUT_ROOT>/Results` detection,
+  fail-closed planned-write validation, and robust `--flag value` /
+  `--flag=value` argv parsing.
+- `ast_preheat_run.py` now refuses schedules whose `--ast-cache-root` points
+  under Dataset/Results, including dry-run validation, and refuses real journals
+  under Dataset/Results before any journal read/write.
+- `unit_schedule_run.py` now refuses schedules whose `certify_argv --out`
+  points under Dataset/Results, refuses real journals under Dataset/Results,
+  and rejects negative `--memlimit-gb`.
+- `put_all.py` now refuses `--out-root` under Dataset/Results before
+  `os.makedirs(OUT)`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/veriput_path_guard.py notes/coverage/scripts/ast_preheat_run.py notes/coverage/scripts/unit_schedule_run.py notes/coverage/scripts/put_all.py scripts/test_ast_preheat_run.py scripts/test_unit_schedule_run.py scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_ast_preheat_run.py` passed
+  and now checks protected AST cache and preheat journal refusal.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule_run.py` passed
+  and now checks protected certification output, unit journal, and negative
+  memlimit refusal.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py` passed
+  and now checks protected Stage-4 `--out-root` refusal before output creation.
+- Related existing tests also passed:
+  `scripts/test_benchmark_pipeline_plan.py`,
+  `scripts/test_veriput_subjects.py`,
+  `scripts/test_ast_preheat_schedule.py`, and `scripts/test_unit_schedule.py`.
+- `git diff --check` passed before this note update.
+- `python3 -m pylint ...` was run on the touched scripts/tests. It exits 28 on
+  existing style debt: import-position after `sys.path` setup, missing
+  docstrings in old scripts/tests, unspecified encodings, subprocess calls
+  without `check`, complexity/duplicate-code warnings, and an existing unused
+  variable in `put_all.py`. The new helper's own missing-docstring warnings were
+  fixed afterward.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
