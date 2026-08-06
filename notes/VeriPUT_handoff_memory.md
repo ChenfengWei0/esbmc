@@ -10083,3 +10083,94 @@ Checks:
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py notes/coverage/scripts/certify_all.py notes/coverage/scripts/veriput_recipe.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-07 benchmark sampling and certification bottleneck
+
+Current branch:
+
+- `feat/veriput-fuzz-first`, pushed to `E-SOL/feat/veriput-fuzz-first`.
+- Latest pushed commit at this checkpoint:
+  `3cf34626c0 [solidity] Preserve VeriPUT salvage sidecars`.
+
+What is now working:
+
+- Partial enumeration salvage is now robust enough for benchmark accounting.
+  If `cov-report.json` / `generalise-result.json` is missing because the outer
+  wrapper kills the run, the driver can still record witnessed paths from
+  `cov-ce-journal.json`.
+- `certify_all.py` records `enumeration_salvage` from either
+  `generalise-result.json` or the sidecar `enumeration-salvage.json`.
+- Coordinate parsing no longer treats prose lines such as mapping dependency
+  policy or `STATE PINNED` as fake coordinates.
+
+Small benchmark confirmation:
+
+- Bugfix124 sample:
+  `/tmp/veriput_bench_salvage_bugfix_20260806_235923`
+  produced `4 / 4` runner-ok and `4 / 4` `CERTIFIED`.
+- Stress243 first sample:
+  `/tmp/veriput_bench_salvage_stress_20260806_235923`
+  showed that ClaimTopicsRegistry `addClaimTopic` and `removeClaimTopic`
+  certify one salvaged path each under the 60s/8GiB first attempt.
+- Peer sample:
+  `/tmp/veriput_bench_salvage_peer_20260806_235924`
+  still has separate shallow issues (`AIRBets.initialize2` `NO-PATH`,
+  `AIRBets.transfer` `NO-WITNESS-UNDECIDED`).
+
+Balanced stress sample:
+
+- Directory:
+  `/tmp/veriput_stress_balanced_20260807_002507`.
+- Six attempt-1 jobs, 60s/8GiB policy via a 70s wrapper:
+  2 `CERTIFIED`, 3 `KILLED`, 1 `NO-COORDINATE`.
+- Certified:
+  `OwnableAuthentication.transferOwnership` certified `2 / 3` witnessed paths;
+  `IdentityRegistryStorage.storedIdentity` certified `1 / 2`.
+- KILLED but useful:
+  `IdentityRegistryStorage.addIdentityToStorage`,
+  `IdentityRegistryStorage.bindIdentityRegistry`, and
+  `OwnableAuthentication.forceTransferOwnership` all had witnessed paths and
+  partial journals.  Their failure mode is not basic instrumentation failure.
+- `OwnableAuthentication.getActionId` is `NO-COORDINATE` because the natural
+  coordinates include unsupported selector/string-ish state, so it should be
+  separated from tool-timeout failures.
+
+Attempt-2 check on two KILLED stress rows:
+
+- Schedule:
+  `/tmp/veriput_stress_balanced_20260807_002507/next-unit-schedule-a2-light2.json`.
+- Results:
+  `/tmp/veriput_stress_balanced_20260807_002507/certify-results-a2-light.jsonl`.
+- Policy:
+  120s ESBMC budget, 130s unit timeout, 8GiB, `jobs=1`.
+- `IdentityRegistryStorage.bindIdentityRegistry`:
+  still `KILLED`, `0 certified / 0 not / 2 witnessed`.
+  It salvaged `2` paths from a partial journal (`77 / 214` claims decided).
+  Level-0 took only `1.6s`; coordinates were `_identityRegistry` and
+  `msg.sender`.
+- `OwnableAuthentication.forceTransferOwnership`:
+  still `KILLED`, `0 certified / 0 not / 1 witnessed`.
+  It salvaged `1` path from a partial journal (`1 / 303` claims decided).
+  Level-0 took only `2.4s`; coordinate was `newOwner`.
+  It reached a full-address refine region before timing out.
+
+Current interpretation:
+
+- The main stress bottleneck has moved from "cannot discover a witness" to
+  "witness exists, cheap refutation/probing works, but the final
+  refine/certification phase times out or does not emit enough structured
+  intermediate status".
+- This means fuzz/cheap CE is useful as a first filter and region tester, but
+  only as refutation.  Certified PUTs still require ESBMC.
+- The next tool-side improvement should distinguish at least:
+  enumeration timeout, refine timeout, and certification timeout after a
+  concrete/region candidate exists.  Without that split, a full benchmark run
+  will undercount progress and overstate hard failures.
+
+Recommended next step:
+
+- Start only stratified small benchmark runs, not full stress-wide execution:
+  peer `contract080`, several bugfix124 units, and a capped stress243 slice.
+- Before a broad run, improve timeout accounting / partial status emission for
+  the post-enumeration stages.  Otherwise the full run will spend many attempts
+  rediscovering already-known witnessed paths and still label them `KILLED`.
