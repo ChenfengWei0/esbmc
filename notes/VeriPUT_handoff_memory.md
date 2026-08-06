@@ -8181,3 +8181,50 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-06 `block.chainid` PUT establishment
+
+Scope:
+
+- This is an external VeriPUT generator improvement for a benchmark-common
+  environment coordinate. It is not POC-specific and does not alter ESBMC
+  internals.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Rationale:
+
+- Read-only benchmark grep showed many uses of `block.chainid` in EIP-712 /
+  domain-separator code.
+- ESBMC already pretty-prints `block_chainid` as `block.chainid` in path
+  reports, and the Solidity frontend already models Foundry `vm.chainId(x)` as
+  a deterministic assignment to `block_chainid`.
+- Therefore `block.chainid` has the same external PUT status as
+  `block.number`: it can be established by a Foundry cheatcode before the
+  target call. Coordinates without this end-to-end support, such as
+  `tx.origin`, remain refused rather than guessed.
+
+Code change:
+
+- `ESTABLISHABLE_ENV_COORDS` now includes `block.chainid`.
+- `build_put` establishes singleton pins/regions with `vm.chainId(k)` and
+  wide certified regions with a bounded fuzz parameter
+  `p_block_chainid`, preserving punched holes with `vm.assume`.
+- Source-R2 mining may now propose numeric endpoints and deltas involving
+  `block.chainid` when the PUT can render that coordinate.
+- Source-resolved mapping-slot priority accepts `block.chainid` as a numeric
+  environment key for unsigned-integer mapping keys, and still refuses
+  incompatible key types such as address.
+- Observed replay preambles containing a literal `vm.chainId(...)` can feed R2
+  endpoints and mapping-slot keys without adding a new fuzz parameter.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/solidity_path_generalise.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 209/209 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.

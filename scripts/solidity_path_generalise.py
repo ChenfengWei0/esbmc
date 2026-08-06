@@ -4878,7 +4878,8 @@ def main():
                          "read.")
     ap.add_argument("--env-coord", action="append", default=[],
                     help="promote one environment quantity (e.g. "
-                         "block.timestamp) to a FREE coordinate instead of a "
+                         "block.timestamp or block.chainid) to a FREE "
+                         "coordinate instead of a "
                          "pin. Named one at a time on purpose: ladder cost is "
                          "multiplicative in the coordinate count.\n"
                          "This exists because the blanket 'never probe the "

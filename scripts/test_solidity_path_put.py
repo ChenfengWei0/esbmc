@@ -509,13 +509,14 @@ def test_block_number_point_is_established_with_roll():
 
 
 def test_block_env_pins_are_established_with_cheatcodes():
-    """Pinned timestamp/number slices are established, not left unchecked."""
+    """Pinned block env slices are established, not left unchecked."""
     em, case = make_case()
     notes = []
     put, stats = build_put(
         "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
-        holes={}, pins={"block.timestamp": 42, "block.number": 7},
+        holes={}, pins={"block.timestamp": 42, "block.number": 7,
+                        "block.chainid": 31337},
         params=PARAMS, emitted=em, case=case, layout=LAYOUT,
         ladder_rows=LADDER, notes=notes)
     text = "\n".join(put or [])
@@ -526,6 +527,8 @@ def test_block_env_pins_are_established_with_cheatcodes():
                  "pinned block.timestamp is established by vm.warp")
     bad += check("    vm.roll(7);" in text,
                  "pinned block.number is established by vm.roll")
+    bad += check("    vm.chainId(31337);" in text,
+                 "pinned block.chainid is established by vm.chainId")
     bad += check(stats.get("env_unchecked") == [],
                  f"established block pins do not remain unchecked: {stats}")
     bad += check(stats["fuzz_params"] == 2,
@@ -559,6 +562,35 @@ def test_block_number_range_is_fuzzed_with_roll():
     bad += check(stats["fuzz_params"] == 3
                  and "block.number" in stats["lifted"],
                  f"block.number range is counted as fuzzed: {stats}")
+    return bad
+
+
+def test_block_chainid_range_is_fuzzed_with_chainId():
+    """A wide chain-id region is a bounded fuzz parameter for vm.chainId."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "block.chainid": (10, 20)},
+        holes={"block.chainid": [13]}, pins={}, params=PARAMS,
+        emitted=em, case=case, layout=LAYOUT, ladder_rows=LADDER,
+        notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"chain-id range emits instead of refusing: {notes}")
+    bad += check("uint256 p_block_chainid" in text,
+                 "wide block.chainid is in the PUT signature")
+    bad += check("p_block_chainid = bound(p_block_chainid, 10, 20);" in text,
+                 "wide block.chainid is bounded")
+    bad += check("vm.assume(p_block_chainid != 13);" in text,
+                 "block.chainid holes are preserved")
+    bad += check("    vm.chainId(p_block_chainid);" in text,
+                 "wide block.chainid drives vm.chainId")
+    bad += check(stats["fuzz_params"] == 3
+                 and "block.chainid" in stats["lifted"],
+                 f"block.chainid range is counted as fuzzed: {stats}")
     return bad
 
 
@@ -3037,6 +3069,10 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                     "expression": {"nodeType": "Identifier",
                                    "name": "block"},
                     "typeDescriptions": {"typeString": "uint256"}}
+    block_chainid = {"nodeType": "MemberAccess", "memberName": "chainid",
+                     "expression": {"nodeType": "Identifier",
+                                    "name": "block"},
+                     "typeDescriptions": {"typeString": "uint256"}}
     bal_sender = {
         "nodeType": "IndexAccess",
         "baseExpression": {"nodeType": "Identifier",
@@ -3063,6 +3099,9 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
              "stateVariable": True,
              "typeDescriptions": {"typeString": "uint256"}},
             {"nodeType": "VariableDeclaration", "id": 15, "name": "height",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "VariableDeclaration", "id": 16, "name": "chain",
              "stateVariable": True,
              "typeDescriptions": {"typeString": "uint256"}},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "pay",
@@ -3121,7 +3160,21 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                      "leftHandSide": {"nodeType": "Identifier",
                                       "referencedDeclaration": 12,
                                       "name": "total"},
-                     "rightHandSide": block_number}}]}}
+                     "rightHandSide": block_number}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "260:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 16,
+                                      "name": "chain"},
+                     "rightHandSide": block_chainid}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "280:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 12,
+                                      "name": "total"},
+                     "rightHandSide": block_chainid}}]}}
         ]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
@@ -3132,10 +3185,12 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                                    "paid": (1, 0, 32),
                                    "total": (2, 0, 32),
                                    "stamp": (4, 0, 32),
-                                   "height": (5, 0, 32)},
+                                   "height": (5, 0, 32),
+                                   "chain": (6, 0, 32)},
             [("msg.sender", "id", 20), ("msg.value", "num", None),
              ("block.timestamp", "num", None),
-             ("block.number", "num", None)],
+             ("block.number", "num", None),
+             ("block.chainid", "num", None)],
             arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
             log=lambda _msg: None)
         none, _none_evidence = source_assignment_r2_specs(
@@ -3143,7 +3198,8 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                                    "paid": (1, 0, 32),
                                    "total": (2, 0, 32),
                                    "stamp": (4, 0, 32),
-                                   "height": (5, 0, 32)},
+                                   "height": (5, 0, 32),
+                                   "chain": (6, 0, 32)},
             [], arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
             log=lambda _msg: None)
     finally:
@@ -3156,6 +3212,8 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     stamp_terms = [item["term"] for item in entries.get("stamp", {}).get(
         "equals", [])]
     height_terms = [item["term"] for item in entries.get("height", {}).get(
+        "equals", [])]
+    chain_terms = [item["term"] for item in entries.get("chain", {}).get(
         "equals", [])]
     total_deltas = entries.get("total", {}).get("deltas", [])
     bal_deltas = entries.get("bal[msg.sender]", {}).get("deltas", [])
@@ -3172,6 +3230,10 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                                    "name": "block.number"}],
                  f"height = block.number is mined as a numeric endpoint: "
                  f"{entries}")
+    bad += check(chain_terms == [{"kind": "coord",
+                                  "name": "block.chainid"}],
+                 f"chain = block.chainid is mined as a numeric endpoint: "
+                 f"{entries}")
     total_delta_terms = [item["lo"] for item in total_deltas]
     bad += check({"kind": "coord", "name": "msg.value"} in total_delta_terms,
                  f"total += msg.value is mined as a delta: {total_deltas}")
@@ -3182,6 +3244,10 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     bad += check({"kind": "coord", "name": "block.number"}
                  in total_delta_terms,
                  f"total += block.number is mined as a delta: "
+                 f"{total_deltas}")
+    bad += check({"kind": "coord", "name": "block.chainid"}
+                 in total_delta_terms,
+                 f"total += block.chainid is mined as a delta: "
                  f"{total_deltas}")
     bad += check(len(bal_deltas) == 1 and bal_deltas[0]["lo"] ==
                  {"kind": "coord", "name": "msg.value"},
@@ -3198,6 +3264,9 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     bad += check(any("height: post == block.number" in line
                      for line in evidence),
                  f"block-number provenance is recorded: {evidence}")
+    bad += check(any("chain: post == block.chainid" in line
+                     for line in evidence),
+                 f"chain-id provenance is recorded: {evidence}")
     bad += check(none == [], f"unrendered environment coords are not mined: {none}")
     return bad
 
@@ -6536,7 +6605,9 @@ def test_source_access_slots_keep_numeric_environment_keys():
              "stateVariable": True},
             {"nodeType": "VariableDeclaration", "id": 12, "name": "byHeight",
              "stateVariable": True},
-            {"nodeType": "VariableDeclaration", "id": 13, "name": "byAddr",
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "byChain",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "byAddr",
              "stateVariable": True},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
              "parameters": {"parameters": []},
@@ -6546,7 +6617,9 @@ def test_source_access_slots_keep_numeric_environment_keys():
                         "120:5:0"),
                  access(12, "byHeight", member("block", "number"),
                         "140:5:0"),
-                 access(13, "byAddr", member("block", "timestamp"),
+                 access(13, "byChain", member("block", "chainid"),
+                        "160:5:0"),
+                 access(14, "byAddr", member("block", "chainid"),
                         "160:5:0")]}}
         ]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
@@ -6560,25 +6633,28 @@ def test_source_access_slots_keep_numeric_environment_keys():
     maps = {"paid": (2, "uint256", 32, 0, "paid", None),
             "byTime": (3, "uint256", 32, 0, "byTime", None),
             "byHeight": (4, "uint256", 32, 0, "byHeight", None),
-            "byAddr": (5, "address", 32, 0, "byAddr", None)}
+            "byChain": (5, "uint256", 32, 0, "byChain", None),
+            "byAddr": (6, "address", 32, 0, "byAddr", None)}
     slots, used, skipped = source_access_slot_vars(
         accesses, maps, params=[], state_types={}, layout={})
     bad = 0
     bad += check(accesses == [
-        ("byAddr", ("block.timestamp",)),
+        ("byAddr", ("block.chainid",)),
+        ("byChain", ("block.chainid",)),
         ("byHeight", ("block.number",)),
         ("byTime", ("block.timestamp",)),
         ("paid", ("msg.value",)),
     ], f"environment keys are preserved from source: {accesses}")
     bad += check(any("state.paid[msg.value]" in line for line in evidence),
                  f"environment key evidence is recorded: {evidence}")
-    bad += check(slots == ["byHeight[block.number]",
+    bad += check(slots == ["byChain[block.chainid]",
+                           "byHeight[block.number]",
                            "byTime[block.timestamp]",
                            "paid[msg.value]"],
                  f"numeric environment keys become source slots: {slots}")
-    bad += check(used == {"byHeight", "byTime", "paid"},
+    bad += check(used == {"byChain", "byHeight", "byTime", "paid"},
                  f"accepted env slots suppress fallback maps: {used}")
-    bad += check(any("byAddr[block.timestamp]" in s
+    bad += check(any("byAddr[block.chainid]" in s
                      and "not safely renderable as `address`" in s
                      for s in skipped),
                  f"incompatible env key remains refused: {skipped}")
@@ -7485,15 +7561,17 @@ def test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints():
 
 
 def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
-    """Literal `vm.warp` / `vm.roll` preambles are observable one-point envs."""
+    """Literal block cheatcode preambles are observable one-point envs."""
     with_block = EMITTED.replace(
         "    vm.prank(address(uint160(0)));\n",
         "    vm.warp(42);\n"
         "    vm.roll(7);\n"
+        "    vm.chainId(31337);\n"
         "    vm.prank(address(uint160(0)));\n")
     terms = {
         "block.timestamp": {"kind": "coord", "name": "block.timestamp"},
         "block.number": {"kind": "coord", "name": "block.number"},
+        "block.chainid": {"kind": "coord", "name": "block.chainid"},
     }
     stamp, stamp_stats, stamp_notes = _r2_put(
         [("totalFees", "post == block.timestamp", "HOLDS")],
@@ -7502,8 +7580,12 @@ def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
         [("totalFees", "post - pre in [block.number, block.number] "
           "with post >= pre", "HOLDS")],
         r2_terms=terms, emitted_text=with_block)
+    chain, chain_stats, chain_notes = _r2_put(
+        [("totalFees", "post == block.chainid", "HOLDS")],
+        r2_terms=terms, emitted_text=with_block)
     stamp_body = "\n".join(stamp or [])
     height_body = "\n".join(height or [])
+    chain_body = "\n".join(chain or [])
     bad = 0
     bad += check(stamp is not None,
                  f"the timestamp endpoint PUT is emitted: {stamp_notes}")
@@ -7524,9 +7606,18 @@ def test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints():
                  and "block.number" not in height_stats.get("lifted", []),
                  f"observing a literal roll does not add a fuzz parameter: "
                  f"{height_stats}")
+    bad += check(chain is not None,
+                 f"the chain-id endpoint PUT is emitted: {chain_notes}")
+    bad += check("assertEq(_post_totalFees, 31337," in chain_body,
+                 "the observed chainId literal becomes the chain-id endpoint")
+    bad += check("p_block_chainid" not in chain_body
+                 and "block.chainid" not in chain_stats.get("lifted", []),
+                 f"observing a literal chainId does not add a fuzz parameter: "
+                 f"{chain_stats}")
     if bad:
         print(stamp_body)
         print(height_body)
+        print(chain_body)
     return bad
 
 
@@ -7535,12 +7626,13 @@ def test_OBSERVED_block_env_slot_keys_are_nameable():
 
     `resolve_coord` in ESBMC accepts `block.*` environment names; the PUT side
     must still wait until this emitter has an expression for the current test.
-    Literal `vm.warp` / `vm.roll` preambles provide exactly that expression.
+    Literal block cheatcode preambles provide exactly that expression.
     """
     with_block = EMITTED.replace(
         "    vm.prank(address(uint160(0)));\n",
         "    vm.warp(42);\n"
         "    vm.roll(7);\n"
+        "    vm.chainId(31337);\n"
         "    vm.prank(address(uint160(0)));\n")
     fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
     with os.fdopen(fd, "w") as out:
@@ -7553,7 +7645,8 @@ def test_OBSERVED_block_env_slot_keys_are_nameable():
     assert case is not None, "fixture: the emitted case was not found"
     notes = []
     maps = {"byTime": (7, "uint256", 32, 0, "byTime", None),
-            "byHeight": (8, "uint256", 32, 0, "byHeight", None)}
+            "byHeight": (8, "uint256", 32, 0, "byHeight", None),
+            "byChain": (9, "uint256", 32, 0, "byChain", None)}
     put, stats = build_put(
         "FeeVault", "setDiscount", 7, 2,
         "sol:@C@FeeVault@F@setDiscount#61",
@@ -7562,6 +7655,7 @@ def test_OBSERVED_block_env_slot_keys_are_nameable():
         layout=R2_LAYOUT, ladder_rows=[
             ("byTime[block.timestamp]", "post == pre", "HOLDS"),
             ("byHeight[block.number]", "post == pre", "HOLDS"),
+            ("byChain[block.chainid]", "post == pre", "HOLDS"),
         ], notes=notes, maps=maps)
     body = "\n".join(put or [])
     bad = 0
@@ -7571,9 +7665,11 @@ def test_OBSERVED_block_env_slot_keys_are_nameable():
                  "timestamp-keyed slot uses the observed warp literal")
     bad += check("keccak256(abi.encode(uint256(7), uint256(8)))" in body,
                  "block-number-keyed slot uses the observed roll literal")
-    bad += check(stats.get("state_asserts") == 2
+    bad += check("keccak256(abi.encode(uint256(31337), uint256(9)))" in body,
+                 "chain-id-keyed slot uses the observed chainId literal")
+    bad += check(stats.get("state_asserts") == 3
                  and not stats.get("oracle_skipped"),
-                 f"both block-keyed frame rungs are emitted: {stats}")
+                 f"all block-keyed frame rungs are emitted: {stats}")
     if bad:
         print(body)
     return bad
@@ -7589,6 +7685,7 @@ def test_R2_proposal_env_coords_include_observable_replay_values():
         "    vm.prank(address(uint160(0)));\n",
         "    vm.warp(42);\n"
         "    vm.roll(7);\n"
+        "    vm.chainId(31337);\n"
         "    vm.prank(address(uint160(0)));\n")
     fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
     with os.fdopen(fd, "w") as out:
@@ -7609,7 +7706,8 @@ def test_R2_proposal_env_coords_include_observable_replay_values():
     bad += check(got_block == [("msg.sender", "id", 20),
                                ("msg.value", "num", None),
                                ("block.timestamp", "num", None),
-                               ("block.number", "num", None)],
+                               ("block.number", "num", None),
+                               ("block.chainid", "num", None)],
                  f"literal block cheatcodes expose block env too: {got_block}")
     return bad
 
@@ -9307,6 +9405,7 @@ def main():
               test_block_number_point_is_established_with_roll,
               test_block_env_pins_are_established_with_cheatcodes,
               test_block_number_range_is_fuzzed_with_roll,
+              test_block_chainid_range_is_fuzzed_with_chainId,
               test_return_rung_is_bound_and_asserted,
               test_return_rung_can_assert_a_scalar_entry_state_coord,
               test_return_rung_can_assert_a_mapping_entry_state_coord,

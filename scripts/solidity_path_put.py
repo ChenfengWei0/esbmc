@@ -1480,7 +1480,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         member = n.get("memberName")
         if member in ("sender", "value"):
             base_name = "msg"
-        elif member in ("timestamp", "number"):
+        elif member in ("timestamp", "number", "chainid"):
             base_name = "block"
         else:
             return None
@@ -1636,7 +1636,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if constant is not None and constant[0].get("kind") == "literal":
             return constant
         env_name = env_coord_name(n)
-        if env_name in ("msg.value", "block.timestamp", "block.number") \
+        if env_name in ("msg.value", "block.timestamp", "block.number",
+                        "block.chainid") \
                 and env_name in rendered_numeric:
             return {"kind": "coord", "name": env_name}, env_name
         return unitless_number_term(n)
@@ -3656,7 +3657,8 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
         key_type = _norm_ty(key_type)
         if key == "msg.sender" and _norm_ty(key_type) == "address":
             return "msg.sender", None
-        if key in ("msg.value", "block.timestamp", "block.number"):
+        if key in ("msg.value", "block.timestamp", "block.number",
+                   "block.chainid"):
             if re.match(r"^uint(\d+)?$", key_type):
                 return key, None
             return None, (
@@ -4744,17 +4746,20 @@ class EmittedFile:
 ENV_PREFIXES = ("msg.", "tx.", "block.")
 # Auto-derived environment coordinates must be realizable by the emitted test.
 # msg.value remains conditional on an existing value-bearing call; the final
-# `block.timestamp` and `block.number` are also test-controlled: Foundry's
-# `vm.warp` and `vm.roll` set them before the next call frame. They must be
-# inserted before the governing `vm.prank`, because the prank is intentionally
-# kept as the last cheatcode before the target call.
+# `block.timestamp`, `block.number`, and `block.chainid` are also
+# test-controlled: Foundry's `vm.warp`, `vm.roll`, and `vm.chainId` set them
+# before the next call frame. They must be inserted before the governing
+# `vm.prank`, because the prank is intentionally kept as the last cheatcode
+# before the target call.
 ESTABLISHABLE_ENV_COORDS = frozenset(
-    ("msg.sender", "msg.value", "block.timestamp", "block.number"))
+    ("msg.sender", "msg.value", "block.timestamp", "block.number",
+     "block.chainid"))
 
 _PRANK_RE = re.compile(r"vm\.(?:start)?[Pp]rank\(")
 _VALUE_RE = re.compile(r"\{\s*value\s*:\s*([^},]+?)\s*\}")
 _WARP_RE = re.compile(r"vm\.warp\(")
 _ROLL_RE = re.compile(r"vm\.roll\(")
+_CHAINID_RE = re.compile(r"vm\.chainId\(")
 
 
 def _lit_int(expr):
@@ -4953,6 +4958,10 @@ def rendered_env_coords_for_r2(body, call_i, region):
             or observable_block_expr_for_r2(body, call_i, _ROLL_RE)
             is not None):
         out.append(("block.number", "num", None))
+    if ("block.chainid" in region
+            or observable_block_expr_for_r2(body, call_i, _CHAINID_RE)
+            is not None):
+        out.append(("block.chainid", "num", None))
     return out
 
 
@@ -5269,6 +5278,13 @@ def establish_env_block_number(body, call_i, region, holes, pins, used):
     return establish_block_env(
         body, call_i, region, holes, pins, used,
         "block.number", "vm.roll", "p_block_number")
+
+
+def establish_env_chainid(body, call_i, region, holes, pins, used):
+    """Insert `vm.chainId` so block.chainid matches the certified slice."""
+    return establish_block_env(
+        body, call_i, region, holes, pins, used,
+        "block.chainid", "vm.chainId", "p_block_chainid")
 
 
 def env_disagreements(body, call_i, call_line, region, pins, established=()):
@@ -5906,12 +5922,41 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             coord_ident["block.number"] = block_number_value
             coord_ident_abs["block.number"] = block_number_value
 
+    (body, call_i, chainid_est, chainid_sig, chainid_pre,
+     chainid_note) = establish_env_chainid(
+        body, call_i, region, holes, pins, used)
+    if chainid_est is not None:
+        env_established.append(chainid_note)
+        if chainid_sig is not None:
+            sig.append(chainid_sig)
+            pre_lines += chainid_pre
+            lifted.append("block.chainid")
+            used.add(chainid_sig[1])
+            _clo, _chi = region["block.chainid"]
+            rendered_width["block.chainid"] = (_chi - _clo + 1) - len(
+                {h for h in holes.get("block.chainid", ())
+                 if _clo <= h <= _chi})
+            coord_ident["block.chainid"] = chainid_sig[1]
+            coord_ident_abs["block.chainid"] = chainid_sig[1]
+        else:
+            chainid_value = (region["block.chainid"][0]
+                             if "block.chainid" in region
+                             else pins["block.chainid"])
+            coord_ident["block.chainid"] = str(chainid_value)
+            coord_ident_abs["block.chainid"] = coord_ident["block.chainid"]
+    elif "block.chainid" not in coord_ident:
+        chainid_value = observable_block_expr_for_r2(
+            body, call_i, _CHAINID_RE)
+        if chainid_value is not None:
+            coord_ident["block.chainid"] = chainid_value
+            coord_ident_abs["block.chainid"] = chainid_value
+
     call_line = body[call_i]
 
     env_refusals, env_unchecked = env_disagreements(
         body, call_i, call_line, region, pins,
-        established={e for e in (env_est, value_est, time_est, block_num_est)
-                     if e})
+        established={e for e in (env_est, value_est, time_est, block_num_est,
+                                 chainid_est) if e})
     if env_refusals:
         notes.append("the emitted case does not run in the certified "
                      "environment slice: " + "; ".join(env_refusals))
@@ -6107,7 +6152,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # from the raw draw.
     if env_sender_expr is not None:
         key_expr_of["msg.sender"] = env_sender_expr
-    for env_key in ("msg.value", "block.timestamp", "block.number"):
+    for env_key in ("msg.value", "block.timestamp", "block.number",
+                    "block.chainid"):
         if env_key in coord_ident:
             key_expr_of[env_key] = coord_ident[env_key]
 
