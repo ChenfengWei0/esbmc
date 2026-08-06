@@ -1451,7 +1451,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if name == RETURN_VAR or name in (layout or {}):
             return True
         mname, _keys, tail = parse_slot_name(name)
-        return bool(mname is not None and maps and mname + tail in maps)
+        return bool(mname is not None and queryable_mapping(maps, mname + tail))
 
     def add_equals_candidate(state_name, term, reason, src):
         key = (state_name, "equals", r2_term_text(term))
@@ -1662,7 +1662,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if base_name is None:
             return None
         mkey = base_name + tail
-        if mkey not in maps:
+        if not queryable_mapping(maps, mkey):
             return None
         _slot, kty, _nbytes, _off, _base, _member = maps[mkey]
         ktypes = list(kty) if isinstance(kty, tuple) else [kty]
@@ -2755,6 +2755,12 @@ def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
         # is keyed `<map>.<field>`. A scalar-valued one has member None and the
         # name is unchanged, byte for byte.
         _s, ktype, _n, _o, base, member = maps[mname]
+        if not map_esbmc_certifiable(base):
+            log(f"[put]   mapping candidate {base} skipped: ESBMC's "
+                "--path-cov-assert ladder currently resolves only "
+                "contract-scope mapping stores, not struct-contained "
+                "mapping_t fields")
+            continue
         ktypes = list(ktype) if isinstance(ktype, tuple) else [ktype]
         per_level = []
         for kt in ktypes:
@@ -3224,6 +3230,27 @@ def parse_slot_name(s):
     return m.group(1), SLOT_KEY_RE.findall(m.group(2)), m.group(3)
 
 
+ESBMC_MAP_BASE_RE = re.compile(r"^[A-Za-z_]\w*$")
+
+
+def map_esbmc_certifiable(base):
+    """Whether --path-cov-assert can resolve this mapping base today."""
+    return ESBMC_MAP_BASE_RE.match(base or "") is not None
+
+
+def map_entry_esbmc_certifiable(spec):
+    return bool(spec and len(spec) >= 5 and map_esbmc_certifiable(spec[4]))
+
+
+def queryable_mapping(maps, key):
+    return bool(maps and key in maps and map_entry_esbmc_certifiable(maps[key]))
+
+
+def esbmc_certifiable_maps(maps):
+    return {name: spec for name, spec in (maps or {}).items()
+            if map_entry_esbmc_certifiable(spec)}
+
+
 def region_slot_vars(region, maps):
     """Mapping-member coordinates already present in the certified region.
 
@@ -3240,7 +3267,7 @@ def region_slot_vars(region, maps):
         mname, _keys, tail = parse_slot_name(v)
         if mname is None:
             continue
-        if maps and mname + tail not in maps:
+        if not queryable_mapping(maps, mname + tail):
             continue
         if v not in out:
             out.append(v)
@@ -3257,7 +3284,7 @@ def assert_query_pins(pins, layout, maps):
         v = name[6:]
         mname, _keys, tail = parse_slot_name(v)
         if mname is not None:
-            if maps and mname + tail in maps:
+            if queryable_mapping(maps, mname + tail):
                 keep[name] = value
             else:
                 skipped.append(
@@ -3281,7 +3308,7 @@ def assert_query_region_entries(region, holes, layout, maps):
             v = name[6:]
             mname, _keys, tail = parse_slot_name(v)
             if mname is not None:
-                if not (maps and mname + tail in maps):
+                if not queryable_mapping(maps, mname + tail):
                     skipped.append(
                         f"{name} (not passed to --path-cov-assert: `{mname}` "
                         "is not a queryable mapping member in solc's layout)")
@@ -7031,10 +7058,17 @@ def main():
               f"read would be a GUESSED slot, and a green assertion about the "
               f"wrong slot is worse than no assertion")
         return 1
+    query_maps = esbmc_certifiable_maps(maps)
+    skipped_maps = sorted(set(maps or {}) - set(query_maps))
     print(f"[put] step 2a: storage layout — {len(layout)} readable scalar "
           f"slot(s): {', '.join(sorted(layout)) or 'none'}; "
-          f"{len(maps)} mapping(s) with a value-type key: "
-          f"{', '.join(sorted(maps)) or 'none'}")
+          f"{len(query_maps)} ESBMC-queryable mapping(s) with a value-type "
+          f"key: {', '.join(sorted(query_maps)) or 'none'}")
+    if skipped_maps:
+        print("[put]   mapping(s) present in solc layout but not sent to "
+              "--path-cov-assert yet: " + ", ".join(skipped_maps) +
+              " (struct-contained mapping_t fields need internal verifier "
+              "support before they are safe ladder variables)")
 
     # Both come from _select_def with the SAME arity, so an overload cannot be
     # resolved one way for the arguments and another way for the return value.
@@ -7085,7 +7119,7 @@ def main():
     else:
         for evidence in slot_dependency_evidence:
             print(f"[put]   {evidence}")
-        direct_slot_vars = region_slot_vars(region, maps)
+        direct_slot_vars = region_slot_vars(region, query_maps)
         if direct_slot_vars:
             print("[put]   certified-region mapping slots sent to the "
                   "assertion ladder first: " + ", ".join(direct_slot_vars))
@@ -7096,7 +7130,7 @@ def main():
             if mname is not None:
                 direct_mkeys.add(mname + tail)
         remaining_maps = {
-            name: spec for name, spec in (maps or {}).items()
+            name: spec for name, spec in (query_maps or {}).items()
             if name not in direct_mkeys
         }
         slot_vars += propose_slot_vars(
@@ -7113,9 +7147,10 @@ def main():
 
     # ---- 2b. the assertion ladder -----------------------------------------
     print("[put] step 2b: post-state assertion ladder over the certified region")
-    query_pins, skipped_query_pins = assert_query_pins(pins, layout, maps)
+    query_pins, skipped_query_pins = assert_query_pins(pins, layout,
+                                                       query_maps)
     query_region, skipped_query_region = assert_query_region_entries(
-        region, holes, layout, maps)
+        region, holes, layout, query_maps)
     for s in skipped_query_region:
         print(f"[put]   {s}")
     for s in skipped_query_pins:
@@ -7261,8 +7296,8 @@ def main():
             if _mn is None:
                 continue
             _mk = _mn + _tail
-            if maps and _mk in maps:
-                _var_bytes[_v] = maps[_mk][2]
+            if query_maps and _mk in query_maps:
+                _var_bytes[_v] = query_maps[_mk][2]
         _source_literals, _source_evidence = source_r2_literals(
             a.ast, a.contract, a.unit, arity=len(params or []),
             declaration_id=declaration_id)
@@ -7298,7 +7333,7 @@ def main():
         _r2, _source_assignment_evidence = source_assignment_r2_specs(
             a.ast, a.contract, a.unit, params, layout, _rendered_coords,
             arity=len(params or []), declaration_id=declaration_id,
-            rettypes=rettypes, maps=maps, log=print)
+            rettypes=rettypes, maps=query_maps, log=print)
         _typed_r2 = propose_r2_batch(
             rows, params, source_literals=_source_literals,
             depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,

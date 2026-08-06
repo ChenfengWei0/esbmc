@@ -4323,7 +4323,9 @@ def test_storage_layout_expands_top_level_struct_scalar_members():
 
 def test_storage_layout_expands_struct_mapping_members():
     from solidity_path_put import (  # noqa: E402
-        _storage_layout_struct_mappings, parse_slot_name, propose_slot_vars)
+        _storage_layout_struct_mappings, assert_query_pins,
+        assert_query_region_entries, esbmc_certifiable_maps, parse_slot_name,
+        propose_slot_vars, region_slot_vars)
 
     types = {
         "t_address": {"encoding": "inplace", "label": "address",
@@ -4346,9 +4348,15 @@ def test_storage_layout_expands_struct_mapping_members():
                 "type": "t_map"}]
     maps = _storage_layout_struct_mappings("vault", "7", members, types)
     parsed = parse_slot_name("vault.userDeposits[who].amount")
+    log = []
     proposed = propose_slot_vars(
         maps, [("who", "address"), ("amount", "uint256")],
-        log=lambda _msg: None)
+        log=log.append)
+    region = {"state.vault.userDeposits[who].amount": (1, 2)}
+    pins = {"state.vault.userDeposits[who].amount": 1}
+    query_region, skipped_region = assert_query_region_entries(
+        region, {}, {}, maps)
+    query_pins, skipped_pins = assert_query_pins(pins, {}, maps)
 
     bad = 0
     bad += check(maps == {
@@ -4359,16 +4367,28 @@ def test_storage_layout_expands_struct_mapping_members():
     }, f"struct-contained mapping fields are layout coords: {maps}")
     bad += check(parsed == ("vault.userDeposits", ["who"], ".amount"),
                  f"dotted mapping base is parsed without eating tail: {parsed}")
-    bad += check(proposed == ["vault.userDeposits[msg.sender].amount",
-                              "vault.userDeposits[who].amount",
-                              "vault.userDeposits[msg.sender].tag",
-                              "vault.userDeposits[who].tag"],
-                 f"struct-contained mapping fields are proposed: {proposed}")
+    bad += check(esbmc_certifiable_maps(maps) == {},
+                 f"struct-contained mappings are not ESBMC-queryable yet: "
+                 f"{esbmc_certifiable_maps(maps)}")
+    bad += check(proposed == [],
+                 f"struct-contained mapping fields are not proposed to "
+                 f"--path-cov-assert yet: {proposed}")
+    bad += check(region_slot_vars(region, maps) == [],
+                 "certified-region dotted slots are not reused before ESBMC "
+                 "can certify them")
+    bad += check(query_region == [] and query_pins == {},
+                 f"dotted mapping region/pins are not passed to "
+                 f"--path-cov-assert: {query_region}, {query_pins}")
+    bad += check(skipped_region and skipped_pins,
+                 f"dotted mapping skips are reported: {skipped_region}, "
+                 f"{skipped_pins}")
+    bad += check(any("struct-contained mapping_t fields" in line
+                     for line in log),
+                 f"skipped struct-contained mapping says why: {log}")
     return bad
 
 
-def test_source_R2_struct_mapping_members_are_state_slots():
-    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+def test_source_R2_struct_mapping_members_wait_for_ESBMC_support():
     from solidity_path_put import source_assignment_r2_specs  # noqa: E402
 
     def ident(ref, name, ty="uint256"):
@@ -4452,30 +4472,16 @@ def test_source_R2_struct_mapping_members_are_state_slots():
     finally:
         os.unlink(path)
 
-    def entries(specs):
-        return {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
-
-    def equals(specs, name):
-        return [r2_term_text(item["term"])
-                for item in entries(specs).get(name, {}).get("equals", [])]
-
-    coord = "vault.userDeposits[who].amount"
     bad = 0
-    bad += check(equals(direct_specs, coord) == ["amount"],
-                 f"direct struct mapping field assignment is mined: "
-                 f"{direct_specs}")
-    bad += check(equals(direct_specs, RETURN_VAR) == ["state." + coord],
-                 f"direct struct mapping field return is mined: {direct_specs}")
-    bad += check(equals(alias_specs, coord) == ["amount"],
-                 f"storage alias to struct mapping field is mined: "
-                 f"{alias_specs}")
-    bad += check(equals(alias_specs, RETURN_VAR) == ["state." + coord],
-                 f"storage alias return preserves struct mapping coord: "
-                 f"{alias_specs}")
-    bad += check(any(coord + ": post == amount" in line
-                     for line in direct_evidence + alias_evidence),
-                 f"struct mapping provenance is recorded: "
-                 f"{direct_evidence + alias_evidence}")
+    bad += check(direct_specs == [],
+                 f"direct struct mapping field is not proposed before ESBMC "
+                 f"can certify mapping_t fields: {direct_specs}")
+    bad += check(alias_specs == [],
+                 f"storage alias to struct mapping field is not proposed "
+                 f"before ESBMC can certify mapping_t fields: {alias_specs}")
+    bad += check(direct_evidence == [] and alias_evidence == [],
+                 f"no source-R2 provenance is claimed for unqueryable "
+                 f"struct mappings: {direct_evidence + alias_evidence}")
     return bad
 
 
@@ -7293,7 +7299,7 @@ def main():
               test_source_R2_mapping_getter_returns_named_entry_slot_coord,
               test_storage_layout_expands_top_level_struct_scalar_members,
               test_storage_layout_expands_struct_mapping_members,
-              test_source_R2_struct_mapping_members_are_state_slots,
+              test_source_R2_struct_mapping_members_wait_for_ESBMC_support,
               test_source_R2_top_level_struct_members_are_state_coords,
               test_source_R2_storage_local_aliases_resolve_to_state_coords,
               test_source_R2_storage_mapping_aliases_preserve_later_indices,

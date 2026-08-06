@@ -72,6 +72,55 @@ Important caveat found immediately afterward:
   ladder run confirms that `state.vault.userDeposits[who].amount` is accepted
   and produces judged rows.
 
+## 2026-08-06 struct-contained mapping fail-closed guard
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- Reading `src/goto-programs/goto_coverage.cpp` showed the
+  `--path-cov-assert` slot ladder resolves mapping slots through
+  `store_syms`, which is built from contract-scope globals named under
+  `sol:@C@<Contract>@...`.
+- Reading Solidity frontend mapping code showed struct-internal mappings are
+  initialized as `mapping_t` fields backed by `_ESBMC_inf_<path>` globals, not
+  as a contract-scope store naturally named `vault.userDeposits`.
+- Therefore the previous external naming/layout support for
+  `vault.userDeposits[who].amount` is useful renderer groundwork but must not
+  be sent to ESBMC's current ladder as a certifiable candidate.
+
+Code change:
+
+- Added `map_esbmc_certifiable()`, `queryable_mapping()`, and
+  `esbmc_certifiable_maps()` in `scripts/solidity_path_put.py`.
+- The main PUT flow now derives `query_maps` from full solc `maps` and uses
+  `query_maps` for:
+  - certified-region slot reuse,
+  - dependency-driven slot proposals,
+  - region and pin entries passed to `--path-cov-assert`,
+  - R2 variable width lookup,
+  - source-assignment R2 mining.
+- `storage_layout()` can still identify dotted mapping bases, and
+  `parse_slot_name()` can still parse them, but `propose_slot_vars()` now
+  skips them with an explicit message until ESBMC gains internal `mapping_t`
+  ladder support.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 175/175 tests.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed before this note update.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 enum mapping-key source-R2
 
 Scope and constraint:
