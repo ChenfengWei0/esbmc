@@ -8,6 +8,43 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 nested mapping storage alias source-R2
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- The storage-alias source-R2 support covered `Bal storage row = bal[who]`;
+  `row.amount` then resolved to `bal[who].amount`.
+- A related nested-mapping idiom still needed a key-preservation rule:
+  `mapping(address => uint256) storage inner = two[token]; inner[who] = amount`.
+- Expanding only the alias base would lose the later `who` index. The correct
+  coordinate is `two[token][who]`.
+
+Code change:
+
+- When `slot_lhs()` expands a local storage alias, it now reapplies the
+  original expression's remaining `IndexAccess` nodes after the alias base and
+  before any member tail.
+- This makes source-R2 mining work for nested mapping storage aliases while
+  retaining the prior struct-field alias behavior.
+- The new synthetic AST test checks both setter and return candidates:
+  `two[token][who]: post == amount` and
+  `return == state.two[token][who]`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  172/172 tests.
+- No POC ESBMC attempt was consumed.
+
 ## 2026-08-06 storage local alias source-R2
 
 Scope and constraint:

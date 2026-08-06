@@ -1628,6 +1628,13 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             expanded = alias
             final_ty = _norm_ty((n.get("typeDescriptions") or {}).get(
                 "typeString") or "")
+            for key in reversed(keys):
+                expanded = {
+                    "nodeType": "IndexAccess",
+                    "baseExpression": expanded,
+                    "indexExpression": key,
+                    "typeDescriptions": {"typeString": final_ty},
+                }
             members = tail.lstrip(".").split(".") if tail else []
             for member in members:
                 expanded = {

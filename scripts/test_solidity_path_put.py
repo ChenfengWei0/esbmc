@@ -4523,6 +4523,103 @@ def test_source_R2_storage_local_aliases_resolve_to_state_coords():
     return bad
 
 
+def test_source_R2_storage_mapping_aliases_preserve_later_indices():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def index_expr(base, key, ty="uint256"):
+        return {"nodeType": "IndexAccess",
+                "baseExpression": base,
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    def local_decl(ref, name, ty, value):
+        return {"nodeType": "VariableDeclarationStatement",
+                "declarations": [{
+                    "nodeType": "VariableDeclaration", "id": ref,
+                    "name": name, "storageLocation": "storage",
+                    "typeDescriptions": {"typeString": ty}}],
+                "initialValue": value}
+
+    def assign(lhs, rhs, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=", "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    token_param = {"id": 21, "name": "token",
+                   "typeDescriptions": {"typeString": "address"}}
+    who_param = {"id": 22, "name": "who",
+                 "typeDescriptions": {"typeString": "address"}}
+    amount_param = {"id": 23, "name": "amount",
+                    "typeDescriptions": {"typeString": "uint256"}}
+    inner_init = index_expr(
+        ident(10, "two",
+              "mapping(address => mapping(address => uint256))"),
+        ident(21, "token", "address"),
+        "mapping(address => uint256) storage ref")
+    inner_who = index_expr(
+        ident(30, "inner", "mapping(address => uint256) storage pointer"),
+        ident(22, "who", "address"))
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "two",
+             "stateVariable": True,
+             "typeDescriptions": {
+                 "typeString":
+                 "mapping(address => mapping(address => uint256))"}},
+            {"nodeType": "FunctionDefinition", "id": 20,
+             "name": "nestedAlias",
+             "parameters": {"parameters": [
+                 token_param, who_param, amount_param]},
+             "returnParameters": {"parameters": [{
+                 "id": 24, "name": "",
+                 "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 local_decl(30, "inner",
+                            "mapping(address => uint256) storage pointer",
+                            inner_init),
+                 assign(inner_who, ident(23, "amount"), "100:10:0"),
+                 {"nodeType": "Return", "src": "120:10:0",
+                  "expression": inner_who}]}}
+        ]}]}
+    maps = {"two": (9, ("address", "address"), 32, 0, "two", None)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out_file:
+        json.dump(ast, out_file)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "nestedAlias",
+            [("token", "address"), ("who", "address"),
+             ("amount", "uint256")], {}, [("token", "id", 20),
+                                           ("who", "id", 20),
+                                           ("amount", "num", None)],
+            arity=3, maps=maps, rettypes=[("", "uint256")],
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    slot_terms = [r2_term_text(item["term"])
+                  for item in entries.get("two[token][who]", {}).get(
+                      "equals", [])]
+    ret_terms = [r2_term_text(item["term"])
+                 for item in entries.get(RETURN_VAR, {}).get("equals", [])]
+    bad = 0
+    bad += check(slot_terms == ["amount"],
+                 f"mapping storage alias preserves the later key: {specs}")
+    bad += check(ret_terms == ["state.two[token][who]"],
+                 f"mapping storage alias return names both keys: {specs}")
+    bad += check(any("two[token][who]: post == amount" in line
+                     for line in evidence),
+                 f"mapping alias provenance is recorded: {evidence}")
+    return bad
+
+
 def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     from solidity_path_put import r2_terms_from_specs, rung_assertions  # noqa: E402
     specs = [{"vars": [{"name": "ready", "equals": [{
@@ -6957,6 +7054,7 @@ def main():
               test_storage_layout_expands_top_level_struct_scalar_members,
               test_source_R2_top_level_struct_members_are_state_coords,
               test_source_R2_storage_local_aliases_resolve_to_state_coords,
+              test_source_R2_storage_mapping_aliases_preserve_later_indices,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
               test_source_R2_merge_preserves_the_candidate_budget,
