@@ -7394,6 +7394,54 @@ Verification:
   passed: 191/191 tests.
 - `git diff --check` passed.
 
+## 2026-08-06 Helper/modifier actuals for source mapping slots
+
+Scope:
+
+- This is another source-resolved slot priority improvement for the external
+  VeriPUT generator. It is not POC-specific and does not special-case any
+  dataset contract.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `unit_mapping_slot_accesses` now carries a small source alias environment
+  across helper-function calls and modifier invocations. Formal parameters in
+  the callee are substituted with the caller actuals before naming mapping
+  slots.
+- The traversal key is now `(callable id, alias fingerprint)` rather than just
+  callable id, so the same helper can contribute different slots for different
+  callers or different actual arguments.
+- Local declaration aliases are preserved in source order and passed through
+  helper calls, while assignments invalidate stale aliases. This lets cases
+  such as `address sender = msg.sender; touchOne(sender)` still resolve to
+  `bal[msg.sender]`.
+- Callable edges are only taken from real call/modifier invocation nodes. Bare
+  child identifiers that reference a function/modifier no longer enqueue a
+  duplicate no-argument visit that would leak unresolved formals like `who` or
+  `auth` into the slot set.
+
+Why it matters:
+
+- Earlier source slot priority worked well for direct accesses in the target
+  function, but missed or weakened many real Solidity patterns where a public
+  unit delegates storage reads/writes through small helpers or modifier guards.
+  This change strengthens R1/R2 candidates before any expensive ESBMC proof
+  attempt by asking for semantic slots like `bal[to]`, `bal[state.owner]`, or
+  `bal[msg.sender]` instead of falling back to broad guessed mapping keys.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 204/204 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 State-keyed mapping ladder candidates
 
 Scope:

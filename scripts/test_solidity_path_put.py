@@ -6720,6 +6720,8 @@ def test_source_access_slots_resolve_local_key_aliases_in_order():
              "stateVariable": True},
             {"nodeType": "VariableDeclaration", "id": 11, "name": "owner",
              "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "admin",
+             "stateVariable": True},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
              "parameters": {"parameters": []},
              "body": {"nodeType": "Block", "statements": [
@@ -6760,6 +6762,103 @@ def test_source_access_slots_resolve_local_key_aliases_in_order():
                  f"accepted alias slots suppress fallback: {used}")
     bad += check(any("source key `who`" in s for s in skipped),
                  f"the reassigned alias is not used stale: {skipped}")
+    return bad
+
+
+def test_source_access_slots_substitute_helper_and_modifier_actuals():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "name": name,
+                "referencedDeclaration": ref}
+
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"}}
+
+    def local_decl(ref, name, init):
+        return {"nodeType": "VariableDeclarationStatement",
+                "declarations": [{"nodeType": "VariableDeclaration",
+                                  "id": ref, "name": name}],
+                "initialValue": init}
+
+    def access(key, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "IndexAccess", "src": src,
+            "baseExpression": ident(10, "bal"),
+            "indexExpression": key}}
+
+    def helper_call(arg, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "FunctionCall", "src": src,
+            "expression": ident(30, "touchOne"), "arguments": [arg]}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "bal",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "owner",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "admin",
+             "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 30, "name": "touchOne",
+             "parameters": {"parameters": [
+                 {"nodeType": "VariableDeclaration", "id": 31,
+                  "name": "who"}]},
+             "body": {"nodeType": "Block", "statements": [
+                 access(ident(31, "who"), "300:5:0")]}},
+            {"nodeType": "ModifierDefinition", "id": 40, "name": "guard",
+             "parameters": {"parameters": [
+                 {"nodeType": "VariableDeclaration", "id": 41,
+                  "name": "auth"}]},
+             "body": {"nodeType": "Block", "statements": [
+                 access(ident(41, "auth"), "400:5:0"),
+                 {"nodeType": "PlaceholderStatement"}]}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": [
+                 {"nodeType": "VariableDeclaration", "id": 21,
+                  "name": "to"}]},
+             "modifiers": [{
+                 "nodeType": "ModifierInvocation",
+                 "modifierName": ident(40, "guard"),
+                 "arguments": [ident(12, "admin")]}],
+             "body": {"nodeType": "Block", "statements": [
+                 helper_call(ident(21, "to"), "100:5:0"),
+                 helper_call(ident(11, "owner"), "120:5:0"),
+                 local_decl(50, "sender", msg_sender),
+                 helper_call(ident(50, "sender"), "140:5:0")]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "touch", declaration_id=20)
+    finally:
+        os.unlink(path)
+    slots, used, skipped = source_access_slot_vars(
+        accesses, {"bal": (2, "address", 32, 0, "bal", None)},
+        params=[("to", "address")],
+        state_types={"admin": "address", "owner": "address"},
+        layout={"admin": (0, 0, 20), "owner": (1, 0, 20)})
+    bad = 0
+    bad += check(accesses == [
+        ("bal", ("msg.sender",)),
+        ("bal", ("state.admin",)),
+        ("bal", ("state.owner",)),
+        ("bal", ("to",)),
+    ], f"helper/modifier formals are substituted with caller actuals: "
+        f"{accesses}")
+    bad += check(any("modifier guard#40" in line and "state.bal[state.admin]" in line
+                     for line in evidence),
+                 f"modifier actual substitution is visible in evidence: "
+                 f"{evidence}")
+    bad += check(slots == ["bal[msg.sender]", "bal[state.admin]",
+                           "bal[state.owner]", "bal[to]"],
+                 f"substituted helper/modifier slots are renderable: {slots}")
+    bad += check(used == {"bal"} and skipped == [],
+                 f"all substituted slots are accepted: {used}, {skipped}")
     return bad
 
 
@@ -9014,6 +9113,7 @@ def main():
               test_source_access_slots_keep_safe_literal_keys,
               test_source_access_slots_fold_safe_constant_keys,
               test_source_access_slots_resolve_local_key_aliases_in_order,
+              test_source_access_slots_substitute_helper_and_modifier_actuals,
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,

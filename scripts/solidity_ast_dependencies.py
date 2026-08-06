@@ -310,14 +310,16 @@ def unit_mapping_slot_accesses(
         kind = ("modifier" if node.get("nodeType") == "ModifierDefinition" else "function")
         return f"{kind} {node.get('name') or '<anonymous>'}#{node.get('id')}"
 
-    def visit(node, depth, chain):
+    def visit(node, depth, chain, initial_aliases=None):
         node_id = node.get("id")
-        old_depth = best_callable_depth.get(node_id)
+        alias_fingerprint = json.dumps(initial_aliases or {}, sort_keys=True)
+        call_key = (node_id, alias_fingerprint)
+        old_depth = best_callable_depth.get(call_key)
         if old_depth is not None and old_depth <= depth:
             return
-        best_callable_depth[node_id] = depth
+        best_callable_depth[call_key] = depth
         next_calls = []
-        alias_by_id = {}
+        alias_by_id = dict(initial_aliases or {})
 
         def declaration_ref(declaration):
             if not isinstance(declaration, dict):
@@ -330,6 +332,32 @@ def unit_mapping_slot_accesses(
                 return None
             ref = expr.get("referencedDeclaration")
             return ref if isinstance(ref, int) else None
+
+        def call_aliases(callee, arguments):
+            formals = ((callee.get("parameters") or {}).get("parameters")
+                       or [])
+            actuals = arguments or []
+            if len(formals) != len(actuals):
+                return {}
+            out = dict(alias_by_id)
+            for formal, actual in zip(formals, actuals):
+                ref = declaration_ref(formal)
+                if ref is not None:
+                    out[ref] = actual
+            return out
+
+        def callable_ref(value):
+            if value.get("nodeType") == "FunctionCall":
+                expr = value.get("expression") or {}
+                ref = expr.get("referencedDeclaration")
+                if ref in callables and ref != node_id:
+                    return ref
+            for key in ("modifierName", "modifierNamePath"):
+                expr = value.get(key) or {}
+                ref = expr.get("referencedDeclaration")
+                if ref in callables and ref != node_id:
+                    return ref
+            return None
 
         def scan(value):
             if isinstance(value, dict):
@@ -372,9 +400,11 @@ def unit_mapping_slot_accesses(
                     if ref in alias_by_id:
                         del alias_by_id[ref]
                     return
-                ref = value.get("referencedDeclaration")
-                if ref in callables and ref != node_id:
-                    next_calls.append(callables[ref])
+                ref = callable_ref(value)
+                if ref is not None:
+                    next_calls.append(
+                        (callables[ref], call_aliases(
+                            callables[ref], value.get("arguments") or [])))
                 for child in value.values():
                     scan(child)
             elif isinstance(value, list):
@@ -383,8 +413,8 @@ def unit_mapping_slot_accesses(
 
         scan(node.get("modifiers") or [])
         scan(node.get("body"))
-        for callee in next_calls:
-            visit(callee, depth + 1, chain + [label(callee)])
+        for callee, aliases in next_calls:
+            visit(callee, depth + 1, chain + [label(callee)], aliases)
 
     for target in targets:
         visit(target, 0, [label(target)])
