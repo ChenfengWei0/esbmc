@@ -7584,3 +7584,63 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 196/196 tests.
 - `git diff --check` passed.
+
+## 2026-08-06 Read-only benchmark and recipe resync
+
+Scope and constraint:
+
+- `/home/samson/workspace/VeriPUT/Datasets` was inspected read-only only.
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. No solc, Forge, fuzz, or benchmark
+  certification run was launched.
+
+Current recipe state:
+
+- `notes/coverage/scripts/poc_one.py` is now a three-stage official POC entry:
+  stage 1 pathcov, stage 2 certification, stage 3 PUT/Foundry.
+- The POC attempt ladder matches the current user budget:
+  attempt 1 = 60s/8 GiB, attempt 2 = 120s/8 GiB, attempt 3 = 600s/10 GiB.
+- `veriput_recipe.py` currently names `STRONG_RECIPE_VERSION =
+  veriput-strong/7`.
+- The strong certification recipe enables one job, explicit probes/refinement,
+  level0 + perturb, witness probes, probe ladder with budget, skip-bracket,
+  disagreed env coords, agreed-state pins, state struct fields, and slot coords.
+- The strong PUT recipe enables auto-unwind 1, typed/source R2 depth 1,
+  R2 term/candidate budgets, and the one-sided Forge R2 prefilter. Forge
+  prefilter evidence still only refutes; every survivor still goes to ESBMC.
+
+Read-only Peer contract080 census:
+
+- The Peer dataset has 182 upgraded `contracts_080/*.sol` files on disk, not
+  183. This matches the user note that one peer contract is not upgraded and
+  should be ignored.
+- Approximate source-feature counts over those 182 files:
+  - `msg.sender`: 119
+  - mapping: 103
+  - nested mapping: 72
+  - payable/value-moving shape: 60 payable functions, 52 send/transfer uses
+  - `block.timestamp` / `now`: 48
+  - `msg.value`: 37
+  - dynamic arrays: 57
+  - modifiers: 69
+  - inheritance: 71
+  - SafeMath-style calls: 44
+  - low-level `.call`: 7
+  - `tx.origin`: 2
+
+Interpretation:
+
+- The real peer workload is strongly caller/value/mapping dominated, so recent
+  fixes around `msg.sender`, `msg.value`, block time/number, nested mappings,
+  struct mapping members, SafeMath-style source-R2, and helper/modifier mining
+  are aligned with the expected benchmark, not POC overfitting.
+- Dynamic arrays are common but remain a separate storage-addressing problem:
+  solc reports dynamic arrays as non-`inplace`, while the current PUT R1/R2
+  renderer reads scalar storage words and mapping slots. Treating dynamic array
+  storage as an ordinary slot would be unsound; this should not be a quick
+  renderer patch.
+- Structured R2 arithmetic should not be casually changed to unchecked or
+  wraparound semantics. For checked Solidity paths, path feasibility usually
+  supplies definedness; for `unchecked`/wrap-return cases the right fix is
+  same-query definedness or an explicitly modelled unchecked candidate class.
