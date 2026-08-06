@@ -308,6 +308,21 @@ def add_unit_summaries(row: dict) -> None:
         "certified_paths": sorted(certified_paths),
         "not_certified_paths": sorted(not_certified_paths),
     }
+    certified_count = len(certified_paths)
+    strong_count = row["put_summary"]["strong_shape"]
+    if not certs:
+        status = "no-certification-row"
+    elif certified_count == 0:
+        status = "no-certified-paths"
+    elif not row["puts"]:
+        status = "certified-no-put"
+    elif strong_count == 0:
+        status = "no-strong-put"
+    elif strong_count < certified_count:
+        status = "partial-strong-put"
+    else:
+        status = "ready-strong"
+    row["ground_truth_status"] = status
 
 
 def build_inventory(args) -> dict:
@@ -357,6 +372,7 @@ def build_inventory(args) -> dict:
 
     filtered_units = [row for row in unit_rows if unit_matches_filters(row, args)]
     filtered_puts = [put for row in filtered_units for put in row["puts"]]
+    status_counts = Counter(row["ground_truth_status"] for row in filtered_units)
 
     return {
         "schema": "veriput-poc-ground-truth/v1",
@@ -389,6 +405,7 @@ def build_inventory(args) -> dict:
             "filtered_out_unit_rows": len(unit_rows) - len(filtered_units),
             "filtered_put_rows": len(filtered_puts),
             "strong_shape_puts": sum(1 for p in filtered_puts if p.get("strong_shape")),
+            "unit_status": dict(sorted(status_counts.items())),
             "bad_cert_jsonl_lines": bad_cert_lines,
             "bad_put_docs": bad_put_docs,
         },
@@ -405,6 +422,8 @@ def print_text(doc: dict, limit: int) -> None:
                 "filtered_out_unit_rows", "strong_shape_puts",
                 "bad_cert_jsonl_lines", "bad_put_docs"):
         print(f"  {key:<24} {summary.get(key)}")
+    if summary.get("unit_status"):
+        print(f"  {'unit_status':<24} {summary.get('unit_status')}")
     print()
     for row in doc["units"][:limit or None]:
         certs = row.get("certifications") or []
@@ -412,6 +431,7 @@ def print_text(doc: dict, limit: int) -> None:
         source = row.get("source") or {}
         expected = source.get("expected_blocks") or []
         print(f"{row.get('contract')}.{row.get('unit')}")
+        print(f"  status                 {row.get('ground_truth_status')}")
         print(f"  cert rows              {len(certs)}")
         print(f"  PUTs                   {len(puts)}")
         print(f"  strong-shape PUTs      {row['put_summary']['strong_shape']}")

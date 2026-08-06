@@ -744,7 +744,10 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   least one non-point region coordinate). It also reports weak PUT reasons:
   `no-fuzz-params`, `no-oracle`, and `no-wide-region`. Use `--only
   Contract.unit`, `--contract`, `--unit`, or `--poc` to narrow the table before
-  a scarce POC run. It never invokes solc, Forge, fuzzing, ESBMC, or PUT
+  a scarce POC run. Each unit also receives a conservative
+  `ground_truth_status`: `no-certification-row`, `no-certified-paths`,
+  `certified-no-put`, `no-strong-put`, `partial-strong-put`, or
+  `ready-strong`. It never invokes solc, Forge, fuzzing, ESBMC, or PUT
   emission, and writes only when `--out` is explicitly passed.
 - `unit_campaign_plan.py`: read-only controller for the agreed per-unit
   certification gradient: attempt 1 is 60s/8GiB, attempt 2 is 120s/8GiB,
@@ -945,11 +948,13 @@ Interpretation:
 - Read-only filtered `poc_ground_truth.py --only Aqua.rawBalances --limit 1`
   smoke on 2026-08-06 reported one matched unit out of 171, four existing
   `put.json` rows, three `strong_shape` PUTs, and one weak PUT whose reason was
-  `no-oracle`. Filtered `--contract P05_Hole --unit pick` reported one matched
-  unit, three existing PUTs, all three `strong_shape`, and surfaced the source
-  `EXPECTED` block about rendering `x in [lo, hi] \ {42}` with
-  `vm.assume(x != 42)`. Both smokes were read-only and did not invoke
-  solc/Forge/fuzz/ESBMC.
+  `no-oracle`; its unit status is `ready-strong`. Filtered `--only Aqua.dock`
+  reported one matched unit, four PUTs, zero `strong_shape` PUTs, weak reasons
+  `{"no-oracle": 4}`, and unit status `no-strong-put`. Filtered
+  `--contract P05_Hole --unit pick` reported one matched unit, three existing
+  PUTs, all three `strong_shape`, and surfaced the source `EXPECTED` block
+  about rendering `x in [lo, hi] \ {42}` with `vm.assume(x != 42)`. All smokes
+  were read-only and did not invoke solc/Forge/fuzz/ESBMC.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 

@@ -104,11 +104,15 @@ def test_inventory_reads_sources_cert_and_puts_without_execution():
                      and doc["summary"]["put_rows"] == 1
                      and doc["summary"]["strong_shape_puts"] == 1,
                      f"artefact rows are counted: {doc['summary']}")
+        bad += check(doc["summary"]["unit_status"] == {"ready-strong": 1},
+                     f"unit status bucket is counted: {doc['summary']}")
         unit = doc["units"][0]
         bad += check(unit["contract"] == "P01"
                      and unit["unit"] == "set"
                      and unit["certifications"][0]["certified_paths"] == ["6"],
                      f"certification row is attached to source contract: {unit}")
+        bad += check(unit["ground_truth_status"] == "ready-strong",
+                     f"unit is classified as ready-strong: {unit}")
         bad += check(unit["source"]["expected_blocks"][0]["text"][0]
                      == "EXPECTED: x generalises to [1, 9].",
                      f"EXPECTED block is extracted: {unit['source']['expected_blocks']}")
@@ -164,6 +168,9 @@ def test_inventory_filters_and_reports_weak_reasons():
         }, f"weak PUT reasons are bucketed: {unit['put_summary']}")
         bad += check(unit["put_summary"]["strong_shape"] == 1,
                      f"strong PUTs stay counted separately: {unit['put_summary']}")
+        bad += check(doc["summary"]["unit_status"] == {"ready-strong": 1}
+                     and unit["ground_truth_status"] == "ready-strong",
+                     f"weak extra PUT does not hide ready strong coverage: {unit}")
         args.only = ["P01.missing"]
         empty = poc_ground_truth.build_inventory(args)
         bad += check(empty["summary"]["unit_rows"] == 0
