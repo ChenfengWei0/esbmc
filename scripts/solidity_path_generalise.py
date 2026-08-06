@@ -1121,6 +1121,90 @@ def _nondet_decision_splits(decisions_a, decisions_b):
     return out
 
 
+UNCONTROLLED_DECISION_TOKENS = (
+    "__esbmc_hash_result",
+    "NONDET(",
+    "extcall.",
+)
+
+
+def _decision_has_uncontrolled_source(decisions):
+    for d in decisions or []:
+        claim = d.get("branch_claim") or ""
+        if any(tok in claim for tok in UNCONTROLLED_DECISION_TOKENS):
+            return True
+    return False
+
+
+def _decision_reads_free_coord(decision, ce, pins, coords, constants=None):
+    rel = _decision_relation((decision or {}).get("branch_claim"))
+    if rel is None:
+        return False
+    lhs, _op, rhs = rel
+    coord_set = set(coords or [])
+    for term in (lhs, rhs):
+        got = _decision_term(term, ce, pins, constants)
+        if got and got[0] == "coord" and got[1] in coord_set:
+            return True
+    return False
+
+
+def uncontrolled_decision_splits(paths, path_decisions, coords, pins,
+                                  constants=None):
+    """Sibling paths split only by a known untestable/nondet decision source.
+
+    This is a refutation-only filter. It never proves a PUT region; it only
+    avoids spending ESBMC certification budget on path pairs whose separating
+    decision is not a generated-test-settable coordinate. The direct trigger is
+    an ESBMC hash/nondet/extcall marker in the pair's decision context. The
+    differing decision itself must not read a free coordinate, so ordinary input
+    guards such as `amount > 9000` still go through normal region search.
+    """
+    failed = {}
+    by_enc = {enc: (depth, ce) for enc, depth, ce in paths}
+    encs = sorted(by_enc)
+    for i, enc_a in enumerate(encs):
+        _depth_a, ce_a = by_enc[enc_a]
+        dec_a = path_decisions.get(enc_a) or []
+        by_key = {(d.get("index"), d.get("function"), d.get("line")): d
+                  for d in dec_a}
+        for enc_b in encs[i + 1:]:
+            _depth_b, ce_b = by_enc[enc_b]
+            dec_b = path_decisions.get(enc_b) or []
+            if not (_decision_has_uncontrolled_source(dec_a) or
+                    _decision_has_uncontrolled_source(dec_b)):
+                continue
+            evidence = []
+            for d in dec_b:
+                key = (d.get("index"), d.get("function"), d.get("line"))
+                other = by_key.get(key)
+                if other is None or other.get("arm") == d.get("arm"):
+                    continue
+                if (_decision_reads_free_coord(d, ce_b, pins, coords,
+                                               constants) or
+                        _decision_reads_free_coord(other, ce_a, pins, coords,
+                                                   constants)):
+                    continue
+                claim = d.get("branch_claim") or other.get("branch_claim") or ""
+                evidence.append(
+                    f"decision#{d.get('index')} {claim}")
+            if not evidence:
+                continue
+            reason = (
+                "STATICALLY INSEPARABLE: this path has a witnessed sibling "
+                "whose source-level split is driven by an ESBMC hash/nondet/"
+                "external-call decision rather than by a generated-test-"
+                "settable coordinate (" + "; ".join(evidence) + "). This is "
+                "a refutation-only attribution: no PUT region is certified, "
+                "and no ESBMC region/certification query is started for this "
+                "path pair because a product region over the available "
+                "coordinates cannot force one value of that uncontrolled "
+                "decision while excluding the other.")
+            failed.setdefault(enc_a, reason)
+            failed.setdefault(enc_b, reason)
+    return failed
+
+
 def extcall_inseparable_failures(paths, path_extras, path_decisions=None):
     """Paths that no generated-test coordinate region can separate.
 
@@ -4772,6 +4856,8 @@ def run_config(args, scope_label):
         "pin_extcall": bool(arg_value(args, "pin_extcall", False)),
         "static_extcall_inseparable": bool(
             arg_value(args, "static_extcall_inseparable", False)),
+        "static_uncontrolled_inseparable": bool(
+            arg_value(args, "static_uncontrolled_inseparable", False)),
         "esbmc_args": list(arg_value(args, "esbmc_arg", []) or []),
         "state_struct_fields": bool(
             arg_value(args, "state_struct_fields", False)),
@@ -5329,6 +5415,14 @@ def main():
                          "realise the extcall behavior; the official gate-cell "
                          "POC recipe enables it because that cell has no such "
                          "fixture.")
+    ap.add_argument("--static-uncontrolled-inseparable", action="store_true",
+                    help="before region search, mark witnessed sibling paths "
+                         "whose differing source decision is driven by a known "
+                         "uncontrolled ESBMC hash/nondet/extcall source and "
+                         "does not read a free generated-test coordinate as "
+                         "NOT_CERTIFIED. Refutation-only: this never proves a "
+                         "PUT region, it only avoids spending refine/certify "
+                         "budget on a split a product region cannot force.")
     ap.add_argument("--esbmc-arg", action="append", default=[], metavar="ARG",
                     help="pass one extra argument straight to EVERY ESBMC "
                          "invocation this driver makes -- enumeration, every "
@@ -5925,9 +6019,14 @@ def main():
     def query_pins():
         return {n: v for n, v in pins.items() if n not in nonquery_pins}
 
-    pre_failed = (extcall_inseparable_failures(paths, path_extras,
-                                              path_decisions)
-                  if args.static_extcall_inseparable else {})
+    pre_failed = {}
+    if args.static_extcall_inseparable:
+        pre_failed.update(
+            extcall_inseparable_failures(paths, path_extras, path_decisions))
+    if args.static_uncontrolled_inseparable:
+        pre_failed.update(
+            uncontrolled_decision_splits(paths, path_decisions, coords, pins,
+                                         constants=constants))
     if pre_failed:
         pairs = []
         encs = [enc for enc, _, _ in paths]
@@ -5945,7 +6044,8 @@ def main():
                         if pa.get(n, _MISSING) != pb.get(n, _MISSING)]
                 if diff and all(n.startswith("extcall.") for n in diff):
                     pairs.append(f"{enc_a}/{enc_b} on {', '.join(diff)}")
-        print("[inseparable] " + "; ".join(pairs)
+        print("[inseparable] " + ("; ".join(pairs) if pairs else
+                                  "static uncontrolled decision split")
               + ". These path(s) are removed from region search and recorded "
                 "as NOT_CERTIFIED with a method-level attribution; this is a "
                 "refutation-only filter, not a proof.")
@@ -5953,8 +6053,8 @@ def main():
 
     if not paths:
         print("[inseparable] every witnessed path was attributed to an "
-              "uncontrolled external-call split; no ESBMC region query is "
-              "started for this unit.")
+              "uncontrolled split; no ESBMC region query is started for this "
+              "unit.")
         args.level0 = False
         args.probe_witnesses = 0
         args.probe_ladder = False
@@ -7434,8 +7534,13 @@ def main():
                   f"they are pairwise disjoint (checked above)")
     for enc, why in sorted(failed.items()):
         if enc in pre_failed:
-            suffix = ("; no concrete counterexample test is emitted without a "
-                      "deterministic external-call fixture")
+            if "external-call" in why:
+                suffix = ("; no concrete counterexample test is emitted "
+                          "without a deterministic external-call fixture")
+            else:
+                suffix = ("; no concrete counterexample test is emitted "
+                          "without a deterministic fixture for the "
+                          "uncontrolled decision source")
         else:
             suffix = "; this path falls back to its concrete counterexample test"
         print(f"  enc={enc}: NOT CERTIFIED — {why}{suffix}")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Versioned VeriPUT recipe fragments shared by POC and benchmark runners."""
 
-STRONG_RECIPE_VERSION = "veriput-strong/8"
+STRONG_RECIPE_VERSION = "veriput-strong/9"
 STRONG_PROBE_WITNESSES = 8
 STRONG_PUT_AUTO_UNWIND = 1
 STRONG_PUT_R2_DEPTH = 1
@@ -32,6 +32,7 @@ STRONG_CERTIFY_ARGS = [
     "--cut-policy", "spec",
     "--state-struct-fields",
     "--slot-coords", "8",
+    "--static-uncontrolled-inseparable",
     "--esbmc-arg=--overflow-check",
     "--esbmc-arg=--div-by-zero-check",
     "--esbmc-arg=--path-cov-arith-resolve",

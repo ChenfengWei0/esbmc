@@ -89,6 +89,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       validate_enumeration_import,
                                       derive_env_coord_disagreed,
                                       tiny_safety_cut_retreat,
+                                      uncontrolled_decision_splits,
                                       _coord_range)
 
 FAILURES = []
@@ -2651,6 +2652,50 @@ finally:
     except OSError:
         pass
     os.rmdir(_arith_dir)
+
+_hash_split_paths = [
+    (12, 3, {"msg.value": 10, "state.bank": 0}),
+    (13, 3, {"msg.value": 10, "state.bank": 1}),
+]
+_hash_split_decisions = {
+    12: [
+        {"index": 1, "function": "play", "line": 15, "arm": "taken",
+         "branch_claim": "!(msg.value == TICKET_AMOUNT)"},
+        {"index": 2, "function": "", "line": 0, "arm": "fall-through",
+         "branch_claim": "!(__esbmc_hash_result_abi_512_1 == 0)"},
+        {"index": 3, "function": "play", "line": 20, "arm": "fall-through",
+         "branch_claim": "!(random == 0)"},
+    ],
+    13: [
+        {"index": 1, "function": "play", "line": 15, "arm": "taken",
+         "branch_claim": "!(msg.value == TICKET_AMOUNT)"},
+        {"index": 2, "function": "", "line": 0, "arm": "fall-through",
+         "branch_claim": "!(__esbmc_hash_result_abi_512_1 == 0)"},
+        {"index": 3, "function": "play", "line": 20, "arm": "taken",
+         "branch_claim": "random == 0"},
+    ],
+}
+_hash_split = uncontrolled_decision_splits(
+    _hash_split_paths, _hash_split_decisions,
+    ["msg.value", "state.bank"], {"state.TICKET_AMOUNT": 10})
+check("hash-derived-local-split-is-static-inseparable",
+      sorted(_hash_split), [12, 13])
+
+_input_split_decisions = {
+    12: [{"index": 7, "function": "f", "line": 9, "arm": "taken",
+          "branch_claim": "amount > 9000"},
+         {"index": 8, "function": "", "line": 0, "arm": "taken",
+          "branch_claim": "!(__esbmc_hash_result_abi_512_1 == 0)"}],
+    13: [{"index": 7, "function": "f", "line": 9, "arm": "fall-through",
+          "branch_claim": "!(amount > 9000)"},
+         {"index": 8, "function": "", "line": 0, "arm": "taken",
+          "branch_claim": "!(__esbmc_hash_result_abi_512_1 == 0)"}],
+}
+check("input-coordinate-split-is-not-static-inseparable",
+      uncontrolled_decision_splits(
+          [(12, 1, {"amount": 9001}), (13, 1, {"amount": 5})],
+          _input_split_decisions, ["amount"], {}),
+      {})
 
 _safety_dir = tempfile.mkdtemp(prefix="safety-witness-")
 try:

@@ -1243,6 +1243,13 @@ def main():
                          "external-call behavior; the official gate-cell POC "
                          "recipe enables it because that cell has no such "
                          "fixture. Use a separate --out for this arm.")
+    ap.add_argument("--static-uncontrolled-inseparable", action="store_true",
+                    help="passed to the driver: before region search, mark "
+                         "witnessed sibling paths split by known uncontrolled "
+                         "ESBMC hash/nondet/extcall decisions, and not by a "
+                         "free generated-test coordinate, as NOT_CERTIFIED. "
+                         "Refutation-only; it saves refine/certify budget but "
+                         "does not prove any PUT region.")
     ap.add_argument("--pin", action="append", default=[], metavar="COORD=VALUE",
                     help="pass one `coord=value` PIN straight to the driver "
                          "(driver --pin). Repeatable. A pinned coordinate is "
@@ -1735,6 +1742,8 @@ def main():
                 cmd.append("--pin-extcall")
             if args.static_extcall_inseparable:
                 cmd.append("--static-extcall-inseparable")
+            if args.static_uncontrolled_inseparable:
+                cmd.append("--static-uncontrolled-inseparable")
             if args.skip_bracket:
                 cmd.append("--skip-bracket")
             if args.env_coord_disagreed:
@@ -1933,6 +1942,8 @@ def main():
                         # stub/artefact arm must not inherit this silently.
                         "static_extcall_inseparable":
                             bool(args.static_extcall_inseparable),
+                        "static_uncontrolled_inseparable":
+                            bool(args.static_uncontrolled_inseparable),
                         # WHICH CUT RULE. An absent key means the row predates
                         # the flag and was therefore measured under `tool`; it
                         # must never be read as the current default. See the

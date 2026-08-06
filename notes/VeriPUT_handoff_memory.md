@@ -8969,3 +8969,62 @@ Current decision:
   sample is healthy, BugFix exposed a hash/randomness coordinate gap, and Stress
   exposed that some large inline-assembly/dynamic-array subjects can burn the
   whole first pass before coordinates are available.
+
+## 2026-08-06 strong/9 static uncontrolled split filter
+
+Problem:
+
+- `EtherLotto.play()` showed a common waste pattern for hash/time/randomness
+  contracts. Enumeration and Level0 were cheap, but the driver spent the rest
+  of the first 60s attempt refining/certifying two sibling paths split by
+  `random == 0`, where `random` is derived from ESBMC's hash/nondet model and is
+  not a generated-test-settable coordinate.
+- Old result:
+  `/tmp/veriput_sample_bugfix_etherlotto_20260806_205324`, recipe
+  `veriput-strong/8`, 60s/8GiB:
+  `KILLED`, `0 certified / 0 not / 3 witnessed`; Level0 had decided all 3
+  paths in 3.1s, then refinement reported `UNSEPARATED=[12,13]`.
+
+Change:
+
+- Added driver flag `--static-uncontrolled-inseparable`.
+- It is refutation-only. It never proves a PUT. It only marks sibling paths as
+  `NOT_CERTIFIED` before region search when:
+  - the pair's decision context contains a known uncontrolled ESBMC source:
+    `__esbmc_hash_result`, `NONDET(`, or `extcall.`;
+  - the differing source decision does not read any current free coordinate.
+- This keeps ordinary input/state guards such as `amount > 9000` in the normal
+  region search.
+- `notes/coverage/scripts/certify_all.py` forwards and records the flag.
+- Bumped the shared recipe to `veriput-strong/9` and enabled the flag there.
+
+Measured result:
+
+- Run:
+  `/tmp/veriput_sample_bugfix_etherlotto_static_unctrl_20260806_211020`,
+  recipe `veriput-strong/9`, 60s/8GiB.
+- Result:
+  `CERTIFIED`, `1 certified / 2 not / 3 witnessed`, 23s.
+- The two not-certified paths are enc=12/13 with reason:
+  `STATICALLY INSEPARABLE ... decision#3 random == 0`.
+- The certified path enc=2 captures the `msg.value != 10` ABI/value gate:
+  `msg.value in [11, UINT_MAX]` plus wide block/sender/bank coordinates and
+  pinned constants/state.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_guards.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py notes/coverage/scripts/certify_all.py notes/coverage/scripts/veriput_recipe.py`
+  passed.
+- `git diff --check` passed.
+
+Next:
+
+- Start small stratified benchmark sampling under `veriput-strong/9`.
+- Watch the `static_uncontrolled_inseparable` count separately from true
+  failures: it is a speed/attribution improvement, not a generalized-test
+  success.
