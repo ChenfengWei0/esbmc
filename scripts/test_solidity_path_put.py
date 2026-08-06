@@ -2610,15 +2610,96 @@ def test_source_R2_delete_updates_prioritize_zero_endpoints():
                  f"delete bool becomes post == false/0: {entries}")
     bad += check(bal_terms == [{"kind": "literal", "value": "0"}],
                  f"delete mapping slot becomes post == 0: {entries}")
-    bad += check("owner" not in entries,
-                 f"delete address is skipped until address literal semantics are "
-                 f"pinned: {entries}")
-    bad += check(specs[0].get("candidate_count") == 3 if specs else False,
+    owner_terms = [item["term"] for item in entries.get("owner", {}).get(
+        "equals", [])]
+    bad += check(owner_terms == [{"kind": "literal", "value": "0"}],
+                 f"delete address becomes post == 0: {entries}")
+    bad += check(specs[0].get("candidate_count") == 4 if specs else False,
                  f"candidate_count includes delete endpoints: {specs}")
     bad += check(any("ready: post == false" in line for line in evidence),
                  f"bool delete provenance names false: {evidence}")
     bad += check(any("bal[msg.sender]: post == 0" in line for line in evidence),
                  f"mapping delete provenance is recorded: {evidence}")
+    return bad
+
+
+def test_source_R2_address_zero_assignments_prioritize_zero_endpoints():
+    from solidity_path_put import (r2_candidates,  # noqa: E402
+                                   source_assignment_r2_specs)
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name}
+
+    def address_zero():
+        return {"nodeType": "FunctionCall", "kind": "typeConversion",
+                "expression": {
+                    "nodeType": "ElementaryTypeNameExpression",
+                    "typeName": {"nodeType": "ElementaryTypeName",
+                                 "name": "address"}},
+                "arguments": [{"nodeType": "Literal", "kind": "number",
+                               "value": "0"}]}
+
+    owners_sender = {
+        "nodeType": "IndexAccess",
+        "baseExpression": ident(11, "owners"),
+        "indexExpression": msg_sender,
+        "typeDescriptions": {"typeString": "address"}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "owner",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "address"}},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "owners",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "mapping(address => address)"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "renounce",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "100:12:0",
+                     "leftHandSide": ident(10, "owner"),
+                     "rightHandSide": address_zero()}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "120:12:0",
+                     "leftHandSide": owners_sender,
+                     "rightHandSide": address_zero()}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "renounce", [], {"owner": (0, 0, 20)}, [],
+            arity=0, maps={"owners": (1, "address", 20, 0, "owners", None)},
+            log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    owner_terms = [item["term"] for item in entries.get("owner", {}).get(
+        "equals", [])]
+    slot_terms = [item["term"] for item in entries.get("owners[msg.sender]", {}).get(
+        "equals", [])]
+    candidates = r2_candidates(specs)
+    bad = 0
+    bad += check(owner_terms == [{"kind": "literal", "value": "0"}],
+                 f"address(0) assignment to scalar is mined: {entries}")
+    bad += check(slot_terms == [{"kind": "literal", "value": "0"}],
+                 f"address(0) assignment to mapping slot is mined: {entries}")
+    bad += check([item["text"] for item in candidates].count("post == 0") == 2,
+                 f"both address-zero candidates render as post == 0: "
+                 f"{candidates}")
+    bad += check(any("owner: post == address(0)" in line for line in evidence),
+                 f"scalar provenance names address(0): {evidence}")
+    bad += check(any("owners[msg.sender]: post == address(0)" in line
+                     for line in evidence),
+                 f"mapping provenance names address(0): {evidence}")
     return bad
 
 
@@ -5143,6 +5224,7 @@ def main():
               test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries,
               test_source_R2_unary_updates_prioritize_one_step_deltas,
               test_source_R2_delete_updates_prioritize_zero_endpoints,
+              test_source_R2_address_zero_assignments_prioritize_zero_endpoints,
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,

@@ -1203,10 +1203,35 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     def zero_term(state_ty):
+        state_ty = _norm_ty(state_ty)
         if state_ty == "bool":
             return {"kind": "literal", "value": "0"}, "false"
         if unsigned_ty(state_ty):
             return {"kind": "literal", "value": "0"}, "0"
+        if state_ty == "address" or state_ty.startswith(("contract ",
+                                                          "interface ")):
+            return {"kind": "literal", "value": "0"}, "0"
+        return None
+
+    def address_zero_term(n, state_ty):
+        if not (_norm_ty(state_ty) == "address"
+                or _norm_ty(state_ty).startswith(("contract ", "interface "))):
+            return None
+        if not isinstance(n, dict) or n.get("nodeType") != "FunctionCall":
+            return None
+        args = n.get("arguments") or []
+        if len(args) != 1:
+            return None
+        arg = unitless_number_term(args[0])
+        if arg is None or arg[1] != "0":
+            return None
+        expr = n.get("expression")
+        if not isinstance(expr, dict):
+            return None
+        if expr.get("nodeType") == "ElementaryTypeNameExpression":
+            ty = expr.get("typeName") or {}
+            if ty.get("name") == "address":
+                return {"kind": "literal", "value": "0"}, "address(0)"
         return None
 
     def source_id():
@@ -1435,6 +1460,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if slot_name and literal is not None:
                     add_equals_candidate(slot_name, literal[0], literal[1],
                                          n.get("src"))
+                zero_addr = address_zero_term(rhs, slot_ty)
+                if slot_name and zero_addr is not None:
+                    add_equals_candidate(slot_name, zero_addr[0],
+                                         zero_addr[1], n.get("src"))
                 if slot_name and unsigned_ty(slot_ty):
                     delta = self_update_delta(
                         rhs,
@@ -1452,6 +1481,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if state_name and literal is not None:
                     add_equals_candidate(state_name, literal[0], literal[1],
                                          n.get("src"))
+                zero_addr = address_zero_term(rhs, state_ty)
+                if state_name and zero_addr is not None:
+                    add_equals_candidate(state_name, zero_addr[0],
+                                         zero_addr[1], n.get("src"))
                 if state_name and unsigned_ty(state_ty):
                     delta = self_update_delta(
                         rhs, lambda candidate: self_ref(candidate, lhs_ref))

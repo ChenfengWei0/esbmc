@@ -5341,6 +5341,48 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 address-zero source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Reasoning:
+
+- Owner/admin/fee receiver style contracts often implement renounce/reset logic
+  as `delete owner` or `owner = address(0)`. A strong PUT should ask the
+  verifier for `post == 0` before spending candidate budget on broad mechanical
+  R2 terms.
+- The existing renderer already represents address storage reads as masked
+  `uint256`, and R2 structured literal `0` renders as Solidity literal `0`.
+  Therefore `post == 0` is a well-formed address-zero endpoint assertion.
+- Fuzz remains refute-only; ESBMC still certifies any candidate before the PUT
+  emits it.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `zero_term()` now includes address,
+  contract, and interface state values in the source `delete` rule.
+- Added `address_zero_term()` for the exact source AST shape
+  `address(0)`: a `FunctionCall` type conversion whose callee is an
+  `ElementaryTypeNameExpression` named `address` and whose only argument is the
+  unitless numeric literal `0`.
+- Direct assignments now mine `owner = address(0)` and
+  `owners[msg.sender] = address(0)` as source-prioritized `post == 0`
+  candidates, with mapping slots still gated by solc `maps`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: `154 test(s) ran, 154 declared in this module`.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 named-return source R2 candidates
 
 Scope and constraint:
