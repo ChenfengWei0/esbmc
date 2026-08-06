@@ -73,8 +73,8 @@ def schedule_doc():
     }
 
 
-def row(job_id, status, reason="", benchmark="peer182"):
-    return {
+def row(job_id, status, reason="", benchmark="peer182", campaign_attempt=None):
+    item = {
         "schema": "veriput-unit-run-row/v1",
         "job_id": job_id,
         "benchmark": benchmark,
@@ -84,6 +84,9 @@ def row(job_id, status, reason="", benchmark="peer182"):
         "status": status,
         "reason": reason,
     }
+    if campaign_attempt is not None:
+        item["campaign_attempt"] = campaign_attempt
+    return item
 
 
 def write_json(path, doc):
@@ -235,11 +238,68 @@ def test_campaign_writes_empty_schedule_when_no_jobs_are_pending():
     return bad
 
 
+def test_campaign_counts_distinct_attempts_not_duplicate_rows():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__dup__f"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__dup__f", "timeout", "timeout after 60s"),
+                row("peer182__dup__f", "error", "rc=9"),
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched), journal_paths=[str(j1)])
+    bad = 0
+    bad += check(doc["summary"]["status_attempts"] == {
+        "error": 1,
+        "timeout": 1,
+    }, f"all duplicate rows remain visible diagnostically: {doc['summary']}")
+    bad += check(doc["summary"]["distinct_attempts_max"] == 1,
+                 f"one journal still counts as one attempt: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"duplicate rows do not skip attempt 2: {doc['summary']}")
+    return bad
+
+
+def test_campaign_uses_explicit_attempt_metadata_for_budget_state():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__late__f"),
+                ],
+            })
+        j3 = write_journal(
+            Path(td) / "only-a3.jsonl", [
+                row("peer182__late__f", "timeout", "timeout after 600s", campaign_attempt=3),
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched), journal_paths=[str(j3)])
+    bad = 0
+    bad += check(doc["summary"]["exhausted"] == 1,
+                 f"campaign_attempt=3 is exhausted after failure: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {},
+                 f"explicit attempt metadata prevents fallback attempt 2: {doc['summary']}")
+    return bad
+
+
 TESTS = [
     test_campaign_partitions_attempts_and_auto_selects_earliest,
     test_campaign_can_emit_attempt_three_schedule_and_runner_argv,
     test_campaign_cli_writes_plan_and_schedule,
     test_campaign_writes_empty_schedule_when_no_jobs_are_pending,
+    test_campaign_counts_distinct_attempts_not_duplicate_rows,
+    test_campaign_uses_explicit_attempt_metadata_for_budget_state,
 ]
 
 if __name__ == "__main__":

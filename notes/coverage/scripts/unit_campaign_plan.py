@@ -70,6 +70,17 @@ def _read_journal(path: str) -> tuple[list[dict], int]:
     return rows, bad_lines
 
 
+def _row_attempt(row: dict, fallback_attempt: int, policy: dict[int, dict]) -> int:
+    raw = row.get("campaign_attempt")
+    try:
+        attempt = int(raw)
+    except (TypeError, ValueError):
+        attempt = fallback_attempt
+    if attempt not in policy:
+        return fallback_attempt
+    return attempt
+
+
 def _load_schedule(path: str) -> dict:
     doc = _load_json(path)
     if doc.get("schema") != "veriput-unit-schedule/v1":
@@ -166,12 +177,12 @@ def plan_campaign(schedule_path: str,
     policy = _policy_by_attempt()
     jobs_by_id = {job.get("job_id"): job for job in schedule.get("jobs") or [] if job.get("job_id")}
     latest = {}
-    attempts_by_job = Counter()
+    attempts_by_job = defaultdict(set)
     status_attempts = Counter()
     bad_lines = 0
     orphan_rows = 0
 
-    for journal in journals:
+    for fallback_attempt, journal in enumerate(journals, start=1):
         rows, bad = _read_journal(journal)
         bad_lines += bad
         for row in rows:
@@ -181,7 +192,7 @@ def plan_campaign(schedule_path: str,
             if job_id not in jobs_by_id:
                 orphan_rows += 1
                 continue
-            attempts_by_job[job_id] += 1
+            attempts_by_job[job_id].add(_row_attempt(row, fallback_attempt, policy))
             status_attempts[row.get("status") or "<missing-status>"] += 1
             latest[job_id] = row
 
@@ -195,7 +206,7 @@ def plan_campaign(schedule_path: str,
 
     for job_id, job in jobs_by_id.items():
         latest_row = latest.get(job_id)
-        attempts = attempts_by_job[job_id]
+        attempts = max(attempts_by_job[job_id], default=0)
         if latest_row and latest_row.get("status") == "ok":
             state = "completed-ok"
             completed.append(job)
@@ -258,6 +269,8 @@ def plan_campaign(schedule_path: str,
             "bad_journal_lines": bad_lines,
             "orphan_journal_rows": orphan_rows,
             "status_attempts": dict(sorted(status_attempts.items())),
+            "distinct_attempts_max": max((len(value) for value in attempts_by_job.values()),
+                                         default=0),
             "latest_status": dict(sorted(latest_status.items())),
             "pending_by_attempt": {
                 str(key): len(value)

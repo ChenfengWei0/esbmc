@@ -700,7 +700,9 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   runner `ok` means the `certify_all.py` command completed successfully; the
   actual certified/not-certified PUT verdict remains in `certify_all.py`'s own
   output JSONL. Optional `--memlimit-gb` applies an inherited address-space cap
-  to the certifier process and its ESBMC children.
+  to the certifier process and its ESBMC children. When the input schedule was
+  written by `unit_campaign_plan.py`, each dry-run/run summary and every
+  journal row carries `campaign_policy` and `campaign_attempt` metadata.
 - `unit_schedule_journal.py`: summarizes a `unit_schedule_run.py` JSONL journal
   and, when given the original unit schedule, emits a retry schedule containing
   jobs whose latest journal row is not `ok` plus jobs never attempted. This is
@@ -714,7 +716,11 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   counts completed/exhausted jobs, and can write the next attempt's filtered
   `veriput-unit-schedule/v1`. It never invokes solc, Forge, fuzzing, ESBMC, or
   certification jobs; the emitted `next_run.runner_argv` is only an auditable
-  command suggestion.
+  command suggestion. Attempt accounting is by highest observed
+  `campaign_attempt` for a job; old rows without that field fall back to the
+  order of `--journal` arguments. Repeated non-`ok` rows in the same journal
+  remain visible in `status_attempts`, but count as one spent attempt for
+  budget progression.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -813,8 +819,9 @@ Interpretation:
 - Read-only unit campaign smoke with an empty journal and the current no-AST
   unit schedule produced: `schedule_jobs=0`, `skipped_rows=548`,
   `selected_attempt=null`, `selected_jobs=0`, `next_jobs=0`,
-  `next_attempt=null`; it wrote only an empty next-attempt schedule under `/tmp`
-  and did not create the external cache path.
+  `next_attempt=null`, `distinct_attempts_max=0`; it wrote only an empty
+  next-attempt schedule under `/tmp` and did not create the external cache
+  path.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 

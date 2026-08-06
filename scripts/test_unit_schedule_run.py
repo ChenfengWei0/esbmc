@@ -63,6 +63,16 @@ def schedule(ok_cmd, fail_cmd=None):
     }
 
 
+def campaign_schedule(ok_cmd):
+    doc = schedule(ok_cmd)
+    doc["source"] = {
+        "campaign_policy": "veriput-unit-campaign-policy/v1",
+        "campaign_attempt": 1,
+    }
+    doc["summary"]["campaign_attempt"] = 2
+    return doc
+
+
 def test_runner_executes_and_resumes_from_journal():
     with tempfile.TemporaryDirectory() as td:
         ok = fake_script(Path(td) / "ok.py")
@@ -154,11 +164,33 @@ def test_runner_cli_dry_run_reads_schedule():
     return bad
 
 
+def test_runner_journals_campaign_metadata_from_schedule():
+    with tempfile.TemporaryDirectory() as td:
+        ok = fake_script(Path(td) / "ok.py")
+        journal = Path(td) / "run.jsonl"
+        first = unit_schedule_run.run_schedule(campaign_schedule(ok),
+                                               journal=str(journal),
+                                               timeout_s=5)
+        row = json.loads(journal.read_text().splitlines()[0])
+        dry = unit_schedule_run.dry_run_doc(campaign_schedule(ok), journal=str(Path(td) / "empty"))
+    bad = 0
+    bad += check(first["summary"]["campaign_attempt"] == 2,
+                 f"run summary records the schedule campaign attempt: {first['summary']}")
+    bad += check(
+        row["campaign_attempt"] == 2
+        and row["campaign_policy"] == "veriput-unit-campaign-policy/v1",
+        f"journal row records campaign metadata: {row}")
+    bad += check(dry["summary"]["campaign_attempt"] == 2,
+                 f"dry-run summary records campaign metadata: {dry['summary']}")
+    return bad
+
+
 TESTS = [
     test_runner_executes_and_resumes_from_journal,
     test_runner_records_failures_as_retryable,
     test_runner_dry_run_start_failure_and_fail_closed_modes,
     test_runner_cli_dry_run_reads_schedule,
+    test_runner_journals_campaign_metadata_from_schedule,
 ]
 
 if __name__ == "__main__":

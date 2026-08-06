@@ -119,7 +119,17 @@ def _preexec_memlimit(memlimit_gb: float):
     return set_limits
 
 
-def _run_one(job: dict, timeout_s: float, memlimit_gb: float) -> dict:
+def _campaign_meta(schedule: dict) -> dict:
+    source = schedule.get("source") or {}
+    summary = schedule.get("summary") or {}
+    attempt = summary.get("campaign_attempt", source.get("campaign_attempt"))
+    return {
+        "campaign_policy": source.get("campaign_policy"),
+        "campaign_attempt": attempt,
+    }
+
+
+def _run_one(job: dict, timeout_s: float, memlimit_gb: float, campaign_meta: dict) -> dict:
     start = time.monotonic()
     argv = [str(arg) for arg in job["certify_argv"]]
     try:
@@ -147,6 +157,8 @@ def _run_one(job: dict, timeout_s: float, memlimit_gb: float) -> dict:
         "subject_id": job.get("subject_id"),
         "contract": job.get("contract"),
         "unit": job.get("unit"),
+        "campaign_policy": campaign_meta.get("campaign_policy"),
+        "campaign_attempt": campaign_meta.get("campaign_attempt"),
         "status": status,
         "reason": reason,
         "wall_s": wall_s,
@@ -171,6 +183,7 @@ def dry_run_doc(schedule: dict, *, shard: str = "", limit: int = 0, journal: str
     jobs = _selected_jobs(schedule, shard=shard, limit=limit)
     done = _completed_from_journal(journal)
     pending = [job for job in jobs if job["job_id"] not in done]
+    campaign_meta = _campaign_meta(schedule)
     return {
         "schema":
         "veriput-unit-run-plan/v1",
@@ -180,6 +193,8 @@ def dry_run_doc(schedule: dict, *, shard: str = "", limit: int = 0, journal: str
             "selected": len(jobs),
             "already_done": len(jobs) - len(pending),
             "pending": len(pending),
+            "campaign_policy": campaign_meta.get("campaign_policy"),
+            "campaign_attempt": campaign_meta.get("campaign_attempt"),
         },
         "jobs": [{
             "job_id": job["job_id"],
@@ -209,12 +224,13 @@ def run_schedule(schedule: dict,
     selected = _selected_jobs(schedule, shard=shard, limit=limit)
     done = _completed_from_journal(journal)
     pending = [job for job in selected if job["job_id"] not in done]
+    campaign_meta = _campaign_meta(schedule)
     rows = []
     counts = Counter()
 
     if jobs <= 1:
         for job in pending:
-            row = _run_one(job, timeout_s, memlimit_gb)
+            row = _run_one(job, timeout_s, memlimit_gb, campaign_meta)
             _write_journal(journal, row)
             rows.append(row)
             counts[row["status"]] += 1
@@ -223,7 +239,7 @@ def run_schedule(schedule: dict,
     else:
         with ThreadPoolExecutor(max_workers=jobs) as executor:
             futures = {
-                executor.submit(_run_one, job, timeout_s, memlimit_gb): job
+                executor.submit(_run_one, job, timeout_s, memlimit_gb, campaign_meta): job
                 for job in pending
             }
             for future in as_completed(futures):
@@ -243,6 +259,8 @@ def run_schedule(schedule: dict,
             "status": dict(sorted(counts.items())),
             "not_attempted": max(0,
                                  len(pending) - len(rows)),
+            "campaign_policy": campaign_meta.get("campaign_policy"),
+            "campaign_attempt": campaign_meta.get("campaign_attempt"),
         },
         "rows": rows,
     }
