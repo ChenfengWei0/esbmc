@@ -10249,15 +10249,13 @@ void goto_coveraget::solidity_path_coverage()
             "the mapping's VALUE type cannot carry a candidate: " + ewhy;
           continue;
         }
-        if (
-          !iv_ok && (!v.equals.empty() || !v.abs.empty() || !v.deltas.empty()))
+        if (!iv_ok && (!v.abs.empty() || !v.deltas.empty()))
         {
           log_error(
             "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: mapping "
-            "slot '{}' has BOOLEAN value type, but its spec contains "
-            "structured R2 candidate(s). Typed R2 arithmetic/interval terms "
-            "require an ordering-capable unsigned scalar; silently dropping "
-            "ASKED candidates would leave the batch summary incomplete",
+            "slot '{}' has BOOLEAN value type, but its spec contains interval "
+            "or delta candidate(s). Bool R2 supports equality only; ordering "
+            "and arithmetic over bool remain refused",
             uid,
             v.name);
           exit(1);
@@ -10462,6 +10460,8 @@ void goto_coveraget::solidity_path_coverage()
           path_cov_refused_coords[v.name + " [ordering/interval rungs]"] =
             "the mapping's value type is a BOOLEAN -- a two-point domain has "
             "no ordering to measure. The equality rungs ARE emitted for it";
+          emit_structured_rungs(
+            &v, et, v.name, live, pre_v, "post", true, true);
           continue;
         }
         emit_rung(

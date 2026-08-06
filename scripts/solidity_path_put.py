@@ -2364,6 +2364,8 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
         for name, text, verdict in ladder_rows)
     if return_target is not None and retlive_refuted:
         allvars.append(RETURN_VAR)
+        if return_target[1] == "bool":
+            target_kinds[RETURN_VAR] = "bool"
         if return_target[2] is not None:
             target_bytes[RETURN_VAR] = return_target[2]
     elif return_target is not None:

@@ -2364,6 +2364,28 @@ def test_typed_R2_return_candidates_never_name_pre_snapshot():
     return bad
 
 
+def test_typed_R2_bool_return_asks_equality_only():
+    from solidity_path_put import propose_r2_batch, r2_candidates  # noqa: E402
+    got = propose_r2_batch(
+        [("return", RETLIVE, "REFUTED")],
+        [("flag_", "bool")], rettypes=[("", "bool")],
+        rendered_coords=[("flag_", "bool", 1)],
+        term_budget=8, candidate_budget=8, log=lambda _line: None)
+    candidates = r2_candidates(got)
+    return_entry = next((v for v in got[0]["vars"]
+                         if v["name"] == "return"), None) if got else None
+    bad = 0
+    bad += check(return_entry is not None,
+                 f"the bool return value is an R2 target: {got}")
+    bad += check([c["text"] for c in candidates] == ["return == flag_"],
+                 f"bool return R2 asks equality only: {candidates}")
+    bad += check(return_entry is not None and not return_entry["abs"]
+                 and not return_entry["deltas"],
+                 f"bool return has no interval/delta candidates: "
+                 f"{return_entry}")
+    return bad
+
+
 def test_typed_R2_term_budget_is_VISIBLE_not_a_second_query():
     from solidity_path_put import propose_r2_batch  # noqa: E402
     said = []
@@ -10038,6 +10060,7 @@ def main():
               test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate,
               test_typed_R2_proposes_return_equals_entry_state_coord_for_getters,
               test_typed_R2_return_candidates_never_name_pre_snapshot,
+              test_typed_R2_bool_return_asks_equality_only,
               test_typed_R2_term_budget_is_VISIBLE_not_a_second_query,
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,
               test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,
