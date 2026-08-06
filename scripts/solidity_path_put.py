@@ -1556,8 +1556,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return state[0] + "".join(f"[{name}]" for name in names) + tail, ty
 
     return_target = None
+    return_ty = None
     return_ids = set()
     if rettypes is not None and len(rettypes) == 1:
+        return_ty = rettypes[0][1]
         return_target = endpoint_candidate(RETURN_VAR, rettypes[0][1])
         if return_target is not None:
             for p in ((target.get("returnParameters") or {}).get(
@@ -1566,17 +1568,17 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if isinstance(ref, int):
                     return_ids.add(ref)
 
-    def return_term(n, expected_kind):
+    def return_term(n, expected_kind, target_ty=None):
         if expected_kind == "bool":
             literal = literal_term(n, "bool")
             if literal is not None:
                 return literal
-            return coord_term(n, "bool")
+            return coord_term(n, "bool", target_ty)
         if expected_kind == "id":
-            return coord_term(n, "id")
+            return coord_term(n, "id", target_ty)
         if expected_kind != "num":
             return None
-        direct = delta_term(n)
+        direct = delta_term(n, target_ty)
         if direct is not None:
             return direct
         if not isinstance(n, dict) or n.get("nodeType") != "BinaryOperation":
@@ -1585,8 +1587,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             n.get("operator"))
         if op is None:
             return None
-        lhs = return_term(n.get("leftExpression"), "num")
-        rhs = return_term(n.get("rightExpression"), "num")
+        lhs = return_term(n.get("leftExpression"), "num", target_ty)
+        rhs = return_term(n.get("rightExpression"), "num", target_ty)
         if lhs is None or rhs is None:
             return None
         if op == "div" and not (rhs[0].get("kind") == "literal"
@@ -1703,7 +1705,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                         add_delta_candidate(state_name, delta[0], delta[1],
                                             delta[2], n.get("src"))
                 if lhs_ref in return_ids and return_target is not None:
-                    term = return_term(rhs, return_target[1])
+                    term = return_term(rhs, return_target[1], return_ty)
                     if term is not None:
                         add_equals_candidate(RETURN_VAR, term[0], term[1],
                                              n.get("src"))
@@ -1738,7 +1740,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                         add_equals_candidate(slot[0], zero[0], zero[1],
                                              n.get("src"))
             elif n.get("nodeType") == "Return" and return_target is not None:
-                term = return_term(n.get("expression"), return_target[1])
+                term = return_term(n.get("expression"), return_target[1],
+                                   return_ty)
                 if term is not None:
                     add_equals_candidate(RETURN_VAR, term[0], term[1],
                                          n.get("src"))

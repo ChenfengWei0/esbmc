@@ -8,6 +8,42 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 cast-wrapped return R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started.
+
+Code change:
+
+- `source_assignment_r2_specs()` now carries the single return type into
+  return-source R2 mining, using the same conservative type-conversion unwrap
+  rules already used for storage and mapping assignments.
+- It can mine stronger return equalities for:
+  - `return uint256(amount)` when the function returns `uint256`;
+  - `return uint128(amount)` when the function returns `uint128`;
+  - `return address(who)` when the function returns `address`;
+  - `return uint256(msg.value)` when `msg.value` is a rendered numeric coord;
+  - named returns such as `out = uint256(amount)`;
+  - one-level arithmetic such as `return uint256(amount) + uint256(7)`.
+- It still refuses unsafe narrow-then-wide mining such as
+  `return uint128(amount)` for a `uint256` return, because that is not the same
+  value relation unless ESBMC proves the range side condition elsewhere.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  162/162 tests.
+- `git diff --check -- scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md` passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 1. Current repository state
 
 - Working branch: `feat/veriput-fuzz-first`

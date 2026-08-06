@@ -3741,6 +3741,151 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
     return bad
 
 
+def test_source_R2_return_type_conversion_wrappers_are_unwrapped():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def num(value):
+        return {"nodeType": "Literal", "kind": "number", "value": str(value)}
+
+    def cast(ty, arg):
+        return {"nodeType": "FunctionCall", "kind": "typeConversion",
+                "typeDescriptions": {"typeString": ty},
+                "expression": {
+                    "nodeType": "ElementaryTypeNameExpression",
+                    "typeName": {"nodeType": "ElementaryTypeName",
+                                 "name": ty}},
+                "arguments": [arg]}
+
+    def msg_value():
+        return {"nodeType": "MemberAccess", "memberName": "value",
+                "expression": {"nodeType": "Identifier", "name": "msg"},
+                "typeDescriptions": {"typeString": "uint256"}}
+
+    def ret(expr, src="100:10:0"):
+        return {"nodeType": "Return", "src": src, "expression": expr}
+
+    def assign(lhs, rhs, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "Assignment", "operator": "=", "src": src,
+            "leftHandSide": lhs, "rightHandSide": rhs}}
+
+    def function(fid, name, params, returns, statements):
+        return {"nodeType": "FunctionDefinition", "id": fid, "name": name,
+                "parameters": {"parameters": params},
+                "returnParameters": {"parameters": returns},
+                "body": {"nodeType": "Block", "statements": statements}}
+
+    amount = {"id": 21, "name": "amount",
+              "typeDescriptions": {"typeString": "uint256"}}
+    who = {"id": 31, "name": "who",
+           "typeDescriptions": {"typeString": "address"}}
+    out = {"id": 72, "name": "out",
+           "typeDescriptions": {"typeString": "uint256"}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            function(20, "wide", [amount], [{
+                "id": 22, "name": "",
+                "typeDescriptions": {"typeString": "uint256"}}],
+                [ret(cast("uint256", ident(21, "amount")))]),
+            function(30, "owner", [who], [{
+                "id": 32, "name": "",
+                "typeDescriptions": {"typeString": "address"}}],
+                [ret(cast("address", ident(31, "who", "address")))]),
+            function(40, "small", [amount], [{
+                "id": 42, "name": "",
+                "typeDescriptions": {"typeString": "uint128"}}],
+                [ret(cast("uint128", ident(21, "amount")))]),
+            function(50, "badWide", [amount], [{
+                "id": 52, "name": "",
+                "typeDescriptions": {"typeString": "uint256"}}],
+                [ret(cast("uint128", ident(21, "amount")))]),
+            function(60, "pay", [], [{
+                "id": 62, "name": "",
+                "typeDescriptions": {"typeString": "uint256"}}],
+                [ret(cast("uint256", msg_value()))]),
+            function(70, "named", [amount], [out], [
+                assign(ident(72, "out"), cast("uint256", ident(21, "amount")),
+                       "300:10:0"),
+                {"nodeType": "Return", "src": "320:7:0"}]),
+            function(80, "calc", [amount], [{
+                "id": 82, "name": "",
+                "typeDescriptions": {"typeString": "uint256"}}],
+                [ret({"nodeType": "BinaryOperation", "operator": "+",
+                      "leftExpression": cast("uint256", ident(21, "amount")),
+                      "rightExpression": cast("uint256", num(7)),
+                      "typeDescriptions": {"typeString": "uint256"}})])
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out_file:
+        json.dump(ast, out_file)
+
+    def specs_for(unit, params, rendered, rettypes):
+        return source_assignment_r2_specs(
+            path, "C", unit, params, {}, rendered, arity=1,
+            rettypes=rettypes, log=lambda _msg: None)
+
+    try:
+        wide_specs, wide_evidence = specs_for(
+            "wide", [("amount", "uint256")], [("amount", "num", None)],
+            [("", "uint256")])
+        owner_specs, _owner_evidence = specs_for(
+            "owner", [("who", "address")], [("who", "id", 20)],
+            [("", "address")])
+        small_specs, _small_evidence = specs_for(
+            "small", [("amount", "uint256")], [("amount", "num", None)],
+            [("", "uint128")])
+        bad_specs, _bad_evidence = specs_for(
+            "badWide", [("amount", "uint256")], [("amount", "num", None)],
+            [("", "uint256")])
+        pay_specs, _pay_evidence = specs_for(
+            "pay", [], [("msg.value", "num", None)], [("", "uint256")])
+        named_specs, _named_evidence = specs_for(
+            "named", [("amount", "uint256")], [("amount", "num", None)],
+            [("out", "uint256")])
+        calc_specs, _calc_evidence = specs_for(
+            "calc", [("amount", "uint256")], [("amount", "num", None)],
+            [("", "uint256")])
+    finally:
+        os.unlink(path)
+
+    def return_terms(specs):
+        entry = next((item for item in specs[0]["vars"]
+                      if item["name"] == RETURN_VAR), {}) if specs else {}
+        return [r2_term_text(item["term"])
+                for item in entry.get("equals", [])]
+
+    bad = 0
+    bad += check(return_terms(wide_specs) == ["amount"],
+                 f"matching uint cast return is unwrapped: {wide_specs}")
+    bad += check(any("return: return == amount" in line
+                     for line in wide_evidence),
+                 f"cast return provenance stays source based: {wide_evidence}")
+    bad += check(return_terms(owner_specs) == ["who"],
+                 f"matching address cast return is unwrapped: {owner_specs}")
+    bad += check(return_terms(small_specs) == ["amount"],
+                 f"matching narrower return type is still source-mined: "
+                 f"{small_specs}")
+    bad += check(bad_specs == [],
+                 f"unsafe narrow cast feeding a wider return is refused: "
+                 f"{bad_specs}")
+    bad += check(return_terms(pay_specs) == ["msg.value"],
+                 f"cast-wrapped msg.value return is mined when rendered: "
+                 f"{pay_specs}")
+    bad += check(return_terms(named_specs) == ["amount"],
+                 f"named return assignments share the cast unwrap: "
+                 f"{named_specs}")
+    bad += check(return_terms(calc_specs) == ["(amount + 7)"],
+                 f"cast-wrapped arithmetic return terms are mined: "
+                 f"{calc_specs}")
+    return bad
+
+
 def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     from solidity_path_put import r2_terms_from_specs, rung_assertions  # noqa: E402
     specs = [{"vars": [{"name": "ready", "equals": [{
@@ -6129,6 +6274,7 @@ def main():
               test_source_R2_mapping_literal_keys_are_named_when_slot_safe,
               test_source_R2_mapping_constant_keys_fold_to_safe_slot_literals,
               test_source_R2_return_candidates_prioritize_return_expressions,
+              test_source_R2_return_type_conversion_wrappers_are_unwrapped,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
               test_source_R2_candidates_merge_into_the_typed_batch,
               test_source_R2_merge_preserves_the_candidate_budget,
