@@ -2797,6 +2797,20 @@ def return_rung_term_spellings(text):
     return []
 
 
+def post_rung_term_spellings(text):
+    """Structured endpoint spellings a post-state rung may contain."""
+    if text.startswith("post == ") and text != "post == pre":
+        return [text[len("post == "):]]
+    m = re.match(r"^post in \[(.*), (.*)\]$", text)
+    if m:
+        return [m.group(1), m.group(2)]
+    m = re.match(r"^(?:post - pre|pre - post) in \[(.*), (.*)\] with "
+                 r"(?:post >= pre|pre >= post)$", text)
+    if m:
+        return [m.group(1), m.group(2)]
+    return []
+
+
 def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
                     r2_terms=None):
     """Forge assertion lines for one rung, or None if it cannot be spelled.
@@ -5548,6 +5562,72 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     while any(okvar in ln for ln in body):
         okvar += "_"
     seen_vars = []
+    r2_state_pre_names = set()
+
+    def materialize_r2_state_coord(cname):
+        if cname in coord_ident_abs:
+            return True
+        if not cname.startswith("state."):
+            return True
+        svar = cname[len("state."):]
+        mname, slot_keys, slot_tail = parse_slot_name(svar)
+        if mname is not None:
+            mkey = mname + slot_tail
+            if not maps or mkey not in maps:
+                oracle_skipped.append(
+                    f"{cname} (`{mname}` is not a mapping solc's layout "
+                    "reports with a scalar value, so the R2 endpoint cannot "
+                    "be read before the call)")
+                return False
+            mslot, _ktype, vnb, voff, _mb, _mm = maps[mkey]
+            nlev = 1 if isinstance(_ktype, str) else len(_ktype)
+            if len(slot_keys) != nlev:
+                oracle_skipped.append(
+                    f"{cname} (`{mname}` is a {nlev}-level store but the "
+                    f"name gives {len(slot_keys)} key(s))")
+                return False
+            kexprs, kerr = [], None
+            for kn in slot_keys:
+                ke, err = slot_key_expr(kn, key_expr_of)
+                if err is not None:
+                    kerr = err
+                    break
+                kexprs.append(ke)
+            if kerr is not None:
+                oracle_skipped.append(f"{cname} ({kerr})")
+                return False
+            ident = "_pre_" + _slot_ident(svar)
+            if ident not in r2_state_pre_names:
+                r2_state_pre_names.add(ident)
+                rd = slot_read_expr_at(
+                    target_addr, map_slot_expr(kexprs, mslot), voff, vnb)
+                pre_reads.append(f"    uint256 {ident} = {rd};")
+            coord_ident[cname] = ident
+            coord_ident_abs[cname] = ident
+            return True
+        if svar not in layout:
+            oracle_skipped.append(
+                f"{cname} (no storage slot: solc's layout does not list it, "
+                "so the R2 endpoint cannot be read before the call)")
+            return False
+        slot, off, nb = layout[svar]
+        ident = "_pre_" + _slot_ident(svar)
+        if ident not in r2_state_pre_names:
+            r2_state_pre_names.add(ident)
+            rd = slot_read_expr(target_addr, slot, off, nb)
+            pre_reads.append(f"    uint256 {ident} = {rd};")
+        coord_ident[cname] = ident
+        coord_ident_abs[cname] = ident
+        return True
+
+    def materialize_r2_state_terms(text):
+        ok = True
+        for spelling in post_rung_term_spellings(text):
+            term = (r2_terms or {}).get(spelling)
+            for cname in r2_term_coord_names(term):
+                ok = materialize_r2_state_coord(cname) and ok
+        return ok
+
     # ---- THE ANTICHAIN. Only the rungs nothing else entails are rendered ----
     #
     # `assertGe` beside `assertGt` on the same pair detects exactly what the
@@ -5626,6 +5706,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                     target_addr, map_slot_expr(kexpr, mslot), voff, vnb)
                 pre_reads.append(f"    uint256 _pre_{ident} = {rd};")
                 post_reads.append(f"    uint256 _post_{ident} = {rd};")
+            coord_ident["state." + var] = "_pre_" + ident
+            coord_ident_abs["state." + var] = "_pre_" + ident
+            if not materialize_r2_state_terms(text):
+                continue
             # GUARDED, not dropped. See the block comment at `okvar`.
             _chg = call_is_revert_tolerant and rung_asserts_a_change(text)
             a = rung_assertions(text, f"_pre_{ident}", f"_post_{ident}",
@@ -5654,6 +5738,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             rd = slot_read_expr(target_addr, slot, off, nb)
             pre_reads.append(f"    uint256 _pre_{var.lstrip('_')} = {rd};")
             post_reads.append(f"    uint256 _post_{var.lstrip('_')} = {rd};")
+        coord_ident["state." + var] = "_pre_" + _slot_ident(var)
+        coord_ident_abs["state." + var] = "_pre_" + _slot_ident(var)
+        if not materialize_r2_state_terms(text):
+            continue
         # GUARDED, not dropped. See the block comment at `okvar`.
         _chg = call_is_revert_tolerant and rung_asserts_a_change(text)
         a = rung_assertions(text, f"_pre_{var.lstrip('_')}",

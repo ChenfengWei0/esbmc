@@ -4402,6 +4402,43 @@ def test_structured_R2_term_renders_with_the_lifted_coordinate():
         f"structured term uses the emitted identifier: {got}")
 
 
+def test_structured_R2_term_renders_with_entry_mapping_coord():
+    em, case = make_case()
+    notes = []
+    term = {
+        "kind": "op", "op": "sub",
+        "lhs": {"kind": "coord", "name": "state.allowance[u]"},
+        "rhs": {"kind": "coord", "name": "bps"},
+    }
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout={"total": (2, 0, 32)},
+        maps={"allowance": (7, "address", 32, 0, "allowance", None)},
+        ladder_rows=[
+            ("total", "post == (state.allowance[u] - bps)", "HOLDS"),
+        ],
+        notes=notes, r2_terms={
+            "(state.allowance[u] - bps)": term,
+        })
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced: {notes}")
+    bad += check("uint256 _pre_allowance_u = uint256(vm.load("
+                 in text,
+                 "the R2 endpoint mapping slot is read before the call")
+    bad += check("keccak256(abi.encode(u, uint256(7)))" in text,
+                 "the R2 endpoint uses the mapping slot hash")
+    bad += check("assertEq(_post_total, (_pre_allowance_u - bps)"
+                 in text,
+                 "the certified equality renders with the entry mapping value")
+    bad += check(not stats["oracle_skipped"],
+                 f"no certified R2 row is dropped: {stats['oracle_skipped']}")
+    return bad
+
+
 def test_structured_R2_requires_a_successful_revert_tolerant_call():
     from solidity_path_put import rung_asserts_a_change  # noqa: E402
     bad = 0
@@ -6613,6 +6650,7 @@ def main():
               test_same_arity_overloads_use_the_exact_path_declaration,
               test_overload_persistence_keys_and_work_suffixes_are_distinct,
               test_structured_R2_term_renders_with_the_lifted_coordinate,
+              test_structured_R2_term_renders_with_entry_mapping_coord,
               test_structured_R2_requires_a_successful_revert_tolerant_call,
               test_oracle_mapping_candidates_share_the_dependency_filter,
               test_an_R2_PASS_actually_runs_and_carries_the_proposed_vars,

@@ -8,6 +8,50 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-06 post-state R2 entry-state endpoint rendering
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Finding:
+
+- Source R2 can now propose strong equalities such as
+  `post == (state.allowance[msg.sender][spender] - amount)`.
+- ESBMC can certify such structured terms, but the PUT renderer only knew how
+  to spell lifted calldata/environment coordinates. A term endpoint containing
+  `state.*` could therefore be proved and then dropped as "rung shape not
+  rendered".
+
+Code change:
+
+- Added `post_rung_term_spellings()` to enumerate structured endpoint spellings
+  from post-state equality, absolute, and delta R2 rungs.
+- During post-state oracle rendering, every `state.*` coordinate mentioned by a
+  structured R2 term is materialized as an entry-state pre-read before the unit
+  call.
+- Scalar state coordinates use `slot_read_expr`; mapping/member coordinates use
+  the existing safe `parse_slot_name` / `slot_key_expr` / `map_slot_expr` /
+  `slot_read_expr_at` machinery.
+- The materialized pre-read is inserted into both `coord_ident` and
+  `coord_ident_abs`, so equality/absolute/delta endpoints can all spell it.
+- Existing own-variable pre-reads also register `state.<var>` as the entry
+  coordinate, avoiding duplicate reads on self-referential structured terms.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  168/168 tests.
+- `git diff --check -- scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md` passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 local alias invalidation for source-R2
 
 Scope and constraint:
