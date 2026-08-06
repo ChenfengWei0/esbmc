@@ -10428,6 +10428,58 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07: Region Slot Coordinates Now Use Read-Only Source Accesses
+
+Problem found on the balanced6b `IdentityRegistryStorage.addIdentityToStorage`
+sample:
+
+- The target writes `_identities[_userAddress].investorCountry = _country`.
+- The path guard reads `_identities[_userAddress].identityContract`.
+- The generalise stage previously collapsed both to the base access
+  `_identities[_userAddress]`, then proposed the queryable scalar field
+  `state._identities[_userAddress].investorCountry` as a path-region
+  coordinate.
+- That slot is a post-state oracle target, not an entry-state path splitter.
+  It had no CE value, was skipped by level0, and made the 0-refine retry report
+  `no fully bounded region was measured`.
+
+Code change:
+
+- `unit_mapping_slot_accesses(..., access_mode="read")` now ignores plain
+  assignment LHS slots for region-coordinate discovery.  Default
+  `access_mode="all"` is unchanged for PUT/oracle use.
+- Struct mapping member tails are preserved:
+  `m[k].identityContract` and `m[k].investorCountry` are no longer collapsed to
+  the same base `m[k]`.
+- `solidity_path_generalise.py` uses read-only slot accesses for
+  `--slot-coords` and derives region slot dependencies from those read slots,
+  so write-only mappings do not re-enter through fallback cross-products.
+- `solidity_path_put.py` accepts the more precise tailed access names, so PUT
+  oracle discovery still works for exact readable/written struct fields.
+
+Static validation on the cached T-REX AST:
+
+- Read-mode access:
+  `[('_identities.identityContract', ('_userAddress',))]`.
+- Default all-mode access:
+  `[('_identities.identityContract', ('_userAddress',)),
+  ('_identities.investorCountry', ('_userAddress',))]`.
+- Region slot proposal after the fix:
+  `[]`.
+- Oracle slot proposal in default mode:
+  `['state._identities[_userAddress].investorCountry']`.
+- Source-R2 with PUT storage-layout metadata still proposes:
+  `_identities[_userAddress].investorCountry: post == _country`.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_generalise.py scripts/solidity_path_put.py scripts/test_solidity_path_generalise.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed.
+
 ## 2026-08-07 balanced6b benchmark sample and refine retry
 
 New stratified sample:

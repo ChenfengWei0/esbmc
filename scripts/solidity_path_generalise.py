@@ -2621,10 +2621,33 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
             if coord not in cand:
                 cand.append(coord)
 
+    def source_spec(name):
+        if name in maps:
+            return name, maps[name], None
+        base, dot, tail = name.partition(".")
+        if not dot or base not in maps:
+            return None, None, None
+        kts, tails = spec_parts(maps[base])
+        wanted = "." + tail
+        if wanted not in tails:
+            return base, None, wanted
+        spec = list(maps[base])
+        if len(spec) > 2:
+            spec[2] = [wanted]
+        else:
+            spec.extend(["", [wanted]][len(spec) - 1:])
+        return base, tuple(spec), wanted
+
     def accept_source_slot(name, keys):
-        if name not in maps:
+        source_base, spec, wanted_tail = source_spec(name)
+        if spec is None:
+            if wanted_tail is not None:
+                skipped.append(
+                    f"state.{name}[...] source slot not proposed: solc storage "
+                    "layout does not report that member as an ESBMC-queryable "
+                    "scalar mapping entry")
             return False
-        kts, tails = spec_parts(maps[name])
+        kts, tails = spec_parts(spec)
         if len(keys) != len(kts):
             return False
         resolved_keys = []
@@ -2632,9 +2655,9 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
             if key_matches(key, kt):
                 resolved_keys.append(key_name(key))
                 continue
-            skipped.append(key_refusal(name, keys, lvl, key, kt))
+            skipped.append(key_refusal(source_base, keys, lvl, key, kt))
             return False
-        push_slot(name, resolved_keys, tails)
+        push_slot(source_base, resolved_keys, tails)
         return True
 
     if dependencies is None:
@@ -2653,10 +2676,12 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
     if slot_accesses:
         source_seen = []
         for name, keys in slot_accesses:
-            if dependencies is not None and name not in map_order:
+            source_base, _spec, _wanted_tail = source_spec(name)
+            if (dependencies is not None and name not in dependencies
+                    and source_base not in map_order):
                 continue
-            if accept_source_slot(name, keys) and name not in source_seen:
-                source_seen.append(name)
+            if accept_source_slot(name, keys) and source_base not in source_seen:
+                source_seen.append(source_base)
         for name in source_seen:
             if name in map_order:
                 map_order.remove(name)
@@ -6549,13 +6574,17 @@ def main():
             declaration_id=declaration_id)
         slot_accesses, slot_access_evidence = unit_mapping_slot_accesses(
             args.ast, args.contract, args.unit,
-            declaration_id=declaration_id)
+            declaration_id=declaration_id, access_mode="read")
+        region_dependencies = (
+            sorted({name for name, _keys in slot_accesses})
+            if slot_accesses is not None else None)
         key_literals, key_literal_skipped = agreed_bytes_mapping_key_literals(
             witnessed_raw_inputs(cwd, args.unit, paths, args.path_function),
             params)
         proposed, skipped = propose_slot_coords(
             maps, params, args.slot_coords,
-            dependencies=[] if dependencies is None else dependencies,
+            dependencies=(
+                [] if region_dependencies is None else region_dependencies),
             slot_accesses=[] if slot_accesses is None else slot_accesses,
             key_literals=key_literals)
         skipped += key_literal_skipped
@@ -6574,8 +6603,17 @@ def main():
             print(f"[coords] mapping dependency policy "
                   f"{SLOT_DEPENDENCY_POLICY}: "
                   + "; ".join(dependency_evidence))
+            if region_dependencies is not None:
+                write_only = sorted(
+                    set(dependencies or []) - set(region_dependencies))
+                if write_only:
+                    print("[coords] mapping(s) used only as write targets are "
+                          "kept out of path-region slot coordinates and left "
+                          "for the PUT oracle/R2 stage: "
+                          + ", ".join("state." + name
+                                      for name in write_only))
         if slot_access_evidence:
-            print("[coords] mapping slot access priority: "
+            print("[coords] mapping READ slot access priority: "
                   + "; ".join(slot_access_evidence))
         if key_literals:
             print("[coords] bytesN mapping key(s) fixed to the witnessed "

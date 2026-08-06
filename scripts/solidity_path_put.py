@@ -3703,8 +3703,16 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
     param_types = {pn: pt for pn, pt in (params or []) if pn}
 
     def entries_for_base(base):
+        if base in (maps or {}):
+            spec = maps[base]
+            return [(base, spec)] if spec[4] == base else []
+        mbase, dot, tail = base.partition(".")
+        if not dot:
+            return sorted((mkey, spec) for mkey, spec in (maps or {}).items()
+                          if spec[4] == base)
+        wanted = "." + tail
         return sorted((mkey, spec) for mkey, spec in (maps or {}).items()
-                      if spec[4] == base)
+                      if spec[4] == mbase and spec[5] == wanted.lstrip("."))
 
     def render_key(key, key_type):
         key_type = _norm_ty(key_type)
@@ -3751,6 +3759,7 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
             "entry-state variables")
 
     for base, keys in accesses or []:
+        source_base = base.partition(".")[0]
         entries = entries_for_base(base)
         if not entries:
             skipped.append(
@@ -3761,7 +3770,10 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
         for mkey, spec in entries:
             _slot, ktype, _nbytes, _off, _base, member = spec
             ktypes = list(ktype) if isinstance(ktype, tuple) else [ktype]
-            source_label = "state." + base + "".join(f"[{k}]" for k in keys)
+            source_label = "state." + source_base + "".join(
+                f"[{k}]" for k in keys)
+            if base != source_base:
+                source_label += "." + base.partition(".")[2]
             if len(keys) != len(ktypes):
                 skipped.append(
                     f"{source_label} source slot skipped: layout says "
@@ -3779,7 +3791,7 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
                 rendered.append(name)
             if not rendered:
                 continue
-            coord = base + "".join(f"[{k}]" for k in rendered)
+            coord = source_base + "".join(f"[{k}]" for k in rendered)
             if member:
                 coord += "." + member
             if coord not in out:

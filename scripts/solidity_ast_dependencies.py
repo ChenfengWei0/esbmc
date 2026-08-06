@@ -242,15 +242,43 @@ def _index_access_chain(node, state_by_id=None, constant_by_id=None,
     return None
 
 
+def _struct_member_slot_chain(node, state_by_id=None, constant_by_id=None,
+                              alias_by_id=None):
+    tail = []
+    cur = node
+    while isinstance(cur, dict) and cur.get("nodeType") == "MemberAccess":
+        member = cur.get("memberName")
+        if not member:
+            return None
+        tail.append(member)
+        cur = cur.get("expression")
+    if not tail or not isinstance(cur, dict) or cur.get("nodeType") != "IndexAccess":
+        return None
+    base_ty = ((cur.get("typeDescriptions") or {}).get("typeString") or "")
+    if "struct " not in base_ty:
+        return None
+    got = _index_access_chain(cur, state_by_id, constant_by_id, alias_by_id)
+    if got is None:
+        return None
+    ref, keys = got
+    return ref, keys, "." + ".".join(reversed(tail))
+
+
 def unit_mapping_slot_accesses(
-        ast_path, contract, unit, arity=None, declaration_id=None):
+        ast_path, contract, unit, arity=None, declaration_id=None,
+        access_mode="all"):
     """Return concrete parameter-keyed mapping slots reached by a unit.
 
     ``unit_state_dependencies`` says which mappings are in the callable
     closure. This stronger fact preserves the key expression chain solc
     resolved in source, e.g. ``_balances[maker][app][strategyHash][token]``.
+    ``access_mode`` is ``"all"`` for oracle use and ``"read"`` for region
+    coordinates.  A plain assignment LHS such as ``m[k] = v`` is a post-state
+    write, not an entry-state condition that can help separate complete paths.
     ``None`` means the AST question could not be answered.
     """
+    if access_mode not in ("all", "read"):
+        raise ValueError("access_mode must be 'all' or 'read'")
     ast = _ast_root(ast_path)
     if ast is None:
         return None, ["slot-access walk unavailable: AST is absent or unreadable"]
@@ -413,9 +441,26 @@ def unit_mapping_slot_accesses(
                     # four-level slot also emits its three partial sub-stores.
                     scan(value.get("indexExpression"))
                     return
+                if value.get("nodeType") == "MemberAccess":
+                    member_got = _struct_member_slot_chain(
+                        value, state_by_id, constant_by_id, alias_by_id)
+                    if member_got:
+                        ref, keys, tail = member_got
+                        if ref in state_by_id:
+                            name = state_by_id[ref] + tail
+                            candidate = (depth, tuple(chain), value.get("src") or "")
+                            old = found.get((name, keys))
+                            if old is None or candidate < old:
+                                found[(name, keys)] = candidate
+                        return
                 if value.get("nodeType") == "Assignment":
-                    for child in value.values():
-                        scan(child)
+                    lhs = value.get("leftHandSide")
+                    rhs = value.get("rightHandSide")
+                    if access_mode == "read" and value.get("operator") == "=":
+                        scan(rhs)
+                    else:
+                        scan(lhs)
+                        scan(rhs)
                     ref = identifier_ref(value.get("leftHandSide"))
                     if ref is not None:
                         if value.get("operator") == "=":

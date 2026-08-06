@@ -1947,6 +1947,170 @@ check("slot-access-walk-preserves-the-source-key-chain",
 check("slot-access-evidence-names-the-source-slot",
       "state._balances[maker][app][strategyHash][token]"
       in _slot_access_evidence[0], True)
+_RW_SLOT_ACCESS = {
+    "nodeType": "SourceUnit",
+    "nodes": [{
+        "nodeType": "ContractDefinition", "name": "RW", "id": 1,
+        "linearizedBaseContracts": [1],
+        "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10,
+             "name": "bal", "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "set",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "who",
+                  "typeDescriptions": {"typeString": "address"}},
+                 {"id": 22, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}},
+                 {"id": 23, "name": "recipient",
+                  "typeDescriptions": {"typeString": "address"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "leftHandSide": {
+                         "nodeType": "IndexAccess", "src": "100:5:0",
+                         "baseExpression": {
+                             "nodeType": "Identifier", "name": "bal",
+                             "referencedDeclaration": 10},
+                         "indexExpression": {
+                             "nodeType": "Identifier", "name": "recipient",
+                             "referencedDeclaration": 23}},
+                     "rightHandSide": {
+                         "nodeType": "Identifier", "name": "amount",
+                         "referencedDeclaration": 22}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "FunctionCall", "src": "120:7:0",
+                     "expression": {"nodeType": "Identifier", "name": "require"},
+                     "arguments": [{
+                         "nodeType": "BinaryOperation", "operator": ">",
+                         "leftExpression": {
+                             "nodeType": "IndexAccess", "src": "130:5:0",
+                             "baseExpression": {
+                                 "nodeType": "Identifier", "name": "bal",
+                                 "referencedDeclaration": 10},
+                             "indexExpression": {
+                                 "nodeType": "MemberAccess",
+                                 "memberName": "sender",
+                                 "expression": {
+                                     "nodeType": "Identifier", "name": "msg"}}},
+                         "rightExpression": {
+                             "nodeType": "Literal", "kind": "number",
+                             "value": "0"}}]}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "leftHandSide": {
+                         "nodeType": "IndexAccess", "src": "150:5:0",
+                         "baseExpression": {
+                             "nodeType": "Identifier", "name": "bal",
+                             "referencedDeclaration": 10},
+                         "indexExpression": {
+                             "nodeType": "Identifier", "name": "who",
+                             "referencedDeclaration": 21}},
+                     "rightHandSide": {
+                         "nodeType": "Identifier", "name": "amount",
+                         "referencedDeclaration": 22}}}]}}
+        ]
+    }]
+}
+_fd_rw, _p_rw = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd_rw, "w") as _f_rw:
+    json.dump(_RW_SLOT_ACCESS, _f_rw)
+_all_slot_accesses, _ = unit_mapping_slot_accesses(
+    _p_rw, "RW", "set", declaration_id=20)
+_read_slot_accesses, _ = unit_mapping_slot_accesses(
+    _p_rw, "RW", "set", declaration_id=20, access_mode="read")
+check("slot-access-default-keeps-write-targets-for-oracles",
+      _all_slot_accesses, [("bal", ("msg.sender",)), ("bal", ("recipient",)),
+                           ("bal", ("who",))])
+check("slot-access-read-mode-drops-plain-assignment-lhs",
+      _read_slot_accesses, [("bal", ("msg.sender",)), ("bal", ("who",))])
+os.unlink(_p_rw)
+_STRUCT_SLOT_ACCESS = {
+    "nodeType": "SourceUnit",
+    "nodes": [{
+        "nodeType": "ContractDefinition", "name": "Rows", "id": 1,
+        "linearizedBaseContracts": [1],
+        "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10,
+             "name": "rows", "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "who",
+                  "typeDescriptions": {"typeString": "address"}},
+                 {"id": 22, "name": "country",
+                  "typeDescriptions": {"typeString": "uint16"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "FunctionCall", "src": "100:7:0",
+                     "expression": {"nodeType": "Identifier", "name": "require"},
+                     "arguments": [{
+                         "nodeType": "BinaryOperation", "operator": "!=",
+                         "leftExpression": {
+                             "nodeType": "MemberAccess",
+                             "memberName": "identity",
+                             "src": "110:5:0",
+                             "expression": {
+                                 "nodeType": "IndexAccess",
+                                 "src": "112:5:0",
+                                 "typeDescriptions": {
+                                     "typeString":
+                                     "struct Rows.Row storage ref"},
+                                 "baseExpression": {
+                                     "nodeType": "Identifier", "name": "rows",
+                                     "referencedDeclaration": 10},
+                                 "indexExpression": {
+                                     "nodeType": "Identifier", "name": "who",
+                                     "referencedDeclaration": 21}}},
+                         "rightExpression": {
+                             "nodeType": "Literal", "kind": "number",
+                             "value": "0"}}]}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "leftHandSide": {
+                         "nodeType": "MemberAccess",
+                         "memberName": "country",
+                         "src": "130:5:0",
+                         "expression": {
+                             "nodeType": "IndexAccess",
+                             "src": "132:5:0",
+                             "typeDescriptions": {
+                                 "typeString": "struct Rows.Row storage ref"},
+                             "baseExpression": {
+                                 "nodeType": "Identifier", "name": "rows",
+                                 "referencedDeclaration": 10},
+                             "indexExpression": {
+                                 "nodeType": "Identifier", "name": "who",
+                                 "referencedDeclaration": 21}}},
+                     "rightHandSide": {
+                         "nodeType": "Identifier", "name": "country",
+                         "referencedDeclaration": 22}}}]}}
+        ]
+    }]
+}
+_fd_struct, _p_struct = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd_struct, "w") as _f_struct:
+    json.dump(_STRUCT_SLOT_ACCESS, _f_struct)
+_struct_read_accesses, _ = unit_mapping_slot_accesses(
+    _p_struct, "Rows", "touch", declaration_id=20, access_mode="read")
+_struct_all_accesses, _ = unit_mapping_slot_accesses(
+    _p_struct, "Rows", "touch", declaration_id=20)
+_struct_maps = {"rows": ("address", "struct Rows.Row", [".country"])}
+_struct_read_slots, _struct_read_skips = propose_slot_coords(
+    _struct_maps, [("who", "address"), ("country", "uint16")], 8,
+    sorted({name for name, _keys in _struct_read_accesses}),
+    _struct_read_accesses)
+_struct_all_slots, _ = propose_slot_coords(
+    _struct_maps, [("who", "address"), ("country", "uint16")], 8,
+    sorted({name for name, _keys in _struct_all_accesses}),
+    _struct_all_accesses)
+check("slot-access-read-mode-preserves-struct-field-tail",
+      _struct_read_accesses, [("rows.identity", ("who",))])
+check("slot-region-does-not-substitute-a-different-struct-field",
+      _struct_read_slots, [])
+check("slot-region-names-the-unqueryable-read-field",
+      any("rows.identity" in s for s in _struct_read_skips), True)
+check("slot-oracle-mode-still-sees-the-written-struct-field",
+      _struct_all_slots, ["state.rows[who].country"])
+os.unlink(_p_struct)
 _bytes32_zero_slot_key = "0x20" + ("00" * 31)
 check("bytes32-zero-ce-lowers-to-solidity-mapping-key",
       bytes_static_mapping_key_from_ce("bytes32", "{ .data = { 0 } }"),
