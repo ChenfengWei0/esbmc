@@ -1103,8 +1103,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
     variable directly from either one of the unit's rendered parameters, a
     source-level bool literal, or a source-level integer literal, or when it
     performs a simple unsigned self-update such as `x += p` or `x = x + p`.
-    The candidate is still proved by --path-cov-assert; the source only decides
-    which small query to ask first.
+    It also recognizes explicit single-value returns and direct assignments to
+    a single named return parameter. The candidate is still proved by
+    --path-cov-assert; the source only decides which small query to ask first.
     """
     try:
         target = _select_def(_function_defs(ast_path, contract, unit), arity,
@@ -1276,8 +1277,15 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         return None
 
     return_target = None
+    return_ids = set()
     if rettypes is not None and len(rettypes) == 1:
         return_target = endpoint_candidate(RETURN_VAR, rettypes[0][1])
+        if return_target is not None:
+            for p in ((target.get("returnParameters") or {}).get(
+                    "parameters") or []):
+                ref = p.get("id")
+                if isinstance(ref, int):
+                    return_ids.add(ref)
 
     def coord_term(n, expected_kind):
         ref = identifier_ref(n)
@@ -1354,6 +1362,11 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                     if delta is not None:
                         add_delta_candidate(state_name, delta[0], delta[1],
                                             delta[2], n.get("src"))
+                if lhs_ref in return_ids and return_target is not None:
+                    term = return_term(rhs, return_target[1])
+                    if term is not None:
+                        add_equals_candidate(RETURN_VAR, term[0], term[1],
+                                             n.get("src"))
             elif n.get("nodeType") == "Return" and return_target is not None:
                 term = return_term(n.get("expression"), return_target[1])
                 if term is not None:

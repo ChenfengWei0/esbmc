@@ -5209,6 +5209,48 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 named-return source R2 candidates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, benchmark AST preheat, or
+  benchmark certification run was started.
+
+Finding:
+
+- Solidity functions commonly use named return parameters:
+  `returns (uint256 out) { out = amount * 2; }`.
+- The previous source-return R2 rule recognized explicit `return expr`, but
+  not direct assignments to the single named return variable. That left these
+  getter/pure units dependent on mechanical typed-R2 ordering even though the
+  source body already identifies the strongest return equality.
+- This can be fixed without another verifier pass because return candidates
+  already share the typed Stage-4 R2 batch.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now records the
+  declaration IDs of a single named return parameter when its return type is an
+  R2 endpoint type.
+- A direct `=` assignment to that return parameter is translated to a structured
+  `return == term` source candidate using the same conservative return-term
+  grammar as explicit `return expr`.
+- Compound assignments to named return parameters are still skipped. Supporting
+  them would require local variable lifecycle analysis, which is outside this
+  source-priority pass.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  150 tests ran, 150 declared.
+- `git diff --check` on the touched files: passed.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 source return R2 candidates
 
 Scope and constraint:

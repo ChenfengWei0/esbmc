@@ -2397,10 +2397,34 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
             "expression": {"nodeType": "Identifier",
                            "referencedDeclaration": 41,
                            "name": "amount"}}]}}
+    named = {
+        "nodeType": "FunctionDefinition", "id": 50, "name": "named",
+        "parameters": {"parameters": [
+            {"id": 51, "name": "amount",
+             "typeDescriptions": {"typeString": "uint256"}}]},
+        "returnParameters": {"parameters": [
+            {"id": 52, "name": "out", "typeDescriptions": {
+                "typeString": "uint256"}}]},
+        "body": {"nodeType": "Block", "statements": [
+            {"nodeType": "ExpressionStatement", "expression": {
+                "nodeType": "Assignment", "operator": "=",
+                "src": "400:10:0",
+                "leftHandSide": {"nodeType": "Identifier",
+                                 "referencedDeclaration": 52,
+                                 "name": "out"},
+                "rightHandSide": {
+                    "nodeType": "BinaryOperation", "operator": "*",
+                    "leftExpression": {"nodeType": "Identifier",
+                                       "referencedDeclaration": 51,
+                                       "name": "amount"},
+                    "rightExpression": {"nodeType": "Literal",
+                                        "kind": "number",
+                                        "value": "2"}}}},
+            {"nodeType": "Return", "src": "420:7:0"}]}}
     ast = {"nodeType": "SourceUnit", "nodes": [{
         "nodeType": "ContractDefinition", "name": "C", "id": 1,
         "linearizedBaseContracts": [1],
-        "nodes": [quote, flag, pair]}]}
+        "nodes": [quote, flag, pair, named]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
         json.dump(ast, out)
@@ -2418,6 +2442,10 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
             [("amount", "num", None)], arity=1,
             rettypes=[("", "uint256"), ("", "uint256")],
             log=lambda _msg: None)
+        named_specs, named_evidence = source_assignment_r2_specs(
+            path, "C", "named", [("amount", "uint256")], {},
+            [("amount", "num", None)], arity=1,
+            rettypes=[("out", "uint256")], log=lambda _msg: None)
     finally:
         os.unlink(path)
     quote_entry = next((entry for entry in quote_specs[0]["vars"]
@@ -2428,6 +2456,10 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
                        if entry["name"] == RETURN_VAR), {}) if flag_specs else {}
     flag_terms = [r2_term_text(item["term"])
                   for item in flag_entry.get("equals", [])]
+    named_entry = next((entry for entry in named_specs[0]["vars"]
+                        if entry["name"] == RETURN_VAR), {}) if named_specs else {}
+    named_terms = [r2_term_text(item["term"])
+                   for item in named_entry.get("equals", [])]
     bad = 0
     bad += check(quote_terms == ["(amount + 7)"],
                  f"the arithmetic return expression is prioritized: "
@@ -2449,6 +2481,12 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
     bad += check(pair_specs == [],
                  f"multi-return whole-value source candidates are skipped: "
                  f"{pair_specs}")
+    bad += check(named_terms == ["(amount * 2)"],
+                 f"assignment to a named return parameter is prioritized: "
+                 f"{named_specs}")
+    bad += check(any("return: return == (amount * 2)" in line
+                     for line in named_evidence),
+                 f"the named-return provenance is recorded: {named_evidence}")
     return bad
 
 
