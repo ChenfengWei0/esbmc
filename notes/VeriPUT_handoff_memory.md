@@ -679,6 +679,10 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   retryable. Each job is validated to contain both `--generate-ast` and
   `--ast-cache-root`; start failures and non-ok subject rows are journaled as
   retryable failures instead of aborting the whole batch.
+- `ast_preheat_journal.py`: summarizes an `ast_preheat_run.py` JSONL journal
+  and, when given the original schedule, emits a retry schedule containing jobs
+  whose latest journal row is not `ok` plus jobs never attempted. This is
+  read-only unless `--out` or `--retry-out` is passed.
 - `unit_schedule.py`: expands a `veriput-unit-manifest/v1` into concrete
   per-unit `certify_all.py --subject-* --unit ...` jobs. It is also read-only:
   it never invokes solc, Forge, fuzzing, or ESBMC. Target-hinted units are
@@ -715,12 +719,16 @@ As of the latest read-only census on 2026-08-06:
   - `solc-0.8.26`: 1 inferred.
 - Bugfix pending unit hints: 381 changed-function hints pending AST
   enumeration. These hints are priorities, not filters.
+- The 509 missing-AST rows contain one duplicate prepared subject:
+  `stress243__ensdomains__ens-contracts__Controllable`. AST preheat should
+  deduplicate by prepared subject, so the current preheat job denominator is
+  508 unique subject jobs, not 509 target rows.
 
 Interpretation:
 
 - The current real-benchmark blocker is not yet region synthesis or ESBMC
-  proof strength. The first blocker is missing compact ASTs for all 509 usable
-  prepared subjects.
+  proof strength. The first blocker is missing compact ASTs for 509 usable
+  target rows, corresponding to 508 unique prepared subjects.
 - For Stress, most apparent `missing_solc_bin` rows were not real metadata
   loss. The successful flatten/compile record contains the exact solc path in
   `meta.compile.cmd`, so the tool now reports this as `inferable_solc_bin` and
@@ -746,16 +754,21 @@ Interpretation:
   until AST preheat/enumeration succeeds.
 - Read-only AST-preheat schedule smoke on the empty external cache path
   `/tmp/veriput-ast-preheat-schedule-20260806-codex` produced:
-  `jobs=509`, `by_benchmark={"bugfix124":124,"peer182":182,
-  "stress243":203}`, `by_solc_source={"explicit":357,"inferred":152}`,
-  `unschedulable=0`, `skipped_by_status={"error":39}` and did not create the
-  cache directory. These jobs are only a plan; running their `preheat_argv`
-  would intentionally invoke solc and write external cache files.
+  `jobs=508`, `by_benchmark={"bugfix124":124,"peer182":182,
+  "stress243":202}`, `by_solc_source={"explicit":357,"inferred":151}`,
+  `duplicate_rows=1`, `unschedulable=0`, `skipped_by_status={"error":39}` and
+  did not create the cache directory. These jobs are only a plan; running their
+  `preheat_argv` would intentionally invoke solc and write external cache
+  files.
 - Read-only preheat runner dry-run smoke on
-  `/tmp/veriput-ast-preheat-run-dry-20260806-codex` selected 509 jobs:
-  `selected=509`, `pending=509`, `already_done=0`, and did not create the
+  `/tmp/veriput-ast-preheat-run-dry-20260806-codex` selected 508 jobs:
+  `selected=508`, `pending=508`, `already_done=0`, and did not create the
   cache directory. This exercises the complete scheduling pipeline through
   `ast_preheat_run.py --dry-run`, still without invoking solc.
+- Read-only journal summary smoke with an empty journal and the current full
+  preheat schedule produced: `attempt_rows=0`, `never_attempted=508`,
+  `retry_jobs=508`, proving the retry schedule preserves all pending unique
+  subject jobs.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4555,12 +4568,15 @@ Implication for next work:
    Stress rows add 51 explicit-solc rows and 152 inferable-solc rows when
    `--use-inferred-solc-bin` is intentionally enabled.
 3. Use `ast_preheat_schedule.py` first to audit the exact per-subject preheat
-   commands; it should show 509 schedulable jobs and 0 unschedulable rows on
-   the current real target set when an external cache root is supplied.
+   commands; it should show 508 unique schedulable subject jobs, 1 duplicate
+   target row, and 0 unschedulable rows on the current real target set when an
+   external cache root is supplied.
 4. Use `ast_preheat_run.py --dry-run --journal <external.jsonl>` to audit the
    pending/resume set before executing. Real preheat execution must pass an
    external journal path and can be sharded/resumed without rerunning rows that
    already reached `ok`.
+   Use `ast_preheat_journal.py --schedule <schedule.json> --retry-out <retry.json>`
+   after any interrupted run to summarize failures and rebuild the retry set.
 5. After preheat, rerun `subject_unit_manifest.py` against the same
    `--ast-cache-root`, then run `unit_schedule.py` to produce priority-ordered
    per-unit `certify_all.py --subject-* --unit ...` jobs.

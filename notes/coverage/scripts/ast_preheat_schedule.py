@@ -151,6 +151,8 @@ def build_schedule(unit_manifest: dict,
 
     jobs = []
     unschedulable = []
+    duplicate_rows = []
+    seen_subjects = set()
     skipped_by_status = Counter()
     for row_pos, row in enumerate(unit_manifest.get("subjects") or []):
         status = row.get("status")
@@ -158,6 +160,16 @@ def build_schedule(unit_manifest: dict,
             skipped_by_status[str(status or "<missing>")] += 1
             continue
         subject = row.get("subject") or {}
+        key = (subject.get("benchmark"), subject.get("subject_id"))
+        if key in seen_subjects:
+            duplicate_rows.append({
+                "row": row_pos,
+                "reason": "duplicate prepared subject",
+                "subject": subject,
+                "target": row.get("target"),
+            })
+            continue
+        seen_subjects.add(key)
         source = _solc_source(subject)
         if source == "missing" or not _solc_path(subject):
             unschedulable.append({
@@ -197,8 +209,10 @@ def build_schedule(unit_manifest: dict,
             "by_benchmark": dict(sorted(by_benchmark.items())),
             "by_solc_source": dict(sorted(by_solc_source.items())),
             "skipped_by_status": dict(sorted(skipped_by_status.items())),
+            "duplicate_rows": len(duplicate_rows),
             "unschedulable": len(unschedulable),
         },
+        "duplicate_rows": duplicate_rows,
         "unschedulable": unschedulable,
         "jobs": jobs,
     }

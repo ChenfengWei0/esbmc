@@ -147,6 +147,26 @@ def test_preheat_schedule_refuses_prepared_subject_writes_without_cache():
     return 1
 
 
+def test_preheat_schedule_deduplicates_prepared_subjects():
+    data = manifest()
+    data["subjects"].append({
+        "subject": subject("stress243", "stress__C", "/tmp/preheat-root"),
+        "status": "missing-ast",
+        "reason": "flat.sol.solast does not exist",
+    })
+    doc = ast_preheat_schedule.build_schedule(data)
+    ids = [job["job_id"] for job in doc["jobs"]]
+    bad = 0
+    bad += check(
+        ids.count("stress243__stress__C") == 1,
+        f"duplicate prepared subject is scheduled once: {ids}")
+    bad += check(doc["summary"]["duplicate_rows"] == 1,
+                 f"duplicate row is reported: {doc['summary']}")
+    bad += check(doc["duplicate_rows"][0]["subject"]["subject_id"] == "stress__C",
+                 f"duplicate sample keeps subject identity: {doc['duplicate_rows']}")
+    return bad
+
+
 def test_preheat_schedule_cli_reads_stdin_and_overrides_cache():
     with tempfile.TemporaryDirectory() as td:
         cp = subprocess.run([
@@ -180,6 +200,7 @@ def test_preheat_schedule_cli_reads_stdin_and_overrides_cache():
 TESTS = [
     test_preheat_schedule_distinguishes_explicit_and_inferred_solc,
     test_preheat_schedule_refuses_prepared_subject_writes_without_cache,
+    test_preheat_schedule_deduplicates_prepared_subjects,
     test_preheat_schedule_cli_reads_stdin_and_overrides_cache,
 ]
 
