@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from pathlib import Path
 
 VERIPUT_ROOT = Path(os.environ.get(
     "VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
+DEFAULT_AST_TIMEOUT_S = 60.0
 
 KNOWN_SUBJECT_ROOTS = {
     "stress243": VERIPUT_ROOT / "Results" / "Stress243" / "subjects",
@@ -313,23 +315,115 @@ def subject_dirs(benchmark: str, root: str | None = None):
     return sorted(p for p in base.iterdir() if (p / "meta.json").exists())
 
 
-def manifest_for_subject(subject: PreparedSubject, *, generate_ast=False) -> dict:
+def _solc_cmd(subject: PreparedSubject) -> list[str]:
+    return [
+        subject.solc_bin,
+        *subject.solc_extra,
+        "--ast-compact-json",
+        subject.flat_sol,
+    ]
+
+
+def _unlink_quietly(path: Path):
     try:
-        wrote_ast = ensure_solast(subject) if generate_ast else False
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def generate_solast(subject: PreparedSubject,
+                    timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> dict:
+    """Create a compact AST without leaving corrupt partial output behind."""
+    ast = Path(subject.solast)
+    if ast.exists():
+        return {
+            "generated": False,
+            "status": "exists",
+            "path": str(ast),
+        }
+    if not subject.solc_bin:
+        raise SubjectError(
+            f"{subject.root} has no solc_bin, and {ast} does not exist")
+
+    ast.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ast.with_name(f"{ast.name}.tmp.{os.getpid()}.{time.time_ns()}")
+    cmd = _solc_cmd(subject)
+    start = time.monotonic()
+    try:
+        with tmp.open("w") as stream:
+            cp = subprocess.run(
+                cmd,
+                stdout=stream,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout_s,
+                check=False)
+    except subprocess.TimeoutExpired as exc:
+        _unlink_quietly(tmp)
+        raise SubjectError(
+            f"solc --ast-compact-json timed out after {timeout_s:g}s: "
+            f"{subject.flat_sol}") from exc
+    except OSError as exc:
+        _unlink_quietly(tmp)
+        raise SubjectError(
+            f"solc --ast-compact-json could not start: {exc}") from exc
+
+    wall_s = round(time.monotonic() - start, 3)
+    stderr_tail = (cp.stderr or "")[-2000:]
+    if cp.returncode:
+        _unlink_quietly(tmp)
+        raise SubjectError(
+            f"solc --ast-compact-json failed rc={cp.returncode} "
+            f"after {wall_s}s: {stderr_tail}")
+
+    if ast.exists():
+        _unlink_quietly(tmp)
+        return {
+            "generated": False,
+            "status": "exists-after-race",
+            "path": str(ast),
+            "wall_s": wall_s,
+            "stderr_tail": stderr_tail,
+        }
+    try:
+        os.replace(tmp, ast)
+    except OSError:
+        _unlink_quietly(tmp)
+        raise
+    return {
+        "generated": True,
+        "status": "generated",
+        "path": str(ast),
+        "wall_s": wall_s,
+        "stderr_tail": stderr_tail,
+    }
+
+
+def manifest_for_subject(subject: PreparedSubject, *, generate_ast=False,
+                         ast_timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> dict:
+    try:
+        ast_info = generate_solast(subject, ast_timeout_s) \
+            if generate_ast else {
+                "generated": False,
+                "status": "not-requested",
+                "path": subject.solast,
+            }
         if not Path(subject.solast).exists():
             return {
                 "subject": subject.to_record(),
                 "status": "missing-ast",
                 "reason": f"{subject.solast} does not exist",
+                "ast": ast_info,
             }
         enum = enumerate_subject_units(subject)
         return {
             "subject": subject.to_record(),
             "status": "ok",
-            "ast_generated": wrote_ast,
+            "ast_generated": bool(ast_info["generated"]),
+            "ast": ast_info,
             "units": enum.to_record(),
         }
-    except (SubjectError, subprocess.CalledProcessError) as exc:
+    except (OSError, SubjectError) as exc:
         return {
             "subject": subject.to_record(),
             "status": "error",
@@ -338,8 +432,12 @@ def manifest_for_subject(subject: PreparedSubject, *, generate_ast=False) -> dic
 
 
 def unit_manifest(benchmark: str, subjects: list[PreparedSubject], *,
-                  generate_ast=False) -> dict:
-    rows = [manifest_for_subject(subject, generate_ast=generate_ast)
+                  generate_ast=False,
+                  ast_timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> dict:
+    rows = [manifest_for_subject(
+        subject,
+        generate_ast=generate_ast,
+        ast_timeout_s=ast_timeout_s)
             for subject in subjects]
     summary = {
         "subjects": len(rows),
@@ -357,28 +455,16 @@ def unit_manifest(benchmark: str, subjects: list[PreparedSubject], *,
         "benchmark": benchmark,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generate_ast": bool(generate_ast),
+        "ast_timeout_s": ast_timeout_s,
         "summary": summary,
         "subjects": rows,
     }
 
 
-def ensure_solast(subject: PreparedSubject) -> bool:
+def ensure_solast(subject: PreparedSubject,
+                  timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> bool:
     """Create `<flat.sol>.solast` for a prepared subject if it is absent.
 
     Returns True when it wrote the file and False when it already existed.
     """
-    ast = Path(subject.solast)
-    if ast.exists():
-        return False
-    if not subject.solc_bin:
-        raise SubjectError(
-            f"{subject.root} has no solc_bin, and {ast} does not exist")
-    ast.parent.mkdir(parents=True, exist_ok=True)
-    with ast.open("w") as stream:
-        subprocess.run(
-            [subject.solc_bin, "--ast-compact-json", subject.flat_sol],
-            stdout=stream,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True)
-    return True
+    return bool(generate_solast(subject, timeout_s)["generated"])

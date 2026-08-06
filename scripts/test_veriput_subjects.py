@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
 from veriput_subjects import (SubjectError, enumerate_subject_units,  # noqa: E402
-                              resolve_subject, subject_from_record,
-                              unit_manifest)
+                              manifest_for_subject, resolve_subject,
+                              subject_from_record, unit_manifest)
 
 
 def check(cond, msg):
@@ -98,6 +98,13 @@ def compact_ast():
             },
         ],
     }
+
+
+def make_fake_solc(path, body):
+    p = Path(path)
+    p.write_text("#!/bin/sh\n" + body)
+    p.chmod(0o755)
+    return str(p)
 
 
 def test_resolve_subject_from_root_and_unit():
@@ -198,6 +205,84 @@ def test_unit_manifest_records_missing_ast_without_solc():
     return bad
 
 
+def test_generate_ast_is_atomic_on_success():
+    with tempfile.TemporaryDirectory() as td:
+        script = make_fake_solc(
+            Path(td) / "solc-ok",
+            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+        d = make_subject(td, "repo__C", solc_bin=script)
+        (d / "flat.sol.solast").unlink()
+        subject = resolve_subject("repo__C", root=td, require_unit=False)
+        row = manifest_for_subject(
+            subject,
+            generate_ast=True,
+            ast_timeout_s=5)
+    bad = 0
+    bad += check(row["status"] == "ok",
+                 f"generated AST row is ok: {row}")
+    bad += check(row["ast_generated"] is True,
+                 f"legacy ast_generated flag is true: {row.get('ast')}")
+    bad += check(row["ast"]["generated"] is True,
+                 f"structured AST metadata says generated: {row['ast']}")
+    bad += check(row["units"]["units"] == ["own", "baseOnly"],
+                 f"generated AST is enumerated: {row.get('units')}")
+    return bad
+
+
+def test_generate_ast_failure_leaves_no_partial_solast():
+    with tempfile.TemporaryDirectory() as td:
+        script = make_fake_solc(
+            Path(td) / "solc-fail",
+            "printf '{\"partial\":'\nexit 2\n")
+        d = make_subject(td, "repo__C", solc_bin=script)
+        ast = d / "flat.sol.solast"
+        ast.unlink()
+        subject = resolve_subject("repo__C", root=td, require_unit=False)
+        row = manifest_for_subject(
+            subject,
+            generate_ast=True,
+            ast_timeout_s=5)
+        tmp_left = list(d.glob("*.tmp.*"))
+        exists = ast.exists()
+    bad = 0
+    bad += check(row["status"] == "error",
+                 f"failed solc is an error row: {row}")
+    bad += check("rc=2" in row["reason"],
+                 f"return code is recorded: {row['reason']}")
+    bad += check(not exists,
+                 "failed solc did not leave flat.sol.solast")
+    bad += check(not tmp_left,
+                 f"failed solc cleaned temp files: {tmp_left}")
+    return bad
+
+
+def test_generate_ast_start_failure_cleans_temp_file():
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(
+            td,
+            "repo__C",
+            solc_bin=str(Path(td) / "missing-solc"))
+        ast = d / "flat.sol.solast"
+        ast.unlink()
+        subject = resolve_subject("repo__C", root=td, require_unit=False)
+        row = manifest_for_subject(
+            subject,
+            generate_ast=True,
+            ast_timeout_s=5)
+        tmp_left = list(d.glob("*.tmp.*"))
+        exists = ast.exists()
+    bad = 0
+    bad += check(row["status"] == "error",
+                 f"missing solc is an error row: {row}")
+    bad += check("could not start" in row["reason"],
+                 f"start failure is explicit: {row['reason']}")
+    bad += check(not exists,
+                 "missing solc did not leave flat.sol.solast")
+    bad += check(not tmp_left,
+                 f"missing solc cleaned temp files: {tmp_left}")
+    return bad
+
+
 def test_unit_manifest_cli_lists_units_without_esbmc():
     with tempfile.TemporaryDirectory() as td:
         d = make_subject(td, "repo__C")
@@ -279,6 +364,9 @@ def main():
         test_bad_status_is_not_usable,
         test_ast_unit_enumeration_is_target_contract_scoped,
         test_unit_manifest_records_missing_ast_without_solc,
+        test_generate_ast_is_atomic_on_success,
+        test_generate_ast_failure_leaves_no_partial_solast,
+        test_generate_ast_start_failure_cleans_temp_file,
         test_unit_manifest_cli_lists_units_without_esbmc,
         test_unit_manifest_cli_shard_and_resume,
     ]

@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from veriput_subjects import (  # noqa: E402
+    DEFAULT_AST_TIMEOUT_S,
     KNOWN_SUBJECT_ROOTS,
     SubjectError,
     manifest_for_subject,
@@ -119,7 +120,10 @@ def build_manifest(args):
         if subject.subject_id in skipped:
             skipped_resume += 1
             continue
-        row = manifest_for_subject(subject, generate_ast=args.generate_ast)
+        row = manifest_for_subject(
+            subject,
+            generate_ast=args.generate_ast,
+            ast_timeout_s=args.ast_timeout)
         rows.append(row)
         _write_journal(args.journal, row)
     summary = {
@@ -139,6 +143,7 @@ def build_manifest(args):
         "benchmark": args.benchmark,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generate_ast": bool(args.generate_ast),
+        "ast_timeout_s": args.ast_timeout,
         "shard": args.shard or None,
         "journal": args.journal or None,
         "resume_journal": args.resume_journal or None,
@@ -167,6 +172,9 @@ def main():
                     help="invoke each subject's solc_bin to create a missing "
                          "compact AST before enumeration. Still never starts "
                          "ESBMC")
+    ap.add_argument("--ast-timeout", type=float, default=DEFAULT_AST_TIMEOUT_S,
+                    help="per-subject solc timeout in seconds when "
+                         "--generate-ast is set")
     ap.add_argument("--journal", default="",
                     help="append one JSONL row per processed subject and fsync "
                          "it. Useful for long AST preheat runs")

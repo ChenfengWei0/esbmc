@@ -4167,3 +4167,59 @@ from the shard and reported all as `missing-ast`, as expected. The added tests
 cover shard selection and journal resume on temporary prepared subjects with
 prebuilt compact ASTs. No solc invocation was needed for those tests, and no
 ESBMC/Forge/POC run was started.
+
+### Dataset target-contract alignment and AST safety
+
+User alignment, 2026-08-06:
+
+- POCs are diagnostic only. They are useful for checking the tool, but the
+  eventual benchmark work is under `/home/samson/workspace/VeriPUT/Datasets`.
+  Code changes must not bake in POC-specific shortcuts or success criteria.
+- Dataset subjects already have a target contract, similar to the POC target
+  contract idea: the target is not "all contracts in the file". The prepared
+  `Results/*/subjects/*/meta.json` layout mirrors this with a `contract` field,
+  and current unit enumeration remains target-contract scoped.
+- Difficulty gradient should be treated as:
+  `peer < bugfix124 <= stress203`. Existing scripts currently expose the
+  prepared Stress population under the historical key `stress243`; keep that
+  key compatible until the real Dataset/Results naming is normalized.
+
+AST preheating is now safer:
+
+- `veriput_subjects.py::generate_solast()` writes solc output to a unique temp
+  file and atomically installs it with `os.replace()` only after solc returns
+  `rc == 0`.
+- Failed or timed-out solc invocations delete the temp file and do not leave an
+  empty or partial `flat.sol.solast`, so interrupted preheat shards can be
+  retried without poisoning later unit enumeration.
+- `subject_unit_manifest.py --ast-timeout <seconds>` controls per-subject solc
+  time when `--generate-ast` is explicitly set. Default is 60s. The manifest
+  records `ast_timeout_s`, and each row records structured `ast` metadata:
+  `generated/status/path`, plus `wall_s` and `stderr_tail` when solc actually
+  runs.
+- `ensure_solast()` remains as the compatibility wrapper used by `certify_all`,
+  but now inherits the atomic write behavior.
+
+Validation without ESBMC/Forge:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/veriput_subjects.py \
+  notes/coverage/scripts/subject_unit_manifest.py \
+  scripts/test_veriput_subjects.py \
+  notes/coverage/scripts/certify_all.py \
+  notes/coverage/scripts/put_all.py
+python3 scripts/test_veriput_subjects.py
+python3 scripts/test_poc_stage_drivers.py
+python3 scripts/test_put_all_accounting.py
+python3 notes/coverage/scripts/subject_unit_manifest.py \
+  --benchmark peer182 --limit 2 --ast-timeout 1
+git diff --check -- \
+  notes/coverage/scripts/veriput_subjects.py \
+  notes/coverage/scripts/subject_unit_manifest.py \
+  scripts/test_veriput_subjects.py
+```
+
+The smoke manifest was read-only (`generate_ast=false`) and reported two
+`peer182` subjects as `missing-ast`, preserving their target contracts from
+metadata. No ESBMC run and no POC attempt was consumed.
