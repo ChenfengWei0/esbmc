@@ -1346,16 +1346,19 @@ static bool first_nil_component(const expr2tc &e, std::string &path)
   return false;
 }
 
-static bool
-is_path_probe_replayable_nondet(const std::string &lhs, const type2tc &type)
+static bool is_path_probe_replayable_nondet(
+  const std::string &lhs,
+  const type2tc &type,
+  const std::string &source_location)
 {
   const bool source_local =
     lhs.rfind("sol:@", 0) == 0 && lhs.find("@F@") != std::string::npos;
+  const bool parameter_like = source_local && source_location.empty();
   const bool replayable_env = lhs.find("@msg_sender") != std::string::npos ||
                               lhs.find("@msg_value") != std::string::npos;
   const bool scalar =
     is_unsignedbv_type(type) || is_signedbv_type(type) || is_bool_type(type);
-  return scalar && (source_local || replayable_env);
+  return scalar && (parameter_like || replayable_env);
 }
 
 // Shared nondet collection logic (used by both TestComp and CTest)
@@ -1411,7 +1414,10 @@ std::vector<collected_nondet_value> collect_nondet_values(
 
       if (
         path_probe_replayable_only &&
-        !is_path_probe_replayable_nondet(lhs_symbol_name, nondet_expr->type))
+        !is_path_probe_replayable_nondet(
+          lhs_symbol_name,
+          nondet_expr->type,
+          SSA_step.source.pc->location.as_string()))
       {
         if (skipped_before_model)
           ++*skipped_before_model;

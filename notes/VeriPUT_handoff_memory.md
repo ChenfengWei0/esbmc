@@ -3497,3 +3497,46 @@ make -C build -j2 esbmc
 
 Both passed. `aqua_Aqua__Aqua__pull` now has only attempt3 remaining
 (600s/10GiB). Do not spend it until this second repair is committed and pushed.
+
+Attempt3 was then spent after commit `aeea521f12`:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  aqua_Aqua__Aqua__pull --stage all --cell gate --attempt 3 --fresh
+```
+
+It also failed in Stage 1:
+
+- Stage 1 exited after 2.79s with ESBMC exit code `-11`.
+- No report was produced; Stage 2 and Stage 3 did not run.
+- The 600s/10GiB final attempt for this POC is now spent. Do not rerun
+  `aqua_Aqua__Aqua__pull` under the current budget policy.
+- The second repair did take effect: the final log's all-witnesses census no
+  longer contains aggregate contract objects or unresolved-component warnings.
+  It contains only `msg_value`, `maker`, `token`, `amount`, and
+  `SafeERC20.safeTransferFrom.success`.
+
+New diagnosis from the final log:
+
+- The remaining non-replayable coordinate is the callee-local
+  `SafeERC20.safeTransferFrom.success` nondet. It is not an input a generated
+  PUT can supply; it is exactly the external-call success/failure split already
+  handled by static extcall sibling classification.
+- Therefore path-probe witness blocking should not treat every scalar Solidity
+  function-local nondet as replayable. It should keep source-level call
+  parameters and replayable env only, not callee-local nondet returns.
+
+Third code-level repair, made after all Aqua pull attempts were spent:
+
+- `is_path_probe_replayable_nondet` now additionally receives the SSA source
+  location and keeps Solidity source values only when they are parameter-like
+  (the current frontend emits these parameter nondet assignments with an empty
+  source location in the census).
+- Scalar callee-local nondets such as `SafeERC20.safeTransferFrom.success`,
+  which carry a real Solidity file/line location, are filtered out before model
+  querying and before building a blocking tuple.
+- The header comment was updated to say "parameter-like values" rather than
+  "function-local values".
+
+This repair still needs compile/format validation and commit/push. It cannot be
+validated on `aqua_Aqua__Aqua__pull` without violating the three-attempt budget.
