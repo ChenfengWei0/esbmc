@@ -7442,6 +7442,44 @@ Verification:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 FunctionCallOptions-wrapped helper source slots
+
+Scope:
+
+- This is a source-resolved mapping slot coverage improvement in the external
+  VeriPUT generator. It is not POC-specific and does not alter ESBMC internals.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `unit_mapping_slot_accesses` now unwraps solc `FunctionCallOptions` nodes
+  when resolving helper-function callees. This covers source shapes such as
+  `helper{gas: ...}(arg)` and `this.helper{value: ...}(arg)`, where the outer
+  `FunctionCall` carries the real arguments but its `expression` is not the
+  callee identifier directly.
+- The actual substitution still uses the outer call's `arguments`, so helper
+  formals continue to resolve to caller-side semantic keys such as `to`.
+- The change is deliberately limited to callable discovery; it does not treat
+  call options themselves as region coordinates or proof evidence.
+
+Why it matters:
+
+- Without this unwrap, helper-internal mapping accesses behind call options
+  were invisible to the source slot priority pass. Those paths would fall back
+  to broader guessed mapping slots or lose mapping R1/R2 candidates entirely.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 205/205 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.
+
 ## 2026-08-06 State-keyed mapping ladder candidates
 
 Scope:

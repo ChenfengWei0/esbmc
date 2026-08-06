@@ -346,10 +346,18 @@ def unit_mapping_slot_accesses(
                     out[ref] = actual
             return out
 
+        def call_expression_ref(expr):
+            while (isinstance(expr, dict)
+                   and expr.get("nodeType") == "FunctionCallOptions"):
+                expr = expr.get("expression") or {}
+            if not isinstance(expr, dict):
+                return None
+            ref = expr.get("referencedDeclaration")
+            return ref if isinstance(ref, int) else None
+
         def callable_ref(value):
             if value.get("nodeType") == "FunctionCall":
-                expr = value.get("expression") or {}
-                ref = expr.get("referencedDeclaration")
+                ref = call_expression_ref(value.get("expression") or {})
                 if ref in callables and ref != node_id:
                     return ref
             for key in ("modifierName", "modifierNamePath"):
