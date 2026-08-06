@@ -57,6 +57,21 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+Important caveat found immediately afterward:
+
+- This change proves the external tool can name, propose, and render Foundry
+  storage-slot oracles for `vault.userDeposits[who].amount`.
+- It does NOT yet prove ESBMC's internal `--path-cov-assert` ladder can certify
+  such dotted mapping bases. Internal `goto_coverage.cpp` currently resolves
+  mapping slots through `store_syms`, while Solidity frontend comments indicate
+  struct-internal mappings use a `mapping_t` field plus an
+  `_ESBMC_inf_<path>` backing pool. That may require an internal verifier
+  extension or an external guard before using these candidates in benchmark
+  runs.
+- Do not count this item as end-to-end success until a small synthetic ESBMC
+  ladder run confirms that `state.vault.userDeposits[who].amount` is accepted
+  and produces judged rows.
+
 ## 2026-08-06 enum mapping-key source-R2
 
 Scope and constraint:
