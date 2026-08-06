@@ -289,6 +289,7 @@ def build_pipeline(args) -> dict:
     unit_sched_doc = unit_schedule.build_schedule(unit_manifest_doc,
                                                   shard=args.unit_shard,
                                                   limit=args.unit_limit,
+                                                  selection_strategy=args.unit_selection_strategy,
                                                   cert_out=cert_out)
     paths["unit_schedule"] = _write_json(args.out_dir, "unit-schedule.json", unit_sched_doc)
 
@@ -422,6 +423,9 @@ def main(argv=None) -> int:
     ap.add_argument("--ast-preheat-stop-on-failure", action="store_true")
     ap.add_argument("--unit-shard", default="")
     ap.add_argument("--unit-limit", type=int, default=0)
+    ap.add_argument("--unit-selection-strategy",
+                    choices=unit_schedule.SELECTION_STRATEGIES,
+                    default="priority")
     ap.add_argument("--cert-out", default="", help="certify_all.py JSONL path for unit jobs")
     ap.add_argument("--journal",
                     action="append",

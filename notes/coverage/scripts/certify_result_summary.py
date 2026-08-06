@@ -221,6 +221,7 @@ def summarize(cert_jsonl: str,
     certified_regions = 0
     rows_with_certified = 0
     rows_with_witnessed = 0
+    certified_unit_keys = set()
 
     for key, row in latest.items():
         subject, unit, _path_function = key
@@ -250,6 +251,7 @@ def summarize(cert_jsonl: str,
         certified_regions += c_count
         if c_count:
             rows_with_certified += 1
+            certified_unit_keys.add((subject, unit))
         if isinstance(row.get("witnessed"), int):
             witnessed = max(0, row["witnessed"])
             rows_with_witnessed += 1
@@ -302,6 +304,17 @@ def summarize(cert_jsonl: str,
 
     scheduled_units = {canonical for canonical, _job, _aliases in scheduled_entries}
     seen_units = {(key[0], key[1]) for key in latest}
+    if scheduled_entries:
+        certified_units = sum(
+            1 for _canonical, _job, aliases in scheduled_entries
+            if aliases & certified_unit_keys)
+        certified_unit_denominator = len(scheduled_entries)
+    else:
+        certified_units = len(certified_unit_keys)
+        certified_unit_denominator = len(seen_units)
+    certified_unit_rate = (
+        certified_units / certified_unit_denominator
+        if certified_unit_denominator else None)
     missing_scheduled = []
     for canonical, job, aliases in scheduled_entries:
         if not (aliases & seen_units):
@@ -325,6 +338,9 @@ def summarize(cert_jsonl: str,
         blockers.append("no certification rows")
     if certified_regions == 0:
         blockers.append("no certified regions")
+    if (certified_unit_rate is not None
+            and certified_unit_rate < min_certified_path_rate):
+        blockers.append("certified unit rate is below threshold")
     gate_rate = (retry_adjusted_certified_path_rate
                  if retry_adjusted_certified_path_rate is not None else
                  (slice_adjusted_certified_path_rate
@@ -359,6 +375,9 @@ def summarize(cert_jsonl: str,
             "missing_scheduled_units": len(missing_scheduled),
             "rows_with_witnessed": rows_with_witnessed,
             "rows_with_certified": rows_with_certified,
+            "certified_units": certified_units,
+            "certified_unit_denominator": certified_unit_denominator,
+            "certified_unit_rate": certified_unit_rate,
             "witnessed_paths": witnessed_paths,
             "eligible_witnessed_paths": eligible_witnessed_paths,
             "retry_eligible_witnessed_paths": retry_eligible_witnessed_paths,

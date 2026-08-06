@@ -24,6 +24,7 @@ from veriput_recipe import STRONG_RECIPE_VERSION, strong_certify_args  # noqa: E
 DEFAULT_TIMEOUT_S = 60
 DEFAULT_RUN_TIMEOUT_S = 60
 DEFAULT_MEMLIMIT_GIB = 8
+SELECTION_STRATEGIES = ("priority", "round-robin-benchmark")
 
 BUDGET_VALUE_FLAGS = {
     "--timeout",
@@ -69,6 +70,35 @@ def _apply_shard(items, shard):
         return items
     idx, total = shard
     return [item for pos, item in enumerate(items) if pos % total == idx]
+
+
+def _select_jobs(jobs: list[dict], selection_strategy: str) -> list[dict]:
+    if selection_strategy not in SELECTION_STRATEGIES:
+        raise ScheduleError("--selection-strategy must be one of: " +
+                            ", ".join(SELECTION_STRATEGIES))
+    if selection_strategy == "priority":
+        return list(jobs)
+
+    groups = []
+    by_benchmark = {}
+    for job in jobs:
+        bench = job.get("benchmark") or "<unknown>"
+        if bench not in by_benchmark:
+            by_benchmark[bench] = []
+            groups.append(bench)
+        by_benchmark[bench].append(job)
+
+    selected = []
+    while groups:
+        next_groups = []
+        for bench in groups:
+            queue = by_benchmark[bench]
+            if queue:
+                selected.append(queue.pop(0))
+            if queue:
+                next_groups.append(bench)
+        groups = next_groups
+    return selected
 
 
 def _validate_budget(name: str, value: int) -> int:
@@ -221,6 +251,7 @@ def build_schedule(manifest: dict,
                    *,
                    shard: str = "",
                    limit: int = 0,
+                   selection_strategy: str = "priority",
                    cert_out: str = "",
                    timeout_s: int = DEFAULT_TIMEOUT_S,
                    run_timeout_s: int = DEFAULT_RUN_TIMEOUT_S,
@@ -294,6 +325,7 @@ def build_schedule(manifest: dict,
     shard_spec = _parse_shard(shard)
     total_jobs = len(jobs)
     jobs.sort(key=lambda item: (item["priority"], item["ordinal"]))
+    jobs = _select_jobs(jobs, selection_strategy)
     jobs = _apply_shard(jobs, shard_spec)
     if limit:
         jobs = jobs[:limit]
@@ -314,6 +346,7 @@ def build_schedule(manifest: dict,
         },
         "shard": shard or None,
         "limit": limit or None,
+        "selection_strategy": selection_strategy,
         "cert_out": cert_out or None,
         "workdir": workdir or None,
         "recipe_version": STRONG_RECIPE_VERSION,
@@ -348,6 +381,10 @@ def main() -> int:
                     type=int,
                     default=0,
                     help="keep only the first N jobs after sharding")
+    ap.add_argument("--selection-strategy",
+                    choices=SELECTION_STRATEGIES,
+                    default="priority",
+                    help="unit-job ordering policy before sharding and limit")
     ap.add_argument("--cert-out",
                     default="",
                     help="append this --out path to generated certify_all argv")
@@ -374,6 +411,7 @@ def main() -> int:
         doc = build_schedule(manifest,
                              shard=args.shard,
                              limit=args.limit,
+                             selection_strategy=args.selection_strategy,
                              cert_out=args.cert_out,
                              timeout_s=args.timeout,
                              run_timeout_s=args.run_timeout,

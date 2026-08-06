@@ -268,6 +268,68 @@ def test_schedule_deduplicates_prepared_subject_units():
     return bad
 
 
+def test_schedule_can_round_robin_across_benchmarks():
+    data = manifest()
+    rows = []
+    for bench, subject_id, units in [
+            ("bugfix124", "bug__A", ["b0", "b1", "b2"]),
+            ("peer182", "peer__B", ["p0", "p1", "p2"]),
+            ("stress243", "stress__C", ["s0", "s1", "s2"]),
+    ]:
+        subject = subject_record()
+        subject["benchmark"] = bench
+        subject["subject_id"] = subject_id
+        subject["benchmark_key"] = f"{bench}__{subject_id}"
+        subject["root"] = f"/tmp/{subject_id}"
+        subject["contract"] = subject_id.rsplit("__", 1)[-1]
+        rows.append({
+            "subject": subject,
+            "status": "ok",
+            "target": {
+                "benchmark": bench,
+                "subject_id": subject_id,
+                "contract": subject["contract"],
+                "units_hint": units if bench == "bugfix124" else [],
+            },
+            "unit_hints": {
+                "hinted_units": units if bench == "bugfix124" else [],
+                "missing_unit_hints": [],
+                "pending_unit_hints": [],
+            },
+            "units": {
+                "schema": "veriput-subject-units/v1",
+                "contract": subject["contract"],
+                "units": units,
+                "skipped": [],
+            },
+        })
+    data["subjects"] = rows
+    default_doc = unit_schedule.build_schedule(data, limit=3)
+    rr_doc = unit_schedule.build_schedule(
+        data, limit=6, selection_strategy="round-robin-benchmark")
+    got_default = [job["benchmark"] for job in default_doc["jobs"]]
+    got_rr = [(job["benchmark"], job["unit"]) for job in rr_doc["jobs"]]
+    bad = 0
+    bad += check(got_default == ["bugfix124", "bugfix124", "bugfix124"],
+                 f"default priority sampling stays unchanged: {got_default}")
+    bad += check(got_rr == [
+        ("bugfix124", "b0"),
+        ("peer182", "p0"),
+        ("stress243", "s0"),
+        ("bugfix124", "b1"),
+        ("peer182", "p1"),
+        ("stress243", "s1"),
+    ], f"round-robin sampling balances benchmarks after priority sorting: {got_rr}")
+    bad += check(rr_doc["selection_strategy"] == "round-robin-benchmark",
+                 f"schedule records the selection strategy: {rr_doc.get('selection_strategy')}")
+    bad += check(rr_doc["summary"]["by_benchmark"] == {
+        "bugfix124": 2,
+        "peer182": 2,
+        "stress243": 2,
+    }, f"round-robin summary is balanced: {rr_doc['summary']}")
+    return bad
+
+
 def test_schedule_refuses_protected_write_paths():
     protected = "/home/samson/workspace/VeriPUT/Results/certify.jsonl"
     try:
@@ -318,6 +380,7 @@ TESTS = [
     test_schedule_prioritizes_semantic_units_before_getter_like_units,
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,
+    test_schedule_can_round_robin_across_benchmarks,
     test_schedule_refuses_protected_write_paths,
 ]
 

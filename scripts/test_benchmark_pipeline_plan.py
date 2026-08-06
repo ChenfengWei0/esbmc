@@ -51,6 +51,7 @@ def args(tmp, out_dir=""):
                               ast_preheat_stop_on_failure=False,
                               unit_shard="",
                               unit_limit=0,
+                              unit_selection_strategy="priority",
                               cert_out="",
                               journal=[],
                               cert_jsonl=[],

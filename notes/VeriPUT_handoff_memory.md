@@ -10428,6 +10428,126 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 round-robin benchmark sampling and unit-level gate
+
+Problem found:
+
+- Priority-only unit sampling can spend an early smoke run on one benchmark
+  family before touching the others.  That is bad for VeriPUT triage because
+  the current failures are benchmark-family specific:
+  - `bugfix124` often reaches real certification work but can timeout on
+    heavier units;
+  - `peer182` exposes no-witness and preflight closure/modeling issues;
+  - `stress243` exposes path-coverage/frontend modeling defects.
+- The summary gate previously looked mainly at witnessed-path certification
+  quality.  A sample with only one certified unit and many units with no
+  usable witness could still look `ready` if the one witnessed path was
+  certified after retry/slice adjustment.  That is too weak for the >=70%
+  generalized PUT target.
+
+Code changes:
+
+- `unit_schedule.py` now supports
+  `--selection-strategy round-robin-benchmark`.
+  The default remains `priority`, so existing schedules are unchanged unless
+  the new strategy is requested.
+- `benchmark_pipeline_plan.py` exposes the same choice as
+  `--unit-selection-strategy`.
+- `certify_result_summary.py` now reports unit-level certification accounting:
+  - `certified_units`;
+  - `certified_unit_denominator`;
+  - `certified_unit_rate`.
+- The summary gate now degrades when the unit-level rate is below the same
+  threshold.  Path-level retry/slice adjusted rates are still reported, but
+  they no longer hide broad no-witness/no-claim coverage failures.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_schedule.py notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_certify_result_summary.py scripts/test_unit_schedule.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_result_summary.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_benchmark_pipeline_plan.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_schedule.py notes/coverage/scripts/benchmark_pipeline_plan.py scripts/test_certify_result_summary.py scripts/test_unit_schedule.py scripts/test_benchmark_pipeline_plan.py`
+  passed.
+
+Benchmark sample:
+
+- Base output directory:
+  `/tmp/veriput_bench_sample_20260807_022340`.
+- Round-robin plan:
+  `/tmp/veriput_bench_sample_20260807_022340/rr_plan1`.
+- The full unit schedule used
+  `--unit-selection-strategy round-robin-benchmark --unit-limit 12`.
+  The base schedule was balanced: 4 `bugfix124`, 4 `peer182`, 4
+  `stress243`.
+- With the earlier min3 journals/certification rows supplied, the campaign
+  selected 9 fresh attempt-1 jobs, balanced 3 / 3 / 3 across the three
+  benchmark families.
+- Attempt policy:
+  `jobs=1`, 60s ESBMC budget, 75s wrapper timeout, 8GiB memory.
+- Result JSONL:
+  `/tmp/veriput_bench_sample_20260807_022340/rr_plan1/certify-results-a1.jsonl`.
+- Runner journal:
+  `/tmp/veriput_bench_sample_20260807_022340/rr_plan1/unit-run-a1.jsonl`.
+- Unit-rate summary:
+  `/tmp/veriput_bench_sample_20260807_022340/rr_plan1/certify-summary-a1-unitrate.json`.
+
+Observed 9-job result:
+
+- `CERTIFIED`: 1
+- `KILLED`: 2
+- `NO-PATH`: 1
+- `NO-WITNESS-UNDECIDED`: 2
+- `NO-WITNESS-UNKNOWN`: 3
+- `certified_units = 1`
+- `certified_unit_denominator = 9`
+- `certified_unit_rate = 0.1111111111111111`
+- `retry_adjusted_certified_path_rate = 1.0`
+- Gate after the unit-rate fix:
+  `degraded`, blocker `certified unit rate is below threshold`.
+
+Per-family diagnosis from this sample:
+
+- `bugfix124`:
+  - `DepositLog.approvedToLog` certified one body-slice region:
+    `_caller` free, `approvedLoggers[_caller] == 0`, environment pins stable.
+  - `DnGmxBatchingManager.executeBatchDeposit` and
+    `FlashGovernanceArbiter.setGoverned` both hit the 60s attempt-1 budget at
+    `started` with no witness.  These are retryable/heavy, but should be
+    inspected before spending 600s attempts.
+- `peer182`:
+  - `AIRBets.initialize2` was `NO-PATH` / bounded-holds no-witness.
+  - `AIRBets.transfer` and `AIRBets.transferFrom` were
+    `NO-WITNESS-UNDECIDED` with a preflight refusal around direct
+    self-recursive helper wrappers in `SafeMath.div/2` and `SafeMath.sub/2`.
+    This is a closure/modeling issue, not a proof of unreachable behavior.
+- `stress243`:
+  - `BalancerContractRegistry.deregisterBalancerContract`,
+    `deprecateBalancerContract`, and
+    `addOrUpdateBalancerContractAlias` all produced
+    `driver_diagnostic=path-coverage-no-claims-reached-solver`.
+  - This repeats the earlier `registerBalancerContract` failure and points to
+    a path-coverage/front-end lowering issue where the instrumented claims are
+    not reaching the solver on this contract family.
+
+Current decision:
+
+- Do not start full benchmark-wide PUT certification yet.  The scheduling
+  machinery can now do disciplined small balanced samples, but the current
+  true unit-level success rate is far below the 70% target.
+- Next high-value fixes are:
+  1. diagnose why `stress243` registry path claims do not reach the solver;
+  2. diagnose the `peer182` AIRBets SafeMath/preflight refusal;
+  3. only then rerun small balanced benchmark samples before considering a
+     full benchmark pass.
+- No files under `/home/samson/workspace/VeriPUT/Datasets` or
+  `/home/samson/workspace/VeriPUT/Results` were modified; all benchmark
+  outputs above are under `/tmp`.
+
 ## 2026-08-07 retry schedules use attempt-specific result JSONL
 
 Discovered before broad benchmark sampling:
