@@ -7719,3 +7719,43 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 197/197 tests.
 - `git diff --check` passed.
+
+## 2026-08-06 Source-resolved mapping slot priority
+
+Scope:
+
+- This closes the next gap after state-keyed mapping rendering/proposal:
+  `solidity_path_put.py` now uses solc-resolved source mapping accesses before
+  falling back to guessed same-type cross-products.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `solidity_ast_dependencies.unit_mapping_slot_accesses` now preserves state
+  keys as `state.<field>` by reading solc `referencedDeclaration`. This avoids
+  confusing a bare source name with a parameter/local of the same spelling.
+- Added `source_access_slot_vars` in `solidity_path_put.py`. It converts
+  source-resolved accesses such as `bal[state.owner]` and
+  `allow[state.owner][spender]` into assertion ladder variables only when every
+  key is renderable by the PUT: `msg.sender`, same-typed unit parameters, or
+  safe layout-backed entry-state variables.
+- Stage-2b candidate selection order is now:
+  certified-region mapping slots, source-resolved mapping slots, then fallback
+  cross-product guesses. Once source access provides a concrete key chain for a
+  mapping/member, that mapping/member's fallback cross-product is suppressed
+  and the reason is printed.
+- This should strengthen R1/R2 on real contracts where the source names a
+  precise slot (`balances[owner]`, `_allowances[owner][spender]`) but a
+  cross-product would otherwise spend budget on caller/parameter guesses first.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 199/199 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.

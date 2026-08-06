@@ -6435,6 +6435,80 @@ def test_mapping_proposer_includes_safe_entry_state_keys_after_params():
     return bad
 
 
+def test_source_access_slots_preserve_state_keys_before_fallback():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "bal",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "allow",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "owner",
+             "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "spender",
+                  "typeDescriptions": {"typeString": "address"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "IndexAccess", "src": "100:5:0",
+                     "baseExpression": {"nodeType": "Identifier",
+                                        "name": "bal",
+                                        "referencedDeclaration": 10},
+                     "indexExpression": {"nodeType": "Identifier",
+                                         "name": "owner",
+                                         "referencedDeclaration": 12}}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "IndexAccess", "src": "120:5:0",
+                     "baseExpression": {
+                         "nodeType": "IndexAccess",
+                         "baseExpression": {"nodeType": "Identifier",
+                                            "name": "allow",
+                                            "referencedDeclaration": 11},
+                         "indexExpression": {"nodeType": "Identifier",
+                                             "name": "owner",
+                                             "referencedDeclaration": 12}},
+                     "indexExpression": {"nodeType": "Identifier",
+                                         "name": "spender",
+                                         "referencedDeclaration": 21}}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "touch", declaration_id=20)
+    finally:
+        os.unlink(path)
+    maps = {"bal": (2, "address", 32, 0, "bal", None),
+            "allow": (3, ("address", "address"), 32, 0, "allow", None),
+            "seen": (4, "bytes32", 32, 0, "seen", None)}
+    slots, used, skipped = source_access_slot_vars(
+        accesses + [("seen", ("state.owner",))], maps,
+        params=[("spender", "address")],
+        state_types={"owner": "address"}, layout={"owner": (0, 0, 20)})
+    bad = 0
+    bad += check(accesses == [
+        ("allow", ("state.owner", "spender")),
+        ("bal", ("state.owner",)),
+    ], f"AST source access keeps state keys distinct from params: {accesses}")
+    bad += check(any("state.bal[state.owner]" in line for line in evidence),
+                 f"evidence prints the state-keyed source slot: {evidence}")
+    bad += check(slots == ["allow[state.owner][spender]",
+                           "bal[state.owner]"],
+                 f"source-resolved slots are emitted before fallback guesses: "
+                 f"{slots}")
+    bad += check(used == {"bal", "allow"},
+                 f"accepted source slots suppress their fallback maps: {used}")
+    bad += check(any("state.seen[state.owner]" in s and "not a safe" in s
+                     for s in skipped),
+                 f"bytesN/incompatible source key is refused, not guessed: "
+                 f"{skipped}")
+    return bad
+
+
 def test_the_CANDIDATE_BUDGET_says_what_it_dropped():
     """⛔ NO SILENT CAP. Four levels against three address parameters PLUS the
     caller is 4^4 = 256 names; the cap keeps 24 and must SAY so, or a truncated
@@ -8618,6 +8692,7 @@ def main():
               test_a_LEVEL_WITH_NO_MATCHING_PARAMETER_proposes_NOTHING,
               test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter,
               test_mapping_proposer_includes_safe_entry_state_keys_after_params,
+              test_source_access_slots_preserve_state_keys_before_fallback,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
               test_assert_query_drops_semantic_pins_ESBMC_cannot_resolve,

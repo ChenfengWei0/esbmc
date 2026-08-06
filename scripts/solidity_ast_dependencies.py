@@ -164,23 +164,29 @@ def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id
     return ordered, evidence
 
 
-def _expr_coord_name(expr):
+def _expr_coord_name(expr, state_by_id=None):
     if not isinstance(expr, dict):
         return None
     if expr.get("nodeType") == "Identifier" and expr.get("name"):
+        ref = expr.get("referencedDeclaration")
+        if state_by_id and ref in state_by_id:
+            return "state." + state_by_id[ref]
         return expr["name"]
     if expr.get("nodeType") == "MemberAccess" and expr.get("memberName"):
         base = expr.get("expression") or {}
         if base.get("nodeType") == "Identifier" and base.get("name"):
+            ref = base.get("referencedDeclaration")
+            if state_by_id and ref in state_by_id:
+                return f"state.{state_by_id[ref]}.{expr['memberName']}"
             return f"{base['name']}.{expr['memberName']}"
     return None
 
 
-def _index_access_chain(node):
+def _index_access_chain(node, state_by_id=None):
     keys = []
     cur = node
     while isinstance(cur, dict) and cur.get("nodeType") == "IndexAccess":
-        key = _expr_coord_name(cur.get("indexExpression"))
+        key = _expr_coord_name(cur.get("indexExpression"), state_by_id)
         if key is None:
             return None
         keys.append(key)
@@ -274,7 +280,7 @@ def unit_mapping_slot_accesses(
         def scan(value):
             if isinstance(value, dict):
                 if value.get("nodeType") == "IndexAccess":
-                    chain_got = _index_access_chain(value)
+                    chain_got = _index_access_chain(value, state_by_id)
                     if chain_got:
                         ref, keys = chain_got
                         if ref in state_by_id:

@@ -106,6 +106,7 @@ import time
 
 from solidity_ast_dependencies import (SLOT_DEPENDENCY_POLICY,
                                         path_function_declaration_id,
+                                        unit_mapping_slot_accesses,
                                         unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
@@ -3632,6 +3633,80 @@ def region_slot_vars(region, maps):
         if v not in out:
             out.append(v)
     return out
+
+
+def source_access_slot_vars(accesses, maps, params=None, state_types=None,
+                            layout=None):
+    """Mapping-member coordinates from solc-resolved source slot accesses.
+
+    `unit_mapping_slot_accesses` preserves the key chain the callable closure
+    actually used. Keep that precision for the assertion ladder, while
+    accepting only keys this PUT can later render: msg.sender, same-typed unit
+    parameters, and safe entry-state variables.
+    """
+    out, used_mkeys, skipped = [], set(), []
+    param_types = {pn: pt for pn, pt in (params or []) if pn}
+
+    def entries_for_base(base):
+        return sorted((mkey, spec) for mkey, spec in (maps or {}).items()
+                      if spec[4] == base)
+
+    def render_key(key, key_type):
+        if key == "msg.sender" and _norm_ty(key_type) == "address":
+            return "msg.sender", None
+        if key.startswith("state."):
+            state_name = key[len("state."):]
+            if (state_name in (state_types or {})
+                    and state_name in (layout or {})
+                    and state_key_type_compatible(
+                        state_types[state_name], key_type)):
+                return key, None
+            return None, (
+                f"entry-state key `{key}` is not a safe layout-backed "
+                f"`{_norm_ty(key_type)}` key")
+        if _norm_ty(param_types.get(key, "")) == _norm_ty(key_type):
+            return key, None
+        return None, (
+            f"source key `{key}` cannot be rendered as `{_norm_ty(key_type)}` "
+            "by the PUT; accepted keys are msg.sender, same-typed unit "
+            "parameters, or safe layout-backed entry-state variables")
+
+    for base, keys in accesses or []:
+        entries = entries_for_base(base)
+        if not entries:
+            skipped.append(
+                f"state.{base}[...] source slot skipped: solc storage layout "
+                "does not report an ESBMC-queryable scalar mapping entry for "
+                "this base")
+            continue
+        for mkey, spec in entries:
+            _slot, ktype, _nbytes, _off, _base, member = spec
+            ktypes = list(ktype) if isinstance(ktype, tuple) else [ktype]
+            source_label = "state." + base + "".join(f"[{k}]" for k in keys)
+            if len(keys) != len(ktypes):
+                skipped.append(
+                    f"{source_label} source slot skipped: layout says "
+                    f"{len(ktypes)} key level(s), source access has "
+                    f"{len(keys)}")
+                continue
+            rendered = []
+            for key, key_type in zip(keys, ktypes):
+                name, err = render_key(key, key_type)
+                if err is not None:
+                    skipped.append(f"{source_label} source slot skipped: "
+                                   f"{err}")
+                    rendered = []
+                    break
+                rendered.append(name)
+            if not rendered:
+                continue
+            coord = base + "".join(f"[{k}]" for k in rendered)
+            if member:
+                coord += "." + member
+            if coord not in out:
+                out.append(coord)
+            used_mkeys.add(mkey)
+    return out, used_mkeys, skipped
 
 
 def assert_query_pins(pins, layout, maps):
@@ -7754,6 +7829,9 @@ def main():
     slot_dependencies, slot_dependency_evidence = unit_state_dependencies(
         a.ast, a.contract, a.unit, arity=arity,
         declaration_id=declaration_id)
+    slot_accesses, slot_access_evidence = unit_mapping_slot_accesses(
+        a.ast, a.contract, a.unit, arity=arity,
+        declaration_id=declaration_id)
     if slot_dependencies is None:
         print("[put]   mapping dependency closure unavailable; failing closed "
               "with no proposed mapping slot: "
@@ -7761,6 +7839,9 @@ def main():
     else:
         for evidence in slot_dependency_evidence:
             print(f"[put]   {evidence}")
+        if slot_access_evidence:
+            print("[put]   mapping source slot priority: "
+                  + "; ".join(slot_access_evidence))
         direct_slot_vars = region_slot_vars(region, query_maps)
         if direct_slot_vars:
             print("[put]   certified-region mapping slots sent to the "
@@ -7771,6 +7852,24 @@ def main():
             mname, _keys, tail = parse_slot_name(v)
             if mname is not None:
                 direct_mkeys.add(mname + tail)
+        source_slot_vars, source_mkeys, source_slot_skipped = \
+            source_access_slot_vars(
+                [] if slot_accesses is None else slot_accesses,
+                {name: spec for name, spec in (query_maps or {}).items()
+                 if name not in direct_mkeys},
+                params=params, state_types=state_types, layout=layout)
+        if source_slot_vars:
+            print("[put]   source-resolved mapping slots sent to the "
+                  "assertion ladder before fallback guesses: "
+                  + ", ".join(source_slot_vars))
+            slot_vars += source_slot_vars
+            for name in sorted(source_mkeys):
+                direct_mkeys.add(name)
+                print(f"[put]   state.{name}[...] fallback cross-product "
+                      "suppressed: solc resolved concrete key chain(s) for "
+                      "this mapping in the target's callable closure")
+        for skipped in source_slot_skipped:
+            print(f"[put]   {skipped}")
         remaining_maps = {
             name: spec for name, spec in (query_maps or {}).items()
             if name not in direct_mkeys
