@@ -662,7 +662,8 @@ def main():
              f"other {n_certified - len(rows)} were NOT measured by this run "
              f"and their absence is a filter, not a result ==="
              if args.only else ""))
-    print_stage2_path_accounting(stage2_path_accounting(cert_path, args.only))
+    stage2_accounting = stage2_path_accounting(cert_path, args.only)
+    print_stage2_path_accounting(stage2_accounting)
     if arm:
         print(f"=== ARM {arm[2:]}: PUTs go to their OWN project and workdir, so "
               f"this table does not overwrite or get confused with another "
@@ -940,7 +941,34 @@ def main():
     print("  EMITTED TEXT; B additionally requires the test to be GREEN on the")
     print("  unmodified contract, which only forge can say. See the gate below.")
 
-    b_report(results, args.forge_timeout)
+    b_summary = b_report(results, args.forge_timeout)
+    summary_path = os.path.join(OUT, "put-summary.json")
+    with open(summary_path, "w") as stream:
+        json.dump({
+            "schema": "veriput-put-summary/1",
+            "cert_path": os.path.abspath(cert_path),
+            "only": args.only,
+            "scope": args.scope,
+            "max_tx": args.max_tx,
+            "auto_unwind": args.auto_unwind,
+            "auto_partial_loops": args.auto_partial_loops,
+            "stage4_recipe_version": stage4_recipe_version,
+            "stage2": stage2_accounting,
+            "cell": {
+                "labels": sorted(cells),
+                "missing": n_norun,
+                "mixed": len(cells) > 1,
+            },
+            "emission": {
+                "certified_region_rows": len(results),
+                "puts_emitted": n_put,
+                "with_fuzz_parameters": n_fuzz,
+                "with_oracle": n_oracle,
+                "with_both": n_both,
+            },
+            "deliverable_b": b_summary,
+        }, stream, indent=2, sort_keys=True)
+    print(f"\n  wrote machine-readable summary: {summary_path}")
     return 0
 
 
@@ -1093,6 +1121,7 @@ def b_report(results, forge_timeout):
     b = 0
     n_stale = 0
     n_refused = 0
+    row_summaries = []
     # ONE identity for the whole table: asking git and stat per row would let
     # a mid-report rebuild split the table's own notion of "this tree".
     _now_binary = current_binary_identity()
@@ -1192,6 +1221,31 @@ def b_report(results, forge_timeout):
         stale = stale_reason(rec, _now_binary) if rc == 0 else None
         ok = g1 and g2 and g3 and g4 and g5 and not stale and not refused
         b += 1 if ok else 0
+        row_summaries.append({
+            "benchmark": bench,
+            "unit": unit,
+            "enc": enc,
+            "piece": piece,
+            "rc": rc,
+            "test": want,
+            "forge_status": status,
+            "gates": {
+                "fuzz": g1,
+                "width": g2 if not refused else None,
+                "assert": g3 if not refused else None,
+                "green": g4 if not (refused or status is None) else None,
+                "corpus": g5 if not refused else None,
+            },
+            "b": ok,
+            "refused": refused,
+            "stale": stale,
+            "fuzz_params": fz,
+            "asserts": ar,
+            "guarded_asserts": guarded,
+            "unconditional_asserts": uncond,
+            "rendered_width": st.get("rendered_width") or {},
+            "file": rec.get("file"),
+        })
         def m(x, unknown=False):
             return "?" if unknown else ("yes" if x else "NO")
         print(f"{bench:<24}{unit:<16}{encs:>7}  "
@@ -1225,6 +1279,14 @@ def b_report(results, forge_timeout):
           f"tree. Re-emit (drop --forge-only) to bring them back.")
     print("  A row failing gate 4 with '?' was never seen by forge -- that is an")
     print("  UNKNOWN, not a failure, and it is not counted toward B either.")
+    return {
+        "b": b,
+        "certified_region_rows": len(results),
+        "forge_seen": forge_seen,
+        "refused": n_refused,
+        "stale": n_stale,
+        "rows": row_summaries,
+    }
 
 
 if __name__ == "__main__":

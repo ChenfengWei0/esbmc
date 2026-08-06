@@ -117,6 +117,65 @@ def main():
                      (args.fuzz_r2_prefilter, args.fuzz_runs,
                       args.fuzz_r2_candidate_budget),
                      (True, 256, 128))
+        bad += check("stage4-v14-does-not-require-certified-details",
+                     put_all.recipe_requires_certified_details(
+                         "veriput-strong/14"),
+                     False)
+        bad += check("stage4-v15-requires-certified-details",
+                     put_all.recipe_requires_certified_details(
+                         "veriput-strong/15-relation-establish"),
+                     True)
+        old_run_forge = put_all.run_forge
+        old_binary = put_all.current_binary_identity
+        try:
+            put_all.current_binary_identity = lambda: {
+                "head": "test",
+                "srcDirty": False,
+                "binaryMtime": 123,
+            }
+            put_all.run_forge = lambda _proj, _timeout: (
+                0,
+                json.dumps({
+                    "Suite": {
+                        "test_results": {
+                            "test_put_C_target_path1()": {
+                                "status": "Success"
+                            },
+                            "test_cov_0()": {
+                                "status": "Success"
+                            },
+                        }
+                    }
+                }),
+                "",
+                False)
+            summary = put_all.b_report([
+                ("bench", "target", 1, None, 0, {
+                    "test": "test_put_C_target_path1",
+                    "file": "/tmp/test.t.sol",
+                    "binary": {"binaryMtime": 123},
+                    "stats": {
+                        "fuzz_params": 1,
+                        "asserts": 1,
+                        "guarded_asserts": 0,
+                        "rendered_width": {"x": 2},
+                    },
+                }, "/tmp/forge-project", {"x": [0, 2]}, True, "C")
+            ], 10)
+            bad += check("stage4-b-summary-counts-b",
+                         (summary["b"], summary["certified_region_rows"]),
+                         (1, 1))
+            bad += check("stage4-b-summary-forge-seen",
+                         (summary["forge_seen"]["put"]["Success"],
+                          summary["forge_seen"]["concrete"]["Success"]),
+                         (1, 1))
+            bad += check("stage4-b-summary-row-gates",
+                         summary["rows"][0]["gates"],
+                         {"fuzz": True, "width": True, "assert": True,
+                          "green": True, "corpus": True})
+        finally:
+            put_all.run_forge = old_run_forge
+            put_all.current_binary_identity = old_binary
         plain = Namespace(strong_recipe=False, auto_unwind=0,
                           auto_partial_loops=False,
                           lift_unconstrained_calldata=False)
