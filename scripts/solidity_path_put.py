@@ -5414,6 +5414,15 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
     for put in puts:
         inserted += put
     lines[cend:cend] = inserted
+    # The `test_cov_*` cases are the concrete replay source of truth, but they
+    # are not part of the PUT deliverable. Keeping them in the assembled project
+    # lets stale replay details fail compilation before forge can measure the
+    # generated `test_put_*` row. Measured on st1inch disabled ERC20 entries:
+    # the PUT call was repaired to `transfer(arg0,arg1)`, while the retained
+    # concrete case still contained `transfer()` and killed the whole project.
+    for _ci, _name, _claims, (fs, fe) in sorted(
+            emitted.cases, key=lambda item: item[3][0], reverse=True):
+        del lines[fs:fe + 1]
     if fixture is not None and contract is not None and unit is not None:
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
                                       fixture, layout)

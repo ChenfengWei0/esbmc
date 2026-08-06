@@ -4231,6 +4231,31 @@ def test_missing_low_level_value_gate_args_update_abi_signature():
     return bad
 
 
+def test_assembled_put_source_drops_stale_concrete_replays():
+    """PUT projects should not compile stale `test_cov_*` replay functions."""
+    em, case = _st1inch_missing_case(3)
+    notes = []
+    put, _stats = build_put(
+        "St1inch", "approve", 3, 1, "sol:@C@St1inch@F@approve#9171",
+        region={"msg.value": (0, 0)}, holes={}, pins={},
+        params=ST1_PARAMS, emitted=em, case=case, layout={},
+        ladder_rows=[], notes=notes, exit_kind="revert")
+    text = assemble_put_source(
+        em, case, [put], "St1inchCovTest_St1inch_approve_put3")
+    bad = 0
+    bad += check("function setUp()" in text,
+                 "the deployment preamble stays in the PUT project")
+    bad += check("function test_cov_" not in text,
+                 "stale concrete replay functions are removed")
+    bad += check("try c1.approve() {} catch {}" not in text,
+                 "the zero-argument stale replay call cannot kill compilation")
+    bad += check("function test_put_St1inch_approve_path3" in text,
+                 "the generated PUT remains")
+    bad += check("try c1.approve(arg0, arg1) {} catch" in text,
+                 "and the repaired PUT call is present")
+    return bad
+
+
 def test_the_funding_line_precedes_the_prank():
     """`vm.prank` binds to the NEXT call; a deal placed after it would consume
     nothing but must not be the last cheatcode standing between it and the
@@ -4421,6 +4446,7 @@ def main():
 	              test_the_low_level_value_gate_emits_a_PUT,
 	              test_missing_replay_args_become_full_domain_fuzz_inputs,
 	              test_missing_low_level_value_gate_args_update_abi_signature,
+	              test_assembled_put_source_drops_stale_concrete_replays,
 	              test_the_funding_line_precedes_the_prank,
 	              test_a_value_gate_certified_at_ZERO_still_REFUSES):
         print(f"--- {t.__name__}")

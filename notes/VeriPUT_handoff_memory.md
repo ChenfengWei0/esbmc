@@ -3730,3 +3730,68 @@ we are still preserving attempts. The next justified run can be either
 entry, or `approve` attempt2 if we specifically want to measure the repaired
 row. Under the adaptive policy, this is a diagnostic fix, not a proof-time
 timeout.
+
+## 2026-08-06 st1inch transfer attempt1 result and assembled-source repair
+
+Official spend:
+
+```sh
+python3 notes/coverage/scripts/poc_one.py \
+  st1inch_St1inch__St1inch__transfer \
+  --stage all --cell gate --attempt 1 --fresh
+```
+
+Budget tier used: attempt1, 60s / 8GiB.
+
+Result:
+
+- Stage 1 completed in 41.1s and produced a path report.
+- Stage 2 completed in 0.6s and certified 2/2 witnessed paths.
+- Stage 3 confirmed the omitted-calldata repair on a real POC:
+  - enc=2 wrote `St1inchCovTest_St1inch_transfer_put2.t.sol`, with fuzz
+    parameters `msg.value`, `arg0`, `arg1`, and one exit-kind oracle;
+  - enc=3 wrote `St1inchCovTest_St1inch_transfer_put3.t.sol`, with fuzz
+    parameters `arg0`, `arg1`, and one exit-kind oracle.
+
+Observed B gate:
+
+- Text emission counters were strong: 2/2 emitted, 2/2 with fuzz, 2/2 with
+  oracle, 2/2 with both.
+- B remained 0/2 because forge could not compile the generated project:
+  `Wrong argument count for function call: 0 arguments given but expected 2`.
+- The compile error came from retained original `test_cov_*` concrete replay
+  functions in the assembled PUT test contract:
+  - `try c1.transfer() {} catch {}`;
+  - `abi.encodeWithSignature("transfer()")`.
+- The generated `test_put_*` functions themselves had already been repaired.
+
+Second code-level repair:
+
+- `assemble_put_source` now drops original `test_cov_*` replay functions from
+  the PUT project after inserting `test_put_*`.
+- The replay cases are Stage-1 preamble/source material, not B deliverables.
+  Keeping stale replay calls in the same project lets an already-repaired PUT
+  row fail before forge can measure it.
+- The deployment preamble, mocks, fixture constructor replay, and generated PUT
+  functions are retained.
+
+Validation, without spending another ESBMC run:
+
+```sh
+python3 -m py_compile \
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py
+python3 scripts/test_solidity_path_put.py
+git diff --check -- \
+  scripts/solidity_path_put.py \
+  scripts/test_solidity_path_put.py \
+  notes/VeriPUT_handoff_memory.md
+```
+
+Result: 143/143 tests passed. Added regression coverage:
+
+- `test_assembled_put_source_drops_stale_concrete_replays`.
+
+Do not rerun `transfer` attempt2 only to regenerate the same row after this
+source-level fix. The next official spend should be a fresh sibling POC
+(`transferFrom` attempt1) or an explicit measurement run if we decide that
+confirming B on this exact unit is worth the attempt.
