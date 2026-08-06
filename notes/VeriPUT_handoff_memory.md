@@ -694,6 +694,13 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   priority 0, other enumerated public/external units are priority 1. Duplicate
   prepared-subject/unit jobs are deduplicated. Apply `--limit` after priority
   sorting so small dry schedules keep changed-function hints first.
+- `unit_schedule_run.py`: consumes a `veriput-unit-schedule/v1` and runs each
+  job's `certify_argv` with JSONL resume. Real execution requires `--journal`;
+  `--dry-run` prints pending certification jobs without executing them. A
+  runner `ok` means the `certify_all.py` command completed successfully; the
+  actual certified/not-certified PUT verdict remains in `certify_all.py`'s own
+  output JSONL. Optional `--memlimit-gb` applies an inherited address-space cap
+  to the certifier process and its ESBMC children.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -781,6 +788,10 @@ Interpretation:
   `status={"error":39,"missing-ast":509}`, `unique_unit_jobs=0`,
   `duplicate_subject_rows=1`, `ready_for_unit_schedule=false`. The matching
   `unit_schedule.py` smoke still emits 0 jobs and reports 548 skipped rows.
+- Read-only unit runner dry-run smoke on the current no-AST manifest produced
+  `selected=0`, `pending=0`, `already_done=0` and did not create the external
+  cache path. This is expected until the post-preheat gate is no longer
+  `blocked`.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4593,6 +4604,9 @@ Implication for next work:
    `--ast-cache-root`, then run `unit_manifest_gate.py`. Only when the gate is
    not `blocked` should `unit_schedule.py` produce priority-ordered per-unit
    `certify_all.py --subject-* --unit ...` jobs.
+   Audit that schedule with `unit_schedule_run.py --dry-run --journal <jsonl>`
+   before real certification. For real runs, pass an explicit external journal
+   and the agreed memory cap through `--memlimit-gb`.
 6. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.
