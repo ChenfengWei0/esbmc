@@ -85,6 +85,10 @@ def test_inventory_reads_sources_cert_and_puts_without_execution():
         args = argparse.Namespace(poc_dir=str(poc_dir),
                                   put_root=str(put_root),
                                   cert_jsonl=[str(cert)],
+                                  contract=[],
+                                  unit=[],
+                                  poc=[],
+                                  only=[],
                                   max_expected_lines=8,
                                   limit=20,
                                   format="json",
@@ -109,6 +113,7 @@ def test_inventory_reads_sources_cert_and_puts_without_execution():
                      == "EXPECTED: x generalises to [1, 9].",
                      f"EXPECTED block is extracted: {unit['source']['expected_blocks']}")
         bad += check(unit["put_summary"]["strong_shape"] == 1
+                     and unit["put_summary"]["weak_reasons"] == {}
                      and unit["puts"][0]["wide_region"] is True,
                      f"PUT strength shape is summarized: {unit['put_summary']}")
         bad += check(not (tmp / "out.json").exists(),
@@ -116,8 +121,60 @@ def test_inventory_reads_sources_cert_and_puts_without_execution():
         return bad
 
 
+def test_inventory_filters_and_reports_weak_reasons():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        poc_dir, put_root, cert = write_fixture(tmp)
+        weak_dir = put_root / "P01__set__7"
+        weak_dir.mkdir()
+        (weak_dir / "put.json").write_text(json.dumps({
+            "contract": "P01",
+            "unit": "set",
+            "enc": 7,
+            "depth": 1,
+            "region": {
+                "x": ["5", "5"],
+            },
+            "stats": {
+                "fuzz_params": 0,
+                "asserts": 0,
+            },
+        }) + "\n")
+        args = argparse.Namespace(poc_dir=str(poc_dir),
+                                  put_root=str(put_root),
+                                  cert_jsonl=[str(cert)],
+                                  contract=[],
+                                  unit=[],
+                                  poc=[],
+                                  only=["P01.set"],
+                                  max_expected_lines=8,
+                                  limit=20,
+                                  format="json",
+                                  out="")
+        doc = poc_ground_truth.build_inventory(args)
+        unit = doc["units"][0]
+        bad = 0
+        bad += check(doc["summary"]["unit_rows"] == 1
+                     and doc["summary"]["filtered_put_rows"] == 2,
+                     f"Contract.unit filter keeps the requested unit: {doc['summary']}")
+        bad += check(unit["put_summary"]["weak_reasons"] == {
+            "no-fuzz-params": 1,
+            "no-oracle": 1,
+            "no-wide-region": 1,
+        }, f"weak PUT reasons are bucketed: {unit['put_summary']}")
+        bad += check(unit["put_summary"]["strong_shape"] == 1,
+                     f"strong PUTs stay counted separately: {unit['put_summary']}")
+        args.only = ["P01.missing"]
+        empty = poc_ground_truth.build_inventory(args)
+        bad += check(empty["summary"]["unit_rows"] == 0
+                     and empty["summary"]["filtered_out_unit_rows"] == 1,
+                     f"non-matching filters produce an empty unit set: {empty['summary']}")
+        return bad
+
+
 TESTS = [
     test_inventory_reads_sources_cert_and_puts_without_execution,
+    test_inventory_filters_and_reports_weak_reasons,
 ]
 
 

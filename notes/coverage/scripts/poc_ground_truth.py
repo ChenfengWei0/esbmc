@@ -12,7 +12,7 @@ import argparse
 import json
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -184,8 +184,15 @@ def collect_put_rows(put_root: Path) -> tuple[list[dict], int]:
             "region_coords": sorted(region),
             "wide_region": region_has_width(region),
         }
-        row["strong_shape"] = (row["fuzz_params"] > 0 and row["asserts"] > 0
-                               and row["wide_region"])
+        weak_reasons = []
+        if row["fuzz_params"] <= 0:
+            weak_reasons.append("no-fuzz-params")
+        if row["asserts"] <= 0:
+            weak_reasons.append("no-oracle")
+        if not row["wide_region"]:
+            weak_reasons.append("no-wide-region")
+        row["weak_reasons"] = weak_reasons
+        row["strong_shape"] = not weak_reasons
         rows.append(row)
     return rows, bad
 
@@ -241,6 +248,68 @@ def contract_from_cert_row(row: dict, sources: list[dict]) -> str | None:
     return None
 
 
+def _filters(args, name: str) -> set[str]:
+    return {str(v) for v in (getattr(args, name, None) or []) if str(v)}
+
+
+def _only_filters(args) -> set[tuple[str, str]]:
+    out = set()
+    for value in getattr(args, "only", None) or []:
+        if "." not in value:
+            raise GroundTruthError(f"--only expects Contract.unit, got {value!r}")
+        contract, unit = value.split(".", 1)
+        if not contract or not unit:
+            raise GroundTruthError(f"--only expects Contract.unit, got {value!r}")
+        out.add((contract, unit))
+    return out
+
+
+def unit_matches_filters(row: dict, args) -> bool:
+    contract = row.get("contract")
+    unit = row.get("unit")
+    source = row.get("source") or {}
+    contract_filter = _filters(args, "contract")
+    unit_filter = _filters(args, "unit")
+    poc_filter = _filters(args, "poc")
+    only_filter = _only_filters(args)
+    if contract_filter and contract not in contract_filter:
+        return False
+    if unit_filter and unit not in unit_filter:
+        return False
+    if poc_filter and source.get("stem") not in poc_filter:
+        return False
+    if only_filter and (contract, unit) not in only_filter:
+        return False
+    return True
+
+
+def add_unit_summaries(row: dict) -> None:
+    weak_reasons = Counter()
+    for put in row["puts"]:
+        weak_reasons.update(put.get("weak_reasons") or [])
+    certs = row.get("certifications") or []
+    certified_paths = set()
+    not_certified_paths = set()
+    buckets = Counter()
+    for cert in certs:
+        buckets.update([cert.get("bucket") or "unknown"])
+        certified_paths.update(cert.get("certified_paths") or [])
+        not_certified_paths.update(cert.get("not_certified_paths") or [])
+    row["put_summary"] = {
+        "puts": len(row["puts"]),
+        "strong_shape": sum(1 for p in row["puts"] if p.get("strong_shape")),
+        "with_oracle": sum(1 for p in row["puts"] if p.get("asserts", 0) > 0),
+        "with_fuzz_params": sum(1 for p in row["puts"] if p.get("fuzz_params", 0) > 0),
+        "weak_reasons": dict(sorted(weak_reasons.items())),
+    }
+    row["cert_summary"] = {
+        "rows": len(certs),
+        "buckets": dict(sorted(buckets.items())),
+        "certified_paths": sorted(certified_paths),
+        "not_certified_paths": sorted(not_certified_paths),
+    }
+
+
 def build_inventory(args) -> dict:
     poc_dir = Path(args.poc_dir)
     put_root = Path(args.put_root)
@@ -284,12 +353,10 @@ def build_inventory(args) -> dict:
                                       (r.get("contract") or ""),
                                       (r.get("unit") or "")))
     for row in unit_rows:
-        row["put_summary"] = {
-            "puts": len(row["puts"]),
-            "strong_shape": sum(1 for p in row["puts"] if p.get("strong_shape")),
-            "with_oracle": sum(1 for p in row["puts"] if p.get("asserts", 0) > 0),
-            "with_fuzz_params": sum(1 for p in row["puts"] if p.get("fuzz_params", 0) > 0),
-        }
+        add_unit_summaries(row)
+
+    filtered_units = [row for row in unit_rows if unit_matches_filters(row, args)]
+    filtered_puts = [put for row in filtered_units for put in row["puts"]]
 
     return {
         "schema": "veriput-poc-ground-truth/v1",
@@ -305,19 +372,28 @@ def build_inventory(args) -> dict:
             "poc_dir": str(poc_dir.resolve()),
             "put_root": str(put_root.resolve()),
             "cert_jsonl": [str(p.resolve()) for p in cert_paths],
+            "filters": {
+                "contract": sorted(_filters(args, "contract")),
+                "unit": sorted(_filters(args, "unit")),
+                "poc": sorted(_filters(args, "poc")),
+                "only": [".".join(v) for v in sorted(_only_filters(args))],
+            },
         },
         "summary": {
             "poc_sources": len(sources),
             "sources_with_expected": sum(1 for s in sources if s["expected_blocks"]),
             "cert_rows": len(cert_rows),
             "put_rows": len(put_rows),
-            "unit_rows": len(unit_rows),
-            "strong_shape_puts": sum(1 for p in put_rows if p.get("strong_shape")),
+            "unit_rows": len(filtered_units),
+            "all_unit_rows": len(unit_rows),
+            "filtered_out_unit_rows": len(unit_rows) - len(filtered_units),
+            "filtered_put_rows": len(filtered_puts),
+            "strong_shape_puts": sum(1 for p in filtered_puts if p.get("strong_shape")),
             "bad_cert_jsonl_lines": bad_cert_lines,
             "bad_put_docs": bad_put_docs,
         },
         "sources": sources,
-        "units": unit_rows,
+        "units": filtered_units,
     }
 
 
@@ -325,8 +401,9 @@ def print_text(doc: dict, limit: int) -> None:
     summary = doc["summary"]
     print("POC ground truth inventory")
     for key in ("poc_sources", "sources_with_expected", "cert_rows", "put_rows",
-                "unit_rows", "strong_shape_puts", "bad_cert_jsonl_lines",
-                "bad_put_docs"):
+                "filtered_put_rows", "unit_rows", "all_unit_rows",
+                "filtered_out_unit_rows", "strong_shape_puts",
+                "bad_cert_jsonl_lines", "bad_put_docs"):
         print(f"  {key:<24} {summary.get(key)}")
     print()
     for row in doc["units"][:limit or None]:
@@ -338,6 +415,8 @@ def print_text(doc: dict, limit: int) -> None:
         print(f"  cert rows              {len(certs)}")
         print(f"  PUTs                   {len(puts)}")
         print(f"  strong-shape PUTs      {row['put_summary']['strong_shape']}")
+        if row["put_summary"]["weak_reasons"]:
+            print(f"  weak reasons           {row['put_summary']['weak_reasons']}")
         if certs:
             last = certs[-1]
             print(f"  last observed bucket   {last.get('bucket')}")
@@ -355,6 +434,13 @@ def main(argv=None) -> int:
     ap.add_argument("--poc-dir", default=str(DEFAULT_POC_DIR))
     ap.add_argument("--put-root", default=str(DEFAULT_PUT_ROOT))
     ap.add_argument("--cert-jsonl", action="append", default=[])
+    ap.add_argument("--contract", action="append", default=[])
+    ap.add_argument("--unit", action="append", default=[])
+    ap.add_argument("--poc", action="append", default=[])
+    ap.add_argument("--only",
+                    action="append",
+                    default=[],
+                    help="restrict unit rows to Contract.unit; repeatable")
     ap.add_argument("--max-expected-lines", type=int, default=8)
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--format", choices=("json", "text"), default="text")
