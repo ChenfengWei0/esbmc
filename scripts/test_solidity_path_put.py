@@ -63,6 +63,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                check_esbmc_args, cell_of,
                                exit_kind_asserted, find_unit_call,
                                no_oracle_reason, observed_env,
+                               rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
                                truncated_loops, unwindset_args)
 
@@ -7982,6 +7983,20 @@ def test_R2_proposal_env_coords_include_observable_replay_values():
     return bad
 
 
+def test_R2_env_coords_are_recovered_from_the_emitted_case():
+    em, case = make_case()
+    got = rendered_env_coords_for_emitted_case(em, case, "setDiscount", {})
+    missing = rendered_env_coords_for_emitted_case(
+        em, case, "doesNotExist", {"msg.value": (0, 0)})
+    bad = 0
+    bad += check(got == [("msg.sender", "id", 20),
+                         ("msg.value", "num", None)],
+                 f"main-path R2 setup recovers emitted env coords: {got}")
+    bad += check(missing == [],
+                 f"missing calls produce no guessed env coords: {missing}")
+    return bad
+
+
 def test_a_numeric_R2_bound_is_UNCHANGED():
     """NEGATIVE CONTROL for the widened regex. A decimal endpoint must render
     exactly as it did before names were allowed; if `([0-9]+|name)` had been
@@ -9864,6 +9879,7 @@ def main():
               test_OBSERVED_block_cheatcodes_render_for_numeric_R2_endpoints,
               test_OBSERVED_block_env_slot_keys_are_nameable,
               test_R2_proposal_env_coords_include_observable_replay_values,
+              test_R2_env_coords_are_recovered_from_the_emitted_case,
               test_a_numeric_R2_bound_is_UNCHANGED,
               test_a_RENAMED_coordinate_is_spelled_with_its_TEST_name,
               test_a_hole_OUTSIDE_the_interval_costs_no_width,

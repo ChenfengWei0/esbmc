@@ -5055,6 +5055,26 @@ def rendered_env_coords_for_r2(body, call_i, region):
     return out
 
 
+def emitted_case_body_and_call(emitted, case, unit):
+    """Return the emitted test-case body and the selected unit call index."""
+    if emitted is None or case is None:
+        return [], None
+    try:
+        fs, fe = case[3]
+    except (IndexError, TypeError, ValueError):
+        return [], None
+    body = emitted.lines[fs + 1:fe]
+    return body, find_unit_call(body, unit)
+
+
+def rendered_env_coords_for_emitted_case(emitted, case, unit, region):
+    """Environment coordinates the R2 proposer may name for an emitted case."""
+    body, call_i = emitted_case_body_and_call(emitted, case, unit)
+    if call_i is None:
+        return []
+    return rendered_env_coords_for_r2(body, call_i, region)
+
+
 def low_level_value_gate_asserts_exit(body, call_i, call_line):
     """Whether the emitted low-level value-gate assertion survived the rewrite.
 
@@ -7956,6 +7976,7 @@ def main():
               f"argument) -- so there is no concrete case to generalise")
         return 1
     print(f"[put]   concrete case: {case[1]} in contract {emitted.blocks[case[0]][0]}")
+    case_body, case_call_i = emitted_case_body_and_call(emitted, case, a.unit)
 
     # ---- 2a. storage layout and declared parameters ------------------------
     #
@@ -7988,12 +8009,9 @@ def main():
     # resolved one way for the arguments and another way for the return value.
     params, rettypes, arity, state_types = None, None, None, {}
     if a.ast:
-        _n, args0 = rewrite_call_args(
-            emitted.lines[case[3][0] + 1:case[3][1]][
-                find_unit_call(emitted.lines[case[3][0] + 1:case[3][1]],
-                               a.unit) or 0],
-            a.unit, {})
-        arity = len(args0) if args0 is not None else None
+        if case_call_i is not None:
+            _n, args0 = rewrite_call_args(case_body[case_call_i], a.unit, {})
+            arity = len(args0) if args0 is not None else None
         params = function_params(a.ast, a.contract, a.unit, arity,
                                  declaration_id)
         rettypes = function_returns(a.ast, a.contract, a.unit, arity,
@@ -8264,7 +8282,8 @@ def main():
                 (_pn, _coord_kind,
                  (20 if _kind[0] == "address" else
                   (_kind[1] // 8 if _kind[0] == "bytes" else None))))
-        _rendered_coords += rendered_env_coords_for_r2(body, call_i, region)
+        _rendered_coords += rendered_env_coords_for_emitted_case(
+            emitted, case, a.unit, region)
         for _sn in sorted({n for n in list(region) + list(pins)
                            if n.startswith("state.")}):
             _sv = _sn[len("state."):]

@@ -8632,3 +8632,74 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/veriput_subjects.py notes/coverage/scripts/unit_schedule.py scripts/test_veriput_subjects.py scripts/test_unit_schedule.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-06 Stage-4 R2 emitted-case context fix
+
+Scope:
+
+- This is a Stage-4 PUT emitter fix and one real benchmark smoke sample.
+- It does not modify `/home/samson/workspace/VeriPUT/Datasets` or
+  `/home/samson/workspace/VeriPUT/Results`; all generated artifacts went under
+  `/tmp/veriput_bench_sample_simple_if_20260806_194351`.
+- The benchmark ESBMC budget used here was one 60s/8GiB Stage-4 roundtrip for
+  `peer182__peer_soltg__simple_if.simple_if` after the earlier Stage-2
+  certification sample.
+
+Bug:
+
+- `put_all.py` reached Stage 4 with three certified `simple_if` regions but
+  emitted zero PUTs because `scripts/solidity_path_put.py` crashed in R2 setup:
+  `NameError: name 'body' is not defined`.
+- Root cause: `rendered_env_coords_for_r2(body, call_i, region)` was called from
+  `main()`, but `body` and `call_i` were locals of `build_put()`.
+- The same area also parsed parameter arity via a repeated emitted-body slice and
+  `find_unit_call(...) or 0`, which could parse the wrong line if the call was
+  absent.
+
+Code change:
+
+- Added `emitted_case_body_and_call(emitted, case, unit)` and
+  `rendered_env_coords_for_emitted_case(...)`.
+- `main()` now recovers `case_body/case_call_i` immediately after selecting the
+  emitted case, uses that for AST arity, and passes the emitted-case helper into
+  R2 rendered-coordinate discovery.
+- If the unit call is missing, env R2 coords are empty rather than guessed.
+
+Regression:
+
+- Added `test_R2_env_coords_are_recovered_from_the_emitted_case`, which asserts
+  that ordinary replay exposes `msg.sender` and `msg.value` through the emitted
+  case and that a missing call yields no guessed env coords.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 217 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check` passed.
+
+Benchmark smoke result:
+
+- Ground truth for `peer182 / peer_soltg__simple_if / Csi1.simple_if(uint256)`:
+  `a < 5` increments local `a` and returns `0`; `a >= 5` asserts `a >= 5` and
+  returns `1`.
+- Stage 2 had certified 3/3 witnessed regions:
+  - enc=2: `msg.value > 0`, value-gate/rollback path.
+  - enc=6: `msg.value == 0`, `a in [0,4]`, expected return `0`.
+  - enc=7: `msg.value == 0`, `a >= 5`, expected return `1`.
+- After the fix, Stage 4 emitted all 3 PUTs and all passed the Foundry gates:
+  `B = 3 of 3 emitted PUT(s)`.
+- Output root:
+  `/tmp/veriput_bench_sample_simple_if_20260806_194351/put-roundtrip-after-r2ctx`.
+
+Quality finding for next optimization:
+
+- R2 is now productive but noisy. On `simple_if`, enc=6 emitted 130 return
+  assertions and enc=7 emitted 53. Many are equivalent under point environment
+  coordinates, e.g. `return == msg.value`, `return == (0 + 0)`, and
+  `return == 0` all survive together when `msg.value == 0`.
+- Correctness is not harmed, but generated PUTs are bloated. The next likely
+  improvement is an R2/return antichain pass that treats point-width rendered
+  coordinates and simple constant-foldable terms as implied by exact literal
+  return equality.
