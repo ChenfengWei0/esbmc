@@ -69,6 +69,43 @@ Interpretation:
   attempt-1 jobs before retrying attempt-2 jobs.  That is good for breadth, but
   not for immediately rescuing a known no-witness Peer unit.
 
+Follow-up fix after this spot check:
+
+- `certify_all.py` now records `empty_witness_obstacles` by compacting
+  `cov-report.json` named-obstacle `u_reason_detail` values into
+  `detail -> count`.  This keeps the JSONL small while preserving the cause
+  that the old generic `empty_witness_reason` dropped.
+- `unit_campaign_plan.py` now distinguishes:
+  - generic named-obstacle no-witness: still non-retryable;
+  - residual gated-unit depth obstacle (`unit still calls another UNIT's own
+    body unexpanded`): retryable with `--max-tx 2`,
+    `--esbmc-arg=--unwind=8`, `--probe-witnesses 0`, and no probe ladder.
+- Probe-claim explosion retry now disables path probes (`--probe-witnesses 0`)
+  instead of merely reducing max witnesses.  The refusal is caused by the
+  branch-arm x exit probe universe, so keeping any path probe rebuilds the same
+  product.
+
+Animalia transfer validation:
+
+- Original `Animalia.transfer` 600s/8GiB run:
+  `NO-WITNESS-UNDECIDED`, 132/132 named-obstacle paths, about 128s.
+- `--unwind=8` while keeping probes:
+  `NO-WITNESS-UNKNOWN` in about 2s because path probes needed 19344 claims and
+  exceeded `--path-cov-max-goals 10000`.
+- `--unwind=8 --probe-witnesses 0`:
+  `NO-PATH`, 372/372 bounded-holds, about 12s.
+- `--max-tx 2 --unwind=8 --probe-witnesses 0`:
+  `NO-PATH`, 372/372 bounded-holds, about 33s.
+
+Interpretation:
+
+- The retry strategy is still useful: it converts a structural named-obstacle
+  into a decided bounded result and avoids a probe-universe explosion.
+- It did not rescue `Animalia.transfer` into a certified region.  The remaining
+  Peer failure is likely entry-state / owner-balance feasibility, or the
+  complete-path assertion polarity/entry modelling, rather than just call-depth
+  expansion.
+
 ## 2026-08-07 point-region concrete fallback
 
 Why this was changed:

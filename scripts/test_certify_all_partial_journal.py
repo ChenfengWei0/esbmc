@@ -147,6 +147,42 @@ def main():
                                                             stale_since) is None,
                      "stale generalise progress sidecar is ignored")
 
+        report = workdir / "cov-report.json"
+        report.write_text(json.dumps({
+            "claims": [
+                {
+                    "condition": "transfer:path:1",
+                    "u_reason": "named-obstacle",
+                    "u_reason_detail":
+                    "unit still calls another UNIT's own body unexpanded "
+                    "(sol:@C@C@F@balanceOf#7); that body carries the ABI value gate",
+                },
+                {
+                    "condition": "transfer:path:2",
+                    "u_reason": "named-obstacle",
+                    "u_reason_detail":
+                    "unit still calls another UNIT's own body unexpanded "
+                    "(sol:@C@C@F@balanceOf#7); that body carries the ABI value gate",
+                },
+                {
+                    "condition": "approve:path:3",
+                    "u_reason": "named-obstacle",
+                    "u_reason_detail": "different unit",
+                },
+            ],
+        }))
+        obstacles = certify_all.result_empty_witness_obstacles(
+            str(workdir), "transfer", since)
+        obstacle_details = obstacles["named_obstacle"]["details"]
+        bad += check(obstacles["named_obstacle"]["total"] == 2,
+                     f"named obstacle total is filtered by unit: {obstacles}")
+        bad += check(list(obstacle_details.values()) == [2],
+                     f"named obstacle detail counts are compacted: {obstacles}")
+        bad += check(certify_all.result_empty_witness_obstacles(
+            str(workdir), "transfer", stale_since) is None,
+                     "stale cov-report obstacle metadata is ignored")
+        report.unlink()
+
         parsed = certify_all.parse_driver(
             "[coords] STATE PINNED (all 2 paths' counterexamples agree): "
             "state._owner==1\n"

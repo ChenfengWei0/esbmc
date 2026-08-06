@@ -47,6 +47,7 @@ CERTIFY_TIMEOUT_GRACE_S = 10.0
 RUNNER_TIMEOUT_GRACE_S = 5.0
 DEFAULT_RETRY_REFINE_ROUNDS = "2"
 BOUNDED_HOLDS_NO_WITNESS_REASON = "bounded-holds no witness"
+GATED_UNIT_DEPTH_NO_WITNESS_REASON = "gated unit depth no witness"
 PROBE_CLAIM_EXPLOSION_REASON = "probe enumeration claim explosion"
 PROBE_CLAIM_EXPLOSION_TAG = "path-coverage-probe-claim-explosion"
 
@@ -165,6 +166,22 @@ def _is_named_obstacle_no_witness(row: dict) -> bool:
     return "named-obstacle" in text
 
 
+def _is_gated_unit_depth_no_witness(row: dict) -> bool:
+    if not _is_named_obstacle_no_witness(row):
+        return False
+    obstacles = row.get("empty_witness_obstacles") or {}
+    if isinstance(obstacles, dict):
+        named = obstacles.get("named_obstacle") or {}
+        if isinstance(named, dict):
+            details = named.get("details") or {}
+            if isinstance(details, dict):
+                for detail in details:
+                    if "unit still calls another UNIT's own body unexpanded" in detail:
+                        return True
+    text = str(row.get("empty_witness_reason") or "")
+    return "unit still calls another UNIT's own body unexpanded" in text
+
+
 def _driver_diagnostic_tag(row: dict) -> str:
     diagnostic = row.get("driver_diagnostic") or {}
     if not isinstance(diagnostic, dict):
@@ -225,6 +242,7 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         probe_claim_explosion_diagnostic = None
         pre_enumeration_stop = False
         bounded_holds_no_witness = False
+        gated_unit_depth_no_witness = False
         for row in rows:
             buckets[row.get("bucket") or "<missing-bucket>"] += 1
             progress_bucket = _progress_bucket(row)
@@ -243,6 +261,8 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             empty_reason = str(row.get("empty_witness_reason") or "")
             if _is_named_obstacle_no_witness(row):
                 named_obstacle_no_witness = True
+            if _is_gated_unit_depth_no_witness(row):
+                gated_unit_depth_no_witness = True
             if "direct self-recursive function/helper" in empty_reason:
                 preflight_refused = True
             c = row.get("certified") or {}
@@ -298,6 +318,8 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             reason = "partial witness journal only"
         elif not regions and bounded_holds_no_witness:
             reason = BOUNDED_HOLDS_NO_WITNESS_REASON
+        elif not regions and gated_unit_depth_no_witness:
+            reason = GATED_UNIT_DEPTH_NO_WITNESS_REASON
         elif not regions and probe_claim_explosion:
             reason = PROBE_CLAIM_EXPLOSION_REASON
         elif not regions:
@@ -307,7 +329,8 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         non_retryable_reason = ""
         if not regions and no_coordinate:
             non_retryable_reason = "no generalisable coordinate"
-        elif not regions and named_obstacle_no_witness:
+        elif (not regions and named_obstacle_no_witness
+              and not gated_unit_depth_no_witness):
             non_retryable_reason = "named obstacle no witness"
         elif not regions and preflight_refused:
             non_retryable_reason = "witness preflight refused"
@@ -442,6 +465,17 @@ def _without_argv_flag(argv: list[str], flag: str, *, has_value: bool) -> list[s
     return rewritten
 
 
+def _with_esbmc_arg(argv: list[str], value: str) -> list[str]:
+    prefix = "--esbmc-arg="
+    if any(arg == "--esbmc-arg" for arg in argv):
+        for idx, arg in enumerate(argv[:-1]):
+            if arg == "--esbmc-arg" and argv[idx + 1] == value:
+                return list(argv)
+    if any(arg == prefix + value for arg in argv):
+        return list(argv)
+    return list(argv) + [prefix + value]
+
+
 def _attempt_out_path(out_path: str, attempt: int) -> str:
     if not out_path or attempt <= 1:
         return out_path
@@ -472,7 +506,7 @@ def _set_retry_refine_rounds(item: dict, refine_rounds: str) -> None:
 
 def _apply_probe_claim_explosion_retry(item: dict, quality: dict) -> None:
     def rewrite(argv: list[str]) -> list[str]:
-        argv = _with_argv_value(argv, "--probe-witnesses", "1")
+        argv = _with_argv_value(argv, "--probe-witnesses", "0")
         argv = _without_argv_flag(argv, "--probe-ladder", has_value=False)
         argv = _without_argv_flag(argv, "--probe-ladder-budget", has_value=True)
         return _with_argv_value(argv, "--refine-rounds",
@@ -480,8 +514,8 @@ def _apply_probe_claim_explosion_retry(item: dict, quality: dict) -> None:
 
     _apply_argv_rewrite(item, rewrite)
     diagnostic = quality.get("driver_diagnostic") or {}
-    quality["retry_strategy"] = "cheap-probe-enumeration"
-    quality["retry_probe_witnesses"] = 1
+    quality["retry_strategy"] = "direct-enumeration-no-probe"
+    quality["retry_probe_witnesses"] = 0
     quality["retry_probe_ladder"] = False
     quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
     if isinstance(diagnostic, dict):
@@ -491,9 +525,35 @@ def _apply_probe_claim_explosion_retry(item: dict, quality: dict) -> None:
                 quality[f"retry_observed_{key}"] = diagnostic[key]
     quality["retry_reason"] = (
         "the previous enumeration timed out after ESBMC expanded path probes "
-        "into an exit-by-branch claim product; keep a cheap refutation probe "
-        "for path diversity, but drop multi-witness collection and the "
-        "per-path probe ladder on the retry")
+        "into an exit-by-branch claim product; disable path probes on the "
+        "retry so ESBMC enumerates complete-path claims directly instead of "
+        "rebuilding the same product")
+
+
+def _apply_gated_unit_depth_retry(item: dict, quality: dict) -> None:
+    def rewrite(argv: list[str]) -> list[str]:
+        argv = _with_argv_value(argv, "--probe-witnesses", "0")
+        argv = _without_argv_flag(argv, "--probe-ladder", has_value=False)
+        argv = _without_argv_flag(argv, "--probe-ladder-budget", has_value=True)
+        argv = _with_argv_value(argv, "--refine-rounds",
+                                DEFAULT_RETRY_REFINE_ROUNDS)
+        argv = _with_argv_value(argv, "--max-tx", "2")
+        return _with_esbmc_arg(argv, "--unwind=8")
+
+    _apply_argv_rewrite(item, rewrite)
+    quality["retry_strategy"] = "deepen-internal-call-expansion"
+    quality["retry_unwind"] = 8
+    quality["retry_max_tx"] = 2
+    quality["retry_probe_witnesses"] = 0
+    quality["retry_probe_ladder"] = False
+    quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
+    quality["retry_reason"] = (
+        "the previous enumeration refused every claim because the focused unit "
+        "still called another unit's external-entry body through a depth-bound "
+        "residual call; raise ESBMC's unwind bound so the internal call can be "
+        "expanded into a gate-free copy, disable path probes to avoid the "
+        "exit-by-branch product, and allow one preparatory transaction before "
+        "certification")
 
 
 def _apply_retry_strategy(item: dict) -> None:
@@ -529,6 +589,9 @@ def _apply_retry_strategy(item: dict) -> None:
             "claim as bounded-holds and produced no path witness; keep the "
             "same dispatcher alphabet but allow one additional transaction "
             "before spending more certification budget")
+        return
+    elif reason == GATED_UNIT_DEPTH_NO_WITNESS_REASON:
+        _apply_gated_unit_depth_retry(item, quality)
         return
     elif reason == PROBE_CLAIM_EXPLOSION_REASON:
         _apply_probe_claim_explosion_retry(item, quality)

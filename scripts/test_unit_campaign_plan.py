@@ -641,14 +641,14 @@ def test_campaign_cheapens_probe_claim_explosion_retries():
     bad += check(doc["summary"]["cert_weak"] == {
         "probe enumeration claim explosion": 1,
     }, f"probe explosion has a precise weak reason: {doc['summary']}")
-    bad += check(quality.get("retry_strategy") == "cheap-probe-enumeration"
-                 and quality.get("retry_probe_witnesses") == 1
+    bad += check(quality.get("retry_strategy") == "direct-enumeration-no-probe"
+                 and quality.get("retry_probe_witnesses") == 0
                  and quality.get("retry_probe_ladder") is False,
-                 f"retry metadata names the cheap probe strategy: {quality}")
-    bad += check(argv_value(argv, "--probe-witnesses") == "1"
+                 f"retry metadata names direct enumeration: {quality}")
+    bad += check(argv_value(argv, "--probe-witnesses") == "0"
                  and "--probe-ladder" not in argv
                  and "--probe-ladder-budget" not in argv,
-                 f"retry argv keeps cheap probe and drops ladder: {argv}")
+                 f"retry argv disables probe product and drops ladder: {argv}")
     bad += check(quality.get("retry_observed_probe_claims") == 370
                  and quality.get("retry_observed_physical_exits") == 37,
                  f"observed probe product travels with retry metadata: {quality}")
@@ -718,6 +718,85 @@ def test_campaign_deepens_tx_for_bounded_holds_no_witness():
                  f"bounded-holds retry changes max-tx only: {argv}")
     bad += check(argv_value(argv, "--refine-rounds") == "2",
                  f"bounded-holds retry keeps normal refinement budget: {argv}")
+    return bad
+
+
+def test_campaign_deepens_unwind_for_gated_unit_depth_obstacle():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("peer182__gated__transfer", benchmark="peer182",
+                        unit="transfer"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("peer182__gated__transfer",
+                    "ok",
+                    benchmark="peer182",
+                    campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "peer182",
+                    "unit": "transfer",
+                    "bucket": "NO-WITNESS-UNDECIDED",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "empty_witness_verdict": "REFUSED",
+                    "empty_witness_reason":
+                    "132 of 132 claim(s) were named-obstacle paths. "
+                    "This is a structural model/chain mismatch for the unit",
+                    "empty_witness_obstacles": {
+                        "named_obstacle": {
+                            "total": 132,
+                            "details": {
+                                "unit still calls another UNIT's own body "
+                                "unexpanded (sol:@C@Animalia@F@balanceOf#1568); "
+                                "that body carries the ABI value gate": 132,
+                            },
+                        },
+                    },
+                    "generalise_progress": {
+                        "stage": "no-witness",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    next_job = doc["next_schedule"]["jobs"][0]
+    quality = next_job.get("certification_quality") or {}
+    argv = next_job["certify_argv"]
+    bad = 0
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"gated-unit obstacle remains retryable: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {
+        "gated unit depth no witness": 1,
+    }, f"gated-unit obstacle has a precise weak reason: {doc['summary']}")
+    bad += check(quality.get("retry_strategy") == "deepen-internal-call-expansion"
+                 and quality.get("retry_unwind") == 8
+                 and quality.get("retry_max_tx") == 2
+                 and quality.get("retry_probe_witnesses") == 0
+                 and quality.get("retry_probe_ladder") is False
+                 and quality.get("retry_refine_rounds") == 2,
+                 f"retry metadata names internal-call expansion: {quality}")
+    bad += check(argv_value(argv, "--max-tx") == "2",
+                 f"gated-unit retry deepens transaction count once: {argv}")
+    bad += check("--esbmc-arg=--unwind=8" in argv,
+                 f"gated-unit retry raises ESBMC unwind: {argv}")
+    bad += check(argv_value(argv, "--probe-witnesses") == "0"
+                 and "--probe-ladder" not in argv
+                 and "--probe-ladder-budget" not in argv,
+                 f"gated-unit retry disables probe product: {argv}")
     return bad
 
 
@@ -1185,6 +1264,7 @@ TESTS = [
     test_campaign_prefers_single_refine_for_refinement_timeouts,
     test_campaign_cheapens_probe_claim_explosion_retries,
     test_campaign_deepens_tx_for_bounded_holds_no_witness,
+    test_campaign_deepens_unwind_for_gated_unit_depth_obstacle,
     test_campaign_restores_default_refine_rounds_after_strategy_attempt,
     test_campaign_treats_slice_excluded_paths_as_body_slice_ready,
     test_campaign_treats_method_unsupported_paths_as_non_retryable,

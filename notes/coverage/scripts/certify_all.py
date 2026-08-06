@@ -686,6 +686,38 @@ def result_generalise_progress(workdir, since_mtime=None):
     return data
 
 
+def result_empty_witness_obstacles(workdir, unit=None, since_mtime=None):
+    path = os.path.join(workdir, "cov-report.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return None
+        with open(path) as stream:
+            data = json.load(stream)
+    except (OSError, ValueError):
+        return None
+    details = {}
+    total = 0
+    for claim in data.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if unit and not str(claim.get("condition") or "").startswith(unit + ":"):
+            continue
+        if claim.get("u_reason") != "named-obstacle":
+            continue
+        total += 1
+        detail = str(claim.get("u_reason_detail") or "").strip()
+        if detail:
+            details[detail] = details.get(detail, 0) + 1
+    if not total:
+        return None
+    return {
+        "named_obstacle": {
+            "total": total,
+            "details": details,
+        }
+    }
+
+
 RE_PATH_COV_PROBE_COUNTS = re.compile(
     r"--path-cov-probe: unit '([^']+)' added ([0-9]+) "
     r"exit-latched claim\(s\) for ([0-9]+) branch arm\(s\) at ([0-9]+) "
@@ -2035,6 +2067,8 @@ def main():
                             result_enumeration_salvage(uwd, t1),
                         "driver_diagnostic": result_driver_diagnostic(out),
                         "generalise_progress": generalise_progress,
+                        "empty_witness_obstacles":
+                            result_empty_witness_obstacles(uwd, unit, t1),
                         "partial_witness_journal":
                             result_partial_witness_journal(
                                 uwd, t1, progress=generalise_progress),
