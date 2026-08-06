@@ -8393,6 +8393,9 @@ def main():
             _r2, _typed_r2, candidate_budget=a.r2_candidate_budget, log=print)
         r2_term_lookup = r2_terms_from_specs(_r2)
         r2_requested = True
+        if unwind_applied:
+            print("[put]   R2 ESBMC passes inherit ladder repair args: "
+                  + " ".join(unwind_applied))
 
         if rollback_here or path_reverts:
             reason = ("rollback path has no observable R2 post-state"
@@ -8427,7 +8430,7 @@ def main():
             o, _rc, _w = run_esbmc(
                 a.esbmc, a.sol, a.ast, a.contract, a.unit,
                 ["--path-cov-assert", spec_path, "--cov-report-json"]
-                + a.esbmc_arg,
+                + a.esbmc_arg + unwind_applied,
                 assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
             return o
 
