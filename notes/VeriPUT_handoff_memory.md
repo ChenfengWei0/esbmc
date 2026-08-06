@@ -665,6 +665,12 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   audited before spending ESBMC.
 - `veriput_readiness.py`: summarizes target->unit readiness without invoking
   solc/Forge/ESBMC.
+- `unit_schedule.py`: expands a `veriput-unit-manifest/v1` into concrete
+  per-unit `certify_all.py --subject-* --unit ...` jobs. It is also read-only:
+  it never invokes solc, Forge, fuzzing, or ESBMC. Target-hinted units are
+  priority 0, other enumerated public/external units are priority 1. Apply
+  `--limit` after priority sorting so small dry schedules keep changed-function
+  hints first.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -719,6 +725,11 @@ Interpretation:
 - Do not run the preheat pass while the user's other experiment depends on
   Dataset/Results immutability. When authorized, preheat in shards with journals
   and no ESBMC.
+- Read-only schedule smoke on the empty external cache path
+  `/tmp/veriput-empty-ast-cache-schedule-20260806-codex` produced:
+  `jobs=0`, `skipped_rows=548`, `skipped_by_status={"error":39,
+  "missing-ast":509}` and did not create the cache directory. This is expected
+  until AST preheat/enumeration succeeds.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4498,24 +4509,28 @@ Key output:
 - preheat:
   - `bugfix124`: `preheatable_missing_ast=124`
   - `peer182`: `preheatable_missing_ast=182`
-  - `stress243`: `preheatable_missing_ast=51`, `missing_solc_bin=152`
+  - `stress243`: `preheatable_missing_ast=51`, `inferable_solc_bin=152`,
+    0 true `missing_solc_bin`
 - missing AST solc buckets:
   - `bugfix124`: `solc-0.8.29=117`,
     `solc-0.8.29 --optimize --optimize-runs 200 --via-ir=6`,
     `solc-0.8.29 --via-ir=1`
   - `peer182`: `solc-0.8.29=182`
-  - `stress243`: `<missing-solc-bin>=152`, `solc-0.8.35=46`,
-    `solc-0.8.15=5`
+  - `stress243`: `inferred:solc-0.8.35=96`,
+    `inferred:solc-0.8.15=35`, `inferred:solc-0.8.17=19`,
+    `inferred:solc-0.8.19=1`, `inferred:solc-0.8.26=1`,
+    plus explicit `solc-0.8.35=46`, `solc-0.8.15=5`
 
 Implication for next work:
 
 1. Do not run ESBMC/PUT yet.
-2. Preheat AST first for the 306 straightforward rows
-   (`bugfix124=124`, `peer182=182`), in shards/journals, after confirming no
-   write conflict with the user's other experiment.
-3. For Stress, either recover/fill solc metadata for the 152 missing-solc-bin
-   rows, or build a read-only inference report from existing compile metadata
-   before attempting preheat.
+2. Preheat AST first into an external cache, not into Dataset/Results. The 306
+   straightforward explicit-solc rows are `bugfix124=124`, `peer182=182`; the
+   Stress rows add 51 explicit-solc rows and 152 inferable-solc rows when
+   `--use-inferred-solc-bin` is intentionally enabled.
+3. After preheat, rerun `subject_unit_manifest.py` against the same
+   `--ast-cache-root`, then run `unit_schedule.py` to produce priority-ordered
+   per-unit `certify_all.py --subject-* --unit ...` jobs.
 4. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.
