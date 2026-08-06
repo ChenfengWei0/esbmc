@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
+
+import unit_campaign_plan  # noqa: E402
+
+
+def check(cond, msg):
+    if cond:
+        print("ok:", msg)
+        return 0
+    print("FAIL:", msg)
+    return 1
+
+
+def job(job_id, benchmark="peer182", unit="f", priority=0):
+    subject_id = job_id.split("__", 1)[-1].rsplit("__", 1)[0]
+    return {
+        "schema":
+        "veriput-unit-job/v1",
+        "job_id":
+        job_id,
+        "priority":
+        priority,
+        "ordinal":
+        priority,
+        "benchmark":
+        benchmark,
+        "subject_id":
+        subject_id,
+        "contract":
+        "C",
+        "unit":
+        unit,
+        "certify_argv": [
+            sys.executable,
+            "/tmp/certify_all.py",
+            "--subject-dir",
+            f"/tmp/{subject_id}",
+            "--unit",
+            unit,
+        ],
+    }
+
+
+def schedule_doc():
+    return {
+        "schema":
+        "veriput-unit-schedule/v1",
+        "generated_at":
+        "2026-08-06T00:00:00+00:00",
+        "source": {
+            "schema": "veriput-unit-manifest/v1",
+        },
+        "cert_out":
+        "/tmp/cert.jsonl",
+        "summary": {
+            "jobs": 5,
+        },
+        "jobs": [
+            job("peer182__new__f"),
+            job("bugfix124__retry2__g", "bugfix124", "g"),
+            job("stress243__retry3__h", "stress243", "h", priority=1),
+            job("stress243__done__i", "stress243", "i", priority=1),
+            job("stress243__exhausted__j", "stress243", "j", priority=1),
+        ],
+    }
+
+
+def row(job_id, status, reason="", benchmark="peer182"):
+    return {
+        "schema": "veriput-unit-run-row/v1",
+        "job_id": job_id,
+        "benchmark": benchmark,
+        "subject_id": job_id,
+        "contract": "C",
+        "unit": "f",
+        "status": status,
+        "reason": reason,
+    }
+
+
+def write_json(path, doc):
+    p = Path(path)
+    p.write_text(json.dumps(doc) + "\n")
+    return p
+
+
+def write_journal(path, rows):
+    p = Path(path)
+    p.write_text("\n".join(json.dumps(item) for item in rows) + "\nnot-json\n")
+    return p
+
+
+def test_campaign_partitions_attempts_and_auto_selects_earliest():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(Path(td) / "schedule.json", schedule_doc())
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("bugfix124__retry2__g", "timeout", "timeout after 60s", "bugfix124"),
+                row("stress243__retry3__h", "error", "rc=9", "stress243"),
+                row("stress243__done__i", "ok", "", "stress243"),
+                row("stress243__exhausted__j", "timeout", "timeout after 60s", "stress243"),
+                row("orphan__x", "timeout"),
+            ])
+        j2 = write_journal(
+            Path(td) / "a2.jsonl", [
+                row("stress243__retry3__h", "timeout", "timeout after 120s", "stress243"),
+                row("stress243__exhausted__j", "timeout", "timeout after 120s", "stress243"),
+            ])
+        j3 = write_journal(
+            Path(td) / "a3.jsonl", [
+                row("stress243__exhausted__j", "timeout", "timeout after 600s", "stress243"),
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1), str(j2),
+                                                              str(j3)])
+    bad = 0
+    bad += check(doc["schema"] == "veriput-unit-campaign-plan/v1",
+                 f"campaign schema is stable: {doc['schema']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {
+        "1": 1,
+        "2": 1,
+        "3": 1,
+    }, f"pending jobs are partitioned by next attempt: {doc['summary']}")
+    bad += check(doc["summary"]["completed_ok"] == 1 and doc["summary"]["exhausted"] == 1,
+                 f"done and exhausted jobs are counted: {doc['summary']}")
+    bad += check(doc["summary"]["selected_attempt"] == 1 and doc["summary"]["selected_jobs"] == 1,
+                 f"auto mode selects earliest pending attempt: {doc['summary']}")
+    bad += check(doc["summary"]["bad_journal_lines"] == 3,
+                 f"bad journal lines are counted across journals: {doc['summary']}")
+    bad += check(doc["summary"]["orphan_journal_rows"] == 1,
+                 f"orphan rows are reported: {doc['summary']}")
+    bad += check(doc["next_run"]["timeout_s"] == 60.0 and doc["next_run"]["memlimit_gb"] == 8.0,
+                 f"attempt 1 uses the agreed short budget: {doc['next_run']}")
+    bad += check([job["job_id"] for job in doc["next_schedule"]["jobs"]] == ["peer182__new__f"],
+                 f"next schedule keeps only attempt-1 jobs: {doc['next_schedule']['jobs']}")
+    return bad
+
+
+def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(Path(td) / "schedule.json", schedule_doc())
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("stress243__retry3__h", "error", "rc=9", "stress243"),
+            ])
+        j2 = write_journal(
+            Path(td) / "a2.jsonl", [
+                row("stress243__retry3__h", "timeout", "timeout after 120s", "stress243"),
+            ])
+        out = Path(td) / "attempt3.json"
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1), str(j2)],
+                                               attempt=3,
+                                               next_schedule_out=str(out),
+                                               next_journal=str(Path(td) / "a3.jsonl"),
+                                               jobs=2)
+        out_doc = json.loads(out.read_text())
+    runner = doc["next_run"]["runner_argv"]
+    bad = 0
+    bad += check(doc["summary"]["selected_attempt"] == 3,
+                 f"explicit attempt 3 is selected: {doc['summary']}")
+    bad += check(doc["next_run"]["timeout_s"] == 600.0 and doc["next_run"]["memlimit_gb"] == 10.0,
+                 f"attempt 3 uses the agreed long budget: {doc['next_run']}")
+    bad += check(
+        "--timeout" in runner and "600.0" in runner and "--memlimit-gb" in runner
+        and "10.0" in runner and "--jobs" in runner and "2" in runner,
+        f"runner argv carries budget and jobs: {runner}")
+    bad += check(
+        out_doc["summary"]["campaign_attempt"] == 3
+        and [job["job_id"] for job in out_doc["jobs"]] == ["stress243__retry3__h"],
+        f"attempt schedule is written: {out_doc['summary']}")
+    return bad
+
+
+def test_campaign_cli_writes_plan_and_schedule():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(Path(td) / "schedule.json", schedule_doc())
+        out_sched = Path(td) / "next.json"
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts" / "unit_campaign_plan.py"),
+            str(sched),
+            "--next-schedule-out",
+            str(out_sched),
+            "--next-journal",
+            str(Path(td) / "run.jsonl"),
+        ],
+                            capture_output=True,
+                            text=True)
+        out_doc = json.loads(out_sched.read_text()) if out_sched.exists() else {}
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    doc = json.loads(cp.stdout)
+    bad = 0
+    bad += check(doc["summary"]["selected_attempt"] == 1,
+                 f"CLI emits a campaign plan: {doc['summary']}")
+    bad += check(out_doc["summary"]["jobs"] == 5,
+                 f"CLI writes attempt-1 schedule for never-attempted jobs: {out_doc['summary']}")
+    bad += check(
+        str(out_sched) in doc["next_run"]["runner_argv"],
+        f"runner argv points to written schedule: {doc['next_run']['runner_argv']}")
+    return bad
+
+
+def test_campaign_writes_empty_schedule_when_no_jobs_are_pending():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 0,
+                },
+                "jobs": [],
+            })
+        out = Path(td) / "empty-next.json"
+        doc = unit_campaign_plan.plan_campaign(str(sched), next_schedule_out=str(out))
+        out_doc = json.loads(out.read_text())
+    bad = 0
+    bad += check(
+        doc["summary"]["selected_attempt"] is None and doc["summary"]["selected_jobs"] == 0,
+        f"no pending jobs means no selected attempt: {doc['summary']}")
+    bad += check(doc["next_run"] is None, f"no runner argv is suggested: {doc['next_run']}")
+    bad += check(out_doc["summary"]["jobs"] == 0 and out_doc["summary"]["campaign_attempt"] is None,
+                 f"empty next schedule is still written: {out_doc['summary']}")
+    return bad
+
+
+TESTS = [
+    test_campaign_partitions_attempts_and_auto_selects_earliest,
+    test_campaign_can_emit_attempt_three_schedule_and_runner_argv,
+    test_campaign_cli_writes_plan_and_schedule,
+    test_campaign_writes_empty_schedule_when_no_jobs_are_pending,
+]
+
+if __name__ == "__main__":
+    failures = 0
+    for test in TESTS:
+        try:
+            failures += test()
+        except Exception as exc:  # pragma: no cover - tiny script harness
+            print(f"FAIL: {test.__name__}: {exc}")
+            failures += 1
+    raise SystemExit(1 if failures else 0)

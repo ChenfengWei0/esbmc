@@ -707,6 +707,14 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   read-only unless `--out` or `--retry-out` is passed. It reports latest status
   by benchmark and schedule priority, so failed priority-0 changed-function
   units can be triaged before spending a longer certification pass.
+- `unit_campaign_plan.py`: read-only controller for the agreed per-unit
+  certification gradient: attempt 1 is 60s/8GiB, attempt 2 is 120s/8GiB,
+  attempt 3 is 600s/10GiB. It consumes a base unit schedule plus zero or more
+  `unit_schedule_run.py` JSONL journals, partitions jobs by next attempt,
+  counts completed/exhausted jobs, and can write the next attempt's filtered
+  `veriput-unit-schedule/v1`. It never invokes solc, Forge, fuzzing, ESBMC, or
+  certification jobs; the emitted `next_run.runner_argv` is only an auditable
+  command suggestion.
 
 As of the latest read-only census on 2026-08-06:
 
@@ -802,6 +810,11 @@ Interpretation:
   no-AST unit schedule produced: `schedule_jobs=0`, `skipped_rows=548`,
   `attempt_rows=0`, `retry_jobs=0`, `never_attempted=0`, and did not create the
   external cache path.
+- Read-only unit campaign smoke with an empty journal and the current no-AST
+  unit schedule produced: `schedule_jobs=0`, `skipped_rows=548`,
+  `selected_attempt=null`, `selected_jobs=0`, `next_jobs=0`,
+  `next_attempt=null`; it wrote only an empty next-attempt schedule under `/tmp`
+  and did not create the external cache path.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
@@ -4621,6 +4634,10 @@ Implication for next work:
    `unit_schedule_journal.py --schedule <schedule.json> --retry-out <retry.json>`
    to summarize latest status and build the next retry schedule before spending
    the next time/memory gradient.
+   Prefer `unit_campaign_plan.py <base-schedule.json> --journal <a1.jsonl> ...`
+   as the controlling layer: it encodes the default 60s/8GiB, 120s/8GiB, and
+   600s/10GiB attempts, writes the filtered schedule for the next attempt, and
+   prints the exact `unit_schedule_run.py` argv to audit before execution.
 6. Separately inspect the 39 Stress prepared errors; 32 compile-failed and 7
    flatten-failed are not unit-denominator rows until fixed or explicitly
    excluded by benchmark policy.
