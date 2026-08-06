@@ -1568,6 +1568,26 @@ def test_an_IDENTITY_endpoint_is_only_asked_about_candidates_of_ITS_WIDTH():
     return bad
 
 
+def test_a_FIXED_BYTES_endpoint_is_width_filtered_like_an_identity():
+    from solidity_path_put import propose_r2_specs  # noqa: E402
+    rows = [("last4", "post >= pre", "HOLDS"),
+            ("owner", "post >= pre", "HOLDS"),
+            ("wide", "post >= pre", "HOLDS")]
+    got = propose_r2_specs(rows, [("key_", "bytes4")],
+                           var_bytes={"last4": 4, "owner": 20, "wide": 32})
+    bad = 0
+    ids = [g for g in got if g["kind"] == "id"]
+    bad += check(len(ids) == 1, f"one fixed-bytes identity query: {got}")
+    if not ids:
+        return bad + 1
+    bad += check(ids[0]["vars"] == [{
+        "name": "last4",
+        "abs_lo": "key_",
+        "abs_hi": "key_",
+    }], f"only the same-width bytes4 slot is asked: {ids[0]}")
+    return bad
+
+
 def test_the_WIDTH_FILTER_leaves_a_NUMERIC_endpoint_alone():
     """⛔ THE FILTER IS ABOUT IDENTITIES ONLY. An amount legitimately bounds a
     candidate of any width -- `uint8 fee` bounding a `uint256 total` is
@@ -2202,6 +2222,65 @@ contract FlaggerCovTest is Test {
                  and stats["wide_fuzz_coords"] == ["flag_"],
                  f"stats record rendered fuzz width, not just region width: "
                  f"{stats}")
+    return bad
+
+
+def test_a_fixed_bytes_region_parameter_is_lifted_via_uint_input():
+    """Fixed bytes are fuzzed as same-width integers and cast at the call.
+
+    Foundry's `bound()` is numeric, but the contract must still receive a
+    `bytesN` ABI value. The raw integer remains the R2 absolute endpoint, so
+    `post == key_` can render without putting bytesN into a delta grammar.
+    """
+    bytes_emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Keyed} from "./Keyed.sol";
+contract KeyedCovTest is Test {
+  Keyed c0;
+  function setUp() public {
+    c0 = new Keyed();
+  }
+  // claim: sol:@C@Keyed@F@take#11:path:4
+  function test_cov_0() public {
+    // [asserted] path exits normally; a revert fails the test
+    c0.take(bytes4(0x00000000));
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as out:
+        out.write(bytes_emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Keyed@F@take#11", 4)
+    notes = []
+    r2_terms = {"key_": {"kind": "coord", "name": "key_"}}
+    put, stats = build_put(
+        "Keyed", "take", 4, 1, "sol:@C@Keyed@F@take#11",
+        region={"key_": (0x12, 0x34)}, holes={}, pins={},
+        params=[("key_", "bytes4")], emitted=em, case=case,
+        layout={"last": (0, 0, 4)},
+        ladder_rows=[("last", "post == key_", "HOLDS")],
+        notes=notes, r2_terms=r2_terms)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a bytes4 PUT is produced: {notes}")
+    bad += check("function test_put_Keyed_take_path4(uint32 key_) public"
+                 in text,
+                 "the fuzz signature uses a boundable uint32")
+    bad += check("key_ = uint32(bound(uint256(key_), 18, 52));" in text,
+                 "the numeric fuzz input is bounded to the certified region")
+    bad += check("c0.take(bytes4(key_));" in text,
+                 "the unit call receives the ABI-level bytes4 value")
+    bad += check("assertEq(_post_last, key_" in text,
+                 "the absolute R2 endpoint uses the raw same-width integer")
+    bad += check(stats["rendered_width"] == {"key_": 35}
+                 and stats["wide_fuzz_coords"] == ["key_"],
+                 f"rendered width is tracked for fixed bytes: {stats}")
     return bad
 
 
@@ -6209,6 +6288,19 @@ def test_a_LEVEL_WITH_NO_MATCHING_PARAMETER_proposes_NOTHING():
     return check(got == [], f"no bytes32 parameter, so no name at all: {got}")
 
 
+def test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter():
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+    got = propose_slot_vars(
+        {"seen": (5, "bytes32", 32, 0, "seen", None)},
+        [("digest", "bytes32"), ("who", "address")])
+    bad = 0
+    bad += check(got == ["seen[digest]"],
+                 f"bytes32 key uses the bytes32 parameter only: {got}")
+    bad += check("seen[who]" not in got,
+                 "an address parameter is not offered for a bytes32 level")
+    return bad
+
+
 def test_the_CANDIDATE_BUDGET_says_what_it_dropped():
     """⛔ NO SILENT CAP. Four levels against three address parameters PLUS the
     caller is 4^4 = 256 names; the cap keeps 24 and must SAY so, or a truncated
@@ -7819,6 +7911,56 @@ def test_missing_replay_args_become_full_domain_fuzz_inputs():
     return bad
 
 
+def test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Keyed} from "./Keyed.sol";
+contract KeyedCovTest is Test {
+  Keyed c1;
+  function setUp() public {
+    c1 = new Keyed();
+  }
+  // claim: sol:@C@Keyed@F@poke#12:path:5
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c1.poke() {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Keyed@F@poke#12", 5)
+    notes = []
+    put, stats = build_put(
+        "Keyed", "poke", 5, 1, "sol:@C@Keyed@F@poke#12",
+        region={}, holes={}, pins={},
+        params=[("", "bytes4")], emitted=em, case=case, layout={},
+        ladder_rows=[], notes=notes, exit_kind="revert")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check("function test_put_Keyed_poke_path5(uint32 arg0) public"
+                 in text,
+                 "anonymous bytes4 calldata is fuzzed as uint32")
+    bad += check(f"arg0 = uint32(bound(uint256(arg0), 0, {(1 << 32) - 1}));"
+                 in text,
+                 "the omitted bytes4 argument is bounded over its full domain")
+    bad += check("try c1.poke(bytes4(arg0)) {} catch { _put_ok = false; }"
+                 in text,
+                 "the high-level replay is rewritten with a bytes4 cast")
+    bad += check(stats["fuzz_params"] == 1
+                 and stats["wide_fuzz_coords"] == ["arg0"],
+                 f"the B ledger sees the fixed-bytes fuzz input: {stats}")
+    return bad
+
+
 def test_missing_low_level_value_gate_args_update_abi_signature():
     """The same omitted-argument repair must update low-level ABI calls."""
     em, case = _st1inch_missing_case(2)
@@ -7994,6 +8136,7 @@ def main():
               test_no_slot_asked_means_no_gap_and_no_claim,
               test_the_EXCLUSION_MESSAGE_names_no_cause_it_did_not_measure,
               test_an_IDENTITY_endpoint_is_only_asked_about_candidates_of_ITS_WIDTH,
+              test_a_FIXED_BYTES_endpoint_is_width_filtered_like_an_identity,
               test_the_WIDTH_FILTER_leaves_a_NUMERIC_endpoint_alone,
               test_WITHOUT_a_width_table_NOTHING_is_filtered,
               test_an_IDENTITY_with_NO_CANDIDATE_OF_ITS_WIDTH_sends_NO_QUERY,
@@ -8012,6 +8155,7 @@ def main():
               test_typed_R2_omits_bool_without_a_bool_endpoint,
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,
+              test_a_fixed_bytes_region_parameter_is_lifted_via_uint_input,
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
               test_source_R2_assignment_candidates_are_small_setter_queries,
               test_source_R2_self_updates_prioritize_delta_queries,
@@ -8066,6 +8210,7 @@ def main():
               test_a_NESTED_mapping_proposes_ONE_KEY_PER_LEVEL,
               test_a_NESTED_STRUCT_mapping_keeps_its_FIELD_TAIL,
               test_a_LEVEL_WITH_NO_MATCHING_PARAMETER_proposes_NOTHING,
+              test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
               test_assert_query_drops_semantic_pins_ESBMC_cannot_resolve,
@@ -8100,6 +8245,7 @@ def main():
               test_a_single_line_call_still_reports_its_own_statement,
               test_the_low_level_value_gate_emits_a_PUT,
               test_missing_replay_args_become_full_domain_fuzz_inputs,
+              test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,
               test_the_funding_line_precedes_the_prank,

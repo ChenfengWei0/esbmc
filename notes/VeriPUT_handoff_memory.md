@@ -7261,3 +7261,52 @@ Verification:
   certified paths covered by strong PUTs; `St1inch.setDefaultFarm` remains
   `partial-strong-put` because its missing enc=15 row is point-only under the
   current definition and current `build_put()` refuses it as not parameterized.
+
+## 2026-08-06 Fixed bytes calldata as PUT fuzz coordinates
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No `/home/samson/workspace/VeriPUT/Results` file was modified.
+- No ESBMC POC attempt was consumed. Validation was Python-only.
+
+Finding:
+
+- ESBMC's Solidity frontend had already repaired the internal `bytesN`
+  calldata model: fixed bytes parameters keep a recoverable nondet payload and
+  get a function-entry assume pinning `.length == N`.
+- The external PUT emitter still only lifted `bool`, `address`, and `uintN`
+  parameters. A certified region over `bytes4 key` or an omitted replay arg of
+  type `bytes4` therefore could not become a real fuzz coordinate.
+- The right boundary is semantic, not syntactic: fixed bytes may name absolute
+  equality endpoints (`post == key`) and same-width mapping keys, but must not
+  be used as arithmetic deltas (`post - pre == key`).
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now recognizes `bytes1` ... `bytes32` via
+  `fixed_bytes_width()`.
+- A lifted fixed-bytes parameter is rendered in the PUT signature as a
+  same-width unsigned integer (`bytes4` -> `uint32`) so the existing numeric
+  `bound()` logic applies. The unit call casts it back at the ABI boundary:
+  `c.take(bytes4(key_))`.
+- Omitted fixed-bytes calldata is synthesized as full-domain fuzz input, and
+  low-level ABI signatures can now spell omitted `bytesN` arguments.
+- R2 endpoint classification treats fixed bytes as width-filtered identity
+  endpoints. This asks `post == key_` only for same-width readable candidates,
+  and keeps fixed bytes out of the delta-coordinate table.
+- Source-assignment R2 mining now classifies fixed bytes as identity-shaped, so
+  direct setters or mapping writes involving `bytesN` parameters can request
+  the strongest equality rows.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 188/188 tests.
+- Added coverage for:
+  - explicit `bytes4` region -> `uint32` PUT parameter -> `bytes4(...)` call;
+  - omitted `bytes4` replay calldata -> full-domain fuzz input;
+  - `mapping(bytes32 => ...)` slot proposal from a same-typed parameter;
+  - fixed-bytes R2 identity endpoint width filtering.

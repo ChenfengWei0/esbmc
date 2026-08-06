@@ -677,8 +677,17 @@ RETLIVE_PREFIX = "a value IS returned on this path"
 IDENTITY_BYTES = {"address": 20, "address payable": 20}
 
 
+def fixed_bytes_width(sol_type):
+    """Byte width for `bytesN`, or None for every other Solidity type."""
+    m = re.match(r"^bytes([1-9]|[12]\d|3[0-2])$", _norm_ty(sol_type))
+    return int(m.group(1)) if m else None
+
+
 def endpoint_bytes(t):
     """Storage width of an identity endpoint type, or None if not known."""
+    b = fixed_bytes_width(t)
+    if b is not None:
+        return b
     if t in IDENTITY_BYTES:
         return IDENTITY_BYTES[t]
     if t.startswith(("contract ", "interface ")):
@@ -695,7 +704,7 @@ def endpoint_candidate(name, sol_type):
         return (name, "num", None)
     if BOOL_TY.match(t):
         return (name, "bool", 1)
-    if IDENTITY_TY.match(t):
+    if IDENTITY_TY.match(t) or fixed_bytes_width(t) is not None:
         return (name, "id", endpoint_bytes(t))
     return None
 
@@ -1486,8 +1495,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             return "bool"
         if unsigned_ty(t):
             return "num"
-        if t == "address" or t.startswith(("contract ", "interface ",
-                                            "enum ")):
+        if (t == "address" or fixed_bytes_width(t) is not None
+                or t.startswith(("contract ", "interface ", "enum "))):
             return "id"
         return None
 
@@ -4267,6 +4276,9 @@ def lift_kind(sol_type):
         return ("bool", 1)
     if t in ("address", "address payable"):
         return ("address", 160)
+    b = fixed_bytes_width(t)
+    if b is not None:
+        return ("bytes", b * 8)
     m = re.match(r"^uint(\d+)?$", t)
     if m:
         return ("uint", int(m.group(1) or 256))
@@ -4294,6 +4306,8 @@ def default_call_arg(sol_type):
         return "false"
     if kind == "address":
         return "address(uint160(0))"
+    if kind == "bytes":
+        return f"bytes{_width // 8}(0)"
     return "0"
 
 
@@ -4303,6 +4317,8 @@ def signature_type(sol_type):
     if t == "address payable":
         return "address"
     if t in ("bool", "address"):
+        return t
+    if fixed_bytes_width(t) is not None:
         return t
     m = re.match(r"^uint(\d+)?$", t)
     if m:
@@ -5599,8 +5615,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         sig_ty = "address" if kind == "address" else (
             "bool" if kind == "bool" else f"uint{width}")
         sig.append((sig_ty, var))
-        pre_lines += bound_lines(var, kind, width, lo, hi, param_holes)
-        repl[idx] = var
+        pre_lines += bound_lines(var, "uint" if kind == "bytes" else kind,
+                                 width, lo, hi, param_holes)
+        repl[idx] = (f"bytes{width // 8}({var})"
+                     if kind == "bytes" else var)
         lifted.append(pname)
         # ---- AN ADDRESS BOUNDS AN ABSOLUTE VALUE, NEVER A DELTA ------------
         #
@@ -5629,6 +5647,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             bit = f"({var} ? uint256(1) : uint256(0))"
             coord_ident[pname] = bit
             coord_ident_abs[pname] = bit
+        elif kind == "bytes":
+            coord_ident_abs[pname] = var
         else:
             coord_ident[pname] = var
             coord_ident_abs[pname] = var
@@ -7720,11 +7740,15 @@ def main():
             _kind = lift_kind(_pt)
             if _kind is None:
                 continue
-            _coord_kind = {"address": "id", "bool": "bool"}.get(_kind[0],
-                                                                "num")
+            _coord_kind = {
+                "address": "id",
+                "bytes": "id",
+                "bool": "bool",
+            }.get(_kind[0], "num")
             _rendered_coords.append(
                 (_pn, _coord_kind,
-                 20 if _kind[0] == "address" else None))
+                 (20 if _kind[0] == "address" else
+                  (_kind[1] // 8 if _kind[0] == "bytes" else None))))
         if "msg.sender" in region:
             _rendered_coords.append(("msg.sender", "id", 20))
         if "msg.value" in region:
