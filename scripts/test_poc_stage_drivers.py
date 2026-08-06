@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -32,6 +33,39 @@ def write_index(tmp, **overrides):
     return p
 
 
+def compact_ast():
+    return {
+        "nodeType": "SourceUnit",
+        "nodes": [{
+            "nodeType": "ContractDefinition",
+            "id": 1,
+            "name": "C",
+            "contractKind": "contract",
+            "linearizedBaseContracts": [1],
+            "nodes": [{
+                "nodeType": "FunctionDefinition",
+                "kind": "function",
+                "name": "set",
+                "visibility": "external",
+            }],
+        }],
+    }
+
+
+def write_subject(tmp):
+    d = Path(tmp) / "repo__C"
+    d.mkdir()
+    (d / "flat.sol").write_text("contract C { function set() external {} }\n")
+    (d / "meta.json").write_text(json.dumps({
+        "subject_id": "repo__C",
+        "benchmark": "stress243",
+        "contract": "C",
+        "status": "ok",
+        "solc_bin": "/bin/false",
+    }) + "\n")
+    return d
+
+
 def test_poc_enumeration_index_supplies_one_unit():
     with tempfile.TemporaryDirectory() as td:
         idx = write_index(td)
@@ -61,6 +95,38 @@ def test_poc_enumeration_index_is_fail_closed():
     bad += check(got is None, f"multi-unit fallback is refused: {got}")
     bad += check("exactly one --unit" in why,
                  f"multi-unit reason is explicit: {why}")
+    return bad
+
+
+def test_certify_all_lists_subject_units_from_ast_cache():
+    with tempfile.TemporaryDirectory() as td:
+        subject = write_subject(td)
+        prepared_ast = subject / "flat.sol.solast"
+        cache = Path(td) / "cache"
+        cached_ast = cache / "stress243" / "stress243__repo__C" \
+            / "flat.sol.solast"
+        cached_ast.parent.mkdir(parents=True)
+        cached_ast.write_text(json.dumps(compact_ast()) + "\n")
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts" / "certify_all.py"),
+            "--subject-dir", str(subject),
+            "--subject-benchmark", "stress243",
+            "--unit", "set",
+            "--ast-cache-root", str(cache),
+            "--list-subject-units",
+            "--dry-run",
+        ], capture_output=True, text=True)
+        prepared_exists = prepared_ast.exists()
+    bad = 0
+    bad += check(cp.returncode == 0,
+                 f"certify_all cache list-units exits cleanly: {cp.stderr}")
+    bad += check("subject units: set" in cp.stdout,
+                 f"cache AST supplies unit list: {cp.stdout}")
+    bad += check(str(cached_ast.resolve()) in cp.stdout,
+                 f"dry-run names the cache AST path: {cp.stdout}")
+    bad += check(not prepared_exists,
+                 "prepared subject AST was not written")
     return bad
 
 
@@ -118,6 +184,7 @@ def main():
     tests = [
         test_poc_enumeration_index_supplies_one_unit,
         test_poc_enumeration_index_is_fail_closed,
+        test_certify_all_lists_subject_units_from_ast_cache,
         test_poc_one_materializes_declared_fixture,
         test_poc_one_can_disable_stage1_probe_witnesses_for_a_cell,
     ]

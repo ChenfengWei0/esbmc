@@ -659,6 +659,10 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   `<dir>/<benchmark>/<benchmark_key>/flat.sol.solast`. This keeps prepared
   `Results` subjects read-only. Without `--generate-ast`, the option only
   checks cache hits/misses and creates no directories or files.
+- `certify_all.py --subject-* --ast-cache-root <dir>` uses the same cache
+  layout for Stage-2 prepared-subject runs. Its dry-run/list-units mode prints
+  both the flat source and the exact AST path, so a scheduled run can be
+  audited before spending ESBMC.
 - `veriput_readiness.py`: summarizes target->unit readiness without invoking
   solc/Forge/ESBMC.
 
@@ -708,8 +712,10 @@ Interpretation:
 - The AST write-sensitive step no longer has to touch VeriPUT `Results`:
   once authorized, run `subject_unit_manifest.py` with both `--ast-cache-root`
   and `--generate-ast` to preheat an external cache, then rerun the manifest
-  against that cache to enumerate units. Keep using `--use-inferred-solc-bin`
-  for Stress rows whose solc path comes from `meta.compile.cmd`.
+  against that cache to enumerate units. Stage-2 certification must receive the
+  same `--ast-cache-root`, otherwise it will look beside `flat.sol` in the
+  prepared subject directory. Keep using `--use-inferred-solc-bin` for Stress
+  rows whose solc path comes from `meta.compile.cmd`.
 - Do not run the preheat pass while the user's other experiment depends on
   Dataset/Results immutability. When authorized, preheat in shards with journals
   and no ESBMC.

@@ -632,6 +632,16 @@ def certification_key(owner, unit, row_path_function, requested_path_function):
             row_path_function if requested_path_function else None)
 
 
+def apply_subject_ast_cache(subject, cache_root):
+    if subject is None or not cache_root:
+        return subject
+    base = os.path.abspath(os.path.expanduser(cache_root))
+    ast_name = os.path.basename(subject.solast)
+    cached = os.path.join(
+        base, subject.benchmark, subject.benchmark_key, ast_name)
+    return subject.with_solast_path(cached, source="cache")
+
+
 def bucket(rec, rc, out):
     """Exactly one outcome per unit, and the failure kinds stay apart.
 
@@ -701,6 +711,9 @@ def main():
                     default="",
                     help="known prepared-subject population used to resolve "
                          "--subject-id and to label the output row.")
+    ap.add_argument("--ast-cache-root", default="",
+                    help="for --subject-*, read/write compact ASTs under this "
+                         "cache root instead of the prepared subject directory")
     ap.add_argument("--list-subject-units", action="store_true",
                     help="for --subject-*, print named public/external units "
                          "from the target contract's compact AST and exit. "
@@ -1319,6 +1332,7 @@ def main():
                            if args.subject_benchmark else None),
                 unit=next(iter(want_units)) if want_units else None,
                 require_unit=not args.list_subject_units)
+            subject = apply_subject_ast_cache(subject, args.ast_cache_root)
             wrote_ast = False if args.dry_run else ensure_solast(subject)
         except (SubjectError, subprocess.CalledProcessError) as exc:
             print(f"[sweep] REFUSED: could not resolve prepared subject: {exc}")
@@ -1326,7 +1340,7 @@ def main():
         unit_label = f" unit={subject.unit}" if subject.unit else ""
         print(f"[sweep] prepared subject: {subject.benchmark_key} "
               f"contract={subject.contract}{unit_label} "
-              f"flat={subject.flat_sol}")
+              f"flat={subject.flat_sol} ast={subject.solast}")
         if wrote_ast:
             print(f"[sweep] generated AST: {subject.solast}")
         elif args.dry_run and not os.path.exists(subject.solast):
