@@ -1167,6 +1167,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
     constant_ids = {}
     enum_member_ids = {}
     function_nodes = []
+    function_by_id = {}
     for scope in scopes:
         for n in (scope.get("nodes") or []):
             if (isinstance(n, dict) and
@@ -1204,6 +1205,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
             if (isinstance(n, dict) and
                     n.get("nodeType") == "FunctionDefinition"):
                 function_nodes.append(n)
+                if n.get("id") is not None:
+                    function_by_id[n["id"]] = n
 
     entries, evidence, seen, by_name = [], [], set(), {}
     next_id = [0]
@@ -1857,8 +1860,51 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         term = {"kind": "op", "op": op, "lhs": lhs[0], "rhs": rhs[0]}
         return term, r2_term_text(term)
 
+    inline_depth = [0]
+
+    def inline_call_effects(n):
+        if inline_depth[0] >= 1:
+            return
+        if not isinstance(n, dict) or n.get("nodeType") != "FunctionCall":
+            return
+        if n.get("kind") not in (None, "functionCall"):
+            return
+        callee_ref = identifier_ref(n.get("expression"))
+        if callee_ref is None or callee_ref == target.get("id"):
+            return
+        callee = function_by_id.get(callee_ref)
+        if callee is None or callee.get("body") is None:
+            return
+        formals = (callee.get("parameters") or {}).get("parameters") or []
+        actuals = n.get("arguments") or []
+        if len(formals) != len(actuals):
+            return
+        old_aliases = dict(local_aliases)
+        old_storage_aliases = dict(local_storage_aliases)
+        old_local_ids = set(local_ids)
+        old_storage_ids = set(local_storage_ids)
+        try:
+            for formal, actual in zip(formals, actuals):
+                ref = formal.get("id") if isinstance(formal, dict) else None
+                if isinstance(ref, int):
+                    local_aliases[ref] = actual
+            inline_depth[0] += 1
+            walk(callee.get("body"))
+        finally:
+            inline_depth[0] -= 1
+            local_aliases.clear()
+            local_aliases.update(old_aliases)
+            local_storage_aliases.clear()
+            local_storage_aliases.update(old_storage_aliases)
+            local_ids.clear()
+            local_ids.update(old_local_ids)
+            local_storage_ids.clear()
+            local_storage_ids.update(old_storage_ids)
+
     def walk(n):
         if isinstance(n, dict):
+            if n.get("nodeType") == "FunctionCall":
+                inline_call_effects(n)
             if n.get("nodeType") == "VariableDeclarationStatement":
                 decls = [d for d in (n.get("declarations") or [])
                          if isinstance(d, dict)]

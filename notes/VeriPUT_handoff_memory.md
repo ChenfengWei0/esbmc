@@ -158,6 +158,51 @@ Verification:
 - Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
 - Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
 
+## 2026-08-06 one-level helper-call source-R2 inlining
+
+Scope and constraint:
+
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` stayed read-only.
+- No POC ESBMC attempt, benchmark certification run, Forge, or fuzz run was
+  started.
+
+Ground truth:
+
+- ERC20/OZ-style public units often expose their semantic storage write only
+  through an internal helper. Example:
+  `approve(spender, amount) -> _approve(_msgSender(), spender, amount)`, while
+  `_approve(owner, spender, amount)` writes
+  `_allowances[owner][spender] = amount`.
+- A strong PUT should prioritize the exact mapping-slot R2 query
+  `_allowances[msg.sender][spender]: post == amount` rather than relying on a
+  broad mechanical candidate product to rediscover it.
+- This is not proof. The source miner only moves that row to the front of the
+  existing R2 batch; ESBMC still certifies and fuzz can only refute.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` `source_assignment_r2_specs()` now indexes
+  function definitions in the selected contract/base scopes by declaration id.
+- When the target body contains a source-level `FunctionCall` whose callee id
+  resolves to one of those functions, the miner performs one-level effect
+  inlining: formal parameter ids are temporarily aliased to actual argument
+  AST expressions, then the callee body is walked by the existing source-R2
+  assignment logic.
+- The inliner is deliberately bounded at depth 1 and restores all local alias
+  state afterward, so helper-local aliases cannot leak into the caller and
+  recursive/helper chains are not expanded indefinitely.
+- This composes with the previous `_msgSender()` alias and mapping-slot key
+  recovery, so `_approve(_msgSender(), spender, amount)` yields
+  `allowances[msg.sender][spender]: post == amount`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 178/178 tests.
+
 Important caveat found immediately afterward:
 
 - This change proves the external tool can name, propose, and render Foundry

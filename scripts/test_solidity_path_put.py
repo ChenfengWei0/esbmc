@@ -2992,6 +2992,103 @@ def test_source_R2_msg_sender_helper_calls_use_rendered_env_coord():
     return bad
 
 
+def test_source_R2_inlines_one_internal_helper_call():
+    from solidity_path_put import r2_term_text, source_assignment_r2_specs  # noqa: E402
+
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+
+    def ident(ref, name, ty="uint256"):
+        return {"nodeType": "Identifier", "referencedDeclaration": ref,
+                "name": name, "typeDescriptions": {"typeString": ty}}
+
+    def call(ref, name, args, ty="tuple()"):
+        return {"nodeType": "FunctionCall", "kind": "functionCall",
+                "arguments": args,
+                "expression": ident(ref, name, "function"),
+                "typeDescriptions": {"typeString": ty}}
+
+    def index(base, key, ty):
+        return {"nodeType": "IndexAccess", "baseExpression": base,
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    allowances_owner = index(
+        ident(10, "allowances", "mapping(address => mapping(address => uint256))"),
+        ident(21, "owner", "address"),
+        "mapping(address => uint256)")
+    allowances_owner_spender = index(
+        allowances_owner, ident(22, "spender", "address"), "uint256")
+    approve_call = call(20, "_approve", [
+        call(40, "_msgSender", [], "address"),
+        ident(31, "spender", "address"),
+        ident(32, "amount", "uint256")])
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10,
+             "name": "allowances", "stateVariable": True,
+             "typeDescriptions": {
+                 "typeString": "mapping(address => mapping(address => uint256))"}},
+            {"nodeType": "FunctionDefinition", "id": 40,
+             "name": "_msgSender",
+             "parameters": {"parameters": []},
+             "returnParameters": {"parameters": [
+                 {"id": 41, "name": "",
+                  "typeDescriptions": {"typeString": "address"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "Return", "expression": msg_sender}]}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "_approve",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "owner",
+                  "typeDescriptions": {"typeString": "address"}},
+                 {"id": 22, "name": "spender",
+                  "typeDescriptions": {"typeString": "address"}},
+                 {"id": 23, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=", "src": "100:12:0",
+                     "leftHandSide": allowances_owner_spender,
+                     "rightHandSide": ident(23, "amount", "uint256")}}]}},
+            {"nodeType": "FunctionDefinition", "id": 30, "name": "approve",
+             "parameters": {"parameters": [
+                 {"id": 31, "name": "spender",
+                  "typeDescriptions": {"typeString": "address"}},
+                 {"id": 32, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "ExpressionStatement", "expression": approve_call}]}}
+        ]}]}
+    maps = {"allowances": (7, ("address", "address"), 32, 0, "allowances",
+                           None)}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "approve",
+            [("spender", "address"), ("amount", "uint256")], {},
+            [("msg.sender", "id", 20), ("spender", "id", 20),
+             ("amount", "num", None)],
+            arity=2, maps=maps, log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    equals = [r2_term_text(item["term"])
+              for item in entries.get(
+                  "allowances[msg.sender][spender]", {}).get("equals", [])]
+    bad = 0
+    bad += check(equals == ["amount"],
+                 f"one internal helper call is source-inlined: {entries}")
+    bad += check(any("allowances[msg.sender][spender]: post == amount"
+                     in line for line in evidence),
+                 f"inlined helper provenance is recorded: {evidence}")
+    return bad
+
+
 def test_source_R2_arithmetic_assignments_prioritize_expression_endpoints():
     from solidity_path_put import (r2_term_text,  # noqa: E402
                                    source_assignment_r2_specs)
@@ -7504,6 +7601,7 @@ def main():
               test_source_R2_address_zero_assignments_prioritize_zero_endpoints,
               test_source_R2_environment_value_assignments_use_rendered_env_coords,
               test_source_R2_msg_sender_helper_calls_use_rendered_env_coord,
+              test_source_R2_inlines_one_internal_helper_call,
               test_source_R2_arithmetic_assignments_prioritize_expression_endpoints,
               test_source_R2_state_entry_coords_are_used_only_when_rendered,
               test_source_R2_type_conversion_wrappers_are_unwrapped_conservatively,
