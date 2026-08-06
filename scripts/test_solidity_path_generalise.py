@@ -81,6 +81,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       path_cov_fixture_state_pins,
                                       structural_decision_region,
                                       structural_decision_regions,
+                                      structural_decision_regions_with_retreat,
                                       enumeration_has_arith_conditions,
                                       witness_values,
                                       extcall_inseparable_failures,
@@ -2790,6 +2791,36 @@ check("simple-decision-region-refuses-coordinate-equality",
       structural_decision_region(
           [{"branch_claim": "a == b"}], {"a": 1, "b": 2}, {},
           ["a", "b"]), None)
+_owner_rel_paths = [
+    (12, 3, {"msg.value": 0, "msg.sender": 9, "state._owner": 1,
+             "newOwner": 0}),
+    (15, 3, {"msg.value": 0, "msg.sender": 7, "state._owner": 7,
+             "newOwner": 5}),
+]
+_owner_rel_decisions = {
+    12: [{"branch_claim": "!(msg.value == 0)"},
+         {"branch_claim":
+          "!(!(return_value$_owner$1 == return_value$__msgSender$2))"},
+         {"branch_claim": "!(!(newOwner != 0))"}],
+    15: [{"branch_claim": "!(msg.value == 0)"},
+         {"branch_claim":
+          "!(return_value$_owner$1 == return_value$__msgSender$2)"},
+         {"branch_claim": "!(newOwner != 0)"}],
+}
+_rel_boxes, _rel_holes, _rel_reasons, _rel_retreats = \
+    structural_decision_regions_with_retreat(
+        _owner_rel_paths, _owner_rel_decisions, {"msg.value": 0},
+        ["msg.sender", "newOwner", "state._owner"],
+        coord_types={"newOwner": "address"})
+check("owner-sender-relation-retreat-pins-entry-owner",
+      _rel_retreats, {12: {"state._owner": 1}, 15: {"state._owner": 7}})
+check("owner-sender-relation-retreat-keeps-nonowner-sender-wide",
+      (_rel_boxes[12]["msg.sender"],
+       _rel_holes[12]["msg.sender"]), ((0, (1 << 160) - 1), {1}))
+check("owner-sender-relation-retreat-pins-owner-path-sender",
+      _rel_boxes[15]["msg.sender"], (7, 7))
+check("owner-sender-relation-retreat-keeps-success-argument-wide",
+      _rel_boxes[15]["newOwner"], (1, (1 << 160) - 1))
 check("decision-relation-inverts-ordered-claim",
       _decision_relation("x > 5"), ("x", "<=", "5"))
 check("decision-relation-keeps-negated-ordered-claim",

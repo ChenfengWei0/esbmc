@@ -9209,6 +9209,86 @@ Checks:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 relation-retreated structural seeds for owner/sender guards
+
+Benchmark sample that exposed the next bottleneck:
+
+- Subject:
+  `stress243__ERC-3643__ERC-3643__AgentRole / AgentRole.transferOwnership`.
+- Source shape:
+  `onlyOwner` checks `owner() == _msgSender()`, then
+  `require(newOwner != address(0))`, then writes `_owner = newOwner`.
+- Pre-fix strong/12 sample:
+  `/tmp/veriput_sample_v12_20260806_220907/.../transferOwnership` reported
+  `0 certified / 5 not / 5 witnessed` in about 31s.
+- Failure diagnosis:
+  `msg.sender` was promoted to a free coordinate and `state._owner` was also
+  free.  The path condition is relational (`msg.sender == state._owner` for
+  owner paths, `!=` for non-owner paths).  A product box cannot express this
+  diagonal relation, so shrink kept receiving witnesses where
+  `extcall.return_value$__msgSender$2`, `msg.sender`, and `state._owner`
+  diverged from the path CE.
+
+Implemented change:
+
+- `scripts/solidity_path_generalise.py` now has a relation-retreat helper for
+  simple complete-path decisions.
+- Default `structural_decision_region()` behaviour is unchanged:
+  coordinate-to-coordinate constraints still return `None`.
+- The new retreat path is opt-in inside the driver:
+  when a complete path contains a simple `==` / `!=` relation between a source
+  getter state coordinate and another rendered coordinate, it pins the
+  `state.*` side to that path's CE value and converts the relation into an
+  ordinary product slice.
+- These relation-retreated seeds are NOT structural certificates.  They skip
+  ladder/refine only when every non-pin-excluded path has such a seed, then
+  each seeded path still goes through `--path-cov-certify`.
+- This keeps the earlier EtherLotto lesson intact: global checked-arithmetic in
+  the enumeration no longer forbids using the seed, but it still forbids
+  accepting it without ESBMC certification.
+
+Measured confirmation:
+
+- First post-change run found a Python `None` normalization bug before
+  certification; fixed without counting it as evidence.
+- Second run:
+  `/tmp/veriput_relretreat_transfer_20260806_2311`,
+  60s/8GiB, certified `4 / 5` in about 23s.
+- Third and final allowed sample rerun:
+  `/tmp/veriput_relretreat_transfer_20260806_2326`,
+  60s/8GiB, certified `4 / 5` in 4.3s by skipping level0/probe/refine.
+- Certified regions:
+  - enc=12: `state._owner == 2147483647`,
+    `msg.sender != 2147483647`, `newOwner == 0`;
+  - enc=13: `state._owner == 2147483647`,
+    `msg.sender != 2147483647`, `newOwner != 0`;
+  - enc=14: `state._owner == 4294967295`,
+    `msg.sender == 4294967295`, `newOwner == 0`;
+  - enc=15: `state._owner == 4294967295`,
+    `msg.sender == 4294967295`, `newOwner != 0`.
+- enc=2 remains not-certified by design because the global `msg.value == 0`
+  body slice excludes the nonpayable ABI value-gate reject path.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
+  passed.
+- `git diff --check` passed.
+
+Next:
+
+- Do a small stratified benchmark sample again.  Expected immediate gain is on
+  Ownable/AccessControl-style guards where both caller and entry owner/admin
+  vary.
+- `AIRBets.transfer` is still a separate witness-discovery bottleneck
+  (`KILLED`, no witnessed path in the earlier 60s sample); relation-retreat
+  does not address that class.
+
 Next:
 
 - Start small stratified benchmark sampling under `veriput-strong/10`.

@@ -916,6 +916,8 @@ def _decision_term(term, ce, pins, constants=None):
         state_name = "state." + m.group(1)
         if state_name in pins:
             return "const", pins[state_name]
+        if state_name in ce:
+            return "coord", state_name
     if term in pins:
         return "const", pins[term]
     if term in (constants or {}):
@@ -999,8 +1001,24 @@ def _box_intersect_order(box, holes, name, op, value, coord_types=None,
     return True
 
 
-def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
-                               type_ranges=None, constants=None):
+def _relation_retreat_coord(lhs, rhs, ce, coord_set):
+    """Pick the coordinate to pin for a simple coord-to-coord relation."""
+    if lhs not in coord_set or rhs not in coord_set:
+        return None
+    if lhs not in ce or rhs not in ce:
+        return None
+    # Entry state is establishable by the PUT preamble and pinning it usually
+    # leaves the caller/input side as the fuzz-facing quantity.
+    if lhs.startswith("state.") and not rhs.startswith("state."):
+        return lhs
+    if rhs.startswith("state.") and not lhs.startswith("state."):
+        return rhs
+    return None
+
+
+def _structural_decision_region(decisions, ce, pins, coords, coord_types=None,
+                                type_ranges=None, constants=None,
+                                allow_relation_retreat=False):
     """Derive a product region directly from simple complete-path decisions.
 
     This is a fast path for source shapes such as:
@@ -1019,6 +1037,7 @@ def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
     coord_set = set(coords or [])
     box = {n: _coord_range(n, coord_types, type_ranges) for n in coord_set}
     holes = {}
+    retreated = {}
     clauses = []
     for d in decisions:
         rel = _decision_relation(d.get("branch_claim"))
@@ -1063,12 +1082,48 @@ def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
                 return None
             clauses.append(f"{lt[1]} {op} {rt[1]} (constant)")
             continue
-        # Coordinate-to-coordinate constraints are not product regions.
+        if (allow_relation_retreat and lt[0] == "coord" and
+                rt[0] == "coord" and op in ("==", "!=")):
+            pin_name = _relation_retreat_coord(lt[1], rt[1], ce, coord_set)
+            if pin_name is None:
+                return None
+            other = rt[1] if pin_name == lt[1] else lt[1]
+            value = ce[pin_name]
+            if not _box_intersect_eq(
+                    box, holes, pin_name, value, coord_types, type_ranges):
+                return None
+            if op == "==":
+                ok = _box_intersect_eq(
+                    box, holes, other, value, coord_types, type_ranges)
+            else:
+                ok = _box_intersect_neq(
+                    box, holes, other, value, coord_types, type_ranges)
+            if not ok:
+                return None
+            retreated[pin_name] = value
+            clauses.append(
+                f"{lt[1]} {op} {rt[1]} (retreat {pin_name}=={value})")
+            continue
+        # Coordinate-to-coordinate constraints are not product regions unless
+        # the caller explicitly allows the relation-to-pin retreat above.
         return None
     reason = ("STRUCTURAL simple decision region: every complete-path decision "
               "is a comparison over a rendered coordinate and a constant, "
-              "literal Solidity constant, or pinned state value; clauses: "
+              "literal Solidity constant, pinned state value, or a retreated "
+              "entry-state relation; clauses: "
               + "; ".join(clauses))
+    return box, holes, reason, retreated
+
+
+def structural_decision_region(decisions, ce, pins, coords, coord_types=None,
+                               type_ranges=None, constants=None):
+    got = _structural_decision_region(
+        decisions, ce, pins, coords, coord_types=coord_types,
+        type_ranges=type_ranges, constants=constants,
+        allow_relation_retreat=False)
+    if got is None:
+        return None
+    box, holes, reason, _retreated = got
     return box, holes, reason
 
 
@@ -1088,6 +1143,26 @@ def structural_decision_regions(paths, path_decisions, pins, coords,
         holes[enc] = h
         reasons[enc] = reason
     return out, holes, reasons
+
+
+def structural_decision_regions_with_retreat(paths, path_decisions, pins,
+                                             coords, coord_types=None,
+                                             type_ranges=None,
+                                             constants=None):
+    out, holes, reasons, retreats = {}, {}, {}, {}
+    for enc, _depth, ce in paths:
+        got = _structural_decision_region(
+            path_decisions.get(enc), ce, pins, coords,
+            coord_types=coord_types, type_ranges=type_ranges,
+            constants=constants, allow_relation_retreat=True)
+        if got is None:
+            return None, None, None, None
+        box, h, reason, retreated = got
+        out[enc] = box
+        holes[enc] = h
+        reasons[enc] = reason
+        retreats[enc] = retreated
+    return out, holes, reasons, retreats
 
 
 def enumeration_has_arith_conditions(cwd):
@@ -6078,6 +6153,8 @@ def main():
     coord_types = dict(unit_params(args.ast, args.contract, args.unit,
                                    declaration_id=declaration_id))
     constants = literal_state_constants(args.ast, args.contract)
+    structural_seed_regions, structural_seed_holes, structural_seed_source, \
+        structural_seed_retreats = {}, {}, {}, {}
 
     def query_pins():
         return {n: v for n, v in pins.items() if n not in nonquery_pins}
@@ -6132,6 +6209,43 @@ def main():
         brackets = regions = warned = round_failure = region_holes = None
         structural_regions = None
         structural_region_source = {}
+    structural_region_retreats = {}
+
+    for enc, _depth, ce in paths:
+        got = _structural_decision_region(
+            path_decisions.get(enc), ce, pins, coords,
+            coord_types=coord_types, type_ranges={},
+            constants=constants, allow_relation_retreat=True)
+        if got is None:
+            continue
+        box, h, reason, retreated = got
+        if not retreated:
+            continue
+        structural_seed_regions[enc] = box
+        structural_seed_holes[enc] = h
+        structural_seed_source[enc] = reason
+        structural_seed_retreats[enc] = retreated
+    if structural_seed_regions:
+        print("[structural] relation-retreated seed region(s) available for "
+              + ", ".join(f"enc={enc}" for enc in sorted(
+                  structural_seed_regions))
+              + ". These do NOT skip ESBMC certification; they replace the "
+                "product-box ladder result for those paths so owner/sender "
+                "relations are tested as an established entry-state slice.")
+    seed_excluded_by_pin = {
+        enc for enc, _depth, ce in paths
+        if ce_in_region({n: (v, v) for n, v in pins.items()}, {}, ce)
+    }
+    if (structural_seed_regions and paths and
+            all(enc in structural_seed_regions or enc in seed_excluded_by_pin
+                for enc, _depth, _ce in paths)):
+        if args.level0 or args.probe_witnesses or args.probe_ladder:
+            print("[structural] every path not excluded by pins has a "
+                  "relation-retreated seed; skipping level0, witness pool "
+                  "probes and per-path ladders")
+        args.level0 = False
+        args.probe_witnesses = 0
+        args.probe_ladder = False
 
     pre_structural_regions, pre_structural_holes, pre_structural_source = \
         {}, {}, {}
@@ -6577,24 +6691,65 @@ def main():
     structural_region_source = {}
     if not paths:
         structural_regions = {}
-    elif arith_conditions_seen:
-        structural_regions = None
-        structural_holes = {}
+    elif (structural_seed_regions and
+          all(enc in structural_seed_regions or enc in seed_excluded_by_pin
+              for enc, _depth, _ce in paths)):
+        structural_regions = dict(structural_seed_regions)
+        structural_holes = dict(structural_seed_holes)
         structural_reasons = {}
+        structural_region_retreats = dict(structural_seed_retreats)
+    elif arith_conditions_seen:
+        structural_regions, structural_holes, structural_reasons, \
+            structural_region_retreats = \
+            structural_decision_regions_with_retreat(
+                paths, path_decisions, pins, coords, coord_types=coord_types,
+                type_ranges=type_ranges, constants=constants)
+        structural_region_retreats = structural_region_retreats or {}
+        if structural_regions is not None and not any(
+                structural_region_retreats.values()):
+            structural_regions = None
+            structural_holes = {}
+            structural_reasons = {}
+            structural_region_retreats = {}
     else:
         structural_regions, structural_holes, structural_reasons = \
             structural_decision_regions(
                 paths, path_decisions, pins, coords, coord_types=coord_types,
                 type_ranges=type_ranges, constants=constants)
+        if structural_regions is None:
+            structural_regions, structural_holes, structural_reasons, \
+                structural_region_retreats = \
+                structural_decision_regions_with_retreat(
+                    paths, path_decisions, pins, coords,
+                    coord_types=coord_types, type_ranges=type_ranges,
+                    constants=constants)
+            structural_region_retreats = structural_region_retreats or {}
+            if structural_regions is not None and not any(
+                    structural_region_retreats.values()):
+                structural_regions = None
+                structural_holes = {}
+                structural_reasons = {}
+                structural_region_retreats = {}
     if paths and structural_regions is not None:
         brackets, regions, warned, round_failure = {}, structural_regions, \
             set(), None
         region_holes = structural_holes
-        structural_region_source = structural_reasons
-        print("[structural] simple decision regions derived for every "
-              f"witnessed path; skipping geometric bracket and refine. "
-              f"{len(regions)} region(s) now go directly to structural "
-              f"certification")
+        if structural_region_retreats:
+            structural_region_source = {}
+            print("[structural] relation-retreated simple decision regions "
+                  f"derived for every witnessed path; skipping geometric "
+                  f"bracket and refine. {len(regions)} region(s) now go to "
+                  f"ESBMC certification, not structural certification, because "
+                  f"the product box relies on a per-path retreated entry-state "
+                  f"coordinate"
+                  + (" and checked-arithmetic conditions were seen elsewhere "
+                     "in the enumeration" if arith_conditions_seen else ""))
+        else:
+            structural_region_source = structural_reasons
+            print("[structural] simple decision regions derived for every "
+                  f"witnessed path; skipping geometric bracket and refine. "
+                  f"{len(regions)} region(s) now go directly to structural "
+                  f"certification")
         for enc in sorted(regions):
             bits = []
             for n, (lo, hi) in sorted(regions[enc].items()):
@@ -6603,6 +6758,10 @@ def main():
                             + (f" \\ {{{', '.join(map(str, h))}}}" if h
                                else ""))
             print(f"[structural] enc={enc}: " + ", ".join(bits))
+            if structural_region_retreats.get(enc):
+                print(f"[structural] enc={enc}: relation retreat "
+                      + ", ".join(f"{n}=={v}" for n, v in sorted(
+                          structural_region_retreats[enc].items())))
     elif paths:
         # Round 1: geometric bracket.
         if args.skip_bracket:
@@ -6717,7 +6876,27 @@ def main():
               "is started for this path.")
     for enc, depth, ce in paths:
         box = regions.get(enc)
+        if enc in structural_seed_regions:
+            box = structural_seed_regions[enc]
+            print(f"[certify enc={enc}] using relation-retreated structural "
+                  f"seed: {structural_seed_source[enc]}. ESBMC certification "
+                  f"is still required for this path.")
         if box is None:
+            excluded_by_pin = ce_in_region(
+                {n: (pv, pv) for n, pv in pins.items()}, {}, ce)
+            if excluded_by_pin:
+                failed[enc] = (
+                    f"EXCLUDED FROM THE SLICE by the pins "
+                    f"({'; '.join(excluded_by_pin)}), so no product region "
+                    f"was searched for this path. ⛔ This is NOT a failure to "
+                    f"certify: this path's own counterexample does not satisfy "
+                    f"the pins, so the path was never in the slice being "
+                    f"generalised. For the ABI-value gate path of a non-payable "
+                    f"unit that is exactly what auto-pinning msg.value costs, "
+                    f"and it is announced when the pin is applied. Counting it "
+                    f"against the certification rate prices a stated design "
+                    f"cost as a search result")
+                continue
             failed[enc] = (last_failure or
                            "no fully bounded region was measured")
             continue
@@ -6726,7 +6905,8 @@ def main():
         # narrowed interval removes nothing -- but it is also harmless to keep,
         # and dropping it here would need its own justification, so it stays and
         # the tool's own emptiness check is the arbiter.
-        holes = dict(region_holes.get(enc) or {})
+        holes = dict(structural_seed_holes.get(enc) or
+                     (region_holes.get(enc) or {}))
         empty = empty_coords(box, holes)
         if empty:
             # ---- THE PIN ATTRIBUTION IS NAMED ON THE OTHER BRANCH ONLY, AND
@@ -6875,7 +7055,8 @@ def main():
             # and pinned at their x_pi value rather than losing the whole path.
             # Per piece and not per path: two pieces of one path are different
             # sets and may retreat on different coordinates.
-            retreated = {}
+            retreated = dict(structural_seed_retreats.get(enc) or
+                             structural_region_retreats.get(enc) or {})
             tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
             for _ in range(args.shrink_rounds):
                 v, nb, wit, punches, unexp, unknown_why = certify(
