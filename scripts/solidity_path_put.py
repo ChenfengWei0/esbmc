@@ -2480,6 +2480,8 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
             "deltas": deltas,
         }
         entries.append(entry)
+    entries = [entry for entry in entries
+               if any(entry[kind] for kind in ("equals", "abs", "deltas"))]
     requested = sum(len(entry[kind]) for entry in entries
                     for kind in ("equals", "abs", "deltas"))
     if requested > candidate_budget:
@@ -6131,12 +6133,108 @@ def rollback_exit_paths(log):
             for m in ROLLBACK_EXIT_RE.finditer(log or "")}
 
 
+SIMPLE_DECISION_RE = re.compile(r"^(.+?)\s*(==|!=|<=|>=|<|>)\s*(.+)$")
+DECISION_NEGATE_OP = {
+    "==": "!=",
+    "!=": "==",
+    "<": ">=",
+    "<=": ">",
+    ">": "<=",
+    ">=": "<",
+}
+
+
+def unwrap_decision_not(text):
+    text = (text or "").strip()
+    if text.startswith("!(") and text.endswith(")"):
+        return text[2:-1].strip(), True
+    return text, False
+
+
+def path_condition_from_branch_claim(branch_claim):
+    """Return the source condition this path walked, when it is simple."""
+    inner, negated = unwrap_decision_not(branch_claim)
+    m = SIMPLE_DECISION_RE.match(inner)
+    if not m:
+        return None
+    lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
+    return lhs, (op if negated else DECISION_NEGATE_OP[op]), rhs
+
+
+def render_path_decision_term(term, coord_ident_abs):
+    term = (term or "").strip()
+    if term in coord_ident_abs:
+        return coord_ident_abs[term], None
+    if "state." + term in coord_ident_abs:
+        return coord_ident_abs["state." + term], None
+    if _KEY_LIT_RE.match(term):
+        return term, None
+    return None, f"`{term}` is not nameable in this PUT"
+
+
+def literal_int_value(text):
+    text = (text or "").strip()
+    if not _KEY_LIT_RE.match(text):
+        return None
+    try:
+        return int(text, 0)
+    except ValueError:
+        return None
+
+
+def constant_relation_truth(lhs, op, rhs):
+    lv = literal_int_value(lhs)
+    rv = literal_int_value(rhs)
+    if lv is None or rv is None:
+        return None
+    if op == "==":
+        return lv == rv
+    if op == "!=":
+        return lv != rv
+    if op == "<":
+        return lv < rv
+    if op == "<=":
+        return lv <= rv
+    if op == ">":
+        return lv > rv
+    if op == ">=":
+        return lv >= rv
+    return None
+
+
+def path_decision_assumes(path_decisions, coord_ident_abs):
+    """Conservative `vm.assume` guards from complete-path decisions."""
+    lines, skipped = [], []
+    seen = set()
+    for dec in path_decisions or []:
+        claim = dec.get("branch_claim") if isinstance(dec, dict) else None
+        rel = path_condition_from_branch_claim(claim)
+        if rel is None:
+            skipped.append(f"{claim!r} (not a simple binary decision)")
+            continue
+        lhs, op, rhs = rel
+        le, lerr = render_path_decision_term(lhs, coord_ident_abs)
+        re_, rerr = render_path_decision_term(rhs, coord_ident_abs)
+        if lerr or rerr:
+            skipped.append(f"{claim!r} ({lerr or rerr})")
+            continue
+        text = f"{le} {op} {re_}"
+        truth = constant_relation_truth(le, op, re_)
+        if truth is True:
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        lines.append((claim, f"    vm.assume({text});"))
+    return lines, skipped
+
+
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
               unwind=None, rettypes=None, maps=None, piece_label="",
               derived_by=None, rollback_exit=False, r2_terms=None,
               oracle_label_prefix="", exit_kind=None, state_types=None,
-              lift_unconstrained_calldata=False):
+              lift_unconstrained_calldata=False, path_decisions=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -7159,6 +7257,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             guard_notes.append(f"{var}: {text}")
         else:
             asserts += a
+    path_guard_lines, path_guard_skipped = path_decision_assumes(
+        path_decisions, coord_ident_abs)
     # ---- THE CALL HAS TO CARRY THE FLAG, OR THE GUARD IS NOT A GUARD -------
     #
     # Only a call ending in `catch {}` is rewritten. Anything else -- a catch
@@ -7419,6 +7519,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"  //   rung DROPPED: {s}")
     for s in oracle_implied:
         out.append(f"  //   rung IMPLIED (not lost, not asserted twice): {s}")
+    for claim, line in path_guard_lines:
+        out.append(f"  //   path guard ESTABLISHED: `{claim}` -> "
+                   f"`{line.strip()}`")
+    for s in path_guard_skipped:
+        out.append(f"  //   path guard DROPPED: {s}")
     for s in state_skipped:
         out.append(f"  //   entry-state bound DROPPED: {s}")
     for s in env_unchecked:
@@ -7471,6 +7576,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     if pre_reads:
         out.append("    // pre-state for the oracle, at this path's own entry")
         out += pre_reads
+    if path_guard_lines:
+        out.append("    // complete-path guard recovered from the emit report")
+        out += [line for _claim, line in path_guard_lines]
     for ln in body[head_end:call_i]:
         if insert_expect_revert and "[asserted] path exits normally" in ln:
             out.append("    // [asserted] path exits through revert; "
@@ -7547,7 +7655,9 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              # other does not.
              "oracle_implied": oracle_implied,
              "state_stored": stored, "state_skipped": state_skipped,
-             "env_unchecked": env_unchecked}
+             "env_unchecked": env_unchecked,
+             "path_guard_assumes": len(path_guard_lines),
+             "path_guard_skipped": path_guard_skipped}
     return out, stats
 
 
@@ -8789,7 +8899,8 @@ def main():
                            exit_kind=a.exit_kind,
                            state_types=state_types,
                            lift_unconstrained_calldata=(
-                               a.lift_unconstrained_calldata))
+                               a.lift_unconstrained_calldata),
+                           path_decisions=claim.get("decisions") or [])
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
@@ -8814,6 +8925,10 @@ def main():
         print(f"[put]     rung dropped: {s}")
     for s in stats.get("oracle_implied", []):
         print(f"[put]     rung implied: {s}")
+    if stats.get("path_guard_assumes"):
+        print(f"[put]     path guard assumes: {stats['path_guard_assumes']}")
+    for s in stats.get("path_guard_skipped") or []:
+        print(f"[put]     path guard dropped: {s}")
     for s in stats["state_stored"]:
         print(f"[put]     entry state stored: {s}")
     for s in stats["state_skipped"]:

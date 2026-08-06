@@ -63,6 +63,8 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                check_esbmc_args, cell_of,
                                exit_kind_asserted, find_unit_call,
                                no_oracle_reason, observed_env,
+                               path_condition_from_branch_claim,
+                               path_decision_assumes,
                                rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
                                target_instance_for_call, rewrite_call_args,
@@ -2383,6 +2385,71 @@ def test_typed_R2_bool_return_asks_equality_only():
                  and not return_entry["deltas"],
                  f"bool return has no interval/delta candidates: "
                  f"{return_entry}")
+    return bad
+
+
+def test_typed_R2_candidate_budget_ignores_empty_bool_return_queue():
+    from solidity_path_put import propose_r2_batch, r2_candidates  # noqa: E402
+    rows = []
+    for name in ("bal0", "bal1", "bal2"):
+        rows += [(name, text, verdict) for _v, text, verdict in INC_ROWS]
+    rows += [("return", RETLIVE, "REFUTED"),
+             ("return", "return == false", "HOLDS"),
+             ("return", "return == true", "REFUTED")]
+    got = propose_r2_batch(
+        rows, [("amount", "uint256")],
+        source_literals=("0", "1", "5", "10", "9000"),
+        rettypes=[("", "bool")],
+        rendered_coords=[("amount", "num", None), ("msg.value", "num", None)],
+        term_budget=96, candidate_budget=128, log=lambda _line: None)
+    candidates = r2_candidates(got)
+    bad = 0
+    bad += check(len(candidates) == 128,
+                 f"the candidate cap is still exact: {len(candidates)}")
+    bad += check("return" not in {c["var"] for c in candidates},
+                 f"empty bool return target is omitted before budget trim: "
+                 f"{candidates[:6]}")
+    return bad
+
+
+def test_path_decision_guard_renders_mapping_slot_relation():
+    cond = path_condition_from_branch_claim("!(balances[msg.sender] < amount)")
+    bad = 0
+    bad += check(cond == ("balances[msg.sender]", "<", "amount"),
+                 f"path condition recovered from negated branch claim: {cond}")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(balances[msg.sender] < amount)"}],
+        {"state.balances[msg.sender]": "_pre_balances_msg_sender",
+         "amount": "amount"})
+    bad += check(lines == [("!(balances[msg.sender] < amount)",
+                            "    vm.assume(_pre_balances_msg_sender < amount);")],
+                 f"mapping-slot path guard rendered: {lines}")
+    bad += check(skipped == [], f"nothing skipped: {skipped}")
+    return bad
+
+
+def test_path_decision_guard_negates_plain_branch_claim():
+    bad = 0
+    bad += check(path_condition_from_branch_claim("msg.value == 0") ==
+                 ("msg.value", "!=", "0"),
+                 "plain branch claim is negated into the walked condition")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "msg.value == 0"}],
+        {"msg.value": "p_msg_value"})
+    bad += check(lines == [("msg.value == 0",
+                            "    vm.assume(p_msg_value != 0);")],
+                 f"plain branch guard rendered: {lines}")
+    bad += check(skipped == [], f"nothing skipped: {skipped}")
+    return bad
+
+
+def test_path_decision_guard_skips_true_constant_relation():
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(msg.value == 0)"}],
+        {"msg.value": "0"})
+    bad = 0
+    bad += check(lines == [], f"true constant guard is not emitted: {lines}")
+    bad += check(skipped == [], f"true constant guard is not reported lost: {skipped}")
     return bad
 
 
@@ -10061,6 +10128,10 @@ def main():
               test_typed_R2_proposes_return_equals_entry_state_coord_for_getters,
               test_typed_R2_return_candidates_never_name_pre_snapshot,
               test_typed_R2_bool_return_asks_equality_only,
+              test_typed_R2_candidate_budget_ignores_empty_bool_return_queue,
+              test_path_decision_guard_renders_mapping_slot_relation,
+              test_path_decision_guard_negates_plain_branch_claim,
+              test_path_decision_guard_skips_true_constant_relation,
               test_typed_R2_term_budget_is_VISIBLE_not_a_second_query,
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,
               test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,
