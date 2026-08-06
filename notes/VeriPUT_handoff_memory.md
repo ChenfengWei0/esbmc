@@ -8147,3 +8147,37 @@ Verification:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
   passed.
 - `git diff --check` passed.
+
+## 2026-08-06 Safe type-conversion source slot keys
+
+Scope:
+
+- This is an external VeriPUT generator improvement for source-resolved
+  mapping slots. It is not POC-specific and does not change ESBMC internals.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `_expr_coord_name` now unwraps only source-level type conversions that are
+  safe for storage-slot key naming: `uint256(...)`, `uint(...)`,
+  `address(...)`, `address payable(...)`, `payable(...)`, and `bool(...)`.
+- This lets source slot priority cover common contract patterns such as
+  `paid[uint256(msg.value)]`, `height[uint256(block.number)]`, and
+  `owner[payable(msg.sender)]` before falling back to weaker generic mapping
+  candidates.
+- Narrowing conversions such as `uint32(block.number)` are deliberately not
+  unwrapped. The generated PUT cannot soundly name that as `block.number`
+  because the source expression hashes the truncated key, not the full
+  environment coordinate.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 208/208 tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check` passed.

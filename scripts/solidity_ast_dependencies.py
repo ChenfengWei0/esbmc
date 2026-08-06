@@ -191,7 +191,12 @@ def _expr_coord_name(expr, state_by_id=None, constant_by_id=None,
         args = expr.get("arguments") or []
         cast_expr = expr.get("expression") or {}
         type_name = cast_expr.get("typeName") or {}
-        if len(args) == 1 and type_name.get("name") == "address":
+        type_desc = ((type_name.get("typeDescriptions") or {}).get(
+            "typeString") or (cast_expr.get("typeDescriptions") or {}).get(
+                "typeString") or "")
+        target = type_name.get("name") or type_desc or cast_expr.get("name")
+        if target in ("address", "address payable", "payable", "uint",
+                      "uint256", "bool") and len(args) == 1:
             return _expr_coord_name(args[0], state_by_id, constant_by_id,
                                     alias_by_id, seen)
     if expr.get("nodeType") == "Identifier" and expr.get("name"):

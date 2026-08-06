@@ -6585,6 +6585,93 @@ def test_source_access_slots_keep_numeric_environment_keys():
     return bad
 
 
+def test_source_access_slots_unwrap_safe_type_conversion_keys():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+
+    def ident(ref, name):
+        return {"nodeType": "Identifier", "name": name,
+                "referencedDeclaration": ref}
+
+    def member(base, name):
+        return {"nodeType": "MemberAccess", "memberName": name,
+                "expression": {"nodeType": "Identifier", "name": base}}
+
+    def cast(name, arg):
+        return {"nodeType": "FunctionCall", "kind": "typeConversion",
+                "expression": {"nodeType": "ElementaryTypeNameExpression",
+                               "typeName": {
+                                   "nodeType": "ElementaryTypeName",
+                                   "name": name}},
+                "arguments": [arg]}
+
+    def access(base_ref, base_name, key, src):
+        return {"nodeType": "ExpressionStatement", "expression": {
+            "nodeType": "IndexAccess", "src": src,
+            "baseExpression": ident(base_ref, base_name),
+            "indexExpression": key}}
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "paid",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 11, "name": "height",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 12, "name": "owner",
+             "stateVariable": True},
+            {"nodeType": "VariableDeclaration", "id": 13, "name": "small",
+             "stateVariable": True},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "touch",
+             "parameters": {"parameters": []},
+             "body": {"nodeType": "Block", "statements": [
+                 access(10, "paid", cast("uint256", member("msg", "value")),
+                        "100:5:0"),
+                 access(11, "height",
+                        cast("uint256", member("block", "number")),
+                        "120:5:0"),
+                 access(12, "owner",
+                        cast("address payable", member("msg", "sender")),
+                        "140:5:0"),
+                 access(13, "small",
+                        cast("uint32", member("block", "number")),
+                        "160:5:0")]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "touch", declaration_id=20)
+    finally:
+        os.unlink(path)
+    maps = {"paid": (2, "uint256", 32, 0, "paid", None),
+            "height": (3, "uint256", 32, 0, "height", None),
+            "owner": (4, "address", 32, 0, "owner", None),
+            "small": (5, "uint32", 32, 0, "small", None)}
+    slots, used, skipped = source_access_slot_vars(
+        accesses, maps, params=[], state_types={}, layout={})
+    bad = 0
+    bad += check(accesses == [
+        ("height", ("block.number",)),
+        ("owner", ("msg.sender",)),
+        ("paid", ("msg.value",)),
+    ], f"safe type-conversion keys are unwrapped: {accesses}")
+    bad += check(not any("small" in name for name, _keys in accesses),
+                 f"narrowing uint32(block.number) is not guessed: {accesses}")
+    bad += check(any("state.height[block.number]" in line
+                     for line in evidence),
+                 f"conversion evidence names the unwrapped env key: "
+                 f"{evidence}")
+    bad += check(slots == ["height[block.number]", "owner[msg.sender]",
+                           "paid[msg.value]"],
+                 f"unwrapped conversion keys render as source slots: {slots}")
+    bad += check(used == {"height", "owner", "paid"} and skipped == [],
+                 f"accepted conversion slots suppress fallback: {used}, "
+                 f"{skipped}")
+    return bad
+
+
 def test_source_access_slots_keep_safe_literal_keys():
     from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
     from solidity_path_put import source_access_slot_vars  # noqa: E402
@@ -9343,6 +9430,7 @@ def main():
               test_mapping_proposer_includes_safe_entry_state_keys_after_params,
               test_source_access_slots_preserve_state_keys_before_fallback,
               test_source_access_slots_keep_numeric_environment_keys,
+              test_source_access_slots_unwrap_safe_type_conversion_keys,
               test_source_access_slots_keep_safe_literal_keys,
               test_source_access_slots_fold_safe_constant_keys,
               test_source_access_slots_resolve_local_key_aliases_in_order,
