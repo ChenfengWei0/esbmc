@@ -6394,6 +6394,47 @@ def test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter():
     return bad
 
 
+def test_mapping_proposer_includes_safe_entry_state_keys_after_params():
+    """Real ERC20-like code often writes `balances[owner]`.
+
+    The ladder has to ask that slot directly; otherwise a source-R2 candidate
+    may exist but the first assertion pass still measures only param/caller
+    slots. Only layout-backed, safely encodable state keys are proposed.
+    """
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+    maps = {
+        "bal": (2, "address", 32, 0, "bal", None),
+        "quota": (3, "uint256", 32, 0, "quota", None),
+        "flagged": (4, "bool", 32, 0, "flagged", None),
+        "seen": (5, "bytes32", 32, 0, "seen", None),
+    }
+    state_types = {
+        "owner": "address",
+        "limit": "uint256",
+        "flag": "bool",
+        "digest": "bytes32",
+        "unslotted": "address",
+    }
+    layout = {"owner": (0, 0, 20), "limit": (1, 0, 32),
+              "flag": (2, 0, 1), "digest": (3, 0, 32)}
+    got = propose_slot_vars(
+        maps, [("u", "address"), ("amount", "uint256"), ("ok", "bool"),
+               ("digestParam", "bytes32")],
+        state_types=state_types, layout=layout, log=lambda _msg: None)
+    bad = 0
+    bad += check(got == [
+        "bal[msg.sender]", "bal[u]", "bal[state.owner]",
+        "flagged[ok]", "flagged[state.flag]",
+        "quota[amount]", "quota[state.limit]", "seen[digestParam]",
+    ], f"safe entry-state keys are proposed after caller/params: {got}")
+    bad += check("bal[state.unslotted]" not in got,
+                 "a state key absent from solc storage layout is not guessed")
+    bad += check("seen[state.digest]" not in got,
+                 "bytesN state keys remain refused until ABI spelling is "
+                 "modelled exactly")
+    return bad
+
+
 def test_the_CANDIDATE_BUDGET_says_what_it_dropped():
     """⛔ NO SILENT CAP. Four levels against three address parameters PLUS the
     caller is 4^4 = 256 names; the cap keeps 24 and must SAY so, or a truncated
@@ -8576,6 +8617,7 @@ def main():
               test_a_NESTED_STRUCT_mapping_keeps_its_FIELD_TAIL,
               test_a_LEVEL_WITH_NO_MATCHING_PARAMETER_proposes_NOTHING,
               test_a_FIXED_BYTES_mapping_level_uses_same_typed_parameter,
+              test_mapping_proposer_includes_safe_entry_state_keys_after_params,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
               test_assert_query_drops_semantic_pins_ESBMC_cannot_resolve,

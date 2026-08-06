@@ -7394,6 +7394,42 @@ Verification:
   passed: 191/191 tests.
 - `git diff --check` passed.
 
+## 2026-08-06 State-keyed mapping ladder candidates
+
+Scope:
+
+- This is the follow-through to the state-variable mapping key renderer above.
+  The previous change made `bal[state.owner]` renderable and source-R2-minable;
+  this change makes the first assertion ladder ask those slots directly.
+- No ESBMC/Forge/fuzz POC or benchmark attempt was consumed.
+- `/home/samson/workspace/VeriPUT/Datasets` and
+  `/home/samson/workspace/VeriPUT/Results` remained unchanged.
+
+Code change:
+
+- `propose_slot_vars` now accepts optional `state_types` and `layout` facts.
+  For each mapping key level it appends safe `state.<field>` candidates after
+  `msg.sender` and matching parameters.
+- The production stage-2b assertion candidate path passes the AST-derived
+  state types and solc storage layout into `propose_slot_vars`, so dependency
+  selected mappings can produce candidates like `balances[state.owner]` in the
+  first ladder pass.
+- Ordering is intentional: `msg.sender` remains first for address keys,
+  declared parameters remain before state keys, and the existing prefix budget
+  semantics are preserved. This keeps caller/argument slots from being starved
+  while adding common entry-state-key slots.
+- The same conservative key policy is reused: only layout-backed, safely
+  encodable state keys are proposed. bytesN state keys and unslotted variables
+  are not guessed.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 198/198 tests.
+- `git diff --check` passed.
+
 ## 2026-08-06 Observable msg.value numeric R2 endpoint
 
 Scope and constraint:

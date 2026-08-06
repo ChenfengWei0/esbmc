@@ -3032,7 +3032,7 @@ SLOT_VAR_BUDGET = 24
 
 
 def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
-                      dependencies=None):
+                      dependencies=None, state_types=None, layout=None):
     """The mapping slot names to ASK THE LADDER ABOUT, one key per level.
 
     Lifted out of `main()` because it was inline there, which is precisely why
@@ -3055,6 +3055,13 @@ def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
     A nested name needs one parameter PER LEVEL, so the candidates are the
     cross product of the per-level type matches -- and one parameter may
     legitimately serve two levels: `bal[u][u]` is a real slot.
+
+    A level may also be keyed by an ENTRY-STATE scalar such as
+    `balances[owner]`. Those candidates are named `state.owner`, and only when
+    solc's layout gives `owner` a readable slot and the key type can be encoded
+    safely by the PUT renderer. They come AFTER parameters, because
+    msg.sender/parameter keys are still cheaper and often more directly tied to
+    the unit call; the budget keeps a prefix, so ordering is part of the policy.
 
     ---- WHY `msg.sender` IS A CANDIDATE AND WHY IT GOES FIRST ----------------
 
@@ -3116,8 +3123,13 @@ def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
             # tuple order, so the old output is reproduced byte for byte.
             cands = sorted(pn for pn, pt in (params or [])
                            if pn and _norm_ty(pt) == _norm_ty(kt))
+            state_cands = sorted(
+                "state." + sn for sn, st in (state_types or {}).items()
+                if sn in (layout or {})
+                and state_key_type_compatible(st, kt))
             if _norm_ty(kt) == "address":
                 cands = ["msg.sender"] + cands
+            cands += state_cands
             per_level.append(cands)
         # EVERY level needs a key. A four-level store with a match on three of
         # them yields NO name -- a partially-keyed name would address a word
@@ -7764,7 +7776,8 @@ def main():
             if name not in direct_mkeys
         }
         slot_vars += propose_slot_vars(
-            remaining_maps, params, dependencies=slot_dependencies)
+            remaining_maps, params, dependencies=slot_dependencies,
+            state_types=state_types, layout=layout)
     scalar_vars = [name for name in (slot_dependencies or ())
                    if name in (layout or {})]
     oracle_vars = scalar_vars + slot_vars
