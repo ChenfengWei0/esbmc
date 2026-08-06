@@ -3,6 +3,12 @@
 
 STRONG_RECIPE_VERSION = "veriput-strong/7"
 STRONG_PROBE_WITNESSES = 8
+STRONG_PUT_AUTO_UNWIND = 1
+STRONG_PUT_R2_DEPTH = 1
+STRONG_PUT_R2_TERM_BUDGET = 96
+STRONG_PUT_R2_CANDIDATE_BUDGET = 128
+STRONG_PUT_FUZZ_RUNS = 256
+STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET = 128
 
 STRONG_CERTIFY_ARGS = [
     "--recipe-version", STRONG_RECIPE_VERSION,
@@ -51,12 +57,12 @@ def strong_certify_args(probe_witnesses=STRONG_PROBE_WITNESSES):
 
 def strong_put_args():
     return [
-        "--auto-unwind", "1",
+        "--auto-unwind", str(STRONG_PUT_AUTO_UNWIND),
         "--propose-r2",
-        "--r2-depth", "1",
-        "--r2-term-budget", "96",
-        "--r2-candidate-budget", "128",
+        "--r2-depth", str(STRONG_PUT_R2_DEPTH),
+        "--r2-term-budget", str(STRONG_PUT_R2_TERM_BUDGET),
+        "--r2-candidate-budget", str(STRONG_PUT_R2_CANDIDATE_BUDGET),
         "--fuzz-r2-prefilter",
-        "--fuzz-runs", "256",
-        "--fuzz-r2-candidate-budget", "128",
+        "--fuzz-runs", str(STRONG_PUT_FUZZ_RUNS),
+        "--fuzz-r2-candidate-budget", str(STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET),
     ]

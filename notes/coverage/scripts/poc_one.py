@@ -56,8 +56,7 @@ POCS = REPO / "notes/coverage/poc_units"
 sys.path.insert(0, str(HERE))
 from pathcov_collect import solver_flags_for  # noqa: E402
 from veriput_recipe import (STRONG_PROBE_WITNESSES,  # noqa: E402
-                            STRONG_RECIPE_VERSION, strong_certify_args,
-                            strong_put_args)
+                            STRONG_RECIPE_VERSION, strong_certify_args)
 
 ATTEMPTS = {
     1: (60, 8),
@@ -400,7 +399,7 @@ def main():
                    "--timeout", str(timeout),
                    "--memlimit-gib", str(memlimit_gib),
                    "--out-root", str(put_out),
-                   ] + strong_put_args()
+                   "--strong-recipe"]
             for flag in solver_flags:
                 cmd.append(f"--esbmc-arg={flag}")
             for flag in fixture_args:

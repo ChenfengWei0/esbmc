@@ -5011,3 +5011,56 @@ Verification:
   passed, including the `probe_witnesses=0` no-ladder case.
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py` and
   `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule_run.py` passed.
+
+## 2026-08-06 shared strong Stage-4 switch
+
+Scope and constraint:
+
+- No `/home/samson/workspace/VeriPUT/Datasets` contract was modified.
+- No POC ESBMC attempt was consumed. Validation was Python compile/tests and a
+  `poc_one.py --dry-run` command inspection.
+
+Finding:
+
+- After the shared Stage-2 recipe repair, `put_all.py` still exposed typed R2
+  and the Foundry refutation prefilter only as low-level independent switches.
+  `poc_one.py` had to spell all of them, and a future benchmark Stage-4 runner
+  would have had to copy the same list again.
+- That is exactly the drift that had made benchmark Stage 2 weaker than POC
+  Stage 2. The Stage-4 fix should therefore be one explicit method switch, not
+  another copied flag bundle.
+
+Code shape:
+
+- `notes/coverage/scripts/veriput_recipe.py` now exposes named constants for
+  the strong PUT settings:
+  auto-unwind 1, R2 depth 1, R2 term budget 96, R2 candidate budget 128,
+  fuzz runs 256, and fuzz R2 candidate budget 128.
+- `notes/coverage/scripts/put_all.py` now accepts `--strong-recipe`. It applies
+  those constants after argparse fills defaults, enabling `--propose-r2` and
+  `--fuzz-r2-prefilter` and forcing `--auto-unwind 1`. The old low-level
+  switches remain available for ablation arms.
+- `put_all.py` prints `Stage-4 recipe : veriput-strong/7` when that switch is
+  active, so a PUT table records that the strong path was requested.
+- `notes/coverage/scripts/poc_one.py` Stage 3 now passes only
+  `--strong-recipe` to `put_all.py` instead of spelling the R2/fuzz list.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/veriput_recipe.py notes/coverage/scripts/put_all.py notes/coverage/scripts/poc_one.py scripts/test_put_all_accounting.py scripts/test_poc_stage_drivers.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed and checks that `--strong-recipe` expands to auto-unwind 1, typed R2,
+  and fuzz-refute settings.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_poc_stage_drivers.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/poc_one.py aqua_Aqua__Aqua__push --stage 3 --attempt 1 --dry-run | rg -- '--strong-recipe|--propose-r2|fuzz-r2|put_all.py'`
+  showed the Stage-3 command now invokes `put_all.py ... --strong-recipe`.
+
+Remaining wiring note:
+
+- `benchmark_pipeline_plan.py` still stops at
+  `certification-ready-for-put` without emitting a Stage-4 runner command. The
+  next orchestration repair should make that next action print a copyable
+  `put_all.py --cert <cert-jsonl> --strong-recipe ...` command with an explicit
+  output root and benchmark Stage-4 timeout/memory policy.

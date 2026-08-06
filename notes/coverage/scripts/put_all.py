@@ -31,6 +31,12 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
 from veriput_subjects import SubjectError, subject_from_record  # noqa: E402
+from veriput_recipe import (STRONG_RECIPE_VERSION, STRONG_PUT_AUTO_UNWIND,  # noqa: E402
+                            STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET,
+                            STRONG_PUT_FUZZ_RUNS,
+                            STRONG_PUT_R2_CANDIDATE_BUDGET,
+                            STRONG_PUT_R2_DEPTH,
+                            STRONG_PUT_R2_TERM_BUDGET)
 NOTES = os.path.abspath(os.path.join(HERE, "..", ".."))
 INPUTS = os.path.join(NOTES, "coverage", "inputs")
 CERT = os.path.join(NOTES, "coverage", "certify", "results.jsonl")
@@ -294,6 +300,21 @@ def stage2_path_accounting(cert_path, only=""):
     return out
 
 
+def apply_strong_put_recipe(args):
+    """Apply the shared versioned Stage-4 recipe after argparse defaults."""
+    if not getattr(args, "strong_recipe", False):
+        return None
+    args.auto_unwind = STRONG_PUT_AUTO_UNWIND
+    args.propose_r2 = True
+    args.r2_depth = STRONG_PUT_R2_DEPTH
+    args.r2_term_budget = STRONG_PUT_R2_TERM_BUDGET
+    args.r2_candidate_budget = STRONG_PUT_R2_CANDIDATE_BUDGET
+    args.fuzz_r2_prefilter = True
+    args.fuzz_runs = STRONG_PUT_FUZZ_RUNS
+    args.fuzz_r2_candidate_budget = STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET
+    return STRONG_RECIPE_VERSION
+
+
 def print_stage2_path_accounting(accounting):
     print()
     print("STAGE 2 PATH ACCOUNTING for the selected unit(s)")
@@ -427,6 +448,11 @@ def main():
                          "not an empty table -- an empty sweep prints a "
                          "well-formed report reading `0 of 0` and exits 0, "
                          "which is indistinguishable from a real answer.")
+    ap.add_argument("--strong-recipe", action="store_true",
+                    help="apply the shared versioned Stage-4 recipe "
+                         f"({STRONG_RECIPE_VERSION}): auto-unwind, typed R2, "
+                         "and one-sided Foundry refutation before ESBMC "
+                         "certifies survivors")
     ap.add_argument("--propose-r2", action="store_true",
                     help="passed through to the driver: issue one typed R2 "
                          "candidate batch per certified region")
@@ -465,6 +491,7 @@ def main():
                     help="project and scratch root. A single POC should point "
                          "this at its own output directory.")
     args = ap.parse_args()
+    stage4_recipe_version = apply_strong_put_recipe(args)
     if args.timeout <= 0:
         sys.exit("--timeout must be positive")
     if args.forge_timeout <= 0:
@@ -790,6 +817,8 @@ def main():
 
     print("\n" + "=" * 84)
     print("STAGE 4: certified region -> PUT with oracle")
+    if stage4_recipe_version:
+        print(f"  Stage-4 recipe                  : {stage4_recipe_version}")
     # THE CELL TRAVELS WITH THE TABLE. A run of the ARTEFACT cell may not be
     # quoted into the branch-coverage gate table and a run of the GATE cell may
     # not be quoted as the method's reach, so the table has to say which it is

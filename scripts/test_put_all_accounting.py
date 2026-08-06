@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import tempfile
+from argparse import Namespace
 
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -86,6 +87,32 @@ def main():
         bad += check("stage4-bench-table-covers-collector",
                      sorted(put_all.BENCHES),
                      sorted(collect.BENCHES))
+        args = Namespace(strong_recipe=True,
+                         auto_unwind=0,
+                         propose_r2=False,
+                         r2_depth=0,
+                         r2_term_budget=1,
+                         r2_candidate_budget=1,
+                         fuzz_r2_prefilter=False,
+                         fuzz_runs=1,
+                         fuzz_r2_candidate_budget=1)
+        bad += check("stage4-strong-recipe-version",
+                     put_all.apply_strong_put_recipe(args),
+                     "veriput-strong/7")
+        bad += check("stage4-strong-recipe-auto-unwind",
+                     args.auto_unwind, 1)
+        bad += check("stage4-strong-recipe-r2",
+                     (args.propose_r2, args.r2_depth, args.r2_term_budget,
+                      args.r2_candidate_budget),
+                     (True, 1, 96, 128))
+        bad += check("stage4-strong-recipe-fuzz-refute",
+                     (args.fuzz_r2_prefilter, args.fuzz_runs,
+                      args.fuzz_r2_candidate_budget),
+                     (True, 256, 128))
+        plain = Namespace(strong_recipe=False, auto_unwind=0)
+        bad += check("stage4-plain-recipe-unchanged",
+                     (put_all.apply_strong_put_recipe(plain), plain.auto_unwind),
+                     (None, 0))
         return bad
     finally:
         os.unlink(path)
