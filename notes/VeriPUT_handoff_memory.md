@@ -10543,6 +10543,59 @@ Next likely bottlenecks:
   `/tmp`; do not modify `/home/samson/workspace/VeriPUT/Datasets` or the
   shared Results contracts.
 
+## 2026-08-07 Stage-4 machine-readable B summary
+
+Speed/accounting change:
+
+- `notes/coverage/scripts/put_all.py` now writes `<out-root>/put-summary.json`
+  at the end of every Stage-4 run.
+- The summary contains:
+  - Stage-2 path accounting for the selected rows;
+  - Stage-4 emission counters (`puts_emitted`, fuzz/oracle/both);
+  - cell labels and mixed-cell flag;
+  - deliverable-B totals;
+  - per-certified-region gate values, forge status, widths, assert counts,
+    stale/refused flags, and emitted file path.
+- This removes the need to parse `put_all.log` by hand when sampling
+  benchmarks.  The source of truth for quick success-rate reporting is now
+  `put-summary.json`.
+
+Validation:
+
+- `python3 -m py_compile notes/coverage/scripts/put_all.py scripts/test_put_all_accounting.py`
+  passed.
+- `python3 scripts/test_put_all_accounting.py` passed.
+- `git diff --check -- notes/coverage/scripts/put_all.py scripts/test_put_all_accounting.py`
+  passed.
+- Read-only real replay of the MayoOcho Stage-4 sample:
+  `python3 notes/coverage/scripts/put_all.py ... --forge-only` wrote
+  `/tmp/veriput_peer_sample_put_20260807_052658/put-summary.json`.
+- That JSON reports:
+  - `stage2.witnessed = 5`;
+  - `stage2.certified = 4`;
+  - `emission.puts_emitted = 4`;
+  - `deliverable_b.b = 4`;
+  - `deliverable_b.certified_region_rows = 4`;
+  - `deliverable_b.forge_seen.put.Success = 4`;
+  - `deliverable_b.forge_seen.concrete.Success = 0`.
+
+NO-PATH interpretation from the peer source_080 micro-sample:
+
+- `peer_syntest__Straight_Fire_Finance.transfer` and
+  `peer_ccsolbmc__PORCUPINE.renounceOwnership` both finished in under 1s with
+  `NO-PATH`.
+- Their JSONL rows say enumeration found the focus unit but witnessed zero
+  paths; all 3 claims were `bounded-holds`.
+- Treat these as Stage-1/focus-cell no-witness outcomes, not Stage-4 PUT
+  failures and not evidence that the PUT emitter failed.  Re-running the same
+  focus/max-tx=1 cell with 600s is not useful unless the campaign deliberately
+  changes the cell, e.g. max-tx/unwind/scope.
+
+Commit:
+
+- `4f2223fb8a [solidity] Summarize VeriPUT PUT gates`, pushed to
+  `E-SOL/feat/veriput-fuzz-first`.
+
 ## 2026-08-07 Stage-4 normal-exit arithmetic retreat
 
 User policy update:
