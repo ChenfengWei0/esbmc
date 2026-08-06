@@ -24,7 +24,7 @@ from veriput_recipe import STRONG_RECIPE_VERSION, strong_certify_args  # noqa: E
 DEFAULT_TIMEOUT_S = 60
 DEFAULT_RUN_TIMEOUT_S = 60
 DEFAULT_MEMLIMIT_GIB = 8
-SELECTION_STRATEGIES = ("priority", "round-robin-benchmark")
+SELECTION_STRATEGIES = ("priority", "round-robin-benchmark", "round-robin-subject")
 
 BUDGET_VALUE_FLAGS = {
     "--timeout",
@@ -80,23 +80,29 @@ def _select_jobs(jobs: list[dict], selection_strategy: str) -> list[dict]:
         return list(jobs)
 
     groups = []
-    by_benchmark = {}
+    grouped = {}
     for job in jobs:
-        bench = job.get("benchmark") or "<unknown>"
-        if bench not in by_benchmark:
-            by_benchmark[bench] = []
-            groups.append(bench)
-        by_benchmark[bench].append(job)
+        if selection_strategy == "round-robin-benchmark":
+            key = (job.get("benchmark") or "<unknown>",)
+        else:
+            key = (
+                job.get("benchmark") or "<unknown>",
+                job.get("subject_id") or "<unknown>",
+            )
+        if key not in grouped:
+            grouped[key] = []
+            groups.append(key)
+        grouped[key].append(job)
 
     selected = []
     while groups:
         next_groups = []
-        for bench in groups:
-            queue = by_benchmark[bench]
+        for key in groups:
+            queue = grouped[key]
             if queue:
                 selected.append(queue.pop(0))
             if queue:
-                next_groups.append(bench)
+                next_groups.append(key)
         groups = next_groups
     return selected
 

@@ -158,28 +158,51 @@ def _subjects(args):
         if not args.subject_root and not args.benchmark:
             raise SubjectError(
                 "--subject-id without --subject-root needs --benchmark")
-        subjects = [
-            (resolve_subject(
-                 sid,
-                 root=args.subject_root or None,
-                 benchmark=args.benchmark or None,
-                 require_unit=False),
-             None)
-            for sid in args.subject_id
-        ]
+        subjects = []
+        for sid in args.subject_id:
+            try:
+                subject = resolve_subject(
+                    sid,
+                    root=args.subject_root or None,
+                    benchmark=args.benchmark or None,
+                    require_unit=False)
+            except SubjectError as exc:
+                subjects.append((None, {
+                    "schema": "veriput-unit-target/v1",
+                    "status": "error",
+                    "reason": str(exc),
+                    "target": {
+                        "benchmark": args.benchmark or None,
+                        "subject_id": sid,
+                    },
+                }))
+                continue
+            subjects.append((subject, None))
         return _apply_shard(subjects, _parse_shard(args.shard))
     dirs = subject_dirs(args.benchmark, args.subject_root or None)
     dirs = _apply_shard(dirs, _parse_shard(args.shard))
     if args.limit:
         dirs = dirs[:args.limit]
-    return [
-        (resolve_subject(
-             str(path),
-             benchmark=args.benchmark or None,
-             require_unit=False),
-         None)
-        for path in dirs
-    ]
+    subjects = []
+    for path in dirs:
+        try:
+            subject = resolve_subject(
+                str(path),
+                benchmark=args.benchmark or None,
+                require_unit=False)
+        except SubjectError as exc:
+            subjects.append((None, {
+                "schema": "veriput-unit-target/v1",
+                "status": "error",
+                "reason": str(exc),
+                "target": {
+                    "benchmark": args.benchmark or None,
+                    "subject_id": path.name,
+                },
+            }))
+            continue
+        subjects.append((subject, None))
+    return subjects
 
 
 def _target_error_row(subject: PreparedSubject, target_info: dict):

@@ -330,6 +330,69 @@ def test_schedule_can_round_robin_across_benchmarks():
     return bad
 
 
+def test_schedule_can_round_robin_across_subjects():
+    data = manifest()
+    rows = []
+    for subject_id, units in [
+            ("repo__A", ["a0", "a1", "a2"]),
+            ("repo__B", ["b0", "b1", "b2"]),
+            ("repo__C", ["c0", "c1", "c2"]),
+    ]:
+        subject = subject_record()
+        subject["subject_id"] = subject_id
+        subject["benchmark_key"] = f"stress243__{subject_id}"
+        subject["root"] = f"/tmp/{subject_id}"
+        subject["contract"] = subject_id.rsplit("__", 1)[-1]
+        rows.append({
+            "subject": subject,
+            "status": "ok",
+            "target": {
+                "benchmark": "stress243",
+                "subject_id": subject_id,
+                "contract": subject["contract"],
+                "units_hint": [],
+            },
+            "unit_hints": {
+                "hinted_units": [],
+                "missing_unit_hints": [],
+                "pending_unit_hints": [],
+            },
+            "units": {
+                "schema": "veriput-subject-units/v1",
+                "contract": subject["contract"],
+                "units": units,
+                "skipped": [],
+            },
+        })
+    data["subjects"] = rows
+    default_doc = unit_schedule.build_schedule(data, limit=4)
+    rr_doc = unit_schedule.build_schedule(
+        data, limit=7, selection_strategy="round-robin-subject")
+    got_default = [(job["subject_id"], job["unit"]) for job in default_doc["jobs"]]
+    got_rr = [(job["subject_id"], job["unit"]) for job in rr_doc["jobs"]]
+    bad = 0
+    bad += check(got_default == [
+        ("repo__A", "a0"),
+        ("repo__A", "a1"),
+        ("repo__A", "a2"),
+        ("repo__B", "b0"),
+    ], f"default priority sampling keeps source order: {got_default}")
+    bad += check(got_rr == [
+        ("repo__A", "a0"),
+        ("repo__B", "b0"),
+        ("repo__C", "c0"),
+        ("repo__A", "a1"),
+        ("repo__B", "b1"),
+        ("repo__C", "c1"),
+        ("repo__A", "a2"),
+    ], f"round-robin-subject spreads scarce attempts: {got_rr}")
+    bad += check(rr_doc["selection_strategy"] == "round-robin-subject",
+                 f"schedule records subject-level sampling: {rr_doc.get('selection_strategy')}")
+    bad += check(rr_doc["summary"]["subjects"] == 3,
+                 f"subject-level sample covers all subjects: {rr_doc['summary']}")
+    return bad
+
+
 def test_schedule_refuses_protected_write_paths():
     protected = "/home/samson/workspace/VeriPUT/Results/certify.jsonl"
     try:
@@ -381,6 +444,7 @@ TESTS = [
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,
     test_schedule_can_round_robin_across_benchmarks,
+    test_schedule_can_round_robin_across_subjects,
     test_schedule_refuses_protected_write_paths,
 ]
 

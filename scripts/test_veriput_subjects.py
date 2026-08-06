@@ -723,6 +723,38 @@ def test_unit_manifest_cli_records_unusable_prepared_subject():
     return bad
 
 
+def test_unit_manifest_cli_continues_after_unusable_scanned_subject():
+    with tempfile.TemporaryDirectory() as td:
+        make_subject(td, "bad__C", status="compile-failed")
+        good = make_subject(td, "good__C")
+        (good / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts"
+                / "subject_unit_manifest.py"),
+            "--benchmark", "stress243",
+            "--subject-root", td,
+        ], capture_output=True, text=True)
+    if cp.returncode:
+        print(cp.stdout)
+        print(cp.stderr)
+        return 1
+    data = json.loads(cp.stdout)
+    rows = {row["subject"]["subject_id"]: row for row in data["subjects"]}
+    bad = 0
+    bad += check(data["summary"]["subjects"] == 2,
+                 f"both scanned subjects are represented: {data['summary']}")
+    bad += check(data["summary"]["ok"] == 1 and data["summary"]["error"] == 1,
+                 f"bad scanned subject is row-local: {data['summary']}")
+    bad += check(rows["bad__C"]["status"] == "error"
+                 and "status='compile-failed'" in rows["bad__C"]["reason"],
+                 f"bad status is recorded without aborting: {rows['bad__C']}")
+    bad += check(rows["good__C"]["status"] == "ok"
+                 and rows["good__C"]["units"]["units"] == ["own", "baseOnly"],
+                 f"good subject after bad one is still enumerated: {rows['good__C']}")
+    return bad
+
+
 def main():
     tests = [
         test_resolve_subject_from_root_and_unit,
@@ -745,6 +777,7 @@ def main():
         test_unit_manifest_cli_reads_target_manifest_hints,
         test_unit_manifest_cli_refuses_target_contract_mismatch,
         test_unit_manifest_cli_records_unusable_prepared_subject,
+        test_unit_manifest_cli_continues_after_unusable_scanned_subject,
     ]
     bad = 0
     for test in tests:

@@ -140,6 +140,61 @@ Interpretation:
   early no-witness/no-path rows. This is where the next speed/quality work
   should focus before expanding to a larger benchmark wave.
 
+## 2026-08-07 benchmark sampling throughput fix
+
+Why this was changed:
+
+- Larger benchmark waves need to enumerate prepared subjects quickly without
+  hand-picking around broken rows.
+- A real smoke attempt over the first 30 Stress subjects used to abort at
+  `ProjectOpenSea__seaport__Seaport` because its prepared `meta.json` has
+  `status='compile-failed'`.
+- The existing priority schedule also packed scarce sample slots into one
+  subject when a subject had many state-changing units, which distorted the
+  case-level success-rate picture.
+
+Code change:
+
+- `notes/coverage/scripts/subject_unit_manifest.py`
+  - `--subject-id` and full benchmark scans now convert unusable prepared
+    subjects into row-local `status: error` manifest rows instead of aborting
+    the whole manifest.
+  - Target-manifest behavior already had this fail-soft shape; this makes the
+    ordinary benchmark scanner match it.
+- `notes/coverage/scripts/unit_schedule.py`
+  - Adds `--selection-strategy round-robin-subject`.
+  - This preserves priority sorting inside the job pool, then cycles by
+    `(benchmark, subject_id)` so a small sample covers more subjects before
+    taking the second or third unit from the same subject.
+
+Validation:
+
+- `python3 -m py_compile notes/coverage/scripts/subject_unit_manifest.py notes/coverage/scripts/unit_schedule.py scripts/test_veriput_subjects.py scripts/test_unit_schedule.py`
+  passed.
+- `python3 scripts/test_veriput_subjects.py` passed: 21 tests.
+- `python3 scripts/test_unit_schedule.py` passed.
+- `git diff --check -- notes/coverage/scripts/subject_unit_manifest.py notes/coverage/scripts/unit_schedule.py scripts/test_veriput_subjects.py scripts/test_unit_schedule.py`
+  passed.
+
+Real read-only smoke:
+
+- Command:
+  `python3 notes/coverage/scripts/subject_unit_manifest.py --benchmark stress243 --limit 30 --ast-cache-root /tmp/veriput_ast_cache_stress_20260807 --out /tmp/veriput_wave_20260807_060455/stress-limit30-manifest-afterfix.json`
+- Result:
+  `subjects=30 ok=10 missing_ast=19 error=1 units=81 skipped=4`.
+- The error row is now retained instead of aborting:
+  `ProjectOpenSea__seaport__Seaport status='compile-failed'`.
+- Round-robin-subject schedule:
+  `/tmp/veriput_wave_20260807_060455/stress-limit30-schedule-rrsubject.json`
+  with `--limit 12` produced 12 jobs across 10 subjects.
+
+Impact:
+
+- This does not change ESBMC modelling or PUT semantics.
+- It makes the next 20-30 unit benchmark wave cheaper to prepare and less
+  biased: bad prepared subjects are counted once and skipped, and scarce
+  verification attempts are spread across subjects.
+
 ## 2026-08-07 600s mini-batch PUT success snapshot
 
 User policy update:
