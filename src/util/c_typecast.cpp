@@ -681,14 +681,23 @@ void c_typecastt::implicit_typecast_followed(
     {
       // we are quite generous about pointers
 
+      if (src_type == dest_type)
+        return;
+
+      if (
+        src_type.subtype().id() == "empty" ||
+        dest_type.subtype().id() == "empty")
+      {
+        // from/to void is always good.  Do this before following the other
+        // pointed type: it may be an incomplete frontend symbol that does not
+        // need to be resolved for a void-pointer conversion.
+        return;
+      }
+
       const typet &src_sub = ns.follow(src_type.subtype());
       const typet &dest_sub = ns.follow(dest_type.subtype());
 
-      if (src_sub.id() == "empty" || dest_sub.id() == "empty")
-      {
-        // from/to void is always good
-      }
-      else if (base_type_eq(dest_type.subtype(), src_type.subtype(), ns))
+      if (base_type_eq(dest_type.subtype(), src_type.subtype(), ns))
       {
       }
       else if (src_sub.is_code() && dest_sub.is_code())

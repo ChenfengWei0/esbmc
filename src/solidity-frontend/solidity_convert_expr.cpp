@@ -6512,7 +6512,11 @@ bool solidity_convertert::get_cast_expr(
   {
   case SolidityGrammar::ImplicitCastTypeT::LValueToRValue:
   {
-    solidity_gen_typecast(ns, expr, type);
+    // Solidity's LValueToRValue changes value category, not the Solidity type.
+    // Calling the C typecaster here asks it to resolve frontend type symbols
+    // even though the source and destination types are identical.  That is
+    // both unnecessary and too early for forward-declared contract/interface
+    // symbols in flattened Solidity sources.
     break;
   }
   case SolidityGrammar::ImplicitCastTypeT::FunctionToPointerDecay:

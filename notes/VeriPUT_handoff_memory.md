@@ -9261,6 +9261,68 @@ Checks:
   passed.
 - `git diff --check` passed.
 
+## 2026-08-06 stress ESBMC frontend crash triage
+
+Context:
+
+- The stratified benchmark sample showed peer/bugfix positives, but stress
+  units were blocked before VeriPUT region search:
+  `OwnableAuthentication.transferOwnership` and
+  `IdentityRegistryStorage.addIdentityToStorage` aborted during Solidity
+  conversion.
+- These were ESBMC Solidity frontend/modeling blockers, not weak PUT-region
+  candidates.
+
+Fixes now in the working tree:
+
+- `src/util/c_typecast.cpp`: pointer casts now return early for identical
+  pointer types and for pointer-to/from-void before following the pointed
+  subtype. This avoids resolving incomplete Solidity contract/interface symbols
+  when the cast does not need their body.
+- `src/solidity-frontend/solidity_convert_expr.cpp`: `LValueToRValue` no longer
+  calls the C typecaster. Solidity's cast changes value category, not type; the
+  previous no-op typecast forced premature `namespacet::follow` on forward
+  interface symbols such as `tag-IAuthorizer`.
+- `src/solidity-frontend/solidity_convert_decl.cpp`: inherited private
+  OpenZeppelin upgradeable storage gaps named `__gap` get an internal
+  component-name suffix based on their AST id. ESBMC flattens inherited storage
+  into one struct, so repeated private `__gap` fields otherwise made
+  `struct_union_data::get_component_number` abort with
+  `Name "__gap" matches more than one member`.
+
+Measured confirmation:
+
+- Built `build/src/esbmc/esbmc` successfully after the changes.
+- `stress243__balancer__balancer-v3-monorepo__OwnableAuthentication /
+  transferOwnership`, direct ESBMC 60s/8GiB:
+  no `namespacet::follow` abort; complete coverage report written in about 21s,
+  `Complete Paths: 3`, `Reached: 3`, `Path Coverage: 100%`.
+- `stress243__ERC-3643__ERC-3643__IdentityRegistryStorage /
+  addIdentityToStorage`, direct ESBMC 60s/8GiB:
+  no `namespacet::follow` abort and no `__gap` duplicate-member abort. It
+  reached normal BMC and timed out at 60s with a partial journal:
+  `Claims Decided: 92 of 116`, `F 5`, `cov-ce-journal.json` written. No
+  `cov-report.json` because the run was terminated before completion.
+
+Checks:
+
+- `/home/samson/.local/bin/clang-format -i` on the three changed C++ files.
+- `git diff --check` passed.
+- `cppcheck --enable=style,warning` on changed Solidity frontend files passed.
+- `cmake --build build --target esbmc -j2` passed.
+
+Current status / next call:
+
+- Code completion for the current crash class is high enough to start
+  benchmark sampling.
+- Recommended next phase: small stratified sampling, serial, 60s/8GiB first.
+  Peer and bugfix can be sampled broadly now. Stress can be sampled, but treat
+  60s partials as timeout/cost data rather than PUT failures; escalate only
+  selected stress units to 120s or 600s after inspecting their ground-truth
+  paths and witness journal.
+- Still do not modify `/home/samson/workspace/VeriPUT/Datasets`; use cached ASTs
+  and `/tmp` workdirs.
+
 ## 2026-08-06 benchmark sampling gate and public getter relation fix
 
 Small benchmark sample after the recursive-helper preflight:
