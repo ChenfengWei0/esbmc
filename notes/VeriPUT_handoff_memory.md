@@ -4223,3 +4223,60 @@ git diff --check -- \
 The smoke manifest was read-only (`generate_ast=false`) and reported two
 `peer182` subjects as `missing-ast`, preserving their target contracts from
 metadata. No ESBMC run and no POC attempt was consumed.
+
+### Dataset target manifest bridge
+
+Added `notes/coverage/scripts/target_manifest.py` as the no-proof entry point
+from real VeriPUT benchmark metadata to a frozen target list:
+
+- Output schema: `veriput-eval/target/v1`; each row is
+  `veriput-eval-target/v1`.
+- It never invokes solc, Forge, fuzzing, or ESBMC. It only reads existing
+  Dataset/Results metadata and validates that referenced source files exist.
+- `bugfix124` reads `Datasets/Patch-Bug-Bench/summary.csv`. Each row preserves
+  exactly one `target_contract`, records both `bug` and `fix` variants, and
+  converts semicolon-separated `changed_functions` into `units_hint`. This
+  implements the README's previously missing JSON target manifest bridge.
+- `stress243` reads `Datasets/Stress-Projects/TARGETS.csv`. Default
+  `--stress-scope include` selects rows with `include=yes`; optional
+  `--stress-scope stateful` restricts further to `STATEFUL`.
+- `peer182` reads the prepared `Results/Peer182/subjects/*/meta.json` target
+  metadata, because `prepare_peer.py` already records the auditable target rule
+  and alternatives needed to avoid CC-SolBMC multi-contract-file ambiguity.
+- `--benchmark stress203` is accepted only as an input alias and normalizes to
+  the current prepared key `stress243`. Do not report `stress203` as a proven
+  disk denominator yet: current files yield Stress denominators of 242
+  (`include=yes`) or 213 (`STATEFUL`), plus the historical `TARGETS.csv` total
+  of 243 including the one excluded mixin.
+
+Real Dataset/Results census, no ESBMC/Forge/solc:
+
+```sh
+python3 notes/coverage/scripts/target_manifest.py --benchmark peer182
+# ok=182 error=0
+python3 notes/coverage/scripts/target_manifest.py --benchmark bugfix124
+# ok=124 error=0
+python3 notes/coverage/scripts/target_manifest.py --benchmark stress243
+# ok=242 error=0  (include=yes)
+python3 notes/coverage/scripts/target_manifest.py \
+  --benchmark stress203 --stress-scope stateful
+# normalized benchmark stress243, ok=213 error=0
+python3 notes/coverage/scripts/target_manifest.py \
+  --benchmark peer182 --benchmark bugfix124 --benchmark stress243
+# ok=548 error=0  (182 + 124 + 242)
+```
+
+Validation:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/target_manifest.py \
+  scripts/test_target_manifest.py
+python3 scripts/test_target_manifest.py
+```
+
+This is still only target discovery, not unit enumeration and not PUT
+generation. Next wiring step is to feed this manifest into subject/unit
+enumeration so the denominator is: target contract first, then target's
+public/external units, with `bugfix124.units_hint` available as a prioritization
+hint rather than a hard filter.
