@@ -65,6 +65,56 @@ Verification:
   203 ok stress targets, while `["stress243"], "include"` reports 242 ok
   TARGETS rows.
 
+## 2026-08-06 `block.timestamp` PUT establishment
+
+Scope and constraint:
+
+- `/home/samson/workspace/VeriPUT/Datasets` contracts were not modified.
+- `/home/samson/workspace/VeriPUT/Results` files were not modified.
+- No solc, Forge, fuzzing, ESBMC, POC attempt, or benchmark certification run
+  was started for this change.
+
+Ground truth:
+
+- Read-only source scans over prepared `flat.sol` files showed
+  `block.timestamp` is common: roughly 48 Peer subjects, 52 BugFix subjects,
+  and 108 Stress prepared flat files mention it.
+- Common patterns include cooldown/time-lock writes such as
+  `cooldown[to] = block.timestamp`, `unlockTime = block.timestamp + delay`,
+  and state updates guarded by current time.
+- Previously the PUT emitter treated `block.timestamp` like an unestablishable
+  environment coordinate. Any certified region containing a singleton or wide
+  timestamp slice could be refused even though Foundry can set call-time
+  timestamp with `vm.warp`.
+
+Code shape:
+
+- `scripts/solidity_path_put.py` now treats `block.timestamp` as an
+  establishable environment coordinate alongside `msg.sender` and the existing
+  narrow `msg.value` low-level-call rewrite.
+- A singleton timestamp region or pin emits `vm.warp(<value>)` before the
+  target call.
+- A wide timestamp region emits a `uint256 p_block_timestamp` PUT parameter,
+  applies the certified `bound()` plus any holes, and calls
+  `vm.warp(p_block_timestamp)`.
+- The insertion keeps `vm.prank` as the last cheatcode before the target call:
+  `vm.warp` is inserted before the governing prank when one exists.
+- Other environment coordinates such as `tx.origin` and most `block.*` values
+  still fail closed unless a dedicated establishment mechanism is added.
+- Source-R2 now recognizes `block.timestamp` as a numeric environment endpoint
+  when it is present in the rendered coordinate set, enabling source-prioritized
+  candidates for patterns such as `stamp = block.timestamp` and
+  `total += block.timestamp`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 180/180 tests.
+- Dataset mtime remained `2026-08-05 01:39:14.979712680 +0800`.
+- Results mtime remained `2026-08-05 08:10:46.032908697 +0800`.
+
 ## 2026-08-06 struct-contained mapping source-R2
 
 Scope and constraint:

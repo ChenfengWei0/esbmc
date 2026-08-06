@@ -419,21 +419,71 @@ def test_env_value_pin_disagreement_refuses():
 
 
 def test_uncomparable_env_quantity_refuses_emission():
-    """`block.timestamp == 42` cannot produce a test outside its proof slice."""
+    """`tx.origin == 42` still cannot produce a test outside its proof slice."""
     em, case = make_case()
     notes = []
     put, _stats = build_put(
         "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
-                "block.timestamp": (42, 42)},
+                "tx.origin": (42, 42)},
         holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
         ladder_rows=LADDER, notes=notes)
     bad = 0
     bad += check(put is None,
                  "an environment slice the emitter cannot establish REFUSES")
-    bad += check(any("block.timestamp is certified at 42" in note
+    bad += check(any("tx.origin is certified at 42" in note
                      and "cannot establish" in note for note in notes),
-                 f"the refusal names the unsupported slice: {notes}")
+                 f"the refusal names the unsupported environment slice: {notes}")
+    return bad
+
+
+def test_block_timestamp_point_is_established_with_warp():
+    """A singleton timestamp region becomes a `vm.warp` before the call."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "block.timestamp": (42, 42)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case, layout=LAYOUT,
+        ladder_rows=LADDER, notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"timestamp point emits instead of refusing: {notes}")
+    bad += check("    vm.warp(42);" in text,
+                 "block.timestamp point is established by vm.warp")
+    bad += check(stats["fuzz_params"] == 2,
+                 f"point timestamp does not add a fuzz param: {stats}")
+    return bad
+
+
+def test_block_timestamp_range_is_fuzzed_with_warp():
+    """A wide timestamp region is a bounded fuzz parameter passed to vm.warp."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1),
+                "block.timestamp": (10, 20)},
+        holes={"block.timestamp": [13]}, pins={}, params=PARAMS,
+        emitted=em, case=case, layout=LAYOUT, ladder_rows=LADDER,
+        notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None,
+                 f"timestamp range emits instead of refusing: {notes}")
+    bad += check("uint256 p_block_timestamp" in text,
+                 "wide timestamp is in the PUT signature")
+    bad += check("p_block_timestamp = bound(p_block_timestamp, 10, 20);" in text,
+                 "wide timestamp is bounded")
+    bad += check("vm.assume(p_block_timestamp != 13);" in text,
+                 "timestamp holes are preserved")
+    bad += check("    vm.warp(p_block_timestamp);" in text,
+                 "wide timestamp drives vm.warp")
+    bad += check(stats["fuzz_params"] == 3
+                 and "block.timestamp" in stats["lifted"],
+                 f"timestamp range is counted as fuzzed: {stats}")
     return bad
 
 
@@ -2777,6 +2827,10 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     msg_value = {"nodeType": "MemberAccess", "memberName": "value",
                  "expression": {"nodeType": "Identifier", "name": "msg"},
                  "typeDescriptions": {"typeString": "uint256"}}
+    block_timestamp = {"nodeType": "MemberAccess", "memberName": "timestamp",
+                       "expression": {"nodeType": "Identifier",
+                                      "name": "block"},
+                       "typeDescriptions": {"typeString": "uint256"}}
     bal_sender = {
         "nodeType": "IndexAccess",
         "baseExpression": {"nodeType": "Identifier",
@@ -2799,6 +2853,9 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
             {"nodeType": "VariableDeclaration", "id": 13, "name": "bal",
              "stateVariable": True,
              "typeDescriptions": {"typeString": "mapping(address => uint256)"}},
+            {"nodeType": "VariableDeclaration", "id": 14, "name": "stamp",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
             {"nodeType": "FunctionDefinition", "id": 20, "name": "pay",
              "parameters": {"parameters": []},
              "body": {"nodeType": "Block", "statements": [
@@ -2827,7 +2884,21 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                      "nodeType": "Assignment", "operator": "+=",
                      "src": "160:12:0",
                      "leftHandSide": bal_sender,
-                     "rightHandSide": msg_value}}]}}
+                     "rightHandSide": msg_value}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "180:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 14,
+                                      "name": "stamp"},
+                     "rightHandSide": block_timestamp}},
+                 {"nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "+=",
+                     "src": "200:12:0",
+                     "leftHandSide": {"nodeType": "Identifier",
+                                      "referencedDeclaration": 12,
+                                      "name": "total"},
+                     "rightHandSide": block_timestamp}}]}}
         ]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
@@ -2836,14 +2907,17 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
         specs, evidence = source_assignment_r2_specs(
             path, "C", "pay", [], {"owner": (0, 0, 20),
                                    "paid": (1, 0, 32),
-                                   "total": (2, 0, 32)},
-            [("msg.sender", "id", 20), ("msg.value", "num", None)],
+                                   "total": (2, 0, 32),
+                                   "stamp": (4, 0, 32)},
+            [("msg.sender", "id", 20), ("msg.value", "num", None),
+             ("block.timestamp", "num", None)],
             arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
             log=lambda _msg: None)
         none, _none_evidence = source_assignment_r2_specs(
             path, "C", "pay", [], {"owner": (0, 0, 20),
                                    "paid": (1, 0, 32),
-                                   "total": (2, 0, 32)},
+                                   "total": (2, 0, 32),
+                                   "stamp": (4, 0, 32)},
             [], arity=0, maps={"bal": (3, "address", 32, 0, "bal", None)},
             log=lambda _msg: None)
     finally:
@@ -2853,6 +2927,8 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
         "equals", [])]
     paid_terms = [item["term"] for item in entries.get("paid", {}).get(
         "equals", [])]
+    stamp_terms = [item["term"] for item in entries.get("stamp", {}).get(
+        "equals", [])]
     total_deltas = entries.get("total", {}).get("deltas", [])
     bal_deltas = entries.get("bal[msg.sender]", {}).get("deltas", [])
     bad = 0
@@ -2860,9 +2936,17 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
                  f"owner = msg.sender is mined as an id endpoint: {entries}")
     bad += check(paid_terms == [{"kind": "coord", "name": "msg.value"}],
                  f"paid = msg.value is mined as a numeric endpoint: {entries}")
-    bad += check(len(total_deltas) == 1 and total_deltas[0]["lo"] ==
-                 {"kind": "coord", "name": "msg.value"},
+    bad += check(stamp_terms == [{"kind": "coord",
+                                  "name": "block.timestamp"}],
+                 f"stamp = block.timestamp is mined as a numeric endpoint: "
+                 f"{entries}")
+    total_delta_terms = [item["lo"] for item in total_deltas]
+    bad += check({"kind": "coord", "name": "msg.value"} in total_delta_terms,
                  f"total += msg.value is mined as a delta: {total_deltas}")
+    bad += check({"kind": "coord", "name": "block.timestamp"}
+                 in total_delta_terms,
+                 f"total += block.timestamp is mined as a delta: "
+                 f"{total_deltas}")
     bad += check(len(bal_deltas) == 1 and bal_deltas[0]["lo"] ==
                  {"kind": "coord", "name": "msg.value"},
                  f"bal[msg.sender] += msg.value is mined as a mapping delta: "
@@ -2872,6 +2956,9 @@ def test_source_R2_environment_value_assignments_use_rendered_env_coords():
     bad += check(any("bal[msg.sender]: post - pre == msg.value" in line
                      for line in evidence),
                  f"mapping value provenance is recorded: {evidence}")
+    bad += check(any("stamp: post == block.timestamp" in line
+                     for line in evidence),
+                 f"timestamp provenance is recorded: {evidence}")
     bad += check(none == [], f"unrendered environment coords are not mined: {none}")
     return bad
 
@@ -7584,6 +7671,8 @@ def main():
               test_env_value_pin_disagreement_refuses,
               test_msg_value_without_a_value_option_is_still_CHECKED_and_refuses,
               test_uncomparable_env_quantity_refuses_emission,
+              test_block_timestamp_point_is_established_with_warp,
+              test_block_timestamp_range_is_fuzzed_with_warp,
               test_return_rung_is_bound_and_asserted,
               test_return_rung_can_assert_a_scalar_entry_state_coord,
               test_return_rung_can_assert_a_mapping_entry_state_coord,

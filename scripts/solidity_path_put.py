@@ -1463,12 +1463,16 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if not isinstance(n, dict) or n.get("nodeType") != "MemberAccess":
             return None
         member = n.get("memberName")
-        if member not in ("sender", "value"):
+        if member in ("sender", "value"):
+            base_name = "msg"
+        elif member == "timestamp":
+            base_name = "block"
+        else:
             return None
         base = n.get("expression")
         if (isinstance(base, dict) and base.get("nodeType") == "Identifier"
-                and base.get("name") == "msg"):
-            return f"msg.{member}"
+                and base.get("name") == base_name):
+            return f"{base_name}.{member}"
         return None
 
     def type_coord_kind(t):
@@ -1617,7 +1621,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if constant is not None and constant[0].get("kind") == "literal":
             return constant
         env_name = env_coord_name(n)
-        if env_name == "msg.value" and env_name in rendered_numeric:
+        if env_name in ("msg.value", "block.timestamp") \
+                and env_name in rendered_numeric:
             return {"kind": "coord", "name": env_name}, env_name
         return unitless_number_term(n)
 
@@ -4369,9 +4374,9 @@ class EmittedFile:
 #
 # ---- ...AND FOR `msg.sender` THAT IS NOW TOO WEAK, MEASURED -----------------
 #
-# The paragraph above is right about `block.timestamp` and about `msg.value`,
-# and it was right about `msg.sender` for exactly as long as no region could
-# carry a WIDE one. `--env-coord msg.sender` makes that reachable, and the
+# The paragraph above is right about `tx.*` and most `block.*` values, and it
+# was right about `msg.sender` for exactly as long as no region could carry a
+# WIDE one. `--env-coord msg.sender` makes that reachable, and the
 # first two regions it produced were both REFUSED here:
 #
 #   farming.setDistributor enc=12
@@ -4409,8 +4414,12 @@ class EmittedFile:
 ENV_PREFIXES = ("msg.", "tx.", "block.")
 # Auto-derived environment coordinates must be realizable by the emitted test.
 # msg.value remains conditional on an existing value-bearing call; that final
-# shape check lives in planned_env_value and fails closed in env_disagreements.
-ESTABLISHABLE_ENV_COORDS = frozenset(("msg.sender", "msg.value"))
+# `block.timestamp` is also test-controlled: Foundry's `vm.warp` sets the
+# timestamp for the next call frame.  It must be inserted before the governing
+# `vm.prank`, because the prank is intentionally kept as the last cheatcode
+# before the target call.
+ESTABLISHABLE_ENV_COORDS = frozenset(
+    ("msg.sender", "msg.value", "block.timestamp"))
 
 _PRANK_RE = re.compile(r"vm\.(?:start)?[Pp]rank\(")
 _VALUE_RE = re.compile(r"\{\s*value\s*:\s*([^},]+?)\s*\}")
@@ -4793,6 +4802,49 @@ def establish_env_value(body, call_i, region, holes, value_var,
                f"by vm.assume" if value_holes else ""))
     return (new_body, call_i, "msg.value", ("uint256", value_var),
             bound_lines(value_var, "uint", 256, lo, hi, value_holes), note)
+
+
+def establish_env_timestamp(body, call_i, region, holes, pins, used):
+    """Insert `vm.warp` so block.timestamp matches the certified slice."""
+    if "block.timestamp" in region:
+        lo, hi = region["block.timestamp"]
+        timestamp_holes = sorted(holes.get("block.timestamp", ()))
+    elif "block.timestamp" in pins:
+        lo = hi = pins["block.timestamp"]
+        timestamp_holes = []
+    else:
+        return body, call_i, None, None, [], None
+
+    sig_add, pre_add = None, []
+    if hi > lo:
+        var = "p_block_timestamp"
+        while var in used:
+            var += "_"
+        sig_add = ("uint256", var)
+        pre_add = bound_lines(var, "uint", 256, lo, hi, timestamp_holes)
+        timestamp_expr = var
+        note = (f"block.timestamp in [{lo}, {hi}]"
+                + ("  \\ {" + ", ".join(str(h) for h in timestamp_holes)
+                   + "}" if timestamp_holes else "")
+                + f" is ESTABLISHED and FUZZED: vm.warp now takes the "
+                  f"bound() fuzz parameter `{var}`"
+                + (f", and the {len(timestamp_holes)} punched value(s) are "
+                   f"excluded by vm.assume" if timestamp_holes else ""))
+    else:
+        timestamp_expr = str(lo)
+        note = (f"block.timestamp == {lo} is ESTABLISHED with "
+                f"`vm.warp({timestamp_expr})` before the target call")
+
+    new_body = list(body)
+    stmt_i = (statement_start(new_body, call_i)
+              if 0 <= call_i < len(new_body) else call_i)
+    insert_at = stmt_i
+    for i in range(min(stmt_i, len(new_body))):
+        if _PRANK_RE.search(new_body[i]):
+            insert_at = i
+    new_body.insert(insert_at, f"    vm.warp({timestamp_expr});")
+    call_i += 1
+    return (new_body, call_i, "block.timestamp", sig_add, pre_add, note)
 
 
 def env_disagreements(body, call_i, call_line, region, pins, established=()):
@@ -5365,11 +5417,35 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         coord_ident["msg.value"] = value_sig[1]
         coord_ident_abs["msg.value"] = value_sig[1]
 
+    (body, call_i, time_est, time_sig, time_pre,
+     time_note) = establish_env_timestamp(
+        body, call_i, region, holes, pins, used)
+    if time_est is not None:
+        env_established.append(time_note)
+        if time_sig is not None:
+            sig.append(time_sig)
+            pre_lines += time_pre
+            lifted.append("block.timestamp")
+            used.add(time_sig[1])
+            _tlo, _thi = region["block.timestamp"]
+            rendered_width["block.timestamp"] = (_thi - _tlo + 1) - len(
+                {h for h in holes.get("block.timestamp", ())
+                 if _tlo <= h <= _thi})
+            coord_ident["block.timestamp"] = time_sig[1]
+            coord_ident_abs["block.timestamp"] = time_sig[1]
+        else:
+            timestamp_value = (region["block.timestamp"][0]
+                               if "block.timestamp" in region
+                               else pins["block.timestamp"])
+            coord_ident["block.timestamp"] = str(timestamp_value)
+            coord_ident_abs["block.timestamp"] = coord_ident[
+                "block.timestamp"]
+
     call_line = body[call_i]
 
     env_refusals, env_unchecked = env_disagreements(
         body, call_i, call_line, region, pins,
-        established={e for e in (env_est, value_est) if e})
+        established={e for e in (env_est, value_est, time_est) if e})
     if env_refusals:
         notes.append("the emitted case does not run in the certified "
                      "environment slice: " + "; ".join(env_refusals))
@@ -7521,6 +7597,8 @@ def main():
             _rendered_coords.append(("msg.sender", "id", 20))
         if "msg.value" in region:
             _rendered_coords.append(("msg.value", "num", None))
+        if "block.timestamp" in region:
+            _rendered_coords.append(("block.timestamp", "num", None))
         for _sn in sorted({n for n in list(region) + list(pins)
                            if n.startswith("state.")}):
             _sv = _sn[len("state."):]
