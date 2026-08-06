@@ -20,6 +20,7 @@ AST_PREHEAT_RUN = SCRIPT_DIR / "ast_preheat_run.py"
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_MEMLIMIT_GB = 8.0
+SELECTION_STRATEGIES = ("priority", "round-robin-benchmark")
 
 
 class PreheatCampaignError(ValueError):
@@ -88,6 +89,7 @@ def _runner_argv(schedule_arg: str,
 def _schedule_for_batch(base_schedule: dict,
                         selected_jobs: list[dict],
                         *,
+                        selection_strategy: str,
                         timeout_s: float,
                         memlimit_gb: float,
                         batch_size: int,
@@ -108,6 +110,7 @@ def _schedule_for_batch(base_schedule: dict,
         "summary": {
             "jobs": len(selected_jobs),
             "jobs_before_batch_filter": len(base_schedule.get("jobs") or []),
+            "selection_strategy": selection_strategy,
             "batch_size": batch_size,
             "max_attempts": max_attempts,
             "outer_timeout_s": timeout_s,
@@ -119,11 +122,43 @@ def _schedule_for_batch(base_schedule: dict,
     }
 
 
+def _select_pending(pending: list[dict], batch_size: int, selection_strategy: str) -> list[dict]:
+    if selection_strategy not in SELECTION_STRATEGIES:
+        raise PreheatCampaignError("--selection-strategy must be one of: " +
+                                   ", ".join(SELECTION_STRATEGIES))
+    if batch_size == 0:
+        return list(pending)
+    if selection_strategy == "priority":
+        return pending[:batch_size]
+
+    groups = []
+    by_benchmark = {}
+    for job in pending:
+        bench = job.get("benchmark") or "<unknown>"
+        if bench not in by_benchmark:
+            by_benchmark[bench] = []
+            groups.append(bench)
+        by_benchmark[bench].append(job)
+
+    selected = []
+    while groups and len(selected) < batch_size:
+        next_groups = []
+        for bench in groups:
+            jobs = by_benchmark[bench]
+            if jobs and len(selected) < batch_size:
+                selected.append(jobs.pop(0))
+            if jobs:
+                next_groups.append(bench)
+        groups = next_groups
+    return selected
+
+
 def plan_preheat_for_schedule(schedule: dict,
                               schedule_label: str,
                               *,
                               journal_paths: list[str] | None = None,
                               batch_size: int = DEFAULT_BATCH_SIZE,
+                              selection_strategy: str = "priority",
                               max_attempts: int = DEFAULT_MAX_ATTEMPTS,
                               timeout_s: float = 90.0,
                               memlimit_gb: float = DEFAULT_MEMLIMIT_GB,
@@ -135,6 +170,9 @@ def plan_preheat_for_schedule(schedule: dict,
         raise PreheatCampaignError(f"unsupported schedule schema {schedule.get('schema')!r}")
     if batch_size < 0:
         raise PreheatCampaignError("--batch-size must be non-negative")
+    if selection_strategy not in SELECTION_STRATEGIES:
+        raise PreheatCampaignError("--selection-strategy must be one of: " +
+                                   ", ".join(SELECTION_STRATEGIES))
     if max_attempts <= 0:
         raise PreheatCampaignError("--max-attempts must be positive")
     if jobs <= 0:
@@ -198,9 +236,10 @@ def plan_preheat_for_schedule(schedule: dict,
         by_benchmark_state[job.get("benchmark") or "<unknown>"][state] += 1
         by_solc_source_state[job.get("solc_source") or "<unknown>"][state] += 1
 
-    selected_jobs = pending if batch_size == 0 else pending[:batch_size]
+    selected_jobs = _select_pending(pending, batch_size, selection_strategy)
     next_schedule = _schedule_for_batch(schedule,
                                         selected_jobs,
+                                        selection_strategy=selection_strategy,
                                         timeout_s=timeout_s,
                                         memlimit_gb=memlimit_gb,
                                         batch_size=batch_size,
@@ -243,8 +282,10 @@ def plan_preheat_for_schedule(schedule: dict,
         "policy": {
             "schema": "veriput-ast-preheat-campaign-policy/v1",
             "batch_size": batch_size,
+            "selection_strategy": selection_strategy,
             "max_attempts": max_attempts,
             "timeout_s": timeout_s,
+            "memlimit_gb": memlimit_gb or None,
         },
         "summary": {
             "jobs": len(jobs_by_id),
@@ -275,6 +316,7 @@ def plan_preheat(schedule_path: str,
                  *,
                  journal_paths: list[str] | None = None,
                  batch_size: int = DEFAULT_BATCH_SIZE,
+                 selection_strategy: str = "priority",
                  max_attempts: int = DEFAULT_MAX_ATTEMPTS,
                  timeout_s: float = 90.0,
                  memlimit_gb: float = DEFAULT_MEMLIMIT_GB,
@@ -287,6 +329,7 @@ def plan_preheat(schedule_path: str,
                                      schedule_path,
                                      journal_paths=journal_paths,
                                      batch_size=batch_size,
+                                     selection_strategy=selection_strategy,
                                      max_attempts=max_attempts,
                                      timeout_s=timeout_s,
                                      memlimit_gb=memlimit_gb,
@@ -307,6 +350,10 @@ def main() -> int:
                     type=int,
                     default=DEFAULT_BATCH_SIZE,
                     help="number of pending jobs to put in the next schedule; 0 means all")
+    ap.add_argument("--selection-strategy",
+                    choices=SELECTION_STRATEGIES,
+                    default="priority",
+                    help="pending-job selection policy for the next bounded schedule")
     ap.add_argument("--max-attempts",
                     type=int,
                     default=DEFAULT_MAX_ATTEMPTS,
@@ -338,6 +385,7 @@ def main() -> int:
         doc = plan_preheat(args.schedule,
                            journal_paths=args.journal,
                            batch_size=args.batch_size,
+                           selection_strategy=args.selection_strategy,
                            max_attempts=args.max_attempts,
                            timeout_s=args.timeout,
                            memlimit_gb=args.memlimit_gb,

@@ -144,6 +144,7 @@ def build_pipeline(args) -> dict:
         paths["ast_preheat_schedule"] or "<in-memory ast preheat schedule>",
         journal_paths=args.ast_preheat_journal,
         batch_size=args.ast_preheat_batch_size,
+        selection_strategy=args.ast_preheat_selection_strategy,
         max_attempts=args.ast_preheat_max_attempts,
         timeout_s=args.ast_preheat_outer_timeout,
         memlimit_gb=args.ast_preheat_memlimit_gb,
@@ -272,6 +273,9 @@ def main(argv=None) -> int:
     ap.add_argument("--ast-preheat-batch-size",
                     type=int,
                     default=ast_preheat_campaign_plan.DEFAULT_BATCH_SIZE)
+    ap.add_argument("--ast-preheat-selection-strategy",
+                    choices=ast_preheat_campaign_plan.SELECTION_STRATEGIES,
+                    default="priority")
     ap.add_argument("--ast-preheat-max-attempts",
                     type=int,
                     default=ast_preheat_campaign_plan.DEFAULT_MAX_ATTEMPTS)

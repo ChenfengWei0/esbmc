@@ -32,6 +32,7 @@ def args(tmp, out_dir=""):
                               preheat_limit=0,
                               ast_preheat_journal=[],
                               ast_preheat_batch_size=32,
+                              ast_preheat_selection_strategy="priority",
                               ast_preheat_max_attempts=3,
                               ast_preheat_outer_timeout=90.0,
                               ast_preheat_memlimit_gb=8.0,

@@ -60,6 +60,18 @@ def schedule_doc():
     }
 
 
+def round_robin_schedule_doc():
+    doc = schedule_doc()
+    doc["jobs"] = [
+        job("peer182__a", "peer182", 0),
+        job("peer182__b", "peer182", 1),
+        job("bugfix124__c", "bugfix124", 2),
+        job("stress243__d", "stress243", 3, "inferred"),
+    ]
+    doc["summary"]["jobs"] = len(doc["jobs"])
+    return doc
+
+
 def row(job_id, status, benchmark="peer182", reason=""):
     return {
         "schema": "veriput-ast-preheat-run-row/v1",
@@ -165,6 +177,7 @@ def test_preheat_campaign_writes_next_schedule_and_cli_plan():
                  f"CLI writes plan: {plan['summary']}")
     bad += check(next_doc["summary"]["jobs"] == 1
                  and next_doc["summary"]["outer_memlimit_gb"] == 8.0
+                 and next_doc["summary"]["selection_strategy"] == "priority"
                  and next_doc["jobs"][0]["job_id"] == "peer182__new",
                  f"CLI writes bounded next schedule: {next_doc['summary']}")
     bad += check(str(next_sched) in plan["next_run"]["runner_argv"],
@@ -188,10 +201,29 @@ def test_preheat_campaign_can_plan_from_in_memory_schedule():
     return bad
 
 
+def test_preheat_campaign_can_round_robin_by_benchmark():
+    doc = ast_preheat_campaign_plan.plan_preheat_for_schedule(round_robin_schedule_doc(),
+                                                              "<preheat-schedule>",
+                                                              batch_size=3,
+                                                              selection_strategy=
+                                                              "round-robin-benchmark")
+    selected = [job["job_id"] for job in doc["next_schedule"]["jobs"]]
+    bad = 0
+    bad += check(selected == ["peer182__a", "bugfix124__c", "stress243__d"],
+                 f"round-robin samples benchmarks before second peer job: {selected}")
+    bad += check(doc["policy"]["selection_strategy"] == "round-robin-benchmark"
+                 and doc["policy"]["memlimit_gb"] == 8.0
+                 and doc["next_schedule"]["summary"]["selection_strategy"] ==
+                 "round-robin-benchmark",
+                 f"selection strategy is recorded: {doc['policy']}")
+    return bad
+
+
 TESTS = [
     test_preheat_campaign_partitions_and_batches_pending_jobs,
     test_preheat_campaign_writes_next_schedule_and_cli_plan,
     test_preheat_campaign_can_plan_from_in_memory_schedule,
+    test_preheat_campaign_can_round_robin_by_benchmark,
 ]
 
 

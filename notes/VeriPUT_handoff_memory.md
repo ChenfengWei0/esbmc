@@ -692,12 +692,15 @@ The bridge scripts in `notes/coverage/scripts/` are intentionally staged:
   completed, stops rescheduling jobs after `--max-attempts` non-ok attempts,
   and writes the next filtered preheat schedule only when
   `--next-schedule-out` is passed. The default batch size is 32 and the
-  default preheat child memlimit is 8GiB. The emitted `next_run` contains both
-  `dry_run_argv` and `runner_argv`; both include `--memlimit-gb`, but only
-  `runner_argv` intentionally runs solc-backed preheat jobs. Copy
-  `dry_run_argv` first to audit the filtered schedule and journal resume set.
-  The planner itself never invokes solc, Forge, fuzzing, ESBMC, or preheat
-  jobs.
+  default preheat child memlimit is 8GiB. Selection defaults to `priority`
+  (current schedule order: Peer before BugFix before Stress), and
+  `--selection-strategy round-robin-benchmark` is available when the next
+  batch should sample every benchmark early to expose solc/metadata problems
+  sooner. The emitted `next_run` contains both `dry_run_argv` and
+  `runner_argv`; both include `--memlimit-gb`, but only `runner_argv`
+  intentionally runs solc-backed preheat jobs. Copy `dry_run_argv` first to
+  audit the filtered schedule and journal resume set. The planner itself never
+  invokes solc, Forge, fuzzing, ESBMC, or preheat jobs.
 - `unit_manifest_gate.py`: post-preheat gate for a
   `veriput-unit-manifest/v1`. It reports `blocked`, `degraded`, or `ready`,
   counts unique unit certification jobs, duplicate prepared-subject/unit jobs,
@@ -897,6 +900,15 @@ Interpretation:
   `next-unit-schedule.json` artifact. This is now the preferred single
   read-only command for restoring the full benchmark denominator state and the
   next bounded action after a context compact.
+- Read-only benchmark pipeline smoke with
+  `--ast-preheat-selection-strategy round-robin-benchmark` on 2026-08-06 still
+  produced `summary.next_action.action=preheat-ast` and selected 32 AST
+  preheat jobs, but mixed the first batch across benchmarks:
+  `by_benchmark={"peer182":11,"bugfix124":11,"stress243":10}` and
+  `by_solc_source={"explicit":32}`. The first jobs alternated Peer, BugFix,
+  Stress. This is the faster smoke strategy when the goal is to discover
+  benchmark-wide preheat breakage before spending several Peer-only batches.
+  It also did not create the external AST cache or runner journal.
 
 ## 11. One-POC, one-ESBMC-rerun protocol
 
