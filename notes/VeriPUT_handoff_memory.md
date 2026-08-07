@@ -10945,6 +10945,69 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 post-string-fix Peer approve mini-wave
+
+Purpose:
+
+- Give a fast post-fix benchmark intuition without touching
+  `/home/samson/workspace/VeriPUT/Datasets`.
+- Sample one ERC20-like unit family where the prior AIRBets failure was known
+  to be caused by constructor string unwinding and missing early CE publication.
+- Per-case final policy is now 600s max; this wave used 600s ESBMC timeout and
+  8GiB memory limit.
+
+Artifacts:
+
+- Root:
+  `/tmp/veriput_postfix_peer_approve_wave_1786062625`.
+- Combined certified-region file:
+  `/tmp/veriput_postfix_peer_approve_wave_1786062625/combined-approve-cert.jsonl`.
+- Stage4 summary:
+  `/tmp/veriput_postfix_peer_approve_wave_1786062625/put-all/put-summary.json`.
+
+Stage2 certification:
+
+- `AIRBets.approve`: `CERTIFIED`, 1 / 1 certified, 193.6s.
+- `Arcadia_Token.approve` from subject `peer_ccsolbmc__Address`:
+  `CERTIFIED`, 1 / 1 certified, 392.0s.
+- `Animalia.approve`: `CERTIFIED`, 1 / 1 certified, 227.7s.
+- Unit-level certified-region rate for this mini-wave: 3 / 3.
+
+Stage4 PUT / Forge replay:
+
+- PUTs emitted: 3 / 3 certified region rows.
+- Concrete replay tests emitted: 0.
+- Forge-visible PUT functions: 3 / 3 green on the reference contracts.
+- All emitted tests were fuzz PUTs with 2 fuzz parameters, normally
+  `spender` and `amount`.
+- Workorder deliverable B rows:
+  - `AIRBets.approve`: B, 2 fuzz params, 1 oracle assert.
+  - `Arcadia_Token.approve`: not B, 2 fuzz params, 0 oracle asserts.
+  - `Animalia.approve`: B, 2 fuzz params, 1 oracle assert.
+- Reference-valid generated tests under the B gate: 2 / 3, all strict PUT/B,
+  0 concrete replay.
+- If counted only as Forge-green generated text, the rate is 3 / 3 PUT tests,
+  but the middle row is intentionally not B because it lacks an oracle.
+
+Diagnosis:
+
+- The string-unroll plus early CE-journal publication fixes the previous
+  AIRBets-style path/region loss.  For this ERC20 `approve` mini-wave, Stage2
+  certification is no longer the immediate bottleneck.
+- The remaining loss is oracle strength/extraction.  `Arcadia_Token.approve`
+  produced a valid fuzz PUT shell and Forge green replay, but no assert because
+  the source slot priority was `_allowances[owner][spender]` and `owner` was
+  not nameable in the emitted PUT.  The fallback mapping candidates were asked,
+  but all 16 came back with no verdict due to the assertion-ladder invocation
+  aborting with exit `-6`.
+- `Animalia.approve` shows the same key-nameability issue for the direct source
+  slot, but the ladder still managed to certify the return oracle
+  `return == true`, so it counted as B.
+- Next high-leverage work should target nameable mapping keys and oracle
+  extraction around `owner == msg.sender`-style local aliases before spending
+  broad benchmark budget.  Fuzz remains useful only as cheap refutation for bad
+  candidate regions/oracles; Forge-green fuzz runs are not proof.
+
 ## 2026-08-07 Peer string constructor and CE-journal salvage fixes
 
 Problem found while diagnosing Peer `AIRBets.approve`:
