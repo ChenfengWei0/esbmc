@@ -11086,6 +11086,47 @@ Checks after the fast-first runner change:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
   should pass.
 
+## 2026-08-07 bugfix124 fast-first 12-subject wave
+
+Command:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 12 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume`
+
+Outcome of the new 12 selected subjects:
+
+- 7 / 12 subjects produced valid reference tests.
+- 5 / 12 subjects were `no-output`.
+- New wave raw=13, valid=13, PUT 13/13, concrete 0/0.
+- Ten subjects finished quickly, from about 3s to 36s.
+- The two `airdrop.transfer` SolGPT subjects consumed the full 600s budget in
+  Stage 2 and produced no output:
+  - `rc_unchecked_low_level_calls__0x4051334adc52057aca763453820cb0e045076ef3__SolGPT__0x4051334adc52057aca763453820cb0e045076ef3_2round`;
+  - `rc_unchecked_low_level_calls__0x4051334adc52057aca763453820cb0e045076ef3__SolGPT__0x4051334adc52057aca763453820cb0e045076ef3_3round`.
+- Both long airdrop runs stayed below the 12GiB per-process memory cap
+  (recorded peak RSS about 8.6-8.8GiB), so they are solver/probe-time heavy,
+  not OOM cases.
+
+Aggregate bugfix124 VeriPUT state after this wave:
+
+- Latest rows: 18.
+- Status counts: `ok=8`, `no-output=8`, `budget-exhausted=2`.
+- Aggregate raw=23, valid=23.
+- Aggregate PUT 17/17; concrete replay 6/6.
+- Subjects with at least one valid test: 8 / 18.
+- Aggregate oracle counts: R0=12, R1=5, R2=9.
+- `Results/results_all.py --benchmark bugfix124` reports the VeriPUT arm as:
+  `ran=18`, `raw_u=23`, `valid_u=23`, `raw_c=8`, `valid_c=8`,
+  `coverage=6.5%`, `VT/case=0.19`.
+
+Diagnosis:
+
+- `fast-first` fixed early throughput compared with manifest order, but source
+  size alone is not a sufficient cost predictor.  The two airdrop subjects are
+  small but have expensive initial `--path-cov-probe --all-witnesses` queries.
+- Next optimization should add a cheap-probe/fuzz/refutation gate or a
+  per-subject slow-probe classifier before spending the whole 600s Stage 2
+  budget on single-unit cases.
+
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 
 User tightened the output requirements before the benchmark wave:
