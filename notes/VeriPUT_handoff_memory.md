@@ -11352,6 +11352,74 @@ Validation:
 - Dry-run with `--no-candidate-stage2-unit-stop-n 4` includes
   `no_candidate_stage2_unit_stop_n` in the audit JSON.
 
+## 2026-08-07 real203 limit150 wave with no-candidate stop
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark real203 --limit 150 --order fast-first --jobs 2 --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 90 --stage2-unit-timeout-cap-s 180 --zero-output-stage4-stop-s 30 --no-candidate-stage2-unit-stop-n 4`
+
+Incremental result:
+
+- Previous latest rows skipped.  Ten new queued target rows ran, but cumulative
+  latest unique rows became 149 rather than 150 because the real203 target
+  manifest contains at least one duplicate subject key earlier in fast-first
+  order (`Controllable`).
+- Status: 10 `no-output`.
+- Raw/valid: 0 / 0.
+- PUT raw/valid: 0 / 0.
+- Concrete raw/valid: 0 / 0.
+- Incremental wall: 255.274s total, 25.527s average.
+- No OOM/timeout/error.
+
+Rows:
+
+- `ProtocolFeeSweeper`: 6.465s, Stage2 6.014s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `BalancerFeeBurner`: 6.965s, Stage2 6.518s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `BalanceForwarder`: 6.196s, Stage2 6.016s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `DNSRegistrar`: 19.835s, Stage2 19.584s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `SablierComptroller`: 13.024s, Stage2 12.012s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `OwnedResolver`: 33.665s, Stage2 32.646s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `Token`: 10.632s, Stage2 10.247s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `Initialize`: 3.143s, Stage2 3.003s, single
+  `NO-WITNESS-UNKNOWN`; natural no-output, no early stop needed.
+- `NameWrapper`: 33.269s, Stage2 31.233s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `ConfiguratorOld`: 122.080s, Stage2 120.622s, `KILLED=1`; stopped by
+  Stage-2 no-output time threshold / capped unit behavior.
+
+Cumulative real203 after this wave:
+
+- latest rows: 149.
+- Status: 23 `ok`, 124 `no-output`, 2 `no-units`.
+- Raw/valid: 123 / 117.
+- PUT raw/valid: 115 / 109.
+- Concrete raw/valid: 8 / 8.
+- Official `results_all.py` real203 line:
+  `veriput rounds=1 ran=149 raw_u=123 valid_u=117 raw_c=23 valid_c=23 coverage=11.3% VT/case=0.58`.
+- Official cost line:
+  `veriput 149 total_h=4.17 wall/subj=100.8+-137.4 peakRSS=1129+-1967MB`.
+- Official anomaly audit for real203 VeriPUT:
+  timeout/oom/error 0, sub-5s ok 0, raw>0 & valid==0 0.
+
+Interpretation:
+
+- The no-candidate stop works as intended for the real203 tail: most no-witness
+  rows now terminate in 3-34s instead of burning 80-120s across many
+  public/external units.
+- It does not improve success rate by itself.  The next bottleneck is still
+  why these contracts produce no witness/candidate at all, especially repeated
+  `NO-WITNESS-UNKNOWN` rows.
+- Continuing blind fast-first real203 is now cheaper, but likely still low ROI
+  until Stage-2 witness/candidate generation improves or subject ordering avoids
+  the resolver/registry tail.
+
 ## 2026-08-07 real203 fast-first limit36 wave
 
 Production policy for RQ1 waves:
