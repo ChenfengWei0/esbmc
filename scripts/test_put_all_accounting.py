@@ -41,6 +41,7 @@ def main():
             "not_certified": {
                 "2": "refuted with concrete witness",
                 "3": "STATICALLY INSEPARABLE: differs only on external-call behavior",
+                "4": "no generalisable coordinate",
             },
             "not_certified_details": {
                 "2": {
@@ -50,6 +51,12 @@ def main():
                     "ce": {"x": "7", "msg.sender": "5"},
                 },
                 "3": {"enc": 3, "concrete_fallback": False},
+                "4": {
+                    "enc": 4,
+                    "concrete_fallback": True,
+                    "witness_check": "COMPLETE-WITNESS-NO-COORDINATE",
+                    "ce": {"msg.sender": "5"},
+                },
             },
         },
         {
@@ -81,17 +88,18 @@ def main():
         bad += check("selected-witnessed-count", target["witnessed"], 4)
         bad += check("selected-certified-count", target["certified"], 1)
         bad += check("selected-not-certified-count",
-                     target["not_certified"], 2)
+                     target["not_certified"], 3)
         bad += check("structured-concrete-fallback",
-                     target["concrete_fallback"], 1)
+                     target["concrete_fallback"], 2)
         fallback_rows = put_all.cleared_concrete_fallback_rows(records[0])
         bad += check("cleared-fallback-point-region",
                      [(r["enc"], r["region"], r["pins"])
                       for r in fallback_rows],
-                     [("2", {"x": [7, 7]}, {"msg.sender": 5})])
+                     [("2", {"x": [7, 7]}, {"msg.sender": 5}),
+                      ("4", {}, {"msg.sender": 5})])
         bad += check("structured-method-unsupported",
                      target["method_unsupported"], 1)
-        bad += check("selected-no-verdict", target["no_verdict"], 1)
+        bad += check("selected-no-verdict", target["no_verdict"], 0)
 
         legacy = put_all.stage2_path_accounting(path, "bench.legacy")
         bad += check("legacy-extcall-attribution",

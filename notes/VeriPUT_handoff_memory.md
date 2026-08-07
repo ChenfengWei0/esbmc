@@ -11099,6 +11099,46 @@ Clean-head RQ1 representative rerun after commit `9251357fd3`:
   constructor-parameter PUTs or at least retain concrete constructor replay
   tests for `NO-COORDINATE` rows whose witnesses are complete.
 
+Follow-up implementation:
+
+- `scripts/solidity_path_generalise.py` now writes a real
+  `generalise-result.json` for `NO GENERALISABLE COORDINATE` instead of only a
+  progress sidecar.
+- The row stays `NO-COORDINATE` / not-certified, but every complete witnessed
+  path is recorded with:
+  - `concrete_fallback=true`;
+  - `witness_check=COMPLETE-WITNESS-NO-COORDINATE`;
+  - the path's concrete CE payload;
+  - a per-enc `NOT CERTIFIED` stdout line so `certify_all.py` fills
+    `not_certified` as well as `not_certified_details`.
+- `put_all.py` and `rq1_veriput_run.py` treat that witness status as eligible
+  for Stage-4 `--concrete-only` emission, but still never as a PUT proof or
+  R1/R2 candidate.
+- `solidity_path_put.py` now records the actual Stage-2 witness status in the
+  concrete-only `put.json` instead of hard-coding `SUCCESSFUL`.
+- `rq1_veriput_run.py` summary matching now keys `put.json` by `(file, test)`
+  when the B rows include a file path.  This fixes duplicate concrete replay
+  names such as `test_cov_0` cross-linking to another unit's `put.json`.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py scripts/solidity_path_put.py notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/test_put_all_accounting.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed.
+- HyperEVM representative rerun before committing these follow-up script edits:
+  `status=ok raw=9 valid=0 put=0/0 concrete=0/9 wall=22.053s`.
+- Interpretation of that rerun:
+  Stage-2 and Stage-4 are now connected for `NO-COORDINATE` complete witnesses.
+  The remaining invalidity is a real replay/fixture issue: the generated
+  concrete files have constructor `setUp` disabled as red on the reference
+  contract, e.g. `new HyperEVMRateProvider(0, 0)` is not a green deployment
+  under the real Foundry environment/precompile model.  Next high-yield repair
+  is constructor/precompile fixture reconstruction, not more region search or
+  more ESBMC time.
+
 ## 2026-08-08 inherited state name collision fix
 
 Context:

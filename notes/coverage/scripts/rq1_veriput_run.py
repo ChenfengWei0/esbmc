@@ -35,6 +35,10 @@ from veriput_recipe import STRONG_RECIPE_VERSION  # noqa: E402
 from veriput_subjects import PreparedSubject  # noqa: E402
 
 PUT_ALL = HERE / "put_all.py"
+CONCRETE_FALLBACK_WITNESS_CHECKS = {
+    "SUCCESSFUL",
+    "COMPLETE-WITNESS-NO-COORDINATE",
+}
 
 DEFAULT_VERIPUT_ROOT = Path("/home/samson/workspace/VeriPUT")
 DEFAULT_RESULT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "VeriPUT"
@@ -429,7 +433,8 @@ def _cleared_concrete_fallback_count(cert_path: Path, benchmark_key: str,
         for enc in not_certified:
             detail = detail_rows.get(str(enc)) or {}
             if (detail.get("concrete_fallback") is True
-                    and detail.get("witness_check") == "SUCCESSFUL"):
+                    and detail.get("witness_check")
+                    in CONCRETE_FALLBACK_WITNESS_CHECKS):
                 count += 1
     return count
 
@@ -575,7 +580,19 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         rows.extend(b.get("rows") or [])
 
     put_jsons = _load_put_jsons(put_root)
-    by_test = {rec.get("test"): rec for rec in put_jsons if rec.get("test")}
+    by_file_test = {}
+    by_test_candidates = {}
+    for rec in put_jsons:
+        test = rec.get("test")
+        file_name = rec.get("file")
+        if test and file_name:
+            by_file_test[(str(file_name), str(test))] = rec
+        if test:
+            by_test_candidates.setdefault(str(test), []).append(rec)
+    by_unique_test = {
+        test: rows[0] for test, rows in by_test_candidates.items()
+        if len(rows) == 1
+    }
 
     raw_tests = []
     valid_tests = []
@@ -583,7 +600,11 @@ def summarize_put_artifacts(put_root: Path) -> dict:
     deliverable_valid = Counter()
     deliverable_tests = set()
     for row in rows:
-        rec = by_test.get(row.get("test"), {})
+        test_name = row.get("test")
+        file_name = row.get("file")
+        rec = by_file_test.get((str(file_name), str(test_name)), {})
+        if not rec and not file_name:
+            rec = by_unique_test.get(str(test_name), {})
         if row.get("refused") or _row_is_no_oracle_put(row, rec):
             continue
         entry = {

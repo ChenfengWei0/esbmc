@@ -6896,19 +6896,89 @@ def main():
                 f"non-scalar): " + ", ".join(refused))
         if pins and not why:
             why.append("every coordinate was pinned by request")
+        no_coord_reason = "; ".join(why) or "no generalisable coordinate"
         print("[coords] NO GENERALISABLE COORDINATE — "
-              + "; ".join(why)
+              + no_coord_reason
               + ". This is a COORDINATE-KIND result, not a search result: the "
                 "paths were witnessed and their region is a point, so each "
                 "falls back to its concrete counterexample test. Widening the "
                 "ladder or the shrink budget cannot change it")
+        for enc, _depth, _ce in sorted(all_paths, key=lambda path: path[0]):
+            print(
+                f"  enc={enc}: NOT CERTIFIED — {no_coord_reason}. "
+                "NO GENERALISABLE COORDINATE: every harvested quantity is "
+                "pinned, unsettable, unsupported, or outside the generated "
+                "test's coordinate model; this path falls back to its "
+                "concrete counterexample test")
+        ce_by_enc = {e: ce for e, _d, ce in all_paths}
+        depth_by_enc = {e: d for e, d, _ce in all_paths}
+        enumeration_report_path = (
+            args.enumeration_report or enumeration_report_snapshot_path(cwd))
+        result_path = os.path.join(cwd, "generalise-result.json")
+        with open(result_path, "w") as f:
+            json.dump(
+                {
+                    "schema": "path-generalise-result/1",
+                    "contract": args.contract,
+                    "unit": args.unit,
+                    "path_function": args.path_function,
+                    "max_tx": args.max_tx,
+                    "scope": scope_label,
+                    "enumeration_source": {
+                        "mode": (
+                            "imported-stage-1" if args.enumeration_report
+                            else "direct"),
+                        "index": file_identity(args.enumeration_index),
+                        "report": file_identity(enumeration_report_path),
+                        "salvage": read_enumeration_salvage(cwd),
+                    },
+                    "pins": {n: str(v) for n, v in sorted(pins.items())},
+                    "path_decisions": {
+                        str(enc): {
+                            "abi_gate_class": abi_gate_class(decisions),
+                            "decisions": decisions,
+                        }
+                        for enc, decisions in sorted(path_decisions.items())
+                    },
+                    "dropped_by_certify": [],
+                    "no_coordinate_reason": no_coord_reason,
+                    "certified": [],
+                    "not_certified": [
+                        {
+                            "enc": e,
+                            "depth": depth_by_enc.get(e),
+                            "verdict": "NOT_CERTIFIED",
+                            "reason": (
+                                no_coord_reason
+                                + ". NO GENERALISABLE COORDINATE: this "
+                                  "complete witness has no free coordinate "
+                                  "for a parameterized region"),
+                            "concrete_fallback": True,
+                            "witness_check": (
+                                "COMPLETE-WITNESS-NO-COORDINATE"),
+                            "ce": {
+                                n: str(v)
+                                for n, v in sorted(
+                                    ce_by_enc.get(e, {}).items())
+                            },
+                        }
+                        for e, _depth, _ce in sorted(
+                            all_paths, key=lambda path: path[0])
+                    ],
+                    "enumerated": [
+                        {"enc": e, "depth": d} for e, d, _ in all_paths
+                    ],
+                },
+                f,
+                indent=2,
+                sort_keys=True)
         write_generalise_progress(
             cwd, "no-generalizable-coordinate",
             witnessed=len(paths),
             refused=list(refused),
             unsettable=sorted(unsettable),
             pins={n: str(v) for n, v in sorted(pins.items())},
-            reason="; ".join(why),
+            reason=no_coord_reason,
         )
         return 1
     # ---- `FREE:` IS A MARKER, NOT DECORATION ----

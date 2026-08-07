@@ -89,6 +89,17 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
                 "assertion_oracles": [],
             },
         }))
+        colliding_concrete_wd = unit / "_wd" / "colliding-concrete"
+        colliding_concrete_wd.mkdir(parents=True)
+        (colliding_concrete_wd / "put.json").write_text(json.dumps({
+            "kind": "concrete",
+            "test": "test_cov_Token_approve_path8",
+            "file": "different-concrete.t.sol",
+            "stats": {
+                "oracle_classes": ["BAD-MATCH"],
+                "assertion_oracles": [],
+            },
+        }))
         (unit / "put-summary.json").write_text(json.dumps({
             "schema": "veriput-put-summary/1",
             "emission": {
@@ -155,6 +166,11 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
         bad += check(len(summary["assertion_oracles"]) == 2
                      and summary["raw_tests"][0]["oracle_classes"] == ["R1", "R2"],
                      f"assertion metadata remains tied to artifacts: {summary}")
+        concrete = [row for row in summary["raw_tests"]
+                    if row["kind"] == "concrete"][0]
+        bad += check(concrete["oracle_classes"] == []
+                     and concrete["put_json"] is None,
+                     f"duplicate concrete test names do not cross-link put.json: {summary}")
         bad += check(len(summary["raw_tests"]) == 2
                      and all(t["enc"] != 9 for t in summary["raw_tests"]),
                      f"refused PUT rows are not raw deliverables: {summary}")
@@ -306,6 +322,20 @@ def test_cleared_concrete_fallbacks_trigger_stage4():
                 "unit": "approve",
                 "bucket": "NOT-CERTIFIED",
                 "certified": {},
+                "not_certified": {"9": "no generalisable coordinate"},
+                "not_certified_details": {
+                    "9": {
+                        "enc": 9,
+                        "concrete_fallback": True,
+                        "witness_check": "COMPLETE-WITNESS-NO-COORDINATE",
+                    },
+                },
+            },
+            {
+                "benchmark": "bench",
+                "unit": "approve",
+                "bucket": "NOT-CERTIFIED",
+                "certified": {},
                 "not_certified": {"8": "unknown point"},
                 "not_certified_details": {
                     "8": {
@@ -322,8 +352,8 @@ def test_cleared_concrete_fallbacks_trigger_stage4():
     argv = rq1_veriput_run._put_argv(
         cert, "approve", "bench", Path("/tmp/out"), 600, 12, 300)
     bad = 0
-    bad += check(count == 1,
-                 "only SUCCESSFUL concrete fallbacks trigger Stage 4")
+    bad += check(count == 2,
+                 "cleared and complete-witness concrete fallbacks trigger Stage 4")
     bad += check("--emit-cleared-concrete-fallbacks" in argv,
                  f"RQ1 Stage 4 enables cleared concrete fallback emission: {argv}")
     return bad

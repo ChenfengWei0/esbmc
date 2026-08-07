@@ -124,6 +124,11 @@ optimizer = true
 optimizer_runs = 200
 """
 
+CONCRETE_FALLBACK_WITNESS_CHECKS = {
+    "SUCCESSFUL",
+    "COMPLETE-WITNESS-NO-COORDINATE",
+}
+
 # Byte for byte the driver's own printers (solidity_path_generalise.py:800,
 # and the `, {n} == {v}` pin suffix built at its report block). One grammar,
 # two readers; if the driver ever changes how it prints a region this parser
@@ -207,7 +212,7 @@ def cleared_concrete_fallback_rows(record):
         detail = by_enc.get(str(enc)) or {}
         if detail.get("concrete_fallback") is not True:
             continue
-        if detail.get("witness_check") != "SUCCESSFUL":
+        if detail.get("witness_check") not in CONCRETE_FALLBACK_WITNESS_CHECKS:
             continue
         ce = detail.get("ce") or {}
         if not isinstance(ce, dict):
@@ -576,9 +581,9 @@ def main():
     ap.add_argument("--emit-cleared-concrete-fallbacks", action="store_true",
                     help="also emit concrete-only replay tests for "
                          "NOT_CERTIFIED paths whose Stage-2 detail has "
-                         "concrete_fallback=true and witness_check=SUCCESSFUL. "
-                         "These are raw/valid concrete tests only, never PUTs "
-                         "or region proofs.")
+                         "concrete_fallback=true and a cleared or complete "
+                         "witness status. These are raw/valid concrete tests "
+                         "only, never PUTs or region proofs.")
     ap.add_argument("--max-tx", type=int, default=1)
     ap.add_argument("--auto-unwind", type=int, default=0,
                     help="passed to the driver: on an UNDECIDED-TRUNCATED "
@@ -670,7 +675,8 @@ def main():
                 rows.append((key, is_poc, r["unit"], r.get("path_function"),
                              enc_i, None, None, [], False, {}, exit_kind,
                              row_subject, "cleared-concrete-fallback",
-                             fb["region"], {}, fb["pins"]))
+                             fb["region"], {}, fb["pins"],
+                             fb["detail"].get("witness_check")))
         if r.get("bucket") != "CERTIFIED":
             continue
         certified_details = r.get("certified_details") or {}
@@ -745,7 +751,8 @@ def main():
             rows.append((key, is_poc, r["unit"], r.get("path_function"),
                          enc_i, piece or None, text,
                          establish, bool(r.get("pin_extcall")), deriv, exit_kind,
-                         row_subject, "certified-region", None, None, None))
+                         row_subject, "certified-region", None, None, None,
+                         None))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
     #
@@ -811,7 +818,8 @@ def main():
               "regions and certification are unchanged")
     for (bench, is_poc, unit, path_function, enc, piece, text, establish,
          pin_extcall, deriv, exit_kind, row_subject, stage2_source,
-         region_override, holes_override, pins_override) in ordered_rows:
+         region_override, holes_override, pins_override,
+         stage2_witness_check) in ordered_rows:
         # The label every downstream name is built from, derived ONCE and in
         # the same shape the emitter builds it (`p<K>`). Two derivations is how
         # the gate below comes to look up a function the emitted file does not
@@ -912,7 +920,7 @@ def main():
             pins = dict(pins_override or {})
         else:
             region, holes, pins = parse_certified(text)
-        if not region and not pins:
+        if stage2_source != "cleared-concrete-fallback" and not region and not pins:
             print(f"  SKIP {bench}.{unit} enc={encs}: the recorded region "
                   f"parsed EMPTY, which is a PARSER failure, not an empty "
                   f"region -- refusing to emit a PUT over nothing")
@@ -960,6 +968,11 @@ def main():
                     str(args.forge_timeout)]
         if stage2_source == "cleared-concrete-fallback":
             cmd += ["--concrete-only", "--test-suffix", "_fb"]
+            if stage2_witness_check:
+                cmd += [
+                    "--concrete-stage2-witness-check",
+                    str(stage2_witness_check),
+                ]
         for extra in args.esbmc_arg:
             cmd.append(f"--esbmc-arg={extra}")
         # ONLY when this row IS a piece, so an unsplit region's command line is

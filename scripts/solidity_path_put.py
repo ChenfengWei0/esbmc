@@ -8554,9 +8554,13 @@ def main():
     ap.add_argument("--concrete-only", action="store_true",
                     help="emit only the authenticated concrete replay for this "
                          "path and skip storage layout, assertion ladder, R2 "
-                         "and PUT construction. This is for Stage-2 paths "
-                         "whose single-point witness check was already "
-                         "SUCCESSFUL; it never proves a parameterized region.")
+                         "and PUT construction. This is for Stage-2 paths with "
+                         "a cleared concrete fallback; it never proves a "
+                         "parameterized region.")
+    ap.add_argument("--concrete-stage2-witness-check", default="SUCCESSFUL",
+                    help="Stage-2 witness status that made --concrete-only "
+                         "eligible. Recorded only; concrete-only output still "
+                         "depends on the emitted replay and Forge validity.")
     ap.add_argument("--piece", default=None, metavar="K",
                     help="which PIECE of a split certified region this is. "
                          "stage 2 may certify one path as a UNION of boxes "
@@ -8808,9 +8812,10 @@ def main():
             f.write(txt)
         print(f"[put] WROTE concrete-only replay {dest}")
         print("[put]   concrete replay : " + case[1])
-        print("[put]   note: Stage-2 witness_check=SUCCESSFUL authenticated "
-              "this point as a concrete replay only; no PUT proof or oracle "
-              "ladder was run here")
+        print("[put]   note: Stage-2 witness_check="
+              f"{a.concrete_stage2_witness_check} made this point eligible "
+              "as a concrete replay only; no PUT proof or oracle ladder was "
+              "run here")
         with open(os.path.join(a.workdir, "put.json"), "w") as f:
             json.dump({"kind": "concrete",
                        "stage2_source": "cleared_not_certified_fallback",
@@ -8845,8 +8850,8 @@ def main():
                                 "max_tx": a.max_tx, "rule": cell_rule},
                        "binary": binary_identity(a.esbmc),
                        "concrete_reason": (
-                           "Stage-2 concrete_fallback with "
-                           "witness_check=SUCCESSFUL"),
+                           "Stage-2 concrete_fallback with witness_check="
+                           + str(a.concrete_stage2_witness_check)),
                        "stats": {
                            "fuzz_params": 0,
                            "lifted": [],
