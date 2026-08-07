@@ -8125,6 +8125,31 @@ def exit_kind_asserted(body_lines):
     return "[asserted]" in txt or "vm.expectRevert()" in txt
 
 
+def normalize_exit_kind(kind):
+    if kind == "undetermined":
+        return "unknown"
+    if kind in ("normal", "revert", "unknown"):
+        return kind
+    return None
+
+
+def effective_exit_kind(cli_kind, claim):
+    """Exit kind for this path, preferring an explicit Stage-4 argument.
+
+    Some production Stage-2 rows predate `enumeration_report`, so the caller
+    cannot always pass `--exit-kind`.  Stage 4 nevertheless runs a fresh
+    coverage emission and selects the exact claim before building the PUT; that
+    claim is the same source of truth the generated Foundry body came from, so
+    it is the right fallback for R0 exit-oracle accounting.
+    """
+    cli = normalize_exit_kind(cli_kind)
+    if cli is not None:
+        return cli
+    if isinstance(claim, dict):
+        return normalize_exit_kind(claim.get("exit_kind"))
+    return None
+
+
 def fixture_from_esbmc_args(extra):
     """The JSON passed through `--path-cov-fixture`, or None."""
     i = 0
@@ -8997,6 +9022,10 @@ def main():
               f"argument) -- so there is no concrete case to generalise")
         return 1
     print(f"[put]   concrete case: {case[1]} in contract {emitted.blocks[case[0]][0]}")
+    path_exit_kind = effective_exit_kind(a.exit_kind, claim)
+    if path_exit_kind and path_exit_kind != a.exit_kind:
+        print(f"[put]   exit kind read from this run's own report: "
+              f"{path_exit_kind}")
     case_body, case_call_i = emitted_case_body_and_call(emitted, case, a.unit)
     constructor_mocks = constructor_staticcall_mock_lines(
         a.forge_project, claim, "    ")
@@ -9142,7 +9171,7 @@ def main():
     else:
         print(f"[put]   declared return: "
               f"{', '.join(t for _n2, t in rettypes) or '(none)'}")
-    if claim.get("exit_kind") == "normal":
+    if path_exit_kind == "normal":
         region, holes, retreat_notes = normal_exit_region_retreat(
             a.ast, a.contract, a.unit, claim.get("decisions") or [],
             region, holes, params, arity=arity,
@@ -9394,7 +9423,7 @@ def main():
     # never guesses `delta_dir`.
     r2_term_lookup = {}
     r2_fuzz_prefilter = {"enabled": bool(a.fuzz_r2_prefilter)}
-    path_reverts = a.exit_kind == "revert"
+    path_reverts = path_exit_kind == "revert"
     skip_r2_after_partial_oracle = False
     if a.propose_r2 and rows and summary is None:
         try:
@@ -9405,7 +9434,8 @@ def main():
                 unwind=unwind_applied,
                 derived_by=json.loads(a.derived_by or "{}"),
                 rollback_exit=rollback_here, r2_terms={},
-                establish=json.loads(a.establish or "[]"))
+                establish=json.loads(a.establish or "[]"),
+                exit_kind=path_exit_kind)
         except ConcreteFallback:
             _probe_stats = {}
         skip_r2_after_partial_oracle = partial_ladder_already_has_strict_oracle(
@@ -9664,7 +9694,7 @@ def main():
                                derived_by=json.loads(a.derived_by or "{}"),
                                rollback_exit=rollback_here,
                                r2_terms=r2_term_lookup,
-                               exit_kind=a.exit_kind,
+                               exit_kind=path_exit_kind,
                                state_types=state_types,
                                lift_unconstrained_calldata=(
                                    a.lift_unconstrained_calldata),

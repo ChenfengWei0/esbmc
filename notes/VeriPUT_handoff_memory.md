@@ -1,12 +1,162 @@
 # VeriPUT Engineering Memory
 
-Last updated: 2026-08-07
+Last updated: 2026-08-08
 
 This document is the durable handoff state for VeriPUT. It records facts that
 were established by reading the paper, the work order, the implementation, and
 the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
+
+## 2026-08-08 RQ1 production accounting and timeout fallback state
+
+R0 normal-exit Stage4 accounting fix:
+
+- Problem found after RQ1: some Stage2 rows predate `enumeration_report`, so
+  `put_all.py` could not pass `--exit-kind` into `solidity_path_put.py`.
+  Stage4 still emitted a bare Foundry call with
+  `[asserted] path exits normally; a revert fails the test`, but `put.json`
+  recorded `exit_kind=null`, `exit_kind_asserts=0`, `asserts=0`, and the B gate
+  rejected it as `zero unconditional assertions`.
+- Fix: `scripts/solidity_path_put.py` now computes an effective exit kind:
+  explicit CLI `--exit-kind` wins; otherwise the selected fresh
+  `cov-report.json` claim supplies `exit_kind` after normalizing
+  `undetermined` to `unknown`.
+- The effective exit kind is used consistently for normal-exit retreat, R2
+  revert skipping, partial-oracle probing, and final PUT accounting.
+- Unit test added:
+  `test_effective_exit_kind_falls_back_to_the_fresh_claim`.
+- Validation:
+  - `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py`
+    passed.
+  - `python3 scripts/test_solidity_path_put.py` passed: 241/241.
+  - `python3 scripts/test_put_all_accounting.py` passed.
+  - `python3 scripts/test_rq1_veriput_run.py` passed.
+  - `pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py`
+    passed.
+- One real Stage4 validation was run to `/tmp` only, not to RQ1 outputs:
+  `peer182 / peer_soltg__branches_merge_variables_5.f`.
+  Result: both certified normal-exit regions became valid fuzz PUTs with
+  `asserts=1`, `exit_kind_asserts=1`, `oracle_classes=R0`; Forge B gate was
+  2/2 green.
+- Expected impact: recover same-shape Stage4 losses where the emitted body is a
+  normal bare call and the only oracle is R0 non-revert. This improves raw/valid
+  PUT accounting without claiming try/catch reachability witnesses as proofs.
+
+Current branch / repository discipline:
+
+- ESBMC work is on `feat/veriput-fuzz-first`, pushed to
+  `E-SOL/feat/veriput-fuzz-first`.
+- Do not push to `upstream`; its push URL is intentionally disabled.
+- `/home/samson/workspace/VeriPUT/Datasets` remains read-only for this work.
+- RQ1 VeriPUT outputs live under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+- The VeriPUT repo currently has local `Results/results_all.py` changes that
+  integrate the VeriPUT arm and add compatibility accounting for older timeout
+  rows.  Those changes are mixed with pre-existing uncommitted work, so do not
+  casually commit or revert them without rechecking the VeriPUT repo status.
+
+Timeout concrete fallback implemented in ESBMC scripts:
+
+- `notes/coverage/scripts/put_all.py` extracts concrete-only Stage4 inputs from
+  Stage2 rows that timed out but left a `partial_witness_journal`.
+- Timeout fallback rows are emitted only when there are no certified or
+  not-certified regions, the Stage2 row is a real timeout shape, and the partial
+  journal has witnessed paths with numeric `path_id` and non-empty
+  `path_function`.
+- `scripts/solidity_path_put.py` records concrete-only provenance via
+  `--concrete-stage2-source`, including `timeout_concrete_fallback`.
+- `notes/coverage/scripts/rq1_veriput_run.py` counts timeout concrete fallback
+  rows as Stage4 candidates and records
+  `timeout_concrete_fallbacks_for_unit`.
+- `rq1_veriput_run.py` now preserves aggregate `valid` even for timeout rows;
+  older rows with `valid: null` but positive `put_valid`, `concrete_valid`, or
+  `valid_tests` need compatibility handling in `Results/results_all.py`.
+
+Validation for the timeout fallback/accounting changes:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile` passed for
+  `notes/coverage/scripts/put_all.py`,
+  `notes/coverage/scripts/rq1_veriput_run.py`,
+  `scripts/solidity_path_put.py`,
+  `scripts/test_put_all_accounting.py`, and
+  `scripts/test_rq1_veriput_run.py`.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py` passed.
+- `pylint --errors-only` passed for the changed Python files above.
+- `git diff --check` passed for the changed ESBMC files before commit.
+
+RQ1 follow-up runs after timeout fallback:
+
+- `real203 / ERC-3643__ERC-3643__Token`
+  - official redo status: `ok`
+  - `raw=1`, `valid=1`, `put=0/0`, `concrete=1/1`
+  - wall about 603s, max RSS about 11.7GiB, budget exhausted.
+  - valid artifact:
+    `TokenCovTest_Token_approve_concrete15_fb.t.sol`
+  - `put.json` kind is `concrete`, stage2 source is
+    `timeout_concrete_fallback`.
+- `real203 / balancer__balancer-v3-monorepo__FeeBurnerAuthentication`
+  - official redo status: `ok`
+  - `raw=7`, `valid=7`, `put=0/0`, `concrete=7/7`
+  - 3 valid concrete rows from timeout fallback on `acceptOwnership`; 4 from
+    cleared concrete fallback on `pendingOwner` / `owner`.
+- `real203 / compound-finance__comet__CometWithExtendedAssetList`
+  - official redo status: `ok`
+  - `raw=1`, `valid=1`, `put=0/0`, `concrete=1/1`
+  - valid artifact:
+    `CometWithExtendedAssetListCovTest_CometWithExtendedAssetList_pause_concrete224_fb.t.sol`.
+- `real203 / ProjectOpenSea__seaport__PausableZone`
+  - official redo status: `no-output`
+  - Stage4 saw two timeout fallback candidates for `executeMatchOrders`, but
+    ESBMC emission refused both before writing tests.
+  - The log names the renderer gap:
+    `PausableZone.executeMatchOrders(seaport: CONTRACT:SeaportInterface, orders: ARRAY:STRUCT, fulfillments: ARRAY:STRUCT)`.
+  - Do not rerun this subject until the Foundry testcase renderer can
+    materialize interface contract arguments and array-of-struct calldata, or
+    can refuse this shape earlier with a precise reason.
+- `bugfix124 / pop_077_GameItems`
+  - official redo status: `ok`
+  - `raw=3`, `valid=0`, `put=0/0`, `concrete=0/3`
+  - raw artifacts came from timeout fallback on `transferOwnership`.
+  - Forge disabled red setup during self-check; generated tests construct
+    `GameItems(address(0), address(0))` / `Neuron(...)`, then the replay is not
+    reference-valid.
+  - Treat this as constructor/setup replay mismatch; do not spend another full
+    benchmark attempt until the emitter can either build valid constructor state
+    or reject setup-dependent raw-invalid concrete replays before accounting.
+
+Current timeout-fallback conclusion:
+
+- The easy timeout-witness salvage is mostly exhausted.
+- Remaining high-yield failures are not solver rerun problems:
+  - PausableZone needs renderer support for interface contract parameters and
+    array-of-struct calldata.
+  - GameItems needs constructor/setup validity handling.
+- Fixes to R1/R2 region generation or oracle rendering may upgrade already
+  valid concrete rows into PUTs or stronger assertions, so global strength
+  fixes deserve small sampled reruns over successful concrete-only/R0-only rows.
+  Local renderer/setup fixes should be rerun only on affected failures.
+- Fuzz remains refute-only: it can cheaply reject bad regions, assertions, and
+  instrumentation candidates, but ESBMC proof is still required for PUT
+  certification.
+
+Results statistics compatibility:
+
+- Some older VeriPUT RQ1 rows have `valid: null` despite positive `put_valid`,
+  `concrete_valid`, or non-empty `valid_tests`; example shape:
+  `peer182 / peer_ccsolbmc__Benu` with `status=timeout`, `raw=14`,
+  `put_valid=14`.
+- `Results/results_all.py` in the VeriPUT repo has local logic to derive
+  `valid_count(row)` from `valid`, then split counts, then `valid_tests`.
+- Validation commands run successfully from `/home/samson/workspace/VeriPUT`:
+  - `PYTHONDONTWRITEBYTECODE=1 python3 Results/results_all.py --benchmark real203`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 Results/results_all.py --benchmark peer182`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 Results/results_all.py --benchmark bugfix124`
+- The real203 run reported no VeriPUT `raw>0 & valid==0` anomaly after the
+  compatibility fix.  Peer and BugFix still have a small number of true
+  raw-invalid rows to diagnose separately.
 
 ## 2026-08-07 current benchmark breadth signal
 

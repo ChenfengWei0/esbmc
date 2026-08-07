@@ -63,6 +63,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                assert_query_region_entries, build_put,
                                check_esbmc_args, cell_of,
                                constructor_staticcall_mock_lines,
+                               effective_exit_kind,
                                exit_kind_asserted, find_unit_call,
                                no_oracle_reason, observed_env,
                                normal_exit_region_retreat,
@@ -9251,6 +9252,26 @@ def test_a_STAGE1_normal_path_counts_the_bare_call_as_R0():
     return bad
 
 
+def test_effective_exit_kind_falls_back_to_the_fresh_claim():
+    """Old Stage-2 rows may not carry an enumeration report for put_all to pass.
+
+    The Stage-4 emitter has already selected the fresh cov-report claim by the
+    time it builds the PUT, so that claim must still recover the R0 exit oracle.
+    """
+    bad = 0
+    bad += check(effective_exit_kind(None, {"exit_kind": "normal"}) == "normal",
+                 "missing CLI exit kind falls back to the selected claim")
+    bad += check(effective_exit_kind("revert", {"exit_kind": "normal"})
+                 == "revert",
+                 "an explicit Stage-4 exit kind still wins over the claim")
+    bad += check(effective_exit_kind(None, {"exit_kind": "undetermined"})
+                 == "unknown",
+                 "legacy report spelling is normalized")
+    bad += check(effective_exit_kind(None, {}) is None,
+                 "an absent exit kind stays absent")
+    return bad
+
+
 def test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle():
     """St1inch.setMaxLossRatio enc=14 shape.
 
@@ -10648,6 +10669,7 @@ def main():
               test_skipped_forge_R2_accounting_is_complete_and_conservative,
               test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle,
               test_oracle_class_metadata_keeps_R0_R1_R2_apart,
+              test_effective_exit_kind_falls_back_to_the_fresh_claim,
               test_typed_R2_omits_bool_without_a_bool_endpoint,
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,
