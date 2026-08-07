@@ -15247,6 +15247,105 @@ Operational note:
   pressure, fall back to fewer jobs rather than reducing artifact retention or
   rerunning completed subjects.
 
+## 2026-08-07 peer182 fast-first limit180 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 180 --order fast-first --jobs 3 --memlimit-gib 11 --mem-fraction 0.95 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Post-run process check:
+
+- No residual `rq1_veriput_run`, `certify_all`, `put_all`, `esbmc`, or
+  `forge test` workers remained after the run.
+- No OOM row was observed in this wave.  Memory stayed safe under
+  `jobs=3 --memlimit-gib 11`.
+
+Newly completed subjects in this wave:
+
+- `peer_ccsolbmc__wLitiSale`: ok/budget-exhausted, raw=19, valid=18,
+  PUT=18/19, wall=595.382s.  Raw and valid artifacts are both retained; the
+  one invalid raw PUT is not counted as reference-valid.
+- `peer_ccsolbmc__ShibaSamurai`: ok/budget-exhausted, raw=1, valid=1,
+  PUT=1/1, wall=600.111s.
+- `peer_ccsolbmc__Lunar`: ok/budget-exhausted, raw=5, valid=5, PUT=5/5,
+  wall=582.312s.
+- `peer_syntest__Revive`: no-output, raw=0, valid=0, wall=49.854s,
+  reason `no certified regions: NO-WITNESS-UNDECIDED=20,
+  NO-WITNESS-UNKNOWN=3`.
+- `peer_syntest__AavePoolReward`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=514.138s, reason no output after 514.0s Stage 2.
+- `peer_ccsolbmc__BERNIE`: ok/budget-exhausted, raw=1, valid=1, PUT=1/1,
+  wall=600.493s.
+- `peer_ccsolbmc__Thicc`: timeout, raw=4, valid=None, PUT=4/4,
+  wall=660.449s, reason `put approve: timeout`.  Raw artifacts are retained,
+  but reference validity was not completed.
+- `peer_ccsolbmc__ShibaKiyo`: ok/budget-exhausted, raw=1, valid=1,
+  PUT=1/1, wall=580.383s.
+- `peer_ccsolbmc__Animalia`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=121.752s, reason no output after 121.2s Stage 2.
+- `peer_ccsolbmc__WrappedToken`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=155.608s, reason no output after 155.2s Stage 2.
+- `peer_ccsolbmc__COINNetwork`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=361.203s, reason no output after 360.9s Stage 2.
+- `peer_ccsolbmc__HotinuFinance`: ok/budget-exhausted, raw=1, valid=1,
+  PUT=1/1, wall=600.513s.
+
+Latest peer182 aggregate after this wave:
+
+- Rows: 180.
+- Status counts:
+  `ok=101`, `no-output=68`, `no-units=5`, `timeout=6`.
+- Completion counts:
+  `ok=105`, `budget-exhausted=39`, `early-stop-no-output=25`,
+  `no-units=5`, `timeout=6`.
+- Raw / valid tests:
+  `410 / 355`.
+- PUT raw / valid:
+  `349 / 334`.
+- Concrete replay raw / valid:
+  `61 / 52`.
+- Subjects with raw tests:
+  `107`.
+- Subjects with valid tests:
+  `100`.
+- Rows with `valid=None`:
+  `6`.
+- Rows with `raw>0 && valid==0`:
+  `1` (`peer_ccsolbmc__shibabread`).
+- Oracle class totals:
+  `R0=314`, `R1=340`, `R2=1594`.
+- Oracle class combination totals:
+  `R0=314`, `R1=271`, `R1+R2=69`, `R2=1525`.
+
+Official `results_all.py --benchmark peer182` snapshot:
+
+- VeriPUT row:
+  `ran=180`, `raw_u=410`, `valid_u=355`, `raw_c=107`,
+  `valid_c=100`, `coverage=54.9%`, `VT/case=1.95`.
+- Cost row:
+  `ran=180`, `total=11.51h`, `wall/subj=230.2+-251.0s`,
+  `peakRSS=3250+-4339MB`.
+- Anomaly audit:
+  `timeout/oom/error=6`, `sub-5s ok=0`, `raw>0 & valid==0=1`.
+- The only invariant violations reported by `results_all.py` were unrelated
+  multi-host cost comparability issues for Solar and SynTest.
+
+Artifact/accounting note:
+
+- The limit180 run preserved the same JSON/artifact contract as limit168:
+  timing fields are present, raw and valid artifacts are retained, and PUT
+  oracle metadata includes `R0/R1/R2` class counts and per-assertion details.
+- Timeout rows such as `peer_ccsolbmc__Thicc` may contain raw PUT artifacts
+  with `valid=None`; keep them archived but do not count them as reference-valid.
+- Fuzz remains refutation-only.  It can reject a candidate cheaply, but never
+  promotes a candidate to proof without ESBMC certification.
+
+Operational note:
+
+- `jobs=3 --memlimit-gib 11` is still acceptable if available memory remains
+  similar.  Continue in small resume waves and do not rerun completed subjects
+  unless a wrapper/accounting bug invalidates the row.
+
 ## 2026-08-07 certification-first retry planning
 
 Attempt-2 diagnostic run:
