@@ -15135,6 +15135,118 @@ Operational note:
   if `MemAvailable` is similar.  If available memory drops, fall back to
   `jobs=2 --memlimit-gib 12`.
 
+## 2026-08-07 peer182 fast-first limit168 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 168 --order fast-first --jobs 3 --memlimit-gib 11 --mem-fraction 0.95 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Post-run process check:
+
+- No residual `rq1_veriput_run`, `certify_all`, `put_all`, `esbmc`, or
+  `forge test` workers remained after the run.
+- Memory pressure stayed acceptable under `jobs=3 --memlimit-gib 11`; no OOM
+  row was observed in this wave.
+
+Newly completed subjects in this wave:
+
+- `peer_ccsolbmc__eNew`: ok/budget-exhausted, raw=1, valid=1, PUT=1/1,
+  wall=599.770s.
+- `peer_ccsolbmc__PORCUPINE`: ok/budget-exhausted, raw=1, valid=1,
+  PUT=1/1, wall=600.088s.
+- `peer_ccsolbmc__Benu`: timeout, raw=14, valid=None, PUT=14/14,
+  wall=660.157s, reason `put approve: timeout`.  Raw artifacts are retained,
+  but reference validity was not completed.
+- `peer_ccsolbmc__MiraNft`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=121.335s, reason no output after 121.1s Stage 2.
+- `peer_ccsolbmc__BurnableERC20`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=239.843s, reason no output after 239.8s Stage 2.
+- `peer_ccsolbmc__Galaxium`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=379.814s, reason no output after 168.2s Stage 2.
+- `peer_ccsolbmc__RIAS`: ok/budget-exhausted, raw=1, valid=1, PUT=1/1,
+  wall=600.449s.
+- `peer_ccsolbmc__CyberFox`: ok/budget-exhausted, raw=1, valid=1,
+  PUT=1/1, wall=599.307s.
+- `peer_ccsolbmc__MayoOcho`: ok/budget-exhausted, raw=5, valid=5,
+  PUT=5/5, wall=622.886s.
+- `peer_ccsolbmc__StarNFTProxy`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=119.669s, reason no output after 119.6s Stage 2.
+- `peer_ccsolbmc__eMuppy`: timeout, raw=3, valid=None, PUT=3/3,
+  wall=660.253s, reason `put approve: timeout`.  Raw artifacts are retained,
+  but reference validity was not completed.
+- `peer_solar__TestDateTime`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=121.250s, reason no output after 120.6s Stage 2.
+
+Latest peer182 aggregate after this wave:
+
+- Rows: 168.
+- Status counts:
+  `ok=95`, `no-output=63`, `no-units=5`, `timeout=5`.
+- Completion counts:
+  `ok=104`, `budget-exhausted=33`, `early-stop-no-output=21`,
+  `no-units=5`, `timeout=5`.
+- Raw / valid tests:
+  `378 / 328`.
+- PUT raw / valid:
+  `317 / 303`.
+- Concrete replay raw / valid:
+  `61 / 52`.
+- Subjects with raw tests:
+  `100`.
+- Subjects with valid tests:
+  `94`.
+- Rows with `valid=None`:
+  `5`.
+- Rows with `raw>0 && valid==0`:
+  `1` (`peer_ccsolbmc__shibabread`).
+- Oracle class totals:
+  `R0=282`, `R1=313`, `R2=1557`.
+- Oracle class combination totals:
+  `R0=282`, `R1=249`, `R1+R2=64`, `R2=1493`.
+
+Official `results_all.py --benchmark peer182` snapshot:
+
+- VeriPUT row:
+  `ran=168`, `raw_u=378`, `valid_u=328`, `raw_c=100`,
+  `valid_c=94`, `coverage=51.6%`, `VT/case=1.80`.
+- Cost row:
+  `ran=168`, `total=10.00h`, `wall/subj=214.4+-246.1s`,
+  `peakRSS=3046+-4278MB`.
+- Anomaly audit:
+  `timeout/oom/error=5`, `sub-5s ok=0`, `raw>0 & valid==0=1`.
+- The only invariant violations reported by `results_all.py` were unrelated
+  multi-host cost comparability issues for Solar and SynTest.
+
+Artifact/accounting contract after this wave:
+
+- Official output root remains:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+- For peer182, raw and valid artifacts are both retained under:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/<subject_id>`.
+- `results.jsonl` rows include timing fields and must continue to do so:
+  `wall_total_s`, `wall`, `stage2_wall_s`, `stage4_wall_s`,
+  `tool_timeout_s`, `wall_cap_s`, `esbmc_run_timeout_s`, `generated_at`, and
+  `ts`.
+- Rows include artifact pointers and retained artifact accounting:
+  `artifact_root`, `result_json`, `cert_jsonl`, `put_summary_paths`,
+  `raw_tests`, `valid_tests`, `raw_artifacts_retained`, and
+  `valid_artifacts_retained`.
+- PUT oracle metadata is preserved in aggregate and per assertion:
+  `oracle_class_counts`, `oracle_class_combo_counts`, and
+  `assertion_oracles[]` with the oracle class/layer/text/verdict/test source.
+- Timeout rows may have raw artifacts and `valid=None`; those raw tests are
+  archived but must not be counted as valid on the reference contract.
+- Fuzz remains a refutation-only filter/replay aid.  It can cheaply find a
+  counterexample to a candidate assertion or region, but it does not prove
+  validity; ESBMC certification is still the proof gate.
+
+Operational note:
+
+- `jobs=3 --memlimit-gib 11` remains usable for the next peer182 fast-first
+  wave if `MemAvailable` is similar.  If another experiment increases memory
+  pressure, fall back to fewer jobs rather than reducing artifact retention or
+  rerunning completed subjects.
+
 ## 2026-08-07 certification-first retry planning
 
 Attempt-2 diagnostic run:
