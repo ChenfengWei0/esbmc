@@ -11014,6 +11014,62 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 — abi.decode(struct) no-cov abort fixed
+
+Context:
+
+- real203 had many `NO-WITNESS-UNKNOWN` rows with driver diagnostic
+  `esbmc-no-cov-report`, `exit=-6`.
+- Current-head representative:
+  `balancer__balancer-v3-monorepo__HyperEVMRateProvider.getSpotPriceMultiplier`.
+- Before the fix, direct ESBMC coverage enumeration aborted before writing
+  `cov-report.json`:
+  `bitwuzla_convt::mk_eq` asserted
+  `a->sort->get_data_width() == b->sort->get_data_width()`.
+
+Root cause:
+
+- `abi.decode(out, (HyperTokenInfo))` was routed through the generic `abi_*`
+  wide-BV table abstraction.
+- That made the frontend emit:
+  `tokenInfo(struct HyperTokenInfo) = __esbmc_hash_result_abi_256_2(uint256)`.
+- The mismatch reached the SMT assignment encoder as a struct-vs-uint256
+  equality, so both Bitwuzla and CVC5 abort before any coverage report is
+  produced.
+
+Code change:
+
+- `src/solidity-frontend/solidity_convert_expr.cpp` now special-cases
+  `c:@F@abi_decode`.
+- If the Solidity return type is the C model's scalar `uint256`, existing
+  behavior is preserved.
+- If the return type is shaped (struct/tuple/string/bytes/etc.), the frontend
+  emits a nondet value of that exact Solidity return type.
+- This is an over-approximation of ABI decode contents, but it keeps later
+  member and tuple reads well-typed and prevents `struct = uint256` SSA.
+
+Regression:
+
+- Added `regression/esbmc-solidity/abi_decode_struct_path_cov_pass`.
+- The test decodes a struct containing dynamic and scalar fields, reads a
+  `uint8` field, and uses it in `10 ** (8 - d)` under:
+  `--solidity-path-coverage --path-cov-probe --all-witnesses
+   --overflow-check --div-by-zero-check --path-cov-arith-resolve`.
+
+Validation:
+
+- `cmake --build build --target esbmc -j2` passed.
+- `ctest --test-dir build -R '(abi_decode_struct_path_cov_pass|abi_decode_tuple_destructure_pass|stress_libsol_abi_decode_simple)' --output-on-failure`
+  passed 3/3.
+- Direct HyperEVM representative no longer aborts; it reaches the solver,
+  writes `cov-report.json`, and reports:
+  `Complete Paths : 2`, `Reached : 2`, `Path Status: F 2, I 0, U 0`.
+- `cmake -DESBMC_REGRESS_TIMEOUT=90 -S . -B build` exited 0 and registered
+  the new regression, but its Bitwuzla external-dependency refresh attempted a
+  meson build that printed CaDiCaL header errors before falling back to the
+  existing Bitwuzla 0.8.2 package. Do not chase this unless future clean
+  configure/builds fail.
+
 ## 2026-08-08 inherited state name collision fix
 
 Context:

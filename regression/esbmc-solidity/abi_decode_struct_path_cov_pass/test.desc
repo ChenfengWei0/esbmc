@@ -1,0 +1,5 @@
+CORE
+contract.solast
+--sol contract.sol --contract AbiDecodeStructPathCov --focus-function scale --solidity-path-coverage --branch-function-coverage --path-cov-probe --cov-report-json --solidity-max-tx 1 --all-witnesses --max-witnesses 4 --overflow-check --div-by-zero-check --path-cov-arith-resolve --memlimit 8g
+^--solidity-path-coverage: instrumented [1-9][0-9]* complete path\(s\) across 1 unit\(s\)
+^VERIFICATION FAILED$

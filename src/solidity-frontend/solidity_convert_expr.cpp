@@ -2384,7 +2384,31 @@ bool solidity_convertert::get_call_expr(
         // Legacy fallback: call `selfdestruct()` which is `exit(0)`.
       }
 
+      bool is_abi_decode = func_id_str == "c:@F@abi_decode";
       bool is_abi_func = func_id_str.find("c:@F@abi_") == 0;
+      if (is_abi_decode)
+      {
+        typet ret_t;
+        if (get_type_description(expr["typeDescriptions"], ret_t))
+          return true;
+
+        // The C library model returns uint256_t.  That is usable for scalar
+        // decodes, but assigning it to a decoded struct/tuple produces a
+        // struct-vs-scalar SSA equality that solver backends cannot encode.
+        // For shaped decodes, over-approximate with a nondet value of the
+        // Solidity return type so later member/tuple reads stay well-typed.
+        const bool is_c_model_scalar =
+          ret_t.is_unsignedbv() && ret_t.width().as_string() == "256";
+        if (!is_c_model_scalar)
+        {
+          get_nondet_expr(ret_t, new_expr);
+          locationt abi_loc;
+          get_location_from_node(expr, abi_loc);
+          new_expr.location() = abi_loc;
+          return false;
+        }
+      }
+
       // [APPROX: OVER] crypto + abi identity/nondet abstraction.
       // keccak256/sha256/ripemd160 and abi.encode* are modelled as a
       // single-uint256 identity hash + nondet decoder. See
