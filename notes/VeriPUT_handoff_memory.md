@@ -11264,6 +11264,69 @@ Checks:
 - `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py scripts/test_put_all_accounting.py`
   passed.
 
+## 2026-08-07 peer182 fast-first limit36 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 36 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Execution:
+
+- Ran after the R0 normal-exit accounting fix.
+- The runner skipped the first 24 fast-first peer rows and queued the next 12.
+- No OOM, timeout, or residual worker processes after completion.
+
+Latest peer182 aggregate after this wave:
+
+- Latest rows: 37.  This includes earlier `peer_ccsolbmc__AIRBets` plus
+  fast-first prefix 36.
+- Status counts: 24 `ok`, 13 `no-output`.
+- Completion counts: 1 `budget-exhausted`, 36 `ok`.
+- Valid subjects: 20 / 37.
+- Generated tests: raw/valid 66 / 42.
+- PUT tests: raw/valid 56 / 34.
+- Concrete replay tests: raw/valid 10 / 8.
+- Raw>0 but valid==0 subjects: 4.
+- Oracle classes: `R2: 289`, `R1: 26`, `R0: 8`.
+- Oracle combinations: `R2: 276`, `R1: 13`, `R1+R2: 13`, `R0: 8`.
+- Median ok-wall: 22.7865s.  Max ok-wall remains AIRBets at 585.465s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=37`,
+  `raw_u=66`, `valid_u=42`, `raw_c=24`, `valid_c=20`,
+  `coverage=11.0%`, `VT/case=0.23`, median ok-wall 22.8s, and
+  `raw>0 & valid==0=4`.
+
+New rows in fast-first 25-36:
+
+- `peer_soltg__constructor_8 / B8`: no-output, wall 1.517s.
+- `peer_soltg__for_1_break_fail / Cfb2`: ok, raw=5, valid=0,
+  PUT 0/5, wall 36.053s.
+- `peer_soltg__microWeth / WETH9`: ok, raw=2, valid=1,
+  PUT 1/2, wall 22.534s, oracle classes `R0:1, R1:1, R2:5`.
+- `peer_soltg__while_nested_continue / Cwb11`: no-output, wall 1.511s.
+- `peer_soltg__constructor_6 / B6`: no-output, wall 2.513s.
+- `peer_soltg__branches_assert_condition_2 / Cb1`: ok, raw=3, valid=3,
+  PUT 3/3, wall 13.033s, oracle classes `R2:3`.
+- `peer_ccsolbmc__ptest / Primality`: ok, raw=2, valid=2,
+  PUT 2/2, wall 36.558s, oracle classes `R1:8, R2:12`.
+- `peer_soltg__constructor_3 / B3`: ok, raw=3, valid=3,
+  PUT 3/3, wall 63.083s, oracle classes `R1:4, R2:6`.
+- `peer_soltg__while_nested_break / Cwb9`: ok, raw=3, valid=1,
+  PUT 1/3, wall 143.145s, oracle classes `R0:1`.
+- `peer_syntest__MetaCoin / MetaCoin`: ok, raw=1, valid=1,
+  PUT 1/1, wall 32.547s, oracle classes `R1:3, R2:11`.
+- `peer_soltg__constructor_1 / C1`: ok, raw=2, valid=2,
+  PUT 2/2, wall 31.548s, oracle classes `R1:3, R2:4`.
+- `peer_soltg__revert_complex_flow / Cr5`: ok, raw=3, valid=2,
+  PUT 2/3, wall 11.524s, oracle classes `R0:2`.
+
+Interpretation:
+
+- The R0 normal-exit accounting fix is visible in new production rows:
+  R0 count increased from 4 to 8, with new valid R0 rows in `microWeth`,
+  `while_nested_break`, and `revert_complex_flow`.
+- `for_1_break_fail` is the next cheap raw-only-invalid diagnostic target.
+  It should be inspected from saved artifacts before any rerun.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
