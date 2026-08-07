@@ -11408,6 +11408,35 @@ PUT child-budget fix:
 - `notes/coverage/scripts/put_all.py` help text now describes this as a
   per-PUT-driver generation budget rather than a per-ESBMC-child timeout.
 
+Official acfix_021 rerun after child-budget fix:
+
+- Command: single-case `rq1_veriput_run.py --benchmark bugfix124 --subject-id
+  acfix_021_CVE_2018_19832 --timeout 600 --esbmc-run-timeout 120
+  --wrapper-grace 60 --no-output-stage2-stop-s 100 --memlimit-gib 12
+  --jobs 1 --forge-timeout 180 --redo`.
+- Old case directory was moved by the runner to
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_021_CVE_2018_19832.redo.1786142992.3098920`.
+- New result: `status=ok`, `raw=1`, `valid=1`, `put_raw=0`,
+  `put_valid=0`, `concrete_raw=1`, `concrete_valid=1`.
+- The saved artifact is a concrete replay:
+  `test/NewIntelTechMediaCovTest_0_NewIntelTechMedia_transferOwnership_concrete15.t.sol`.
+- Timing in row: `stage2_wall_s=196.176`, `stage4_wall_s=403.897`,
+  `stage4_emission_wall_s=402.229`, `foundry_replay_wall_s=1.438`,
+  `wall_total_s=600.141`, `maxrss_mb=10501.8`.
+- Completion status is still `budget-exhausted` because the runner started a
+  later unit (`finishDistribution`) after producing this artifact and then hit
+  the case budget. Since raw output exists, the public status is correctly
+  `ok`.
+- `results_all.py --benchmark bugfix124` after the rerun reports VeriPUT:
+  `raw_u=190`, `valid_u=165`, `raw_c=59`, `valid_c=59`,
+  `coverage=47.6%`, `VT/case=1.33`.
+- Current split by last-write-wins `results.jsonl`: valid artifacts are
+  126 PUT and 39 concrete, so artifact-level PUT generalization is
+  `126 / 165 = 76.4%`. Case-level: 59 / 124 cases have a valid test, 50 of
+  those have at least one valid PUT, and 65 / 124 still have no valid test.
+- Remaining no-valid status buckets: 58 `no-output`, 5 `no-units`,
+  2 `budget-exhausted`; the prior timeout bucket is now gone.
+
 Checks already run before committing this repair:
 
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
