@@ -11214,6 +11214,45 @@ Current timeout-fallback effect on real203:
   failed due to renderer gaps, the latest deduped real203 count is:
   `ok=27`, `valid>0=27`, `raw>0=27`, `concrete_valid>0=7`.
 
+Bugfix124 timeout-fallback follow-up:
+
+- `pop_077_GameItems` was the only bugfix124 no-output row with timeout
+  fallback candidates.
+- Official redo command used the standard 600s / 120s run-timeout / 180s
+  unit-cap / 12GiB settings with `--redo`.
+- Result:
+  `status=ok raw=3 valid=0 put=0/0 concrete=0/3 wall=591.978s`.
+- Stage times:
+  `stage2_wall_s=185.161`, `stage4_wall_s=406.386`,
+  `maxrss_mb=3094.5`, `budget_exhausted=true`.
+- All three raw concrete artifacts came from
+  `timeout_concrete_fallback` on `transferOwnership` (enc 2/6/7).
+- Forge rejected all three.  The Stage-4 log says:
+  `[self-check] ... disabled 1 red concrete replay(s): setUp`.
+- The generated tests have constructor-heavy `setUp` blocks such as
+  `new GameItems(address(0), address(0))` / `new Neuron(...)`; after self-check
+  disables red setup, the replay functions remain not reference-valid.
+- Treat this as a setup/constructor replay mismatch.  Do not rerun until the
+  concrete emitter can either make the constructor state valid or refuse these
+  raw-invalid setup-dependent replays earlier.
+
+Post-follow-up scan:
+
+- Remaining no-output rows with timeout fallback candidates:
+  only `real203/ProjectOpenSea__seaport__PausableZone`, already identified as
+  a renderer gap for interface contract args plus array-of-struct calldata.
+- No remaining bugfix124 or peer182 no-output row has a timeout-fallback
+  candidate under the current extractor.
+- Latest deduped counts after these follow-ups:
+  - real203: `ok=27`, `no-output=174`, `no-units=2`,
+    `valid>0=27`, `raw>0=27`, `concrete_valid>0=7`.
+  - bugfix124: `ok=59`, `no-output=56`, `no-units=5`,
+    `budget-exhausted=2`, `timeout=2`,
+    `valid>0=52`, `raw>0=60`, `concrete_valid>0=10`.
+  - peer182 unchanged by timeout fallback:
+    `ok=102`, `no-output=69`, `timeout=6`, `no-units=5`,
+    `valid>0=101`, `raw>0=108`, `concrete_valid>0=25`.
+
 ## 2026-08-08 - RQ1 scheduler no-output diagnosis
 
 Official accounting:
