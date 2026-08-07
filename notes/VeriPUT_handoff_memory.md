@@ -11295,6 +11295,63 @@ Interpretation:
   no-witness rejection, and region/candidate improvements for ENS resolver,
   Balancer registry, and Comet factory tails.
 
+## 2026-08-07 RQ1 runner no-candidate Stage-2 unit stop
+
+Problem found from limit130/limit140:
+
+- The latest real203 tail rows often do not reach Stage 4 at all.
+- The dominant waste pattern is many scheduled public/external units producing
+  `NO-WITNESS-UNKNOWN`, `NO-WITNESS-UNDECIDED`, or other rows with no
+  certified region and no cleared concrete fallback.
+- Pure Stage-4 zero-output early stop does not help these rows because no PUT
+  emission is ever launched.
+
+Historical read-only replay over current latest RQ1 VeriPUT rows:
+
+- Inputs: 445 latest rows from peer182, bugfix124, and real203.
+- Productive rows: 190, raw/valid 712 / 606.
+- Stage-2 time threshold counterfactual:
+  - 100s: 105 stops, about 677s saved, lost productive rows 0.
+  - 90s: 107 stops, about 839s saved, lost productive rows 0.
+  - 60s: 114 stops, about 1844s saved, lost productive rows 1, lost raw 1.
+- Consecutive no-candidate unit counterfactual:
+  - 3 consecutive no-candidate units: 81 stops, about 2199s saved, lost
+    productive rows 1, lost raw 2.
+  - 4 consecutive no-candidate units: 63 stops, about 1825s saved, lost
+    productive rows 0.
+  - 5 consecutive no-candidate units: 47 stops, about 1612s saved, lost
+    productive rows 0.
+
+Code change:
+
+- `notes/coverage/scripts/rq1_veriput_run.py` now has:
+  `--no-candidate-stage2-unit-stop-n`.
+- Default is 0, preserving old scheduling unless the production command opts in.
+- Semantics:
+  - count consecutive Stage-2 units where
+    `certified_regions + cleared_concrete_fallbacks == 0`;
+  - only stop if current retained raw artifacts are still 0;
+  - reset the counter when a unit has a certified region or cleared fallback;
+  - record `no_candidate_stage2_unit_stop_n` and
+    `max_consecutive_no_candidate_units` in result rows.
+- This remains a scheduling heuristic only.  It does not promote fuzz/ESBMC
+  counterexamples to proof and does not change PUT validity semantics.
+
+Recommended next small wave command shape:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark real203 --limit 150 --order fast-first --jobs 2 --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 90 --stage2-unit-timeout-cap-s 180 --zero-output-stage4-stop-s 30 --no-candidate-stage2-unit-stop-n 4`
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed: all 14 tests.
+- Dry-run with `--no-candidate-stage2-unit-stop-n 4` includes
+  `no_candidate_stage2_unit_stop_n` in the audit JSON.
+
 ## 2026-08-07 real203 fast-first limit36 wave
 
 Production policy for RQ1 waves:

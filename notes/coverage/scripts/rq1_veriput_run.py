@@ -689,6 +689,11 @@ def _format_stage4_no_output_stop(stage4_wall_s: float) -> str:
             "stopped before remaining units")
 
 
+def _format_no_candidate_unit_stop(count: int) -> str:
+    return (f"no Stage-2 candidate after {count} consecutive units; "
+            "stopped before remaining units")
+
+
 def _should_stop_after_zero_output_stage4(stages: list[dict],
                                           put_summary: dict,
                                           threshold_s: int) -> bool:
@@ -697,6 +702,16 @@ def _should_stop_after_zero_output_stage4(stages: list[dict],
     if int(put_summary.get("raw") or 0) > 0:
         return False
     return _stage_wall_s(stages, "put") >= float(threshold_s)
+
+
+def _should_stop_after_no_candidate_units(consecutive_units: int,
+                                          put_summary: dict,
+                                          threshold_units: int) -> bool:
+    if threshold_units <= 0:
+        return False
+    if int(put_summary.get("raw") or 0) > 0:
+        return False
+    return consecutive_units >= threshold_units
 
 
 def _certify_argv_for_remaining(job: dict, remaining_s: float, run_timeout_s: int,
@@ -756,6 +771,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     result_status = "ok"
     failure_reason = None
     early_stop_reason = None
+    consecutive_no_candidate_units = 0
+    max_consecutive_no_candidate_units = 0
 
     try:
         schedule = build_subject_schedule(subject,
@@ -812,9 +829,22 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         n_cleared_fallback = _cleared_concrete_fallback_count(
             cert_path, subject.benchmark_key, unit)
         if n_certified + n_cleared_fallback <= 0:
+            consecutive_no_candidate_units += 1
+            max_consecutive_no_candidate_units = max(
+                max_consecutive_no_candidate_units,
+                consecutive_no_candidate_units)
+            partial_put = summarize_put_artifacts(case_dir / "put")
+            if _should_stop_after_no_candidate_units(
+                    consecutive_no_candidate_units,
+                    partial_put,
+                    args.no_candidate_stage2_unit_stop_n):
+                early_stop_reason = _format_no_candidate_unit_stop(
+                    consecutive_no_candidate_units)
+                result_status = "early-stop-no-output"
+                failure_reason = early_stop_reason
+                break
             stop_s = args.no_output_stage2_stop_s
             if stop_s > 0 and _stage_wall_s(stages, "certify") >= stop_s:
-                partial_put = summarize_put_artifacts(case_dir / "put")
                 if partial_put["raw"] == 0:
                     early_stop_reason = _format_stage2_no_output_stop(
                         _stage_wall_s(stages, "certify"))
@@ -822,6 +852,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                     failure_reason = early_stop_reason
                     break
             continue
+        consecutive_no_candidate_units = 0
         if _remaining(deadline) < args.min_remaining_s:
             result_status = "budget-exhausted"
             failure_reason = "case budget exhausted before Stage 4"
@@ -894,6 +925,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "stage2_unit_timeout_cap_s": args.stage2_unit_timeout_cap_s,
         "cleared_concrete_fallbacks_enabled": True,
         "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
+        "no_candidate_stage2_unit_stop_n": args.no_candidate_stage2_unit_stop_n,
+        "max_consecutive_no_candidate_units": max_consecutive_no_candidate_units,
         "zero_output_stage4_stop_s": args.zero_output_stage4_stop_s,
         "early_stop_reason": early_stop_reason,
         "wall_cap_s": args.timeout + args.wrapper_grace,
@@ -1069,6 +1102,7 @@ def build_dry_run(args) -> dict:
         "timeout_s": args.timeout,
         "esbmc_run_timeout_s": args.esbmc_run_timeout,
         "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
+        "no_candidate_stage2_unit_stop_n": args.no_candidate_stage2_unit_stop_n,
         "zero_output_stage4_stop_s": args.zero_output_stage4_stop_s,
         "memlimit_gib": args.memlimit_gib,
         "jobs": args.jobs,
@@ -1117,6 +1151,12 @@ def main(argv=None) -> int:
                     help="if positive, stop trying remaining units in a subject "
                          "after this many cumulative Stage-2 seconds when no "
                          "raw artifact has been produced")
+    ap.add_argument("--no-candidate-stage2-unit-stop-n", type=int, default=0,
+                    help="if positive, stop trying remaining units in a subject "
+                         "after this many consecutive Stage-2 units produce no "
+                         "certified region and no cleared concrete fallback, "
+                         "provided no raw artifact has been produced. Default "
+                         "0 preserves old scheduling")
     ap.add_argument("--zero-output-stage4-stop-s", type=int, default=0,
                     help="if positive, stop trying remaining units in a subject "
                          "after this many cumulative Stage-4 seconds when "
@@ -1145,10 +1185,12 @@ def main(argv=None) -> int:
         if (args.timeout <= 0 or args.esbmc_run_timeout <= 0
                 or args.wrapper_grace < 0 or args.memlimit_gib <= 0
                 or args.no_output_stage2_stop_s < 0
+                or args.no_candidate_stage2_unit_stop_n < 0
                 or args.stage2_unit_timeout_cap_s < 0
                 or args.zero_output_stage4_stop_s < 0):
             raise RQ1RunError("timeouts and --memlimit-gib must be positive; "
                               "--no-output-stage2-stop-s and "
+                              "--no-candidate-stage2-unit-stop-n and "
                               "--stage2-unit-timeout-cap-s and "
                               "--zero-output-stage4-stop-s must be "
                               "non-negative")

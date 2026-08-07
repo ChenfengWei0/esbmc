@@ -512,6 +512,23 @@ def test_zero_output_stage4_stop_is_thresholded_and_raw_sensitive():
     return bad
 
 
+def test_no_candidate_stage2_unit_stop_is_thresholded_and_raw_sensitive():
+    bad = 0
+    bad += check(not rq1_veriput_run._should_stop_after_no_candidate_units(
+        4, {"raw": 0}, 0), "no-candidate unit stop defaults off")
+    bad += check(not rq1_veriput_run._should_stop_after_no_candidate_units(
+        4, {"raw": 1}, 4), "no-candidate unit stop keeps raw outputs")
+    bad += check(not rq1_veriput_run._should_stop_after_no_candidate_units(
+        3, {"raw": 0}, 4), "no-candidate unit stop waits for threshold")
+    bad += check(rq1_veriput_run._should_stop_after_no_candidate_units(
+        4, {"raw": 0}, 4), "no-candidate unit stop fires at threshold")
+    bad += check(rq1_veriput_run._format_no_candidate_unit_stop(4) ==
+                 "no Stage-2 candidate after 4 consecutive units; "
+                 "stopped before remaining units",
+                 "no-candidate early-stop reason is stable")
+    return bad
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
@@ -527,6 +544,7 @@ def main():
         test_prepare_case_dir_preserves_complete_and_quarantines_partial,
         test_stage2_no_output_stop_reason_is_audit_friendly,
         test_zero_output_stage4_stop_is_thresholded_and_raw_sensitive,
+        test_no_candidate_stage2_unit_stop_is_thresholded_and_raw_sensitive,
     ]
     bad = 0
     for test in tests:
