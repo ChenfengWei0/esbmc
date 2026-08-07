@@ -11195,6 +11195,24 @@ Official redo:
     4 valid concrete replays from `cleared_not_certified_fallback`
     (`pendingOwner`, `owner`).
   - No PUT/oracle was produced; all 7 are concrete reference-valid replay tests.
+- `compound-finance__comet__CometWithExtendedAssetList`:
+  - command used the same standard RQ1 settings with `--redo`.
+  - result: `status=ok raw=1 valid=1 put=0/0 concrete=1/1 wall=599.780s`.
+  - Stage times: `stage2_wall_s=402.854`, `stage4_wall_s=195.184`,
+    `maxrss_mb=2345.3`, `budget_exhausted=true`.
+  - Final valid artifact:
+    `CometWithExtendedAssetListCovTest_CometWithExtendedAssetList_pause_concrete224_fb.t.sol`.
+  - `put.json` records `kind=concrete`,
+    `stage2_source=timeout_concrete_fallback`, `unit=pause`, `enc=224`,
+    no oracle vars/classes/assertions.
+
+Current timeout-fallback effect on real203:
+
+- Before the timeout fallback official redos, real203 latest rows were roughly
+  `ok=24/25`, `valid>0=24/25` depending on whether the Token rerun was counted.
+- After Token, FeeBurnerAuthentication, and compound succeeded, and PausableZone
+  failed due to renderer gaps, the latest deduped real203 count is:
+  `ok=27`, `valid>0=27`, `raw>0=27`, `concrete_valid>0=7`.
 
 ## 2026-08-08 - RQ1 scheduler no-output diagnosis
 
