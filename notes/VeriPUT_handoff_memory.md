@@ -11164,6 +11164,74 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 shibabread payable constructor repair
+
+Problem:
+
+- After the FrontRunner repairs, the only remaining VeriPUT peer182 anomaly
+  with `raw>0` and `valid==0` was `peer_ccsolbmc__shibabread`.
+- Official row before repair:
+  `raw=1`, `valid=0`, `put_raw=1`, `put_valid=0`, `concrete=0/0`.
+- The single raw PUT was `SHIBABREAD.approve` enc=15.  It carried R0+R2 in the
+  old artifacts but Forge could not parse JSON because compilation failed.
+- Direct Forge diagnostic showed the real compile errors were in `setUp()`:
+  `new SHIBABREAD(address(uint160(0)), address(uint160(0)))` was passed to a
+  constructor whose two parameters are `address payable`.
+
+Code change:
+
+- Commit `ec4b713ff6 [scripts] Cast payable constructor replays`, pushed to
+  `E-SOL/feat/veriput-fuzz-first`.
+- `scripts/solidity_path_put.py` now parses target constructor parameter types
+  from the generated Foundry project's `src/flat.sol`.
+- PUT, concrete fallback, and Forge R2 prefilter assembly all call
+  `repair_payable_constructor_args`, which wraps replay constructor arguments
+  in `payable(...)` when the Solidity constructor declares `address payable`.
+- This is general constructor replay rendering, not a shibabread special case.
+
+Checks before official update:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py` passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py` passed:
+  249 / 249 tests.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- `git diff --check -- scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py` passed.
+- Cheap Forge probe, no ESBMC:
+  `/tmp/veriput_shibabread_forge_payable_probe_1786138166`.
+  After manually adding `payable(...)` in the copied project, Forge ran the
+  generated PUT successfully: 1 test, 256 fuzz runs, 0 failures.
+
+Official-output update:
+
+- Backed up old official artifacts to:
+  `/tmp/veriput_shibabread_official_backup_1786138300`.
+- Reused the existing certification JSONL:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_ccsolbmc__shibabread/cert/certify-results.jsonl`.
+- Reran only Stage 4:
+  `put_all.py --only peer182__peer_ccsolbmc__shibabread.approve --timeout 600
+  --forge-timeout 660 --memlimit-gib 12`.
+- The official `approve` Stage-4 rerun produced `B = 1 / 1`:
+  `raw=1`, `valid=1`, `put_raw=1`, `put_valid=1`, `concrete=0/0`.
+- The regenerated PUT is now conservative R0 only.  The rerun's ladder refused
+  the mapping/source R2 query because `state._owner` is not nameable as a unit
+  input, so the old return R2 was not re-emitted.
+- Updated subject `result.json`, appended a fresh latest row to
+  `peer182/results.jsonl`, rewrote the manifest, and recorded
+  `stage4_partial_rerun` metadata in the row/detail.
+
+Peer182 after update:
+
+- Manifest summary:
+  `raw=451`, `valid=388`, `put_raw=376`, `put_valid=355`,
+  `concrete_raw=75`, `concrete_valid=64`, `rows=182`.
+- `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark
+  peer182` completed.
+- VeriPUT anomaly bucket `raw>0 & valid==0` is now `0`.
+- No files under `/home/samson/workspace/VeriPUT/Datasets` were modified.
+
 ## 2026-08-08 FrontRunner Runtime Interface And R2 Arithmetic Fixes
 
 Context:
