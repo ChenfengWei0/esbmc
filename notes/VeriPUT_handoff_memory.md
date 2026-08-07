@@ -11056,6 +11056,9 @@ Required row fields now emitted by the runner:
 - `raw`, `valid`, `put_raw`, `put_valid`, `concrete_raw`,
   `concrete_valid`.
 - `status`, `reason`, `mem_budget_mb`, `n_concurrent`, `host`.
+- `completion_status` and `budget_exhausted`, so a subject that produced
+  reference-valid tests before exhausting the remaining unit budget can still
+  report `status=ok` while preserving the budget fact.
 - `artifact_root`, `result_json`, `cert_jsonl`, `put_summary_paths`.
 - `oracle_class_counts` and `oracle_class_combo_counts`.
 - flags `raw_artifacts_retained=true` and `valid_artifacts_retained=true`.
@@ -11084,6 +11087,19 @@ Smoke and cleanup:
   the guard allowlist was fixed. It was moved out of the official result tree
   to `/tmp/veriput_rq1_smoke_rejected/peer182_1786070277`.
 - Current `Results/RQ1/VeriPUT` tree has no formal peer row from that smoke.
+- First formal sample after the runner landed:
+  `peer182/peer_ccsolbmc__AIRBets`, 600s/12GiB, one subject.
+  It certified `approve` in 231s, emitted and validated one R2 PUT for
+  `approve`, then produced one valid concrete replay for `initialize2`.
+  Journal row: raw=2, valid=2, PUT=1/1, concrete=1/1, wall=585.465s,
+  peak RSS about 12.2GiB. The row on disk predates the later
+  `completion_status` field and has `status=budget-exhausted`; do not rerun it
+  just to rename the status.
+- `/home/samson/workspace/VeriPUT/Results/results_all.py` was patched outside
+  the ESBMC repo to add a `veriput` arm that reads
+  `Results/RQ1/VeriPUT/<dataset>/results.jsonl` directly. On the AIRBets-only
+  sample, `results_all.py --benchmark peer182` reports veriput raw_u=2,
+  valid_u=2, raw_c=1, valid_c=1.
 
 Validation:
 

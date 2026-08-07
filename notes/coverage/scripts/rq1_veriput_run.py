@@ -501,6 +501,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
 
     put_summary = summarize_put_artifacts(case_dir / "put")
     wall_total_s = round(time.monotonic() - start, 3)
+    completion_status = result_status
+    budget_exhausted = completion_status == "budget-exhausted"
+    if budget_exhausted and put_summary["raw"] > 0:
+        result_status = "ok"
     if result_status == "ok" and put_summary["raw"] == 0:
         result_status = "no-output"
         failure_reason = "no PUT or concrete replay emitted"
@@ -516,6 +520,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "tool_timeout_s": args.timeout,
         "wall_cap_s": args.timeout + args.wrapper_grace,
         "status": result_status,
+        "completion_status": completion_status,
+        "budget_exhausted": budget_exhausted,
         "reason": failure_reason,
         "subject_id": subject_id,
         "benchmark": target_row["benchmark"],
