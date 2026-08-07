@@ -11156,6 +11156,46 @@ Official RQ1 redo after commit `53c83943e1`:
   the case exhausted its budget; the single useful deliverable is the valid
   concrete replay for `approve`.
 
+Follow-up scan after the Token success:
+
+- Cheap scan over latest `results.jsonl` rows found timeout-fallback candidates
+  among no-output cases:
+  - real203:
+    `ProjectOpenSea__seaport__PausableZone` (2 fallback paths),
+    `balancer__balancer-v3-monorepo__FeeBurnerAuthentication` (1),
+    `compound-finance__comet__CometWithExtendedAssetList` (1).
+  - bugfix124:
+    `pop_077_GameItems` (2).
+  - peer182:
+    none.
+
+Official redo:
+
+- `ProjectOpenSea__seaport__PausableZone`:
+  - command used the standard 600s / 120s run-timeout / 180s unit-cap / 12GiB
+    RQ1 settings with `--redo`.
+  - result: `status=no-output raw=0 valid=0 wall=302.005s`.
+  - Stage 4 did run the new fallback:
+    `executeMatchOrders` had `timeout_concrete_fallbacks_for_unit=2`.
+  - Both fallback paths refused at ESBMC emission:
+    `exit=1 emitted=[]`.
+  - The ESBMC log names a renderer gap, not a solver timeout:
+    `PausableZone.executeMatchOrders(seaport: CONTRACT:SeaportInterface,
+    orders: ARRAY:STRUCT, fulfillments: ARRAY:STRUCT)`.
+  - Do not keep rerunning this case until the Foundry testcase renderer can
+    materialize interface contract args and array-of-struct calldata.
+- `balancer__balancer-v3-monorepo__FeeBurnerAuthentication`:
+  - command used the same standard RQ1 settings with `--redo`.
+  - result: `status=ok raw=7 valid=7 put=0/0 concrete=7/7 wall=593.635s`.
+  - Stage times: `stage2_wall_s=402.862`, `stage4_wall_s=190.689`,
+    `maxrss_mb=2532.6`, `budget_exhausted=true`.
+  - Source split:
+    3 valid concrete replays from `timeout_concrete_fallback`
+    (`acceptOwnership`, enc 2/6/7);
+    4 valid concrete replays from `cleared_not_certified_fallback`
+    (`pendingOwner`, `owner`).
+  - No PUT/oracle was produced; all 7 are concrete reference-valid replay tests.
+
 ## 2026-08-08 - RQ1 scheduler no-output diagnosis
 
 Official accounting:
