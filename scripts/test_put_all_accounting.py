@@ -76,6 +76,28 @@ def main():
             },
             "static_extcall_inseparable": True,
         },
+        {
+            "benchmark": "bench",
+            "unit": "timeout",
+            "bucket": "KILLED",
+            "exit": 124,
+            "witnessed": 1,
+            "pins": {"msg.sender": 1},
+            "certified": {},
+            "not_certified": {},
+            "partial_witness_journal": {
+                "source_stage": "certify-query-started",
+                "partial": True,
+                "claims_decided": 1,
+                "claims_total": 9,
+                "witness_count": 1,
+                "paths": [{
+                    "path_id": "15",
+                    "path_function": "sol:@C@Token@F@approve#972",
+                    "witness_count": 1,
+                }],
+            },
+        },
     ]
     with tempfile.NamedTemporaryFile("w", delete=False) as fh:
         path = fh.name
@@ -97,6 +119,24 @@ def main():
                       for r in fallback_rows],
                      [("2", {"x": [7, 7]}, {"msg.sender": 5}),
                       ("4", {}, {"msg.sender": 5})])
+        timeout_rows = put_all.timeout_concrete_fallback_rows(records[3])
+        bad += check("timeout-fallback-uses-partial-witness-path",
+                     [(r["enc"], r["path_function"], r["region"], r["pins"],
+                       r["detail"]["witness_check"]) for r in timeout_rows],
+                     [("15", "sol:@C@Token@F@approve#972", {},
+                       {"msg.sender": 1}, "TIMEOUT-WITNESSED")])
+        inferred_timeout = dict(records[3])
+        inferred_timeout.update({
+            "exit": 1,
+            "witnessed": None,
+            "wall_s": 119.5,
+            "run_timeout_s": 120,
+            "driver_diagnostic": {"tag": "esbmc-no-cov-report"},
+        })
+        inferred_rows = put_all.timeout_concrete_fallback_rows(inferred_timeout)
+        bad += check("timeout-fallback-matches-runner-inferred-timeout",
+                     [(r["enc"], r["path_function"]) for r in inferred_rows],
+                     [("15", "sol:@C@Token@F@approve#972")])
         bad += check("structured-method-unsupported",
                      target["method_unsupported"], 1)
         bad += check("selected-no-verdict", target["no_verdict"], 0)

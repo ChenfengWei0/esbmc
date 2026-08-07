@@ -128,6 +128,10 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
     "SUCCESSFUL",
     "COMPLETE-WITNESS-NO-COORDINATE",
 }
+CONCRETE_ONLY_STAGE2_SOURCES = {
+    "cleared-concrete-fallback": "cleared_not_certified_fallback",
+    "timeout-concrete-fallback": "timeout_concrete_fallback",
+}
 
 # Byte for byte the driver's own printers (solidity_path_generalise.py:800,
 # and the `, {n} == {v}` pin suffix built at its report block). One grammar,
@@ -233,6 +237,79 @@ def cleared_concrete_fallback_rows(record):
             "pins": pins,
             "reason": reason,
             "detail": detail,
+        })
+    return rows
+
+
+def cert_row_timed_out(record):
+    if record.get("exit") == 124:
+        return True
+    if str(record.get("bucket") or "").upper() == "TIMEOUT":
+        return True
+    diagnostic = record.get("driver_diagnostic") or {}
+    progress = record.get("generalise_progress") or {}
+    run_timeout = record.get("run_timeout_s") or progress.get("timeout_s")
+    try:
+        run_timeout = float(run_timeout)
+        wall_s = float(record.get("wall_s") or 0)
+    except (TypeError, ValueError):
+        return False
+    if run_timeout <= 0 or wall_s < max(1.0, run_timeout * 0.9):
+        return False
+    return (
+        str(record.get("bucket") or "").upper() == "KILLED"
+        and record.get("witnessed") is None
+        and diagnostic.get("tag") == "esbmc-no-cov-report")
+
+
+def timeout_concrete_fallback_rows(record):
+    """Timed-out Stage-2 rows whose partial witness names replayable paths.
+
+    These rows are not proofs and they do not provide a certified region.  They
+    only keep a concrete replay opportunity when Stage 2 reached a path witness
+    and then died in the final certification query.
+    """
+    if not cert_row_timed_out(record):
+        return []
+    if record.get("certified") or record.get("not_certified"):
+        return []
+    journal = record.get("partial_witness_journal") or {}
+    if not isinstance(journal, dict):
+        return []
+    try:
+        witness_count = int(journal.get("witness_count") or 0)
+    except (TypeError, ValueError):
+        witness_count = 0
+    if witness_count <= 0:
+        return []
+    row_pins = parse_pins(record.get("pins"))
+    rows = []
+    for path in journal.get("paths") or []:
+        if not isinstance(path, dict):
+            continue
+        enc = claim_path_id_int(path.get("path_id"))
+        path_function = path.get("path_function")
+        if enc is None or not path_function:
+            continue
+        try:
+            path_witnesses = int(path.get("witness_count") or 0)
+        except (TypeError, ValueError):
+            path_witnesses = 0
+        if path_witnesses <= 0:
+            continue
+        rows.append({
+            "enc": str(enc),
+            "path_function": str(path_function),
+            "region": {},
+            "pins": row_pins,
+            "reason": "Stage-2 certification timed out after witnessing path",
+            "detail": {
+                "witness_check": "TIMEOUT-WITNESSED",
+                "source_stage": journal.get("source_stage"),
+                "claims_decided": journal.get("claims_decided"),
+                "claims_total": journal.get("claims_total"),
+                "partial": journal.get("partial"),
+            },
         })
     return rows
 
@@ -582,8 +659,10 @@ def main():
                     help="also emit concrete-only replay tests for "
                          "NOT_CERTIFIED paths whose Stage-2 detail has "
                          "concrete_fallback=true and a cleared or complete "
-                         "witness status. These are raw/valid concrete tests "
-                         "only, never PUTs or region proofs.")
+                         "witness status, plus timed-out certification rows "
+                         "whose partial journal already names witnessed "
+                         "paths. These are raw/valid concrete tests only, "
+                         "never PUTs or region proofs.")
     ap.add_argument("--max-tx", type=int, default=1)
     ap.add_argument("--auto-unwind", type=int, default=0,
                     help="passed to the driver: on an UNDECIDED-TRUNCATED "
@@ -641,6 +720,7 @@ def main():
     rows = []
     n_certified = 0   # BEFORE --only, so the header can say what was filtered
     n_cleared_fallback = 0
+    n_timeout_fallback = 0
     for line in open(cert_path):
         line = line.strip()
         if not line:
@@ -675,6 +755,25 @@ def main():
                 rows.append((key, is_poc, r["unit"], r.get("path_function"),
                              enc_i, None, None, [], False, {}, exit_kind,
                              row_subject, "cleared-concrete-fallback",
+                             fb["region"], {}, fb["pins"],
+                             fb["detail"].get("witness_check")))
+            for fb in timeout_concrete_fallback_rows(r):
+                try:
+                    enc_i = int(fb["enc"])
+                except ValueError:
+                    print(f"  SKIP {key}.{r['unit']} enc={fb['enc']}: the "
+                          "partial witness path id is not numeric, so this "
+                          "timeout concrete fallback cannot be resolved")
+                    continue
+                n_timeout_fallback += 1
+                if args.only and args.only not in f"{key}.{r['unit']}":
+                    continue
+                path_function = fb.get("path_function") or r.get("path_function")
+                exit_kind = report_exit_kind(
+                    r.get("enumeration_report"), path_function, enc_i)
+                rows.append((key, is_poc, r["unit"], path_function,
+                             enc_i, None, None, [], False, {}, exit_kind,
+                             row_subject, "timeout-concrete-fallback",
                              fb["region"], {}, fb["pins"],
                              fb["detail"].get("witness_check")))
         if r.get("bucket") != "CERTIFIED":
@@ -776,8 +875,11 @@ def main():
           + (f"\n=== {n_cleared_fallback} cleared concrete fallback(s) "
              "available from Stage 2 ==="
              if args.emit_cleared_concrete_fallbacks else "")
+          + (f"\n=== {n_timeout_fallback} timeout concrete fallback(s) "
+             "available from Stage 2 partial witnesses ==="
+             if args.emit_cleared_concrete_fallbacks else "")
           + (f"\n=== --only '{args.only}' keeps {len(rows)} of them; the "
-             f"other {(n_certified + n_cleared_fallback) - len(rows)} were NOT measured by this run "
+             f"other {(n_certified + n_cleared_fallback + n_timeout_fallback) - len(rows)} were NOT measured by this run "
              f"and their absence is a filter, not a result ==="
              if args.only else ""))
     stage2_accounting = stage2_path_accounting(cert_path, args.only)
@@ -793,7 +895,7 @@ def main():
     # which is a different fact entirely. Same shape as poc_funnel's --only,
     # and it is here because that one was found by being read wrong first.
     if args.only and not rows:
-        total_rows = n_certified + n_cleared_fallback
+        total_rows = n_certified + n_cleared_fallback + n_timeout_fallback
         print(f"⛔ --only '{args.only}' selected NONE of the {total_rows} "
               f"Stage-4 candidate row(s) in this arm. It matches against "
               f"`<benchmark>.<unit>`. Refusing to print an empty sweep, which "
@@ -914,13 +1016,13 @@ def main():
                   f"whose behaviour matches the pinned value -- after which "
                   f"this row becomes emittable unchanged")
             continue
-        if stage2_source == "cleared-concrete-fallback":
+        if stage2_source in CONCRETE_ONLY_STAGE2_SOURCES:
             region = dict(region_override or {})
             holes = dict(holes_override or {})
             pins = dict(pins_override or {})
         else:
             region, holes, pins = parse_certified(text)
-        if stage2_source != "cleared-concrete-fallback" and not region and not pins:
+        if stage2_source not in CONCRETE_ONLY_STAGE2_SOURCES and not region and not pins:
             print(f"  SKIP {bench}.{unit} enc={encs}: the recorded region "
                   f"parsed EMPTY, which is a PARSER failure, not an empty "
                   f"region -- refusing to emit a PUT over nothing")
@@ -955,19 +1057,21 @@ def main():
             cmd += ["--path-function", path_function]
         if exit_kind:
             cmd += ["--exit-kind", exit_kind]
-        if args.propose_r2 and stage2_source != "cleared-concrete-fallback":
+        if args.propose_r2 and stage2_source not in CONCRETE_ONLY_STAGE2_SOURCES:
             cmd += ["--propose-r2", "--r2-depth", str(args.r2_depth),
                     "--r2-term-budget", str(args.r2_term_budget),
                     "--r2-candidate-budget", str(args.r2_candidate_budget)]
         if (args.fuzz_r2_prefilter
-                and stage2_source != "cleared-concrete-fallback"):
+                and stage2_source not in CONCRETE_ONLY_STAGE2_SOURCES):
             cmd += ["--fuzz-r2-prefilter", "--fuzz-runs",
                     str(args.fuzz_runs), "--fuzz-r2-candidate-budget",
                     str(args.fuzz_r2_candidate_budget),
                     "--fuzz-r2-prefilter-timeout",
                     str(args.forge_timeout)]
-        if stage2_source == "cleared-concrete-fallback":
+        if stage2_source in CONCRETE_ONLY_STAGE2_SOURCES:
             cmd += ["--concrete-only", "--test-suffix", "_fb"]
+            cmd += ["--concrete-stage2-source",
+                    CONCRETE_ONLY_STAGE2_SOURCES[stage2_source]]
             if stage2_witness_check:
                 cmd += [
                     "--concrete-stage2-witness-check",

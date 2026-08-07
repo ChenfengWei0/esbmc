@@ -4850,6 +4850,7 @@ def _retreat_uint_add_region(expr, region, holes, id_names):
     if any(value is None for value in bounds.values()):
         return None
     best = None
+    best_score = None
     for name in unique_coords:
         other_hi = literal_sum
         for other in coords:
@@ -4864,8 +4865,9 @@ def _retreat_uint_add_region(expr, region, holes, id_names):
         old_width = hi - lo
         new_width = new_hi - lo
         score = (new_width > 0, new_width, old_width, name)
-        if best is None or score > best[0]:
+        if best_score is None or score > best_score:
             best = (score, name, lo, hi, new_hi)
+            best_score = score
     if best is None:
         return None
     _score, name, lo, hi, new_hi = best
@@ -8761,6 +8763,13 @@ def main():
                     help="Stage-2 witness status that made --concrete-only "
                          "eligible. Recorded only; concrete-only output still "
                          "depends on the emitted replay and Forge validity.")
+    ap.add_argument("--concrete-stage2-source",
+                    default="cleared_not_certified_fallback",
+                    choices=("cleared_not_certified_fallback",
+                             "timeout_concrete_fallback"),
+                    help="Stage-2 source for --concrete-only accounting. "
+                         "Recorded only; it does not turn a replay into a "
+                         "proof.")
     ap.add_argument("--piece", default=None, metavar="K",
                     help="which PIECE of a split certified region this is. "
                          "stage 2 may certify one path as a UNION of boxes "
@@ -9025,7 +9034,7 @@ def main():
               "run here")
         with open(os.path.join(a.workdir, "put.json"), "w") as f:
             json.dump({"kind": "concrete",
-                       "stage2_source": "cleared_not_certified_fallback",
+                       "stage2_source": a.concrete_stage2_source,
                        "contract": a.contract, "unit": a.unit, "enc": a.enc,
                        "depth": a.depth, "path_function": pf,
                        "artifact_identity": overload_label,
@@ -9057,7 +9066,8 @@ def main():
                                 "max_tx": a.max_tx, "rule": cell_rule},
                        "binary": binary_identity(a.esbmc),
                        "concrete_reason": (
-                           "Stage-2 concrete_fallback with witness_check="
+                           "Stage-2 " + str(a.concrete_stage2_source)
+                           + " with witness_check="
                            + str(a.concrete_stage2_witness_check)),
                        "constructor_staticcall_mocks": len(
                            constructor_mocks) // 2,

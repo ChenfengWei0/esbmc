@@ -439,6 +439,49 @@ def _cleared_concrete_fallback_count(cert_path: Path, benchmark_key: str,
     return count
 
 
+def _timeout_concrete_fallback_count(cert_path: Path, benchmark_key: str,
+                                     unit: str) -> int:
+    if not cert_path.exists():
+        return 0
+    count = 0
+    for line in cert_path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("unit") != unit:
+            continue
+        if (row.get("benchmark") or row.get("poc")) != benchmark_key:
+            continue
+        if not _cert_row_timed_out(row):
+            continue
+        if row.get("certified") or row.get("not_certified"):
+            continue
+        journal = row.get("partial_witness_journal") or {}
+        if not isinstance(journal, dict):
+            continue
+        try:
+            witness_count = int(journal.get("witness_count") or 0)
+        except (TypeError, ValueError):
+            witness_count = 0
+        if witness_count <= 0:
+            continue
+        for path in journal.get("paths") or []:
+            if not isinstance(path, dict):
+                continue
+            if not path.get("path_id") or not path.get("path_function"):
+                continue
+            try:
+                path_witnesses = int(path.get("witness_count") or 0)
+            except (TypeError, ValueError):
+                path_witnesses = 0
+            if path_witnesses > 0:
+                count += 1
+    return count
+
+
 def summarize_certification(cert_path: Path) -> dict:
     summary = {
         "rows": 0,
@@ -868,7 +911,11 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         n_certified = _certified_count(cert_path, subject.benchmark_key, unit)
         n_cleared_fallback = _cleared_concrete_fallback_count(
             cert_path, subject.benchmark_key, unit)
-        if n_certified + n_cleared_fallback <= 0:
+        n_timeout_fallback = _timeout_concrete_fallback_count(
+            cert_path, subject.benchmark_key, unit)
+        n_stage4_candidates = (
+            n_certified + n_cleared_fallback + n_timeout_fallback)
+        if n_stage4_candidates <= 0:
             consecutive_no_candidate_units += 1
             max_consecutive_no_candidate_units = max(
                 max_consecutive_no_candidate_units,
@@ -919,7 +966,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             "unit": unit,
             "certified_regions_for_unit": n_certified,
             "cleared_concrete_fallbacks_for_unit": n_cleared_fallback,
-            "stage4_candidates_for_unit": n_certified + n_cleared_fallback,
+            "timeout_concrete_fallbacks_for_unit": n_timeout_fallback,
+            "stage4_candidates_for_unit": n_stage4_candidates,
             "put_out_root": str(put_root),
         })
         stages.append(put_stage)
@@ -976,6 +1024,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "esbmc_run_timeout_s": args.esbmc_run_timeout,
         "stage2_unit_timeout_cap_s": args.stage2_unit_timeout_cap_s,
         "cleared_concrete_fallbacks_enabled": True,
+        "timeout_concrete_fallbacks_enabled": True,
         "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
         "no_candidate_stage2_unit_stop_n": args.no_candidate_stage2_unit_stop_n,
         "max_consecutive_no_candidate_units": max_consecutive_no_candidate_units,

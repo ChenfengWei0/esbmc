@@ -345,15 +345,37 @@ def test_cleared_concrete_fallbacks_trigger_stage4():
                     },
                 },
             },
+            {
+                "benchmark": "bench",
+                "unit": "approve",
+                "bucket": "KILLED",
+                "exit": 124,
+                "witnessed": 1,
+                "certified": {},
+                "not_certified": {},
+                "partial_witness_journal": {
+                    "partial": True,
+                    "witness_count": 1,
+                    "paths": [{
+                        "path_id": "15",
+                        "path_function": "sol:@C@Token@F@approve#972",
+                        "witness_count": 1,
+                    }],
+                },
+            },
         ]
         cert.write_text("".join(json.dumps(row) + "\n" for row in rows))
-        count = rq1_veriput_run._cleared_concrete_fallback_count(
+        cleared_count = rq1_veriput_run._cleared_concrete_fallback_count(
+            cert, "bench", "approve")
+        timeout_count = rq1_veriput_run._timeout_concrete_fallback_count(
             cert, "bench", "approve")
     argv = rq1_veriput_run._put_argv(
         cert, "approve", "bench", Path("/tmp/out"), 600, 12, 300)
     bad = 0
-    bad += check(count == 2,
+    bad += check(cleared_count == 2,
                  "cleared and complete-witness concrete fallbacks trigger Stage 4")
+    bad += check(timeout_count == 1,
+                 "timed-out witnessed certification rows trigger Stage 4")
     bad += check("--emit-cleared-concrete-fallbacks" in argv,
                  f"RQ1 Stage 4 enables cleared concrete fallback emission: {argv}")
     return bad

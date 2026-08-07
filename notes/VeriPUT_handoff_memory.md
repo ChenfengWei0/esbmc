@@ -11045,6 +11045,85 @@ Answer / policy:
   meaningful, schedule a bounded upgrade pass; otherwise keep the first-pass
   results and spend the budget on untouched / no-output subjects.
 
+## 2026-08-08 - timeout witnessed concrete fallback
+
+Problem:
+
+- `real203/ERC-3643__ERC-3643__Token` still produced `raw=0 valid=0` after the
+  scheduler fixes.
+- It was no longer stuck on `init`: the runner attempted `approve` and
+  `increaseAllowance`.
+- Both Stage-2 rows were `bucket=KILLED exit=124 witnessed=1`, with no
+  certified/not-certified regions, but each row's
+  `partial_witness_journal.paths[0]` contained a concrete path id and
+  `path_function`.
+- The existing Stage-4 fallback only consumed
+  `not_certified_details.concrete_fallback=true`, so these witnessed timeout
+  rows were treated as if they had no Stage-4 candidate at all.
+
+Code change:
+
+- `notes/coverage/scripts/put_all.py` now extracts
+  `timeout-concrete-fallback` rows from timed-out Stage-2 records when:
+  - the row timed out (`exit=124` or `bucket=TIMEOUT`);
+  - it has no certified or not-certified regions;
+  - its `partial_witness_journal` names witnessed paths with numeric
+    `path_id` and nonempty `path_function`.
+- These rows run `scripts/solidity_path_put.py --concrete-only` only.  They are
+  concrete replay candidates, not PUTs and not proofs.
+- `scripts/solidity_path_put.py` gained `--concrete-stage2-source`, so
+  concrete-only `put.json` records either:
+  - `cleared_not_certified_fallback`; or
+  - `timeout_concrete_fallback`.
+- `notes/coverage/scripts/rq1_veriput_run.py` now counts timeout concrete
+  fallbacks as Stage-4 candidates, so the production wrapper does not early-stop
+  a unit immediately after certification timeout when a witnessed path can
+  still be replayed concretely.
+- A small pre-existing pylint error in `scripts/solidity_path_put.py`
+  (`_retreat_uint_add_region`, tuple score tracking) was fixed by splitting
+  `best_score` from `best`.
+- Code review found that runner and Stage 4 originally used slightly different
+  timeout predicates.  `put_all.py::cert_row_timed_out` now matches the
+  runner's inferred timeout shape too (`KILLED`, no cov report diagnostic,
+  wall near run timeout), and `test_put_all_accounting.py` covers it.
+
+Validation:
+
+- `py_compile` passed for:
+  `put_all.py`, `rq1_veriput_run.py`, `solidity_path_put.py`,
+  `test_put_all_accounting.py`, `test_rq1_veriput_run.py`.
+- `git diff --check` passed for the same files.
+- `scripts/test_put_all_accounting.py` passed, including direct extraction of
+  a timeout partial-witness fallback.
+- `scripts/test_rq1_veriput_run.py` passed, including Stage-4 candidate
+  accounting for timed-out witnessed rows.
+- `pylint --errors-only` passed for the changed Python files.
+
+Token probe using the existing official cert jsonl, not a full official redo:
+
+- Command shape:
+  `put_all.py --cert .../ERC-3643__ERC-3643__Token/cert/certify-results.jsonl
+   --only stress243__ERC-3643__ERC-3643__Token.approve
+   --strong-recipe --emit-cleared-concrete-fallbacks --memlimit-gib 12`.
+- With `--timeout 120`, concrete emission timed out:
+  `exit=124 120.5s emitted=[]`.
+- With `--timeout 300`, concrete emission succeeded:
+  `exit=1 134.4s emitted=['Token.cov.t.sol']`.
+- The probe wrote one concrete-only replay:
+  `TokenCovTest_Token_approve_concrete15_fb.t.sol`.
+- Forge gate was green in the probe:
+  `Reference-valid generated tests: 1 total (0 PUT, 1 concrete)`.
+- No PUT or oracle was produced, as intended:
+  `PUTs emitted: 0`, `Concrete replays emitted: 1`.
+
+Implication:
+
+- For this class of hard rows, the fallback can improve official raw/valid
+  concrete counts if Stage 4 gets roughly 135s+ for emission/Forge after the
+  Stage-2 timeout.
+- It will not improve PUT counts by itself.  Concrete-to-PUT still requires a
+  separate ESBMC proof over a generalized region.
+
 ## 2026-08-08 - RQ1 scheduler no-output diagnosis
 
 Official accounting:
