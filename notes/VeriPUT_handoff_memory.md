@@ -11455,6 +11455,103 @@ Diagnosis and code change:
   - `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
     passed.
 
+## 2026-08-07 bugfix124 fast-first 72-subject state
+
+Sixth fast-first wave command, first using no-output Stage-2 early-stop:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 72 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Pre-run state:
+
+- Latest ESBMC branch head:
+  `1858fb7db6 [scripts] Add VeriPUT no-output early stop`.
+- No residual VeriPUT/ESBMC worker processes.
+- About 35GiB available memory.
+
+The runner skipped the prior rows and queued a reentrancy-bank-heavy block:
+
+- `rcx_reentrancy__0x23a9...__SmartFix / PrivateBank`:
+  ok, raw=1, valid=0, PUT 0/0, concrete 0/1, wall 312.470s,
+  Stage2 252.726s, Stage4 59.705s.
+- `rcx_reentrancy__0xb5e1...__SmartFix / Private_Bank`:
+  ok, raw=1, valid=0, PUT 0/0, concrete 0/1, wall 311.469s,
+  Stage2 252.725s, Stage4 58.704s.
+- `rcx_reentrancy__0xf015...__SmartFix / MY_BANK`:
+  ok, raw=1, valid=1, PUT 1/1, wall 262.868s,
+  Stage2 94.269s, Stage4 168.578s, oracle R1=2, R2=6.
+- `rcx_reentrancy__0x7b36...__SmartFix / W_WALLET`:
+  ok, raw=1, valid=1, PUT 1/1, wall 264.370s,
+  Stage2 94.268s, Stage4 170.082s, oracle R1=2, R2=6.
+- `rcx_reentrancy__0x93c3...__SmartFix / X_WALLET`:
+  ok, raw=1, valid=1, PUT 1/1, wall 266.202s,
+  Stage2 95.759s, Stage4 170.426s, oracle R1=2, R2=6.
+- `rcx_reentrancy__0xaae1...__SmartFix / DEP_BANK`:
+  ok, raw=3, valid=2, PUT 2/2, concrete 0/1, wall 257.210s,
+  Stage2 217.077s, Stage4 40.092s, oracle R1=6, R2=6.
+- `rcx_reentrancy__0x561e...__SmartFix / BANK_SAFE`:
+  ok, raw=3, valid=2, PUT 2/2, concrete 0/1, wall 256.779s,
+  Stage2 217.197s, Stage4 39.540s, oracle R1=6, R2=6.
+- `rcx_reentrancy__0x4e73...__SmartFix / PRIVATE_ETH_CELL`:
+  ok, raw=3, valid=2, PUT 2/2, concrete 0/1, wall 257.784s,
+  Stage2 218.204s, Stage4 39.542s, oracle R1=6, R2=6.
+- `rcx_reentrancy__0x4320...__SmartFix / ACCURAL_DEPOSIT`:
+  ok, raw=4, valid=3, PUT 3/3, concrete 0/1, wall 386.484s,
+  Stage2 257.745s, Stage4 128.690s, oracle R1=4, R2=6.
+- `rcx_reentrancy__0xbe40...__SmartFix / MONEY_BOX`:
+  no-output, raw=0, wall 308.386s, Stage2 308.367s,
+  `completion_status=early-stop-no-output`,
+  `early_stop_reason="no output after 308.4s Stage 2; stopped before remaining units"`.
+- `rcx_reentrancy__0x96ed...__SmartFix / PENNY_BY_PENNY`:
+  no-output, raw=0, wall 202.211s, Stage2 202.187s,
+  `completion_status=early-stop-no-output`,
+  `early_stop_reason="no output after 202.2s Stage 2; stopped before remaining units"`.
+- `rcx_reentrancy__0xf015...__sGuard / MY_BANK`:
+  ok, raw=3, valid=1, PUT 1/2, concrete 0/1, wall 216.236s,
+  Stage2 38.036s, Stage4 178.178s, oracle R1=8, R2=14.
+
+Wave-level outcome:
+
+- 10 / 12 subjects were `ok`.
+- 8 / 12 subjects produced at least one valid reference test.
+- New wave raw=21, valid=13.
+- New wave PUT 13/14; concrete replay 0/7.
+- New wave oracle additions: R1=36, R2=56.
+- 2 / 12 rows used `completion_status=early-stop-no-output`.
+
+Early-stop diagnosis:
+
+- The new early-stop policy did trigger and recorded auditable reasons, but it
+  did not save as much as hoped in this bank-heavy block because the slow
+  no-output cases spent 202-308s inside a single unit before reaching the
+  runner's unit boundary.  The policy only decides between units.
+- For successful bank cases, the long cost often produced valid PUTs.  Examples:
+  MY_BANK/W_WALLET/X_WALLET took about 263-266s each and emitted valid R1/R2
+  PUTs; ACCURAL_DEPOSIT took about 386s and emitted 3 valid PUTs.
+- Therefore a broad skip for reentrancy-bank subjects would hurt strength.
+  The next speed improvement should target one of:
+  - a per-unit Stage2 cap lower than 120s for no-artifact subjects;
+  - a PUT/R2 assertion subquery cap or staged R2 budget;
+  - a `valid-output` early-stop variant, because this wave introduced two
+    raw-only invalid concrete rows.
+
+Aggregate bugfix124 VeriPUT state after this wave:
+
+- Latest rows: 78.  This exceeds `--limit 72` because earlier manifest-order
+  smoke rows are outside the fast-first prefix but remain in the same
+  last-write-wins journal.
+- Status counts: `ok=43`, `no-output=29`, `no-units=4`,
+  `budget-exhausted=2`.
+- Aggregate raw=108, valid=85.
+- Aggregate PUT 71/80; concrete replay 14/28.
+- Subjects with at least one valid test: 41 / 78.
+- Aggregate oracle counts: R0=47, R1=53, R2=124.
+- `Results/results_all.py --benchmark bugfix124` reports the VeriPUT arm as:
+  `ran=78`, `raw_u=108`, `valid_u=85`, `raw_c=43`, `valid_c=41`,
+  `coverage=33.1%`, `VT/case=0.69`.
+- `results_all.py` anomaly audit for VeriPUT:
+  median ok-wall 58.1s, `timeout/oom/error=0`, `raw>0 & valid==0=2`.
+- No residual VeriPUT/ESBMC worker processes remained after the wave.
+
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 
 User tightened the output requirements before the benchmark wave:
