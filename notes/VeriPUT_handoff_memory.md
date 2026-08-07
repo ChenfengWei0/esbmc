@@ -11077,6 +11077,55 @@ Checks:
 - `pylint --errors-only notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
   passed.
 
+Follow-up rerun:
+
+- Ran one official redo for
+  `real203/ERC-3643__ERC-3643__Token` after the scheduler fix:
+  `timeout=600`, `esbmc-run-timeout=120`, `stage2-unit-timeout-cap-s=180`,
+  `no-output-stage2-stop-s=90`, `no-candidate-stage2-unit-stop-n=4`,
+  `zero-output-stage4-stop-s=30`, `memlimit=12GiB`.
+- Result remained `no-output`, raw=0, valid=0, wall=180.929s.
+- But the failure changed in an informative way:
+  attempted unit was now `approve`, not `init`; schedule fix worked.
+- `approve` got one witnessed path and finished level-0 quickly, then timed out
+  inside certification query (`KILLED`, exit 124) at the 180s unit cap.
+- Because the runner applied the wall-clock no-output stop after a single
+  no-candidate unit, the subject still stopped before trying
+  `increaseAllowance`, `decreaseAllowance`, etc.
+
+## 2026-08-08 - Stage-2 no-output stop needs repeated misses
+
+Diagnosis:
+
+- The real203 Token rerun showed that `--no-output-stage2-stop-s 90` was too
+  aggressive when paired with `--stage2-unit-timeout-cap-s 180`.
+- A single heavy no-candidate unit could exceed the 90s wall threshold and end
+  a multi-unit subject before any second entry point was attempted.
+- This defeats the purpose of the consecutive no-candidate unit stop and hides
+  potentially cheaper later units.
+
+Code change:
+
+- `notes/coverage/scripts/rq1_veriput_run.py` now routes the Stage-2 wall
+  no-output decision through `_should_stop_after_no_output_stage2`.
+- That stop still requires raw=0 and elapsed Stage-2 wall >= threshold, but by
+  default it also requires at least 2 consecutive no-candidate units.
+- If the operator explicitly sets `--no-candidate-stage2-unit-stop-n 1`, the
+  one-unit early-stop policy is still honored.
+- This preserves the speed valve while preventing one heavy unit from
+  monopolizing a multi-unit subject.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed.
+- `pylint --errors-only notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py notes/VeriPUT_handoff_memory.md`
+  passed after this note was added.
+
 ## 2026-08-08 - constructor precompile fixture repair
 
 Branch/worktree:

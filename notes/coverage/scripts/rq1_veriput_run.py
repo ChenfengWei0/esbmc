@@ -730,6 +730,20 @@ def _should_stop_after_zero_output_stage4(stages: list[dict],
     return _stage_wall_s(stages, "put") >= float(threshold_s)
 
 
+def _should_stop_after_no_output_stage2(stages: list[dict],
+                                        put_summary: dict,
+                                        threshold_s: int,
+                                        consecutive_units: int,
+                                        min_consecutive_units: int = 2) -> bool:
+    if threshold_s <= 0:
+        return False
+    if int(put_summary.get("raw") or 0) > 0:
+        return False
+    if consecutive_units < max(1, int(min_consecutive_units)):
+        return False
+    return _stage_wall_s(stages, "certify") >= float(threshold_s)
+
+
 def _should_stop_after_no_candidate_units(consecutive_units: int,
                                           put_summary: dict,
                                           threshold_units: int) -> bool:
@@ -870,13 +884,19 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 failure_reason = early_stop_reason
                 break
             stop_s = args.no_output_stage2_stop_s
-            if stop_s > 0 and _stage_wall_s(stages, "certify") >= stop_s:
-                if partial_put["raw"] == 0:
-                    early_stop_reason = _format_stage2_no_output_stop(
-                        _stage_wall_s(stages, "certify"))
-                    result_status = "early-stop-no-output"
-                    failure_reason = early_stop_reason
-                    break
+            min_no_candidate_units = (
+                1 if args.no_candidate_stage2_unit_stop_n == 1 else 2)
+            if _should_stop_after_no_output_stage2(
+                    stages,
+                    partial_put,
+                    stop_s,
+                    consecutive_no_candidate_units,
+                    min_no_candidate_units):
+                early_stop_reason = _format_stage2_no_output_stop(
+                    _stage_wall_s(stages, "certify"))
+                result_status = "early-stop-no-output"
+                failure_reason = early_stop_reason
+                break
             continue
         consecutive_no_candidate_units = 0
         if _remaining(deadline) < args.min_remaining_s:
@@ -916,13 +936,19 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             failure_reason = early_stop_reason
             break
         stop_s = args.no_output_stage2_stop_s
-        if stop_s > 0 and _stage_wall_s(stages, "certify") >= stop_s:
-            if partial_put["raw"] == 0:
-                early_stop_reason = _format_stage2_no_output_stop(
-                    _stage_wall_s(stages, "certify"))
-                result_status = "early-stop-no-output"
-                failure_reason = early_stop_reason
-                break
+        min_no_candidate_units = (
+            1 if args.no_candidate_stage2_unit_stop_n == 1 else 2)
+        if _should_stop_after_no_output_stage2(
+                stages,
+                partial_put,
+                stop_s,
+                consecutive_no_candidate_units,
+                min_no_candidate_units):
+            early_stop_reason = _format_stage2_no_output_stop(
+                _stage_wall_s(stages, "certify"))
+            result_status = "early-stop-no-output"
+            failure_reason = early_stop_reason
+            break
 
     put_summary = summarize_put_artifacts(case_dir / "put")
     cert_summary = summarize_certification(cert_path)

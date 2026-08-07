@@ -527,6 +527,29 @@ def test_stage2_no_output_stop_reason_is_audit_friendly():
     return bad
 
 
+def test_stage2_no_output_stop_requires_multiple_no_candidate_units():
+    stages = [
+        {
+            "stage": "certify",
+            "wall_s": 180.0,
+        },
+    ]
+    bad = 0
+    bad += check(not rq1_veriput_run._should_stop_after_no_output_stage2(
+        stages, {"raw": 0}, 90, 1),
+                 "one heavy no-candidate unit does not end a multi-unit subject")
+    bad += check(rq1_veriput_run._should_stop_after_no_output_stage2(
+        stages, {"raw": 0}, 90, 2),
+                 "Stage-2 no-output stop fires after repeated no-candidate units")
+    bad += check(not rq1_veriput_run._should_stop_after_no_output_stage2(
+        stages, {"raw": 1}, 90, 2),
+                 "Stage-2 no-output stop keeps raw outputs")
+    bad += check(rq1_veriput_run._should_stop_after_no_output_stage2(
+        stages, {"raw": 0}, 90, 1, min_consecutive_units=1),
+                 "explicit one-unit policy can still stop after one candidate miss")
+    return bad
+
+
 def test_zero_output_stage4_stop_is_thresholded_and_raw_sensitive():
     stages = [
         {
@@ -580,6 +603,7 @@ def main():
         test_certify_argv_for_remaining_honors_unit_timeout_cap,
         test_prepare_case_dir_preserves_complete_and_quarantines_partial,
         test_stage2_no_output_stop_reason_is_audit_friendly,
+        test_stage2_no_output_stop_requires_multiple_no_candidate_units,
         test_zero_output_stage4_stop_is_thresholded_and_raw_sensitive,
         test_no_candidate_stage2_unit_stop_is_thresholded_and_raw_sensitive,
     ]
