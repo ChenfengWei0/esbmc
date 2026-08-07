@@ -11387,6 +11387,71 @@ Checks:
 - `git diff --check -- scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_certify_all_partial_journal.py scripts/test_put_all_accounting.py`
   passed.
 
+## 2026-08-07 peer182 fast-first limit48 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 48 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Execution:
+
+- Ran after Stage1 report snapshot preservation.
+- The runner skipped the first 36 fast-first peer rows and queued the next 12.
+- No OOM, timeout, or residual worker processes after completion.
+- New direct-mode rows now have `enumeration-report.json` snapshots and their
+  `certify-results.jsonl` rows carry the snapshot path in `enumeration_report`.
+  Checked on `peer_soltg__store_state`,
+  `peer_soltg__while_1_continue_fail`, and `peer_soltg__constructor_5`.
+
+Latest peer182 aggregate after this wave:
+
+- Latest rows: 49.  This includes earlier `peer_ccsolbmc__AIRBets` plus
+  fast-first prefix 48.
+- Status counts: 29 `ok`, 19 `no-output`, 1 `no-units`.
+- Completion counts: 1 `budget-exhausted`, 47 `ok`, 1 `no-units`.
+- Valid subjects: 25 / 49.
+- Generated tests: raw/valid 76 / 51.
+- PUT tests: raw/valid 64 / 41.
+- Concrete replay tests: raw/valid 12 / 10.
+- Raw>0 but valid==0 subjects: 4.
+- Oracle classes: `R2: 310`, `R1: 38`, `R0: 16`.
+- Oracle combinations: `R2: 290`, `R1: 18`, `R1+R2: 20`, `R0: 16`.
+- Median ok-wall: 23.039s.  Max ok-wall remains AIRBets at 585.465s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=49`,
+  `raw_u=76`, `valid_u=51`, `raw_c=29`, `valid_c=25`,
+  `coverage=13.7%`, `VT/case=0.28`, median ok-wall 23.0s, and
+  `raw>0 & valid==0=4`.
+
+New rows in fast-first 37-48:
+
+- `peer_soltg__store / Storage`: no-output, wall 2.022s.
+- `peer_solar__EasyPayAndWithDraw / EasyPayAndWithDraw`: ok,
+  raw=2, valid=2, PUT 1/1, concrete 1/1, wall 36.055s,
+  oracle classes `R0:1`.
+- `peer_soltg__store_state / Storage`: ok, raw=2, valid=2,
+  PUT 1/1, concrete 1/1, wall 20.037s, oracle classes `R0:1, R1:5, R2:11`.
+- `peer_soltg__while_1_continue_fail / Cwb5`: ok, raw=1,
+  valid=1, PUT 1/1, wall 26.034s, oracle classes `R0:1`.
+- `peer_soltg__constructor_2_fun_overloading / C2`: no-output,
+  wall 3.517s.
+- `peer_soltg__constructor_5 / C5`: ok, raw=3, valid=2,
+  PUT 2/3, wall 58.071s, oracle classes `R0:3, R1:6, R2:9`.
+- `peer_soltg__branches_in_modifiers / Ci1`: no-output, wall 1.511s.
+- `peer_soltg__simple_if_state_var / Csi3`: no-output, wall 1.512s.
+- `peer_soltg__constructor_7 / B7`: no-output, wall 2.514s.
+- `peer_soltg__constructor_state_variable_init_chain_alternate / Dv2`:
+  no-units, wall 0.009s.
+- `peer_solar__GuessTheNumberChallenge / GuessTheNumberChallenge`: ok,
+  raw=2, valid=2, PUT 2/2, wall 18.029s, oracle classes `R0:2, R1:1, R2:1`.
+- `peer_soltg__state_machine_1 / Csma`: no-output, wall 6.519s.
+
+Interpretation:
+
+- The Stage1 report preservation fix is active in production output.
+- R0 count doubled from 8 to 16 in this wave, which is the expected effect of
+  passing normal/revert exit-kind into Stage4 more reliably.
+- The `raw>0 valid==0` count did not increase in this wave; it remains 4.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
