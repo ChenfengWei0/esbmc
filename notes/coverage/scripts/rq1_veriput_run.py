@@ -138,7 +138,11 @@ def target_rows(veriput_root: Path, benchmark: str, subject_ids: list[str],
 def cached_subject(subject: PreparedSubject, ast_cache_root: Path,
                    dataset_label: str) -> PreparedSubject:
     ast_name = Path(subject.solast).name
-    cached = ast_cache_root / dataset_label / subject.benchmark_key / ast_name
+    # certify_all.py re-applies --ast-cache-root using the prepared subject's
+    # own benchmark key.  The cache must use that same namespace; the RQ1
+    # dataset label (`real203`) is only an output label.
+    _ = dataset_label
+    cached = ast_cache_root / subject.benchmark / subject.benchmark_key / ast_name
     return subject.with_solast_path(str(cached.resolve()), source="rq1-cache")
 
 
@@ -468,7 +472,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             failure_reason = f"certify {unit}: {cert_stage['status']}"
             break
         if cert_stage["status"] != "ok":
-            continue
+            result_status = "error"
+            failure_reason = f"certify {unit}: {cert_stage['status']}"
+            break
         n_certified = _certified_count(cert_path, subject.benchmark_key, unit)
         if n_certified <= 0:
             continue

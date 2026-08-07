@@ -133,10 +133,33 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
         return bad
 
 
+def test_real203_cache_uses_prepared_benchmark_namespace():
+    subject = rq1_veriput_run.PreparedSubject(
+        benchmark="stress243",
+        subject_id="repo__C",
+        root="/prepared/repo__C",
+        flat_sol="/prepared/repo__C/flat.sol",
+        solast="/prepared/repo__C/flat.sol.solast",
+        contract="C",
+        unit="",
+        solc_bin="/bin/solc",
+        solc_extra=(),
+        metadata={
+            "status": "ok",
+        },
+    )
+    cached = rq1_veriput_run.cached_subject(
+        subject, Path("/tmp/cache"), "real203")
+    return check(cached.solast == "/tmp/cache/stress243/stress243__repo__C/flat.sol.solast",
+                 f"real203 output label does not change AST cache namespace: "
+                 f"{cached.solast}")
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
         test_put_artifact_summary_counts_raw_valid_and_oracle_classes,
+        test_real203_cache_uses_prepared_benchmark_namespace,
     ]
     bad = 0
     for test in tests:
