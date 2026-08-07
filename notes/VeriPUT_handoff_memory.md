@@ -11235,6 +11235,128 @@ Diagnosis from this wave:
   no-output dominates without enough new valid PUTs, pause to optimize Stage-2
   candidate ordering / cheap refutation / coordinate extraction.
 
+## 2026-08-07 real203 fast-first limit120 wave
+
+Command:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py \
+  --benchmark real203 --limit 120 --order fast-first --jobs 3 \
+  --memlimit-gib 10 --mem-fraction 0.98 --timeout 600 \
+  --wrapper-grace 60 --resume --no-output-stage2-stop-s 100
+```
+
+Operational notes:
+
+- This wave used the same accelerated settings as the limit80 wave:
+  `jobs=3`, 10GiB per case, 600s generation timeout, 60s wrapper grace.
+- Before launch, real203 had 79 rows, 115 raw / 110 valid tests, and no
+  residual VeriPUT/ESBMC processes.
+- The wave queued 40 additional fast-first subjects.
+- During the run, one `CometExtAssetList` ESBMC process reached about 8GiB RSS
+  under the 10GiB cap.  System memory stayed available, but this is close
+  enough that future waves with larger contracts should be cautious with
+  `jobs=3`.
+- After completion, `pgrep -af 'rq1_veriput_run|veriput|esbmc'` showed no
+  residual VeriPUT/ESBMC runner processes.  A separate SolAR/ganache experiment
+  from another run was still present and unrelated.
+
+Official `Results/results_all.py --benchmark real203` snapshot:
+
+- `veriput ran=119 raw_u=118 valid_u=113 raw_c=22 valid_c=22 coverage=10.8% VT/case=0.56`.
+- Cost: `total=3.58h`, `wall/subj=108.4+-147.0s`,
+  `peakRSS=1166+-1960MB`.
+- VeriPUT statuses: 22 `ok`, 95 `no-output`, 2 `no-units`.
+- VeriPUT anomaly audit: `timeout/oom/error=0`, `sub-5s ok=0`,
+  `raw>0 & valid==0=0`.
+- Remaining invariant violations are still only the existing multi-host
+  comparability issues for other tools (`cc-solbmc`, `solar`, `syntest`), not
+  VeriPUT.
+
+Latest-key total aggregate after limit120:
+
+- Rows: 119.
+- Status: 22 `ok`, 95 `no-output`, 2 `no-units`.
+- Completion reasons: 82 `ok`, 2 `no-units`, 33 `early-stop-no-output`,
+  2 `budget-exhausted`.
+- Raw/valid tests: 118 / 113.
+- PUT raw/valid: 110 / 105.
+- Concrete raw/valid: 8 / 8.
+- Subjects with raw tests: 22.
+- Subjects with valid tests: 22.
+- `valid=None`: 0.
+- `raw>0 && valid==0`: 0.
+- Oracle class counts: `R0=106`, `R1=34`, `R2=82`.
+- Oracle combo counts: `R0=106`, `R1=34`, `R2=82`.
+
+Incremental aggregate for the new rows after the first 79:
+
+- Rows: 40.
+- Status: 1 `ok`, 39 `no-output`.
+- Completion reasons: 21 `early-stop-no-output`, 18 `ok`,
+  1 `budget-exhausted`.
+- Raw/valid tests: 3 / 3.
+- PUT raw/valid: 1 / 1.
+- Concrete raw/valid: 2 / 2.
+- Subjects with raw tests: 1.
+- Subjects with valid tests: 1.
+- `valid=None`: 0.
+- `raw>0 && valid==0`: 0.
+- Oracle class counts: `R0=1`.
+- Oracle combo counts: `R0=1`.
+
+Only successful row added by this wave:
+
+- `ERC-3643__ERC-3643__ModularCompliance`: 3 raw / 3 valid,
+  with 1 / 1 PUT and 2 / 2 concrete, 595.809s wall.
+
+High-cost no-output rows added by this wave:
+
+- `compound-finance__comet__CometExtAssetList`: 554.548s,
+  `no output after 554.4s Stage 2`; observed around 8GiB RSS during the run.
+- `compound-finance__comet__CometExt`: 417.349s,
+  `no output after 417.2s Stage 2`.
+- `compound-finance__comet__CometProxyAdminOld`: 411.593s,
+  `no output after 411.5s Stage 2`.
+- `ERC-3643__ERC-3643__Token`: 362.049s,
+  `no output after 361.0s Stage 2`.
+- `compound-finance__comet__CometProxyAdmin`: 361.066s,
+  `no output after 361.0s Stage 2`.
+- `ERC-3643__ERC-3643__TREXImplementationAuthority`: 260.77s,
+  `no output after 260.5s Stage 2`.
+- `ERC-3643__ERC-3643__TREXGateway`: 235.758s,
+  `no output after 235.3s Stage 2`.
+- `ERC-3643__ERC-3643__IdentityRegistryStorage`: 179.334s,
+  `no output after 165.7s Stage 2`.
+- `safe-fndn__safe-smart-account__CompatibilityFallbackHandler`: 169.752s,
+  `no output after 169.7s Stage 2`.
+- `ensdomains__ens-contracts__MigrationHelper`: 154.455s,
+  `no output after 133.3s Stage 2`.
+- Other no-output clusters in the wave:
+  Comet rewards/bulker/admin, ERC-3643 registry/compliance/token/gateway,
+  OpenSea helper/conduit, Safe fallback/Safe/SafeL2, ENS DNS/resolver/registrar,
+  Morpho, Balancer OwnableAuthentication, Euler IRMSynth/DToken.
+
+Diagnosis from this wave:
+
+- The artifact/statistics pipeline remains healthy.  There were no timeout,
+  OOM, `valid=None`, or `raw>0 && valid==0` anomalies.
+- The production ROI for this fast-first segment is poor: 40 new rows produced
+  only one valid subject and only one PUT.
+- Do not immediately open a limit160 wave.  The next step should be strategy
+  work, not blind production.
+- The main optimization target is high-cost no-output in Stage 2:
+  `CometExtAssetList`, `CometExt`, `CometProxyAdmin{,Old}`, ERC-3643
+  `Token`/`TREX*`/registries, and Safe/OpenSea/ENS helper clusters.
+- The contrast with the limit80 bridge-receiver cluster is useful: bridge
+  receivers yielded many 3-5 valid PUT rows, while Comet admin/ext and ERC
+  registries burn similar time without output.  Compare their certify results
+  and candidate/oracle distributions before changing ESBMC or the outer runner.
+- Resource note: `jobs=3` is safe for earlier real203 waves but may be too
+  aggressive when multiple Comet-sized ESBMC jobs coincide.  For future
+  production after optimization, consider either `jobs=2` for the heavy tail or
+  adaptive scheduling by observed subject size / prior cluster.
+
 ## 2026-08-07 RQ1 peer182 wave to limit 120 and zero-oracle accounting
 
 User requirements still active:
