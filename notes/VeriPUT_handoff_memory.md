@@ -15519,6 +15519,99 @@ Operational note:
   bug is found.  Timeout rows with raw artifacts must remain archived but
   `valid=None` is not reference-valid.
 
+## 2026-08-07 bugfix124 fast-first limit112 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 112 --order fast-first --jobs 3 --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Post-run process check:
+
+- No residual `rq1_veriput_run`, `certify_all`, `put_all`, `esbmc`, or
+  `forge test` workers remained after the run.
+- The run resumed from the 103-row bugfix124 state and completed 11 more
+  latest-key rows, bringing the VeriPUT arm to `ran=114`.
+- Output root remained:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124`.
+
+Newly completed subjects in this wave:
+
+- `acfix_3_5_101_ANCHToken`: no-output, raw=0, valid=0,
+  wall=46.585s, reason `NO-PATH=18`.
+- `pop_051_LiquidityPool`: no-output, raw=0, valid=0,
+  wall=105.404s.
+- `pop_046_CVXStaker`: no-output, raw=0, valid=0, wall=121.129s.
+- `pop_066_LRTDepositPool`: no-output, raw=0, valid=0,
+  wall=120.927s.
+- `pop_049_Cooler`: no-output, raw=0, valid=0, wall=45.478s.
+- `pop_042_VaultAdapter`: no-output, raw=0, valid=0, wall=16.148s.
+- `ct_20_Pool_sol_Synth_sol_Failing_Max_Value_Al`: no-output,
+  raw=0, valid=0, wall=121.078s.
+- `acfix_002_Templedao`: ok/budget-exhausted, raw=2, valid=2,
+  PUT=2/2, wall=599.176s.
+- `acfix_llama3_002_Templedao`: ok/budget-exhausted, raw=2, valid=2,
+  PUT=2/2, wall=600.027s.
+- `reprod_DCFToken`: ok/budget-exhausted, raw=4, valid=0, PUT=0/4,
+  wall=600.176s.  This is a raw-positive reference-invalid row.
+- `pop_077_GameItems`: no-output, raw=0, valid=0, wall=599.624s.
+
+Latest-key aggregate after this wave:
+
+- Rows:
+  `114`.
+- Status counts:
+  `ok=58`, `no-output=48`, `no-units=4`, `budget-exhausted=2`,
+  `timeout=2`.
+- Raw / valid tests:
+  `174 / 129`.
+- PUT raw / valid:
+  `137 / 112`.
+- Concrete replay raw / valid:
+  `37 / 19`.
+- Subjects with raw tests:
+  `59`.
+- Subjects with valid tests:
+  `52`.
+- Rows with `valid=None`:
+  `2`.
+- Raw-positive reference-invalid rows:
+  `7`, adding `reprod_DCFToken` in this wave.
+- Oracle class totals:
+  `R0=103`, `R1=147`, `R2=396`.
+- Oracle class combination totals:
+  `R0=103`, `R1=115`, `R1+R2=32`, `R2=364`.
+
+Official `results_all.py --benchmark bugfix124` snapshot:
+
+- VeriPUT row:
+  `ran=114`, `raw_u=174`, `valid_u=129`, `raw_c=59`,
+  `valid_c=52`, `coverage=41.9%`, `VT/case=1.04`.
+- This wave's increment over the limit100 state was:
+  `+11 ran`, `+8 raw_u`, `+4 valid_u`, `+3 raw_c`, `+2 valid_c`.
+- Cost row:
+  `ran=114`, `total=4.98h`, `wall/subj=157.4+-178.1s`,
+  `peakRSS=1491+-2146MB`.
+- Anomaly audit for VeriPUT:
+  `timeout/oom/error=2`, `sub-5s ok=0`, `raw>0 & valid==0=6`
+  in `results_all.py` display, while the latest-key raw-positive invalid
+  list has 7 because it also includes the timeout raw-only archived row
+  `acfix_llama3_024_CVE_2019_15078` with `valid=None`.
+
+Operational note:
+
+- This wave shows the tail difficulty clearly: most larger pop/ACFix subjects
+  failed in Stage 2 before a certified region could drive PUT generation.
+- The two Templedao cases did produce valid PUTs, but only near the full 600s
+  subject budget.  `reprod_DCFToken` produced raw PUTs that failed reference
+  replay.
+- Continue bugfix124 tail (`113-124`) with `jobs=2`, not `jobs=3`, because the
+  remaining fast-first subjects include Putty, PrivatePool, Product,
+  Multicall, and PhiNFT.  Do not rerun the 114 completed rows.
+- Treat the repeated no-output pattern as a region/certification difficulty
+  signal for later grouped analysis; do not stop the benchmark run for a
+  one-off script edit unless artifact retention, JSON accounting, or resume
+  semantics break.
+
 ## 2026-08-07 certification-first retry planning
 
 Attempt-2 diagnostic run:
