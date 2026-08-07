@@ -655,6 +655,7 @@ bool solidity_convertert::get_statement(
       if (
         stmt["expression"]["nodeType"].get<std::string>() !=
           "TupleExpression" &&
+        stmt["expression"]["nodeType"].get<std::string>() != "Conditional" &&
         stmt["expression"]["nodeType"].get<std::string>() != "FunctionCall")
       {
         log_error("Unexpected tuple");
@@ -715,6 +716,60 @@ bool solidity_convertert::get_statement(
 
           // do assignment
           get_tuple_assignment(stmt, lop, rop);
+        }
+      }
+      else if (
+        stmt["expression"]["nodeType"].get<std::string>() == "Conditional")
+      {
+        // return cond ? (a, b) : (c, d);
+        const nlohmann::json &conditional = stmt["expression"];
+        const nlohmann::json &true_expr = conditional["trueExpression"];
+        const nlohmann::json &false_expr = conditional["falseExpression"];
+        if (
+          true_expr.value("nodeType", "") != "TupleExpression" ||
+          false_expr.value("nodeType", "") != "TupleExpression" ||
+          !true_expr.contains("components") ||
+          !false_expr.contains("components"))
+        {
+          log_error("Unexpected tuple conditional return structure");
+          return true;
+        }
+
+        exprt cond_expr;
+        if (get_expr(conditional["condition"], cond_expr))
+          return true;
+
+        const struct_typet &lhs_struct = to_struct_type(lhs.type());
+        const auto &true_components = true_expr["components"];
+        const auto &false_components = false_expr["components"];
+        for (size_t i = 0; i < lhs_struct.components().size(); ++i)
+        {
+          if (
+            i >= true_components.size() || i >= false_components.size() ||
+            true_components[i].is_null() || false_components[i].is_null())
+          {
+            log_error(
+              "tuple conditional return: branch arity mismatch at slot {}", i);
+            return true;
+          }
+
+          exprt lop;
+          if (get_tuple_member_call(
+                lhs.identifier(), lhs_struct.components().at(i), lop))
+            return true;
+
+          exprt true_value, false_value;
+          if (get_expr(true_components[i], true_value))
+            return true;
+          if (get_expr(false_components[i], false_value))
+            return true;
+
+          convert_type_expr(ns, true_value, lop, empty_json);
+          convert_type_expr(ns, false_value, lop, empty_json);
+
+          exprt ternary("if", lop.type());
+          ternary.copy_to_operands(cond_expr, true_value, false_value);
+          get_tuple_assignment(stmt, lop, ternary);
         }
       }
       else

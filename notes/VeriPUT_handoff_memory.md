@@ -11420,6 +11420,132 @@ Interpretation:
   until Stage-2 witness/candidate generation improves or subject ordering avoids
   the resolver/registry tail.
 
+## 2026-08-07 real203 limit160 wave with no-candidate stop
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark real203 --limit 160 --order fast-first --jobs 2 --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 90 --stage2-unit-timeout-cap-s 180 --zero-output-stage4-stop-s 30 --no-candidate-stage2-unit-stop-n 4`
+
+Incremental result:
+
+- Ten new real203 subjects ran.
+- Status: 10 `no-output`.
+- Raw/valid: 0 / 0.
+- PUT raw/valid: 0 / 0.
+- Concrete raw/valid: 0 / 0.
+- Incremental wall: 309.989s total, 30.999s average.
+- No OOM/timeout/error.
+
+Rows:
+
+- `Vault`: 14.617s, Stage2 13.145s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `EulerSavingsRate`: 26.927s, Stage2 25.537s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `RiskManager`: 18.374s, Stage2 18.019s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `PublicResolver`: 47.203s, Stage2 45.543s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `CowSwapFeeBurner`: 12.710s, Stage2 12.012s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `Configurator`: 123.006s, Stage2 120.663s, `KILLED=1`; stopped by
+  Stage-2 no-output threshold / capped unit behavior.
+- `Liquidation`: 10.224s, Stage2 10.017s, natural no-output after 2
+  `NO-WITNESS-UNKNOWN` rows.
+- `Borrowing`: 23.540s, Stage2 22.715s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `Governance`: 18.200s, Stage2 16.596s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+- `ERC4626CowSwapFeeBurner`: 15.188s, Stage2 14.516s, 4 consecutive
+  `NO-WITNESS-UNKNOWN`; stopped by no-candidate unit stop.
+
+Cumulative real203 after this wave:
+
+- latest rows: 159.
+- Status: 23 `ok`, 134 `no-output`, 2 `no-units`.
+- Raw/valid: 123 / 117.
+- PUT raw/valid: 115 / 109.
+- Concrete raw/valid: 8 / 8.
+- Official `results_all.py` real203 line:
+  `veriput rounds=1 ran=159 raw_u=123 valid_u=117 raw_c=23 valid_c=23 coverage=11.3% VT/case=0.58`.
+- Official cost line:
+  `veriput 159 total_h=4.26 wall/subj=96.4+-134.3 peakRSS=1077+-1916MB`.
+- Official anomaly audit for real203 VeriPUT:
+  timeout/oom/error 0, sub-5s ok 0, raw>0 & valid==0 0.
+
+Interpretation:
+
+- After two no-candidate-stop waves, 20 new real203 subjects cost 565.263s
+  total, but produced no new raw tests.
+- Continuing blind fast-first sweep is now cheap but not productive enough.
+  Next work should target the internal ESBMC/coverage failures behind
+  `NO-WITNESS-UNKNOWN`, not just scheduler knobs.
+
+## 2026-08-07 ESBMC tuple conditional return fix
+
+Diagnosis:
+
+- `euler-xyz__euler-vault-kit__Vault.deposit` failed Stage 2 in about 3s with
+  `NO-WITNESS-UNKNOWN`.
+- Inner driver log showed ESBMC conversion failed before writing
+  `cov-report.json`:
+  `ERROR: Unexpected tuple`.
+- AST localization found a Solidity-legal tuple conditional return:
+  `return isEmptyOrTrueReturn(success, data) ? (true, bytes("")) : (false, data);`
+  inside `trySafeTransferFrom`, returning `(bool, bytes memory)`.
+- The Solidity frontend ReturnStatement tuple path only accepted
+  `TupleExpression` and `FunctionCall`.  solc encodes this expression as
+  nodeType `Conditional` with tuple type, so conversion aborted.
+
+Code change:
+
+- `src/solidity-frontend/solidity_convert_stmt.cpp` now accepts
+  `Conditional` in the tuple-return branch.
+- For `return cond ? (a, b) : (c, d);`, it:
+  - verifies both branches are tuple literals;
+  - converts the condition;
+  - for each tuple slot, converts both branch values to the return slot type;
+  - emits `tuple_instance.mem<i> = cond ? true_slot : false_slot`;
+  - then follows the existing final `return;` path.
+- FunctionCall and direct TupleExpression return behavior is unchanged.
+
+Regression:
+
+- Added `regression/esbmc-solidity/tuple_return_conditional_pass`.
+- The regression uses a minimal `(bool,uint256)` conditional tuple return and
+  checks both branches.
+
+Validation:
+
+- `cmake --build build --target esbmc -j2` passed after the patch.
+- Direct regression command:
+  `build/src/esbmc/esbmc regression/esbmc-solidity/tuple_return_conditional_pass/contract.solast --sol regression/esbmc-solidity/tuple_return_conditional_pass/contract.sol --contract ConditionalTupleReturn --no-standard-checks --function check --k-induction --max-k-step 20 --k-step 3`
+  returned `VERIFICATION SUCCESSFUL`.
+- After rerunning CMake with `-DESBMC_REGRESS_TIMEOUT=90`, CTest found and ran
+  `regression/esbmc-solidity/tuple_return_conditional_pass`; it passed in
+  0.44s.  The CMake configure printed bundled Bitwuzla/CaDiCaL header errors
+  while trying to rebuild Bitwuzla, then reused the existing Bitwuzla 0.8.2 and
+  exited 0.
+- `cppcheck --enable=style,warning ... src/solidity-frontend/solidity_convert_stmt.cpp`
+  produced no findings.
+- `git diff --check` on the touched files passed.
+- Direct Vault.deposit path-coverage command no longer fails at conversion:
+  it generated the GOTO program and entered path-coverage/unwinding.  It was
+  intentionally stopped by a 70s outer timeout, so this was only a conversion
+  smoke check, not a completed certification run.
+
+Impact / rerun candidates:
+
+- Read-only scan over current latest RQ1 VeriPUT rows found 10 subject rows
+  whose cert logs contain `driver_diagnostic.error == "Unexpected tuple"`:
+  8 real203 subjects and 2 bugfix124 subjects.
+- real203 examples: `BalanceForwarder`, `Token`, `Initialize`, `Vault`,
+  `RiskManager`, `Liquidation`, `Borrowing`, `Governance`.
+- bugfix124 examples: `acfix_fixlink_Product`, `acfix_fixlink_Product2`.
+- These old rows should be considered stale after this ESBMC frontend fix, but
+  they have not been automatically overwritten.  Use explicit targeted redo
+  later if spending ESBMC budget on them is worthwhile.
+
 ## 2026-08-07 real203 fast-first limit36 wave
 
 Production policy for RQ1 waves:
